@@ -1,0 +1,20 @@
+{
+  "name": "tao-local-plugins",
+  "interface": {
+    "displayName": "TAO Local Plugins"
+  },
+  "plugins": [
+    {
+      "name": "tao-skill-bank",
+      "source": {
+        "source": "local",
+        "path": "./plugins/tao-skill-bank"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "tao-skill-bank",
+  "description": "NVIDIA TAO skill bank with generated capability discovery for model training, data processing, workflow orchestration, AutoML, and platform execution.",
+  "version": "0.1.6"
+}

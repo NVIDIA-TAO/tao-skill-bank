@@ -1,0 +1,509 @@
+{
+  "schema_version": 3,
+  "default_long_running_enabled": true,
+  "default_status_interval_minutes": 5,
+  "credential_definitions": {
+    "LEPTON_WORKSPACE_ID": {
+      "description": "Lepton/DGX Cloud workspace where TAO jobs will be submitted.",
+      "how_to_get": "Open the Lepton workspace UI or CLI context and use the workspace id for the target GPU workspace."
+    },
+    "LEPTON_AUTH_TOKEN": {
+      "description": "API token used to submit and monitor Lepton jobs.",
+      "how_to_get": "Create or copy a Lepton API token from the Lepton account/workspace settings."
+    },
+    "BREV_API_TOKEN": {
+      "description": "Brev API token used to create and manage GPU instances/jobs.",
+      "how_to_get": "Create or copy a token from the Brev console settings page."
+    },
+    "SLURM_USER": {
+      "description": "SSH username for the SLURM login node.",
+      "how_to_get": "Use the username you normally use when running ssh <user>@<slurm-login-host>."
+    },
+    "SLURM_HOSTNAME": {
+      "description": "Comma-separated SLURM login hostnames for failover.",
+      "how_to_get": "Use the login hosts provided by the cluster admin, for example login-01.example.com,login-02.example.com."
+    },
+    "SSH_KEY_PATH": {
+      "description": "Private key path used for public-key SSH to SLURM login nodes.",
+      "how_to_get": "Use the private key that succeeds with ssh -o BatchMode=yes -i <key> <SLURM_USER>@<host> 'hostname'. If it is not set up, create one with ssh-keygen, install it with ssh-copy-id, trust the host with ssh-keyscan, chmod 600 the private key, then set SSH_KEY_PATH to that private key path."
+    },
+    "SSH_AUTH_SOCK": {
+      "description": "SSH agent socket containing a key accepted by the SLURM login node.",
+      "how_to_get": "Run ssh-agent, add the key with ssh-add, and pass the printed SSH_AUTH_SOCK value to the launch environment."
+    },
+    "SLURM_BASE_RESULTS_DIR": {
+      "description": "Shared filesystem base directory where SLURM job staging, logs, and results should be written.",
+      "how_to_get": "Use a writable Lustre/shared path from the cluster, commonly /lustre/fsw/portfolios/<team>/users/<user>."
+    },
+    "SLURM_ACCOUNT": {
+      "description": "Scheduler account charged by #SBATCH --account when the site requires accounting.",
+      "how_to_get": "Ask the cluster admin or check a known-good sbatch script for the account value."
+    },
+    "SLURM_PARTITION": {
+      "description": "SLURM partition or comma-separated partition list to submit GPU jobs to.",
+      "how_to_get": "Run sinfo on the login node or use the partition from a known-good GPU sbatch script."
+    },
+    "SLURM_CONTAINER_MOUNTS": {
+      "description": "Container mount list that exposes shared data/results paths inside Pyxis/Enroot containers.",
+      "how_to_get": "Use the cluster's required mounts, usually /lustre for Lustre-backed datasets."
+    },
+    "NGC_KEY": {
+      "description": "NVIDIA NGC API key used for nvcr.io image pulls or model/artifact access.",
+      "how_to_get": "Create or copy an API key from the NGC account setup page."
+    },
+    "HF_TOKEN": {
+      "description": "Hugging Face read token for gated model repositories required by the selected model.",
+      "how_to_get": "Accept the model agreement on Hugging Face, then create a read token from Hugging Face settings."
+    },
+    "ACCESS_KEY": {
+      "description": "Access key id for S3 or S3-compatible object storage used by dataset/result URIs.",
+      "how_to_get": "Use the access key from the object-storage account, cloud secret, or data platform credential."
+    },
+    "SECRET_KEY": {
+      "description": "Secret access key for S3 or S3-compatible object storage.",
+      "how_to_get": "Use the paired secret for ACCESS_KEY from the object-storage account or secret manager."
+    },
+    "S3_ENDPOINT_URL": {
+      "description": "Custom S3-compatible endpoint URL for non-AWS object stores such as MinIO.",
+      "how_to_get": "Use the endpoint published by the storage provider; AWS S3 usually does not need this."
+    },
+    "S3_BUCKET_NAME": {
+      "description": "Default bucket for workflow outputs when the launcher needs to construct result URIs.",
+      "how_to_get": "Use a writable bucket allocated for TAO artifacts."
+    },
+    "CLOUD_REGION": {
+      "description": "Cloud/object-storage region used by S3-compatible clients.",
+      "how_to_get": "Use the bucket region from the storage provider, for example us-east-1."
+    },
+    "DOCKER_HOST": {
+      "description": "Docker daemon endpoint when not using the local default socket.",
+      "how_to_get": "Use the value from docker context inspect or the remote Docker daemon configuration."
+    },
+    "DOCKER_NETWORK": {
+      "description": "Docker network name to attach TAO containers to.",
+      "how_to_get": "Run docker network ls and choose the network that can reach required services/storage."
+    },
+    "DOCKER_USERNAME": {
+      "description": "Container registry username for image pulls when registry auth is required.",
+      "how_to_get": "Use the registry account username; for NGC nvcr.io pulls this is usually $oauthtoken."
+    },
+    "DOCKER_PULL_POLICY": {
+      "description": "Controls whether local Docker should always pull, never pull, or pull if missing.",
+      "how_to_get": "Set only when you need behavior different from the local Docker handler default."
+    },
+    "DOCKER_AUTO_REMOVE": {
+      "description": "Controls whether local Docker containers are removed automatically after completion.",
+      "how_to_get": "Set according to debugging needs; disable auto-remove when logs/files need postmortem inspection."
+    },
+    "HOST_SSH_PATH": {
+      "description": "Host SSH directory to mount into local Docker containers when workflows need SSH access.",
+      "how_to_get": "Use the host path containing the SSH keys/config needed inside the container, commonly ~/.ssh."
+    },
+    "KUBECONFIG": {
+      "description": "Path to the kubeconfig file for the target Kubernetes cluster.",
+      "how_to_get": "Use the path from your cluster setup command, for example aws eks update-kubeconfig output."
+    },
+    "TAO_K8S_NAMESPACE": {
+      "description": "Kubernetes namespace where TAO Jobs, pods, and related resources will be created.",
+      "how_to_get": "Use an existing namespace where your account can create Jobs and read pod logs."
+    },
+    "TAO_K8S_CONTEXT": {
+      "description": "Kubeconfig context name for the target cluster.",
+      "how_to_get": "Run kubectl config get-contexts and choose the context for the GPU cluster."
+    }
+  },
+  "platforms": [
+    {
+      "name": "lepton",
+      "display_name": "Lepton / DGX Cloud",
+      "aliases": [
+        "dgx-cloud"
+      ],
+      "backend_type": "lepton",
+      "description": "Managed GPU compute on DGX Cloud through Lepton jobs.",
+      "required_credentials": [
+        {
+          "name": "LEPTON_WORKSPACE_ID",
+          "source": "env_var",
+          "description": "Lepton/DGX Cloud workspace where TAO jobs will be submitted.",
+          "how_to_get": "Open the Lepton workspace UI or CLI context and use the workspace id for the target GPU workspace."
+        },
+        {
+          "name": "LEPTON_AUTH_TOKEN",
+          "source": "env_var",
+          "description": "API token used to submit and monitor Lepton jobs.",
+          "how_to_get": "Create or copy a Lepton API token from the Lepton account/workspace settings."
+        }
+      ],
+      "optional_credentials": [
+        {
+          "name": "NGC_KEY",
+          "source": "env_var"
+        },
+        {
+          "name": "ACCESS_KEY",
+          "source": "env_var",
+          "only_when": "dataset or result URIs use s3://"
+        },
+        {
+          "name": "SECRET_KEY",
+          "source": "env_var",
+          "only_when": "dataset or result URIs use s3://"
+        },
+        {
+          "name": "S3_ENDPOINT_URL",
+          "source": "env_var",
+          "only_when": "using a custom S3-compatible endpoint"
+        },
+        {
+          "name": "S3_BUCKET_NAME",
+          "source": "env_var",
+          "only_when": "workflow needs a default output bucket"
+        },
+        {
+          "name": "CLOUD_REGION",
+          "source": "env_var",
+          "only_when": "S3-compatible storage requires a region"
+        }
+      ],
+      "storage": {
+        "protocol": "aws",
+        "uri_format": "s3://{bucket_name}/{path}",
+        "metadata_key": "aws"
+      },
+      "dataset_examples": [
+        "s3://my-bucket/cosmos_rl/train",
+        "s3://my-bucket/cosmos_rl/eval",
+        "custom.train_dataset.annotation_path=s3://my-bucket/cosmos_rl/train/annotations.json",
+        "custom.train_dataset.media_path=s3://my-bucket/cosmos_rl/media/videos.tar.gz"
+      ],
+      "preflight_checks": [
+        "Confirm LEPTON_WORKSPACE_ID and LEPTON_AUTH_TOKEN are set in the launch environment.",
+        "Verify Lepton API access for the workspace before generating runner scripts.",
+        "Verify s3:// dataset/result URIs with ACCESS_KEY/SECRET_KEY and aws s3 ls, or provide manual proof for mounted shared storage paths.",
+        "Verify model-specific credentials such as HF_TOKEN before generating runner scripts."
+      ]
+    },
+    {
+      "name": "brev",
+      "display_name": "Brev",
+      "aliases": [],
+      "backend_type": "brev",
+      "description": "Managed GPU instances with Docker support through the Brev CLI.",
+      "required_credentials": [
+        {
+          "name": "BREV_API_TOKEN",
+          "source": "env_var",
+          "description": "Brev API token used to create and manage GPU instances/jobs.",
+          "how_to_get": "Create or copy a token from the Brev account settings or CLI login flow."
+        }
+      ],
+      "optional_credentials": [
+        {
+          "name": "NGC_KEY",
+          "source": "env_var"
+        },
+        {
+          "name": "ACCESS_KEY",
+          "source": "env_var",
+          "only_when": "dataset or result URIs use s3://"
+        },
+        {
+          "name": "SECRET_KEY",
+          "source": "env_var",
+          "only_when": "dataset or result URIs use s3://"
+        },
+        {
+          "name": "S3_ENDPOINT_URL",
+          "source": "env_var",
+          "only_when": "using a custom S3-compatible endpoint"
+        },
+        {
+          "name": "S3_BUCKET_NAME",
+          "source": "env_var",
+          "only_when": "workflow needs a default output bucket"
+        },
+        {
+          "name": "HF_TOKEN",
+          "source": "env_var",
+          "only_when": "selected model requires HuggingFace access"
+        }
+      ],
+      "storage": {
+        "protocol": "aws",
+        "uri_format": "s3://{bucket_name}/{path}",
+        "metadata_key": "aws"
+      },
+      "dataset_examples": [
+        "s3://my-bucket/tao/train",
+        "s3://my-bucket/tao/eval",
+        "custom.train_dataset.annotation_path=s3://my-bucket/tao/train/annotations.json",
+        "custom.train_dataset.media_path=s3://my-bucket/tao/media/videos.tar.gz"
+      ],
+      "preflight_checks": [
+        "Confirm BREV_API_TOKEN is set and the Brev CLI/API can list instances before generating runner scripts.",
+        "Verify s3:// dataset/result URIs with ACCESS_KEY/SECRET_KEY and aws s3 ls before generating runner scripts.",
+        "Verify model-specific credentials such as HF_TOKEN before generating runner scripts."
+      ]
+    },
+    {
+      "name": "slurm",
+      "display_name": "SLURM",
+      "aliases": [
+        "cluster"
+      ],
+      "backend_type": "slurm",
+      "description": "Remote SLURM GPU cluster execution over SSH with Pyxis/Enroot containers.",
+      "required_credentials": [
+        {
+          "name": "SLURM_USER",
+          "source": "env_var",
+          "description": "SSH username for the SLURM login node.",
+          "how_to_get": "Use the username you normally use when running ssh <user>@<slurm-login-host>."
+        },
+        {
+          "name": "SLURM_HOSTNAME",
+          "source": "env_var",
+          "description": "Comma-separated SLURM login hostnames for failover.",
+          "how_to_get": "Use the login hosts provided by the cluster admin, for example login-01.example.com,login-02.example.com."
+        },
+        {
+          "name": "SLURM_PARTITION",
+          "source": "env_var",
+          "description": "SLURM partition or comma-separated partition list to submit GPU jobs to.",
+          "how_to_get": "Run sinfo on the login node or use the GPU partition from a known-good sbatch script."
+        }
+      ],
+      "credential_groups": [
+        {
+          "name": "ssh_identity",
+          "require_one_of": [
+            "SSH_KEY_PATH",
+            "SSH_AUTH_SOCK"
+          ],
+          "preferred": "SSH_KEY_PATH",
+          "description": "Non-interactive SSH identity for passwordless public-key login to at least one SLURM login host.",
+          "how_to_get": "Provide SSH_KEY_PATH for a private key accepted by the cluster. Set up passwordless access with ssh-keygen, ssh-copy-id, ssh-keyscan, chmod 600, then verify using ssh -o BatchMode=yes -i <key> <SLURM_USER>@<host> 'hostname'."
+        }
+      ],
+      "optional_credentials": [
+        {
+          "name": "SLURM_BASE_RESULTS_DIR",
+          "source": "env_var",
+          "only_when": "user wants a custom results/staging root instead of the platform default"
+        },
+        {
+          "name": "SLURM_ACCOUNT",
+          "source": "env_var",
+          "only_when": "the cluster site requires #SBATCH --account"
+        },
+        {
+          "name": "SLURM_CONTAINER_MOUNTS",
+          "source": "env_var",
+          "only_when": "cluster requires container mounts different from the platform default"
+        },
+        {
+          "name": "NGC_KEY",
+          "source": "env_var",
+          "only_when": "private nvcr.io image pulls require NGC auth"
+        },
+        {
+          "name": "HF_TOKEN",
+          "source": "env_var",
+          "only_when": "selected model requires HuggingFace access"
+        }
+      ],
+      "storage": {
+        "protocol": "lustre",
+        "uri_format": "lustre:///{absolute_path}",
+        "metadata_key": "slurm"
+      },
+      "resource_defaults": {
+        "num_nodes": 1,
+        "num_gpus": 4,
+        "max_num_gpus_per_node": 8,
+        "cpus_per_task": 16,
+        "partition": "polar,polar3,polar4,grizzly",
+        "time_hours": 4,
+        "timeout_hours": 3.8,
+        "max_time_hours": 4,
+        "container_mounts": "/lustre",
+        "use_sqsh": true,
+        "sqsh_conversion_partition": "cpu",
+        "sqsh_conversion_timeout_minutes": 30,
+        "sqsh_conversion_memory_gb": 32
+      },
+      "dataset_examples": [
+        "/lustre/fsw/portfolios/edgeai/users/<user>/data/<model>/train",
+        "lustre:///lustre/fsw/portfolios/edgeai/users/<user>/data/<model>/eval",
+        "custom.train_dataset.annotation_path=/lustre/fsw/.../annotations.json",
+        "custom.train_dataset.media_path=/lustre/fsw/.../videos.tar.gz"
+      ],
+      "preflight_checks": [
+        "Resolve each host in SLURM_HOSTNAME and require passwordless SSH to at least one host with BatchMode=yes.",
+        "If SSH fails, stop before generating runner scripts, ask for SSH_KEY_PATH, and show ssh-keygen/ssh-copy-id/ssh-keyscan/chmod/BatchMode verification steps.",
+        "After SSH passes, validate dataset annotation/media paths from the login host using test -e before generating runner scripts.",
+        "Verify model-specific credentials such as HF_TOKEN before submitting jobs."
+      ]
+    },
+    {
+      "name": "local-docker",
+      "display_name": "Local Docker",
+      "aliases": [
+        "docker"
+      ],
+      "backend_type": "local-docker",
+      "description": "Local Docker execution using the host Docker daemon and NVIDIA GPU runtime.",
+      "required_credentials": [],
+      "optional_credentials": [
+        {
+          "name": "DOCKER_HOST",
+          "source": "env_var"
+        },
+        {
+          "name": "DOCKER_NETWORK",
+          "source": "env_var"
+        },
+        {
+          "name": "DOCKER_USERNAME",
+          "source": "env_var"
+        },
+        {
+          "name": "DOCKER_PULL_POLICY",
+          "source": "env_var"
+        },
+        {
+          "name": "DOCKER_AUTO_REMOVE",
+          "source": "env_var"
+        },
+        {
+          "name": "NGC_KEY",
+          "source": "env_var"
+        },
+        {
+          "name": "HOST_SSH_PATH",
+          "source": "env_var"
+        },
+        {
+          "name": "ACCESS_KEY",
+          "source": "env_var",
+          "only_when": "dataset or result URIs use s3://"
+        },
+        {
+          "name": "SECRET_KEY",
+          "source": "env_var",
+          "only_when": "dataset or result URIs use s3://"
+        },
+        {
+          "name": "S3_ENDPOINT_URL",
+          "source": "env_var",
+          "only_when": "using a custom S3-compatible endpoint"
+        },
+        {
+          "name": "S3_BUCKET_NAME",
+          "source": "env_var",
+          "only_when": "workflow needs a default output bucket"
+        },
+        {
+          "name": "HF_TOKEN",
+          "source": "env_var",
+          "only_when": "selected model requires HuggingFace access"
+        }
+      ],
+      "storage": {
+        "protocol": "local",
+        "uri_format": "file://{absolute_path}",
+        "metadata_key": "local"
+      },
+      "dataset_examples": [
+        "/data/tao/<model>/train",
+        "file:///data/tao/<model>/eval",
+        "custom.train_dataset.annotation_path=/data/tao/train/annotations.json",
+        "custom.train_dataset.media_path=/data/tao/media/videos.tar.gz"
+      ],
+      "preflight_checks": [
+        "Confirm Docker is reachable from the launch host and the NVIDIA runtime can see GPUs.",
+        "Validate local dataset annotation/media paths with test -e before generating runner scripts.",
+        "For s3:// inputs, verify S3 credentials are present and aws s3 ls can read the dataset/result paths.",
+        "Verify model-specific credentials such as HF_TOKEN before launching the container."
+      ]
+    },
+    {
+      "name": "kubernetes",
+      "display_name": "Kubernetes",
+      "aliases": [
+        "k8s",
+        "local-k8s"
+      ],
+      "backend_type": "kubernetes",
+      "description": "Kubernetes Jobs on a configured GPU cluster using kubeconfig or in-cluster service account auth.",
+      "required_credentials": [],
+      "optional_credentials": [
+        {
+          "name": "KUBECONFIG",
+          "source": "env_var",
+          "only_when": "using a non-default kubeconfig path"
+        },
+        {
+          "name": "TAO_K8S_NAMESPACE",
+          "source": "env_var"
+        },
+        {
+          "name": "TAO_K8S_CONTEXT",
+          "source": "env_var"
+        },
+        {
+          "name": "NGC_KEY",
+          "source": "env_var"
+        },
+        {
+          "name": "ACCESS_KEY",
+          "source": "env_var",
+          "only_when": "dataset or result URIs use s3://"
+        },
+        {
+          "name": "SECRET_KEY",
+          "source": "env_var",
+          "only_when": "dataset or result URIs use s3://"
+        },
+        {
+          "name": "S3_ENDPOINT_URL",
+          "source": "env_var",
+          "only_when": "using a custom S3-compatible endpoint"
+        },
+        {
+          "name": "S3_BUCKET_NAME",
+          "source": "env_var",
+          "only_when": "workflow needs a default output bucket"
+        },
+        {
+          "name": "CLOUD_REGION",
+          "source": "env_var",
+          "only_when": "S3-compatible storage requires a region"
+        },
+        {
+          "name": "HF_TOKEN",
+          "source": "env_var",
+          "only_when": "selected model requires HuggingFace access"
+        }
+      ],
+      "storage": {
+        "protocol": "aws",
+        "uri_format": "s3://{bucket_name}/{path}",
+        "metadata_key": "aws"
+      },
+      "dataset_examples": [
+        "s3://my-bucket/tao/<model>/train",
+        "s3://my-bucket/tao/<model>/eval",
+        "custom.train_dataset.annotation_path=s3://my-bucket/tao/<model>/train/annotations.json",
+        "custom.train_dataset.media_path=s3://my-bucket/tao/<model>/media/videos.tar.gz"
+      ],
+      "preflight_checks": [
+        "Confirm kubectl can access the target context and namespace.",
+        "Verify job-create permission and allocatable nvidia.com/gpu nodes before generating runner specs.",
+        "For s3:// inputs, verify S3 credentials are present and aws s3 ls can read the dataset/result paths.",
+        "Verify model-specific credentials such as HF_TOKEN before creating Kubernetes jobs."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+model_path: ''
+results_dir: ''
+train:
+  num_epochs: 1
+  batch_size: 8
+  learning_rate: 0.0001
+  vision_learning_rate: 1.0e-05
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  gradient_accumulation_steps: 2
+  lora_r: 16
+  max_tiles: 12
+  video_max_tiles: 6
+  llm_mode: lora
+  vision_mode: ft
+  model_max_length: 32768
+  checkpoint_interval: 100
+  total_checkpoint_limit: 0
+  logging_interval: 1
+  disable_wandb: 'true'
+  num_video_frames: 8
+  num_time_tokens: 0
+  system:
+    num_gpus: 1
+    num_nodes: 1
+    master_addr: 127.0.0.1
+    node_rank: 0
+    port: 24501
+    save_on_each_node: 'False'
+  dataset:
+    dataset_name: scienceqa
+    dataset_path: ''
+    dataset_yaml_path: ''
+    mixture_path: ''
+    media_dir: ''
+    data_path: ''
+evaluate:
+  task: youcook2_val
+  dataset_yaml_path: ''
+  num_gpus: 1

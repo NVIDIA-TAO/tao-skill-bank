@@ -1,0 +1,304 @@
+// =============================================================================
+// tao-skills-external — versions.yaml bump release pipeline
+// =============================================================================
+// Patches the canonical container image tags + SDK wheel version in
+// `versions.yaml` at the repo root, then commits and pushes to
+// `release/${TAO_VERSION}` on origin. Pure CPU; no Docker / GPU build.
+//
+// Build parameters (TAO_VERSION, *_TAG, SDK_VERSION) are configured via the
+// Jenkins job UI (Pipeline → This project is parameterized → Add String
+// Parameter), NOT declaratively in this file. Required UI parameters:
+//
+//   TAO_VERSION             e.g. "6.26.6"   (target branch release/${TAO_VERSION})
+//   PYTORCH_TAG             full image URI for images.tao_toolkit.pyt
+//   DEPLOY_TAG              full image URI for images.tao_toolkit.deploy
+//   DATA_SERVICES_TAG       full image URI for images.tao_toolkit.data_services
+//   COSMOS_RL_TAG           full image URI for images.tao_toolkit.cosmos_rl
+//   COSMOS_PREDICT_2_5_TAG  full image URI for images.tao_toolkit.cosmos_predict_2_5
+//   COSMOS_EMBED_TAG        full image URI for images.tao_toolkit.cosmos_embed
+//   VILA_TAG                full image URI for images.tao_toolkit.vila
+//   SDK_VERSION             bare PEP 440 version (e.g. "0.2.0"); applied to all
+//                           four nvidia-tao-sdk wheel entries (tao_sdk,
+//                           tao_sdk_lepton, tao_sdk_brev, tao_sdk_all)
+//
+// Notes:
+// - Each agent relies on Jenkins's automatic `checkout scm` (job SCM is
+//   configured to track the branch the Jenkinsfile lives on, typically `main`).
+//   The push targets `release/${TAO_VERSION}` regardless of the SCM branch.
+// - `python:3.12-slim` ships without git; the `setup` stage apt-installs it.
+// =============================================================================
+
+@Library('tao-jenkins-shared-library') _
+import org.tao.TaoConfig
+import org.tao.PodTemplates
+
+// === CONFIGURATION ===
+TaoConfig.init([
+    projectName: 'tao-skills-external',
+
+    ciAuthorName: 'TAO Release CI',
+    ciAuthorEmail: 'tao-ci-bot@nvidia.com',
+    podLabelPrefix: 'tao-skills-external-release',
+
+    registries: [
+        GITLAB: [
+            url: 'https://gitlab-master.nvidia.com',
+            connection: 'git-lab-master'
+        ]
+    ],
+
+    credentials: [
+        GITLAB_TOKEN: 'gitlab-api-token'
+    ],
+
+    images: [
+        // Pure-Python patcher. python:3.12-slim is small and gives us the
+        // standard library + pip; we apt-install git in the setup stage.
+        PATCHER_X86: 'python:3.12-slim'
+    ],
+
+    kubernetes: [
+        cloud: 'sc-ipp-blossom-prod',
+        imagePullSecrets: ['svc-tlt-ci-ngcimagepullsecret', 'gitlab-tao-imagepullsecret']
+    ],
+
+    gitlab: [
+        projectId  : '275742',
+        projectPath: 'nvidia-tao-toolkit/tao-skills-external'
+    ]
+])
+
+// === POD TEMPLATES ===
+PodTemplates.init([
+    imagePullSecrets: TaoConfig.kubernetes.imagePullSecrets,  // REQUIRED — NPE if omitted
+    containers: [
+        'patcher-x86': [
+            image: TaoConfig.images.PATCHER_X86,
+            command: ['cat'],
+            tty: true,
+            resources: [
+                requests: [cpu: '500m', memory: '1Gi'],
+                limits:   [cpu: '2',    memory: '2Gi']
+            ]
+        ]
+    ],
+    affinityPools: [
+        // CPU-only x86 pool; no GPU / driver constraints required.
+        'docker-only': [os: 'linux', arch: 'amd64']
+    ]
+])
+
+// === STATE TRACKED ACROSS STAGES ===
+def TAO_VERSION_RESOLVED = ''
+def TARGET_BRANCH = ''
+
+pipeline {
+    agent none
+    options {
+        timestamps()
+        ansiColor('xterm')
+        timeout(time: 15, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '50'))
+        disableConcurrentBuilds()  // serialize pushes against the same release branch
+    }
+
+    stages {
+
+        // ---------------------------------------------------------------------
+        // 1. Patch versions.yaml and push to release/${TAO_VERSION}
+        // ---------------------------------------------------------------------
+        stage('bump_versions_yaml') {
+            agent {
+                kubernetes {
+                    cloud TaoConfig.kubernetes.cloud
+                    yaml PodTemplates.generate(containers: ['patcher-x86'], affinityPool: 'docker-only')
+                }
+            }
+            stages {
+
+                stage('init_inputs') {
+                    steps {
+                        container('patcher-x86') {
+                            script {
+                                TAO_VERSION_RESOLVED = normalizeVersion(params.TAO_VERSION)
+                                TARGET_BRANCH = "release/${TAO_VERSION_RESOLVED}"
+
+                                // Fail fast on missing UI parameters.
+                                def required = [
+                                    'TAO_VERSION'           : TAO_VERSION_RESOLVED,
+                                    'PYTORCH_TAG'           : params.PYTORCH_TAG,
+                                    'DEPLOY_TAG'            : params.DEPLOY_TAG,
+                                    'DATA_SERVICES_TAG'     : params.DATA_SERVICES_TAG,
+                                    'COSMOS_RL_TAG'         : params.COSMOS_RL_TAG,
+                                    'COSMOS_PREDICT_2_5_TAG': params.COSMOS_PREDICT_2_5_TAG,
+                                    'COSMOS_EMBED_TAG'      : params.COSMOS_EMBED_TAG,
+                                    'VILA_TAG'              : params.VILA_TAG,
+                                    'SDK_VERSION'           : params.SDK_VERSION,
+                                ]
+                                def missing = required.findAll { k, v -> !(v?.toString()?.trim()) }
+                                if (missing) {
+                                    error "Missing required parameter(s): ${missing.keySet().join(', ')}"
+                                }
+
+                                // Export to env so downstream `sh` blocks see them.
+                                env.TAO_VERSION             = TAO_VERSION_RESOLVED
+                                env.TARGET_BRANCH           = TARGET_BRANCH
+                                env.PYTORCH_TAG             = params.PYTORCH_TAG
+                                env.DEPLOY_TAG              = params.DEPLOY_TAG
+                                env.DATA_SERVICES_TAG       = params.DATA_SERVICES_TAG
+                                env.COSMOS_RL_TAG           = params.COSMOS_RL_TAG
+                                env.COSMOS_PREDICT_2_5_TAG  = params.COSMOS_PREDICT_2_5_TAG
+                                env.COSMOS_EMBED_TAG        = params.COSMOS_EMBED_TAG
+                                env.VILA_TAG                = params.VILA_TAG
+                                env.SDK_VERSION             = params.SDK_VERSION
+
+                                echo "=== Bump plan ==="
+                                echo "TAO_VERSION            = ${TAO_VERSION_RESOLVED}"
+                                echo "TARGET_BRANCH          = ${TARGET_BRANCH}"
+                                echo "PYTORCH_TAG            = ${params.PYTORCH_TAG}"
+                                echo "DEPLOY_TAG             = ${params.DEPLOY_TAG}"
+                                echo "DATA_SERVICES_TAG      = ${params.DATA_SERVICES_TAG}"
+                                echo "COSMOS_RL_TAG          = ${params.COSMOS_RL_TAG}"
+                                echo "COSMOS_PREDICT_2_5_TAG = ${params.COSMOS_PREDICT_2_5_TAG}"
+                                echo "COSMOS_EMBED_TAG       = ${params.COSMOS_EMBED_TAG}"
+                                echo "VILA_TAG               = ${params.VILA_TAG}"
+                                echo "SDK_VERSION            = ${params.SDK_VERSION}"
+                            }
+                        }
+                    }
+                }
+
+                stage('setup') {
+                    steps {
+                        container('patcher-x86') {
+                            // python:3.12-slim ships without git or ca-certs;
+                            // both are needed for checkout + push.
+                            sh '''
+                                set -eux
+                                apt-get update
+                                DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                                    git ca-certificates
+                                rm -rf /var/lib/apt/lists/*
+                                git --version
+                                python --version
+                            '''
+                        }
+                    }
+                }
+
+                stage('checkout') {
+                    steps {
+                        container('patcher-x86') {
+                            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                                withGitLabStatus('checkout') {
+                                    checkoutWithSafeDirectory()
+                                    sh 'git rev-parse --short HEAD'
+                                }
+                            }
+                        }
+                    }
+                }
+
+                stage('patch_versions_yaml') {
+                    steps {
+                        container('patcher-x86') {
+                            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                                withGitLabStatus('patch_versions_yaml') {
+                                    // Each key/value pair lives on its own indented line, e.g.
+                                    //     pyt:                nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
+                                    // The Python helper preserves the leading indent + key +
+                                    // intra-line spacing and replaces only the value. It fails
+                                    // loudly if a key is missing or matches multiple lines.
+                                    sh '''
+                                        set -eu
+                                        VERSIONS_FILE="versions.yaml"
+                                        test -f "${VERSIONS_FILE}"
+
+                                        patch_line() {
+                                            python3 - "$1" "$2" "${VERSIONS_FILE}" <<'PY'
+import re, sys
+key, value, path = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, "r", encoding="utf-8") as fh:
+    lines = fh.readlines()
+pattern = re.compile(rf"^(\\s*{re.escape(key)}:\\s+)(\\S.*)$")
+hits = 0
+for i, line in enumerate(lines):
+    m = pattern.match(line)
+    if m:
+        lines[i] = f"{m.group(1)}{value}\\n"
+        hits += 1
+if hits == 0:
+    sys.exit(f"ERROR: key not found in {path}: {key}")
+if hits > 1:
+    sys.exit(f"ERROR: key matched {hits} times in {path}: {key}")
+with open(path, "w", encoding="utf-8") as fh:
+    fh.writelines(lines)
+PY
+                                        }
+
+                                        patch_line "pyt"                "${PYTORCH_TAG}"
+                                        patch_line "deploy"             "${DEPLOY_TAG}"
+                                        patch_line "data_services"      "${DATA_SERVICES_TAG}"
+                                        patch_line "cosmos_rl"          "${COSMOS_RL_TAG}"
+                                        patch_line "cosmos_predict_2_5" "${COSMOS_PREDICT_2_5_TAG}"
+                                        patch_line "cosmos_embed"       "${COSMOS_EMBED_TAG}"
+                                        patch_line "vila"               "${VILA_TAG}"
+
+                                        patch_line "tao_sdk"        "nvidia-tao-sdk==${SDK_VERSION}"
+                                        patch_line "tao_sdk_lepton" "nvidia-tao-sdk[lepton]==${SDK_VERSION}"
+                                        patch_line "tao_sdk_brev"   "nvidia-tao-sdk[brev]==${SDK_VERSION}"
+                                        patch_line "tao_sdk_all"    "nvidia-tao-sdk[all]==${SDK_VERSION}"
+
+                                        echo "----- BEGIN versions.yaml -----"
+                                        cat "${VERSIONS_FILE}"
+                                        echo "------ END versions.yaml ------"
+                                        echo "----- DIFF vs. HEAD -----"
+                                        git --no-pager diff -- "${VERSIONS_FILE}" || true
+                                    '''
+                                }
+                            }
+                        }
+                    }
+                }
+
+                stage('commit_and_push') {
+                    steps {
+                        container('patcher-x86') {
+                            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                                withGitLabStatus('commit_and_push') {
+                                    withCredentials([string(credentialsId: TaoConfig.credentials.GITLAB_TOKEN, variable: 'GITLAB_TOKEN')]) {
+                                        script {
+                                            def commitResult = gitCommit(
+                                                files: ['versions.yaml'],
+                                                message: "[TAO-0000][Feature] Bump versions.yaml for ${TAO_VERSION_RESOLVED} (build ${env.BUILD_NUMBER})"
+                                            )
+                                            if (!commitResult.committed) {
+                                                echo "⏭ versions.yaml unchanged — skipping push."
+                                                return
+                                            }
+                                            gitPush(
+                                                gitToken: GITLAB_TOKEN,
+                                                repoUrl: TaoConfig.gitlab.projectPath,
+                                                branch: TARGET_BRANCH
+                                            )
+                                            echo "✓ Pushed ${commitResult.commit} to ${TARGET_BRANCH}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✓ tao-skills-external release bump completed successfully"
+        }
+        failure {
+            echo "✗ tao-skills-external release bump failed"
+        }
+    }
+}

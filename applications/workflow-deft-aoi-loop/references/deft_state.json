@@ -1,0 +1,52 @@
+{
+  "_comment": "Reference schema for ${RESULTS_DIR}/deft_state.json. Written with Python/jq (never echo) after every step. Together with results/loop_log.jsonl this is the single source of truth: re-read on startup and before every stage; never trust in-memory state across turns. Example values are aligned to /home/shadeform/workspace.",
+  "version": 2,
+  "started_at": "2026-05-04T06:46:53+00:00",
+  "kpi_target": "FAR < 10% at recall=100%",
+  "results_dir": "/home/shadeform/workspace/results",
+  "max_iterations": 2,
+  "current_iteration": 0,
+  "config": {
+    "specs_file": "/home/shadeform/workspace/specs/baseline_spec.yaml",
+    "training_csv": "/home/shadeform/workspace/train/base/training_set.csv",
+    "validation_csv": "/home/shadeform/workspace/train/base/validation_set.csv",
+    "images_dir": "/home/shadeform/workspace/kpi/images",
+    "backbone_weight_dir": "/home/shadeform/workspace/augmentation/backbone",
+    "train_container": "nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt",
+    "num_gpus": 4,
+    "batch_size": 16,
+    "num_epochs": 20,
+    "anomalygen": {
+      "sub_skill": "cosmos-anomalygen",
+      "mode": "inference_only",
+      "project": "nvpcb",
+      "defect_spec": "/home/shadeform/workspace/augmentation/anomalygen/checkpoints/nvpcb/defect_spec.jsonl",
+      "checkpoint_dir": "/home/shadeform/workspace/augmentation/anomalygen/checkpoints/nvpcb/checkpoints",
+      "step": 14000,
+      "num_SDG": 20,
+      "container": "nvcr.io/nv-metropolis-dev/metropolis-sdg/cosmos-anomalygen:1.0.3-006434bb.main"
+    },
+    "mining_filter": {
+      "sub_skill": "deft-aoi-mining",
+      "top_k_per_target": 5,
+      "metric": "cosine",
+      "min_similarity": null
+    }
+  },
+  "iterations": {},
+  "_completed_step_values": [
+    "evaluate",
+    "rca",
+    "anomalygen",
+    "routing",
+    "data_mining",
+    "train",
+    "loop_stop"
+  ],
+  "_status_values": [
+    "pending",
+    "in_progress",
+    "complete",
+    "failed"
+  ]
+}

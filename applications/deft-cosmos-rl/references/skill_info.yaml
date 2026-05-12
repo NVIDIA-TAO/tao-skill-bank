@@ -1,0 +1,162 @@
+type: workflow
+prerequisites:
+  required:
+  - name: kpi_dataset_uri
+    description: S3 URI of the KPI/validation dataset (must contain annotations and media files)
+  - name: platform
+    description: Compute backend (lepton)
+  - name: qwen_endpoint
+    description: URL of the Qwen VLM inference endpoint for caption generation
+  - name: prompt_file
+    description: S3 path to the captioning prompt template
+  optional:
+  - name: kpi_ann_filename
+    description: Annotation filename within the KPI dataset
+    default: annotations.json
+  - name: train_dataset_uri
+    description: Initial training dataset URI (triggers SFT before the DEFT loop)
+  - name: init_checkpoint
+    description: Initial model checkpoint (defaults to Cosmos-RL PTM from HuggingFace)
+  - name: iteration_count
+    description: 'Number of DEFT iterations to run (default: 3)'
+  - name: continual_model
+    description: 'Chain checkpoints across iterations (default: true)'
+  - name: continual_dataset
+    description: 'Accumulate training data across iterations (default: true)'
+iteration_defaults:
+  count: 3
+  continual_model: true
+  continual_dataset: true
+stages:
+  init:
+  - name: zero_shot_eval
+    action: evaluate
+    skill: cosmos-rl
+    type: gpu
+    spec_overrides:
+      dataset.media_dir: '{kpi_dataset_uri}'
+      eval_dataset_annotation: '{kpi_ann_filename}'
+  - name: sft_training
+    action: train
+    skill: cosmos-rl
+    type: gpu
+    conditional: train_dataset_uri provided
+    spec_overrides:
+      custom.val_dataset.media_path: '{kpi_dataset_uri}'
+      eval_dataset_annotation: '{kpi_ann_filename}'
+  - name: sft_eval
+    action: evaluate
+    skill: cosmos-rl
+    type: gpu
+    conditional: after sft_training
+    spec_overrides:
+      dataset.media_dir: '{kpi_dataset_uri}'
+      eval_dataset_annotation: '{kpi_ann_filename}'
+  iteration:
+  - name: gap_analysis
+    type: cpu
+    script: model/cosmos-rl/scripts/analyze_gaps.py
+    image: nvcr.io/nvidian/iva/smart_data_augmentation
+    args:
+      results-dir: '{prev_storage_root}'
+      gaps-parquet: '{storage_root}/gaps/gaps.parquet'
+      kpi-ann-path: '{kpi_dataset_uri}/{kpi_ann_filename}'
+      kpi-media-path: '{kpi_dataset_uri}'
+    inputs:
+      results-dir:
+        type: folder
+      kpi-ann-path:
+        type: file
+      kpi-media-path:
+        type: folder
+    outputs:
+      gaps-parquet:
+        type: file
+  - name: caption_generation
+    type: cpu
+    action: caption
+    skill: qwen-caption
+  - name: split_data
+    type: cpu
+    script: workflow/deft-cosmos-rl/scripts/split_data.py
+    image: nvcr.io/nvidian/iva/smart_data_augmentation
+    args:
+      captions-jsonl: '{storage_root}/captions/captions.jsonl'
+      gaps-parquet: '{storage_root}/gaps/gaps.parquet'
+      output-dir: '{storage_root}/splits/'
+      num-splits: 8
+    inputs:
+      captions-jsonl:
+        type: file
+      gaps-parquet:
+        type: file
+    outputs:
+      output-dir:
+        type: folder
+  - name: video_generation
+    type: gpu
+    action: generate
+    skill: cosmos-predict-2-5
+    parallel: 8
+  - name: merge_cosmos_outputs
+    type: cpu
+    script: workflow/deft-cosmos-rl/scripts/merge_cosmos_outputs.py
+    image: nvcr.io/nvidian/iva/smart_data_augmentation
+    args:
+      output-dir: '{storage_root}/generated'
+      splits-dir: '{storage_root}/splits'
+      num-splits: 8
+    inputs:
+      output-dir:
+        type: folder
+      splits-dir:
+        type: folder
+    outputs:
+      output-dir:
+        type: folder
+  - name: create_training_json
+    type: cpu
+    script: workflow/deft-cosmos-rl/scripts/merge_annotations.py
+    image: nvcr.io/nvidian/iva/smart_data_augmentation
+    args:
+      mode: create-llava
+      cosmos-data-parquet: '{storage_root}/generated/all_kpi_gaps_with_videos.parquet'
+      output-json-path: '{storage_root}/augmented/generated_annotations.json'
+    inputs:
+      cosmos-data-parquet:
+        type: file
+    outputs:
+      output-json-path:
+        type: file
+  - name: data_merge
+    type: cpu
+    script: workflow/deft-cosmos-rl/scripts/merge_annotations.py
+    image: nvcr.io/nvidian/iva/smart_data_augmentation
+    args:
+      mode: merge
+      curr-annotations-path: '{storage_root}/augmented/generated_annotations.json'
+      prev-annotations-path: '{prev_annotations_path}'
+      result-path: '{storage_root}/training_data/annotations.json'
+    inputs:
+      curr-annotations-path:
+        type: file
+    outputs:
+      result-path:
+        type: file
+  - name: training
+    type: gpu
+    action: train
+    skill: cosmos-rl
+    train_dataset_uri: '{storage_root}/training_data'
+    spec_overrides:
+      custom.val_dataset.media_path: '{kpi_dataset_uri}'
+      eval_dataset_annotation: '{kpi_ann_filename}'
+      train.train_batch_per_replica: 4
+  - name: evaluation
+    type: gpu
+    action: evaluate
+    skill: cosmos-rl
+    spec_overrides:
+      dataset.media_dir: '{kpi_dataset_uri}'
+      eval_dataset_annotation: '{kpi_ann_filename}'
+      evaluation.batch_size: 1
