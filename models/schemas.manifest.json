@@ -1,0 +1,353 @@
+{
+  "models": {
+    "action-recognition": {
+      "actions": [
+        "evaluate",
+        "export",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "action_recognition"
+    },
+    "bevfusion": {
+      "actions": [
+        "dataset_convert",
+        "evaluate",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "bevfusion"
+    },
+    "centerpose": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "centerpose"
+    },
+    "classification-pyt": {
+      "actions": [
+        "distill",
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "classification_pyt"
+    },
+    "clip": {
+      "actions": [
+        "evaluate",
+        "export",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "clip"
+    },
+    "cosmos-predict-2-5": {
+      "actions": [],
+      "failures": {
+        "generate": "cosmos-predict-2-5: ModuleNotFoundError: No module named 'nvidia_tao_core.config.cosmos-predict-2-5'; cosmos_predict_2_5: ModuleNotFoundError: No module named 'nvidia_tao_core.config.cosmos_predict_2_5'"
+      },
+      "network_arch": "cosmos-predict-2-5"
+    },
+    "cosmos-rl": {
+      "actions": [
+        "evaluate",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "cosmos-rl"
+    },
+    "deformable-detr": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "deformable_detr"
+    },
+    "depth-net-mono": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "depth_net_mono"
+    },
+    "depth-net-stereo": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "depth_net_stereo"
+    },
+    "dino": {
+      "actions": [
+        "distill",
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "dino"
+    },
+    "grounding-dino": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "grounding_dino"
+    },
+    "mae": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "mae"
+    },
+    "mal": {
+      "actions": [
+        "evaluate",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "mal"
+    },
+    "mask-grounding-dino": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "mask_grounding_dino"
+    },
+    "mask2former": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "mask2former"
+    },
+    "ml-recog": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "ml_recog"
+    },
+    "nvdinov2": {
+      "actions": [
+        "distill",
+        "export",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "nvdinov2"
+    },
+    "nvpanoptix3d": {
+      "actions": [
+        "evaluate",
+        "export",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "nvpanoptix3d"
+    },
+    "ocdnet": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "prune",
+        "quantize",
+        "retrain",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "ocdnet"
+    },
+    "ocrnet": {
+      "actions": [
+        "dataset_convert",
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "prune",
+        "quantize",
+        "retrain",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "ocrnet"
+    },
+    "oneformer": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "oneformer"
+    },
+    "optical-inspection": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "optical_inspection"
+    },
+    "pointpillars": {
+      "actions": [
+        "dataset_convert",
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "prune",
+        "retrain",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "pointpillars"
+    },
+    "pose-classification": {
+      "actions": [
+        "evaluate",
+        "export",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "pose_classification"
+    },
+    "re-identification": {
+      "actions": [
+        "evaluate",
+        "export",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "re_identification"
+    },
+    "rtdetr": {
+      "actions": [
+        "distill",
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "rtdetr"
+    },
+    "segformer": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "segformer"
+    },
+    "sparse4d": {
+      "actions": [
+        "dataset_convert",
+        "evaluate",
+        "export",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "sparse4d"
+    },
+    "vila": {
+      "actions": [
+        "evaluate",
+        "inference",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "vila"
+    },
+    "visual-changenet": {
+      "actions": [
+        "evaluate",
+        "inference",
+        "segment_evaluate",
+        "segment_inference",
+        "segment_train",
+        "train"
+      ],
+      "failures": {},
+      "network_arch": "visual-changenet"
+    }
+  },
+  "schema_version": 1
+}

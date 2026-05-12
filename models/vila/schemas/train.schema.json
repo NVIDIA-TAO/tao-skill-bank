@@ -1,0 +1,455 @@
+{
+  "automl_default_parameters": [],
+  "automl_disabled_parameters": [
+    "evaluate",
+    "inference",
+    "train",
+    "train.dataset",
+    "train.system"
+  ],
+  "default": {
+    "model_path": "",
+    "results_dir": "",
+    "train": {
+      "batch_size": 8,
+      "checkpoint_interval": 100,
+      "dataset": {
+        "data_path": "",
+        "dataset_name": "scienceqa",
+        "dataset_path": "",
+        "dataset_yaml_path": "",
+        "media_dir": "",
+        "mixture_path": ""
+      },
+      "disable_wandb": "true",
+      "gradient_accumulation_steps": 2,
+      "learning_rate": 0.0001,
+      "llm_mode": "lora",
+      "logging_interval": 1,
+      "lora_r": 16,
+      "max_tiles": 12,
+      "model_max_length": 32768,
+      "num_epochs": 1,
+      "num_time_tokens": 0,
+      "num_video_frames": 8,
+      "system": {
+        "master_addr": "127.0.0.1",
+        "node_rank": 0,
+        "num_gpus": 1,
+        "num_nodes": 1,
+        "port": 24501,
+        "save_on_each_node": "False"
+      },
+      "total_checkpoint_limit": 0,
+      "video_max_tiles": 6,
+      "vision_learning_rate": 1e-05,
+      "vision_mode": "ft",
+      "warmup_ratio": 0.03,
+      "weight_decay": 0.0
+    }
+  },
+  "popular": {
+    "inference": {
+      "num_video_frames": -1,
+      "video_max_tiles": -1
+    },
+    "train": {
+      "batch_size": 8,
+      "checkpoint_interval": 100,
+      "gradient_accumulation_steps": 2,
+      "learning_rate": 0.0001,
+      "logging_interval": 1,
+      "lora_r": 16,
+      "max_tiles": 12,
+      "model_max_length": 32768,
+      "num_epochs": 1,
+      "num_video_frames": 8,
+      "system": {
+        "num_gpus": 1,
+        "num_nodes": 1
+      },
+      "total_checkpoint_limit": 0,
+      "video_max_tiles": 6,
+      "warmup_ratio": 0.03,
+      "weight_decay": 0.0
+    }
+  },
+  "properties": {
+    "automl_disabled_parameters": [
+      "train",
+      "evaluate",
+      "inference"
+    ],
+    "model_path": {
+      "default": "",
+      "description": "Pretrained model path",
+      "title": "Pretrained model path",
+      "type": "string"
+    },
+    "results_dir": {
+      "default": "",
+      "description": "Output directory. Must contain `lora` in the output name.",
+      "title": "Output directory",
+      "type": "string"
+    },
+    "train": {
+      "automl_disabled_parameters": [
+        "train.system",
+        "train.dataset"
+      ],
+      "automl_enabled": false,
+      "default": {
+        "batch_size": 8,
+        "checkpoint_interval": 100,
+        "dataset": {
+          "data_path": "",
+          "dataset_name": "scienceqa",
+          "dataset_path": "",
+          "dataset_yaml_path": "",
+          "media_dir": "",
+          "mixture_path": ""
+        },
+        "disable_wandb": "true",
+        "gradient_accumulation_steps": 2,
+        "learning_rate": 0.0001,
+        "llm_mode": "lora",
+        "logging_interval": 1,
+        "lora_r": 16,
+        "max_tiles": 12,
+        "model_max_length": 32768,
+        "num_epochs": 1,
+        "num_time_tokens": 0,
+        "num_video_frames": 8,
+        "system": {
+          "master_addr": "127.0.0.1",
+          "node_rank": 0,
+          "num_gpus": 1,
+          "num_nodes": 1,
+          "port": 24501,
+          "save_on_each_node": "False"
+        },
+        "total_checkpoint_limit": 0,
+        "video_max_tiles": 6,
+        "vision_learning_rate": 1e-05,
+        "vision_mode": "ft",
+        "warmup_ratio": 0.03,
+        "weight_decay": 0.0
+      },
+      "description": "Train config",
+      "popular": [
+        "gradient_accumulation_steps",
+        "model_max_length",
+        "system",
+        "warmup_ratio",
+        "lora_r",
+        "batch_size",
+        "checkpoint_interval",
+        "learning_rate",
+        "weight_decay",
+        "max_tiles",
+        "logging_interval",
+        "num_epochs",
+        "num_video_frames",
+        "video_max_tiles",
+        "total_checkpoint_limit"
+      ],
+      "properties": {
+        "batch_size": {
+          "default": 8,
+          "description": "The batch size during training.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Batch size",
+          "type": "int"
+        },
+        "checkpoint_interval": {
+          "default": 100,
+          "description": "Checkpoint interval. Default is 100.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Checkpoint interval",
+          "type": "int"
+        },
+        "dataset": {
+          "automl_enabled": false,
+          "default": {
+            "data_path": "",
+            "dataset_name": "scienceqa",
+            "dataset_path": "",
+            "dataset_yaml_path": "",
+            "media_dir": "",
+            "mixture_path": ""
+          },
+          "description": "Dataset config",
+          "properties": {
+            "data_path": {
+              "default": "",
+              "description": "Path to the annotation file",
+              "title": "Annotation path",
+              "type": "string"
+            },
+            "dataset_name": {
+              "default": "scienceqa",
+              "description": "Dataset name. Default is scienceqa. Dataset name must be registered",
+              "title": "Dataset name",
+              "type": "string"
+            },
+            "dataset_path": {
+              "default": "",
+              "description": "Path to the dataset file",
+              "title": "Dataset path",
+              "type": "string"
+            },
+            "dataset_yaml_path": {
+              "default": "",
+              "description": "Path to the dataset yaml file",
+              "title": "Dataset yaml path",
+              "type": "string"
+            },
+            "media_dir": {
+              "default": "",
+              "description": "Path to the media directory",
+              "title": "Media directory path",
+              "type": "string"
+            },
+            "mixture_path": {
+              "default": "",
+              "description": "Path to the mixture file",
+              "title": "Mixture path",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "disable_wandb": {
+          "default": "true",
+          "description": "Enable or disable wandb logging",
+          "enum": [
+            "true",
+            "false"
+          ],
+          "title": "Vision tower mode",
+          "type": "categorical"
+        },
+        "gradient_accumulation_steps": {
+          "default": 2,
+          "description": "Gradient accumulation steps. Your effective batch size is batch_size * gradient_accumulation_steps.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Gradient accumulation steps.",
+          "type": "int"
+        },
+        "learning_rate": {
+          "default": 0.0001,
+          "description": "Learning rate. Default is 1e-4.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "popular": true,
+          "title": "Learning rate",
+          "type": "float"
+        },
+        "llm_mode": {
+          "default": "lora",
+          "description": "LLM mode: freeze, ft, or lora. Default is lora",
+          "enum": [
+            "freeze",
+            "ft",
+            "lora"
+          ],
+          "title": "LLM mode",
+          "type": "categorical"
+        },
+        "logging_interval": {
+          "default": 1,
+          "description": "Logging interval. Default is 1.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Logging interval",
+          "type": "int"
+        },
+        "lora_r": {
+          "default": 16,
+          "description": "LORA r. Default is 16.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "LORA r",
+          "type": "int"
+        },
+        "max_tiles": {
+          "default": 12,
+          "description": "Max tiles. Default is 12.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Max tiles",
+          "type": "int"
+        },
+        "model_max_length": {
+          "default": 32768,
+          "description": "Model max length. Default is 32,768.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Model max length",
+          "type": "int"
+        },
+        "num_epochs": {
+          "default": 1,
+          "description": "The number of epochs.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of Epochs",
+          "type": "int"
+        },
+        "num_time_tokens": {
+          "default": 0,
+          "maximum": Infinity,
+          "minimum": 0,
+          "title": "Number of time tokens",
+          "type": "int"
+        },
+        "num_video_frames": {
+          "default": 8,
+          "description": "Number of video frames. Default is 8.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Number of video frames",
+          "type": "int"
+        },
+        "system": {
+          "automl_enabled": false,
+          "default": {
+            "master_addr": "127.0.0.1",
+            "node_rank": 0,
+            "num_gpus": 1,
+            "num_nodes": 1,
+            "port": 24501,
+            "save_on_each_node": "False"
+          },
+          "description": "GPU and Multinode System config",
+          "popular": [
+            "num_gpus",
+            "num_nodes"
+          ],
+          "properties": {
+            "master_addr": {
+              "default": "127.0.0.1",
+              "description": "Master address. Only set if using multinode.",
+              "title": "Master address",
+              "type": "string"
+            },
+            "node_rank": {
+              "default": 0,
+              "description": "Node rank. Only set if using multinode.",
+              "minimum": 0,
+              "title": "Node rank",
+              "type": "int"
+            },
+            "num_gpus": {
+              "default": 1,
+              "description": "Number of gpus. Should range from 1 - 8.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Number of GPUs",
+              "type": "int"
+            },
+            "num_nodes": {
+              "default": 1,
+              "description": "Number of nodes. Only set if using multinode.",
+              "minimum": 1,
+              "popular": true,
+              "title": "Number of Nodes",
+              "type": "int"
+            },
+            "port": {
+              "default": 24501,
+              "description": "Port number. Default is 24501",
+              "title": "Port number",
+              "type": "int"
+            },
+            "save_on_each_node": {
+              "default": "False",
+              "description": "\n        Whether or not to save checkpoint on each node.\n        Only set if using multinode without shared storage.\n        Default is False",
+              "title": "Save on each Node",
+              "type": "string"
+            }
+          },
+          "type": "collection"
+        },
+        "total_checkpoint_limit": {
+          "default": 0,
+          "description": "Total checkpoint limit. Default is 0.",
+          "maximum": Infinity,
+          "minimum": 0,
+          "popular": true,
+          "title": "Total checkpoint limit",
+          "type": "int"
+        },
+        "video_max_tiles": {
+          "default": 6,
+          "description": "Video max tiles. Default is 6.",
+          "maximum": Infinity,
+          "minimum": 1,
+          "popular": true,
+          "title": "Video max tiles",
+          "type": "int"
+        },
+        "vision_learning_rate": {
+          "default": 1e-05,
+          "description": "Vision learning rate. Default is 1e-5.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "type": "float"
+        },
+        "vision_mode": {
+          "default": "ft",
+          "description": "Vision tower mode: freeze, ft, or lora. Default is ft",
+          "enum": [
+            "freeze",
+            "ft",
+            "lora"
+          ],
+          "title": "Vision tower mode",
+          "type": "categorical"
+        },
+        "warmup_ratio": {
+          "default": 0.03,
+          "description": "Warmup ratio.",
+          "maximum": Infinity,
+          "minimum": 0.0,
+          "popular": true,
+          "title": "Warmup ratio",
+          "type": "float"
+        },
+        "weight_decay": {
+          "default": 0.0,
+          "description": "The weight decay coefficient.",
+          "popular": true,
+          "title": "Weight decay",
+          "type": "float"
+        }
+      },
+      "type": "collection"
+    }
+  },
+  "required": [
+    "evaluate"
+  ],
+  "type": "object",
+  "x_tao_schema": {
+    "action": "train",
+    "core_module": "vila",
+    "model": "vila",
+    "network_arch": "vila",
+    "schema_action": "train",
+    "schema_version": 1,
+    "source": "tao-core dataclass config"
+  }
+}

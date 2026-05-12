@@ -1,0 +1,43 @@
+name: REPLACE-WITH-SKILL-NAME
+type: model
+# container_image accepts EITHER form:
+#   - dotted key resolved against ../../../versions.yaml (preferred for shared images)
+#   - absolute registry URI (for one-off / experimental / third-party images)
+# Examples:
+#   container_image: tao_toolkit.pyt
+#   container_image: nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
+container_image: tao_toolkit.pyt
+required_credentials:
+  - HF_TOKEN
+
+actions:
+  train:
+    command: REPLACE_ENTRYPOINT train -e {config_path}
+    config_format: yaml      # yaml | toml | json
+    inputs:
+      dataset.train_csv: { type: file }
+      dataset.images_dir: { type: folder }
+    outputs:
+      results_dir: { type: folder }
+  evaluate:
+    command: REPLACE_ENTRYPOINT evaluate -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.eval_csv: { type: file }
+      model.checkpoint: { type: file }
+    outputs:
+      results_dir: { type: folder }
+  inference:
+    command: REPLACE_ENTRYPOINT inference -e {config_path}
+    config_format: yaml
+    inputs:
+      dataset.test_dir: { type: folder }
+      model.checkpoint: { type: file }
+    outputs:
+      results_dir: { type: folder }
+
+# For SDK orchestration: which spec keys map to GPU count / node count
+gpu_spec_key: train.num_gpus
+node_spec_key: train.num_nodes
+
+# tags live in SKILL.md frontmatter — not here.

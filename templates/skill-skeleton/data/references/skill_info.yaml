@@ -1,0 +1,26 @@
+name: REPLACE-WITH-SKILL-NAME
+type: data
+# container_image accepts EITHER form:
+#   - dotted key resolved against ../../../versions.yaml (preferred for shared images)
+#   - absolute registry URI (for one-off / experimental / third-party images)
+# Examples:
+#   container_image: tao_toolkit.pyt
+#   container_image: nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
+container_image: tao_toolkit.pyt
+required_credentials: []
+
+actions:
+  <primary-action>:
+    command: python /workspace/scripts/REPLACE.py
+    mode: args
+    inputs:
+      input-dir: { type: folder, required: true }
+    outputs:
+      output: { type: file }
+    args:
+      input-dir: '{input_dir}'
+      output: '{output_path}'
+    defaults:
+      output_path: output.csv
+
+# tags live in SKILL.md frontmatter — not here.
