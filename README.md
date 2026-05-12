@@ -11,7 +11,7 @@ The skill bank works with both Claude Code and Codex. Pick the runtime you use.
 In a Claude Code session, add the marketplace and install a plugin. Two choices:
 
 ```
-/plugin marketplace add https://github.com/NVIDIA-TAO/tao-skills-bank.git
+/plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
 /plugin install tao-skills@tao-skill-bank             # everything (recommended)
 # or
 /plugin install deft-aoi-loop-plugin@tao-skill-bank   # just the DEFT AOI loop
@@ -30,7 +30,7 @@ Codex setup has **two independent pieces** — the plugin (which surfaces the sk
 **Option B — CLI + TUI.** Add the marketplace from the shell, then install the plugin from inside the Codex TUI (no CLI `install` subcommand exists yet — [openai/codex#17431](https://github.com/openai/codex/issues/17431)):
 
 ```bash
-codex plugin marketplace add https://github.com/NVIDIA-TAO/tao-skills-bank.git
+codex plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
 codex                # opens TUI
 /plugins             # then: select tao-skill-bank → Install plugin
 ```
