@@ -116,7 +116,7 @@ jobs:
       fail-fast: false
       matrix:
         skill: ${{ fromJSON(needs.detect.outputs.skills_json) }}
-        backend: ${{ fromJSON(format('[{0}]', join(split(inputs.backends || 'claude,codex', ','), ','))) }}
+        backend: [claude, codex]
     env:
       SKILL_EVAL_IMAGE: nvcr.io/nvstaging/tao/skill-eval:latest
     steps:
