@@ -151,11 +151,17 @@ jobs:
             --skill-src '$GITHUB_WORKSPACE' \
             --output-dir '$OUTDIR' \
             eval '/workspace/skill-source/$SKILL' --backend $BACKEND"
+      - name: Sanitize skill name for artifact path
+        id: sanitize
+        run: |
+          # actions/upload-artifact disallows `/`, `:`, `?`, etc. in names
+          safe_skill=$(echo "${{ matrix.skill }}" | tr '/' '-')
+          echo "safe_skill=$safe_skill" >> "$GITHUB_OUTPUT"
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: skill-eval-${{ matrix.skill }}-${{ matrix.backend }}-${{ github.run_id }}
+          name: skill-eval-${{ steps.sanitize.outputs.safe_skill }}-${{ matrix.backend }}-${{ github.run_id }}
           path: skill-test-outputs/
           retention-days: 30
       - name: Post PR comment with eval report
