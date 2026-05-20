@@ -1,0 +1,204 @@
+name: Skill Eval
+
+# Runs the skill-eval container on a self-hosted runner whenever a PR
+# touches a skill directory (or eval.config). Mirrors the GitLab
+# `skill-exec-eval` job but uses the pre-built container at
+# `nvcr.io/nvstaging/tao/skill-eval:latest` instead of a pre-installed
+# venv on the runner.
+
+on:
+  pull_request:
+    paths:
+      - '**/eval.config'
+      - '**/SKILL.md'
+      - 'models/**'
+      - 'data/**'
+      - 'applications/**'
+      - 'platform/**'
+      - '.claude-plugin/**'
+      - '.codex-plugin/**'
+      - 'plugins/**'
+      - '.github/workflows/skill-eval.yml'
+  workflow_dispatch:
+    inputs:
+      backends:
+        description: 'Comma-separated backends to run (claude,codex)'
+        required: false
+        default: 'claude,codex'
+      skill_path:
+        description: 'Optional path to a specific skill (relative to repo root). Empty = detect from diff.'
+        required: false
+        default: ''
+
+concurrency:
+  group: skill-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect changed skills
+    runs-on: [self-hosted, horde, gpu-l40]
+    outputs:
+      skills: ${{ steps.find.outputs.skills }}
+      skills_json: ${{ steps.find.outputs.skills_json }}
+      changed_count: ${{ steps.find.outputs.changed_count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: find
+        name: Find changed skills (legacy + plugin-workflow-eval)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          MANUAL_PATH: ${{ inputs.skill_path }}
+        run: |
+          set -euo pipefail
+          if [ -n "${MANUAL_PATH:-}" ]; then
+            # workflow_dispatch override — single skill path
+            ABS="$GITHUB_WORKSPACE/$MANUAL_PATH"
+            if [ ! -f "$ABS/eval.config" ]; then
+              echo "::error::No eval.config at $MANUAL_PATH/eval.config"
+              exit 2
+            fi
+            skills_json='["'"$MANUAL_PATH"'"]'
+            count=1
+          else
+            CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" || true)
+            echo "Changed files:"
+            printf '  %s\n' $CHANGED || true
+            ALL_CFGS=$(find . -name eval.config -not -path './.git/*' | sort -u)
+            ACC=""
+            for CFG in $ALL_CFGS; do
+              DIR=$(dirname "$CFG" | sed 's|^\./||')
+              EVAL_TYPE=$(jq -r '.type // "skill-eval"' "$CFG" 2>/dev/null || echo "skill-eval")
+              if [ "$EVAL_TYPE" = "plugin-workflow-eval" ]; then
+                SKILLS_DIRS=$(jq -r '.skills_dir[]?' "$CFG" 2>/dev/null)
+                ORCH=$(jq -r '.orchestrator_skill // empty' "$CFG" 2>/dev/null)
+                [ -z "$ORCH" ] && ORCH="$DIR"
+                MATCH=""
+                for SP in $SKILLS_DIRS; do
+                  SP_CLEAN="${SP#./}"; SP_CLEAN="${SP_CLEAN%/}"
+                  if echo "$CHANGED" | grep -q "^$SP_CLEAN/"; then MATCH="$SP_CLEAN"; break; fi
+                done
+                [ -z "$MATCH" ] && echo "$CHANGED" | grep -q "^$DIR/eval.config$" && MATCH="$DIR/eval.config"
+                if [ -n "$MATCH" ]; then
+                  ACC="$ACC $ORCH"
+                  echo "Plugin-workflow trigger: $DIR (touched: $MATCH) → $ORCH"
+                fi
+              else
+                if echo "$CHANGED" | grep -q "^$DIR/"; then
+                  ACC="$ACC $DIR"
+                  echo "Legacy trigger: $DIR"
+                fi
+              fi
+            done
+            ACC=$(echo "$ACC" | xargs)
+            count=$(echo "$ACC" | wc -w)
+            if [ "$count" = "0" ]; then
+              echo "No changed skills with eval.config — exiting cleanly."
+              skills_json='[]'
+            else
+              skills_json=$(printf '%s\n' $ACC | jq -R . | jq -sc .)
+            fi
+          fi
+          echo "skills_json=$skills_json" >> "$GITHUB_OUTPUT"
+          echo "skills=$(echo $skills_json | jq -r 'join(\",\")')" >> "$GITHUB_OUTPUT"
+          echo "changed_count=$count" >> "$GITHUB_OUTPUT"
+
+  eval:
+    name: Eval ${{ matrix.skill }} / ${{ matrix.backend }}
+    needs: detect
+    if: needs.detect.outputs.changed_count != '0'
+    runs-on: [self-hosted, horde, gpu-l40]
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        skill: ${{ fromJSON(needs.detect.outputs.skills_json) }}
+        backend: ${{ fromJSON(format('[{0}]', join(split(inputs.backends || 'claude,codex', ','), ','))) }}
+    env:
+      SKILL_EVAL_IMAGE: nvcr.io/nvstaging/tao/skill-eval:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Re-bootstrap docker if pod restarted
+        run: |
+          # Idempotent — bootstrap-host.sh skips work that's already done.
+          if [ -x "$HOME/bootstrap-host.sh" ]; then
+            "$HOME/bootstrap-host.sh"
+          else
+            echo "bootstrap-host.sh not on host; runner is mis-provisioned" >&2
+            exit 1
+          fi
+      - name: Pull latest skill-eval image
+        run: |
+          sg docker -c "docker pull $SKILL_EVAL_IMAGE" | tail -3
+          sg docker -c "docker tag $SKILL_EVAL_IMAGE skill-eval:latest"
+      - name: Run eval container
+        env:
+          SKILL: ${{ matrix.skill }}
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          OUTDIR="$GITHUB_WORKSPACE/skill-test-outputs"
+          rm -rf "$OUTDIR" && mkdir -p "$OUTDIR"
+          # Inside the container we point at the same path the host sees
+          # (via the WORKSPACE_DIR same-path bind mount the launcher sets up).
+          sg docker -c "~/.local/bin/skill-eval \
+            --env-file ~/skill-eval.env \
+            --skill-src '$GITHUB_WORKSPACE' \
+            --output-dir '$OUTDIR' \
+            eval '/workspace/skill-source/$SKILL' --backend $BACKEND"
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-eval-${{ matrix.skill }}-${{ matrix.backend }}-${{ github.run_id }}
+          path: skill-test-outputs/
+          retention-days: 30
+      - name: Post PR comment with eval report
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        env:
+          SKILL: ${{ matrix.skill }}
+          BACKEND: ${{ matrix.backend }}
+          OUTDIR: ${{ github.workspace }}/skill-test-outputs
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const skill = process.env.SKILL;
+            const backend = process.env.BACKEND;
+            const outdir = process.env.OUTDIR;
+            // skill-eval writes artifacts under <skill>/artifacts (single backend run)
+            // or <skill>/<backend>/artifacts (multi-backend). The matrix runs one
+            // backend per job, so the single-backend layout applies.
+            const skillName = path.basename(skill);
+            const candidates = [
+              path.join(outdir, skillName, 'artifacts', 'eval_report.md'),
+              path.join(outdir, skillName, backend, 'artifacts', 'eval_report.md'),
+            ];
+            const reportPath = candidates.find(p => fs.existsSync(p));
+            if (!reportPath) {
+              core.warning(`No eval_report.md found under ${outdir}`);
+              return;
+            }
+            const body = `<!-- skill-eval ${skill} ${backend} -->\n## Skill Eval — \`${skill}\` / \`${backend}\`\n\n` +
+                         fs.readFileSync(reportPath, 'utf8');
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number,
+            });
+            const marker = `<!-- skill-eval ${skill} ${backend} -->`;
+            const prev = comments.find(c => c.body && c.body.includes(marker));
+            if (prev) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body,
+              });
+            }
