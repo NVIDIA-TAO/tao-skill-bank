@@ -46,7 +46,7 @@ CI runs `validate-skills.sh` automatically. Merge once green.
 
 ```bash
 grep -rl "git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-sdk.git" .
-grep -rl "git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-automl.git" .
+grep -rl "git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-run-automl.git" .
 ```
 
 Update each match. There is no central manifest to bump.

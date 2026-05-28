@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Summarize TAO Skill Bank capabilities for plugin capability answers."""
 
 from __future__ import annotations
@@ -283,20 +286,24 @@ def format_capabilities_text(data: dict[str, Any]) -> str:
         [
             "",
             "AutoML/HPO support:",
-            "- I can tune TAO models with AutoMLRunner when a valid packaged train "
-            f"schema is present. Supported models: {csv(automl_models)}",
-            f"- Gate: {automl['support_rule']}",
+            "- AutoML is enabled from model metadata, so workflows that train a "
+            "model should route through AutoMLRunner unless their run settings "
+            "set automl_policy=off or the user explicitly asks for a plain "
+            "single run.",
+            "- Runnable AutoML still requires a valid packaged train schema. "
+            f"Runnable models: {csv(automl_models)}",
+            f"- Rule: {automl['support_rule']}",
         ]
     )
     if automl["unsupported"]:
         lines.append(
-            "- Not AutoML-supported from the packaged manifests: "
+            "- AutoML-enabled models waiting on train schema packaging: "
             + "; ".join(
                 f"{item['model']} ({item['reason']})" for item in automl["unsupported"]
             )
         )
     else:
-        lines.append("- Not AutoML-supported from the packaged manifests: none")
+        lines.append("- AutoML-enabled models waiting on train schema packaging: none")
 
     lines.extend(
         [

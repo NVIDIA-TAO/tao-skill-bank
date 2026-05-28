@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # SessionStart hook for the TAO skill bank.
 #
 # Stdout is loaded into the agent's context as additionalContext at session
@@ -11,14 +14,12 @@
 #   3. Surface clear setup hints if docker is missing.
 #
 # This hook does NOT install Python packages. The TAO SDK is opt-in and
-# installed lazily by the skills that need it (platform/lepton, platform/tao-sdk,
-# applications/tao-automl) via their Preflight blocks.
+# installed lazily by the skills that need it (platform/tao-run-on-lepton, platform/tao-run-platform,
+# applications/tao-run-automl) via their Preflight blocks.
 
 set -u
 
-# Idempotency guard: both `tao-skills` and `deft-aoi-loop-plugin` share the
-# same source dir, so hook auto-discovery fires this script once per enabled
-# plugin. Emit the guidance only on the first invocation per session.
+# Idempotency guard: emit the guidance only on the first invocation per session.
 if [[ -n "${TAO_SESSION_INIT_DONE:-}" ]]; then
   exit 0
 fi
@@ -84,7 +85,9 @@ if ! command -v docker >/dev/null 2>&1; then
   echo "- CUDA Toolkit 13.0"
   echo "- NVIDIA Container Toolkit 1.19.0"
   echo
-  echo "Use the \`nvidia-gpu-setup\` skill to check or install the NVIDIA pieces, and install Docker separately:"
-  echo "- Docker: https://docs.docker.com/engine/install/"
+  echo "Use the \`tao-setup-nvidia-gpu-host\` skill to check / install the NVIDIA pieces;"
+  echo "its \`--backend docker --install --yes\` path also installs Docker on"
+  echo "Debian/RHEL/SUSE-family hosts and adds you to the \`docker\` group."
+  echo "Manual install reference: https://docs.docker.com/engine/install/"
   echo
 fi

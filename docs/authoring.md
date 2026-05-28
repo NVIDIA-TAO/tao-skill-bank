@@ -6,17 +6,17 @@ The minimum viable skill is a single `SKILL.md`. Everything else — `references
 
 | Layer | Use when the skill is… | Examples |
 |---|---|---|
-| `models/` | A trainable network with `train` / `evaluate` / `inference` / `export` actions | `cosmos-rl`, `visual-changenet`, `clip` |
+| `models/` | A trainable network with `train` / `evaluate` / `inference` / `export` actions | `tao-finetune-cosmos-reason`, `tao-train-visual-changenet`, `tao-finetune-clip` |
 | `data/` | A data transformation — preparation, analysis, embedding, filtering | `omniverse-sdg`, `mining`, `changenet-data-prepare` |
-| `platform/` | A compute backend or runtime convention (where/how jobs run) | `docker`, `brev`, `lepton`, `tao-sdk` |
-| `applications/` | A workflow composing multiple skills (orchestrator) | `workflow-deft-aoi-loop`, `normal-train` |
+| `platform/` | A compute backend or runtime convention (where/how jobs run) | `tao-run-on-docker`, `tao-run-on-brev`, `tao-run-on-lepton`, `tao-run-platform` |
+| `applications/` | A workflow composing multiple skills (orchestrator) | `tao-run-deft-aoi`, `tao-train-single-step` |
 
 If you're unsure: produces a trained model artifact → model. Transforms data → data. Infrastructure → platform. Orchestrates → application.
 
 ## 1. Minimum viable skill
 
 ```
-my-skill/
+tao-train-my-network/
 └── SKILL.md
 ```
 
@@ -30,7 +30,10 @@ YAML between `---` markers at the top of `SKILL.md`.
 
 ```yaml
 ---
-name: my-skill                # kebab-case; matches the directory name
+name: tao-<verb>-<object>     # kebab-case; product prefix `tao-`, verb after the prefix.
+                              # Approved verbs: train, deploy, finetune, tune, generate, run,
+                              # analyze, deploy, setup, call, list, prepare. Drop the word
+                              # "skill" from the name (it is redundant). ≤ 4 tokens, ≤ 64 chars.
 description: >-               # 1-3 sentences. Include literal trigger phrases.
   What the skill does and when to use it. Use when the user asks to
   "convert annotations to DAFT", "package annotations in DAFT format",
@@ -39,6 +42,38 @@ description: >-               # 1-3 sentences. Include literal trigger phrases.
 license: Apache-2.0           # required — Apache-2.0 unless your skill has a different license
 ---
 ```
+
+#### Naming conventions
+
+The frontmatter `name:` is the skill's trigger surface — the agent matches the user's
+words against it. Follow these rules:
+
+- **Shape:** `tao-<verb>-<object-or-outcome>`. The product prefix `tao-` always
+  leads; the verb comes immediately after the prefix.
+- **Approved verbs:** `train`, `finetune`, `tune`, `deploy`, `run`, `generate`,
+  `analyze`, `setup`, `call`, `list`, `prepare`, `inspect`, `audit`, `migrate`,
+  `summarize`, `search`, `query`, `ask`, `ingest`. If you can't find a verb that
+  fits, the skill probably does too many things — split it.
+- **Outcome over implementation.** Pick the user's word — "rca" or "frag" alone
+  reads like internal jargon; pair it with `analyze-` / `generate-` or expand it.
+- **Drop the word "skill"** from the name (it is redundant per Marketing).
+- **Length:** ≤ 4 tokens, ≤ 64 characters. Multi-word network names like
+  `mask-grounding-dino` count as one logical noun and are allowed.
+- **Lowercase, kebab-case, no underscores, no filler words** (`a`, `an`, `the`).
+- **Per-product subscope** (e.g. `tao-daft-` for TAO DAFT, `tao-deft-` for the
+  DEFT loop) is fine — `tao-` still leads, then the subscope, then the verb,
+  then the object: `tao-convert-dataset-format`, `tao-mine-aoi-images`.
+- **No personal namespacing.** Differentiate variants by scope, not by author
+  (e.g. `tao-deploy-edge` vs `tao-deploy-cloud`, not `<author>/deploy`).
+
+Examples that pass:
+`tao-train-visual-changenet`, `tao-deploy-dino`, `tao-run-automl`,
+`tao-run-deft-aoi`, `tao-finetune-huggingface-model`, `tao-run-platform`,
+`tao-setup-nvidia-gpu-host`, `tao-launch-workflow`, `tao-list-capabilities`.
+
+Examples that fail:
+`dino` (no verb, no prefix), `visual-changenet-deploy` (verb at end), `mine-skill`
+(contains "skill"), `train_changenet` (underscore), `the-tao-trainer` (filler word).
 
 The validator fails CI when `license` is missing. `name` and `description` follow the standard Agent Skills spec.
 
@@ -65,10 +100,10 @@ allowed-tools: Read Bash
 | Skill type | Recommended `compatibility:` value |
 |---|---|
 | Containerized model/data | `Requires docker + nvidia-container-toolkit + NGC API key.` |
-| `platform/docker` | `Requires docker + nvidia-container-toolkit.` |
-| `platform/brev` | `Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login.` |
-| `platform/lepton` | `Requires the nvidia-tao-sdk Python package with the lepton extra (pip install 'nvidia-tao-sdk[lepton]') plus LEPTON_WORKSPACE_ID and LEPTON_AUTH_TOKEN.` |
-| `platform/tao-sdk` | `Requires Python 3.10+ and the nvidia-tao-sdk package (pip install nvidia-tao-sdk).` |
+| `platform/tao-run-on-docker` | `Requires docker + nvidia-container-toolkit.` |
+| `platform/tao-run-on-brev` | `Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login.` |
+| `platform/tao-run-on-lepton` | `Requires the nvidia-tao-sdk Python package with the lepton extra (pip install 'nvidia-tao-sdk[lepton]') plus LEPTON_WORKSPACE_ID and LEPTON_AUTH_TOKEN.` |
+| `platform/tao-run-platform` | `Requires Python 3.10+ and the nvidia-tao-sdk package (pip install nvidia-tao-sdk).` |
 | Local Python script (no container) | `Requires Python 3.8+ and Pillow.` (or whatever) |
 | Agent-prompt-driven | `Standalone — no external runtime requirements.` or omit the field. |
 
@@ -97,7 +132,7 @@ Body must contain at least one of:
 - A `docker run` code block
 - A `references/skill_info.yaml` file on disk
 - A `scripts/` or `hooks/` directory on disk
-- An SDK invocation example (`sdk.create_job`, `LeptonSDK`, etc.) — for skills like `platform/tao-sdk`
+- An SDK invocation example (`sdk.create_job`, `LeptonSDK`, etc.) — for skills like `platform/tao-run-platform`
 
 The validator enforces this.
 
@@ -180,7 +215,7 @@ To bump an RC, change one line — that's the entire diff.
 
 ### Skills that require the SDK
 
-Most skills run with just docker (no Python SDK). A few skills are SDK-orchestrated by design (e.g., `platform/tao-sdk`, `platform/lepton`, `applications/tao-automl`). These need a **preflight** block at the top of `SKILL.md`:
+Most skills run with just docker (no Python SDK). A few skills are SDK-orchestrated by design (e.g., `platform/tao-run-platform` (`tao-run-platform`), `platform/tao-run-on-lepton` (`tao-run-on-lepton`), `applications/tao-run-automl` (`tao-run-automl`)). These need a **preflight** block at the top of `SKILL.md`:
 
 ````markdown
 ## Preflight
@@ -205,7 +240,7 @@ The preflight is documentation-only; the validator does not enforce it. But ever
 ### `references/skill_info.yaml` schema
 
 ```yaml
-name: my-skill
+name: tao-train-my-network                      # follow the kebab + verb-object convention
 type: model | data | application | platform     # optional, useful for tooling
 required_credentials: [HF_TOKEN, NGC_KEY]
 
@@ -262,7 +297,7 @@ Rename the directory to your skill's kebab-case name. Fill in the placeholders.
 
 ## 7. Add to `marketplace.json`
 
-The marketplace (named `tao-skill-bank`) hosts two plugins. List your skill under `tao-skills` (the mega plugin) so it ships with the standard install. Add it to `deft-aoi-loop-plugin` too if it's part of that focused workflow.
+List your skill under `tao-skills` (the marketplace's main plugin) so it ships with the standard install.
 
 ```json
 {
@@ -271,7 +306,7 @@ The marketplace (named `tao-skill-bank`) hosts two plugins. List your skill unde
     {
       "name": "tao-skills",
       "skills": [
-        "./models/my-new-skill",
+        "./models/my-new-network",
         ...
       ]
     }
@@ -280,6 +315,8 @@ The marketplace (named `tao-skill-bank`) hosts two plugins. List your skill unde
 ```
 
 Users install with `/plugin install tao-skills@tao-skill-bank`. The plugin name (`tao-skills`) is what they type; the marketplace name (`tao-skill-bank`) is the source.
+
+Do not also add the skill under top-level `skills/`. That directory is only for Codex helper/router skills that generate capability answers or launch intake from the packaged manifests. Mirroring model, data, platform, or application skills under both places gives agents duplicate trigger surfaces and increases the chance of stale or hallucinated routing.
 
 ## 8. Validate
 
@@ -290,9 +327,10 @@ Users install with `/plugin install tao-skills@tao-skill-bank`. The plugin name 
 Errors (fail CI):
 
 - `marketplace.json` skill paths must resolve.
+- `skills/` must not contain symlink mirrors of canonical skills.
 - `SKILL.md` frontmatter must have `name`, `description`, and `license`.
 - `SKILL.md` body must have runnable info (Quick Start, docker run, scripts/, hooks/, or `references/skill_info.yaml`).
-- No `tao_sdk` symbol leaks into model/data/application skills (platform/* exempt; tao-automl exempted as SDK-native workflow).
+- No `tao_sdk` symbol leaks into model/data/application skills (platform/* exempt; tao-run-automl exempted as SDK-native workflow).
 - Hook paths in frontmatter must resolve.
 
 Warnings (printed but don't fail CI):
@@ -321,18 +359,21 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 - [ ] If using `references/skill_info.yaml`: `container_image` set, `actions.<name>.command` set per action.
 - [ ] No SDK symbols (`tao_sdk`, `sdk.create_job`, etc.) in model/data/application skills (allowed in `platform/*`).
 - [ ] Added to `.claude-plugin/marketplace.json` under the right plugin(s).
+- [ ] No mirrored copy or symlink added under top-level `skills/`.
 - [ ] `scripts/validate-skills.sh` passes (no errors; warnings are informational).
 - [ ] Tested locally via `claude --plugin-dir .`.
 
 ## Common pitfalls
 
-**Naming the skill file wrong.** It must be `SKILL.md` (uppercase, exact). Files like `vila.md` or `<skill_name>.md` are NOT picked up by Claude Code's plugin system — they're treated as supporting docs.
+**Naming the skill file wrong.** It must be `SKILL.md` (uppercase, exact). Files like `dino.md` or `<skill_name>.md` are NOT picked up by Claude Code's plugin system — they're treated as supporting docs.
 
 **Mentioning the agent harness in `compatibility`.** The skill bank is harness-agnostic. Don't write "Designed for Claude Code." Restrict the `compatibility` field to runtime requirements.
 
 **Abstract description.** "Visual Changenet model" is bad. "Fine-tune Visual ChangeNet for PCB defect detection. Use when the user asks to 'train ChangeNet', 'PCB defect detection', or mentions 'siamese classification'." is good.
 
-**Duplicating docker boilerplate.** If your skill explains `--gpus`, NGC login, or nvidia-container-toolkit, delete it and link to `tao-skill-bank:docker`.
+**Duplicating docker boilerplate.** If your skill explains `--gpus`, NGC login, or nvidia-container-toolkit, delete it and link to `tao-skill-bank:tao-run-on-docker`.
+
+**Mirroring skills under `skills/`.** Keep one canonical skill location under `models/`, `data/`, `platform/`, or `applications/`. The top-level `skills/` directory is a Codex helper surface, not a flat copy of the bank.
 
 **Over-long SKILL.md.** Keep it under ~500 lines. Move long reference material to `references/` and link.
 

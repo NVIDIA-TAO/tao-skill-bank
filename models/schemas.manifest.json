@@ -1,74 +1,59 @@
 {
   "models": {
-    "action-recognition": {
-      "actions": [
-        "evaluate",
-        "export",
-        "inference",
-        "train"
-      ],
-      "failures": {},
-      "network_arch": "action_recognition"
-    },
-    "bevfusion": {
-      "actions": [
-        "dataset_convert",
-        "evaluate",
-        "inference",
-        "train"
-      ],
-      "failures": {},
-      "network_arch": "bevfusion"
-    },
-    "centerpose": {
-      "actions": [
-        "evaluate",
-        "export",
-        "gen_trt_engine",
-        "inference",
-        "train"
-      ],
-      "failures": {},
-      "network_arch": "centerpose"
-    },
-    "classification-pyt": {
-      "actions": [
-        "distill",
-        "evaluate",
-        "export",
-        "gen_trt_engine",
-        "inference",
-        "quantize",
-        "train"
-      ],
-      "failures": {},
-      "network_arch": "classification_pyt"
-    },
-    "clip": {
+    "tao-finetune-clip": {
       "actions": [
         "evaluate",
         "export",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "clip"
     },
-    "cosmos-predict-2-5": {
-      "actions": [],
-      "failures": {
-        "generate": "cosmos-predict-2-5: ModuleNotFoundError: No module named 'nvidia_tao_core.config.cosmos-predict-2-5'; cosmos_predict_2_5: ModuleNotFoundError: No module named 'nvidia_tao_core.config.cosmos_predict_2_5'"
-      },
-      "network_arch": "cosmos-predict-2-5"
-    },
-    "cosmos-rl": {
+    "tao-finetune-cosmos-reason": {
       "actions": [
         "evaluate",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "cosmos-rl"
     },
-    "deformable-detr": {
+    "tao-train-action-recognition": {
+      "actions": [
+        "evaluate",
+        "export",
+        "inference",
+        "train"
+      ],
+      "automl_enabled": true,
+      "failures": {},
+      "network_arch": "action_recognition"
+    },
+    "tao-train-bevfusion": {
+      "actions": [
+        "dataset_convert",
+        "evaluate",
+        "inference",
+        "train"
+      ],
+      "automl_enabled": true,
+      "failures": {},
+      "network_arch": "bevfusion"
+    },
+    "tao-train-centerpose": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "train"
+      ],
+      "automl_enabled": true,
+      "failures": {},
+      "network_arch": "centerpose"
+    },
+    "tao-train-deformable-detr": {
       "actions": [
         "evaluate",
         "export",
@@ -77,10 +62,11 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "deformable_detr"
     },
-    "depth-net-mono": {
+    "tao-train-depth-anything-v2": {
       "actions": [
         "evaluate",
         "export",
@@ -89,22 +75,11 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "depth_net_mono"
     },
-    "depth-net-stereo": {
-      "actions": [
-        "evaluate",
-        "export",
-        "gen_trt_engine",
-        "inference",
-        "quantize",
-        "train"
-      ],
-      "failures": {},
-      "network_arch": "depth_net_stereo"
-    },
-    "dino": {
+    "tao-train-dino": {
       "actions": [
         "distill",
         "evaluate",
@@ -114,10 +89,11 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "dino"
     },
-    "grounding-dino": {
+    "tao-train-foundation-stereo": {
       "actions": [
         "evaluate",
         "export",
@@ -126,10 +102,38 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
+      "failures": {},
+      "network_arch": "depth_net_stereo"
+    },
+    "tao-train-grounding-dino": {
+      "actions": [
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "grounding_dino"
     },
-    "mae": {
+    "tao-train-image-classification": {
+      "actions": [
+        "distill",
+        "evaluate",
+        "export",
+        "gen_trt_engine",
+        "inference",
+        "quantize",
+        "train"
+      ],
+      "automl_enabled": true,
+      "failures": {},
+      "network_arch": "classification_pyt"
+    },
+    "tao-train-mask-auto-encoder": {
       "actions": [
         "evaluate",
         "export",
@@ -137,19 +141,21 @@
         "inference",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "mae"
     },
-    "mal": {
+    "tao-train-mask-auto-label": {
       "actions": [
         "evaluate",
         "inference",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "mal"
     },
-    "mask-grounding-dino": {
+    "tao-train-mask-grounding-dino": {
       "actions": [
         "evaluate",
         "export",
@@ -158,10 +164,11 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "mask_grounding_dino"
     },
-    "mask2former": {
+    "tao-train-mask2former": {
       "actions": [
         "evaluate",
         "export",
@@ -170,10 +177,11 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "mask2former"
     },
-    "ml-recog": {
+    "tao-train-metric-learning-recognition": {
       "actions": [
         "evaluate",
         "export",
@@ -181,30 +189,33 @@
         "inference",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "ml_recog"
     },
-    "nvdinov2": {
+    "tao-train-nvdinov2": {
       "actions": [
         "distill",
         "export",
         "inference",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "nvdinov2"
     },
-    "nvpanoptix3d": {
+    "tao-train-nvpanoptix3d": {
       "actions": [
         "evaluate",
         "export",
         "inference",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "nvpanoptix3d"
     },
-    "ocdnet": {
+    "tao-train-ocdnet": {
       "actions": [
         "evaluate",
         "export",
@@ -215,10 +226,11 @@
         "retrain",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "ocdnet"
     },
-    "ocrnet": {
+    "tao-train-ocrnet": {
       "actions": [
         "dataset_convert",
         "evaluate",
@@ -230,10 +242,11 @@
         "retrain",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "ocrnet"
     },
-    "oneformer": {
+    "tao-train-oneformer": {
       "actions": [
         "evaluate",
         "export",
@@ -242,10 +255,11 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "oneformer"
     },
-    "optical-inspection": {
+    "tao-train-optical-inspection": {
       "actions": [
         "evaluate",
         "export",
@@ -253,10 +267,11 @@
         "inference",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "optical_inspection"
     },
-    "pointpillars": {
+    "tao-train-pointpillars": {
       "actions": [
         "dataset_convert",
         "evaluate",
@@ -267,30 +282,33 @@
         "retrain",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "pointpillars"
     },
-    "pose-classification": {
+    "tao-train-pose-classification": {
       "actions": [
         "evaluate",
         "export",
         "inference",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "pose_classification"
     },
-    "re-identification": {
+    "tao-train-reid": {
       "actions": [
         "evaluate",
         "export",
         "inference",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "re_identification"
     },
-    "rtdetr": {
+    "tao-train-rtdetr": {
       "actions": [
         "distill",
         "evaluate",
@@ -300,10 +318,11 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "rtdetr"
     },
-    "segformer": {
+    "tao-train-segformer": {
       "actions": [
         "evaluate",
         "export",
@@ -312,10 +331,11 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "segformer"
     },
-    "sparse4d": {
+    "tao-train-sparse4d": {
       "actions": [
         "dataset_convert",
         "evaluate",
@@ -324,19 +344,11 @@
         "quantize",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "sparse4d"
     },
-    "vila": {
-      "actions": [
-        "evaluate",
-        "inference",
-        "train"
-      ],
-      "failures": {},
-      "network_arch": "vila"
-    },
-    "visual-changenet": {
+    "tao-train-visual-changenet": {
       "actions": [
         "evaluate",
         "inference",
@@ -345,6 +357,7 @@
         "segment_train",
         "train"
       ],
+      "automl_enabled": true,
       "failures": {},
       "network_arch": "visual-changenet"
     }

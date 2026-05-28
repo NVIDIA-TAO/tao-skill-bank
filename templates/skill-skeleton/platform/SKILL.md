@@ -17,7 +17,7 @@ allowed-tools: Read Bash
 
 Short summary of the platform's execution model. Instance-based or job-based? API-first or docker-first? Single-node or multi-node? Managed or self-hosted?
 
-For generic docker conventions, defer to `tao-skill-bank:docker`. This skill covers the platform-specific layering on top.
+For generic docker conventions, defer to `tao-skill-bank:tao-run-on-docker`. This skill covers the platform-specific layering on top.
 
 ## External dependencies
 
@@ -70,7 +70,7 @@ sdk = <Platform>SDK()
 job = sdk.create_job(...)
 ```
 
-See `tao-skill-bank:tao-sdk` for SDK semantics.
+See `tao-skill-bank:tao-run-platform` for SDK semantics.
 
 ## Platform-specific notes
 

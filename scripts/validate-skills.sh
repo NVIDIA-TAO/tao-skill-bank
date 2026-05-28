@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # Validate the skill bank.
 #
 # Required:
 #   1. Every skill path in .claude-plugin/marketplace.json resolves to a dir with SKILL.md.
-#   2. Every SKILL.md has valid YAML frontmatter with `name` and `description`.
-#   3. Each SKILL.md body contains enough info to run the skill (heuristic: a Quick Start
+#   2. The Codex-facing skills/ directory has no symlink mirror of canonical skills.
+#   3. Every SKILL.md has valid YAML frontmatter with `name` and `description`.
+#   4. Each SKILL.md body contains enough info to run the skill (heuristic: a Quick Start
 #      section, a docker run code block, OR a references/skill_info.yaml link).
-#   4. No SDK symbols leak into model/data/application SKILL.md (platform/* exempt).
-#   5. Hook paths in skill frontmatter resolve to existing scripts.
+#   5. No SDK symbols leak into model/data/application SKILL.md (platform/* exempt).
+#   6. Hook paths in skill frontmatter resolve to existing scripts.
 #
 # Optional (validated only if the file exists):
-#   6. references/skill_info.yaml parses; if the skill is in models/ or data/ and declares
+#   7. references/skill_info.yaml parses; if the skill is in models/ or data/ and declares
 #      it, container_image + at least one actions.*.command must be present.
-#   7. references/model_info.yaml (legacy name) parses if present — same rules.
+#   8. references/model_info.yaml (legacy name) parses if present — same rules.
 #
 # Exit status = number of errors found.
 #
@@ -49,6 +53,22 @@ for plugin in mp.get('plugins', []):
 sys.exit(errs)
 PY
 [ $? -eq 0 ] && ok "all marketplace paths resolve" || errors=$((errors + $?))
+
+# ─── 1b. Codex skills/ should not mirror canonical skills ──────────────────
+echo
+echo "=== 1b. Codex skills/ has no mirror symlinks ==="
+codex_skill_symlinks="$(find skills -mindepth 1 -maxdepth 1 -type l -print | sort || true)"
+if [ -n "$codex_skill_symlinks" ]; then
+  codex_skill_symlink_errors=0
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    echo "ERROR: $path — do not mirror canonical skills under skills/. Keep real skills under applications/, data/, models/, or platform/." >&2
+    codex_skill_symlink_errors=$((codex_skill_symlink_errors + 1))
+  done <<< "$codex_skill_symlinks"
+  errors=$((errors + codex_skill_symlink_errors))
+else
+  ok "skills/ contains only Codex helper skill directories"
+fi
 
 # ─── 2. SKILL.md frontmatter (errors) + DAFT-style optional fields (warnings) ─
 echo
@@ -165,7 +185,7 @@ for root, dirs, files in os.walk('.'):
             continue
         # Application skills that are SDK-orchestrated (AutoML, etc.) are exempt.
         # Add new ones here only after confirming they cannot run without the SDK.
-        if path in ('./applications/tao-automl/SKILL.md',):
+        if path in ('./applications/tao-run-automl/SKILL.md',):
             continue
         # Models may have an "Optional: running via the TAO SDK" section
         is_model = path.startswith('./models/')

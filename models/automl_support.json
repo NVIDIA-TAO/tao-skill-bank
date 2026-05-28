@@ -1,77 +1,11 @@
 {
   "schema_version": 1,
-  "support_rule": "AutoML is supported only when models/<network>/schemas/train.schema.json is packaged and valid.",
+  "support_rule": "AutoML is enabled at model level; runnable AutoML also requires models/<network>/schemas/train.schema.json to be packaged and valid.",
   "supported": [
     {
-      "automl_default_parameters": [
-        "model.dropout_ratio",
-        "train.optim.lr"
-      ],
-      "model": "action-recognition",
-      "network_arch": "action_recognition",
-      "train_schema": "schemas/train.schema.json",
-      "train_spec_template": "references/spec_template_train.yaml"
-    },
-    {
-      "automl_default_parameters": [
-        "dataset.test_dataset.batch_size",
-        "dataset.test_dataset.num_workers",
-        "dataset.train_dataset.batch_size",
-        "dataset.train_dataset.num_workers",
-        "dataset.val_dataset.batch_size",
-        "dataset.val_dataset.num_workers"
-      ],
-      "model": "bevfusion",
-      "network_arch": "bevfusion",
-      "train_schema": "schemas/train.schema.json",
-      "train_spec_template": "references/spec_template_train.yaml"
-    },
-    {
-      "automl_default_parameters": [
-        "train.optim.lr",
-        "train.optim.lr_decay"
-      ],
-      "model": "centerpose",
-      "network_arch": "centerpose",
-      "train_schema": "schemas/train.schema.json",
-      "train_spec_template": "references/spec_template_train.yaml"
-    },
-    {
-      "automl_default_parameters": [
-        "dataset.augmentation.random_aug.enable",
-        "dataset.augmentation.random_color.brightness",
-        "dataset.augmentation.random_color.color_probability",
-        "dataset.augmentation.random_color.contrast",
-        "dataset.augmentation.random_color.enable",
-        "dataset.augmentation.random_color.hue",
-        "dataset.augmentation.random_color.saturation",
-        "dataset.augmentation.random_erase.enable",
-        "dataset.augmentation.random_erase.erase_probability",
-        "dataset.augmentation.random_flip.enable",
-        "dataset.augmentation.random_flip.hflip_probability",
-        "dataset.augmentation.random_flip.vflip_probability",
-        "dataset.augmentation.random_rotate.enable",
-        "dataset.augmentation.random_rotate.rotate_probability",
-        "dataset.augmentation.with_scale_random_crop.enable",
-        "dataset.batch_size",
-        "dataset.workers",
-        "distill.teacher.backbone.freeze_backbone",
-        "distill.teacher.backbone.freeze_norm",
-        "model.backbone.freeze_backbone",
-        "model.backbone.freeze_norm",
-        "train.optim.betas",
-        "train.optim.lr",
-        "train.optim.momentum",
-        "train.optim.weight_decay"
-      ],
-      "model": "classification-pyt",
-      "network_arch": "classification_pyt",
-      "train_schema": "schemas/train.schema.json",
-      "train_spec_template": "references/spec_template_train.yaml"
-    },
-    {
       "automl_default_parameters": [],
-      "model": "clip",
+      "automl_enabled": true,
+      "model": "tao-finetune-clip",
       "network_arch": "clip",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -86,8 +20,46 @@
         "train.optm_decay_type",
         "train.optm_lr"
       ],
-      "model": "cosmos-rl",
+      "automl_enabled": true,
+      "model": "tao-finetune-cosmos-reason",
       "network_arch": "cosmos-rl",
+      "train_schema": "schemas/train.schema.json",
+      "train_spec_template": "references/spec_template_train.yaml"
+    },
+    {
+      "automl_default_parameters": [
+        "model.dropout_ratio",
+        "train.optim.lr"
+      ],
+      "automl_enabled": true,
+      "model": "tao-train-action-recognition",
+      "network_arch": "action_recognition",
+      "train_schema": "schemas/train.schema.json",
+      "train_spec_template": "references/spec_template_train.yaml"
+    },
+    {
+      "automl_default_parameters": [
+        "dataset.test_dataset.batch_size",
+        "dataset.test_dataset.num_workers",
+        "dataset.train_dataset.batch_size",
+        "dataset.train_dataset.num_workers",
+        "dataset.val_dataset.batch_size",
+        "dataset.val_dataset.num_workers"
+      ],
+      "automl_enabled": true,
+      "model": "tao-train-bevfusion",
+      "network_arch": "bevfusion",
+      "train_schema": "schemas/train.schema.json",
+      "train_spec_template": "references/spec_template_train.yaml"
+    },
+    {
+      "automl_default_parameters": [
+        "train.optim.lr",
+        "train.optim.lr_decay"
+      ],
+      "automl_enabled": true,
+      "model": "tao-train-centerpose",
+      "network_arch": "centerpose",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
     },
@@ -110,7 +82,8 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "deformable-detr",
+      "automl_enabled": true,
+      "model": "tao-train-deformable-detr",
       "network_arch": "deformable_detr",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -163,8 +136,35 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "depth-net-mono",
+      "automl_enabled": true,
+      "model": "tao-train-depth-anything-v2",
       "network_arch": "depth_net_mono",
+      "train_schema": "schemas/train.schema.json",
+      "train_spec_template": "references/spec_template_train.yaml"
+    },
+    {
+      "automl_default_parameters": [
+        "dataset.augmentation.horizontal_flip_prob",
+        "dataset.augmentation.train_random_crop_max",
+        "dataset.augmentation.train_random_crop_min",
+        "dataset.batch_size",
+        "dataset.workers",
+        "model.dec_layers",
+        "model.enc_layers",
+        "model.num_queries",
+        "model.num_select",
+        "train.optim.layer_decay_rate",
+        "train.optim.lr",
+        "train.optim.lr_backbone",
+        "train.optim.lr_decay",
+        "train.optim.lr_linear_proj_mult",
+        "train.optim.lr_step_size",
+        "train.optim.momentum",
+        "train.optim.weight_decay"
+      ],
+      "automl_enabled": true,
+      "model": "tao-train-dino",
+      "network_arch": "dino",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
     },
@@ -216,7 +216,8 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "depth-net-stereo",
+      "automl_enabled": true,
+      "model": "tao-train-foundation-stereo",
       "network_arch": "depth_net_stereo",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -226,13 +227,9 @@
         "dataset.augmentation.horizontal_flip_prob",
         "dataset.augmentation.train_random_crop_max",
         "dataset.augmentation.train_random_crop_min",
-        "dataset.batch_size",
-        "dataset.workers",
         "model.dec_layers",
         "model.enc_layers",
-        "model.num_queries",
         "model.num_select",
-        "train.optim.layer_decay_rate",
         "train.optim.lr",
         "train.optim.lr_backbone",
         "train.optim.lr_decay",
@@ -241,29 +238,43 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "dino",
-      "network_arch": "dino",
+      "automl_enabled": true,
+      "model": "tao-train-grounding-dino",
+      "network_arch": "grounding_dino",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
     },
     {
       "automl_default_parameters": [
-        "dataset.augmentation.horizontal_flip_prob",
-        "dataset.augmentation.train_random_crop_max",
-        "dataset.augmentation.train_random_crop_min",
-        "model.dec_layers",
-        "model.enc_layers",
-        "model.num_select",
+        "dataset.augmentation.random_aug.enable",
+        "dataset.augmentation.random_color.brightness",
+        "dataset.augmentation.random_color.color_probability",
+        "dataset.augmentation.random_color.contrast",
+        "dataset.augmentation.random_color.enable",
+        "dataset.augmentation.random_color.hue",
+        "dataset.augmentation.random_color.saturation",
+        "dataset.augmentation.random_erase.enable",
+        "dataset.augmentation.random_erase.erase_probability",
+        "dataset.augmentation.random_flip.enable",
+        "dataset.augmentation.random_flip.hflip_probability",
+        "dataset.augmentation.random_flip.vflip_probability",
+        "dataset.augmentation.random_rotate.enable",
+        "dataset.augmentation.random_rotate.rotate_probability",
+        "dataset.augmentation.with_scale_random_crop.enable",
+        "dataset.batch_size",
+        "dataset.workers",
+        "distill.teacher.backbone.freeze_backbone",
+        "distill.teacher.backbone.freeze_norm",
+        "model.backbone.freeze_backbone",
+        "model.backbone.freeze_norm",
+        "train.optim.betas",
         "train.optim.lr",
-        "train.optim.lr_backbone",
-        "train.optim.lr_decay",
-        "train.optim.lr_linear_proj_mult",
-        "train.optim.lr_step_size",
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "grounding-dino",
-      "network_arch": "grounding_dino",
+      "automl_enabled": true,
+      "model": "tao-train-image-classification",
+      "network_arch": "classification_pyt",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
     },
@@ -275,14 +286,16 @@
         "train.optim.warmup_epochs",
         "train.optim.weight_decay"
       ],
-      "model": "mae",
+      "automl_enabled": true,
+      "model": "tao-train-mask-auto-encoder",
       "network_arch": "mae",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
     },
     {
       "automl_default_parameters": [],
-      "model": "mal",
+      "automl_enabled": true,
+      "model": "tao-train-mask-auto-label",
       "network_arch": "mal",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -301,7 +314,8 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "mask-grounding-dino",
+      "automl_enabled": true,
+      "model": "tao-train-mask-grounding-dino",
       "network_arch": "mask_grounding_dino",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -319,7 +333,8 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "mask2former",
+      "automl_enabled": true,
+      "model": "tao-train-mask2former",
       "network_arch": "mask2former",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -342,7 +357,8 @@
         "train.optim.warmup_factor",
         "train.optim.warmup_iters"
       ],
-      "model": "ml-recog",
+      "automl_enabled": true,
+      "model": "tao-train-metric-learning-recognition",
       "network_arch": "ml_recog",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -352,7 +368,8 @@
         "dataset.batch_size",
         "dataset.workers"
       ],
-      "model": "nvdinov2",
+      "automl_enabled": true,
+      "model": "tao-train-nvdinov2",
       "network_arch": "nvdinov2",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -361,7 +378,8 @@
       "automl_default_parameters": [
         "train.optim.lr"
       ],
-      "model": "nvpanoptix3d",
+      "automl_enabled": true,
+      "model": "tao-train-nvpanoptix3d",
       "network_arch": "nvpanoptix3d",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -371,7 +389,8 @@
         "train.optimizer.args.lr",
         "train.optimizer.args.weight_decay"
       ],
-      "model": "ocdnet",
+      "automl_enabled": true,
+      "model": "tao-train-ocdnet",
       "network_arch": "ocdnet",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -384,7 +403,8 @@
         "dataset.augmentation.rotate_prob",
         "train.optim.lr"
       ],
-      "model": "ocrnet",
+      "automl_enabled": true,
+      "model": "tao-train-ocrnet",
       "network_arch": "ocrnet",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -399,7 +419,8 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "oneformer",
+      "automl_enabled": true,
+      "model": "tao-train-oneformer",
       "network_arch": "oneformer",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -423,7 +444,8 @@
         "train.optim.lr",
         "train.optim.momentum"
       ],
-      "model": "optical-inspection",
+      "automl_enabled": true,
+      "model": "tao-train-optical-inspection",
       "network_arch": "optical_inspection",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -438,7 +460,8 @@
         "train.momentum",
         "train.weight_decay"
       ],
-      "model": "pointpillars",
+      "automl_enabled": true,
+      "model": "tao-train-pointpillars",
       "network_arch": "pointpillars",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -454,7 +477,8 @@
         "train.optim.patience",
         "train.optim.weight_decay"
       ],
-      "model": "pose-classification",
+      "automl_enabled": true,
+      "model": "tao-train-pose-classification",
       "network_arch": "pose_classification",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -463,7 +487,8 @@
       "automl_default_parameters": [
         "train.optim.lr_steps"
       ],
-      "model": "re-identification",
+      "automl_enabled": true,
+      "model": "tao-train-reid",
       "network_arch": "re_identification",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -486,7 +511,8 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "rtdetr",
+      "automl_enabled": true,
+      "model": "tao-train-rtdetr",
       "network_arch": "rtdetr",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -510,7 +536,8 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "segformer",
+      "automl_enabled": true,
+      "model": "tao-train-segformer",
       "network_arch": "segformer",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
@@ -519,15 +546,9 @@
       "automl_default_parameters": [
         "train.optim.lr"
       ],
-      "model": "sparse4d",
+      "automl_enabled": true,
+      "model": "tao-train-sparse4d",
       "network_arch": "sparse4d",
-      "train_schema": "schemas/train.schema.json",
-      "train_spec_template": "references/spec_template_train.yaml"
-    },
-    {
-      "automl_default_parameters": [],
-      "model": "vila",
-      "network_arch": "vila",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
     },
@@ -567,17 +588,12 @@
         "train.optim.momentum",
         "train.optim.weight_decay"
       ],
-      "model": "visual-changenet",
+      "automl_enabled": true,
+      "model": "tao-train-visual-changenet",
       "network_arch": "visual-changenet",
       "train_schema": "schemas/train.schema.json",
       "train_spec_template": "references/spec_template_train.yaml"
     }
   ],
-  "unsupported": [
-    {
-      "model": "cosmos-predict-2-5",
-      "network_arch": "cosmos-predict-2-5",
-      "reason": "schemas/train.schema.json is not packaged"
-    }
-  ]
+  "unsupported": []
 }

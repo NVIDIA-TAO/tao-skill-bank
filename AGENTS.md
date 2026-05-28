@@ -17,8 +17,8 @@ need no Python.
 
 1. **Read the task skill.** `models/<arch>/SKILL.md` (network specifics),
    `data/<name>/SKILL.md` (transforms), or `applications/<name>/SKILL.md`
-   (workflows that compose model + data + platform — `tao-automl`,
-   `workflow-deft-aoi-loop`, etc.). Get the model facts, data format, action
+   (workflows that compose model + data + platform — `tao-run-automl`,
+   `tao-run-deft-aoi`, etc.). Get the model facts, data format, action
    parameters, and known error patterns.
 
 2. **Read `references/skill_info.yaml`** for the structured contract:
