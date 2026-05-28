@@ -14,17 +14,18 @@
 
 images:
   tao_toolkit:
-    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.0.0-rc-226-multiarch
-    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.0.0-rc-171-multiarch
-    data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.0-rc-180-multiarch
-    cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.0.0-rc-176-multiarch
-    cosmos_embed:       nvcr.io/nvstaging/tao/cosmos-embed:7.0.0-rc-44
+    pyt:                nvcr.io/nvidia/tao/tao-toolkit:7.0.0-pyt
+    deploy:             nvcr.io/nvidia/tao/tao-toolkit:7.0.0-deploy
+    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.0.0-data-services
+    cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.0.0-cosmos-rl
+    cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.0-cosmos-predict
+    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.0.0-cosmos-embed
     vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
 wheels:
   # Single SDK wheel with extras. The `nvidia-tao-sdk` package consolidates
   # what used to be three wheels (tao-sdk, tao-sdk-lepton, tao-sdk-brev).
-  tao_sdk:        nvidia-tao-sdk==7.0.0rc21
-  tao_sdk_lepton: nvidia-tao-sdk[lepton]==7.0.0rc21
-  tao_sdk_brev:   nvidia-tao-sdk[brev]==7.0.0rc21
-  tao_sdk_all:    nvidia-tao-sdk[all]==7.0.0rc21
+  tao_sdk:        nvidia-tao-sdk==7.0.0
+  tao_sdk_lepton: nvidia-tao-sdk[lepton]==7.0.0
+  tao_sdk_brev:   nvidia-tao-sdk[brev]==7.0.0
+  tao_sdk_all:    nvidia-tao-sdk[all]==7.0.0
