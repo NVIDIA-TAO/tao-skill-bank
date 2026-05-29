@@ -31,11 +31,11 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 "${SLURM_USER}@${SLURM_HOST}" "true" 2
 }
 
 # 2. Optional: TAO SDK wrapper for Job handles + S3 wrapping.
-# nvidia-tao-sdk is not on public PyPI yet — install from the GitLab repo:
-REPO='git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-sdk.git'
+# nvidia-tao-sdk is on public PyPI; pin lives in versions.yaml (wheels.tao_sdk_slurm).
+PIN=$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_sdk_slurm)
 python -c "import tao_sdk" 2>/dev/null || {
   echo "MISSING: nvidia-tao-sdk not installed. Run:"
-  echo "  pip install \"nvidia-tao-sdk[slurm] @ $REPO\""
+  echo "  pip install \"$PIN\""
   exit 1
 }
 
@@ -422,6 +422,10 @@ sbatch/`squeue`/`sacct` plumbing handled for you, run-folder durability via
 `hf_model://`, and `ngc://` URIs to the right downloader; without the SDK you
 either pre-stage the data on Lustre or call `fsspec` / `huggingface-cli`
 yourself).
+
+When the SDK is in scope, read `tao-skill-bank:tao-run-platform` for the `SlurmSDK`
+kwarg reference (`num_nodes`, `partition`, `account`), `build_entrypoint`,
+and `ActionWorkflow`.
 
 > **Use Lustre, not S3, for SLURM job inputs.** SLURM's scheduler enforces a
 > GPU-idle timeout: the GPU allocation starts the moment your job is

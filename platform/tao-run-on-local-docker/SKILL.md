@@ -55,16 +55,18 @@ docker run --rm --runtime=nvidia --gpus all ubuntu nvidia-smi >/dev/null 2>&1 ||
 
 # Mode 2 — TAO SDK wrapper. Adds Job handles, S3 I/O wrapping, ActionWorkflow.
 # Skip this block if Mode 1 is sufficient for the user's request.
-# nvidia-tao-sdk is not on public PyPI yet — install from the GitLab repo:
-REPO='git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-sdk.git'
+# When Mode 2 is in scope, read `tao-skill-bank:tao-run-platform` for the DockerSDK
+# kwarg contract, build_entrypoint, and monitoring patterns.
+# nvidia-tao-sdk is on public PyPI; pin lives in versions.yaml (wheels.tao_sdk_docker).
+PIN=$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_sdk_docker)
 python -c "import tao_sdk" 2>/dev/null || {
   echo "MISSING: nvidia-tao-sdk not installed. Run:"
-  echo "  pip install \"nvidia-tao-sdk[docker] @ $REPO\""
+  echo "  pip install \"$PIN\""
   exit 1
 }
 python -c "import docker" 2>/dev/null || {
   echo "MISSING: docker Python client not installed. Run:"
-  echo "  pip install \"nvidia-tao-sdk[docker] @ $REPO\""
+  echo "  pip install \"$PIN\""
   exit 1
 }
 

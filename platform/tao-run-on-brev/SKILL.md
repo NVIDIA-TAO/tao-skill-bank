@@ -41,16 +41,29 @@ command -v brev >/dev/null 2>&1 || {
   exit 1
 }
 
-# 3. brev login active
+# 3. brev login active — always token-login first when running headless.
+#    Plain `brev ls` will hit an interactive auth prompt (read: EOF on stdin)
+#    even when BREV_API_TOKEN is set, so refresh the session up front.
+if [ -n "$BREV_API_TOKEN" ]; then
+  brev login --token "$BREV_API_TOKEN" >/dev/null 2>&1 || {
+    echo "MISSING: brev token login failed. Verify BREV_API_TOKEN."
+    exit 1
+  }
+fi
+# Retry once after a forced re-login: cached creds occasionally desync and the
+# first `brev ls` returns auth EOF until the session is rebuilt.
 brev ls >/dev/null 2>&1 || {
-  echo "MISSING: not logged in to brev. Run:"
-  echo "  brev login                                    # interactive (opens browser)"
-  echo "  # or set BREV_API_TOKEN in ~/.config/tao/.env (then 'brev login --token \$BREV_API_TOKEN')"
-  exit 1
+  [ -n "$BREV_API_TOKEN" ] && brev login --token "$BREV_API_TOKEN" >/dev/null 2>&1
+  brev ls >/dev/null 2>&1 || {
+    echo "MISSING: not logged in to brev. Run:"
+    echo "  brev login                                    # interactive (opens browser)"
+    echo "  # or set BREV_API_TOKEN in ~/.config/tao/.env (then 'brev login --token \$BREV_API_TOKEN')"
+    exit 1
+  }
 }
 ```
 
-If any step fails, the agent prompts the user to authorize the fix via Bash, then re-runs the preflight before continuing. The TAO SDK is **not** required for Brev — `brev exec docker run …` is sufficient. Reach for the SDK only if you want Job handles, S3 I/O wrapping via `script_runner`, or state persistence; the SDK is not on public PyPI yet, install with: `pip install "nvidia-tao-sdk[brev] @ git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-sdk.git"`.
+If any step fails, the agent prompts the user to authorize the fix via Bash, then re-runs the preflight before continuing. The TAO SDK is **not** required for Brev — `brev exec docker run …` is sufficient. Reach for the SDK only if you want Job handles, S3 I/O wrapping via `script_runner`, or state persistence; `nvidia-tao-sdk` is on public PyPI, install the pinned Brev extra from `versions.yaml`: `pip install "$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_sdk_brev)"`. **When going the SDK route, read `tao-skill-bank:tao-run-platform` for the `BrevSDK` kwarg reference, `build_entrypoint`, and `ActionWorkflow` patterns.**
 
 ## Authentication
 
@@ -61,6 +74,15 @@ Two options:
 2. **Manual**: Run `brev login` (opens browser). Tokens expire hourly — the handler refreshes automatically.
 
 S3 credentials (ACCESS_KEY, SECRET_KEY) are needed separately for data transfer.
+
+### Headless / non-interactive
+
+In a CI shell, container, or agent session with no controlling TTY, **always
+run `brev login --token "$BREV_API_TOKEN"` before any other `brev` call** —
+even when the token is exported. Otherwise the CLI prompts on stdin and
+returns an `EOF` auth error on commands like `brev ls`, `brev create`, or
+`brev exec`. Re-run the token login if a call returns auth-EOF; a single
+refresh is usually enough.
 
 ## Launch Preflight
 
@@ -81,6 +103,38 @@ The agent controls instance lifecycle:
 
 - **Reuse**: Pass `instance_id` in `backend_details` to run multiple jobs on the same instance. Efficient for multi-step workflows.
 - **Ephemeral**: Omit `instance_id` — the handler creates a new instance per job. Clean but slower (instance boot ~2-5 min).
+
+### Creating an instance — placement info
+
+For accounts with more than one cloud credential or workspace group, plain
+`brev create` rejects the call with a placement error. Pass the account-specific
+IDs explicitly:
+
+```bash
+brev create my-instance \
+  --gpu L40S:1 \
+  --cloud-cred-id <cloudCredId> \
+  --workspace-group-id <workspaceGroupId>
+```
+
+Discover the values once and stash them in `~/.config/tao/.env`:
+
+```bash
+brev ls --json | jq -r '.workspaces[0].workspaceGroupId'   # default group
+brev orgs --json | jq -r '.[0].cloudCredentials[].id'      # cloud credential
+```
+
+When using the SDK, pass them through `backend_details`:
+
+```python
+BrevSDK().create_job(
+    ...,
+    backend_details={
+        "cloud_cred_id": "<cloudCredId>",
+        "workspace_group_id": "<workspaceGroupId>",
+    },
+)
+```
 
 ## Multi-GPU and multi-node
 
@@ -113,6 +167,34 @@ brev exec <instance> -- docker run --gpus all --rm \
   visual_changenet train -e /data/spec.yaml
 ```
 
+### Wait for instance readiness before the first `brev exec`
+
+A freshly created instance reports `RUNNING` long before sshd, hostname
+resolution, and the user shell are ready. The first `brev exec` against an
+unsettled instance fails with `hostname not resolvable`,
+`Connection refused`, or a silent timeout. Always poll until a trivial exec
+succeeds before issuing real work:
+
+```bash
+# Wait up to 5 minutes for shell readiness — covers the SSH bring-up window.
+for i in $(seq 1 60); do
+  brev exec <instance> -- true >/dev/null 2>&1 && break
+  sleep 5
+done
+brev exec <instance> -- true >/dev/null 2>&1 || {
+  echo "instance <instance> never became exec-ready"; exit 1;
+}
+```
+
+### `brev exec` timeout for cold-start workloads
+
+`brev exec` inherits no default timeout, but anything that wraps it (the SDK
+handler, CI step wrappers, `timeout` shell builtins) must allow time for both
+the SSH bring-up window and the container pull on a fresh instance. Use
+**≥ 600 s (10 min)** for the first exec on a new instance; the previous
+60–120 s default truncates remote startup and surfaces as a spurious
+`exec failed` even though the remote command is still progressing.
+
 ## Mixed-Platform Workflows
 
 Brev can be mixed with Lepton in the same workflow. Per-stage platform assignment:
@@ -124,11 +206,45 @@ Brev can be mixed with Lepton in the same workflow. Per-stage platform assignmen
 
 CPU stages (gap analysis, data merge) run cheaply on Brev. GPU stages (training) run on Lepton H100s.
 
+## Cleanup
+
+```bash
+brev delete <instance>      # plain delete — no flags
+```
+
+The CLI does not accept `--yes` / `-y`; passing it errors with
+`unknown flag: --yes`. `brev delete <instance>` is already non-interactive on
+recent CLIs, so no confirmation flag is needed.
+
 ## Error Patterns
 
 **brev CLI not found**: Install from https://docs.nvidia.com/brev/.
 
-**Token expired**: Handler auto-refreshes via `brev ls`. If persistent, run `brev login` manually.
+**`brev ls` returns auth EOF even with `BREV_API_TOKEN` set**: Headless shell
+has no stdin for the interactive auth prompt. Run
+`brev login --token "$BREV_API_TOKEN"` first, then retry. If the failure
+persists across a single retry, the token itself is stale — mint a fresh one.
+
+**Token expired**: Handler auto-refreshes via `brev login --token`. If
+persistent, run `brev login` manually.
+
+**`brev create` rejected with placement error (`cloudCredId` /
+`workspaceGroupId` required)**: Multi-credential or multi-workspace accounts
+must pass `--cloud-cred-id` and/or `--workspace-group-id`. See
+*Creating an instance — placement info* above.
+
+**`brev exec` fails with `hostname not resolvable` or `Connection refused`
+right after create**: Instance reports `RUNNING` before sshd is up. Use the
+readiness-wait loop in *Wait for instance readiness before the first `brev
+exec`* before issuing the real command.
+
+**SDK exec timeout / `exec failed` on a fresh instance**: The SDK's
+`brev exec` wrapper timed out before remote startup finished. Raise the
+timeout to ≥ 600 s for cold-start runs (see *`brev exec` timeout for
+cold-start workloads*).
+
+**`brev delete --yes`: `unknown flag: --yes`**: The CLI has no confirmation
+flag. Use plain `brev delete <instance>`.
 
 **Instance stuck in provisioning**: Some GPU types have limited availability. Try a different `--gpu-name` or provider.
 

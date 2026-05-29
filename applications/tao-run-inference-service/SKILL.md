@@ -142,7 +142,7 @@ Read **`platform/<platform>/SKILL.md`** and follow it to start the container.
 | Platform | Additional inputs |
 |----------|------------------|
 | **local-docker** | None beyond base |
-| **brev** | `instance_id` (optional — reuse an existing instance) |
+| **brev** | `instance_id` (optional — reuse an existing instance); on multi-credential / multi-workspace accounts also `cloud_cred_id` and `workspace_group_id` for first-create — see `platform/tao-run-on-brev/SKILL.md` |
 | **lepton** | `resource_shape` (GPU shape ID, e.g. `gpu.8xh100-sxm`); `dedicated_node_group` (optional) |
 | **slurm** | `partition` and `account` — check `SLURM_PARTITION`/`SLURM_ACCOUNT` env vars; ask user if unset |
 | **kubernetes** | `namespace` (default: `default`); `image_pull_secret` (required for `nvcr.io` images) |

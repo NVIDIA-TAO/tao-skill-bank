@@ -33,7 +33,7 @@ The runner is **platform-agnostic** — it takes any object implementing the sta
 | SDK | Best for AutoML |
 |---|---|
 | `LeptonSDK` | Multi-node sweeps on DGX Cloud; managed scheduling |
-| `BrevSDK` | Cost-tuned sweeps on Brev instances (single-instance per rec, multi-GPU OK) |
+| `BrevSDK` | Cost-tuned sweeps on Brev instances (single-instance per rec, multi-GPU OK). Multi-credential / multi-workspace accounts must pass `cloud_cred_id=` and `workspace_group_id=` to `create_job` — see `platform/tao-run-on-brev/SKILL.md`. |
 | `SlurmSDK` | Large sweeps on shared HPC clusters with queue/quota |
 | `KubernetesSDK` | Sweeps on EKS / GKE / AKS / on-prem clusters with the NVIDIA GPU Operator |
 | `DockerSDK` | Local debugging or single-host sweeps with a few recs |
@@ -42,19 +42,19 @@ Multi-node per rec works on Lepton, SLURM, and K8s (each rec is an N-node distri
 
 ## Preflight
 
-This skill needs `nvidia-tao-automl` (which pulls `nvidia-tao-sdk` as a transitive dep). Neither package is published to public PyPI yet — install directly from the NVIDIA GitLab repo using a `pip` direct-URL with the platform extra you want:
+This skill needs `nvidia-tao-automl` (which pulls `nvidia-tao-sdk` as a transitive dep). Both are on public PyPI; the pinned versions live in `versions.yaml` (`wheels.tao_automl_*`), resolved via `scripts/resolve_versions_key.py`. Pick the platform extra you want:
 
 ```bash
 python -c "import tao_automl" 2>/dev/null || {
-  REPO='git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-run-automl.git'
+  SB="${TAO_SKILL_BANK_PATH:?}"
   echo "MISSING: nvidia-tao-automl not installed. Pick the platform extra you need:"
-  echo "  pip install \"nvidia-tao-automl[lepton] @ \$REPO\"      # DGX Cloud / Lepton"
-  echo "  pip install \"nvidia-tao-automl[slurm] @ \$REPO\"       # on-prem SLURM cluster"
-  echo "  pip install \"nvidia-tao-automl[kubernetes] @ \$REPO\"  # K8s (EKS / GKE / on-prem)"
-  echo "  pip install \"nvidia-tao-automl[docker] @ \$REPO\"      # local Docker daemon"
-  echo "  pip install \"nvidia-tao-automl[brev] @ \$REPO\"        # Brev GPU instances"
-  echo "  pip install \"nvidia-tao-automl[all] @ \$REPO\"         # all 5 platforms"
-  echo "  REPO=$REPO"
+  echo "  pip install \"$($SB/scripts/resolve_versions_key.py wheels.tao_automl_lepton)\"      # DGX Cloud / Lepton"
+  echo "  pip install \"$($SB/scripts/resolve_versions_key.py wheels.tao_automl_slurm)\"       # on-prem SLURM cluster"
+  echo "  pip install \"$($SB/scripts/resolve_versions_key.py wheels.tao_automl_kubernetes)\"  # K8s (EKS / GKE / on-prem)"
+  echo "  pip install \"$($SB/scripts/resolve_versions_key.py wheels.tao_automl_docker)\"      # local Docker daemon"
+  echo "  pip install \"$($SB/scripts/resolve_versions_key.py wheels.tao_automl_brev)\"        # Brev GPU instances"
+  echo "  pip install \"$($SB/scripts/resolve_versions_key.py wheels.tao_automl_all)\"         # all 5 platforms"
+  echo "  (append ,llm or ,wandb to the extra for agentic-search or experiment-tracking deps)"
   exit 1
 }
 ```
@@ -114,12 +114,12 @@ Before running AutoML:
    **CRITICAL**: AutoML requires a packaged generated train dataclass schema at `<bank-root>/models/<network>/schemas/train.schema.json`. The schema must exist and parse as JSON — it's the AutoML support gate because it defines `automl_enabled` parameters, defaults, ranges, options, weights, and popular metadata. Schemas are generated during skill-bank maintenance and shipped with the plugin; the runtime must not expect `~/tao-core` to exist. If the packaged train schema is missing, do not run AutoML for that model.
 
    `references/spec_template_<action>.yaml` is required for **non-TAO-Core models** (cosmos-rl, clip, etc.) — without it the runner has no defaults and the trial spec will be missing keys. For **TAO Core / Hydra-based models** (DINO, BEVFusion, etc.) the template is optional; Hydra fills container-side defaults at runtime.
-4. **`nvidia-tao-automl` installed** with the platform extra you want. Not on public PyPI yet — install from the GitLab repo via `pip` direct-URL:
+4. **`nvidia-tao-automl` installed** with the platform extra you want. On public PyPI; pin lives in `versions.yaml` (`wheels.tao_automl_*`):
    ```bash
-   REPO='git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-run-automl.git'
-   pip install "nvidia-tao-automl[lepton] @ $REPO"        # or [slurm], [kubernetes], [docker], [brev], [all]
-   # With LLM/agentic algorithms:
-   pip install "nvidia-tao-automl[lepton,llm] @ $REPO"
+   SB="${TAO_SKILL_BANK_PATH:?}"
+   pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_automl_lepton)"   # or _slurm, _kubernetes, _docker, _brev, _all
+   # With LLM/agentic algorithms, append ,llm to the extra:
+   pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_automl_lepton | sed 's/]/,llm]/')"
    ```
    For local development against a checkout: `pip install -e '~/tao-run-automl[lepton]'`.
 
@@ -649,8 +649,8 @@ AutoML optionally integrates with [Weights & Biases](https://wandb.ai) to track 
 
 ```bash
 pip install wandb
-# or (when reinstalling tao-run-automl with the wandb extra):
-#   pip install "nvidia-tao-automl[wandb] @ git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-run-automl.git"
+# or (when reinstalling tao-run-automl with the wandb extra — append ,wandb to your platform extra):
+#   pip install "$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_automl_lepton | sed 's/]/,wandb]/')"
 ```
 
 ### How it works

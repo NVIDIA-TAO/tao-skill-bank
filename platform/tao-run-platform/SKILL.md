@@ -293,7 +293,7 @@ job = sdk.create_job(
     #   SLURM:      partition, account, num_nodes
     #   Kubernetes: namespace, node_selector, tolerations, num_nodes
     #   Docker:     mounts
-    #   Brev:       instance_id, gpu_type
+    #   Brev:       instance_id, gpu_type, cloud_cred_id, workspace_group_id
 )
 print(f"Job submitted: {job.id}    Results: {job.results_dir}")
 ```
@@ -407,65 +407,13 @@ detach/stop, or a real runtime limit that prevents further polling.
 
 For background runs, persist `job.id` and the `state_file` path, then re-attach later by constructing the same SDK and calling `get_job_status(job_id)` — job state is read from the on-disk store.
 
-## Multi-step workflows
+## Orchestration patterns
 
-The agent chains jobs by waiting for a parent to complete, then constructing the next job's command using the parent's results directory:
-
-```python
-# Step 1: train
-train = sdk.create_job(image=img, command=train_cmd, gpu_count=8, ...)
-while sdk.get_job_status(train.id).status not in ("Complete", "Error"):
-    time.sleep(30)
-assert sdk.get_job_status(train.id).status == "Complete"
-
-# Step 2: evaluate (uses the train results dir)
-ckpt = f"{train.results_dir}/best.pth"
-eval_cmd = make_eval_command(checkpoint=ckpt, ...)
-eval_job = sdk.create_job(image=img, command=eval_cmd, gpu_count=1, ...)
-```
-
-There is no `SkillBank`, `Planner`, or `parent_job_id` mechanism — workflow orchestration is the agent's job, not the SDK's. (The SDK does ship an `ActionWorkflow` helper for run-folder durability — see below.)
-
-## Run-folder durability with `ActionWorkflow`
-
-Optional state-persistence helper for skills that want a durable run folder
-across context breaks. Decoupled from any specific platform.
-
-```python
-from datetime import datetime
-from tao_sdk.action_workflow import ActionWorkflow
-from tao_sdk.platforms.lepton import LeptonSDK
-
-ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-workflow = ActionWorkflow(root_dir="./runs", run_name="dino-train", timestamp=ts)
-sdk = LeptonSDK(state_file=str(workflow.workspace / "tao_session_state.json"))
-
-workflow.write_metadata(network="dino", action="train", dataset_uri="s3://bucket/coco/")
-job = sdk.create_job(image=..., command=..., gpu_count=8, ...)
-workflow.write_submission(job=job, specs=specs, script_runner={})
-workflow.sync_from_sdk(sdk, job.id)  # writes status.json + latest_logs.txt + failure_analysis.json
-```
-
-The folder layout (`./runs/dino-train/<timestamp>/`):
-- `metadata.json` — what the user asked for
-- `status.json` — current job status snapshot
-- `status_events.jsonl` — append-only event log
-- `active_jobs.json` — in-flight job IDs (drained on terminal)
-- `latest_logs.txt` — last polled log tail
-- `failure_analysis.json` — populated on failure
-
-Re-attach later with `ActionWorkflow.from_workspace(path)`. Works with any
-SDK that has `get_job_status` / `get_job_logs` / `get_failure_analysis` —
-Lepton, Brev, Docker, SLURM, Kubernetes.
-
-## Parallel execution
-
-```python
-jobs = [sdk.create_job(image=img, command=make_cmd(i), gpu_count=1, ...) for i in range(8)]
-# Poll all
-while not all(sdk.get_job_status(j.id).status in ("Complete", "Error") for j in jobs):
-    time.sleep(30)
-```
+Multi-step workflows, parallel sweeps, and run-folder durability via
+`ActionWorkflow` live in
+[`references/orchestration-patterns.md`](references/orchestration-patterns.md).
+Read it before chaining `create_job` calls, sweeping a parameter, or
+persisting run state across context breaks.
 
 ## Dataset utilities
 
@@ -497,6 +445,15 @@ specs["dataset"]["train_csv"] = f"{base}/train.csv"   # nested — see "spec is 
 - No shared storage — S3 only.
 - Pass `instance_id="<id>"` in kwargs to reuse an existing instance (skip 2–5 min boot).
 - Pass `gpu_type="L40S"` to control instance class for ephemeral instances.
+- Pass `cloud_cred_id="<id>"` and `workspace_group_id="<id>"` on multi-credential
+  or multi-workspace accounts. Without them, `brev create` rejects with a
+  placement error. Discover via `brev orgs --json` (cloud cred) and
+  `brev ls --json` (workspace group). See `platform/tao-run-on-brev/SKILL.md` →
+  *Creating an instance — placement info* for the full lookup recipe.
+- The handler waits for both `status=RUNNING` and `brev exec ... -- true`
+  before returning, so a `create_job` → `get_job_logs` sequence won't race
+  sshd bring-up. The first remote exec uses a 600s timeout to absorb the
+  container-pull window; reused instances use 30s.
 - Use `sdk.delete_instance(instance_id)` when done with an ephemeral one.
 
 ### SLURM
@@ -527,28 +484,13 @@ specs["dataset"]["train_csv"] = f"{base}/train.csv"   # nested — see "spec is 
 
 ## Error patterns
 
-**`CredentialError: Missing LEPTON_WORKSPACE_ID`**: env var not loaded. Run `source ~/.config/tao/.env` or check the SessionStart hook fired.
-
-**`CredentialError: S3_BUCKET_NAME env var required`**: any `inputs` or `outputs` argument needs S3 credentials. Set `S3_BUCKET_NAME`, `ACCESS_KEY`, `SECRET_KEY` (and `S3_ENDPOINT_URL` for non-AWS).
-
-**TAO crash: `You need to set ... results_dir`** (or any spec key declared in `skill_info.actions.<action>.outputs`): `build_entrypoint` was called without `outputs=action_cfg["outputs"]`. The script_runner only auto-fills output spec keys it was told about; missing `outputs=` leaves `results_dir: ''` and the TAO entrypoint aborts. Same root cause if S3 input URIs aren't downloaded — `inputs=action_cfg["inputs"]` was also omitted. Mirror both from `skill_info.yaml` exactly.
-
-**Job stuck in `Pending` (Lepton)**: call `get_job_replicas(job_id)` and inspect `readiness_issue`. Most common: image pull (waited too long) or `ConfigError` on a bad node — cancel and resubmit.
-
-**`Image pull failed`**: `NGC_KEY` is invalid or expired. The SDK auto-creates a Lepton image-pull-secret from `$NGC_KEY`; refresh the key and resubmit.
-
-**Double slash in S3 URI**: `dataset_uri.rstrip("/")` before concatenating, or use `os.path.join` (note: not `posixpath.join` — that doesn't strip).
-
-**Brev instance won't start**: GPU type unavailable in the user's region. Try a different `gpu_type` or wait.
+SDK error → root cause → fix mappings are in
+[`references/error-patterns.md`](references/error-patterns.md). Read when
+you hit a `CredentialError`, image-pull failure, stuck-Pending job, or
+similar — the entries map exception text to the underlying cause.
 
 ## What the SDK does NOT do
 
-- It does **not** read or interpret skills. The agent reads `SKILL.md` and `references/skill_info.yaml`; the SDK just submits whatever command the agent constructs.
-- It does **not** do hyperparameter optimization by itself. The agent owns the
-  model-level AutoML policy: when model metadata has `automl_enabled: true`, use
-  `applications/tao-run-automl` (which uses this SDK as a building block) unless the
-  workflow passes `automl_policy: off` or the user explicitly asks for a plain
-  single training run.
-- It does **not** decide what goes in the spec. The agent constructs the spec dict (loading templates, applying overrides) and passes it to `build_entrypoint`, which serializes the spec and inlines the in-container runner that writes it to `{config_path}` at job start. The SDK has no opinion about which keys you set.
-- It does **not** select platforms automatically. Pick the SDK matching your target backend explicitly: `LeptonSDK`, `BrevSDK`, `DockerSDK`, `SlurmSDK`, or `KubernetesSDK`.
-- It does **not** orchestrate multi-step workflows. The agent chains jobs by polling and constructing the next command.
+Scope guardrails (no skill-reading, no HPO, no spec opinions, no
+auto-platform-selection, no workflow orchestration) live in
+[`references/scope.md`](references/scope.md).

@@ -411,6 +411,12 @@ def check_brev(platform: dict[str, Any], skip_access: bool) -> bool:
             return False
 
     result = run([brev, "ls", "--json"], timeout=60)
+    if result.returncode != 0 and token:
+        # Headless `brev ls` occasionally hits an auth-EOF even after a
+        # successful token login — the cached session desyncs. Force one
+        # refresh and retry before declaring failure.
+        run([brev, "login", "--token", token], timeout=45)
+        result = run([brev, "ls", "--json"], timeout=60)
     if result.returncode == 0:
         print("Brev CLI/API OK")
         return True

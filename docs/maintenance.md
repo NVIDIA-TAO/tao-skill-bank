@@ -1,8 +1,8 @@
 # Maintenance — bumping container images
 
-All TAO container image tags live in **one file**: [`versions.yaml`](../versions.yaml) at the repo root. RC bumps and image upgrades are a one-line edit there.
+All TAO container image tags **and** Python wheel pins live in **one file**: [`versions.yaml`](../versions.yaml) at the repo root. RC bumps and upgrades are a one-line edit there for both.
 
-Wheel install commands are NOT centrally pinned — each skill's Preflight section declares the explicit `pip install "...[<extra>] @ git+https://..."` direct-URL it needs. See "Bumping an SDK install command" below.
+Container images live under `images:`, Python wheels under `wheels:`. Skills resolve both by dotted key via `scripts/resolve_versions_key.py` — there are no hardcoded image tags or `pip install` URLs in skill bodies. See "Bumping an SDK/AutoML wheel" below.
 
 ## Bumping a container image
 
@@ -40,18 +40,27 @@ git push -u origin <your-branch>
 
 CI runs `validate-skills.sh` automatically. Merge once green.
 
-## Bumping an SDK install command
+## Bumping an SDK/AutoML wheel
 
-`nvidia-tao-sdk` and `nvidia-tao-automl` are not on public PyPI yet, so each skill's Preflight section uses a `pip install "...[<extra>] @ git+https://..."` direct-URL pointing at the GitLab repo. When packages eventually publish to PyPI, replace each skill's Preflight URL form with a versioned form (e.g., `pip install 'nvidia-tao-sdk[lepton]>=0.4.0'`). Use a repo-wide grep:
+`nvidia-tao-sdk` and `nvidia-tao-automl` are on public PyPI and pinned in the `wheels:` section of `versions.yaml`. Bumping is a one-line edit per entry — symmetric with images:
 
-```bash
-grep -rl "git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-sdk.git" .
-grep -rl "git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-run-automl.git" .
+```diff
+# versions.yaml
+wheels:
+-   tao_sdk_lepton:     nvidia-tao-sdk[lepton]==7.0.0
++   tao_sdk_lepton:     nvidia-tao-sdk[lepton]==7.1.0rc1
 ```
 
-Update each match. There is no central manifest to bump.
+Every skill Preflight resolves its wheel key via `scripts/resolve_versions_key.py wheels.<key>`, so the new pin propagates automatically — no per-skill grep, no hardcoded URLs.
 
-Why no central pin: a pinned `nvidia-tao-sdk==0.2.0` in `versions.yaml` would resolve to a wheel that doesn't exist on any pip-resolvable index. The direct-URL form in each Preflight is honest about where the package actually lives and works without `--extra-index-url` or auth.
+### Internal RC versions
+
+To stage an RC internally before the public release:
+
+1. Publish the RC wheel to the index pip is pointed at — an internal PyPI mirror, or `--extra-index-url` / `--index-url` supplied via pip config or `PIP_*` env. Index selection is an environment concern; the skill bank never bakes in a registry.
+2. Pin the **exact** RC version in `versions.yaml` (e.g. `==7.1.0rc1`). pip installs an exact pre-release pin without `--pre`; a non-exact specifier like `>=7.1.0` would skip pre-releases unless `--pre` is passed.
+
+That's the whole change: one line in `versions.yaml`, exactly like a container RC bump.
 
 ## Adding a new image
 
@@ -87,17 +96,17 @@ Promote to a key (`versions.yaml` entry) when:
 
 ## Related: Python wheel install matrix
 
-Users install the SDK via the `pip` direct-URL form (the wheels aren't on public PyPI yet):
+Users install the SDK by resolving the pin from `versions.yaml` (wheels are on public PyPI):
 
 ```bash
-REPO='git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-sdk.git'
-pip install "nvidia-tao-sdk @ $REPO"                  # core only
-pip install "nvidia-tao-sdk[lepton] @ $REPO"          # + Lepton handler deps
-pip install "nvidia-tao-sdk[brev] @ $REPO"            # + Brev handler
-pip install "nvidia-tao-sdk[slurm] @ $REPO"           # + SLURM handler
-pip install "nvidia-tao-sdk[kubernetes] @ $REPO"      # + Kubernetes handler
-pip install "nvidia-tao-sdk[docker] @ $REPO"          # + local Docker handler
-pip install "nvidia-tao-sdk[all] @ $REPO"             # all platforms
+SB="${TAO_SKILL_BANK_PATH:-~/tao-skills-external}"
+pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk)"             # core only
+pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_lepton)"      # + Lepton handler deps
+pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_brev)"        # + Brev handler
+pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_slurm)"       # + SLURM handler
+pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_kubernetes)"  # + Kubernetes handler
+pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_docker)"      # + local Docker handler
+pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_all)"         # all platforms
 ```
 
 Legacy `tao-sdk` package: still installable as a thin alias that pulls in `nvidia-tao-sdk`. Prints a `DeprecationWarning` on import. Will be removed in a future major release.

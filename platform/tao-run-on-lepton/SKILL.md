@@ -25,18 +25,18 @@ Use Lepton when you need cloud-based GPU compute without managing Kubernetes or 
 
 ## Preflight
 
-Lepton is API-first — no docker-run alternative. This skill needs the TAO SDK with the Lepton extra. `nvidia-tao-sdk` is not on public PyPI yet — install from the GitLab repo via `pip` direct-URL:
+Lepton is API-first — no docker-run alternative. This skill needs the TAO SDK with the Lepton extra. `nvidia-tao-sdk` is on public PyPI; the pinned version lives in `versions.yaml` (`wheels.tao_sdk_lepton`), resolved via `scripts/resolve_versions_key.py`:
 
 ```bash
-REPO='git+https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-sdk.git'
+PIN=$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_sdk_lepton)
 python -c "import tao_sdk" 2>/dev/null || {
   echo "MISSING: nvidia-tao-sdk not installed. Run:"
-  echo "  pip install \"nvidia-tao-sdk[lepton] @ $REPO\""
+  echo "  pip install \"$PIN\""
   exit 1
 }
 python -c "import leptonai" 2>/dev/null || {
   echo "MISSING: lepton extra not installed. Run:"
-  echo "  pip install \"nvidia-tao-sdk[lepton] @ $REPO\""
+  echo "  pip install \"$PIN\""
   exit 1
 }
 ```
