@@ -27,7 +27,7 @@ docker run --gpus all --rm \
   <command>
 ```
 
-See `tao-skill-bank:docker` for `docker run` conventions (NGC auth, --gpus, mount patterns).
+See `tao-skill-bank:tao-run-on-docker` for `docker run` conventions (NGC auth, --gpus, mount patterns).
 
 ## Inputs
 

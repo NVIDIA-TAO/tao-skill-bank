@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Migrate `container_image` literals in `references/skill_info.yaml` to dotted keys.
 
 Walks every `references/skill_info.yaml`. For each `container_image` whose

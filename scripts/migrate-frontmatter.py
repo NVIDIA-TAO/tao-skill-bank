@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Bulk-add DAFT-style frontmatter fields to every SKILL.md.
 
 Mechanical fields (no per-skill judgment required):
@@ -96,11 +99,10 @@ def compatibility_for(skill_path: str) -> str:
 # Skills that orchestrate workflows and persist state files — need `Write`.
 # Most other skills only read inputs and shell out (Bash for docker / python / aws).
 _ORCHESTRATOR_PATHS = {
-    "applications/workflow-deft-aoi-loop",
-    "applications/deft-cosmos-rl",
+    "applications/tao-run-deft-aoi",
     "applications/deft-vcn-aoi",
-    "applications/tao-automl",
-    "applications/normal-train",
+    "applications/tao-run-automl",
+    "applications/tao-train-single-step",
 }
 
 

@@ -14,21 +14,39 @@
 
 images:
   tao_toolkit:
-    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:6.26.6-rc-223-multiarch
-    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:6.26.6-rc-162-multiarch
-    data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:6.26.6-rc-175-multiarch
-    cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:6.26.6-rc-164-multiarch
-    cosmos_predict_2_5: nvcr.io/nvstaging/tao/cosmos-predict:6.26.6-rc-51
-    cosmos_embed:       nvcr.io/nvstaging/tao/cosmos-embed:6.26.6-rc-42
+    pyt:                nvcr.io/nvidia/tao/tao-toolkit:7.0.0-pyt
+    deploy:             nvcr.io/nvidia/tao/tao-toolkit:7.0.0-deploy
+    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.0.0-data-services
+    cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.0.0-cosmos-rl
+    cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.0-cosmos-predict
+    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.0.0-cosmos-embed
     vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
-  metropolis_sdg:
-    cosmos_anomalygen: nvcr.io/nv-metropolis-dev/metropolis-sdg/cosmos-anomalygen:1.0.3-006434bb.main
-
 wheels:
-  # Single SDK wheel with extras. The `nvidia-tao-sdk` package consolidates
-  # what used to be three wheels (tao-sdk, tao-sdk-lepton, tao-sdk-brev).
-  tao_sdk:        nvidia-tao-sdk==6.26.6rc16
-  tao_sdk_lepton: nvidia-tao-sdk[lepton]==6.26.6rc16
-  tao_sdk_brev:   nvidia-tao-sdk[brev]==6.26.6rc16
-  tao_sdk_all:    nvidia-tao-sdk[all]==6.26.6rc16
+  # TAO Python wheels, published to public PyPI. Skill Preflight sections
+  # resolve these keys via `scripts/resolve_versions_key.py wheels.<key>` —
+  # exactly like the image keys above — so the pin lives in one place.
+  #
+  # RC / version bump: change the version on the relevant entries (e.g.
+  # `==7.0.0` -> `==7.1.0rc1`). To pull an internal pre-release, publish the RC
+  # to the index pip is pointed at and pin the exact RC version here; pip
+  # installs an exact pre-release pin without needing `--pre`.
+  #
+  # The `nvidia-tao-sdk` package consolidates what used to be three wheels
+  # (tao-sdk, tao-sdk-lepton, tao-sdk-brev). One entry per platform extra.
+  tao_sdk:            nvidia-tao-sdk==7.0.0
+  tao_sdk_lepton:     nvidia-tao-sdk[lepton]==7.0.0
+  tao_sdk_brev:       nvidia-tao-sdk[brev]==7.0.0
+  tao_sdk_slurm:      nvidia-tao-sdk[slurm]==7.0.0
+  tao_sdk_kubernetes: nvidia-tao-sdk[kubernetes]==7.0.0
+  tao_sdk_docker:     nvidia-tao-sdk[docker]==7.0.0
+  tao_sdk_all:        nvidia-tao-sdk[all]==7.0.0
+  # nvidia-tao-automl pulls nvidia-tao-sdk as a transitive dep. One entry per
+  # platform extra; append `,llm` or `,wandb` to an extra at install time for
+  # the agentic-search or experiment-tracking deps.
+  tao_automl_lepton:     nvidia-tao-automl[lepton]==7.0.0
+  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.0.0
+  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.0.0
+  tao_automl_docker:     nvidia-tao-automl[docker]==7.0.0
+  tao_automl_brev:       nvidia-tao-automl[brev]==7.0.0
+  tao_automl_all:        nvidia-tao-automl[all]==7.0.0

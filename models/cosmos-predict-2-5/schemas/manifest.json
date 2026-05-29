@@ -1,9 +1,0 @@
-{
-  "actions": {},
-  "failures": {
-    "generate": "cosmos-predict-2-5: ModuleNotFoundError: No module named 'nvidia_tao_core.config.cosmos-predict-2-5'; cosmos_predict_2_5: ModuleNotFoundError: No module named 'nvidia_tao_core.config.cosmos_predict_2_5'"
-  },
-  "model": "cosmos-predict-2-5",
-  "network_arch": "cosmos-predict-2-5",
-  "schema_version": 1
-}
