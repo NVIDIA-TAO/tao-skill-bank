@@ -594,3 +594,4 @@ Always save into a timestamped folder:
 3. Write `RCA_Report.md` into that folder (this triggers the packaging hook to copy config + logs)
 
 If the user specifies a custom path, use that instead but maintain the same structure.
+

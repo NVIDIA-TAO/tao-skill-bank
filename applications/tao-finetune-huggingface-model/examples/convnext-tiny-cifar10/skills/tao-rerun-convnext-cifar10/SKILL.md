@@ -138,3 +138,4 @@ Variance on 1000 eval samples: ±1–2 pts on accuracy across random seeds.
 - Training logs: `logs/train.log`, `logs/smoke.log`
 - Result artifacts: `reports/eval_results.json`, `reports/baseline_results.json`,
   `reports/inference_samples/`
+

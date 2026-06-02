@@ -125,3 +125,4 @@ the paper's 300-epoch schedule on COCO (118k). For closer-to-SOTA numbers bump
 
 - Generator: `tao-finetune-huggingface-model` on 2026-04-23
 - Host GPU: NVIDIA A100-SXM4-80GB, driver 560.35.05
+
