@@ -1,24 +1,6 @@
----
-name: tao-deploy-mask-auto-encoder
-description: >-
-  MAE deploy workflow for TensorRT engine generation using TAO Deploy. Use
-  when the user asks to deploy MAE, build a MAE TensorRT engine,
-  or prepare a TensorRT engine from an exported ONNX artifact.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- self-supervised
-- deployment
-- tensorrt
----
-
 # MAE Deploy
 
-MAE deploy covers the TAO Deploy actions for an exported self-supervised representation model. Use the parent `mae` model skill for training, checkpoint evaluation, quantization, distillation, export, or inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine.
+MAE deploy covers the TAO Deploy actions for an exported self-supervised representation model. Use the `mae` model skill for training, checkpoint evaluation, quantization, distillation, export, or inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine.
 
 Supported actions: `gen_trt_engine`.
 
@@ -35,15 +17,15 @@ docker run --gpus all --rm --shm-size=16g \
   mae gen_trt_engine -e /specs/mae_deploy_gen_trt_engine.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in the parent references folder:
+Deploy action metadata is in `tao-deploy-mask-auto-encoder.skill_info.yaml`. Deploy spec templates live in this references folder:
 
-- `../references/spec_template_deploy_gen_trt_engine.yaml`
+- `spec_template_deploy_gen_trt_engine.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `mae` skill.
+1. Train and export with the `mae` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 
 Direct TAO Launcher spelling is `tao deploy mae gen_trt_engine`.
 
@@ -73,7 +55,7 @@ Recommended starting overrides:
 
 Model-specific notes:
 
-- TAO Deploy exposes `gen_trt_engine` for MAE; evaluate and inference stay in the parent MAE workflow.
+- TAO Deploy exposes `gen_trt_engine` for MAE; evaluate and inference stay in the MAE workflow.
 - Keep `model.num_classes`, image size, and batch profile aligned with the exported MAE ONNX model.
 
 ## Job Chain Mapping

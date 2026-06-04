@@ -30,9 +30,8 @@ spec_shorthand_keys:
   batch_size: dataset.batch_size
 description: MAE deploy workflow for gen_trt_engine using TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy_gen_trt_engine.yaml
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
 notes:
-- TAO Deploy exposes `gen_trt_engine` for MAE; evaluate and inference stay in the
-  parent MAE workflow.
+- TAO Deploy exposes `gen_trt_engine` for MAE; evaluate and inference stay in the MAE workflow.
 - Keep `model.num_classes`, image size, and batch profile aligned with the exported
   MAE ONNX model.
