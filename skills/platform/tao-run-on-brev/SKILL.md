@@ -7,7 +7,7 @@ license: Apache-2.0
 compatibility: Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login.
 metadata:
   author: NVIDIA Corporation
-  version: '0.1'
+  version: "0.1.0"
 allowed-tools: Read Bash
 tags:
 - gpu
