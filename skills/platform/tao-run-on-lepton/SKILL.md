@@ -8,7 +8,7 @@ compatibility: Requires the tao-sdk Python package with the lepton extra (pip in
   and LEPTON_AUTH_TOKEN.
 metadata:
   author: NVIDIA Corporation
-  version: '0.1'
+  version: "0.1.0"
 allowed-tools: Read Bash
 tags:
 - dgx-cloud

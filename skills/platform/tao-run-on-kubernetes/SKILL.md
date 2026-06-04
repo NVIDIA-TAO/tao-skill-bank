@@ -7,7 +7,7 @@ license: Apache-2.0
 compatibility: Requires GPU worker nodes with NVIDIA driver branch 580, CUDA Toolkit 13.0, and NVIDIA Container Toolkit 1.19.0; the nvidia-tao-sdk Python package with the kubernetes extra (pip install 'nvidia-tao-sdk[kubernetes]'); an authenticated cluster; and the NVIDIA GPU Operator or device plugin.
 metadata:
   author: NVIDIA Corporation
-  version: '0.1'
+  version: "0.1.0"
 allowed-tools: Read Bash
 tags:
 - kubernetes
