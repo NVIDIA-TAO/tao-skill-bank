@@ -7,7 +7,7 @@ description: RT-DETR (Real-Time DEtection TRansformer) for 2D object detection. 
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
-  version: '0.1'
+  version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
 tags:
@@ -21,7 +21,7 @@ RT-DETR (Real-Time DEtection TRansformer) for 2D object detection. Designed for 
 
 Set model.pretrained_backbone_path for backbone weights or train.pretrained_model_path for full model.
 
-For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `deploy/SKILL.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
+For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `references/tao-deploy-rtdetr.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
 
 ## Dataclass Schemas
 
@@ -185,6 +185,8 @@ Optional. Provides validation mAP at each checkpoint if supplied.
 - TRT data types: FP32, FP16, INT8
 - TRT workspace: 1024 MB
 - TRT max_batch_size: 4
+
+Full TAO Deploy reference: [tao-deploy-rtdetr](references/tao-deploy-rtdetr.md).
 
 ## Distillation
 
