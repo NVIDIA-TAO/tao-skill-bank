@@ -11,7 +11,7 @@ license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit + at least one VLM endpoint (Gemini API key or OpenAI-compatible).
 metadata:
   author: NVIDIA Corporation
-  version: "0.1"
+  version: "0.1.0"
 tags:
   - image
   - referring-expression
