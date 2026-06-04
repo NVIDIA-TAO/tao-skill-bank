@@ -4,7 +4,7 @@ Render `${RESULTS_DIR}/DEFT_Loop_Report.html` from the canonical disk state, fol
 
 ## Role
 
-The parent skill (`tao-run-deft-aoi`) re-renders `DEFT_Loop_Report.html` after each completed iteration and once more at loop end. (Earlier revisions rendered after every stage; the cost dominated for short stages and the per-iteration cadence captures the same information.) By the time the loop finishes, the parent's context window is often saturated and the final render gets silently dropped. This agent owns rendering as a fresh, isolated task: every invocation starts with no inherited context and reads disk as the single source of truth, so a missed end-of-loop render is impossible.
+The main skill (`tao-run-deft-aoi`) re-renders `DEFT_Loop_Report.html` after each completed iteration and once more at loop end. (Earlier revisions rendered after every stage; the cost dominated for short stages and the per-iteration cadence captures the same information.) By the time the loop finishes, the parent's context window is often saturated and the final render gets silently dropped. This agent owns rendering as a fresh, isolated task: every invocation starts with no inherited context and reads disk as the single source of truth, so a missed end-of-loop render is impossible.
 
 You are spawned by the parent via the Task tool. You return one line of status and exit; the parent does not depend on your in-memory state.
 
