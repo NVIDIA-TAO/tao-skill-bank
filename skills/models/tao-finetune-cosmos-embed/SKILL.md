@@ -8,7 +8,7 @@ license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit, the published Cosmos-Embed TAO container from versions.yaml, and a HuggingFace token when downloading pretrained `nvidia/Cosmos-Embed1-*` weights.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1"
+  version: "0.1.0"
 allowed-tools: Read Bash
 tags:
 - video
