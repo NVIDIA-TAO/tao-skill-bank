@@ -64,13 +64,13 @@ spec_shorthand_keys:
 description: DepthNet Mono deploy workflow for gen_trt_engine, evaluate, inference
   using TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy.yaml
-  evaluate: ../references/spec_template_deploy.yaml
-  inference: ../references/spec_template_deploy.yaml
+  gen_trt_engine: spec_template_deploy.yaml
+  evaluate: spec_template_deploy.yaml
+  inference: spec_template_deploy.yaml
 notes:
 - The TAO Deploy command is `depth_net` for both mono and stereo DepthNet model skills.
 - 'Keep `dataset.dataset_name: MonoDataset` and use a monocular data source such as
   `RelativeMonoDataset` (or `NYUDV2Relative` for NYU eval) in the deploy spec.'
 - 'Build TRT engines with `gen_trt_engine.tensorrt.data_type: fp32` for ViT-Large mono
   models. FP16 layernorm in the DepthAnythingV2 backbone can saturate at runtime
-  and produce NaN predictions; see deploy SKILL.md for the caveat.'
+  and produce NaN predictions; see tao-deploy-depth-anything-v2.md for the caveat.'

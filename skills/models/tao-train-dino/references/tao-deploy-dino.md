@@ -1,28 +1,8 @@
----
-name: tao-deploy-dino
-description: >-
-  DINO deploy workflow for TensorRT engine generation, TensorRT evaluation, and
-  TensorRT inference using TAO Deploy. Use when the user asks to deploy DINO,
-  build a DINO TensorRT engine, run DINO TRT inference, or evaluate a DINO TRT
-  engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- object
-- detection
-- deployment
-- tensorrt
----
-
 # DINO Deploy
 
 DINO deploy covers the TAO Deploy actions for a trained and exported DINO object
-detector. Use the parent `dino` model skill for train, checkpoint evaluation,
-quantize, distill, and export. Use this deploy sub-skill after export when the
+detector. Use the `dino` model skill for train, checkpoint evaluation,
+quantize, distill, and export. Use this deploy workflow after export when the
 input artifact is an ONNX model and the desired output is a TensorRT engine or
 TensorRT-backed predictions.
 
@@ -65,20 +45,20 @@ docker run --gpus all --rm --shm-size=16g \
   dino inference -e /specs/dino_deploy_inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in
-the parent DINO references folder:
+Deploy action metadata is in `tao-deploy-dino.skill_info.yaml`. Deploy spec templates live in
+this references folder:
 
-- `../references/spec_template_deploy_gen_trt_engine.yaml`
-- `../references/spec_template_deploy_evaluate.yaml`
-- `../references/spec_template_deploy_inference.yaml`
+- `spec_template_deploy_gen_trt_engine.yaml`
+- `spec_template_deploy_evaluate.yaml`
+- `spec_template_deploy_inference.yaml`
 
 ## Deploy Workflow
 
-1. Train DINO with the parent `dino` skill.
-2. Export the trained checkpoint to ONNX with the parent `dino` skill. Keep any
+1. Train DINO with the `dino` skill.
+2. Export the trained checkpoint to ONNX with the `dino` skill. Keep any
    ONNX sidecar files in the same directory as the ONNX file.
-3. Build a TensorRT engine with this sub-skill's `gen_trt_engine` action.
-4. Run TensorRT `evaluate` or `inference` with this sub-skill. For TensorRT
+3. Build a TensorRT engine with this workflow's `gen_trt_engine` action.
+4. Run TensorRT `evaluate` or `inference` with this workflow. For TensorRT
    inference, use the engine job as the parent artifact, not the train job.
 
 Direct TAO Launcher spelling is `tao deploy dino gen_trt_engine`,
@@ -185,8 +165,7 @@ When generating a chained job runner, infer parent artifacts as follows:
 | `evaluate` | `evaluate.trt_engine` | engine job output |
 | `inference` | `inference.trt_engine` | engine job output |
 
-For regular DINO inference from a trained checkpoint, use the parent `dino`
-skill. This deploy sub-skill's `inference` action expects
+For regular DINO inference from a trained checkpoint, use the `dino` skill. This deploy workflow's `inference` action expects
 `inference.trt_engine`.
 
 ## Outputs

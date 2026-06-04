@@ -1,25 +1,6 @@
----
-name: tao-deploy-depth-anything-v2
-description: >-
-  DepthNet Mono deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy. Use
-  when the user asks to deploy DepthNet Mono, build a DepthNet Mono TensorRT engine,
-  run DepthNet Mono TRT inference, or evaluate a DepthNet Mono TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- depth
-- monocular
-- deployment
-- tensorrt
----
-
 # DepthNet Mono Deploy
 
-DepthNet Mono deploy covers the TAO Deploy actions for an exported monocular depth estimation model. Use the parent `depth-net-mono` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+DepthNet Mono deploy covers the TAO Deploy actions for an exported monocular depth estimation model. Use the `depth-net-mono` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 Direct TAO Deploy command name: `depth_net`.
@@ -59,15 +40,15 @@ docker run --gpus all --rm --shm-size=16g \
   depth_net inference -e /specs/inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec template lives in the parent references folder:
+Deploy action metadata is in `tao-deploy-depth-anything-v2.skill_info.yaml`. Deploy spec template lives in this references folder:
 
-- `../references/spec_template_deploy.yaml`
+- `spec_template_deploy.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `depth-net-mono` skill.
+1. Train and export with the `depth-net-mono` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
 Direct TAO Launcher spelling is `tao deploy depth_net gen_trt_engine`, `tao deploy depth_net evaluate`, `tao deploy depth_net inference`.
@@ -87,11 +68,11 @@ For direct Docker runs, mount input folders at the same paths used in the spec. 
 
 ## Spec Templates
 
-Two model variants are supported. The deploy spec template at `../references/spec_template_deploy.yaml` covers the **relative variant** (default). For the **metric variant**, start from the same template and apply the overrides below.
+Two model variants are supported. The deploy spec template at `spec_template_deploy.yaml` covers the **relative variant** (default). For the **metric variant**, start from the same template and apply the overrides below.
 
 ### Relative variant (default)
 
-Copy `../references/spec_template_deploy.yaml` as a starting point. Override only paths and environment-specific values (`data_file`, `results_dir`, `trt_engine` paths, batch size as needed). No structural overrides required.
+Copy `spec_template_deploy.yaml` as a starting point. Override only paths and environment-specific values (`data_file`, `results_dir`, `trt_engine` paths, batch size as needed). No structural overrides required.
 
 ### Metric variant
 

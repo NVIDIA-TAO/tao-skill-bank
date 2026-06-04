@@ -40,11 +40,9 @@
 
         "./skills/models/tao-train-fast-foundation-stereo",
         "./skills/models/tao-train-depth-anything-v2",
-        "./skills/models/tao-train-depth-anything-v2/deploy",
         "./skills/models/tao-train-foundation-stereo",
         "./skills/models/tao-train-foundation-stereo/deploy",
         "./skills/models/tao-train-dino",
-        "./skills/models/tao-train-dino/deploy",
         "./skills/models/tao-train-grounding-dino",
         "./skills/models/tao-train-grounding-dino/deploy",
         "./skills/models/tao-train-mask-auto-encoder",
