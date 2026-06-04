@@ -7,7 +7,7 @@ license: Apache-2.0
 compatibility: Requires the packaged TAO skill bank helper scripts.
 metadata:
   author: NVIDIA Corporation
-  version: '0.1'
+  version: "0.1.0"
 allowed-tools: Read Bash
 tags:
 - tao
