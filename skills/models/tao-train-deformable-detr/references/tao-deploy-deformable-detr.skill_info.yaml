@@ -1,11 +1,11 @@
-name: centerpose-deploy
+name: deformable-detr-deploy
 type: model
-network_arch: centerpose
+network_arch: deformable_detr
 container_image: tao_toolkit.deploy
-data_format: default
+data_format: coco
 actions:
   gen_trt_engine:
-    command: centerpose gen_trt_engine -e {config_path}
+    command: deformable_detr gen_trt_engine -e {config_path}
     config_format: yaml
     inputs:
       gen_trt_engine.onnx_file:
@@ -20,12 +20,14 @@ actions:
     upload_excludes:
     - inputs/
   evaluate:
-    command: centerpose evaluate -e {config_path}
+    command: deformable_detr evaluate -e {config_path}
     config_format: yaml
     inputs:
       evaluate.trt_engine:
         type: file
-      dataset.test_data:
+      dataset.test_data_sources.image_dir:
+        type: folder
+      dataset.test_data_sources.json_file:
         type: file
     outputs:
       results_dir:
@@ -33,12 +35,14 @@ actions:
     upload_excludes:
     - inputs/
   inference:
-    command: centerpose inference -e {config_path}
+    command: deformable_detr inference -e {config_path}
     config_format: yaml
     inputs:
       inference.trt_engine:
         type: file
-      dataset.inference_data:
+      dataset.infer_data_sources.image_dir:
+        type: folder
+      dataset.infer_data_sources.classmap:
         type: file
     outputs:
       results_dir:
@@ -60,14 +64,15 @@ spec_shorthand_keys:
   trt_data_type: gen_trt_engine.tensorrt.data_type
   trt_engine: gen_trt_engine.trt_engine
   batch_size: dataset.batch_size
-description: CenterPose deploy workflow for gen_trt_engine, evaluate, inference using
-  TAO Deploy.
+description: Deformable DETR deploy workflow for gen_trt_engine, evaluate, inference
+  using TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy_gen_trt_engine.yaml
-  evaluate: ../references/spec_template_deploy_evaluate.yaml
-  inference: ../references/spec_template_deploy_inference.yaml
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
+  evaluate: spec_template_deploy_evaluate.yaml
+  inference: spec_template_deploy_inference.yaml
 notes:
-- Keep `dataset.num_classes`, camera focal lengths, and input resolution aligned with
-  the exported CenterPose model.
-- 'For the starter-kit validation flow, use `dataset.batch_size: 1` when evaluating
-  the TensorRT engine.'
+- Carry `dataset.num_classes` as object classes plus background, matching train/export.
+- Use FP16 for the starter-kit TensorRT engine path; INT8 requires a real calibration
+  image folder and cache path.
+- Keep transformer structure fields such as `model.num_queries`, `model.num_feature_levels`,
+  `model.enc_layers`, and `model.dec_layers` aligned with export.

@@ -1,25 +1,6 @@
----
-name: tao-deploy-deformable-detr
-description: >-
-  Deformable DETR deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy. Use
-  when the user asks to deploy Deformable DETR, build a Deformable DETR TensorRT engine,
-  run Deformable DETR TRT inference, or evaluate a Deformable DETR TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- object
-- detection
-- deployment
-- tensorrt
----
-
 # Deformable DETR Deploy
 
-Deformable DETR deploy covers the TAO Deploy actions for an exported object detection model. Use the parent `deformable-detr` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+Deformable DETR deploy covers the TAO Deploy actions for an exported object detection model. Use the `deformable-detr` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 
@@ -58,17 +39,17 @@ docker run --gpus all --rm --shm-size=16g \
   deformable_detr inference -e /specs/deformable-detr_deploy_inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in the parent references folder:
+Deploy action metadata is in `tao-deploy-deformable-detr.skill_info.yaml`. Deploy spec templates live in this references folder:
 
-- `../references/spec_template_deploy_gen_trt_engine.yaml`
-- `../references/spec_template_deploy_evaluate.yaml`
-- `../references/spec_template_deploy_inference.yaml`
+- `spec_template_deploy_gen_trt_engine.yaml`
+- `spec_template_deploy_evaluate.yaml`
+- `spec_template_deploy_inference.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `deformable-detr` skill.
+1. Train and export with the `deformable-detr` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
 Direct TAO Launcher spelling is `tao deploy deformable_detr gen_trt_engine`, `tao deploy deformable_detr evaluate`, `tao deploy deformable_detr inference`.

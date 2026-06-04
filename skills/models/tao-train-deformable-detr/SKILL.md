@@ -7,7 +7,7 @@ description: Deformable DETR for 2D object detection. Uses deformable attention 
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
-  version: '0.1'
+  version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
 tags:
@@ -21,7 +21,7 @@ Deformable DETR for 2D object detection. Uses deformable attention for efficient
 
 Uses pretrained backbone weights. Set model.pretrained_backbone_path for backbone-only loading.
 
-For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `deploy/SKILL.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
+For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `references/tao-deploy-deformable-detr.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
 
 ## Dataclass Schemas
 
@@ -155,6 +155,8 @@ Same DDP/FSDP behavior as DINO. Multi-node requires `WORLD_SIZE`, `NODE_RANK`, `
 - TRT data types: FP32, FP16, INT8
 - TRT workspace: 1024 MB
 - TRT max_batch_size: 1
+
+Full TAO Deploy reference: [tao-deploy-deformable-detr](references/tao-deploy-deformable-detr.md).
 
 ## Hardware
 

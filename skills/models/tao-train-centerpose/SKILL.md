@@ -6,7 +6,7 @@ description: CenterPose for keypoint / pose estimation. Detects object centers a
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
-  version: '0.1'
+  version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
 tags:
@@ -20,7 +20,7 @@ CenterPose for keypoint / pose estimation. Detects object centers and regresses 
 
 Set model.backbone.pretrained_backbone_path.
 
-For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `deploy/SKILL.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
+For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `references/tao-deploy-centerpose.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
 
 ## Dataclass Schemas
 
@@ -127,6 +127,8 @@ Optional. Val and test datasets are provided as separate tarballs.
 - Export input: 512x512 (fixed), opset 16
 - TRT data types: FP32, FP16, INT8
 - TRT opt_batch_size: 4, max_batch_size: 8
+
+Full TAO Deploy reference: [tao-deploy-centerpose](references/tao-deploy-centerpose.md).
 
 ## Hardware
 
