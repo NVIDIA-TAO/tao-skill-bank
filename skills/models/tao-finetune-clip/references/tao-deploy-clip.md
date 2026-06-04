@@ -1,25 +1,6 @@
----
-name: tao-deploy-clip
-description: >-
-  CLIP deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy. Use
-  when the user asks to deploy CLIP, build a CLIP TensorRT engine,
-  run CLIP TRT inference, or evaluate a CLIP TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- multimodal
-- embedding
-- deployment
-- tensorrt
----
-
 # CLIP Deploy
 
-CLIP deploy covers the TAO Deploy actions for an exported multimodal embedding model. Use the parent `clip` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+CLIP deploy covers the TAO Deploy actions for an exported multimodal embedding model. Use the `clip` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 
@@ -58,15 +39,15 @@ docker run --gpus all --rm --shm-size=16g \
   clip inference -e /specs/clip_deploy_inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in the parent references folder:
+Deploy action metadata is in `tao-deploy-clip.skill_info.yaml`. Deploy spec templates live in this references folder:
 
-- `../references/spec_template_deploy.yaml`
+- `spec_template_deploy.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `clip` skill.
+1. Train and export with the `clip` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
 Direct TAO Launcher spelling is `tao deploy clip gen_trt_engine`, `tao deploy clip evaluate`, `tao deploy clip inference`.

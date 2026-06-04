@@ -63,9 +63,9 @@ spec_shorthand_keys:
 description: CLIP deploy workflow for gen_trt_engine, evaluate, inference using TAO
   Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy.yaml
-  evaluate: ../references/spec_template_deploy.yaml
-  inference: ../references/spec_template_deploy.yaml
+  gen_trt_engine: spec_template_deploy.yaml
+  evaluate: spec_template_deploy.yaml
+  inference: spec_template_deploy.yaml
 notes:
 - Keep CLIP sidecar artifacts next to the engine path because evaluate and inference
   load model configuration from the engine location.

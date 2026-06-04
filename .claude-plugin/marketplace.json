@@ -33,7 +33,6 @@
         "./skills/models/tao-train-image-classification",
         "./skills/models/tao-train-image-classification/deploy",
         "./skills/models/tao-finetune-clip",
-        "./skills/models/tao-finetune-clip/deploy",
         "./skills/models/tao-finetune-cosmos-reason",
         "./skills/models/tao-train-deformable-detr",
         "./skills/models/tao-train-deformable-detr/deploy",

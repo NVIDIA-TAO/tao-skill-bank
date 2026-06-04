@@ -7,7 +7,7 @@ license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
   author: NVIDIA Corporation
-  version: '1.0'
+  version: "1.0.0"
 allowed-tools: Read Bash
 tags:
 - vision-language
@@ -37,7 +37,7 @@ Use this skill for NVIDIA TAO CLIP jobs: training, evaluation, embedding inferen
 
 For dataset-backed actions, collect the required image, caption, list, or prompt files from the user and place the resolved paths in `spec_overrides`. For `export` and `gen_trt_engine`, infer parent artifacts from the upstream job when available; otherwise require explicit checkpoint, ONNX, or engine paths. Run `gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference` in the TAO Deploy image.
 
-For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `deploy/SKILL.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
+For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `references/tao-deploy-clip.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
 
 ## Training Requirements
 
@@ -158,6 +158,8 @@ The skill exposes `gen_trt_engine` as the deploy action. In generated SDK runner
 TAO Deploy supports both combined and separate encoder formats. For separate encoders, pass the base path without `_vision` or `_text` to `gen_trt_engine.onnx_file` and `gen_trt_engine.trt_engine`; TAO detects or writes the suffixed vision/text files.
 
 Use `evaluate.trt_engine` for TensorRT evaluation and `inference.trt_engine` for TensorRT embedding extraction. These TensorRT paths also run in the TAO Deploy image. Direct TAO Launcher usage spells these as `tao deploy clip evaluate` and `tao deploy clip inference`.
+
+Full TAO Deploy reference: [tao-deploy-clip](references/tao-deploy-clip.md).
 
 ## Important Parameters
 
