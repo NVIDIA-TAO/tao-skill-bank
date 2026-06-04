@@ -5,10 +5,10 @@ description: Standard single-step train/eval/export workflow for any TAO model. 
   then export", "plain TAO training", "normal training", "no AutoML", "skip the loop". Routes through the per-model SKILL.md
   for action specifics and through `tao-launch-workflow` for platform/credentials/dataset intake.
 license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit. Sub-skills declare additional requirements.
+compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
 metadata:
   author: NVIDIA Corporation
-  version: '0.1'
+  version: "0.1.0"
 allowed-tools: Read Bash Write
 tags:
 - training

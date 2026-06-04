@@ -12,7 +12,7 @@ license: Apache-2.0
 compatibility: The inference service has no cloud-storage dependency — model weights come from the HuggingFace Hub (HF_TOKEN env var for gated models) or a local container path. Platform prerequisites are checked by each platform skill.
 metadata:
   author: NVIDIA Corporation
-  version: '0.3'
+  version: "0.3.0"
 allowed-tools: Read Bash Write
 tags:
 - inference
