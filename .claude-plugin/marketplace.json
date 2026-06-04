@@ -60,7 +60,6 @@
         "./skills/models/tao-train-nvdinov2/deploy",
         "./skills/models/tao-train-nvpanoptix3d",
         "./skills/models/tao-train-ocdnet",
-        "./skills/models/tao-train-ocdnet/deploy",
         "./skills/models/tao-train-ocrnet",
         "./skills/models/tao-train-ocrnet/deploy",
         "./skills/models/tao-train-oneformer",

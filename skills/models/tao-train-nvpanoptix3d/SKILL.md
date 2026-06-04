@@ -7,7 +7,7 @@ description: NVPanoptix3D for panoptic 3D scene reconstruction from posed RGB im
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
-  version: '0.1'
+  version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
 tags:

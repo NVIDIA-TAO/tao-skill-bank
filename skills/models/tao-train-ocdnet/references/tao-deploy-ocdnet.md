@@ -1,25 +1,6 @@
----
-name: tao-deploy-ocdnet
-description: >-
-  OCDNet deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy. Use
-  when the user asks to deploy OCDNet, build a OCDNet TensorRT engine,
-  run OCDNet TRT inference, or evaluate a OCDNet TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- ocr
-- text-detection
-- deployment
-- tensorrt
----
-
 # OCDNet Deploy
 
-OCDNet deploy covers the TAO Deploy actions for an exported optical character detection model. Use the parent `ocdnet` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+OCDNet deploy covers the TAO Deploy actions for an exported optical character detection model. Use the `ocdnet` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 
@@ -58,17 +39,17 @@ docker run --gpus all --rm --shm-size=16g \
   ocdnet inference -e /specs/ocdnet_deploy_inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in the parent references folder:
+Deploy action metadata is in `tao-deploy-ocdnet.skill_info.yaml`. Deploy spec templates live in this references folder:
 
-- `../references/spec_template_deploy_gen_trt_engine.yaml`
-- `../references/spec_template_deploy_evaluate.yaml`
-- `../references/spec_template_deploy_inference.yaml`
+- `spec_template_deploy_gen_trt_engine.yaml`
+- `spec_template_deploy_evaluate.yaml`
+- `spec_template_deploy_inference.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `ocdnet` skill.
+1. Train and export with the `ocdnet` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
 Direct TAO Launcher spelling is `tao deploy ocdnet gen_trt_engine`, `tao deploy ocdnet evaluate`, `tao deploy ocdnet inference`.
