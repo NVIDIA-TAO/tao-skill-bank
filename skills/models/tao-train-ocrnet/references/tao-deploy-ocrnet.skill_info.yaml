@@ -67,9 +67,9 @@ spec_shorthand_keys:
 description: OCRNet deploy workflow for gen_trt_engine, evaluate, inference using
   TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy_experiment.yaml
-  evaluate: ../references/spec_template_deploy_experiment.yaml
-  inference: ../references/spec_template_deploy_experiment.yaml
+  gen_trt_engine: spec_template_deploy_experiment.yaml
+  evaluate: spec_template_deploy_experiment.yaml
+  inference: spec_template_deploy_experiment.yaml
 notes:
 - OCRNet deploy uses the shared experiment spec for all three actions.
 - Use FP16 for the starter-kit TensorRT engine path when the target hardware supports
