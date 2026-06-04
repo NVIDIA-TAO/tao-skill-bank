@@ -7,7 +7,7 @@ description: Sparse4D for multi-camera temporal 3D object detection and tracking
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
-  version: '0.1'
+  version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
 tags:

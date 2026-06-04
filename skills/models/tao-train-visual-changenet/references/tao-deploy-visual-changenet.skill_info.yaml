@@ -60,13 +60,13 @@ description: Visual ChangeNet deploy workflow for gen_trt_engine, evaluate, infe
   using TAO Deploy.
 spec_templates:
   classify:
-    gen_trt_engine: ../references/spec_template_deploy_classify_gen_trt_engine.yaml
-    evaluate: ../references/spec_template_deploy_classify_evaluate.yaml
-    inference: ../references/spec_template_deploy_classify_inference.yaml
+    gen_trt_engine: spec_template_deploy_classify_gen_trt_engine.yaml
+    evaluate: spec_template_deploy_classify_evaluate.yaml
+    inference: spec_template_deploy_classify_inference.yaml
   segment:
-    gen_trt_engine: ../references/spec_template_deploy_segment_gen_trt_engine.yaml
-    evaluate: ../references/spec_template_deploy_segment_evaluate.yaml
-    inference: ../references/spec_template_deploy_segment_inference.yaml
+    gen_trt_engine: spec_template_deploy_segment_gen_trt_engine.yaml
+    evaluate: spec_template_deploy_segment_evaluate.yaml
+    inference: spec_template_deploy_segment_inference.yaml
 notes:
 - Visual ChangeNet deploy has classify and segment spec variants under the same TAO
   Deploy command.

@@ -77,7 +77,6 @@
         "./skills/models/tao-train-segformer/deploy",
         "./skills/models/tao-train-sparse4d",
         "./skills/models/tao-train-visual-changenet",
-        "./skills/models/tao-train-visual-changenet/deploy",
         "./skills/platform/tao-run-on-brev",
         "./skills/platform/tao-run-on-docker",
         "./skills/platform/tao-run-on-kubernetes",

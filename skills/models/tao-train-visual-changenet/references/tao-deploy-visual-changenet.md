@@ -1,25 +1,6 @@
----
-name: tao-deploy-visual-changenet
-description: >-
-  Visual ChangeNet deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy. Use
-  when the user asks to deploy Visual ChangeNet, build a Visual ChangeNet TensorRT engine,
-  run Visual ChangeNet TRT inference, or evaluate a Visual ChangeNet TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- change-detection
-- aoi
-- deployment
-- tensorrt
----
-
 # Visual ChangeNet Deploy
 
-Visual ChangeNet deploy covers the TAO Deploy actions for an exported visual change detection model. Use the parent `visual-changenet` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+Visual ChangeNet deploy covers the TAO Deploy actions for an exported visual change detection model. Use the `visual-changenet` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 Visual ChangeNet has separate classify and segment deploy spec variants for each action.
@@ -105,20 +86,20 @@ docker run --gpus all --rm --shm-size=16g \
   visual_changenet inference -e /specs/visual-changenet_deploy_segment_inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in the parent references folder:
+Deploy action metadata is in `tao-deploy-visual-changenet.skill_info.yaml`. Deploy spec templates live in this references folder:
 
-- `../references/spec_template_deploy_classify_gen_trt_engine.yaml` (classify `gen_trt_engine`)
-- `../references/spec_template_deploy_classify_evaluate.yaml` (classify `evaluate`)
-- `../references/spec_template_deploy_classify_inference.yaml` (classify `inference`)
-- `../references/spec_template_deploy_segment_gen_trt_engine.yaml` (segment `gen_trt_engine`)
-- `../references/spec_template_deploy_segment_evaluate.yaml` (segment `evaluate`)
-- `../references/spec_template_deploy_segment_inference.yaml` (segment `inference`)
+- `spec_template_deploy_classify_gen_trt_engine.yaml` (classify `gen_trt_engine`)
+- `spec_template_deploy_classify_evaluate.yaml` (classify `evaluate`)
+- `spec_template_deploy_classify_inference.yaml` (classify `inference`)
+- `spec_template_deploy_segment_gen_trt_engine.yaml` (segment `gen_trt_engine`)
+- `spec_template_deploy_segment_evaluate.yaml` (segment `evaluate`)
+- `spec_template_deploy_segment_inference.yaml` (segment `inference`)
 
 ## Deploy Workflow
 
-1. Train and export with the parent `visual-changenet` skill.
+1. Train and export with the `visual-changenet` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
 Direct TAO Launcher spelling is `tao deploy visual_changenet gen_trt_engine`, `tao deploy visual_changenet evaluate`, `tao deploy visual_changenet inference`.
