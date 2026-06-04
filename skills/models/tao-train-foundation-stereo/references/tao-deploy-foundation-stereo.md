@@ -1,25 +1,6 @@
----
-name: tao-deploy-foundation-stereo
-description: >-
-  DepthNet Stereo deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy. Use
-  when the user asks to deploy DepthNet Stereo, build a DepthNet Stereo TensorRT engine,
-  run DepthNet Stereo TRT inference, or evaluate a DepthNet Stereo TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- depth
-- stereo
-- deployment
-- tensorrt
----
-
 # DepthNet Stereo Deploy
 
-DepthNet Stereo deploy covers the TAO Deploy actions for an exported FoundationStereo model. Use the parent `depth-net-stereo` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+DepthNet Stereo deploy covers the TAO Deploy actions for an exported FoundationStereo model. Use the `depth-net-stereo` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 Direct TAO Deploy command name: `depth_net`.
@@ -59,15 +40,15 @@ docker run --gpus all --rm --shm-size=16g \
   depth_net inference -e /specs/inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec template lives in the parent references folder:
+Deploy action metadata is in `tao-deploy-foundation-stereo.skill_info.yaml`. Deploy spec template lives in this references folder:
 
-- `../references/spec_template_deploy.yaml`
+- `spec_template_deploy.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `depth-net-stereo` skill.
+1. Train and export with the `depth-net-stereo` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
 Direct TAO Launcher spelling is `tao deploy depth_net gen_trt_engine`, `tao deploy depth_net evaluate`, `tao deploy depth_net inference`.
@@ -87,7 +68,7 @@ For direct Docker runs, mount input folders at the same paths used in the spec. 
 
 ## Spec Template
 
-Stereo deploy supports one model (`FoundationStereo`). Copy `../references/spec_template_deploy.yaml` as a starting point and override only paths and environment-specific values (`data_file`, `results_dir`, `trt_engine` paths, batch size as needed).
+Stereo deploy supports one model (`FoundationStereo`). Copy `spec_template_deploy.yaml` as a starting point and override only paths and environment-specific values (`data_file`, `results_dir`, `trt_engine` paths, batch size as needed).
 
 Adjustments by use case:
 

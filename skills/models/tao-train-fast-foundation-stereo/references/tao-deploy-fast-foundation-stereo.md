@@ -1,28 +1,6 @@
----
-name: tao-deploy-fast-foundation-stereo
-description: >-
-  DepthNet Fast Stereo (FFS bp2) deploy workflow for TensorRT engine generation,
-  TensorRT evaluation, and TensorRT inference using TAO Deploy. Use when the user
-  asks to deploy FastFoundationStereo, build an FFS TensorRT engine, run FFS TRT
-  inference, or evaluate an FFS TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- depth
-- stereo
-- deployment
-- tensorrt
-- realtime
-- distilled
----
-
 # DepthNet Fast Stereo Deploy
 
-DepthNet Fast Stereo deploy covers the TAO Deploy actions for an exported FFS (FastFoundationStereo) ONNX. Use the parent `depth-net-fast-stereo` model skill for training, checkpoint evaluation, export, or non-TensorRT (pyt) inference. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+DepthNet Fast Stereo deploy covers the TAO Deploy actions for an exported FFS (FastFoundationStereo) ONNX. Use the `depth-net-fast-stereo` model skill for training, checkpoint evaluation, export, or non-TensorRT (pyt) inference. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 Direct TAO Deploy command name: `depth_net`.
@@ -62,13 +40,13 @@ docker run --gpus all --rm --shm-size=16g \
   depth_net inference -e /specs/inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec template lives at `../references/spec_template_deploy.yaml`.
+Deploy action metadata is in `tao-deploy-fast-foundation-stereo.skill_info.yaml`. Deploy spec template lives at `spec_template_deploy.yaml`.
 
 ## Deploy Workflow
 
-1. Train (optional) and export with the parent `depth-net-fast-stereo` skill. For the raw-bp2 use case, skip train and export directly from the bp2 ckpt.
+1. Train (optional) and export with the `depth-net-fast-stereo` skill. For the raw-bp2 use case, skip train and export directly from the bp2 ckpt.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
 Direct TAO Launcher spelling is `tao deploy depth_net gen_trt_engine`, `tao deploy depth_net evaluate`, `tao deploy depth_net inference`.
@@ -88,7 +66,7 @@ For direct Docker runs, mount input folders at the same paths used in the spec. 
 
 ## Spec Template
 
-Fast Stereo deploy supports one model (`FastFoundationStereo`). Copy `../references/spec_template_deploy.yaml` as a starting point and override only paths and environment-specific values (`data_file`, `results_dir`, `trt_engine` paths, batch size as needed).
+Fast Stereo deploy supports one model (`FastFoundationStereo`). Copy `spec_template_deploy.yaml` as a starting point and override only paths and environment-specific values (`data_file`, `results_dir`, `trt_engine` paths, batch size as needed).
 
 Adjustments by use case:
 
@@ -288,7 +266,7 @@ The spec yaml's basename (modulo `.yaml`) must match the action verb passed on t
 
 1. **Source image resolution** — lower-resolution sources amplify drift because the cost-volume softmax peak is softer and amplifies fp32-precision differences between TAO and upstream engines after resize-to-engine-shape. Hold source resolution constant when comparing across runs.
 2. **Input resize parity** — your preprocessing resize order / interpolation must match upstream's, or drift amplifies for reasons unrelated to TAO.
-3. **`model.max_disparity` explicit** — if the spec yaml's `model:` block omits `max_disparity: 192`, OmegaConf falls back to the schema default of `416`, which builds a 2× oversized cost volume and shifts disparity out of the trained regime. See the parent skill's "Important Parameters" entry.
+3. **`model.max_disparity` explicit** — if the spec yaml's `model:` block omits `max_disparity: 192`, OmegaConf falls back to the schema default of `416`, which builds a 2× oversized cost volume and shifts disparity out of the trained regime. See the main skill's "Important Parameters" entry.
 
 **fp16 dynamic-shape engine produces NaN or aspect-stretched bad disparity**: fp16 dynamic-shape is supported but more sensitive than static fp16. NaN can occur under some checkpoint states. If observed, fall back to static-shape fp16 or dynamic-shape fp32 — both are robust.
 

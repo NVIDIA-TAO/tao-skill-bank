@@ -3,7 +3,7 @@
 # For raw-bp2 deploy: set inference.checkpoint to the bp2 file.
 # For finetuned-ckpt inference: drop inference.checkpoint (SDK resolves via parent_job_id).
 #
-# For deploy-side inference (TRT engine), see deploy/SKILL.md and spec_template_deploy.yaml.
+# For deploy-side inference (TRT engine), see tao-deploy-fast-foundation-stereo.md and spec_template_deploy.yaml.
 
 results_dir: <out_dir>
 

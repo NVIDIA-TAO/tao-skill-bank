@@ -5,7 +5,7 @@
 #   evaluate:       TRT engine + GT annotations → EPE / bp metrics
 #   inference:      TRT engine + 2-col annotations → disparity outputs
 #
-# Use the static-shape fp16 deploy path by default; see deploy/SKILL.md for the
+# Use the static-shape fp16 deploy path by default; see tao-deploy-fast-foundation-stereo.md for the
 # dynamic-shape deploy path (fp32 default; fp16 also supported with caveats).
 
 results_dir: /results
@@ -41,7 +41,7 @@ evaluate:
   input_height: 480
   # Do NOT enable evaluate.native_padded with a TRT 10.13 dynamic engine —
   # triggers Cask Pooling Runner Execute Failure (silent disparity corruption,
-  # EPE inflated to ~40-60 px). See deploy/SKILL.md "Common errors".
+  # EPE inflated to ~40-60 px). See tao-deploy-fast-foundation-stereo.md "Common errors".
   # For variable-aspect inputs: pre-pad each input to a stride-32 multiple at
   # preprocess and rely on a dynamic engine without native_padded.
 
@@ -51,7 +51,7 @@ gen_trt_engine:
   trt_engine: /results/depth-net-fast-stereo.engine
   batch_size: 1                          # static-shape deploy; -1 enables dynamic batch axis
   tensorrt:
-    data_type: fp16                      # static-shape FFS = fp16 recommended; dynamic-shape = fp32 default or fp16 (see deploy/SKILL.md)
+    data_type: fp16                      # static-shape FFS = fp16 recommended; dynamic-shape = fp32 default or fp16 (see tao-deploy-fast-foundation-stereo.md)
     workspace_size: 4096                 # MB; FFS needs more than the 1024 default
     min_batch_size: 1
     opt_batch_size: 1

@@ -1,4 +1,4 @@
-name: depth-net-stereo-deploy
+name: depth-net-fast-stereo-deploy
 type: model
 network_arch: depth_net_stereo
 container_image: tao_toolkit.deploy
@@ -61,18 +61,13 @@ spec_shorthand_keys:
   trt_engine: gen_trt_engine.trt_engine
   test_batch_size: dataset.test_dataset.batch_size
   infer_batch_size: dataset.infer_dataset.batch_size
-description: DepthNet Stereo deploy workflow for gen_trt_engine, evaluate, inference
-  using TAO Deploy.
+description: DepthNet Fast Stereo (FastFoundationStereo) deploy workflow for gen_trt_engine, evaluate, inference using TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy.yaml
-  evaluate: ../references/spec_template_deploy.yaml
-  inference: ../references/spec_template_deploy.yaml
+  gen_trt_engine: spec_template_deploy.yaml
+  evaluate: spec_template_deploy.yaml
+  inference: spec_template_deploy.yaml
 notes:
-- The TAO Deploy command is `depth_net` for both mono and stereo DepthNet model skills.
-- 'Keep `dataset.dataset_name: StereoDataset` and use a stereo data source such as
-  `GenericDataset` (no GT) or a dataset-specific class like `Middlebury` (with GT) in the deploy spec.'
-- 'Build TRT engines with `gen_trt_engine.tensorrt.data_type: fp16` for FoundationStereo
-  on supported deploy paths (NGC static-shape and user-trained static / batch-only-dynamic).
-  Engine input H/W are pinned to the trace shape on every path. See deploy/SKILL.md.'
-- 'Match `evaluate.input_height/input_width` to the export-time ONNX shape and to
-  `dataset.test_dataset.augmentation.crop_size` for end-to-end shape consistency.'
+- The TAO Deploy command is `depth_net` for mono, stereo, and fast-stereo skills. `model.model_type` discriminates between them.
+- Build TRT engines with `gen_trt_engine.tensorrt.data_type: fp16` on the static-shape FFS ONNX path (lowest drift vs upstream). The dynamic-shape engine path supports both `fp32` (default; static-fp32 parity) and `fp16` (higher drift than static fp16; engine may produce NaN under some checkpoint states — fall back to fp32 if observed). See tao-deploy-fast-foundation-stereo.md deployment matrix.
+- Match `evaluate.input_height/input_width` to the export-time ONNX shape and to `dataset.test_dataset.augmentation.crop_size` for end-to-end shape consistency.
+- FFS-bp2 requires `model.gwc_feature_normalize: true`. Without it the model produces broken disparity; the deploy engine inherits the broken output.

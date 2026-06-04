@@ -6,7 +6,7 @@ description: Stereo depth estimation using FoundationStereo. Predicts disparity 
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
-  version: '0.1'
+  version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
 tags:
@@ -23,7 +23,7 @@ Uses pretrained Depth Anything v2 and EdgeNeXt encoders. Set `model.stereo_backb
 
 The mono and stereo skills both invoke the unified TAO `depth_net` CLI inside the container; the mono/stereo family is selected via `model.model_type` (e.g., `FoundationStereo`).
 
-For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `deploy/SKILL.md` first. The deploy spec template lives in this skill's `references/spec_template_deploy.yaml`.
+For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `references/tao-deploy-foundation-stereo.md` first. The deploy spec template lives in this skill's `references/spec_template_deploy.yaml`.
 
 ## Train Action Policy
 
@@ -91,17 +91,17 @@ Prefer the dataset-specific class when your layout matches a supported one — i
 | Crestereo synthetic data | `FoundationStereo` | `Crestereo` |
 | Other / non-canonical layout | `FoundationStereo` | `GenericDataset` |
 
-See **Training Requirements → Formats** for the full registered-class list. The same `dataset_name` value applies across train and evaluate actions (all of which use 3-column or 4-column annotations with GT disparity). The deploy-side `evaluate` action follows the same rule — see `deploy/SKILL.md`. For inference with 2-column annotations (left + right, no GT), use `dataset_name: GenericDataset` regardless of data layout — the dataset-specific classes (`Middlebury` / `Kitti` / `Eth3d` / `FSD` / `IsaacRealDataset` / `Crestereo`) require 3-column input and reject 2-column annotations at the dataloader level. For inference with 3-column annotations (left + right + GT), the dataset-specific class is fine.
+See **Training Requirements → Formats** for the full registered-class list. The same `dataset_name` value applies across train and evaluate actions (all of which use 3-column or 4-column annotations with GT disparity). The deploy-side `evaluate` action follows the same rule — see `references/tao-deploy-foundation-stereo.md`. For inference with 2-column annotations (left + right, no GT), use `dataset_name: GenericDataset` regardless of data layout — the dataset-specific classes (`Middlebury` / `Kitti` / `Eth3d` / `FSD` / `IsaacRealDataset` / `Crestereo`) require 3-column input and reject 2-column annotations at the dataloader level. For inference with 3-column annotations (left + right + GT), the dataset-specific class is fine.
 
 ### Step 3 — Write spec yaml from Typical Spec Overrides
 
-Copy the action block from **Training Requirements → Typical Spec Overrides**. Replace:
+Copy the action block from `references/foundation-stereo-spec-overrides.md` (per-action `spec_overrides`, mandatory data sources). Replace:
 - `model.model_type` from Step 2 (typically `FoundationStereo`)
 - `dataset.<...>.data_sources[*].dataset_name` from Step 2
 - `dataset.<...>.data_sources[*].data_file` with the path from Step 1
-- For deploy-side `evaluate`: enforce `dataset.test_dataset.batch_size: 1` (see `deploy/SKILL.md`).
+- For deploy-side `evaluate`: enforce `dataset.test_dataset.batch_size: 1` (see `references/tao-deploy-foundation-stereo.md`).
 
-Shape consistency: the `crop_size` in `dataset.test_dataset.augmentation.crop_size` should match `export.input_height` / `input_width` so the trained-model evaluator and the deploy-side TensorRT evaluator operate at the same shape — see **Shape consistency** below in this file.
+Shape consistency: the `crop_size` in `dataset.test_dataset.augmentation.crop_size` should match `export.input_height` / `input_width` so the trained-model evaluator and the deploy-side TensorRT evaluator operate at the same shape — see `references/foundation-stereo-troubleshooting.md`.
 
 ### Step 4 — Run
 
@@ -121,10 +121,10 @@ Without `--user $(id -u):$(id -g)` the container writes outputs as `nobody:nogro
 - Container exit code 0
 - `status.json` `kpi` block populated
 - For `train`: inspect per-step `train_loss` directly (the entrypoint reports `Execution status: PASS` even when loss is NaN)
-- For `evaluate`: rely on `epe` / `bp1` / `bp2` / `bp3` / `d1` / `rmse` (the evaluator also emits `abs_rel` / `sq_rel` / `rmse_log` which are non-meaningful for stereo — see **Evaluation Metrics** below)
+- For `evaluate`: rely on `epe` / `bp1` / `bp2` / `bp3` / `d1` / `rmse` (the evaluator also emits `abs_rel` / `sq_rel` / `rmse_log` which are non-meaningful for stereo — see `references/foundation-stereo-parameters.md`)
 - For `inference`: artifacts under `results_dir`
 
-For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `deploy/SKILL.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
+For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `references/tao-deploy-foundation-stereo.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
 
 ## Training Requirements
 
@@ -147,129 +147,17 @@ For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and Tens
 
 Data source overrides are **mandatory for every action** — the agent MUST construct data source paths from the Per-Action Dataset Requirements table above and include them in `spec_overrides`. Each `data_sources` entry is a dict with **two mandatory fields**: `data_file` and `dataset_name`.
 
-```python
-S3_TRAIN = "aws://bucket/data/train"
-S3_EVAL = "aws://bucket/data/eval"
-```
+See `references/foundation-stereo-spec-overrides.md` for the full per-action `spec_overrides` blocks (train, evaluate, export, gen_trt_engine, inference, quantize) with `S3_TRAIN` / `S3_EVAL` placeholders.
 
-**train (mandatory data sources):**
-```python
-{
-    "train.num_epochs": 10,
-    "train.checkpoint_interval": 10,
-    "train.validation_interval": 10,
-    "train.num_gpus": 1,
-    "model.model_type": "FoundationStereo",
-    "model.encoder": "vits",
-    "dataset.train_dataset.batch_size": 1,
-    "dataset.train_dataset.workers": 4,
-    "dataset.train_dataset.augmentation.crop_size": [320, 736],
-    "dataset.train_dataset.data_sources": [
-        {"data_file": f"{S3_TRAIN}/annotations.txt", "dataset_name": "Middlebury"}
-    ],
-    "dataset.val_dataset.batch_size": 1,
-    "dataset.val_dataset.workers": 4,
-    "dataset.val_dataset.augmentation.crop_size": [320, 736],
-    "dataset.val_dataset.data_sources": [
-        {"data_file": f"{S3_EVAL}/annotations.txt", "dataset_name": "Middlebury"}
-    ],
-}
-```
-
-**evaluate (mandatory data sources):**
-```python
-{
-    "model.model_type": "FoundationStereo",
-    "model.encoder": "vits",
-    "dataset.test_dataset.batch_size": 1,
-    "dataset.test_dataset.workers": 4,
-    "dataset.test_dataset.augmentation.crop_size": [320, 736],
-    "dataset.test_dataset.data_sources": [
-        {"data_file": f"{S3_EVAL}/annotations.txt", "dataset_name": "Middlebury"}
-    ],
-}
-```
-
-**export:**
-```python
-{
-    "model.model_type": "FoundationStereo",
-    "model.encoder": "vits",
-    "export.batch_size": 1,
-    "export.input_height": 320,
-    "export.input_width": 736,
-}
-```
-
-**gen_trt_engine:**
-```python
-{
-    "gen_trt_engine.batch_size": 1,
-}
-```
-
-**inference (mandatory data sources):**
-```python
-{
-    "model.model_type": "FoundationStereo",
-    "model.encoder": "vits",
-    "dataset.infer_dataset.batch_size": 1,
-    "dataset.infer_dataset.workers": 4,
-    "dataset.infer_dataset.data_sources": [
-        {"data_file": f"{S3_EVAL}/annotations.txt", "dataset_name": "GenericDataset"}
-    ],
-}
-```
-
-**quantize (mandatory data sources):**
-```python
-{
-    "dataset.train_dataset.data_sources": [
-        {"data_file": f"{S3_TRAIN}/annotations.txt", "dataset_name": "Middlebury"}
-    ],
-    "dataset.val_dataset.data_sources": [
-        {"data_file": f"{S3_EVAL}/annotations.txt", "dataset_name": "Middlebury"}
-    ],
-    "dataset.quant_calibration_dataset.images_dir": f"{S3_TRAIN}/images.tar.gz",
-}
-```
 ## Eval Dataset
 
 Optional. Val dataset configured via `dataset.val_dataset.data_sources` (each entry needs `data_file` and `dataset_name`).
 
 ## Important Parameters
 
-- **model.model_type**: Architecture. Default `FoundationStereo` for stereo. Only `FoundationStereo` is selectable in the current release.
-- **model.encoder**: Backbone encoder (top-level `model` field, not nested under `stereo_backbone`). Options: `vits`, `vitb`, `vitl`, `vitg`. Schema default `vitl`; **FS small NGC ckpt requires `vits` — must override explicitly** (silent shape mismatch on `patch_embed` / ViT block keys without it).
-- **model.max_disparity**: Maximum disparity range. Default 416, range 1-416.
-- **model.hidden_dims**: Hidden dimensions in GRU refinement. Default `[128, 128, 128]`.
-- **model.train_iters**: GRU refinement iterations during training. Default 22.
-- **model.volume_dim**: Cost volume dimension. Schema default `32`, but the `FoundationStereo` class hardcodes `volume_dim = 28` at construction (`foundation_stereo.py:51`) — the schema field is currently a no-op for FS. Override is unnecessary; the model always builds at 28.
-- **model.low_memory**: Memory optimization level. Range 0-4. Higher = less memory.
-- **dataset.dataset_name**: Top-level dataset family identifier (e.g., `StereoDataset`).
-- **dataset.baseline**: Stereo camera baseline. Default `193.001/1e3` meters.
-- **dataset.focal_x**: Camera focal length X. Default `1998.842`.
-- **dataset.{train,val,test,infer}_dataset.batch_size**: Per-split batch size.
-- **dataset.{train,val,test,infer}_dataset.workers**: Per-split DataLoader worker count (the field name is `workers`, not `num_workers`).
-- **dataset.{train,val,test,infer}_dataset.augmentation.crop_size**: Per-split crop size (e.g., `[320, 736]`). Match `export.input_height`/`export.input_width` and the deploy-side `evaluate` crop_size for end-to-end shape consistency (see `deploy/SKILL.md` for the deploy-side shape table).
-- **dataset.{train,val,test,infer}_dataset.data_sources**: List of `{data_file, dataset_name}` dicts. Both fields are mandatory per entry.
-- **train.optim.lr**: Learning rate. Default 1e-4 (AdamW).
-- **train.precision**: Training precision. Options: fp32 (recommended), fp16. (bf16 is not supported by the FS trainer.)
-- **train.distributed_strategy**: Distribution strategy. Options: ddp, fsdp.
-- **export.batch_size**: ONNX batch size. `1` = static (matches NGC release), `-1` = batch axis dynamic (height and width are always taken from the trace shape; the DINOv2 + EdgeNeXt backbone constant-folds the patch count, so H/W dynamic is not supported). Default `-1`.
+Key defaults: `model.model_type` = `FoundationStereo` (only selectable type); `model.encoder` (top-level, not under `stereo_backbone`) schema default `vitl` but **FS small NGC ckpt requires `vits`, override explicitly**; `model.max_disparity` default 416; `train.optim.lr` default 1e-4; `train.precision` fp32 (recommended) or fp16 (no bf16); `export.batch_size` default `-1`. The `workers` field name is `workers`, not `num_workers`.
 
-### Evaluation Metrics
-
-`StereoDepthEvaluator` (`nvidia_tao_deploy/cv/depth_net/evaluation/stereo_evaluator.py`) emits a fixed metric set; only the disparity-domain metrics are meaningful for stereo:
-
-| Metric | Meaning | Use |
-|---|---|---|
-| `epe` | mean End-Point-Error in pixels | primary stereo metric |
-| `bp1` / `bp2` / `bp3` | fraction of pixels with EPE > 1 / 2 / 3 px | quality thresholds |
-| `d1` | KITTI-style outlier rate (EPE > 3 px AND > 5% of GT disparity) | KITTI-comparable headline |
-| `rmse` | RMSE on disparity values | sensitivity to large errors |
-
-The same evaluator also emits `abs_rel`, `sq_rel`, `rmse_log`. These are formulated for monocular depth (relative-error normalised by GT depth in metres) and produce numerically large, **non-meaningful** values when applied to disparity tensors. Ignore them for stereo evaluation; rely on `epe` / `bp*` / `d1` / `rmse`.
+See `references/foundation-stereo-parameters.md` for the full parameter glossary (all `model.*`, `dataset.*`, `train.*`, `export.*` fields with defaults and ranges) and the **Evaluation Metrics** reference (which `epe` / `bp*` / `d1` / `rmse` to trust and why `abs_rel` / `sq_rel` / `rmse_log` are non-meaningful for stereo).
 
 ## Multi-GPU / Multi-Node
 
@@ -286,70 +174,20 @@ Same DDP/FSDP behavior as depth-net-mono. Multi-node requires `WORLD_SIZE`, `NOD
 
 ## Export / TRT Defaults
 
-- TRT data types: FP32, FP16.
-- Static-shape ONNX (`export.batch_size: 1`): `fp16` supported (recommended, best EPE).
-- Batch-only dynamic ONNX (`export.batch_size: -1`): `fp16` supported. Engine accepts variable batch size; height and width are pinned to the trace shape.
-- Height and width are always pinned to the trace shape; H/W-dynamic engines are not supported. Build separate engines for different (H, W) targets.
-- For the NGC release (576×960), set `export.batch_size: 1`, `export.opset_version: 17`, `export.on_cpu: True` (CPU export is required at 576×960 to avoid GPU OOM during the trace).
-- For user-trained fp16 export, pair `opset_version` to `on_cpu`: `on_cpu: True` (CPU trace) accepts either opset 16 or 17 deterministically; `on_cpu: False` (GPU trace) accepts only opset 16 (opset 17 + on_cpu=False is broken on TRT 10.13 fp16). At `on_cpu=False + opset 16` the fp16 build is occasionally non-deterministic — re-run on a `costTensor::indexOfMin` or `optimizer::reduce` assertion. fp32 builds are unaffected. See `deploy/SKILL.md` for the validation table.
-- `export.on_cpu` is driven by GPU trace memory: `False` for ≤320×736 (fits 47 GB VRAM), `True` for ≥480×736 (PyTorch trace OOMs at GPU). Prefer `on_cpu: True` whenever feasible — fp16 builds at `on_cpu=True` are empirically deterministic at every tested shape (including NGC release 576×960).
-- See `deploy/SKILL.md` for the three supported deploy paths (NGC static / user-trained static / user-trained batch-only-dynamic).
+TRT data types FP32 / FP16. Static-shape ONNX (`export.batch_size: 1`) and batch-only dynamic ONNX (`export.batch_size: -1`) both support `fp16`; height and width are always pinned to the trace shape (H/W-dynamic engines are not supported — build separate engines per (H, W)). For the NGC release (576×960), set `export.batch_size: 1`, `export.opset_version: 17`, `export.on_cpu: True`.
 
-## Hardware
+See `references/foundation-stereo-export-trt-hardware.md` for the full export / TRT defaults (the opset-vs-`on_cpu` pairing rules, determinism notes, `on_cpu` GPU-memory thresholds) and the **Hardware** requirements. See `references/tao-deploy-foundation-stereo.md` for the three supported deploy paths and the validation table.
 
-Minimum 1 GPU(s), recommended 4 GPU(s). 24GB+ (A100 recommended) VRAM per GPU. Stereo matching is memory intensive due to cost volume. Use `model.low_memory > 0` for constrained GPUs. fp32 recommended for training.
+Full TAO Deploy reference: [tao-deploy-foundation-stereo](references/tao-deploy-foundation-stereo.md).
 
 ## Error Patterns
 
-**Disparity overflow**: Reduce `model.max_disparity` if targets exceed range or OOM occurs.
+Common issues: disparity overflow (reduce `model.max_disparity`); missing pretrained paths (set both `model.stereo_backbone.depth_anything_v2_pretrained_path` and `model.stereo_backbone.edgenext_pretrained_path`); `Key 'encoder' not in 'StereoBackBone'` (`encoder` is top-level `model.encoder`); `Key 'dataset_name' is not in struct` (each `data_sources` entry needs both `data_file` and `dataset_name`); `bash: exec: depth_net_stereo: not found` (entrypoint is `depth_net`, no suffix).
 
-**Missing pretrained paths**: Both `model.stereo_backbone.depth_anything_v2_pretrained_path` and `model.stereo_backbone.edgenext_pretrained_path` should be set for fine-tuning.
-
-**`Key 'encoder' not in 'StereoBackBone'`**: `encoder` is a top-level `model.encoder` field, not under `stereo_backbone`. See Important Parameters.
-
-**`Key 'dataset_name' is not in struct`** under `data_sources`: every `data_sources` entry must include both `data_file` and `dataset_name`.
-
-**`bash: exec: depth_net_stereo: not found`**: the unified entrypoint is `depth_net` (no `_mono` / `_stereo` suffix). The skill's `command` already uses the correct form; check any user-supplied wrapper.
-
-**Pyt `evaluate` runs at native image resolution (`crop_size` is decorative on the pyt test path)**: the stereo data module's test transform is built with `split='infer'` (`pl_stereo_data_module.py`), which applies only `NormalizeImage` + `PrepareForNet` — no `Resize`/`Crop`. So `dataset.test_dataset.augmentation.crop_size` is read but **not consumed** for the pyt `evaluate` action; samples are fed at the annotation file's native shape. For variable-aspect datasets like Middlebury, point the test annotation file at a resolution that fits GPU memory (e.g., MiddEval3-data-Q at 718×496 instead of MiddEval3-data-H at 1428×988 for the small variant on 24–48 GB GPUs). This asymmetry is pyt-only — `crop_size` IS authoritative on the deploy `evaluate` side (the deploy runtime reads it; see `deploy/SKILL.md`).
+See `references/foundation-stereo-troubleshooting.md` for the full error patterns plus the pyt-vs-deploy `crop_size` discussion (the pyt `evaluate` path runs at native image resolution and ignores `crop_size`, with the Middlebury resolution guidance) and the **Shape consistency** rule.
 
 ## Spec Param / Parent Model Inference
 
-Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners should read this section and apply the mappings with SDK helpers before `create_job()`. This mirrors the old microservices `infer_params.py` flow.
+Model-specific inference mappings belong in MD, not in `config.json`. Generated runners read these mappings and apply them with SDK helpers before `create_job()` (mirrors the old microservices `infer_params.py` flow). For `parent_model` / `parent_model_folder`, pass the upstream train/export/AutoML child job id as `parent_job_id`; the SDK lists the parent result folder, filters checkpoint artifacts, and returns the selected model file or folder. Do not add these mappings back to `config.json` and do not patch generated runner scripts to guess checkpoint paths.
 
-Inference mappings from TAO Core `depth_net_stereo.config.json`:
-
-| Action | Spec Field | Inference Function | Meaning |
-|---|---|---|---|
-| evaluate | `dataset.dataset_name` | `StereoDataset` | StereoDataset |
-| evaluate | `evaluate.checkpoint` | `parent_model` | model file inferred from the parent job results folder |
-| evaluate | `evaluate.trt_engine` | `parent_model` | model file inferred from the parent job results folder |
-| evaluate | `model.model_type` | `FoundationStereo` | FoundationStereo |
-| evaluate | `results_dir` | `output_dir` | current job results directory |
-| export | `dataset.dataset_name` | `StereoDataset` | StereoDataset |
-| export | `export.checkpoint` | `parent_model` | model file inferred from the parent job results folder |
-| export | `export.onnx_file` | `create_onnx_file` | output ONNX path |
-| export | `model.model_type` | `FoundationStereo` | FoundationStereo |
-| export | `results_dir` | `output_dir` | current job results directory |
-| gen_trt_engine | `dataset.dataset_name` | `StereoDataset` | StereoDataset |
-| gen_trt_engine | `gen_trt_engine.onnx_file` | `parent_model` | model file inferred from the parent job results folder |
-| gen_trt_engine | `gen_trt_engine.trt_engine` | `create_engine_file` | output TensorRT engine path |
-| gen_trt_engine | `model.model_type` | `FoundationStereo` | FoundationStereo |
-| gen_trt_engine | `results_dir` | `output_dir` | current job results directory |
-| inference | `dataset.dataset_name` | `StereoDataset` | StereoDataset |
-| inference | `inference.checkpoint` | `parent_model` | model file inferred from the parent job results folder |
-| inference | `inference.trt_engine` | `parent_model` | model file inferred from the parent job results folder |
-| inference | `model.model_type` | `FoundationStereo` | FoundationStereo |
-| inference | `results_dir` | `output_dir` | current job results directory |
-| quantize | `dataset.dataset_name` | `StereoDataset` | StereoDataset |
-| quantize | `model.model_type` | `FoundationStereo` | FoundationStereo |
-| quantize | `quantize.model_path` | `parent_model` | model file inferred from the parent job results folder |
-| quantize | `results_dir` | `output_dir` | current job results directory |
-| train | `dataset.dataset_name` | `StereoDataset` | StereoDataset |
-| train | `model.model_type` | `FoundationStereo` | FoundationStereo |
-| train | `model.stereo_backbone.depth_anything_v2_pretrained_path` | `{'link': 'https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth', 'destination_path': '/ptm/depth_net/stereo_backbone/depth_anything_v2_vits.pth'}` | {'link': 'https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth', 'destination_path': '/ptm/depth_net/stereo_backbone/depth_anything_v2_vits.pth'} |
-| train | `results_dir` | `output_dir` | current job results directory |
-| train | `train.pretrained_model_path` | `ptm_if_no_resume_model` | PTM when no resume checkpoint exists |
-| train | `train.resume_training_checkpoint_path` | `resume_model` | model file inferred from the current job results folder |
-
-For `parent_model` or `parent_model_folder`, pass the upstream train/export/AutoML child job id as `parent_job_id`. The SDK lists the parent result folder, filters checkpoint artifacts, and returns the selected model file or folder. Do not add these mappings back to `config.json` and do not patch generated runner scripts to guess checkpoint paths.
+See `references/foundation-stereo-spec-param-inference.md` for the full per-action inference-mapping table (train / evaluate / inference / export / gen_trt_engine / quantize, including the train pretrained-path link/destination and resume-checkpoint mappings).
