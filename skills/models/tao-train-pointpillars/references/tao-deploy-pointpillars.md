@@ -1,26 +1,6 @@
----
-name: tao-deploy-pointpillars
-description: >-
-  PointPillars deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy. Use
-  when the user asks to deploy PointPillars, build a PointPillars TensorRT engine,
-  run PointPillars TRT inference, or evaluate a PointPillars TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- 3d
-- point-cloud
-- detection
-- deployment
-- tensorrt
----
-
 # PointPillars Deploy
 
-PointPillars deploy covers the TAO Deploy actions for an exported 3D object detection model. Use the parent `pointpillars` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+PointPillars deploy covers the TAO Deploy actions for an exported 3D object detection model. Use the `pointpillars` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 
@@ -59,17 +39,17 @@ docker run --gpus all --rm --shm-size=16g \
   pointpillars inference -e /specs/pointpillars_deploy_inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in the parent references folder:
+Deploy action metadata is in `tao-deploy-pointpillars.skill_info.yaml`. Deploy spec templates live in this references folder:
 
-- `../references/spec_template_deploy_gen_trt_engine.yaml`
-- `../references/spec_template_deploy_evaluate.yaml`
-- `../references/spec_template_deploy_inference.yaml`
+- `spec_template_deploy_gen_trt_engine.yaml`
+- `spec_template_deploy_evaluate.yaml`
+- `spec_template_deploy_inference.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `pointpillars` skill.
+1. Train and export with the `pointpillars` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
 Direct TAO Launcher spelling is `tao deploy pointpillars gen_trt_engine`, `tao deploy pointpillars evaluate`, `tao deploy pointpillars inference`.

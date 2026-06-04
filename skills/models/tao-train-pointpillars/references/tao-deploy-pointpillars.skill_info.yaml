@@ -67,9 +67,9 @@ spec_shorthand_keys:
 description: PointPillars deploy workflow for gen_trt_engine, evaluate, inference
   using TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy_gen_trt_engine.yaml
-  evaluate: ../references/spec_template_deploy_evaluate.yaml
-  inference: ../references/spec_template_deploy_inference.yaml
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
+  evaluate: spec_template_deploy_evaluate.yaml
+  inference: spec_template_deploy_inference.yaml
 notes:
 - PointPillars deploy uses `gen_trt_engine.save_engine` for the engine output path,
   not `gen_trt_engine.trt_engine`.
