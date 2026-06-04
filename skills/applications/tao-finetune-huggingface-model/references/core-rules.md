@@ -22,6 +22,20 @@ full text.
 
 ---
 
+## Order of authority (highest first)
+
+1. **User input** — explicit `model_id`, `dataset_id`, `training_method`, `config.yaml` overrides.
+2. **Live research** — model card, HF repo example, author finetune script, HF task docs, paper. Always fetched. See Step 3 + `research-priorities.md`.
+3. **Curated references** (`references/*.md`) — fallback when live research is silent or ambiguous.
+4. **Your training-data memory** — last resort. Treat as suspect; cross-check against (2) or (3).
+
+If (2) and (3) conflict on an API call, (2) wins (newer). If they conflict on a
+method detail (collator, LoRA targets, augmentation), (2) wins for the *specific*
+model; (3) for the generic shape. Note the discrepancy in a comment at the source
+line.
+
+---
+
 ## Your knowledge of HF libraries is outdated
 
 You do not know current APIs for `transformers`, `trl`, `datasets`, `peft`, or
@@ -109,3 +123,12 @@ stop and ask.
 Rule of thumb: bf16 weights ≈ 2 B/param; optimizer states add ≈ 3-4× weights for
 full finetune, ~0 for LoRA. If full won't fit and user didn't ask for LoRA, ask
 before switching.
+
+---
+
+## Communication style
+
+- Terse. No filler, no restating the request. One-word answers when appropriate.
+- Always include direct Hub and wandb URLs when referencing artifacts.
+- On error: state what went wrong, why, what you changed. No menus.
+- Never present "Option A/B/C" for a request that has a clear answer. Act.

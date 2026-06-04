@@ -45,7 +45,7 @@ NVIDIA Apache 2.0 copyright notice in an HTML comment (`<!--` … `-->`), exactl
 below, then the body. Markdown renders this as invisible metadata; do not use `#`
 lines for the notice (they show up as visible headings).
 Keep `license: Apache-2.0`, `metadata.author`, and `metadata.version` aligned with
-the parent `tao-finetune-huggingface-model` skill unless product policy says otherwise.
+the `tao-finetune-huggingface-model` skill unless product policy says otherwise.
 
 ---
 
