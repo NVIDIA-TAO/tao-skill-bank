@@ -7,7 +7,7 @@ description: Mask2Former for universal image segmentation (panoptic, instance, a
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
-  version: '0.1'
+  version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
 tags:
@@ -20,7 +20,7 @@ Mask2Former for universal image segmentation (panoptic, instance, and semantic).
 
 Set model.backbone.pretrained_weights for Swin backbone weights.
 
-For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `deploy/SKILL.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
+For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`), read `references/tao-deploy-mask2former.md` first. Deploy spec templates live in this skill's `references/` folder with the `spec_template_deploy_*.yaml` prefix.
 
 ## Dataclass Schemas
 
@@ -206,6 +206,8 @@ Optional. Val data sources are part of the dataset config alongside train.
 ## Export / TRT Defaults
 
 - TRT data types: FP32, FP16 only — **INT8 is NOT supported**
+
+Full TAO Deploy reference: [tao-deploy-mask2former](references/tao-deploy-mask2former.md).
 
 ## Hardware
 

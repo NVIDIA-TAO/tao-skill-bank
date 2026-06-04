@@ -1,11 +1,11 @@
-name: mask2former-deploy
+name: mask-grounding-dino-deploy
 type: model
-network_arch: mask2former
+network_arch: mask_grounding_dino
 container_image: tao_toolkit.deploy
-data_format: coco_panoptic
+data_format: odvg
 actions:
   gen_trt_engine:
-    command: mask2former gen_trt_engine -e {config_path}
+    command: mask_grounding_dino gen_trt_engine -e {config_path}
     config_format: yaml
     inputs:
       gen_trt_engine.onnx_file:
@@ -20,16 +20,14 @@ actions:
     upload_excludes:
     - inputs/
   evaluate:
-    command: mask2former evaluate -e {config_path}
+    command: mask_grounding_dino evaluate -e {config_path}
     config_format: yaml
     inputs:
       evaluate.trt_engine:
         type: file
-      dataset.val.annot_file:
-        type: file
-      dataset.val.root_dir:
+      dataset.test_data_sources.image_dir:
         type: folder
-      dataset.label_map:
+      dataset.test_data_sources.json_file:
         type: file
     outputs:
       results_dir:
@@ -37,15 +35,15 @@ actions:
     upload_excludes:
     - inputs/
   inference:
-    command: mask2former inference -e {config_path}
+    command: mask_grounding_dino inference -e {config_path}
     config_format: yaml
     inputs:
       inference.trt_engine:
         type: file
-      dataset.test.img_dir:
-        type: file
-      dataset.label_map:
-        type: file
+      dataset.infer_data_sources.image_dir:
+        type: folder
+      dataset.infer_data_sources.captions:
+        type: list
     outputs:
       results_dir:
         type: folder
@@ -66,15 +64,15 @@ spec_shorthand_keys:
   trt_data_type: gen_trt_engine.tensorrt.data_type
   trt_engine: gen_trt_engine.trt_engine
   batch_size: dataset.batch_size
-description: Mask2Former deploy workflow for gen_trt_engine, evaluate, inference using
-  TAO Deploy.
+description: Mask Grounding DINO deploy workflow for gen_trt_engine, evaluate, inference
+  using TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy_gen_trt_engine.yaml
-  evaluate: ../references/spec_template_deploy_evaluate.yaml
-  inference: ../references/spec_template_deploy_inference.yaml
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
+  evaluate: spec_template_deploy_evaluate.yaml
+  inference: spec_template_deploy_inference.yaml
 notes:
-- Carry `model.sem_seg_head.num_classes` from train/export; the starter-kit ADE-style
-  path used 90 classes for one flow and the template default is only a placeholder.
-- 'For TensorRT inference, set `model.object_mask_threshold: 0.0` when you need all
-  mask candidates forwarded for post-processing.'
-- Set `dataset.contiguous_id` to match the dataset id layout used during training.
+- 'For object-detection style deploy data, set `dataset.infer_data_sources.data_type:
+  OD` and `dataset.test_data_sources.data_type: OD`.'
+- Use batch size 1 for TensorRT inference unless the engine profile and memory budget
+  are explicitly widened.
+- Keep prompt captions aligned with the target objects for open-vocabulary inference.
