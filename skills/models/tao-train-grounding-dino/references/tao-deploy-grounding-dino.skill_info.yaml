@@ -1,11 +1,11 @@
-name: classification-pyt-deploy
+name: grounding-dino-deploy
 type: model
-network_arch: classification_pyt
+network_arch: grounding_dino
 container_image: tao_toolkit.deploy
-data_format: classification_pyt
+data_format: odvg
 actions:
   gen_trt_engine:
-    command: classification_pyt gen_trt_engine -e {config_path}
+    command: grounding_dino gen_trt_engine -e {config_path}
     config_format: yaml
     inputs:
       gen_trt_engine.onnx_file:
@@ -20,26 +20,30 @@ actions:
     upload_excludes:
     - inputs/
   evaluate:
-    command: classification_pyt evaluate -e {config_path}
+    command: grounding_dino evaluate -e {config_path}
     config_format: yaml
     inputs:
       evaluate.trt_engine:
         type: file
-      dataset.test_dataset.images_dir:
+      dataset.test_data_sources.image_dir:
         type: folder
+      dataset.test_data_sources.json_file:
+        type: file
     outputs:
       results_dir:
         type: folder
     upload_excludes:
     - inputs/
   inference:
-    command: classification_pyt inference -e {config_path}
+    command: grounding_dino inference -e {config_path}
     config_format: yaml
     inputs:
       inference.trt_engine:
         type: file
-      dataset.test_dataset.images_dir:
+      dataset.infer_data_sources.image_dir:
         type: folder
+      dataset.infer_data_sources.captions:
+        type: list
     outputs:
       results_dir:
         type: folder
@@ -60,14 +64,16 @@ spec_shorthand_keys:
   trt_data_type: gen_trt_engine.tensorrt.data_type
   trt_engine: gen_trt_engine.trt_engine
   batch_size: dataset.batch_size
-description: Classification PyT deploy workflow for gen_trt_engine, evaluate, inference
+description: Grounding DINO deploy workflow for gen_trt_engine, evaluate, inference
   using TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy_gen_trt_engine.yaml
-  evaluate: ../references/spec_template_deploy_evaluate.yaml
-  inference: ../references/spec_template_deploy_inference.yaml
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
+  evaluate: spec_template_deploy_evaluate.yaml
+  inference: spec_template_deploy_inference.yaml
 notes:
-- Use `fp16` for the starter-kit TensorRT engine path unless INT8 calibration is explicitly
-  requested.
-- For TensorRT inference, set the runtime batch size to 1 unless the engine profile
-  was built for the larger batch.
+- For inference, always set `dataset.infer_data_sources.captions`; these are the text
+  prompts used for open-vocabulary detection.
+- Use FP16 for starter-kit TensorRT builds unless an explicit precision requirement
+  says otherwise.
+- Carry transformer structure fields from export, including backbone, feature levels,
+  encoder/decoder layers, and query count.

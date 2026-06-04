@@ -1,25 +1,6 @@
----
-name: tao-deploy-image-classification
-description: >-
-  Classification PyT deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy. Use
-  when the user asks to deploy Classification PyT, build a Classification PyT TensorRT engine,
-  run Classification PyT TRT inference, or evaluate a Classification PyT TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- image
-- classification
-- deployment
-- tensorrt
----
+# Grounding DINO Deploy
 
-# Classification PyT Deploy
-
-Classification PyT deploy covers the TAO Deploy actions for an exported image classification model. Use the parent `classification-pyt` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+Grounding DINO deploy covers the TAO Deploy actions for an exported open-vocabulary object detection model. Use the `grounding-dino` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 
@@ -33,7 +14,7 @@ docker run --gpus all --rm --shm-size=16g \
   -v /path/to/export:/models \
   -v /path/to/results:/results \
   nvcr.io/nvidia/tao/tao-toolkit:6.26.3-deploy \
-  classification_pyt gen_trt_engine -e /specs/classification-pyt_deploy_gen_trt_engine.yaml
+  grounding_dino gen_trt_engine -e /specs/grounding-dino_deploy_gen_trt_engine.yaml
 ```
 
 ### Evaluate TensorRT Engine
@@ -44,7 +25,7 @@ docker run --gpus all --rm --shm-size=16g \
   -v /path/to/eval:/data \
   -v /path/to/results:/results \
   nvcr.io/nvidia/tao/tao-toolkit:6.26.3-deploy \
-  classification_pyt evaluate -e /specs/classification-pyt_deploy_evaluate.yaml
+  grounding_dino evaluate -e /specs/grounding-dino_deploy_evaluate.yaml
 ```
 
 ### TensorRT Inference
@@ -55,23 +36,23 @@ docker run --gpus all --rm --shm-size=16g \
   -v /path/to/inference:/data \
   -v /path/to/results:/results \
   nvcr.io/nvidia/tao/tao-toolkit:6.26.3-deploy \
-  classification_pyt inference -e /specs/classification-pyt_deploy_inference.yaml
+  grounding_dino inference -e /specs/grounding-dino_deploy_inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in the parent references folder:
+Deploy action metadata is in `tao-deploy-grounding-dino.skill_info.yaml`. Deploy spec templates live in this references folder:
 
-- `../references/spec_template_deploy_gen_trt_engine.yaml`
-- `../references/spec_template_deploy_evaluate.yaml`
-- `../references/spec_template_deploy_inference.yaml`
+- `spec_template_deploy_gen_trt_engine.yaml`
+- `spec_template_deploy_evaluate.yaml`
+- `spec_template_deploy_inference.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `classification-pyt` skill.
+1. Train and export with the `grounding-dino` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
-Direct TAO Launcher spelling is `tao deploy classification_pyt gen_trt_engine`, `tao deploy classification_pyt evaluate`, `tao deploy classification_pyt inference`.
+Direct TAO Launcher spelling is `tao deploy grounding_dino gen_trt_engine`, `tao deploy grounding_dino evaluate`, `tao deploy grounding_dino inference`.
 
 ## Required Inputs
 
@@ -80,9 +61,11 @@ Direct TAO Launcher spelling is `tao deploy classification_pyt gen_trt_engine`, 
 | `gen_trt_engine` | Exported ONNX model | `gen_trt_engine.onnx_file` |
 | `gen_trt_engine` | Output engine path | `gen_trt_engine.trt_engine` |
 | `evaluate` | TensorRT engine | `evaluate.trt_engine` |
-| `evaluate` | Image classification test folder | `dataset.test_dataset.images_dir` |
+| `evaluate` | Eval image folder | `dataset.test_data_sources.image_dir` |
+| `evaluate` | Eval annotations | `dataset.test_data_sources.json_file` |
 | `inference` | TensorRT engine | `inference.trt_engine` |
-| `inference` | Image classification test folder | `dataset.test_dataset.images_dir` |
+| `inference` | Inference image folder list | `dataset.infer_data_sources.image_dir` |
+| `inference` | Prompt captions | `dataset.infer_data_sources.captions` |
 
 For direct Docker runs, mount input folders at the same paths used in the spec. For chained jobs, map exported ONNX artifacts into `gen_trt_engine.onnx_file` and map the engine artifact into `evaluate.trt_engine` or `inference.trt_engine` where those actions are available.
 
@@ -94,18 +77,17 @@ Recommended starting overrides:
 
 ```python
 {
-    'gen_trt_engine.tensorrt.data_type': 'fp16',
-    'inference.batch_size': 1,
-    'gen_trt_engine.tensorrt.min_batch_size': 1,
-    'gen_trt_engine.tensorrt.opt_batch_size': 1,
-    'gen_trt_engine.tensorrt.max_batch_size': 8,
+    'dataset.infer_data_sources.captions': ['person'],
+    'gen_trt_engine.tensorrt.data_type': 'FP16',
+    'dataset.batch_size': 1,
 }
 ```
 
 Model-specific notes:
 
-- Use `fp16` for the starter-kit TensorRT engine path unless INT8 calibration is explicitly requested.
-- For TensorRT inference, set the runtime batch size to 1 unless the engine profile was built for the larger batch.
+- For inference, always set `dataset.infer_data_sources.captions`; these are the text prompts used for open-vocabulary detection.
+- Use FP16 for starter-kit TensorRT builds unless an explicit precision requirement says otherwise.
+- Carry transformer structure fields from export, including backbone, feature levels, encoder/decoder layers, and query count.
 
 ## Job Chain Mapping
 
@@ -113,7 +95,6 @@ Model-specific notes:
 |---|---|---|
 | `gen_trt_engine` | `gen_trt_engine.onnx_file` | export job ONNX |
 | `gen_trt_engine` | `gen_trt_engine.trt_engine` | new engine output path |
-| `gen_trt_engine` INT8 | calibration image/cache fields | calibration dataset and new cache output |
 | `evaluate` | `evaluate.trt_engine` | engine job output |
 | `inference` | `inference.trt_engine` | engine job output |
 
@@ -122,8 +103,8 @@ Model-specific notes:
 | Action | Output |
 |---|---|
 | `gen_trt_engine` | TensorRT engine at `gen_trt_engine.trt_engine` |
-| `evaluate` | Top-K classification metrics under `results_dir` |
-| `inference` | Classification predictions under `results_dir` |
+| `evaluate` | Grounding detection metrics under `results_dir` |
+| `inference` | Prompt-conditioned detections under `results_dir` |
 
 ## Known Pitfalls
 
