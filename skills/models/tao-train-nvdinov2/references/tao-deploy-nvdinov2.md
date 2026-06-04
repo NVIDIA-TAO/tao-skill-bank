@@ -1,25 +1,6 @@
----
-name: tao-deploy-nvdinov2
-description: >-
-  NvDINOv2 deploy workflow for TensorRT engine generation using TAO Deploy. Use
-  when the user asks to deploy NvDINOv2, build a NvDINOv2 TensorRT engine,
-  or prepare a TensorRT engine from an exported ONNX artifact.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- self-supervised
-- backbone
-- deployment
-- tensorrt
----
-
 # NvDINOv2 Deploy
 
-NvDINOv2 deploy covers the TAO Deploy actions for an exported self-supervised vision backbone model. Use the parent `nvdinov2` model skill for training, distillation, export, or downstream inference workflows where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine.
+NvDINOv2 deploy covers the TAO Deploy actions for an exported self-supervised vision backbone model. Use the `nvdinov2` model skill for training, distillation, export, or downstream inference workflows where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine.
 
 Supported actions: `gen_trt_engine`.
 
@@ -36,15 +17,15 @@ docker run --gpus all --rm --shm-size=16g \
   nvdinov2 gen_trt_engine -e /specs/nvdinov2_deploy_gen_trt_engine.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in the parent references folder:
+Deploy action metadata is in `tao-deploy-nvdinov2.skill_info.yaml`. Deploy spec templates live in this references folder:
 
-- `../references/spec_template_deploy_gen_trt_engine.yaml`
+- `spec_template_deploy_gen_trt_engine.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `nvdinov2` skill.
+1. Train and export with the `nvdinov2` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 
 Direct TAO Launcher spelling is `tao deploy nvdinov2 gen_trt_engine`.
 
@@ -75,7 +56,7 @@ Recommended starting overrides:
 
 Model-specific notes:
 
-- TAO Deploy exposes `gen_trt_engine` for NvDINOv2; downstream evaluate and inference remain in the parent workflow or consumer model.
+- TAO Deploy exposes `gen_trt_engine` for NvDINOv2; downstream evaluate and inference remain in the workflow or consumer model.
 - Keep `model.backbone.img_size` aligned with the exported backbone, with 518 as the deploy template default.
 
 ## Job Chain Mapping

@@ -30,9 +30,9 @@ spec_shorthand_keys:
   batch_size: dataset.batch_size
 description: NvDINOv2 deploy workflow for gen_trt_engine using TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy_gen_trt_engine.yaml
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
 notes:
 - TAO Deploy exposes `gen_trt_engine` for NvDINOv2; downstream evaluate and inference
-  remain in the parent workflow or consumer model.
+  remain in the workflow or consumer model.
 - Keep `model.backbone.img_size` aligned with the exported backbone, with 518 as the
   deploy template default.

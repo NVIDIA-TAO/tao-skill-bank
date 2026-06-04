@@ -69,9 +69,9 @@ spec_shorthand_keys:
 description: MLRecog deploy workflow for gen_trt_engine, evaluate, inference using
   TAO Deploy.
 spec_templates:
-  gen_trt_engine: ../references/spec_template_deploy_gen_trt_engine.yaml
-  evaluate: ../references/spec_template_deploy_evaluate.yaml
-  inference: ../references/spec_template_deploy_inference.yaml
+  gen_trt_engine: spec_template_deploy_gen_trt_engine.yaml
+  evaluate: spec_template_deploy_evaluate.yaml
+  inference: spec_template_deploy_inference.yaml
 notes:
 - The starter-kit deploy flow builds MLRecog engines with INT8, so provide real calibration
   images and a writable calibration cache path.

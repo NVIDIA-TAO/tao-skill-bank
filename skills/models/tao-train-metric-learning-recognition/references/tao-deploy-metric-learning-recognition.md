@@ -1,25 +1,6 @@
----
-name: tao-deploy-metric-learning-recognition
-description: >-
-  MLRecog deploy workflow for TensorRT engine generation, TensorRT evaluation, and TensorRT inference using TAO Deploy. Use
-  when the user asks to deploy MLRecog, build a MLRecog TensorRT engine,
-  run MLRecog TRT inference, or evaluate a MLRecog TRT engine.
-license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  version: "0.1"
-  author: NVIDIA Corporation
-allowed-tools: Read Bash
-tags:
-- recognition
-- metric-learning
-- deployment
-- tensorrt
----
-
 # MLRecog Deploy
 
-MLRecog deploy covers the TAO Deploy actions for an exported metric-learning recognition model. Use the parent `ml-recog` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy sub-skill after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
+MLRecog deploy covers the TAO Deploy actions for an exported metric-learning recognition model. Use the `ml-recog` model skill for training, checkpoint evaluation, quantization, distillation, pruning, export, or non-TensorRT inference where those actions exist. Use this deploy workflow after export when the input artifact is an ONNX model and the desired output is a TensorRT engine or TensorRT-backed predictions.
 
 Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 
@@ -58,17 +39,17 @@ docker run --gpus all --rm --shm-size=16g \
   ml_recog inference -e /specs/ml-recog_deploy_inference.yaml
 ```
 
-Deploy action metadata is in `skill_info.yaml`. Deploy spec templates live in the parent references folder:
+Deploy action metadata is in `tao-deploy-metric-learning-recognition.skill_info.yaml`. Deploy spec templates live in this references folder:
 
-- `../references/spec_template_deploy_gen_trt_engine.yaml`
-- `../references/spec_template_deploy_evaluate.yaml`
-- `../references/spec_template_deploy_inference.yaml`
+- `spec_template_deploy_gen_trt_engine.yaml`
+- `spec_template_deploy_evaluate.yaml`
+- `spec_template_deploy_inference.yaml`
 
 ## Deploy Workflow
 
-1. Train and export with the parent `ml-recog` skill.
+1. Train and export with the `ml-recog` skill.
 2. Keep the exported ONNX artifact and any sidecar files together in the mounted model directory.
-3. Build the TensorRT engine with this sub-skill.
+3. Build the TensorRT engine with this workflow.
 4. Run TensorRT `evaluate` or `inference` from the engine artifact produced by `gen_trt_engine`.
 
 Direct TAO Launcher spelling is `tao deploy ml_recog gen_trt_engine`, `tao deploy ml_recog evaluate`, `tao deploy ml_recog inference`.
