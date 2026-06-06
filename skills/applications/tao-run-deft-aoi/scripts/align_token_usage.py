@@ -24,7 +24,7 @@ CLI:
 
     python scripts/align_token_usage.py \
         --log-path /abs/path/results/loop_log.jsonl \
-        --project-dir ~/.claude/projects/-home-shadeform-tao-skills-external
+        --project-dir ~/.claude/projects/-home-user-tao-skills-external
 
     # or pass individual transcript files (repeatable):
     python scripts/align_token_usage.py \
@@ -35,7 +35,7 @@ CLI:
     # or auto-resolve the project dir from cwd (default: current cwd):
     python scripts/align_token_usage.py \
         --log-path /abs/path/results/loop_log.jsonl \
-        --cwd /home/shadeform/tao-skills-external
+        --cwd /home/user/tao-skills-external
 
 The per-entry `tokens` field shape:
 

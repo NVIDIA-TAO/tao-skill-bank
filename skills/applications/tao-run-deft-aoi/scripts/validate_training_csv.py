@@ -32,8 +32,8 @@ CLI:
 
     python scripts/validate_training_csv.py \
         --csv ${RESULTS_DIR}/iter${N}/dataset/train_combined_iter${N}.csv \
-        --workspace-root /home/shadeform/workspace \
-        [--validation-csv /home/shadeform/workspace/train/base/validation_set.csv]
+        --workspace-root /home/user/workspace \
+        [--validation-csv /home/user/workspace/train/base/validation_set.csv]
 """
 
 from __future__ import annotations

@@ -15,8 +15,8 @@ is passed — the resume path is supposed to read disk, not regenerate.
 CLI:
 
     python scripts/init_deft_state.py \
-        --results-dir /home/shadeform/workspace/results/run_20260514_143000 \
-        --workspace /home/shadeform/workspace \
+        --results-dir /home/user/workspace/results/run_20260514_143000 \
+        --workspace /home/user/workspace \
         --kpi-target "FAR < 10% at recall=100%" \
         --max-iterations 2 \
         --num-gpus 4 \

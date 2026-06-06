@@ -5,7 +5,7 @@ description: >
   baseline evaluate, RCA, ingestion of customer-supplied pre-generated AnomalyGen images, k-NN mining,
   retraining, and deployment gating until FAR / recall KPI targets are met. EA variant — does not run
   AnomalyGen inline; the customer pre-generates synthetic NG/OK pairs out-of-band and the loop ingests them.
-  Use for prompts like "run the DEFT loop", "fine-tune until FAR < 0.1% at recall=100%", or "improve my AOI
+  Use for prompts like "run the DEFT loop", "fine-tune until FAR below 0.1% at recall=100%", or "improve my AOI
   ChangeNet model with RCA and pre-generated synthetic defects"; do not use for standalone TAO training,
   one-off inference, generic anomaly generation, or RCA-only analysis.
 license: Apache-2.0 AND CC-BY-4.0
