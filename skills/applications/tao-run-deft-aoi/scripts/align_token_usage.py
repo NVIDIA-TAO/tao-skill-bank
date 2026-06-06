@@ -35,7 +35,7 @@ CLI:
     # or auto-resolve the project dir from cwd (default: current cwd):
     python scripts/align_token_usage.py \
         --log-path /abs/path/results/loop_log.jsonl \
-        --cwd /home/user/tao-skills-external
+        --cwd ~/tao-skills-external
 
 The per-entry `tokens` field shape:
 
