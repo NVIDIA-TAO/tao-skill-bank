@@ -150,7 +150,7 @@ Available via `brev search`:
 
 ## Storage
 
-No shared NFS/Lustre. All data flows through S3 via the script_runner's fsspec integration. Instance-local disk at `/home/ubuntu/` persists across stop/start but not across delete/create.
+No shared NFS/Lustre. All data flows through S3 via the script_runner's fsspec integration. Instance-local disk under the login user's home directory (`$HOME`) persists across stop/start but not across delete/create.
 
 ## Docker on Brev
 
@@ -162,7 +162,7 @@ brev exec <instance> -- docker login nvcr.io -u '$oauthtoken' -p <NGC_KEY>
 
 # Run a TAO training job
 brev exec <instance> -- docker run --gpus all --rm \
-  -v /home/ubuntu/data:/data \
+  -v $HOME/data:/data \
   nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt \
   visual_changenet train -e /data/spec.yaml
 ```
