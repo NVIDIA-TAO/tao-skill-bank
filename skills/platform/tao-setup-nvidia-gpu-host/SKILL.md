@@ -66,6 +66,16 @@ bash skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh 
 bash skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh --backend kubernetes --check-only
 ```
 
+> ⚠️ **Note:** `--yes` auto-confirms an unattended installation of system
+> packages (NVIDIA driver branch 580, CUDA Toolkit 13.0, NVIDIA Container
+> Toolkit, and — for Docker backends — Docker) and modifies the host: it adds
+> NVIDIA package repositories, may restart Docker, and adds the invoking user
+> to the `docker` group. Run `--check-only` first to preview what is missing,
+> review this script, and only use `--install --yes` on a host you control and
+> with the privileges to change it. Omitting `--yes` keeps `--install` but
+> prompts interactively (`Continue? [y/N]`) with the exact package list before
+> making any changes.
+
 In an installed plugin copy that exposes `skills/`, use:
 
 ```bash
