@@ -95,7 +95,8 @@ passwordless SSH fails.
 - **SSH_AUTH_SOCK** (advanced fallback): SSH agent socket with an accepted key
   already loaded. Prefer `SSH_KEY_PATH` in user-facing remediation prompts.
 - **SLURM_BASE_RESULTS_DIR** (optional): Base shared filesystem path. Default
-  convention from `tao-core` is `/lustre/fsw/portfolios/edgeai/users/$USER`.
+  convention from `tao-core` is `/lustre/fsw/portfolios/edgeai/<your-dir>`,
+  where `<your-dir>` is your per-user directory on the cluster.
 - **SLURM_ACCOUNT** (usually required by site policy): Account charged by
   `#SBATCH --account`.
 
@@ -154,8 +155,10 @@ fail inside the first training job.
 Results default to:
 
 ```text
-/lustre/fsw/portfolios/edgeai/users/$USER/results/<job_id>
+/lustre/fsw/portfolios/edgeai/<your-dir>/results/<job_id>
 ```
+
+`<your-dir>` is your per-user directory on the cluster.
 
 The runner sets `TAO_API_RESULTS_DIR` to the parent results directory because
 container code appends the job id when writing status and artifacts.
