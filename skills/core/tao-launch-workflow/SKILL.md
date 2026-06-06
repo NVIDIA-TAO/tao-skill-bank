@@ -215,8 +215,9 @@ Accept dataset inputs in either mode:
 Ask for dataset examples that match the selected platform:
 
 - SLURM: shared cluster paths such as
-  `/lustre/fsw/portfolios/<team>/users/$USER/data/<model>/train`, or direct
-  spec paths under `/lustre/...`.
+  `/lustre/fsw/portfolios/<team>/<your-dir>/data/<model>/train` (where
+  `<your-dir>` is your per-user directory on the cluster), or direct spec
+  paths under `/lustre/...`.
 - Lepton, Brev, Kubernetes: usually `s3://bucket/path/train` and
   `s3://bucket/path/eval` unless the platform profile mounts shared storage.
 - Local Docker: local paths visible to the Docker host, such as
