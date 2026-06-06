@@ -17,7 +17,7 @@ compatibility: Requires docker + nvidia-container-toolkit. Workflows (tao-run-au
 metadata:
   author: NVIDIA Corporation
   version: "0.4.0"
-allowed-tools: Read Bash Write Skill
+allowed-tools: Read Skill Bash Write
 tags:
 - tao
 - applications
