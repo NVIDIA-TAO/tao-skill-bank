@@ -6,7 +6,7 @@ actions:
     outputs:
       runtime_status: {type: text}
   install_docker:
-    command: bash skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh --backend docker --install --yes
+    command: bash skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh --backend docker --install
     outputs:
       runtime_status: {type: text}
   check_kubernetes:
@@ -14,6 +14,6 @@ actions:
     outputs:
       runtime_status: {type: text}
   install_kubernetes:
-    command: bash skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh --backend kubernetes --install --yes
+    command: bash skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh --backend kubernetes --install
     outputs:
       runtime_status: {type: text}
