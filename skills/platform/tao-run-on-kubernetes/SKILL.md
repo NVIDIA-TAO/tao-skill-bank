@@ -97,7 +97,7 @@ GPU capacity before submitting.
   - In-cluster service account — used when running inside a pod (no kubeconfig needed)
 - **TAO_K8S_NAMESPACE** (optional): default namespace for Job submission. Defaults to `default`.
 - **TAO_K8S_CONTEXT** (optional): kubeconfig context name to switch clusters.
-- **NGC_KEY** (optional): for nvcr.io image pulls. Pass `image_pull_secret="<existing-secret-name>"` to `create_job` if you've pre-created an image-pull secret in the target namespace.
+- **NGC_KEY** (optional): for nvcr.io image pulls. If you've pre-created an image-pull secret in the target namespace, pass its name to `create_job` via the `image_pull_secret` argument.
 - **ACCESS_KEY / SECRET_KEY / S3_BUCKET_NAME / S3_ENDPOINT_URL** (optional): for S3 dataset I/O via the SDK's `inputs`/`outputs` script_runner wrapping.
 
 Do not ask for Lepton, Brev, or SLURM credentials for Kubernetes runs. Ask for
@@ -260,7 +260,7 @@ The TAO SDK's Indexed Job path is intentionally simple and dependency-free; if y
 
 **`No nvidia.com/gpu resources allocatable on the cluster`** — the GPU Operator (or NVIDIA Device Plugin) isn't installed. Install per the link above; verify with `kubectl get nodes -o jsonpath='{.items[*].status.allocatable}'`.
 
-**`ImagePullBackOff` / `ErrImagePull`** — the cluster can't pull the image. For nvcr.io: pre-create an image-pull secret in the namespace and pass `image_pull_secret="<name>"`:
+**`ImagePullBackOff` / `ErrImagePull`** — the cluster can't pull the image. For nvcr.io: pre-create an image-pull secret in the namespace and pass its name via the `image_pull_secret` argument:
 ```bash
 kubectl create secret docker-registry ngc-pull-secret \
   --docker-server=nvcr.io \
