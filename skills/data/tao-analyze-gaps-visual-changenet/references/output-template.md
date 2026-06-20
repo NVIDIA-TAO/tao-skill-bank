@@ -1,6 +1,6 @@
-# VCN Gap Analysis RCA Report Structure
+# Output Report Structure
 
-Keep the RCA write-up tight (1000-1800 words). This is a computational gap analysis, not a deep RCA - depth comes from accurate numbers and a clear action list, not narrative.
+Keep the report tight (1000–1800 words). This is a computational gap analysis, not a deep RCA — depth comes from accurate numbers and a clear action list, not narrative.
 
 ```
 # VCN Gap Analysis Report: <Experiment Name>
@@ -54,4 +54,4 @@ is per-lighting, but the table is per-sample.)
 4. **Systematic failures** — if any visual spot-check sample is tagged `systematic`, flag the failure mode (which lighting? which component family?) for model architecture review.
 ```
 
-When `unreachable_kpi.txt` exists, replace sections 3-6 with a single short section quoting that file's contents and stating the model cannot meet the KPI at any threshold. Section 7 then collapses to one recommendation: retrain or relabel.
+When `unreachable_kpi.txt` exists, replace sections 3–6 with a single short section quoting that file's contents and stating the model cannot meet the KPI at any threshold. Section 7 then collapses to one recommendation: retrain or relabel.

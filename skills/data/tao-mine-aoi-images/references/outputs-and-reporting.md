@@ -1,4 +1,27 @@
-# Mining Reporting Specification
+# Outputs and Reporting
+
+## Output layout
+
+Write everything into a timestamped folder under the experiment / iteration directory. The packaging hook will add `mining_config/` and `claude_session.jsonl` automatically when `Mining_Report.md` is written.
+
+```
+<output_dir>/mining_results/YYYY-MM-DD_HHMMSS/
+├── Mining_Report.md            # Full mining report
+├── embedding_spec.yaml         # The -e spec used for Steps 1 and 2
+├── mining_spec.yaml            # The -e spec used for Step 3
+├── target_embeddings.parquet   # Step 1 output (filepath, embedding, + carried metadata)
+├── source_embeddings.parquet   # Step 2 output (filepath, embedding, + carried metadata)
+├── mined.parquet               # Step 3 output — unique mined source filepaths
+├── mining_summary.txt          # Auto-emitted next to mined.parquet by the container
+├── mining_config/              # Auto-copied by hook
+└── claude_session.jsonl        # Auto-copied by hook
+```
+
+At the start of the run, get the real timestamp by running `date +%Y-%m-%d_%H%M%S` in Bash. Do NOT hardcode or guess. If the user specifies a custom output path, use it directly but maintain the same internal layout.
+
+The mined parquet is the artifact downstream training consumes. The two embedding parquets are intermediate but worth retaining: they are reusable across multiple mining runs against the same source pool, and they are the only place to look when a "looks unrelated" report needs encoder-level debugging.
+
+## Report template
 
 Keep the report tight (600–1200 words). Mining is a deterministic pipeline; the value is making the encoder choice, the row counts, and any silent filter no-ops auditable — not narrative.
 
