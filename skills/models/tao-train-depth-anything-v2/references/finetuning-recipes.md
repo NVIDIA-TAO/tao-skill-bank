@@ -1,7 +1,5 @@
 # Finetuning Recipes
 
-Relative and Metric variant finetuning recipes for `depth_net` mono models.
-
 ## Relative Variant Finetuning Recipe
 
 Relative finetune from a TAO-trained `RelativeDepthAnything` checkpoint:
@@ -20,7 +18,7 @@ The dataset block follows **Step 2 — Pair `model_type` and `dataset_name`** in
 
 If the goal is a sanity check (1-epoch loss-decreasing, exit 0) rather than convergent finetune, use the released checkpoint directly for `evaluate` / `inference` / `export` instead of running `train` — a 1-epoch finetune at any LR is unlikely to reach the released benchmark and will measure the warmup transient, not skill correctness.
 
-The relative variant emits scale-shift-invariant disparity (unbounded). The deploy-side evaluator runs LSQ alignment + GT disparity inversion; ensure the deploy spec sets `model.model_type: RelativeDepthAnything` so those paths engage (see `tao-deploy-depth-anything-v2.md`).
+The relative variant emits scale-shift-invariant disparity (unbounded). The deploy-side evaluator runs LSQ alignment + GT disparity inversion; ensure the deploy spec sets `model.model_type: RelativeDepthAnything` so those paths engage (see references/tao-deploy-depth-anything-v2.md).
 
 ## Metric Variant Finetuning Recipe
 
@@ -82,7 +80,7 @@ A 1-epoch run with `metric_depth_head` random init will not reach released-check
 
 **Sanity-run PASS criteria — entrypoint `Execution status: PASS` is not sufficient**:
 
-The trainer's `Execution status: PASS` only signals epoch completion — it does not check for `train_loss = NaN`. A from-scratch metric head with low learning rate can produce `train_loss = NaN` while `val/loss` and the entrypoint PASS remain misleadingly clean. Inspect the `train_loss_step` values in the run log directly; PASS means *only* if the values are finite and decreasing.
+The trainer's `Execution status: PASS` only signals epoch completion — it does not check for `train_loss = NaN`. A from-scratch metric head with low learning rate can produce `train_loss = NaN`; on relative-depth smoke data, `val/loss` can also be `NaN` while finite validation accuracies such as `val/d1` are still emitted. Inspect the `train_loss_step` values in the run log directly; PASS means *only* if the values are finite and decreasing.
 
 Mitigations to try in order if NaN is observed:
 - Increase `dataset.train_dataset.batch_size` to 2 or higher (the per-batch variance computation has unstable degrees-of-freedom at batch_size 1).
