@@ -1,6 +1,4 @@
-# Quick Start (AOI Worked Example) and Non-AOI Variant
-
-## Quick Start (AOI worked example)
+# Quick Start (AOI Worked Example)
 
 This is what the agent says to the user when starting fresh from "run the AOI workflow":
 
@@ -15,14 +13,3 @@ This is what the agent says to the user when starting fresh from "run the AOI wo
 > Total cost is `<N_automl>` AutoML training jobs × 2 sweeps + `<M_iter>` DEFT iterations (each with SDG + retrain). No extra baseline retrain at the front; no extra retrain at the end — Phase 1's winner is DEFT's baseline, Phase 3's winner is the deliverable. If you can tell me roughly how long one ChangeNet training run takes on your hardware I can give you a wall-clock estimate. OK to proceed?
 
 After confirmation, invoke `tao-skill-bank:tao-run-automl` (Phase 1), write the merged spec, pre-seed `deft_state.json`, invoke `tao-skill-bank:tao-run-deft-aoi` with every input pre-supplied so its inline summary is a display step rather than a re-prompt, then `tao-skill-bank:tao-run-automl` again (Phase 3). No further user pauses unless a downstream skill hits an unrecoverable hard-stop gate (called out in the consolidated summary). Summarize the trajectory at the end: baseline AutoML best → DEFT iter 1 → ... → DEFT iter N_final → Phase 3 best, so the user sees where the gains came from.
-
-## Non-AOI DEFT applications
-
-Same three-phase pattern applies to other DEFT skills. Swap:
-
-- `network_arch` to the relevant model
-- The DEFT skill invoked in Phase 2
-- The "best HP spec file" and "best HP checkpoint" path conventions to whatever the target DEFT skill expects
-- The augmented-CSV path in Phase 3 to whatever the target DEFT skill produces
-
-The handoff shape — Phase 1 emits a *spec + checkpoint* (the checkpoint pre-seeds the DEFT baseline), Phase 2 consumes both and emits an augmented dataset, Phase 3 emits the final checkpoint — is identical. The Phase 1 → Phase 2 baseline-skip mechanism is generic: any DEFT-style loop that exposes a resumable baseline state can be seeded the same way.

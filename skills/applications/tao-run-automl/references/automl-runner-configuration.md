@@ -1,28 +1,59 @@
-# AutoML Settings and Run Configuration
+# TAO AutoML Runner Configuration
 
-Step 3 of the workflow: configure and run. This covers the runner shapes, the `automl_settings` keys, `kpi` metric resolution, the LLM analyzer toggle, and `spec_overrides`.
+Runner construction, SDK handoff examples, settings keys, metrics, custom parameter ranges, spec overrides, and WandB setup.
 
-## Minimal Example
+Load this file only when the compact `SKILL.md` points here for the current task. If this reference conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or platform/model skills, the compact/current source wins.
+
+## Contents
+
+- Minimal Example
+- Pick whichever SDK matches where you want trials to run. AutoMLRunner is
+- platform-agnostic — none of the SDKs is a default; the user picks.
+- from tao_sdk.platforms.slurm      import SlurmSDK      # SLURM cluster
+- from tao_sdk.platforms.kubernetes import KubernetesSDK # K8s (EKS / GKE / on-prem)
+- from tao_sdk.platforms.docker     import DockerSDK     # local Docker daemon
+- Full Example (all options)
+- LLM-Powered Algorithm Example
+- Programmatic API (without runner)
+- `automl_settings` keys
+- `kpi` metric resolution
+- `custom_param_ranges` format
+- Model-specific search-space rules
+- LLM Analyzer (server-side range narrowing)
+- `spec_overrides`
+- WandB Experiment Tracking
+- Setup
+- or (when reinstalling tao-run-automl with the wandb extra):
+- `pip install "$(${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py wheels.tao_automl_brev | sed 's/]/,wandb]/')"`
+- How it works
+- Minimal WandB setup
+- Option 1: via config dict
+- Option 2: environment variable (simpler)
+- export WANDB_API_KEY=your-key
+- Dashboard features
+
+## Step 3: Configure and Run
+
+### Minimal Example
 
 ```python
 from datetime import datetime
 from pathlib import Path
 
 # Pick whichever SDK matches where you want trials to run. AutoMLRunner is
-# platform-agnostic — none of the 5 SDKs is a default; the user picks.
-from tao_sdk.platforms.lepton     import LeptonSDK     # DGX Cloud Lepton
+# platform-agnostic — none of the SDKs is a default; the user picks.
+from tao_sdk.platforms.brev       import BrevSDK       # Brev GPU instances
 # from tao_sdk.platforms.slurm      import SlurmSDK      # SLURM cluster
 # from tao_sdk.platforms.kubernetes import KubernetesSDK # K8s (EKS / GKE / on-prem)
 # from tao_sdk.platforms.docker     import DockerSDK     # local Docker daemon
-# from tao_sdk.platforms.brev       import BrevSDK       # Brev GPU instances
 from tao_automl.runner import AutoMLRunner
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-sdk = LeptonSDK()                                # reads platform credentials from env
+sdk = BrevSDK()                                  # reads platform credentials from env
 runner = AutoMLRunner(
     sdk=sdk,
-    skill_dir=SKILL_BANK / "models" / network_arch,           # SKILL_BANK = Path("<bank-root>")
+    skill_dir=SKILL_BANK / "skills" / "models" / model_skill, # resolved skill dir
     action="train",
 )
 result = runner.run(
@@ -37,11 +68,11 @@ result = runner.run(
     # See each platform's SKILL.md for the kwargs each accepts.
     gpu_count=8,
     num_nodes=1,
-    dedicated_node_group="my-h100-pool",          # Lepton-specific
+    gpu_type="H100",                             # Brev-specific
 )
 ```
 
-## Full Example (all options)
+### Full Example (all options)
 
 ```python
 def my_eval(rec, train_job_id):
@@ -84,28 +115,27 @@ result = runner.run(
     on_result=lambda r, metric, status: print(f"rec {r.id} {status} → {metric}"),
 
     # --- Platform create_job kwargs (forwarded as **platform_kwargs) ---
-    # Lepton:     dedicated_node_group, resource_shape, num_nodes, gpu_count
     # SLURM:      partition, account, num_nodes, gpu_count
     # Kubernetes: namespace, node_selector, tolerations, num_nodes, gpu_count
     # Docker:     mounts, gpu_count
     # Brev:       instance_id, gpu_type, gpu_count
     gpu_count=8,
     num_nodes=1,
-    dedicated_node_group="my-h100-pool",
+    gpu_type="H100",
 )
 ```
 
-## LLM-Powered Algorithm Example
+### LLM-Powered Algorithm Example
 
 For `llm`, `hybrid`, or `autoresearch`, use the same generic runner shape as above, plus the required LLM endpoint, model, and key in `automl_settings`. All model-specific hyperparameters, metric extractors, and `spec_overrides` must still come from the model skill.
 
 **LLM endpoint configuration** (in order of precedence):
-1. `automl_settings` keys: `llm_endpoint`, `llm_model`, `llm_api_key`
+1. `automl_settings` keys: `llm_endpoint`, `llm_model`, `llm_api_key`; aliases `base_url`, `model`, and `api_key` are also accepted.
 2. Environment variables: `AUTOML_LLM_ENDPOINT`, `AUTOML_LLM_MODEL`, `AUTOML_LLM_API_KEY`
 3. Fallback env var for API key: `NVIDIA_API_KEY`
-4. Defaults: NVIDIA NIM endpoint (`https://inference-api.nvidia.com`) with `meta/llama-3.1-70b-instruct`. **Note:** the code hardcodes `https://integrate.api.nvidia.com/v1` as the fallback which may 404 — always pass `llm_endpoint` explicitly or set `AUTOML_LLM_ENDPOINT`.
+4. Defaults: NVIDIA inference endpoint (`https://inference-api.nvidia.com`) with `gcp/google/gemini-3.1-pro-preview`. Always pass the endpoint, model, and key explicitly for reproducible LLM-based testing.
 
-## Programmatic API (without runner)
+### Programmatic API (without runner)
 
 For tighter control, use the `AutoML` class directly:
 
@@ -134,7 +164,7 @@ automl.finish()   # close WandB run
 print("Best:", automl.get_best().specs)
 ```
 
-## `automl_settings` keys
+### `automl_settings` keys
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -147,18 +177,47 @@ print("Best:", automl.get_best().specs)
 | `automl_max_concurrent` | int | 4 | Max parallel configs (asha only) |
 | `automl_population_size` | int | 10 | Population size (pbt only) |
 | `automl_max_experiments` | int | 50 | Max experiments (autoresearch only) |
-| `llm_endpoint` | str | NVIDIA NIM | OpenAI-compatible API endpoint (llm, hybrid, autoresearch) |
-| `llm_model` | str | `meta/llama-3.1-70b-instruct` | LLM model name (llm, hybrid, autoresearch) |
+| `llm_endpoint` | str | `https://inference-api.nvidia.com` | OpenAI-compatible API endpoint (llm, hybrid, autoresearch) |
+| `llm_model` | str | `gcp/google/gemini-3.1-pro-preview` | LLM model name (llm, hybrid, autoresearch) |
 | `llm_api_key` | str | from env | API key for the LLM endpoint |
 | `research_program` | str | None | Free-text research directives for the autoresearch agent |
 | `automl_delete_intermediate_ckpt` | bool | False | Delete non-best checkpoints to save storage. Hyperband-family algorithms defer deletion until bracket completion for safety. |
 | `override_automl_disabled_params` | bool | False | Include params whose schema `automl_enabled` is False. For advanced users who want to search over params the network author didn't flag for AutoML. |
 
-## `kpi` metric resolution
+### `kpi` metric resolution
 
 When `metric="kpi"`, the controller resolves the actual metric key from the network config's `metrics.monitoring_metric` field. Whether `kpi` is appropriate, and whether a custom `metric_extractor` is needed, is model-specific. Follow the model skill's **AutoML / HPO Notes**.
 
-## LLM Analyzer (server-side range narrowing)
+### `custom_param_ranges` format
+
+Each entry can include:
+
+| Field | Type | Description |
+|---|---|---|
+| `valid_min` | float/int/list | Min value. For list-valued parameters, pass the list shape required by the schema. |
+| `valid_max` | float/int/list | Max value. Same list rules as min. |
+| `valid_options` | list[str] | For categorical/ordered params: restrict to these values |
+| `option_weights` | list[float] | Sampling weights for `valid_options`. Must match length. Higher weight = more likely to be sampled. |
+| `disable_list` | bool | For params that can be float OR list: `True` keeps it as a single float for optimization, bypassing network list helpers. Use only when supported by the schema/model skill. |
+
+Example with all features:
+
+```python
+custom_param_ranges={
+    "<float_param>": {"valid_min": min_value, "valid_max": max_value, "disable_list": True},
+    "<categorical_param>": {
+        "valid_options": ["option_a", "option_b"],
+        "option_weights": [0.7, 0.3],
+    },
+    "<list_param>": {"valid_min": [min_a, min_b], "valid_max": [max_a, max_b]},
+}
+```
+
+### Model-specific search-space rules
+
+Some networks have built-in search-space exclusions or algorithm restrictions. Do not document them here; read the model skill's **AutoML / HPO Notes** and let schema validation report unsupported combinations.
+
+### LLM Analyzer (server-side range narrowing)
 
 The controller supports automatic range narrowing via the LLM analyzer. Enable via environment variables before launching:
 
@@ -170,8 +229,64 @@ os.environ["AUTOML_LLM_ANALYZER_NARROW_RANGES"] = "true" # auto-tighten custom_p
 
 When enabled, after every N completed experiments the analyzer reviews patterns, assesses convergence, and optionally narrows search ranges to focus on promising regions. This happens server-side and persists the narrowed ranges.
 
-## `spec_overrides`
+### `spec_overrides`
 
 `spec_overrides` keys are model-specific. Read the model skill's **Training Requirements**, **Per-Action Dataset Requirements**, and **Typical Spec Overrides** sections, then pass only the keys required or recommended there. Do not infer override keys from examples in this AutoML skill.
 
 Every key you pass is validated against the skill's spec schema. Typos that look like existing keys raise `ValueError` with a suggestion; genuinely-new keys are accepted with a warning.
+
+---
+
+## WandB Experiment Tracking
+
+AutoML optionally integrates with [Weights & Biases](https://wandb.ai) to track all experiments in a single dashboard.
+
+### Setup
+
+```bash
+pip install wandb
+# or (when reinstalling tao-run-automl with the wandb extra):
+#   pip install "$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_automl_brev | sed 's/]/,wandb]/')"
+```
+
+### How it works
+
+When `wandb_config={"enabled": True}` is passed:
+
+1. The controller creates a WandB **run** named `automl_brain` in the specified project.
+2. All recommendations are grouped under a WandB **group** (e.g. `automl_abc123`) so parent + child training runs appear together in the dashboard.
+3. After every result, a **WandB table** (`automl_experiments`) is logged containing:
+   - `experiment_id`, `job_id`, `status`, metric value, `best_epoch_number`
+   - All varying hyperparameter values
+4. Call `automl.finish()` (or let `runner.run()` complete) to finalize the WandB run.
+
+### Minimal WandB setup
+
+```python
+# Option 1: via config dict
+result = runner.run(
+    ...,
+    wandb_config={
+        "enabled": True,
+        "project": "tao-hpo",
+        "api_key": "your-key",  # or set WANDB_API_KEY env var
+    },
+)
+
+# Option 2: environment variable (simpler)
+# export WANDB_API_KEY=your-key
+result = runner.run(
+    ...,
+    wandb_config={"enabled": True, "project": "tao-hpo"},
+)
+```
+
+### Dashboard features
+
+Once tracking is active, you can:
+- **Compare all trials** side-by-side in the WandB table view
+- **Sort by metric** to find the best config instantly
+- **Group by hyperparameter** to see which values correlate with good results
+- **Link to child training runs** if the compute backend also logs to WandB (group name is available via `automl.wandb_group`)
+
+---

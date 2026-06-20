@@ -1,10 +1,15 @@
-# Phase Handoffs and Warm-Start
+# Phase Handoffs — Baseline Pre-Seed and Phase 3 Warm-Start
 
-This covers the Phase 1 → Phase 2 baseline pre-seed (spec + checkpoint), the Phase 2 quality check, and the Phase 3 warm-start `spec_overrides` pattern plus wiring Phase 3's output back into the DEFT report.
-
-## Phase 1 → Phase 2 handoff
+## Phase 1 → Phase 2 handoff (spec + checkpoint)
 
 Phase 1 hands over **two artifacts**: the winning *spec* and the winning *checkpoint*. Retraining the same HPs in DEFT's baseline step is wasted compute — instead, pre-seed DEFT's baseline state from Phase 1's outputs so DEFT starts at baseline inference → evaluate → RCA → iter 1.
+
+In the mental model, Phase 1 → Phase 2 is a *spec file* AND the *winning checkpoint* (Phase 1 already trained a model at those HPs — retraining the same HPs in DEFT's baseline step is wasted compute). The bridge:
+  1. Deep-merges Phase 1's winning HPs onto `<workspace>/specs/baseline_spec.yaml` → writes `specs/baseline_spec_automl.yaml` (DEFT reads this).
+  2. Copies the Phase 1 winning checkpoint into `${RESULTS_DIR}/baseline/train/` with the filename DEFT expects.
+  3. Pre-populates `${RESULTS_DIR}/deft_state.json` and `${RESULTS_DIR}/loop_log.jsonl` so DEFT sees baseline train as already completed and resumes at baseline inference → evaluate → RCA → iter 1.
+
+DEFT itself stays plain-train (`automl_policy: off` inside the DEFT loop is preserved).
 
 **Step 1 — Write the merged spec.** Deep-merge `result["best"]["specs"]` onto `<workspace>/specs/baseline_spec.yaml` (preserve dataset paths, model architecture, lighting layout; overwrite only the HPs AutoML tuned) and write to `<workspace>/specs/baseline_spec_automl.yaml`. Copy this onto the path DEFT reads:
 
@@ -36,14 +41,25 @@ Append a matching `baseline.train` entry to `loop_log.jsonl` via `scripts/log_st
 
 > **DEFT honors this handoff.** `tao-run-deft-aoi` checks `iterations.baseline.stage_completed == "train"` on startup (Workflow step 2 / Pipeline baseline block in its `SKILL.md`) and resumes at baseline inference against the pre-seeded checkpoint — no retrain.
 
-## Quality check before handing off
+### Quality check before handing off
 
 Run a quick eval of the winning checkpoint against the held-out set:
 
 - Per-class prediction counts — if it collapsed to one class, the winning HPs are useless for Phase 2. Evaluate the 2nd or 3rd best instead.
 - Compare to a zero-shot ChangeNet baseline. If AutoML did not improve over zero-shot, surface that to the user and pause before continuing.
 
-## Phase 3 warm-start — why it is mandatory
+## Phase 2 → Phase 3 handoff (training CSV + iter winner checkpoint)
+
+A *training CSV* AND the *iter winner's checkpoint*. The CSV (`train_combined_iter${N_final}.csv`) is fed to AutoML as the training data; the checkpoint (`iterations.<best>.best_ckpt_path` from `deft_state.json`) is wired into each rec's `train.pretrained_model_path` so Phase 3 **fine-tunes from Phase 2's winner** rather than training from scratch. Without this warm-start Phase 3 routinely regresses vs the iter winner — small epoch budgets aren't enough to reconverge a from-scratch model on the augmented dataset, and AutoML ends up tuning a worse base. Phase 3's winning checkpoint is the pipeline's deliverable — no separate retrain step after Phase 3.
+
+After the DEFT loop exits (KPI met or `max_iterations` reached), capture two values from `deft_state.json`:
+
+- `iterations.<best>.best_ckpt_path` — the loop's best plain-train checkpoint
+- The final iteration label `N_final` — used to locate the augmented training CSV
+
+If the DEFT loop hard-stops on an unrecoverable gate, **skip Phase 3**. There is no validated augmented CSV to feed AutoML.
+
+### Why the warm-start is mandatory
 
 Phase 3 receives a small augmented dataset (often a few hundred rows) and a tight epoch budget per rec (typically the same `num_epochs` Phase 1 used). With **no warm-start**, every rec starts from random init and only has 10-20 epochs to reconverge — not enough to outperform the iter winner which already trained for ~baseline + N×iter epochs. Result: Phase 3's `val_loss` regresses by 0.03-0.05 vs iter1, and the `_pick_best` safety net silently rolls back to the iter winner, wasting Phase 3's entire compute.
 
@@ -51,7 +67,7 @@ With warm-start, each rec is doing **targeted HP refinement on a converged model
 
 Tradeoff: warm-starting from `iterations.<best>.best_ckpt_path` means Phase 3 is exploring a narrower region around the iter winner's weights, so it won't discover radically different optima — but for HP *refinement* on a small augmented set, that's the right inductive bias. If you want broad exploration instead, run a separate `tao-run-automl` sweep with no warm-start; don't conflate the two.
 
-## Concrete `spec_overrides` pattern
+### Concrete `spec_overrides` pattern
 
 ```python
 import json
@@ -67,7 +83,7 @@ spec_overrides["train"]["pretrained_model_path"] = warmstart_ckpt
 
 Output goes to `${RESULTS_DIR}/final_automl/`. The winning checkpoint of this sweep is the pipeline's deliverable.
 
-## Wiring Phase 3's output back into the DEFT report
+### Wiring Phase 3's output back into the DEFT report
 
 `tao-run-deft-aoi`'s `scripts/prepare_inference_spec.py` selects the lowest-`far_pct` entry from `deft_state.json["iterations"]`. To make Phase 3's checkpoint visible to the handoff:
 
