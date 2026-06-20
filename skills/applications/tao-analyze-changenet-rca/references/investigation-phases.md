@@ -1,4 +1,4 @@
-# Investigation Phases (Detailed Procedures)
+# Investigation Phases
 
 The investigation has 5 phases. Phase 1 (numbers) gives you hypotheses. Phase 2 (images) proves or disproves them. Phase 3 (cross-dimensional) finds hidden patterns. Phase 4 (config) explains the mechanism. Phase 5 (counterfactual) quantifies fixes. **Phase 2 is the core — spend the most effort there. Phase 5 is the most actionable — never skip it.**
 
@@ -269,3 +269,12 @@ For each root cause identified, simulate the fix:
    - Risk (could this make other metrics worse?)
 3. Identify the **minimum set of fixes** needed to reach the target KPI
 4. Flag if the target KPI is **unreachable** even with all fixes — and explain why (e.g., defects are genuinely invisible at this resolution)
+
+## Architecture Reference
+
+- **Learnable module**: `softmax(model(img1, img2), dim=1)[:, 1]` → score = P(defect). Higher = more defective.
+- **Euclidean module**: `F.pairwise_distance(embed1, embed2)` → score = distance. Higher = more different.
+- **WeightedRandomSampler**: `fail_wt = (num_pass / num_fail) * fpratio_sampling`. Defects sampled at fail_wt:1 rate.
+- **Image paths**: `{images_dir}/{input_path}/{object_name}_{light_condition}.{ext}`
+- **LR linear**: `lr * (1.0 - epoch / (num_epochs + 1))`
+- **Data loading**: `SiameseNetworkTRIDataset` for `num_golden=1`, `MultiGoldenDataset` for `num_golden>1`

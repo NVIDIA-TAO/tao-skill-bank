@@ -2,7 +2,7 @@ model_name: ''
 encryption_key: ''
 results_dir: ''
 wandb:
-  enable: true
+  enable: false
   project: TAO Toolkit
   entity: ''
   group: ''
@@ -36,53 +36,19 @@ dataset:
   segment:
     root_dir: ''
     label_transform: norm
-    data_name: LEVIR
+    data_name: custom
     dataset: CNDataset
     multi_scale_train: true
     multi_scale_infer: false
     num_classes: 2
     img_size: 224
-    batch_size: 8
+    batch_size: 1
     workers: 1
     shuffle: true
     image_folder_name: A
     change_image_folder_name: B
     list_folder_name: list
     annotation_folder_name: label
-    augmentation:
-      random_flip:
-        vflip_probability: 0.5
-        hflip_probability: 0.5
-        enable: true
-      random_rotate:
-        rotate_probability: 0.5
-        angle_list:
-        - 90
-        - 180
-        - 270
-        enable: true
-      random_color:
-        brightness: 0.3
-        contrast: 0.3
-        saturation: 0.3
-        hue: 0.3
-        enable: true
-        color_probability: 0.5
-      with_scale_random_crop:
-        scale_range:
-        - 1
-        - 1.2
-        enable: true
-      with_random_blur: true
-      with_random_crop: true
-      mean:
-      - 0.5
-      - 0.5
-      - 0.5
-      std:
-      - 0.5
-      - 0.5
-      - 0.5
     train_split: train
     validation_split: val
     test_split: test
@@ -104,7 +70,7 @@ dataset:
       csv_path: ''
       images_dir: ''
     image_ext: .jpg
-    batch_size: 8
+    batch_size: 1
     workers: 1
     fpratio_sampling: 0.1
     num_input: 1
@@ -125,31 +91,6 @@ dataset:
       - 0.226
       - 0.226
       - 0.226
-      random_flip:
-        vflip_probability: 0.5
-        hflip_probability: 0.5
-        enable: true
-      random_rotate:
-        rotate_probability: 0.5
-        angle_list:
-        - 90
-        - 180
-        - 270
-        enable: true
-      random_color:
-        brightness: 0.3
-        contrast: 0.3
-        saturation: 0.3
-        hue: 0.3
-        enable: true
-        color_probability: 0.5
-      with_scale_random_crop:
-        scale_range:
-        - 1
-        - 1.2
-        enable: true
-      with_random_blur: true
-      with_random_crop: true
       augment: false
     num_classes: 2
     num_golden: 1
@@ -197,23 +138,13 @@ train:
   precision: 32-true
   sync_batchnorm: false
   use_distributed_sampler: false
-evaluate:
-  num_gpus: 1
-  gpu_ids:
-  - 0
-  num_nodes: 1
-  checkpoint: ???
-  trt_engine: ''
-  results_dir: ''
-  batch_size: 8
-  vis_after_n_batches: 1
 quantize:
   backend: torchao
   mode: weight_only_ptq
   algorithm: minmax
   layers: []
   skip_names: []
-  model_path: ''
+  model_path: ???
   results_dir: ''
   backend_kwargs: {}
   device: cuda

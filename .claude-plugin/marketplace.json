@@ -14,6 +14,7 @@
       "source": "./",
       "strict": true,
       "skills": [
+        "./skills/data/paidf-anomalygen",
         "./skills/applications/tao-run-automl-deft-pipeline",
         "./skills/applications/tao-train-single-step",
         "./skills/applications/tao-analyze-changenet-rca",
