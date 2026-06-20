@@ -1,4 +1,4 @@
-# FoundationStereo Parameters and Evaluation Metrics
+# FoundationStereo Parameters and Defaults
 
 ## Important Parameters
 
@@ -33,3 +33,31 @@
 | `rmse` | RMSE on disparity values | sensitivity to large errors |
 
 The same evaluator also emits `abs_rel`, `sq_rel`, `rmse_log`. These are formulated for monocular depth (relative-error normalised by GT depth in metres) and produce numerically large, **non-meaningful** values when applied to disparity tensors. Ignore them for stereo evaluation; rely on `epe` / `bp*` / `d1` / `rmse`.
+
+## Multi-GPU / Multi-Node
+
+**Launch method:** Lightning-managed (single `python` process, Lightning spawns workers).
+
+| Spec Key | Description | Default |
+|----------|-------------|---------|
+| `train.num_gpus` | Number of GPUs | 1 |
+| `train.gpu_ids` | GPU device indices | [0] |
+| `train.num_nodes` | Number of nodes | 1 |
+| `train.distributed_strategy` | `ddp` or `fsdp` | `ddp` |
+
+Same DDP/FSDP behavior as depth-net-mono. Multi-node requires `WORLD_SIZE`, `NODE_RANK`, `MASTER_ADDR`, `MASTER_PORT` env vars.
+
+## Export / TRT Defaults
+
+- TRT data types: FP32, FP16.
+- Static-shape ONNX (`export.batch_size: 1`): `fp16` supported (recommended, best EPE).
+- Batch-only dynamic ONNX (`export.batch_size: -1`): `fp16` supported. Engine accepts variable batch size; height and width are pinned to the trace shape.
+- Height and width are always pinned to the trace shape; H/W-dynamic engines are not supported. Build separate engines for different (H, W) targets.
+- For the NGC release (576×960), set `export.batch_size: 1`, `export.opset_version: 17`, `export.on_cpu: True` (CPU export is required at 576×960 to avoid GPU OOM during the trace).
+- For user-trained fp16 export, pair `opset_version` to `on_cpu`: `on_cpu: True` (CPU trace) accepts either opset 16 or 17 deterministically; `on_cpu: False` (GPU trace) accepts only opset 16 (opset 17 + on_cpu=False is broken on TRT 10.13 fp16). At `on_cpu=False + opset 16` the fp16 build is occasionally non-deterministic — re-run on a `costTensor::indexOfMin` or `optimizer::reduce` assertion. fp32 builds are unaffected. See `tao-deploy-foundation-stereo.md` for the validation table.
+- `export.on_cpu` is driven by GPU trace memory: `False` for ≤320×736 (fits 47 GB VRAM), `True` for ≥480×736 (PyTorch trace OOMs at GPU). Prefer `on_cpu: True` whenever feasible — fp16 builds at `on_cpu=True` are empirically deterministic at every tested shape (including NGC release 576×960).
+- See `tao-deploy-foundation-stereo.md` for the three supported deploy paths (NGC static / user-trained static / user-trained batch-only-dynamic).
+
+## Hardware
+
+Minimum 1 GPU(s), recommended 4 GPU(s). 24GB+ (A100 recommended) VRAM per GPU. Stereo matching is memory intensive due to cost volume. Use `model.low_memory > 0` for constrained GPUs. fp32 recommended for training.

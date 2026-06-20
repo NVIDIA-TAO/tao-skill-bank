@@ -1,6 +1,20 @@
-# FoundationStereo Typical Spec Overrides
+# FoundationStereo Spec Overrides
 
-Data source overrides are **mandatory for every action** — the agent MUST construct data source paths from the Per-Action Dataset Requirements table and include them in `spec_overrides`. Each `data_sources` entry is a dict with **two mandatory fields**: `data_file` and `dataset_name`.
+## Per-Action Dataset Requirements
+
+| Action | Spec Key | Source | Files | List? |
+|---|---|---|---|---|
+| evaluate | dataset.test_dataset.data_sources | eval_dataset | data_file: annotations.txt + dataset_name | Yes |
+| inference | dataset.infer_dataset.data_sources | inference_dataset | data_file: annotations.txt + dataset_name | Yes |
+| quantize | dataset.train_dataset.data_sources | train_datasets | data_file: annotations.txt + dataset_name | Yes |
+| quantize | dataset.val_dataset.data_sources | eval_dataset | data_file: annotations.txt + dataset_name | Yes |
+| quantize | dataset.quant_calibration_dataset.images_dir | train_datasets | images.tar.gz | No |
+| train | dataset.train_dataset.data_sources | train_datasets | data_file: annotations.txt + dataset_name | Yes |
+| train | dataset.val_dataset.data_sources | eval_dataset | data_file: annotations.txt + dataset_name | Yes |
+
+## Typical Spec Overrides
+
+Data source overrides are **mandatory for every action** — the agent MUST construct data source paths from the Per-Action Dataset Requirements table above and include them in `spec_overrides`. Each `data_sources` entry is a dict with **two mandatory fields**: `data_file` and `dataset_name`.
 
 ```python
 S3_TRAIN = "aws://bucket/data/train"
@@ -42,6 +56,7 @@ S3_EVAL = "aws://bucket/data/eval"
     "dataset.test_dataset.data_sources": [
         {"data_file": f"{S3_EVAL}/annotations.txt", "dataset_name": "Middlebury"}
     ],
+    "evaluate.checkpoint": "<selected train/AutoML checkpoint>",
 }
 ```
 
@@ -50,16 +65,10 @@ S3_EVAL = "aws://bucket/data/eval"
 {
     "model.model_type": "FoundationStereo",
     "model.encoder": "vits",
+    "export.checkpoint": "<selected train/AutoML checkpoint>",
     "export.batch_size": 1,
     "export.input_height": 320,
     "export.input_width": 736,
-}
-```
-
-**gen_trt_engine:**
-```python
-{
-    "gen_trt_engine.batch_size": 1,
 }
 ```
 
@@ -73,18 +82,24 @@ S3_EVAL = "aws://bucket/data/eval"
     "dataset.infer_dataset.data_sources": [
         {"data_file": f"{S3_EVAL}/annotations.txt", "dataset_name": "GenericDataset"}
     ],
+    "inference.checkpoint": "<selected train/AutoML checkpoint>",
 }
 ```
 
 **quantize (mandatory data sources):**
 ```python
 {
+    "model.model_type": "FoundationStereo",
+    "model.encoder": "vits",
     "dataset.train_dataset.data_sources": [
         {"data_file": f"{S3_TRAIN}/annotations.txt", "dataset_name": "Middlebury"}
     ],
     "dataset.val_dataset.data_sources": [
         {"data_file": f"{S3_EVAL}/annotations.txt", "dataset_name": "Middlebury"}
     ],
-    "dataset.quant_calibration_dataset.images_dir": f"{S3_TRAIN}/images.tar.gz",
+    "dataset.quant_calibration_dataset.images_dir": f"{S3_TRAIN}/left",
+    "quantize.model_path": "<selected train/AutoML checkpoint>",
 }
 ```
+
+Known issue in `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.0.0-rc-226-multiarch`: stereo `depth_net quantize` reaches the checkpoint load path and then fails inside the SDK with `StereoDepthNetPlModel` missing `load_state_dict_from_checkpoint`. Keep `quantize.model_path` wired to the selected checkpoint; do not replace it with a latest-file guess.
