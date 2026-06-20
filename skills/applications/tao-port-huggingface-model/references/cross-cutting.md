@@ -14,13 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# Execution Platform, Environment Isolation & Debugging
+# Cross-Cutting Rules — Execution Platform, Environment Isolation, Debugging
 
-Cross-cutting operational rules for the TAO-HF integration workflow: which container runs what, how Python environments stay isolated, the build-test-debug loop, and the symptom-to-fix debugging playbook.
+These rules apply across every phase of the TAO-HF integration workflow.
 
 ---
 
-## Submodule Override — Working-Directory Layout
+## Submodule Override Strategy (full detail)
 
 The user clones the four TAO repos (`tao-core`, `tao-pytorch`, `tao-deploy`, `tao-dataservices`) independently into one working directory:
 
@@ -36,17 +36,37 @@ working-directory/
     └── tao-pytorch/     ← submodule at original commit
 ```
 
-The nested `tao-core/` submodules inside each repo point to the **original unmodified commit**. Modifications only exist in the top-level `tao-core/`. **Always install from the top-level `tao-core/`, never from `<repo>/tao-core/`.** In CI, Jenkinsfiles run `pip install tao-core/` (the submodule); the local override mounts the whole working directory at `/workspace`, installs `/workspace/tao-core` first, and puts the top-level tao-core first on `PYTHONPATH`. Using the nested submodule silently ignores all modifications — model configs, backbone mappings, etc. would not be present.
+The nested `tao-core/` submodules point to the **original unmodified commit**; modifications only exist in the top-level `tao-core/`. **Always install from the top-level `tao-core/`, never from `<repo>/tao-core/`** — the nested submodule silently ignores all modifications (model configs, backbone mappings, etc.). In CI, Jenkinsfiles run `pip install tao-core/` (the submodule); the local override is:
+
+1. **Mount the working directory** into the container: `-v $(pwd):/workspace`.
+2. **pip install order:** `pip install /workspace/tao-core` FIRST, before tao-pytorch or tao-deploy, so modified config schemas are used instead of the stale submodule.
+3. **PYTHONPATH:** top-level tao-core first, e.g. `-e PYTHONPATH=/workspace/tao-core:/workspace/tao-pytorch`.
+
+---
+
+## Cross-Phase Data Flow (full chain)
+
+```
+train → export → gen_trt_engine → inference / evaluate
+
+train produces:           <results_dir>/train/<model_name>_model_latest.pth
+export.checkpoint reads:  ${results_dir}/train/<model_name>_model_latest.pth
+export produces:          <results_dir>/export/<model_name>.onnx
+gen_trt_engine reads:     ${export.results_dir}/<model_name>.onnx
+gen_trt_engine produces:  <results_dir>/trt/<model_name>.engine
+inference reads:          inference.trt_engine = <engine_path>
+evaluate reads:           evaluate.trt_engine = <engine_path>
+```
 
 ---
 
 ## Execution platform
 
-Every test, smoke run, and end-to-end validation runs inside a locally prepared
-TAO Toolkit container (`tao-pytorch-base:latest`, `tao-deploy-base:latest`,
-optionally `tao-dataservices-base:latest` — all prepared in Phase 0). The
-platform skills own the *how* of running those containers; this workflow only
-specifies *what* to run inside them.
+This skill executes every test, smoke run, and end-to-end validation inside a
+locally prepared TAO Toolkit container (`tao-pytorch-base:latest`,
+`tao-deploy-base:latest`, optionally `tao-dataservices-base:latest` — all
+prepared in Phase 0). The platform skills own the *how* of running those
+containers; this skill only specifies *what* to run inside them.
 
 | Concern | Authoritative skill |
 |---|---|
@@ -75,22 +95,7 @@ only specify the *workflow-specific* additions (`-w /workspace/<repo>`,
 `PYTHONPATH=/workspace/tao-core:/workspace/<repo>`, the inner
 `pip install /workspace/tao-core && python setup.py develop && pytest ...`
 shell). If anything about the generic conventions changes, change it in the
-docker platform skill — do not fork them inside this workflow.
-
----
-
-## Development Loop
-
-At every implementation step:
-
-```
-1. Write code
-2. Test immediately (import check, unit test, or dry-run)
-3. If it fails → read traceback → diagnose root cause → fix → go to 2
-4. If it passes → move to next step
-```
-
-Do NOT accumulate untested code across multiple steps. Test early, test often. Writing all files first and only testing at the end makes debugging much harder because multiple bugs compound.
+docker platform skill — do not fork them inside this skill.
 
 ---
 
@@ -124,7 +129,7 @@ Rules:
    Container Toolkit) are owned by the `tao-setup-nvidia-gpu-host` skill, which
    handles the distro-specific package manager (`apt-get` on Debian/Ubuntu
    and derivatives, `dnf` / `yum` on Fedora/RHEL/Rocky/Alma, `zypper` on
-   openSUSE/SLES, manual instructions for other distros). This workflow never
+   openSUSE/SLES, manual instructions for other distros). This skill never
    issues `apt`/`dnf`/`zypper` commands directly — it only invokes
    `tao-setup-nvidia-gpu-host --check-only` and surfaces the error.
 3. **Container UID convention — depends on the workload:**
@@ -146,6 +151,13 @@ Rules:
      them between iterations — none of them is a source artifact.
 4. Remove the long-lived inspection container (`docker rm -f
    tao-hf-inspect`) at the end of Phase 1.
+
+---
+
+## Module pitfalls (tao-pytorch vs tao-deploy)
+
+- tao-pytorch and tao-deploy have **separate** `hydra_runner` and `monitor_status` implementations. Use the deploy versions in deploy scripts.
+- The `ExperimentConfig` is imported from `nvidia_tao_core` in both repos — same schema, same field paths.
 
 ---
 
