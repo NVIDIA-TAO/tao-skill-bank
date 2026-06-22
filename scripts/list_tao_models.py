@@ -215,6 +215,7 @@ def build_model_records(skill_bank: Path) -> list[dict[str, Any]]:
                     skill_info.get("automl_enabled", metadata.get("automl_enabled")),
                     default=True,
                 ),
+                "automl_blocked_reason": skill_info.get("automl_blocked_reason", ""),
                 "has_train_schema": has_train_schema,
                 "train_schema": f"models/{model}/{TRAIN_SCHEMA_REL.as_posix()}",
                 "train_schema_status": train_schema_reason,
@@ -256,6 +257,18 @@ def build_automl_support(skill_bank: Path) -> dict[str, Any]:
                     "network_arch": record["network_arch"],
                     "automl_enabled": False,
                     "reason": "automl_enabled is false in model metadata",
+                    "train_schema_status": record["train_schema_status"],
+                }
+            )
+            continue
+
+        if record.get("automl_blocked_reason"):
+            unsupported.append(
+                {
+                    "model": model,
+                    "network_arch": record["network_arch"],
+                    "automl_enabled": True,
+                    "reason": record["automl_blocked_reason"],
                     "train_schema_status": record["train_schema_status"],
                 }
             )

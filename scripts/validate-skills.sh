@@ -12,11 +12,13 @@
 #      section, a docker run code block, OR a references/skill_info.yaml link).
 #   5. No SDK symbols leak into model/data/application SKILL.md (platform/* exempt).
 #   6. Hook paths in skill frontmatter resolve to existing scripts.
+#   7. AutoML guidance keeps the automatic post-preflight baseline eval gate.
 #
 # Optional (validated only if the file exists):
-#   7. references/skill_info.yaml parses; if the skill is in models/ or data/ and declares
-#      it, container_image + at least one actions.*.command must be present.
-#   8. references/model_info.yaml (legacy name) parses if present — same rules.
+#   8. Any skill_info.yaml parses, including deploy/skill_info.yaml files.
+#   9. Container image keys resolve through versions.yaml, including action-level overrides.
+#  10. Model/data action contracts declare command, mode, inputs, outputs, and upload_excludes.
+#  11. references/model_info.yaml (legacy name) parses if present — same rules.
 #
 # Exit status = number of errors found.
 #
@@ -155,7 +157,7 @@ for skill_md in iter_skill_files():
         content = f.read()
     has_qs = re.search(r'^##\s+quick ?start', content, re.IGNORECASE | re.MULTILINE)
     has_dr = 'docker run' in content
-    has_sdk = re.search(r'sdk\.create_job|LeptonSDK|BrevSDK', content)
+    has_sdk = re.search(r'sdk\.create_job|BrevSDK', content)
     has_refs = (os.path.isfile(os.path.join(skill_dir, 'references/skill_info.yaml'))
                 or os.path.isfile(os.path.join(skill_dir, 'references/model_info.yaml')))
     # Local-Python or agent-prompt-driven skills: presence of scripts/ or hooks/ counts as runnable.
@@ -241,57 +243,159 @@ sys.exit(errs)
 PY
 [ $? -eq 0 ] && ok "all hook paths resolve" || errors=$((errors + $?))
 
-# ─── 6/7. optional structured metadata ──────────────────────────────────────
+# ─── 6. AutoML baseline eval guardrail ───────────────────────────────────────
+echo
+echo "=== 6. AutoML baseline eval guardrail ==="
+python3 - <<'PY'
+from pathlib import Path
+import sys
+
+required = {
+    "skills/applications/tao-run-automl/SKILL.md": [
+        "## Automatic Baseline Eval Job",
+        "post-preflight eval job",
+        "eval metric number",
+    ],
+    "skills/applications/tao-run-automl/references/automl-intent-algorithms.md": [
+        "automatic baseline eval job",
+        "job id, result path, and metric value",
+    ],
+    "skills/models/tao-finetune-cosmos-reason/SKILL.md": [
+        "run the model's evaluate",
+        "action once after preflight",
+        "Report that eval job id, result path, and accuracy",
+    ],
+}
+stale_phrases = (
+    "baseline/pretrained evaluation",
+    "pretrained evaluation before AutoML",
+    "baseline-eval plan",
+    "unless the user explicitly declines it",
+)
+
+errs = 0
+for rel, needles in required.items():
+    text = Path(rel).read_text(encoding="utf-8")
+    for needle in needles:
+        if needle not in text:
+            print(f"ERROR: {rel} — missing AutoML baseline eval guardrail text: {needle}", file=sys.stderr)
+            errs += 1
+    for phrase in stale_phrases:
+        if phrase in text:
+            print(f"ERROR: {rel} — stale optional baseline wording remains: {phrase}", file=sys.stderr)
+            errs += 1
+sys.exit(errs)
+PY
+[ $? -eq 0 ] && ok "AutoML baseline eval guidance is guarded" || errors=$((errors + $?))
+
+# ─── 7. optional structured metadata ────────────────────────────────────────
 if [ "${1:-}" != "--quick" ]; then
   echo
-  echo "=== 6. references/skill_info.yaml + legacy model_info.yaml (when present) ==="
+  echo "=== 7. skill_info.yaml + legacy model_info.yaml (when present) ==="
   python3 - <<'PY'
 import os, sys, yaml
 errs = 0
-for root, dirs, files in os.walk('.'):
-    if any(x in root for x in ('.git', 'templates/skill-skeleton', '.claude-plugin')):
-        continue
-    if 'references' not in root: continue
-    for fname in ('skill_info.yaml', 'model_info.yaml'):
-        if fname in files:
-            path = os.path.join(root, fname)
-            try:
-                with open(path) as f:
-                    info = yaml.safe_load(f)
-            except yaml.YAMLError as e:
-                print(f"ERROR: {path} — YAML parse error: {e}", file=sys.stderr); errs += 1; continue
-            skill_dir = os.path.dirname(os.path.dirname(path))
-            # Validate container_image: must be either a key reference resolving in
-            # versions.yaml, or an absolute registry URI.
-            if isinstance(info, dict) and isinstance(info.get('container_image'), str):
-                img = info['container_image']
-                # Absolute path heuristic: contains '/' or ':' (registry URI shape).
-                if '/' in img or ':' in img:
-                    pass  # accept as literal — both forms valid
-                else:
-                    # Treat as key reference; resolve against versions.yaml
-                    try:
-                        with open('versions.yaml') as vf:
-                            manifest = yaml.safe_load(vf) or {}
-                        node = manifest.get('images', {})
-                        for part in img.split('.'):
-                            if not isinstance(node, dict) or part not in node:
-                                raise KeyError(f"key '{img}' missing from versions.yaml images tree")
-                            node = node[part]
-                        if not isinstance(node, str):
-                            print(f"ERROR: {path} — container_image key '{img}' resolves to non-string in versions.yaml", file=sys.stderr); errs += 1
-                    except FileNotFoundError:
-                        print(f"ERROR: {path} — container_image '{img}' looks like a key but versions.yaml is missing at repo root", file=sys.stderr); errs += 1
-                    except KeyError as e:
-                        print(f"ERROR: {path} — container_image key '{img}' not found in versions.yaml ({e})", file=sys.stderr); errs += 1
-            # If this is a model or data skill AND skill_info declares actions, validate them
-            if (skill_dir.startswith('./skills/models/') or skill_dir.startswith('./skills/data/')) and isinstance(info, dict):
-                if 'actions' in info and not info.get('container_image'):
-                    print(f"WARN: {path} — has actions but no container_image", file=sys.stderr)
-                actions = info.get('actions') or {}
-                for name, spec in actions.items():
-                    if 'command' not in (spec or {}):
-                        print(f"ERROR: {path} — actions.{name} missing `command`", file=sys.stderr); errs += 1
+VALID_MODES = {'config', 'args', 'passthrough'}
+VALID_CONFIG_FORMATS = {'yaml', 'toml', 'json'}
+
+try:
+    with open('versions.yaml') as vf:
+        manifest = yaml.safe_load(vf) or {}
+except FileNotFoundError:
+    manifest = {}
+
+def iter_metadata_files():
+    for root, dirs, files in os.walk('.'):
+        dirs[:] = [
+            d for d in dirs
+            if d not in ('.git', 'templates', '.claude-plugin', '.codex-plugin')
+        ]
+        for fname in ('skill_info.yaml', 'model_info.yaml'):
+            if fname in files:
+                yield os.path.join(root, fname)
+
+def skill_dir_for(path):
+    parts = path.split(os.sep)
+    if 'references' in parts:
+        idx = parts.index('references')
+        return os.sep.join(parts[:idx])
+    if len(parts) >= 3 and parts[-2] == 'deploy':
+        return os.sep.join(parts[:-2])
+    return os.path.dirname(path)
+
+def validate_image(path, img, context):
+    global errs
+    if not isinstance(img, str):
+        print(f"ERROR: {path} — {context} must be a string", file=sys.stderr); errs += 1
+        return
+    # Absolute path heuristic: contains '/' or ':' (registry URI shape).
+    if '/' in img or ':' in img:
+        return
+    if not manifest:
+        print(f"ERROR: {path} — {context} '{img}' looks like a key but versions.yaml is missing at repo root", file=sys.stderr); errs += 1
+        return
+    node = manifest.get('images', {})
+    try:
+        for part in img.split('.'):
+            if not isinstance(node, dict) or part not in node:
+                raise KeyError(f"key '{img}' missing from versions.yaml images tree")
+            node = node[part]
+        if not isinstance(node, str):
+            print(f"ERROR: {path} — {context} key '{img}' resolves to non-string in versions.yaml", file=sys.stderr); errs += 1
+    except KeyError as e:
+        print(f"ERROR: {path} — {context} key '{img}' not found in versions.yaml ({e})", file=sys.stderr); errs += 1
+
+for path in iter_metadata_files():
+    try:
+        with open(path) as f:
+            info = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        print(f"ERROR: {path} — YAML parse error: {e}", file=sys.stderr); errs += 1; continue
+    if not isinstance(info, dict):
+        print(f"ERROR: {path} — metadata file must contain a YAML mapping", file=sys.stderr); errs += 1; continue
+
+    skill_dir = skill_dir_for(path)
+    is_model_or_data = skill_dir.startswith('./skills/models/') or skill_dir.startswith('./skills/data/')
+
+    if isinstance(info.get('container_image'), str):
+        validate_image(path, info['container_image'], 'container_image')
+    elif is_model_or_data and 'actions' in info:
+        print(f"WARN: {path} — has actions but no top-level container_image", file=sys.stderr)
+
+    actions = info.get('actions') or {}
+    if actions and not isinstance(actions, dict):
+        print(f"ERROR: {path} — actions must be a mapping", file=sys.stderr); errs += 1; continue
+
+    for name, spec in actions.items():
+        if not isinstance(spec, dict):
+            print(f"ERROR: {path} — actions.{name} must be a mapping", file=sys.stderr); errs += 1; continue
+
+        if isinstance(spec.get('container_image'), str):
+            validate_image(path, spec['container_image'], f'actions.{name}.container_image')
+
+        command = spec.get('command')
+        if is_model_or_data and not command:
+            print(f"ERROR: {path} — actions.{name} missing `command`", file=sys.stderr); errs += 1
+            continue
+        if not command:
+            continue
+
+        mode = spec.get('mode')
+        if mode not in VALID_MODES:
+            print(f"ERROR: {path} — actions.{name}.mode must be one of {sorted(VALID_MODES)}", file=sys.stderr); errs += 1
+        if mode == 'config':
+            config_format = spec.get('config_format')
+            if config_format not in VALID_CONFIG_FORMATS:
+                print(f"ERROR: {path} — actions.{name}.config_format must be one of {sorted(VALID_CONFIG_FORMATS)} when mode is config", file=sys.stderr); errs += 1
+            if '{config_path}' not in str(command):
+                print(f"ERROR: {path} — actions.{name}.command must include {{config_path}} when mode is config", file=sys.stderr); errs += 1
+        if mode == 'args' and not isinstance(spec.get('args'), dict):
+            print(f"ERROR: {path} — actions.{name}.args must be a mapping when mode is args", file=sys.stderr); errs += 1
+
+        if is_model_or_data:
+            for field in ('inputs', 'outputs', 'upload_excludes'):
+                if field not in spec:
+                    print(f"ERROR: {path} — actions.{name} missing `{field}`", file=sys.stderr); errs += 1
 sys.exit(errs)
 PY
   [ $? -eq 0 ] && ok "skill_info.yaml / model_info.yaml validation passed" || errors=$((errors + $?))

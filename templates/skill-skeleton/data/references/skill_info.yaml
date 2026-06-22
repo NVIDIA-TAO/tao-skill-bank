@@ -17,6 +17,8 @@ actions:
       input-dir: { type: folder, required: true }
     outputs:
       output: { type: file }
+    upload_excludes:
+    - inputs/
     args:
       input-dir: '{input_dir}'
       output: '{output_path}'

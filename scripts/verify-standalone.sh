@@ -45,8 +45,8 @@ if [ -z "$INFO_FILE" ]; then
   echo "  tao-train-visual-changenet has no references/skill_info.yaml or references/model_info.yaml"
   echo "  Skipping metadata read — agent must construct from SKILL.md prose alone."
 else
-  IMAGE=$(python3 -c "import yaml; print(yaml.safe_load(open('$INFO_FILE'))['container_image'])")
-  echo "  container_image: $IMAGE"
+  IMAGE=$(sed -n 's/^[[:space:]]*container_image:[[:space:]]*//p' "$INFO_FILE" | head -n 1)
+  echo "  container_image: ${IMAGE:-<not declared>}"
 fi
 
 echo

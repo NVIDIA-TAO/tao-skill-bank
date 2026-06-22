@@ -287,9 +287,9 @@ def format_capabilities_text(data: dict[str, Any]) -> str:
             "",
             "AutoML/HPO support:",
             "- AutoML is enabled from model metadata, so workflows that train a "
-            "model should route through AutoMLRunner unless their run settings "
-            "set automl_policy=off or the user explicitly asks for a plain "
-            "single run.",
+            "model should route through AutoMLRunner when automl_policy=on "
+            "(the default), unless the user explicitly asks for a plain single "
+            "run or sets automl_policy=off.",
             "- Runnable AutoML still requires a valid packaged train schema. "
             f"Runnable models: {csv(automl_models)}",
             f"- Rule: {automl['support_rule']}",

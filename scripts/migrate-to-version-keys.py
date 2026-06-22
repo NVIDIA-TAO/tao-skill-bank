@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Migrate `container_image` literals in `references/skill_info.yaml` to dotted keys.
+"""Migrate `container_image` literals in skill metadata to dotted keys.
 
-Walks every `references/skill_info.yaml`. For each `container_image` whose
+Walks every `skill_info.yaml`. For each top-level or action-level
+`container_image` whose
 value is an absolute path (e.g., `nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt`):
 
   - Look up the string in `versions.yaml` images tree.
@@ -53,24 +54,34 @@ def looks_like_uri(value: str) -> bool:
     return isinstance(value, str) and ("/" in value or ":" in value)
 
 
-def migrate_one(skill_info: Path, lookup: dict[str, str], apply: bool) -> str | None:
+def migrate_one(skill_info: Path, lookup: dict[str, str], apply: bool) -> list[str]:
     with open(skill_info) as f:
         info = yaml.safe_load(f) or {}
     if not isinstance(info, dict):
-        return None
-    img = info.get("container_image")
-    if not isinstance(img, str):
-        return None
-    if not looks_like_uri(img):
-        return None  # already a key reference
-    key = lookup.get(img)
-    if not key:
-        return f"{skill_info}: kept absolute (not in versions.yaml): {img}"
-    info["container_image"] = key
-    if apply:
+        return []
+
+    results: list[str] = []
+
+    def maybe_migrate(container: dict, field_path: str) -> None:
+        img = container.get("container_image")
+        if not isinstance(img, str) or not looks_like_uri(img):
+            return
+        key = lookup.get(img)
+        if not key:
+            results.append(f"{skill_info} {field_path}: kept absolute (not in versions.yaml): {img}")
+            return
+        container["container_image"] = key
+        results.append(f"{skill_info} {field_path}: {img} -> {key}")
+
+    maybe_migrate(info, "container_image")
+    for action_name, action_cfg in (info.get("actions") or {}).items():
+        if isinstance(action_cfg, dict):
+            maybe_migrate(action_cfg, f"actions.{action_name}.container_image")
+
+    if apply and any(" -> " in line for line in results):
         with open(skill_info, "w") as f:
             yaml.safe_dump(info, f, sort_keys=False, default_flow_style=False, width=120, allow_unicode=True)
-    return f"{skill_info}: {img} → {key}"
+    return results
 
 
 def main() -> int:
@@ -89,22 +100,20 @@ def main() -> int:
     lookup = load_image_lookup(versions_path)
     print(f"Loaded {len(lookup)} image entries from versions.yaml\n")
 
-    skill_infos = sorted(Path(".").rglob("references/skill_info.yaml"))
+    skill_infos = sorted(Path(".").rglob("skill_info.yaml"))
     skill_infos = [p for p in skill_infos if "templates/" not in str(p)]
     if not skill_infos:
-        print("No references/skill_info.yaml files found", file=sys.stderr)
+        print("No skill_info.yaml files found", file=sys.stderr)
         return 1
 
     migrated = []
     kept_absolute = []
     for skill_info in skill_infos:
-        result = migrate_one(skill_info, lookup, apply=args.apply)
-        if result is None:
-            continue
-        if "kept absolute" in result:
-            kept_absolute.append(result)
-        else:
-            migrated.append(result)
+        for result in migrate_one(skill_info, lookup, apply=args.apply):
+            if "kept absolute" in result:
+                kept_absolute.append(result)
+            else:
+                migrated.append(result)
 
     print(f"{'Applied' if args.apply else 'Would apply'} {len(migrated)} migrations:")
     for line in migrated:

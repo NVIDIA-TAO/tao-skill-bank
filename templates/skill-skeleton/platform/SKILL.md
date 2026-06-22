@@ -77,7 +77,6 @@ See `tao-skill-bank:tao-run-platform` for SDK semantics.
 - Storage model (shared NFS/Lustre? S3 only? instance-local?)
 - Pricing / lifecycle considerations
 - Known limitations
-- Mixed-platform patterns
 
 ## Known pitfalls
 

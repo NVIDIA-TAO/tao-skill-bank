@@ -14,27 +14,36 @@ actions:
   train:
     command: REPLACE_ENTRYPOINT train -e {config_path}
     config_format: yaml      # yaml | toml | json
+    mode: config
     inputs:
       dataset.train_csv: { type: file }
       dataset.images_dir: { type: folder }
     outputs:
       results_dir: { type: folder }
+    upload_excludes:
+    - inputs/
   evaluate:
     command: REPLACE_ENTRYPOINT evaluate -e {config_path}
     config_format: yaml
+    mode: config
     inputs:
       dataset.eval_csv: { type: file }
       model.checkpoint: { type: file }
     outputs:
       results_dir: { type: folder }
+    upload_excludes:
+    - inputs/
   inference:
     command: REPLACE_ENTRYPOINT inference -e {config_path}
     config_format: yaml
+    mode: config
     inputs:
       dataset.test_dir: { type: folder }
       model.checkpoint: { type: file }
     outputs:
       results_dir: { type: folder }
+    upload_excludes:
+    - inputs/
 
 # For SDK orchestration: which spec keys map to GPU count / node count
 gpu_spec_key: train.num_gpus

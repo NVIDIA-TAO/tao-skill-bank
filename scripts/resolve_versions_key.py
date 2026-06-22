@@ -12,7 +12,7 @@ docs so the YAML schema is known in exactly one place.
 Examples
 --------
     resolve_versions_key.py images.tao_toolkit.pyt
-    resolve_versions_key.py images.tao_toolkit.data_services
+    resolve_versions_key.py images.metropolis_sdg.paidf_anomalygen
     resolve_versions_key.py wheels.tao_sdk
 """
 

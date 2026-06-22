@@ -38,7 +38,10 @@ def parse_args() -> argparse.Namespace:
         "--network",
         dest="model",
         required=True,
-        help="Packaged model/network name, for example cosmos-rl.",
+        help=(
+            "Packaged model skill directory or network_arch, for example "
+            "tao-finetune-cosmos-reason or cosmos-rl."
+        ),
     )
     parser.add_argument(
         "--action",
@@ -63,6 +66,66 @@ def load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def load_model_metadata(
+    skill_bank: Path,
+    requested_model: str,
+) -> tuple[str, Path, dict[str, Any]]:
+    """Load model metadata by skill directory or network_arch alias."""
+    models_root = skill_bank.expanduser() / "skills" / "models"
+    requested = requested_model.strip()
+    exact_path = models_root / requested / "references" / "skill_info.yaml"
+    if exact_path.exists():
+        return requested, exact_path, load_yaml(exact_path)
+
+    if not models_root.exists():
+        raise FileNotFoundError(f"Model skills directory not found: {models_root}")
+
+    matches: list[tuple[str, Path, dict[str, Any]]] = []
+    requested_casefold = requested.casefold()
+    for candidate in sorted(models_root.iterdir()):
+        metadata_path = candidate / "references" / "skill_info.yaml"
+        if not metadata_path.exists():
+            continue
+        skill_info = load_yaml(metadata_path)
+        aliases = {
+            candidate.name,
+            str(skill_info.get("network_arch", "")).strip(),
+            str(skill_info.get("model", "")).strip(),
+            str(skill_info.get("name", "")).strip(),
+        }
+        aliases.update(str(alias).strip() for alias in skill_info.get("aliases", []))
+        aliases = {alias for alias in aliases if alias}
+        if requested in aliases or requested_casefold in {
+            alias.casefold() for alias in aliases
+        }:
+            matches.append((candidate.name, metadata_path, skill_info))
+
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        choices = ", ".join(name for name, _, _ in matches)
+        raise ValueError(
+            f"Model alias '{requested}' is ambiguous. Matching skill directories: {choices}"
+        )
+
+    available = []
+    for candidate in sorted(models_root.iterdir()):
+        metadata_path = candidate / "references" / "skill_info.yaml"
+        if not metadata_path.exists():
+            continue
+        try:
+            skill_info = load_yaml(metadata_path)
+        except Exception:
+            continue
+        network_arch = skill_info.get("network_arch", candidate.name)
+        available.append(f"{candidate.name} ({network_arch})")
+    suffix = "; available examples: " + ", ".join(available[:8]) if available else ""
+    raise FileNotFoundError(
+        f"Model metadata not found for '{requested}'. Pass a skill directory "
+        f"or network_arch under {models_root}{suffix}"
+    )
+
+
 def resolve_image_key(skill_bank: Path, image: str) -> tuple[str, str]:
     """Resolve a versions.yaml image key to a URI when possible."""
     image = image.strip()
@@ -83,13 +146,7 @@ def resolve_image_key(skill_bank: Path, image: str) -> tuple[str, str]:
 
 def resolve_image(skill_bank: Path, model: str, action: str) -> dict[str, Any]:
     """Resolve action-level image first, then model-level image."""
-    metadata_path = (
-        skill_bank.expanduser() / "skills" / "models" / model / "references" / "skill_info.yaml"
-    )
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Model metadata not found: {metadata_path}")
-
-    skill_info = load_yaml(metadata_path)
+    resolved_model, metadata_path, skill_info = load_model_metadata(skill_bank, model)
     actions = skill_info.get("actions", {})
     if not isinstance(actions, dict):
         actions = {}
@@ -98,12 +155,12 @@ def resolve_image(skill_bank: Path, model: str, action: str) -> dict[str, Any]:
     if action_config is None:
         available = ", ".join(sorted(actions)) if actions else "none"
         raise ValueError(
-            f"Action '{action}' is not packaged for model '{model}'. "
+            f"Action '{action}' is not packaged for model '{resolved_model}'. "
             f"Available actions: {available}"
         )
     if not isinstance(action_config, dict):
         raise ValueError(
-            f"skills/models/{model}/references/skill_info.yaml actions.{action} must be an object"
+            f"skills/models/{resolved_model}/references/skill_info.yaml actions.{action} must be an object"
         )
 
     candidates = [
@@ -117,8 +174,9 @@ def resolve_image(skill_bank: Path, model: str, action: str) -> dict[str, Any]:
             resolved_image, resolved_from = resolve_image_key(skill_bank, image)
             return {
                 "schema_version": 2,
-                "model": model,
-                "network_arch": skill_info.get("network_arch", model),
+                "requested_model": model,
+                "model": resolved_model,
+                "network_arch": skill_info.get("network_arch", resolved_model),
                 "action": action,
                 "image": resolved_image,
                 "declared_image": image.strip(),
@@ -130,7 +188,7 @@ def resolve_image(skill_bank: Path, model: str, action: str) -> dict[str, Any]:
             }
 
     raise ValueError(
-        f"No container image found for model '{model}' action '{action}' in {metadata_path}"
+        f"No container image found for model '{resolved_model}' action '{action}' in {metadata_path}"
     )
 
 
@@ -139,6 +197,7 @@ def format_text(data: dict[str, Any]) -> str:
     return "\n".join(
         [
             "TAO container image resolution:",
+            f"- requested model: {data.get('requested_model', data['model'])}",
             f"- model: {data['model']} ({data['network_arch']})",
             f"- action: {data['action']}",
             f"- default image: {data['image']}",

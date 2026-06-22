@@ -64,7 +64,6 @@ def compatibility_for(skill_path: str) -> str:
     platform_compat = {
         "docker": "Requires docker + nvidia-container-toolkit.",
         "brev": "Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login.",
-        "lepton": "Requires the tao-sdk Python package with the lepton extra (pip install 'tao-sdk[lepton]') plus LEPTON_WORKSPACE_ID and LEPTON_AUTH_TOKEN.",
         "tao-sdk": "Requires Python 3.10+ and the tao-sdk package (pip install tao-sdk).",
     }
     if layer == "platform" and name in platform_compat:

@@ -1,13 +1,13 @@
 ---
 name: tao-run-on-docker
 description: Docker conventions for running NVIDIA GPU container workloads — NGC authentication, --gpus flag, mount patterns,
-  env-var passthrough, container inspection, data-root relocation for split-disk hosts, and common error modes. Use whenever
+  env-var passthrough, container inspection, data-root relocation for split-disk hosts, and common error modes. Use when
   another skill requires running an nvcr.io container or any docker run command on a GPU host. Trigger keywords — docker,
   docker run, nvcr.io, NGC, --gpus, nvidia-container-toolkit, container image, docker login, docker pull.
 license: Apache-2.0
 compatibility: Requires NVIDIA driver branch 580, CUDA Toolkit 13.0, Docker, and NVIDIA Container Toolkit 1.19.0.
 metadata:
-  version: '0.1'
+  version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
 tags:
@@ -29,13 +29,12 @@ Sources: official Docker CLI reference (<https://docs.docker.com/reference/cli/d
 
 ```bash
 TAO_SKILL_BANK_ROOT="${TAO_SKILL_BANK_ROOT:-$PWD}"
-SETUP_SCRIPT="${TAO_SKILL_BANK_ROOT}/skills/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh"
-[ -x "$SETUP_SCRIPT" ] || SETUP_SCRIPT="${TAO_SKILL_BANK_ROOT}/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh"
+SETUP_SCRIPT="${TAO_SKILL_BANK_ROOT}/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh"
 
 bash "$SETUP_SCRIPT" --backend docker --check-only || {
   echo "MISSING: TAO GPU host runtime is not ready."
-  echo "After user approval, run:"
-  echo "  bash \"$SETUP_SCRIPT\" --backend docker --install --yes"
+  echo "After user approval, run (append --yes for non-interactive agent runs):"
+  echo "  bash \"$SETUP_SCRIPT\" --backend docker --install"
   exit 1
 }
 
@@ -200,7 +199,7 @@ Most TAO training workloads don't need this — single container per job.
 
 ## Common error modes
 
-**`could not select device driver "" with capabilities: [[gpu]]`** — NVIDIA Container Toolkit missing or Docker is not configured for the NVIDIA runtime. Run `tao-setup-nvidia-gpu-host` with `--backend docker --install --yes` after user approval, then restart Docker.
+**`could not select device driver "" with capabilities: [[gpu]]`** — NVIDIA Container Toolkit missing or Docker is not configured for the NVIDIA runtime. Run `tao-setup-nvidia-gpu-host` with `--backend docker --install` after user approval (append `--yes` for a non-interactive agent run), then restart Docker.
 
 **`unauthorized: authentication required`** on `docker pull` — NGC key invalid/missing. Re-run `docker login nvcr.io`.
 
@@ -217,7 +216,6 @@ Most TAO training workloads don't need this — single container per job.
 This skill covers the *how* of running docker on a GPU host. Platform-specific layering (how to get onto the host, dispatch via a CLI wrapper) lives in:
 
 - `tao-skill-bank:tao-run-on-brev` — running docker via `brev exec` on a Brev instance
-- `tao-skill-bank:tao-run-on-lepton` — submitting jobs to Lepton (API-first; `docker run` doesn't apply)
 - `tao-skill-bank:tao-run-platform` — optional Python layer wrapping docker invocations with Job handles, state persistence, and S3 I/O
 
 Model and data skills specify **what** image and command; they defer to this skill for the **how**.

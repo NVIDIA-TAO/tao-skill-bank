@@ -187,6 +187,31 @@ def generate_schema_for_action(
     from nvidia_tao_core.api_utils import dataclass2json_converter
 
     network_arch = skill_config.get("network_arch", model_name)
+    if network_arch == "sparse4d" and action == "dataset_convert":
+        module = importlib.import_module("nvidia_tao_ds.config.annotations.default_config")
+        exp_config = module.ExperimentConfig()
+        json_with_meta = dataclass2json_converter.dataclass_to_json(exp_config)
+        schema = dataclass2json_converter.create_json_schema(json_with_meta)
+        schema["default"]["data"]["input_format"] = "AICITY"
+        schema["default"]["data"]["output_format"] = "OVPKL"
+        schema["default"]["aicity"]["root"] = "???"
+        schema["properties"]["data"]["default"]["input_format"] = "AICITY"
+        schema["properties"]["data"]["default"]["output_format"] = "OVPKL"
+        schema["properties"]["data"]["properties"]["input_format"]["default"] = "AICITY"
+        schema["properties"]["data"]["properties"]["output_format"]["default"] = "OVPKL"
+        schema["properties"]["aicity"]["default"]["root"] = "???"
+        schema["properties"]["aicity"]["properties"]["root"]["default"] = "???"
+        schema["x_tao_schema"] = {
+            "schema_version": 1,
+            "model": model_name,
+            "network_arch": network_arch,
+            "action": action,
+            "schema_action": "convert",
+            "core_module": "annotations",
+            "source": "tao-dataservices annotations dataclass config",
+        }
+        return schema, "annotations", "convert"
+
     schema_action = ACTION_ALIASES.get(action, action)
     errors = []
 
