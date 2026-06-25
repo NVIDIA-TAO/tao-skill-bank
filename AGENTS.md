@@ -12,8 +12,11 @@ need no Python.
 ## Discovery flow
 
 0. **Preflight the chosen platform.** Open `skills/platform/<chosen>/SKILL.md` and run
-   its Preflight section. Bail if anything's missing — do not draft launch
-   commands against an unconfigured environment.
+   its Preflight section. If a missing prerequisite is a Python package that can
+   be installed with `python -m pip install ...`, install it in the active
+   Python environment, then rerun preflight. Bail on missing non-Python/system
+   prerequisites — do not draft launch commands against an unconfigured
+   environment.
 
 1. **Read the task skill.** `skills/models/<arch>/SKILL.md` (network specifics),
    `skills/data/<name>/SKILL.md` (transforms), or `skills/applications/<name>/SKILL.md`
@@ -47,7 +50,7 @@ need no Python.
 
 6. **Confirm with the user**, then dispatch via the chosen platform's pattern:
    - Local docker / Brev / local-docker: `docker run …` via Bash.
-   - Managed (Lepton, Kubernetes, SLURM, Brev with SDK tracking):
+   - Managed (Kubernetes, SLURM, Brev with SDK tracking):
      `<Platform>SDK.create_job(image, command, gpu_count, …)`. The agent
      calls `build_entrypoint(...)` first to bake the spec heredoc + invocation
      into `command`.
@@ -62,29 +65,40 @@ Reach for the SDK only when the user wants one of:
 - Job tracking (status persistence, logs, failure analysis)
 - S3 I/O wrapping (`inputs` / `outputs` automatic up/download)
 - Multi-node training
-- A managed platform: **Lepton, Kubernetes, SLURM, Brev**
+- A managed platform: **Kubernetes, SLURM, Brev**
 
 Each platform skill's Preflight tells you which SDK extra to install
-(`pip install 'nvidia-tao-sdk[<platform>]'`). The five platform SDKs are
+(`python -m pip install 'nvidia-tao-sdk[<platform>]'`). Install missing pip
+requirements automatically, then rerun preflight. The four platform SDKs are
 equal-class peers — **no default**. If the user hasn't chosen, ask.
 
 ## Never do
 
-- **Never write flat dotted spec keys.** Specs are **nested dicts**:
-  `{"train": {"num_epochs": 12}}`, not `{"train.num_epochs": 12}`. This is
-  the most common agent mistake against the SDK boundary.
+- **Never write flat dotted spec keys in the actual spec.** Specs passed to
+  `build_entrypoint`, SDK job creation, config files, or containers are
+  **nested dicts**: `{"train": {"num_epochs": 12}}`, not
+  `{"train.num_epochs": 12}`. AutoMLRunner's `spec_overrides` argument is the
+  one exception: it accepts dotted path keys as an override map and expands them
+  into the nested spec before launch. Do not pass that override map directly to
+  SDK/container boundaries.
 - **Never default to one platform** when several would fit. If the user hasn't
-  said Lepton vs. SLURM vs. Brev vs. Docker vs. Kubernetes, ask. Five SDKs are
-  equal-class peers; biasing toward one (especially Lepton) is wrong.
+  said SLURM vs. Brev vs. Docker vs. Kubernetes, ask. Four SDKs are
+  equal-class peers; biasing toward one is wrong.
 - **Never start a side-effecting action without user confirmation.** This
   means: `docker run`, `sdk.create_job`, `git push`, file mutations outside
-  the working directory.
-- **Never ask for API keys, tokens, or passwords via chat.** Credentials live
-  in `~/.config/tao/.env` and are loaded into the session env by the plugin's
-  hook.
+  the working directory. Missing Python-package prerequisites installed with
+  `python -m pip install ...` are an explicit exception for TAO workflows:
+  install them by default and report what was installed.
+- **Never ask for API keys, tokens, or passwords via chat.** Credentials come
+  from the **session environment** — the user exports them in their own shell
+  before launching. If a required var is missing, tell the user which one to
+  `export`; do not collect the value yourself. The skill bank does not read or
+  load any credentials file.
 - **Never read credential values.** To verify a var is set:
   `[ -n "$VAR_NAME" ] && echo SET || echo UNSET`. Never `cat`, `Read`,
-  `grep`, or `head` on `.env` or `~/.config/tao/.env`.
+  `grep`, or `head` a credentials file (e.g. any `.env` the user may have
+  created).
 - **Never assume the SDK is installed.** Model and data skills must be
-  runnable with just docker. Run the chosen platform's Preflight first; reach
-  for the SDK only when the user explicitly opts in.
+  runnable with just docker. Run the chosen platform's Preflight first; when
+  the SDK path is selected and its pip package/extra is missing, install it by
+  default and rerun preflight.

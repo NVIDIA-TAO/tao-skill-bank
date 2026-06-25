@@ -1,5 +1,28 @@
 # Authoring a new skill
 
+## Contents
+
+- 0. Decide the layer
+- 1. Minimum viable skill
+- 2. Frontmatter
+  - Required fields
+  - Optional fields (validator warns when missing)
+  - Body must be agent-runnable
+- 3. Body structure (DAFT-style)
+- 4. When to add `references/`
+  - Version references
+  - Skills that require the SDK
+  - `references/skill_info.yaml` schema
+- 5. Optional: `example/` reference output
+- 6. Templates
+- 7. Add to `marketplace.json`
+- 8. Validate
+- 9. Test locally
+- Checklist
+- Common pitfalls
+- Agent identity (cross-cutting)
+
+
 The minimum viable skill is a single `SKILL.md`. Everything else — `references/skill_info.yaml`, `scripts/`, `example/`, templates, defaults — is optional and only added when it earns its keep.
 
 ## 0. Decide the layer
@@ -8,7 +31,7 @@ The minimum viable skill is a single `SKILL.md`. Everything else — `references
 |---|---|---|
 | `skills/models/` | A trainable network with `train` / `evaluate` / `inference` / `export` actions | `tao-finetune-cosmos-reason`, `tao-train-visual-changenet`, `tao-finetune-clip` |
 | `skills/data/` | A data transformation — preparation, analysis, embedding, filtering | `omniverse-sdg`, `mining`, `changenet-data-prepare` |
-| `skills/platform/` | A compute backend or runtime convention (where/how jobs run) | `tao-run-on-docker`, `tao-run-on-brev`, `tao-run-on-lepton`, `tao-run-platform` |
+| `skills/platform/` | A compute backend or runtime convention (where/how jobs run) | `tao-run-on-docker`, `tao-run-on-brev`, `tao-run-on-slurm`, `tao-run-platform` |
 | `skills/applications/` | A workflow composing multiple skills (orchestrator) | `tao-run-deft-aoi`, `tao-train-single-step` |
 
 If you're unsure: produces a trained model artifact → model. Transforms data → data. Infrastructure → platform. Orchestrates → application.
@@ -95,14 +118,13 @@ allowed-tools: Read Bash
 
 **`compatibility:`** — runtime requirements only. Tools, packages, env vars, services the skill needs.
 
-> **Important:** the skill bank is **agent-harness-agnostic**. Do NOT prefix `compatibility:` with "Designed for Claude Code" or any specific harness — the same skill must work in Claude Code, Codex, Gemini CLI, and any Agent Skills compatible agent. Describe runtime requirements only.
+> **Important:** the skill bank is **agent-harness-agnostic**. Do NOT prefix `compatibility:` with "Designed for <runtime>" or any specific harness — the same skill must work in any Agent Skills compatible agent. Describe runtime requirements only.
 
 | Skill type | Recommended `compatibility:` value |
 |---|---|
 | Containerized model/data | `Requires docker + nvidia-container-toolkit + NGC API key.` |
 | `skills/platform/tao-run-on-docker` | `Requires docker + nvidia-container-toolkit.` |
 | `skills/platform/tao-run-on-brev` | `Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login.` |
-| `skills/platform/tao-run-on-lepton` | `Requires the nvidia-tao-sdk Python package with the lepton extra (pip install 'nvidia-tao-sdk[lepton]') plus LEPTON_WORKSPACE_ID and LEPTON_AUTH_TOKEN.` |
 | `skills/platform/tao-run-platform` | `Requires Python 3.10+ and the nvidia-tao-sdk package (pip install nvidia-tao-sdk).` |
 | Local Python script (no container) | `Requires Python 3.8+ and Pillow.` (or whatever) |
 | Agent-prompt-driven | `Standalone — no external runtime requirements.` or omit the field. |
@@ -111,7 +133,7 @@ allowed-tools: Read Bash
 
 **`metadata.version`** — skill version (NOT tool/model version). Start at `"0.1"` for new skills; bump when the SKILL.md materially changes (new actions, schema changes, etc.).
 
-**`allowed-tools`** — pre-approves tools so Claude doesn't prompt the user per use. Whitespace-separated list. Common values: `Read Bash`, `Read Bash Write`. Use sparingly — only for tools the skill genuinely needs frequently.
+**`allowed-tools`** — declares frequently used tools for compatible runtimes. Whitespace-separated list. Common values: `Read Bash`, `Read Bash Write`. Use sparingly — only for tools the skill genuinely needs frequently.
 
 **`tags`** — list of short keywords for documentation, browsing, and our own catalog tooling. Examples:
 
@@ -123,7 +145,7 @@ tags:
   - classification
 ```
 
-Tags are NOT used by Claude Code for skill auto-invocation — that's driven by `description` (and trigger phrases within it). Tags exist for human browsing and tooling. Lives in `SKILL.md` frontmatter only — `references/skill_info.yaml` does NOT carry tags (single source of truth).
+Tags are NOT used for skill auto-invocation — that's driven by `description` (and trigger phrases within it). Tags exist for human browsing and tooling. Lives in `SKILL.md` frontmatter only — `references/skill_info.yaml` does NOT carry tags (single source of truth).
 
 ### Body must be agent-runnable
 
@@ -132,7 +154,7 @@ Body must contain at least one of:
 - A `docker run` code block
 - A `references/skill_info.yaml` file on disk
 - A `scripts/` or `hooks/` directory on disk
-- An SDK invocation example (`sdk.create_job`, `LeptonSDK`, etc.) — for skills like `skills/platform/tao-run-platform`
+- An SDK invocation example (`sdk.create_job`, `BrevSDK`, etc.) — for skills like `skills/platform/tao-run-platform`
 
 The validator enforces this.
 
@@ -175,6 +197,7 @@ Add a `references/` directory when one or more applies:
 | Add this file | When |
 |---|---|
 | `references/skill_info.yaml` | Multi-action skill (train/evaluate/inference) AND/OR you want SDK-orchestrated execution. The TAO SDK reads this for structured action metadata. |
+| `deploy/skill_info.yaml` | Deploy-only metadata paired with a `deploy/SKILL.md`. It follows the same schema and validator rules as `references/skill_info.yaml`. |
 | `references/spec_template_<action>.yaml` | Action takes a config file (YAML/TOML) and you want users to start from a known-good default. |
 | `references/scripts/<file>.py` | The skill ships a reference implementation of a script that runs inside the container. |
 
@@ -215,15 +238,15 @@ To bump an RC, change one line — that's the entire diff.
 
 ### Skills that require the SDK
 
-Most skills run with just docker (no Python SDK). A few skills are SDK-orchestrated by design (e.g., `skills/platform/tao-run-platform` (`tao-run-platform`), `skills/platform/tao-run-on-lepton` (`tao-run-on-lepton`), `skills/applications/tao-run-automl` (`tao-run-automl`)). These need a **preflight** block at the top of `SKILL.md`:
+Most skills run with just docker (no Python SDK). A few skills are SDK-orchestrated by design (e.g., `skills/platform/tao-run-platform` (`tao-run-platform`), `skills/applications/tao-run-automl` (`tao-run-automl`)). These need a **preflight** block at the top of `SKILL.md`:
 
 ````markdown
 ## Preflight
 
-This skill needs the TAO SDK. `nvidia-tao-sdk` is on public PyPI and pinned in `versions.yaml`; Preflight blocks resolve the pin via `scripts/resolve_versions_key.py` (swap `wheels.tao_sdk_lepton` for the extra you need — `_brev`, `_docker`, `_slurm`, `_kubernetes`, `_all`):
+This skill needs the TAO SDK. `nvidia-tao-sdk` is on public PyPI and pinned in `versions.yaml`; Preflight blocks resolve the pin via `scripts/resolve_versions_key.py` (swap `wheels.tao_sdk_brev` for the extra you need — `_docker`, `_slurm`, `_kubernetes`, `_all`):
 
 ```bash
-PIN=$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_sdk_lepton)
+PIN=$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_sdk_brev)
 python -c "import tao_sdk" 2>/dev/null || {
   echo "MISSING: nvidia-tao-sdk not installed. Run:"
   echo "  pip install \"$PIN\""
@@ -249,10 +272,18 @@ actions:
   train:
     command: visual_changenet train -e {config_path}
     config_format: yaml
+    mode: config
     inputs:
       dataset.train_csv: { type: file }
     outputs:
       results_dir: { type: folder }
+    upload_excludes:
+      - inputs/
+
+# Action mode controls how launch tooling serializes the spec:
+# - config: write a YAML/TOML/JSON spec file and substitute {config_path}
+# - args: build command arguments from actions.<action>.args
+# - passthrough: run the command as declared, without generated config or args
 
 # Models only — parallelism wiring for SDK orchestration
 gpu_spec_key: train.num_gpus
@@ -263,7 +294,7 @@ stages:
   - { skill: omniverse-sdg, action: generate, condition: always }
 
 # Platform skills
-sdk_module: tao_sdk.platforms.lepton.sdk
+sdk_module: tao_sdk.platforms.brev.sdk
 features: [tracking, multi-node, lustre]
 
 tags: [classification, my-domain]
@@ -331,6 +362,9 @@ Errors (fail CI):
 - `SKILL.md` body must have runnable info (Quick Start, docker run, scripts/, hooks/, or `references/skill_info.yaml`).
 - No `tao_sdk` symbol leaks into model/data/application skills (skills/platform/* exempt; tao-run-automl exempted as SDK-native workflow).
 - Hook paths in frontmatter must resolve.
+- Any `skill_info.yaml` or `model_info.yaml` parses, including `deploy/skill_info.yaml`.
+- Container image keys resolve through `versions.yaml` (top-level and action-level).
+- Model/data action contracts declare `command`, `mode`, `inputs`, `outputs`, and `upload_excludes`.
 
 Warnings (printed but don't fail CI):
 
@@ -342,9 +376,8 @@ CI runs the same script — fix errors before opening a PR; address warnings opp
 
 ## 9. Test locally
 
-```bash
-claude --plugin-dir /path/to/tao-skills-external
-```
+Use the applicable local plugin/runtime command for the target environment and
+point it at `/path/to/tao-skills-external`.
 
 Start a session, ask the agent to exercise the skill. Verify the agent reads it, constructs a valid invocation, and produces the expected output.
 
@@ -355,18 +388,18 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 - [ ] Optional: `compatibility`, `metadata.author`, `metadata.version`, `allowed-tools` populated.
 - [ ] Body has Quick Start (or scripts/, hooks/, references/skill_info.yaml) — agent-runnable.
 - [ ] If the skill is non-trivial: External Dependencies, CLI Reference, Output Structure, Known Pitfalls sections present.
-- [ ] If using `references/skill_info.yaml`: `container_image` set, `actions.<name>.command` set per action.
+- [ ] If using `skill_info.yaml`: `container_image` set, each model/data action has `command`, `mode`, `inputs`, `outputs`, and `upload_excludes`.
 - [ ] No SDK symbols (`tao_sdk`, `sdk.create_job`, etc.) in model/data/application skills (allowed in `skills/platform/*`).
-- [ ] Added to `.claude-plugin/marketplace.json` under the right plugin(s).
+- [ ] Added to the marketplace manifest under the right plugin(s), when the packaging surface requires it.
 - [ ] No mirrored copy or symlink added under `skills/core/`.
 - [ ] `scripts/validate-skills.sh` passes (no errors; warnings are informational).
-- [ ] Tested locally via `claude --plugin-dir .`.
+- [ ] Tested locally with the applicable plugin/runtime harness.
 
 ## Common pitfalls
 
-**Naming the skill file wrong.** It must be `SKILL.md` (uppercase, exact). Files like `dino.md` or `<skill_name>.md` are NOT picked up by Claude Code's plugin system — they're treated as supporting docs.
+**Naming the skill file wrong.** It must be `SKILL.md` (uppercase, exact). Files like `dino.md` or `<skill_name>.md` are NOT discovered as skills by plugin runtimes — they're treated as supporting docs.
 
-**Mentioning the agent harness in `compatibility`.** The skill bank is harness-agnostic. Don't write "Designed for Claude Code." Restrict the `compatibility` field to runtime requirements.
+**Mentioning the agent harness in `compatibility`.** The skill bank is harness-agnostic. Don't write "Designed for <runtime>." Restrict the `compatibility` field to runtime requirements.
 
 **Abstract description.** "Visual Changenet model" is bad. "Fine-tune Visual ChangeNet for PCB defect detection. Use when the user asks to 'train ChangeNet', 'PCB defect detection', or mentions 'siamese classification'." is good.
 
@@ -378,11 +411,11 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 
 **Assuming the SDK is available.** Write the skill to be runnable with just docker. SDK usage should be in an "Optional: via TAO SDK" section, not the primary path.
 
-**Stale `references/skill_info.yaml`.** When you change the docker command in `SKILL.md`, update the YAML too. The SDK reads the YAML; if they drift, agent and SDK diverge.
+**Stale `skill_info.yaml`.** When you change the docker command in `SKILL.md`, update the YAML too, including deploy metadata under `deploy/skill_info.yaml`. The SDK reads the YAML; if they drift, agent and SDK diverge.
 
 ## Agent identity (cross-cutting)
 
-The agent's identity — who it is, the discovery flow, what it must never do — lives in **`AGENTS.md`** at the repo root. This is the cross-runtime instruction-loading file per the [agents.md](https://agents.md/) spec. Codex auto-loads `AGENTS.md` from the project root (and from `~/.codex/AGENTS.md`). Claude Code reads the same file via the plugin's `hooks/session_start.sh` (which `cat`s `${CLAUDE_PLUGIN_ROOT}/AGENTS.md`). One file drives both runtimes.
+The agent's identity — who it is, the discovery flow, what it must never do — lives in **`AGENTS.md`** at the repo root. This is the cross-runtime instruction-loading file per the [agents.md](https://agents.md/) spec. Compatible runtimes should load the same file from the project root or plugin hook so one file drives all runtimes.
 
 **Edit `AGENTS.md`, not the hooks or plugin manifests.** When you add a new runtime (e.g., once Codex's plugin-bundled `SessionStart` hook is wired up — see [openai/codex#16430](https://github.com/openai/codex/issues/16430)), make it `cat AGENTS.md` from `${<RUNTIME>_PLUGIN_ROOT}/AGENTS.md`. Do not duplicate the prompt inline in a hook or in a plugin manifest's `description` / `longDescription` / `defaultPrompt` field — duplicating means future drift across runtimes.
 

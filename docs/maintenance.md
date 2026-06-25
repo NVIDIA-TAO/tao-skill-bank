@@ -1,5 +1,16 @@
 # Maintenance — bumping container images
 
+## Contents
+
+- Bumping a container image
+  - Verify the bump
+  - Commit + PR
+- Bumping an SDK/AutoML wheel
+- Adding a new image
+- When to use absolute paths instead of keys
+- Related: Python wheel install matrix
+
+
 All TAO container image tags **and** Python wheel pins live in **one file**: [`versions.yaml`](../versions.yaml) at the repo root. RC bumps and upgrades are a one-line edit there for both.
 
 Container images live under `images:`, Python wheels under `wheels:`. Skills resolve both by dotted key via `scripts/resolve_versions_key.py` — there are no hardcoded image tags or `pip install` URLs in skill bodies. See "Bumping an SDK/AutoML wheel" below.
@@ -47,8 +58,8 @@ CI runs `validate-skills.sh` automatically. Merge once green.
 ```diff
 # versions.yaml
 wheels:
--   tao_sdk_lepton:     nvidia-tao-sdk[lepton]==7.0.0
-+   tao_sdk_lepton:     nvidia-tao-sdk[lepton]==7.1.0rc1
+-   tao_sdk_brev:     nvidia-tao-sdk[brev]==7.0.0
++   tao_sdk_brev:     nvidia-tao-sdk[brev]==7.1.0rc1
 ```
 
 Every skill Preflight resolves its wheel key via `scripts/resolve_versions_key.py wheels.<key>`, so the new pin propagates automatically — no per-skill grep, no hardcoded URLs.
@@ -101,7 +112,6 @@ Users install the SDK by resolving the pin from `versions.yaml` (wheels are on p
 ```bash
 SB="${TAO_SKILL_BANK_PATH:-~/tao-skills-external}"
 pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk)"             # core only
-pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_lepton)"      # + Lepton handler deps
 pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_brev)"        # + Brev handler
 pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_slurm)"       # + SLURM handler
 pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_kubernetes)"  # + Kubernetes handler
