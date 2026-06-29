@@ -7,28 +7,34 @@ This skill is ready for commercial/non-commercial use. <br>
 NVIDIA <br>
 
 ### License/Terms of Use: <br>
-Apache 2.0 <br>
+Apache-2.0 <br>
 ## Use Case: <br>
-Developers and engineers training or evaluating video question-answering models, fine-tuning Cosmos3-Nano or compatible Cosmos Reason models with SFT/LoRA, or working with Cosmos-RL. <br>
+Developers and engineers training or evaluating video question-answering models, fine-tuning Cosmos3-Nano or compatible Cosmos Reason models with SFT/LoRA. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Yes] <br>
+**Credential Type(s):** [API key] <br>  
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
+- [cosmos-reason-launch.md](references/cosmos-reason-launch.md) <br>
+- [cosmos-reason-evaluate.md](references/cosmos-reason-evaluate.md) <br>
+- [cosmos-reason-automl.md](references/cosmos-reason-automl.md) <br>
+- [cosmos-reason-parameters.md](references/cosmos-reason-parameters.md) <br>
 - [Cosmos3-Nano on Hugging Face](https://huggingface.co/nvidia/Cosmos3-Nano) <br>
-- [Agent Skills Open Standard](https://agentskills.io) <br>
-- [Cosmos Reason Launch Guide](references/cosmos-reason-launch.md) <br>
-- [Cosmos Reason Evaluate Guide](references/cosmos-reason-evaluate.md) <br>
-- [Cosmos Reason AutoML Guide](references/cosmos-reason-automl.md) <br>
-- [Cosmos Reason Parameters](references/cosmos-reason-parameters.md) <br>
+- [NVIDIA TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skills-bank) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Configuration instructions, Code] <br>
+**Output Type(s):** [Shell commands, Configuration instructions] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -40,7 +46,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task in the NVSkills-Eval external profile. <br>
+Evaluated against 1 internal evaluation task via NVSkills-Eval (external profile). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -65,10 +71,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 20% (-18%) | 97% (+97%) |
-| Discoverability | 1 | 0% (-46%) | 97% (+97%) |
-| Effectiveness | 1 | 44% (+40%) | 90% (+72%) |
-| Efficiency | 1 | 27% (-3%) | 96% (+68%) |
+| Correctness | 1 | 100% (+100%) | 20% (+20%) |
+| Discoverability | 1 | 85% (+85%) | 0% (+0%) |
+| Effectiveness | 1 | 100% (+86%) | 48% (+34%) |
+| Efficiency | 1 | 68% (+41%) | 28% (-0%) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
