@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--action",
         default="",
-        help="Filter support to one action such as train, distill, prune, or quantize.",
+        help="Filter support to one action such as train, evaluate, inference, distill, prune, or quantize.",
     )
     return parser.parse_args()
 
