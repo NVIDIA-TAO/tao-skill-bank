@@ -54,7 +54,7 @@ sdk = BrevSDK()                                  # reads platform credentials fr
 runner = AutoMLRunner(
     sdk=sdk,
     skill_dir=SKILL_BANK / "skills" / "models" / model_skill, # resolved skill dir
-    action=action,                                            # train, distill, prune, quantize, ...
+    action=action,                                            # train, evaluate, inference, distill, prune, quantize, ...
 )
 result = runner.run(
     train_dataset_uri=train_dataset_uri,
