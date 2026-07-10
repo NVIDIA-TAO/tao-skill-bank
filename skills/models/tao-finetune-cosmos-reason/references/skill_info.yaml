@@ -96,6 +96,14 @@ actions:
     command: cosmos-rl-evaluate --config {config_path}
     config_format: toml
     mode: config
+    automl_default_parameters:
+    - dataset.system_prompt
+    - vision.nframes
+    - generation.max_tokens
+    - generation.temperature
+    - generation.repetition_penalty
+    - generation.presence_penalty
+    - generation.frequency_penalty
     inputs:
       dataset.annotation_path:
         type: file

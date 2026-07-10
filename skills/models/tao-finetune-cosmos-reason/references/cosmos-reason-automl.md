@@ -49,6 +49,71 @@ review before asking for confirmation to start recommendations. The final
 AutoML summary must compare this baseline accuracy, every recommendation's
 accuracy, and the selected best recommendation.
 
+## Zero-shot Evaluate AutoML / Auto-Prompter
+
+For Metropolis/VSS-style zero-shot video QA, use `action="evaluate"` when the
+user asks to optimize prompts, inference config, or Auto-Prompter behavior
+without training. This launches multiple real Cosmos-RL evaluate jobs over the
+same eval dataset/model and compares the requested task metric. It is useful
+before fine-tuning or DEFT because it can identify whether prompt wording,
+frame sampling, or generation settings recover enough accuracy without changing
+weights.
+
+The packaged Cosmos evaluate schema defaults to this bounded search space:
+
+```text
+dataset.system_prompt
+vision.nframes
+generation.max_tokens
+generation.temperature
+generation.repetition_penalty
+generation.presence_penalty
+generation.frequency_penalty
+```
+
+`dataset.system_prompt` is categorical. The packaged candidates cover the
+existing CCTV assistant prompt plus Metropolis-oriented event-verification
+prompts that emphasize visible evidence, object IDs/bounding boxes, temporal
+order, interactions, and concise yes/no answers when applicable. Keep prompt
+search bounded by explicit candidates; do not generate arbitrary free-form
+prompts during a run unless the user explicitly asks for an LLM-guided research
+algorithm and provides the endpoint/key preflight.
+
+Use `metric="accuracy"` and `direction="maximize"` for VANTAGE-style
+classification or event-verification prompts. Use BERTScore F1 or another
+model-skill-supported semantic metric only for free-form answers where exact
+matching is not meaningful.
+
+Example evaluate AutoML setup:
+
+```python
+action = "evaluate"
+automl_hyperparameters = [
+    "dataset.system_prompt",
+    "vision.nframes",
+    "generation.max_tokens",
+    "generation.temperature",
+    "generation.repetition_penalty",
+    "generation.presence_penalty",
+    "generation.frequency_penalty",
+]
+custom_param_ranges = {
+    "vision.nframes": {
+        "value_type": "ordered_int",
+        "valid_options": [4, 8],
+    },
+    "generation.max_tokens": {
+        "value_type": "ordered_int",
+        "valid_options": [256, 512, 1024],
+    },
+    "generation.temperature": {"valid_min": 0.0, "valid_max": 0.4},
+}
+```
+
+If the eval spec uses `vision.nframes`, do not also search `vision.fps` by
+default. Search `vision.fps` only when the user explicitly requests FPS-based
+sampling and the spec/runtime has been switched away from frame-count sampling.
+
 For the evaluator prompt "search over learning rate, batch size, number of
 epochs, weight decay, warmup ratio", map the requested knobs to:
 
