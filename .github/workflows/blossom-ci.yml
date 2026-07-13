@@ -34,11 +34,11 @@ jobs:
       
     # This job only runs for pull request comments
     if: |
-         github.event.comment.body == '/build' && (github.actor == 'hqtran-nv' || github.actor == 'christinayyw')  
+         github.event.comment.body == '/build' && contains(fromJSON(vars.AUTHORIZED_USERS), github.actor)  
     steps:
       - name: Check if comment is issued by authorized person
         run: blossom-ci
-        env:
+        env: 
           OPERATION: 'AUTH'
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_KEY_DATA: ${{ secrets.BLOSSOM_KEY }}
@@ -46,7 +46,7 @@ jobs:
   Vulnerability-scan:
     name: Vulnerability scan
     needs: [Authorization]
-    runs-on: vulnerability-scan
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
