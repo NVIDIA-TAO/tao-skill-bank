@@ -130,7 +130,7 @@
         "system_prompt": {
           "automl_enabled": true,
           "default": "You are a helpful assistant that can answer questions about a street-view CCTV footage. The vehicles that need attention are marked with bounding boxes and IDs.",
-          "description": "System prompt for the evaluation tasks. AutoML treats this as a bounded prompt-candidate search for zero-shot Metropolis/VSS evaluation.",
+          "description": "System prompt for zero-shot Metropolis/VSS evaluation. The enum provides seed candidates for bounded algorithms; autoresearch can evolve free-form prompts when dataset.system_prompt is listed in evolvable_text_parameters.",
           "enum": [
             "You are a helpful assistant that can answer questions about a street-view CCTV footage. The vehicles that need attention are marked with bounding boxes and IDs.",
             "You are a careful video event verification assistant for traffic and security CCTV. Answer only from visible evidence, track object IDs and bounding boxes, and state yes/no when the question asks whether an event occurred.",
