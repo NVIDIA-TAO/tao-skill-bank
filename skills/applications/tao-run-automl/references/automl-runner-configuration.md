@@ -182,8 +182,15 @@ print("Best:", automl.get_best().specs)
 | `llm_model` | str | `gcp/google/gemini-3.1-pro-preview` | LLM model name (llm, hybrid, autoresearch) |
 | `llm_api_key` | str | from env | API key for the LLM endpoint |
 | `research_program` | str | None | Free-text research directives for the autoresearch agent |
+| `evolvable_text_parameters` | str \| list[str] | `[]` | Searchable text parameters that `autoresearch` may rewrite beyond schema seed enums. |
 | `automl_delete_intermediate_ckpt` | bool | True | Automatically delete cleanup-supported terminal artifacts once they are safe to prune. The active trial/current best, every non-dominated Pareto-front member in a multi-objective search, and Hyperband-family promotion/resume inputs are protected; Hybrid conservatively retains successful trials when full-fidelity provenance is ambiguous. Cleanup-aware SDKs reject remote Docker binds, named volumes, unsafe output ownership, and unbound S3 identities before the first trial because deletion cannot be verified. Set False only when all trial artifacts and their external cleanup lifecycle are intentionally owned. |
 | `override_automl_disabled_params` | bool | False | Include params whose schema `automl_enabled` is False. For advanced users who want to search over params the network author didn't flag for AutoML. |
+
+`AutoMLRunner.run(..., feedback_fn=...)` accepts a callback with signature
+`(recommendation, job_id) -> JSON-safe value`. For reflective searches, return
+compact per-sample diagnostics such as incorrect IDs, expected/predicted labels,
+and evaluator comments. The runner persists this feedback and supplies it to the
+next `autoresearch` proposal; it does not replace the numeric selection metric.
 
 ### `kpi` metric resolution
 
