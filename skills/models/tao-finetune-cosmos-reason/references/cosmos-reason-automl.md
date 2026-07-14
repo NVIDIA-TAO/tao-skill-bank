@@ -59,7 +59,8 @@ before fine-tuning or DEFT because it can identify whether prompt wording,
 frame sampling, or generation settings recover enough accuracy without changing
 weights.
 
-The packaged Cosmos evaluate schema defaults to this bounded search space:
+The packaged Cosmos evaluate schema defaults to this joint prompt/config search
+space:
 
 ```text
 dataset.system_prompt
@@ -71,23 +72,48 @@ generation.presence_penalty
 generation.frequency_penalty
 ```
 
-`dataset.system_prompt` is categorical. The packaged candidates cover the
-existing CCTV assistant prompt plus Metropolis-oriented event-verification
-prompts that emphasize visible evidence, object IDs/bounding boxes, temporal
-order, interactions, and concise yes/no answers when applicable. Keep prompt
-search bounded by explicit candidates; do not generate arbitrary free-form
-prompts during a run unless the user explicitly asks for an LLM-guided research
-algorithm and provides the endpoint/key preflight.
+There are two distinct operating modes:
+
+1. **Bounded fallback:** use `algorithm="bayesian"`. The four packaged prompts
+   are an exhaustive categorical choice set. This is useful for a cheap prompt
+   ablation, but it is not the reflective Auto-Prompter described in the
+   Metropolis design.
+2. **Reflective Auto-Prompter:** use `algorithm="autoresearch"`, provide the LLM
+   endpoint/model/key, and set
+   `evolvable_text_parameters=["dataset.system_prompt"]`. The four packaged
+   prompts become seeds; the reflector may write new prompts and jointly change
+   frame-sampling and generation settings. Supply `feedback_fn` so the next
+   proposal sees compact incorrect-sample diagnostics instead of only an
+   aggregate score.
+
+The TAO integration uses the existing autoresearch reflector to provide the
+GEPA-style propose, evaluate, reflect, and keep/discard lifecycle. Do not claim
+exact GEPA optimizer parity or merge behavior unless the dedicated Auto-Prompter
+package is installed and used by the caller.
 
 Use `metric="accuracy"` and `direction="maximize"` for VANTAGE-style
 classification or event-verification prompts. Use BERTScore F1 or another
 model-skill-supported semantic metric only for free-form answers where exact
 matching is not meaningful.
 
-Example evaluate AutoML setup:
+Example reflective evaluate AutoML setup:
 
 ```python
 action = "evaluate"
+automl_settings = {
+    "algorithm": "autoresearch",
+    "metric": "accuracy",
+    "direction": "maximize",
+    "automl_max_experiments": 20,
+    "llm_endpoint": llm_endpoint,
+    "llm_model": llm_model,
+    "llm_api_key": llm_api_key,
+    "evolvable_text_parameters": ["dataset.system_prompt"],
+    "research_program": (
+        "Optimize zero-shot event verification. Use visible temporal evidence; "
+        "learn from the supplied false-positive and false-negative examples."
+    ),
+}
 automl_hyperparameters = [
     "dataset.system_prompt",
     "vision.nframes",
@@ -109,6 +135,38 @@ custom_param_ranges = {
     "generation.temperature": {"valid_min": 0.0, "valid_max": 0.4},
 }
 ```
+
+The per-recommendation `eval_fn` returns the numeric score. The `feedback_fn`
+must read the same result artifacts and return a bounded payload, for example:
+
+```python
+{
+    "false_positives": [
+        {"id": "clip-17", "expected": "no", "predicted": "yes", "reason": "..."}
+    ],
+    "false_negatives": [
+        {"id": "clip-42", "expected": "yes", "predicted": "no", "reason": "..."}
+    ],
+}
+```
+
+Do not put the full result corpus into `feedback_fn`; select representative
+failures and keep the payload compact enough for the reflection model.
+
+### Dataset and reporting protocol
+
+- Tune only on the declared tuning split. For the VANTAGE experiment in the
+  Auto-Prompter thread, that is 98 videos; keep the 65-video holdout completely
+  out of proposal feedback.
+- Select the best prompt/config on tuning results, then use `final_eval_fn` for
+  the untouched holdout and, when required, the full dataset. Report zero-shot
+  baseline, tuned result, absolute percentage-point lift, and job/result paths.
+- For Metropolis alert verification, report VK/model accuracy and AB/end-to-end
+  Alerts accuracy side by side. If both are available for every recommendation,
+  return both metrics and configure `automl_settings["objectives"]`; otherwise
+  optimize VK in-loop and run AB as final system validation.
+- Never describe a four-static-prompt run, a subset-only run, or the WTS video-QA
+  benchmark as validation of the full reflective Auto-Prompter.
 
 If the eval spec uses `vision.nframes`, do not also search `vision.fps` by
 default. Search `vision.fps` only when the user explicitly requests FPS-based

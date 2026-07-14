@@ -236,7 +236,7 @@ def unwrap_cosmos_non_train_action_schema(schema: dict[str, Any], action: str) -
 
 
 def apply_cosmos_evaluate_autoprompt_metadata(schema: dict[str, Any]) -> dict[str, Any]:
-    """Add bounded Auto-Prompter-style search metadata for Cosmos evaluate."""
+    """Add bounded seeds and reflective Auto-Prompter metadata for Cosmos evaluate."""
     schema["automl_default_parameters"] = list(COSMOS_EVALUATE_AUTOML_DEFAULT_PARAMETERS)
 
     properties = schema.setdefault("properties", {})
@@ -249,9 +249,10 @@ def apply_cosmos_evaluate_autoprompt_metadata(schema: dict[str, Any]) -> dict[st
             {
                 "automl_enabled": True,
                 "description": (
-                    "System prompt for the evaluation tasks. AutoML treats this as a "
-                    "bounded prompt-candidate search for zero-shot Metropolis/VSS "
-                    "evaluation."
+                    "System prompt for zero-shot Metropolis/VSS evaluation. The enum "
+                    "provides seed candidates for bounded algorithms; autoresearch can "
+                    "evolve free-form prompts when dataset.system_prompt is listed in "
+                    "evolvable_text_parameters."
                 ),
                 "enum": list(COSMOS_METROPOLIS_SYSTEM_PROMPT_OPTIONS),
                 "option_weights": [0.4, 0.25, 0.2, 0.15],
