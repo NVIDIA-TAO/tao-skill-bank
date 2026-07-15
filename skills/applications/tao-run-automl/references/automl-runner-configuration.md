@@ -188,9 +188,12 @@ print("Best:", automl.get_best().specs)
 
 `AutoMLRunner.run(..., feedback_fn=...)` accepts a callback with signature
 `(recommendation, job_id) -> JSON-safe value`. For reflective searches, return
-compact per-sample diagnostics such as incorrect IDs, expected/predicted labels,
-and evaluator comments. The runner persists this feedback and supplies it to the
-next `autoresearch` proposal; it does not replace the numeric selection metric.
+compact training-split records containing the input/query, generated output,
+and a failure-mode comment that does not reveal the correct answer. Do not return
+gold/expected labels, item or media identifiers, or paths. The runner removes
+common ground-truth and identifier fields, persists the sanitized feedback, and
+supplies it to the next `autoresearch` proposal; it does not replace the numeric
+validation selection metric.
 
 ### `kpi` metric resolution
 
