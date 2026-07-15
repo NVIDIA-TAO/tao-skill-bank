@@ -72,27 +72,38 @@ generation.presence_penalty
 generation.frequency_penalty
 ```
 
-There are two distinct operating modes:
+There are three distinct operating modes:
 
 1. **Bounded fallback:** use `algorithm="bayesian"`. The four packaged prompts
    are an exhaustive categorical choice set. This is useful for a cheap prompt
    ablation, but it is not the reflective Auto-Prompter described in the
    Metropolis design.
-2. **Reflective Auto-Prompter:** use `algorithm="autoresearch"`, provide the LLM
+2. **Generic reflective fallback:** use `algorithm="autoresearch"`, provide the LLM
    endpoint/model/key, and set
    `evolvable_text_parameters=["dataset.system_prompt"]`. The four packaged
-   prompts become seeds; the reflector may write new prompts and jointly change
-   frame-sampling and generation settings. Supply `feedback_fn` so the next
-   proposal sees compact incorrect-sample diagnostics instead of only an
-   aggregate score.
+   prompts become seeds; the agent may write new prompts and jointly change the
+   declared frame-sampling and generation settings. Supply `feedback_fn` so the
+   next proposal sees compact, leak-free training failures instead of only an
+   aggregate score. This is TAO autoresearch, not GEPA, and must not be reported
+   as the Metropolis Auto-Prompter result.
+3. **Canonical Metropolis Auto-Prompter:** use the `mjhuria/vss_autotuner`
+   package's pinned `GepaOptimizer`, `TargetAdapter`, and `VLMOptimizer`. It uses
+   GEPA's Pareto candidate pool, per-example reflective records, explicit
+   train/validation/test roles, and a text/config/joint axis selector. A TAO
+   evaluate target should expose `run_batch(candidate, items) -> outputs` so one
+   recommendation launches one action job while preserving GEPA's aligned
+   per-example scores. Keep fixed inference settings in the adapter's
+   `base_candidate`; only explicitly declared prompt/config knobs belong in the
+   optimizer seed.
 
-The TAO integration uses the existing autoresearch reflector to provide the
-GEPA-style propose, evaluate, reflect, and keep/discard lifecycle. Do not claim
-exact GEPA optimizer parity or merge behavior unless the dedicated Auto-Prompter
-package is installed and used by the caller.
-
-Use `metric="accuracy"` and `direction="maximize"` for VANTAGE-style
-classification or event-verification prompts. Use BERTScore F1 or another
+Use the canonical set-level `macro_f1` metric for VANTAGE binary event
+verification. GEPA's per-item reflection score is class-weighted correctness, a
+balanced-accuracy proxy. The current Auto-Tuner also selects its GEPA candidate
+on that proxy, then reports true Macro-F1; this residual objective mismatch is a
+documented limitation because Macro-F1 is not decomposable per item. Do not claim
+that the current package selects on true Macro-F1. Re-rank the candidate pool on
+true validation Macro-F1 when that follow-up is implemented. Use `accuracy` only
+for tasks whose official metric is accuracy. Use BERTScore F1 or another
 model-skill-supported semantic metric only for free-form answers where exact
 matching is not meaningful.
 
@@ -102,7 +113,7 @@ Example reflective evaluate AutoML setup:
 action = "evaluate"
 automl_settings = {
     "algorithm": "autoresearch",
-    "metric": "accuracy",
+    "metric": "macro_f1",
     "direction": "maximize",
     "automl_max_experiments": 20,
     "llm_endpoint": llm_endpoint,
@@ -136,37 +147,51 @@ custom_param_ranges = {
 }
 ```
 
-The per-recommendation `eval_fn` returns the numeric score. The `feedback_fn`
-must read the same result artifacts and return a bounded payload, for example:
+For the generic TAO fallback, `eval_fn` returns the validation score while
+`feedback_fn` reads training-split artifacts and returns a bounded, leak-free
+payload, for example:
 
 ```python
 {
-    "false_positives": [
-        {"id": "clip-17", "expected": "no", "predicted": "yes", "reason": "..."}
-    ],
-    "false_negatives": [
-        {"id": "clip-42", "expected": "yes", "predicted": "no", "reason": "..."}
-    ],
+    "failures": [
+        {
+            "query": "Did a second person cross during the same gate cycle?",
+            "generated_output": "No",
+            "feedback": "The response did not track the complete gate-open interval."
+        }
+    ]
 }
 ```
 
-Do not put the full result corpus into `feedback_fn`; select representative
-failures and keep the payload compact enough for the reflection model.
+Do not include gold/expected labels, sample or video IDs, media paths, or the
+full result corpus in `feedback_fn`. Select representative training failures,
+describe the failure mode without revealing the answer, and keep the payload
+compact enough for the reflection model. TAO removes common identifier and
+ground-truth fields, but callers must also avoid leaking answers in free-form
+text.
 
 ### Dataset and reporting protocol
 
-- Tune only on the declared tuning split. For the VANTAGE experiment in the
-  Auto-Prompter thread, that is 98 videos; keep the 65-video holdout completely
-  out of proposal feedback.
-- Select the best prompt/config on tuning results, then use `final_eval_fn` for
-  the untouched holdout and, when required, the full dataset. Report zero-shot
-  baseline, tuned result, absolute percentage-point lift, and job/result paths.
+- Use three disjoint roles: reflect on train, select candidates on validation,
+  and report once on untouched test. The current deterministic split of the 163
+  VANTAGE event-verification items is approximately 66 train / 32 validation /
+  65 test. The older 98/65 protocol and its reported gains are historical
+  two-way results, not validation of the current implementation.
+- For generic TAO autoresearch, select the best prompt/config on validation
+  Macro-F1, then use `final_eval_fn` for the untouched test. For the current
+  canonical package, selection uses its class-balanced per-item proxy on the
+  validation split; report both the proxy and true Macro-F1 and call out the
+  mismatch. In either mode, report zero-shot baseline, tuned result, absolute
+  percentage-point lift, and job/result paths, plus full-dataset results when
+  required.
 - For Metropolis alert verification, report VK/model accuracy and AB/end-to-end
   Alerts accuracy side by side. If both are available for every recommendation,
   return both metrics and configure `automl_settings["objectives"]`; otherwise
   optimize VK in-loop and run AB as final system validation.
-- Never describe a four-static-prompt run, a subset-only run, or the WTS video-QA
-  benchmark as validation of the full reflective Auto-Prompter.
+- Never describe a four-static-prompt run, a subset-only run, a WTS video-QA
+  run, or the historical two-way VANTAGE result as validation of the current
+  three-way GEPA/VLM implementation. Those remain useful ablations or historical
+  evidence and must be labeled as such.
 
 If the eval spec uses `vision.nframes`, do not also search `vision.fps` by
 default. Search `vision.fps` only when the user explicitly requests FPS-based
