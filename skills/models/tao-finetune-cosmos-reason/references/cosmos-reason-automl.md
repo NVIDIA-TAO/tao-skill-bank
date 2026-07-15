@@ -86,24 +86,24 @@ There are three distinct operating modes:
    next proposal sees compact, leak-free training failures instead of only an
    aggregate score. This is TAO autoresearch, not GEPA, and must not be reported
    as the Metropolis Auto-Prompter result.
-3. **Canonical Metropolis Auto-Prompter:** use the `mjhuria/vss_autotuner`
-   package's pinned `GepaOptimizer`, `TargetAdapter`, and `VLMOptimizer`. It uses
-   GEPA's Pareto candidate pool, per-example reflective records, explicit
-   train/validation/test roles, and a text/config/joint axis selector. A TAO
-   evaluate target should expose `run_batch(candidate, items) -> outputs` so one
-   recommendation launches one action job while preserving GEPA's aligned
-   per-example scores. Keep fixed inference settings in the adapter's
-   `base_candidate`; only explicitly declared prompt/config knobs belong in the
-   optimizer seed.
+3. **TAO GEPA Auto-Prompter:** install `nvidia-tao-automl[autoprompter]` and use
+   `tao_automl.GEPAutoPrompter`, `TAOGEPAAdapter`, and
+   `TAOActionBatchRunner`. TAO owns this integration; the original Auto-Tuner
+   and VLMEvalKit repositories are read-only references/metric providers and
+   must not receive TAO feature changes. A TAO evaluate callback launches one
+   action job for `run_batch(candidate, items) -> outputs`, preserving GEPA's
+   aligned per-example scores. Keep fixed inference settings in the base action
+   spec; only prompt components being evolved belong in GEPA's seed. Use the
+   generic TAO autoresearch mode above when prompt and bounded config knobs must
+   be explored jointly.
 
 Use the canonical set-level `macro_f1` metric for VANTAGE binary event
-verification. GEPA's per-item reflection score is class-weighted correctness, a
-balanced-accuracy proxy. The current Auto-Tuner also selects its GEPA candidate
-on that proxy, then reports true Macro-F1; this residual objective mismatch is a
-documented limitation because Macro-F1 is not decomposable per item. Do not claim
-that the current package selects on true Macro-F1. Re-rank the candidate pool on
-true validation Macro-F1 when that follow-up is implemented. Use `accuracy` only
-for tasks whose official metric is accuracy. Use BERTScore F1 or another
+verification. GEPA still needs decomposable per-item feedback for reflection
+and proposal gating, but TAO's `GEPAutoPrompter` reranks every accepted
+candidate with `binary_aggregate` on the complete validation set and selects on
+true Macro-F1 before running test. Pass VLMEvalKit's read-only `binary_metric`
+and `binary_aggregate` callbacks; no scorer changes are required. Use `accuracy`
+only for tasks whose official metric is accuracy. Use BERTScore F1 or another
 model-skill-supported semantic metric only for free-form answers where exact
 matching is not meaningful.
 
@@ -178,12 +178,12 @@ text.
   65 test. The older 98/65 protocol and its reported gains are historical
   two-way results, not validation of the current implementation.
 - For generic TAO autoresearch, select the best prompt/config on validation
-  Macro-F1, then use `final_eval_fn` for the untouched test. For the current
-  canonical package, selection uses its class-balanced per-item proxy on the
-  validation split; report both the proxy and true Macro-F1 and call out the
-  mismatch. In either mode, report zero-shot baseline, tuned result, absolute
-  percentage-point lift, and job/result paths, plus full-dataset results when
-  required.
+  Macro-F1, then use `final_eval_fn` for the untouched test. For TAO GEPA, pass
+  `aggregate_metric_fn=binary_aggregate` and
+  `aggregate_metric_key="macro_f1"`; the returned candidate is then selected on
+  true validation Macro-F1. In either mode, report zero-shot baseline, tuned
+  result, absolute percentage-point lift, and job/result paths, plus
+  full-dataset results when required.
 - For Metropolis alert verification, report VK/model accuracy and AB/end-to-end
   Alerts accuracy side by side. If both are available for every recommendation,
   return both metrics and configure `automl_settings["objectives"]`; otherwise
