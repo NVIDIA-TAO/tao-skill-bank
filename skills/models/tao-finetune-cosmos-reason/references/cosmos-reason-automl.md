@@ -137,7 +137,7 @@ automl_hyperparameters = [
 custom_param_ranges = {
     "vision.nframes": {
         "value_type": "ordered_int",
-        "valid_options": [4, 8],
+        "valid_options": [4, 8, 16],
     },
     "generation.max_tokens": {
         "value_type": "ordered_int",
@@ -196,6 +196,12 @@ text.
 If the eval spec uses `vision.nframes`, do not also search `vision.fps` by
 default. Search `vision.fps` only when the user explicitly requests FPS-based
 sampling and the spec/runtime has been switched away from frame-count sampling.
+Sixteen frames is a higher-cost option intended for detail- or coverage-bound
+failures on sufficiently provisioned local evaluation. The current Cosmos
+evaluator materializes processed video inputs before inference; split a large
+corpus into complete, video-disjoint execution shards when one monolithic action
+would exhaust host memory, then reject missing or duplicate prediction IDs
+before computing the aggregate metric.
 
 For the evaluator prompt "search over learning rate, batch size, number of
 epochs, weight decay, warmup ratio", map the requested knobs to:
