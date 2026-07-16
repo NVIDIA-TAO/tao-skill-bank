@@ -539,12 +539,13 @@
         "nframes": {
           "automl_enabled": true,
           "default": 8,
-          "description": "Number of frames for vision processing.",
+          "description": "Number of evenly sampled frames for vision processing. Higher values increase host memory, preprocessing time, and inference cost.",
           "enum": [
             4,
-            8
+            8,
+            16
           ],
-          "maximum": 8,
+          "maximum": 16,
           "minimum": 1,
           "title": "Number of frames",
           "type": "ordered_int"
