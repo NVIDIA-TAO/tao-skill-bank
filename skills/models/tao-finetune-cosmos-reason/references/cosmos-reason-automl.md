@@ -105,6 +105,15 @@ four-proposal stopper ends search after four attempts even if substantial metric
 budget remains. Prefer the metric budget plus a wall-time guard, or set a
 proposal cap that cannot become the unintended limiting condition.
 
+For a strict budget comparison, checkpoint one seeded GEPA trajectory by metric
+calls instead of comparing independent stochastic searches. In the full WTS
+Nano run, the best prompt available at 1,124 calls scored 1,721/2,676 (64.31%)
+in a fresh full evaluation; the best prompt through 3,002 calls scored
+1,754/2,676 (65.55%). The same fresh default run scored 1,449/2,676 (54.15%).
+All three specs used the same model, data, order, 8 frames, decoding settings,
+seed, and exact-match metric. Treat these as WTS integration evidence, not as a
+VANTAGE benchmark.
+
 Use the canonical set-level `macro_f1` metric for VANTAGE binary event
 verification. GEPA still needs decomposable per-item feedback for reflection
 and proposal gating, but TAO's `GEPAutoPrompter` reranks every accepted
