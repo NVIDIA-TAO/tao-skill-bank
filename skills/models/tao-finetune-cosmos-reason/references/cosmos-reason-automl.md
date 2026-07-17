@@ -97,6 +97,14 @@ There are three distinct operating modes:
    generic TAO autoresearch mode above when prompt and bounded config knobs must
    be explored jointly.
 
+For GEPA, distinguish the metric-call budget from any proposal-count stopper.
+Each proposal scores both its parent and new prompt on the reflection minibatch,
+and an accepted proposal is then scored on complete validation. Do not leave a
+small `MaxCandidateProposalsStopper` in place when raising the metric budget: a
+four-proposal stopper ends search after four attempts even if substantial metric
+budget remains. Prefer the metric budget plus a wall-time guard, or set a
+proposal cap that cannot become the unintended limiting condition.
+
 Use the canonical set-level `macro_f1` metric for VANTAGE binary event
 verification. GEPA still needs decomposable per-item feedback for reflection
 and proposal gating, but TAO's `GEPAutoPrompter` reranks every accepted
