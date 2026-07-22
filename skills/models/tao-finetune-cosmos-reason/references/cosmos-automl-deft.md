@@ -39,8 +39,8 @@ lookup. Do not patch optional annotation fields or edit the user's source
 dataset unless the user explicitly asks for that dataset mutation.
 
 If the user's objective names `accuracy` or an accuracy target such as
-`>=90%`, optimize an evaluation metric, not `val/avg_loss`. Use AutoMLRunner's
-`eval_fn` to run the model skill's `evaluate` action on the validation dataset
+`>=90%`, optimize an evaluation metric, not `val/avg_loss`. Run the model
+skill's `evaluate` action on the validation dataset
 after each recommendation, with `task=""`, `model.enable_lora=true`, and
 `model.base_model_path` set to the same base model used for training. Return
 the evaluator's `accuracy` value and set `direction="maximize"`. Use
