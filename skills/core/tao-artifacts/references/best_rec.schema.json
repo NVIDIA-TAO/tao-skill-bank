@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "tao://artifacts/best_rec.schema.json",
   "title": "TAO AutoML best_rec",
-  "description": "The read side of the AutoML -> downstream (e.g. DEFT warm-start) seam, emitted by tao-run-automl's best_rec adapter after AutoMLRunner (separate nvidia-tao-automl wheel) finishes. DEFT's own loop state stays in deft_state.json.",
+  "description": "The read side of the AutoML -> downstream (e.g. DEFT warm-start) seam emitted by the tao-run-automl step engine. DEFT's own loop state stays in deft_state.json.",
   "type": "object",
   "required": ["schema_version", "experiment_id", "metric_name", "direction", "best", "all_recs"],
   "additionalProperties": false,
@@ -17,8 +17,12 @@
     "direction": { "enum": ["maximize", "minimize"] },
     "best": {
       "type": "object",
-      "required": ["rec_id", "score", "specs", "observed_budget", "checkpoint_uri"],
+      "required": ["rec_id", "score", "specs", "observed_budget"],
       "additionalProperties": false,
+      "anyOf": [
+        { "required": ["checkpoint_uri"] },
+        { "required": ["artifact_uri"] }
+      ],
       "properties": {
         "rec_id": { "type": "string", "minLength": 1 },
         "score": { "type": "number" },
@@ -32,6 +36,12 @@
           "description": "The budget the winning trial actually ran at (e.g. {\"num_epochs\": 10}), kept SEPARATE from specs."
         },
         "checkpoint_uri": { "type": "string", "minLength": 1 },
+        "artifact_uri": { "type": "string", "minLength": 1 },
+        "objective_values": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "objective_score": { "type": "number" },
         "checkpoint_epoch": { "type": "integer", "minimum": 0 },
         "checkpoint_step": { "type": "integer", "minimum": 0 }
       }
@@ -45,7 +55,7 @@
         "properties": {
           "rec_id": { "type": "string", "minLength": 1 },
           "score": { "type": ["number", "null"] },
-          "job_id": { "type": "string", "description": "Links to .tao/jobs/<id>.json via parent_job." }
+          "job_id": { "type": "string", "description": "Directly names .tao/jobs/<id>.json; a derived downstream job may reference it through parent_job." }
         }
       }
     }

@@ -4,18 +4,17 @@
 
 """Stamp versions.yaml values into skill files, or verify they are in sync.
 
-Skills are standalone: they carry literal container URIs and wheel pins instead
-of resolving ``versions.yaml`` at runtime. Each embedded literal is annotated
+Skills are standalone: they carry literal container URIs instead of resolving
+``versions.yaml`` at runtime. Each embedded literal is annotated
 with the versions.yaml key it came from, so this script can re-stamp every
 site on a release bump and CI can verify nothing drifted:
 
     container_image: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt  # versions-key: images.tao_toolkit.pyt
     export TAO_DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.0.1-data-services  # versions-key: images.tao_toolkit.data_services
-    python -m pip install "nvidia-tao-sdk[slurm]==7.0.1"  # versions-key: wheels.tao_sdk_slurm
 
 Rules enforced:
   * A line carrying ``# versions-key: <dotted.key>`` must contain exactly the
-    value versions.yaml resolves for that key. ``stamp`` rewrites it; ``--check``
+    image value versions.yaml resolves for that key. ``stamp`` rewrites it; ``--check``
     fails on mismatch.
   * The key must exist in versions.yaml (unknown key = error in both modes).
   * Deliberately unmanaged pins are annotated ``# unpinned: <reason>`` (or
@@ -50,9 +49,7 @@ MARKER_RE = re.compile(r"(?:#|<!--)\s*versions-key:\s*([A-Za-z0-9_.]+)")
 UNPINNED_RE = re.compile(r"(?:#|<!--)\s*unpinned:\s*\S")
 # An image reference with an explicit tag (registry host / path : tag).
 IMAGE_RE = re.compile(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}/[A-Za-z0-9_./-]+:[A-Za-z0-9][A-Za-z0-9_.-]*")
-# A pinned wheel spec, optionally with extras: name[extra]==1.2.3 / name==1.2.3rc4
-WHEEL_RE = re.compile(r"[A-Za-z0-9._-]+(?:\[[A-Za-z0-9_,-]+\])?==[A-Za-z0-9.]+")
-# nvidia-tao-* wheels are the only release-cadenced wheels; strays scan just those.
+# NVIDIA TAO wheels are forbidden; their former responsibilities are skill-owned.
 STRAY_WHEEL_RE = re.compile(r"nvidia-tao-[a-z-]+(?:\[[A-Za-z0-9_,-]+\])?==[A-Za-z0-9.]+")
 # Bare dotted key as the whole value (first-time stamping of key-form fields).
 DOTTED_KEY_VALUE_RE = re.compile(r"^(\s*[A-Za-z_]+:\s*)([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)(\s*#.*)$")
@@ -102,9 +99,6 @@ def replace_value(line: str, new_value: str) -> tuple[str, bool]:
     """Replace the versioned value token on a marked line. Returns (line, ok)."""
     code = line.split("#", 1)[0]
     m = IMAGE_RE.search(code)
-    if m:
-        return line[: m.start()] + new_value + line[m.end():], True
-    m = WHEEL_RE.search(code)
     if m:
         return line[: m.start()] + new_value + line[m.end():], True
     m = DOTTED_KEY_VALUE_RE.match(line)

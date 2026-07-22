@@ -191,7 +191,11 @@ See `references/error-patterns.md` for the full list of CLIP error symptoms and 
 
 ## Spec Param / Parent Model Inference
 
-See `references/spec-param-inference.md` for the model-specific inference mappings (the full `clip.config.json` action/spec-field/inference-function table) that generated runners apply with SDK helpers before `create_job()`, plus `parent_job_id` resolution rules.
+See `references/spec-param-inference.md` for the model-specific mappings (the
+full `clip.config.json` action/spec-field/artifact-rule table) and
+`parent_job_id` resolution rules. Generated runners must resolve the parent
+job's recorded `results_dir`, select the exact artifact, write the nested spec
+field, and submit through the selected platform skill.
 
 ## Deployment
 

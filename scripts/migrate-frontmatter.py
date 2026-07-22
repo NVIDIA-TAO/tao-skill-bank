@@ -64,7 +64,6 @@ def compatibility_for(skill_path: str) -> str:
     platform_compat = {
         "docker": "Requires docker + nvidia-container-toolkit.",
         "brev": "Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login.",
-        "tao-sdk": "Requires Python 3.10+ and the tao-sdk package (pip install tao-sdk).",
     }
     if layer == "platform" and name in platform_compat:
         return platform_compat[name]

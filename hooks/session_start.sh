@@ -14,9 +14,8 @@
 #      credentials in their own shell; the session inherits that environment.
 #   3. Surface clear setup hints if docker is missing.
 #
-# This hook does NOT install Python packages. The bank runs SDK-free over native
-# platform CLIs; the one wheel-dependent skill, skills/applications/tao-run-automl,
-# installs nvidia-tao-automl lazily via its Preflight block.
+# This hook does NOT install Python packages. The bank and AutoML engine run
+# through skill-owned helpers over native platform CLIs.
 
 set -u
 
@@ -57,7 +56,7 @@ fi
 echo "## Credentials"
 echo
 # Known credential vars across the platform/model skills. Names only.
-_tao_cred_vars="NGC_KEY BREV_API_TOKEN \
+_tao_cred_vars="NGC_KEY BREV_API_TOKEN NVIDIA_API_KEY AUTOML_LLM_API_KEY \
 ACCESS_KEY SECRET_KEY S3_BUCKET_NAME S3_ENDPOINT_URL HF_TOKEN WANDB_API_KEY"
 _tao_present=""
 for _v in $_tao_cred_vars; do

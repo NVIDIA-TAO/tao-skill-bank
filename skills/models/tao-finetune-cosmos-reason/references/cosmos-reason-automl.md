@@ -30,9 +30,9 @@ lookup. Do not edit or patch the user's source annotation files unless the user
 explicitly asks for a dataset repair.
 
 If the user's objective names `accuracy` or an accuracy target such as
-`>=90%`, optimize an evaluation metric, not `val/avg_loss`. Use AutoMLRunner's
-`eval_fn` to run the model skill's `evaluate` action on the validation dataset
-after each recommendation, with `task=""`, `model.enable_lora=true`, and
+`>=90%`, optimize an evaluation metric, not `val/avg_loss`. Run the model
+skill's `evaluate` action on the validation dataset after each recommendation,
+with `task=""`, `model.enable_lora=true`, and
 `model.base_model_path` set to the same base model used for training. Return
 the evaluator's task metric and set `direction="maximize"`. Use `accuracy` for
 constrained classification prompts and BERTScore F1 for free-form
@@ -86,9 +86,8 @@ Keep `train.train_policy.mini_batch=1` unless the user explicitly changes it,
 so all listed batch sizes remain divisible by the micro-batch size. For small
 datasets, cap `train.train_batch_per_replica` so it does not exceed
 `floor(num_train_samples / policy.parallelism.dp_shard_size)`. When the
-annotation count is known, pass it as `automl_settings["train_sample_count"]`;
-current `AutoMLRunner` versions use that to cap invalid batch-size
-recommendations before launch and record the adjustment in AutoML history.
+annotation count is known, cap invalid batch-size recommendations before launch
+and record the adjustment in recommendation metadata.
 For integer knobs with discrete choices, include `value_type: "ordered_int"`
 with `valid_options`; integer `valid_options` alone are ignored by the current
 Bayesian sampler.
