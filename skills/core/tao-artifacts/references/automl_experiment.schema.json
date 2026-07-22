@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tao://artifacts/automl_experiment.schema.json",
+  "title": "TAO SDK-free AutoML experiment",
+  "description": "Durable state for the stepwise AutoML skill loop. The optimizer proposes configurations, while platform skills exclusively own submit/status/logs/cancel. Writes are atomic and recommendations survive agent or process restarts.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "status",
+    "algorithm",
+    "algorithm_version",
+    "seed",
+    "network_arch",
+    "action",
+    "metric_name",
+    "direction",
+    "max_recommendations",
+    "max_concurrent",
+    "candidate_count",
+    "search_schema_source",
+    "search_schema_sha256",
+    "base_spec_sha256",
+    "base_spec",
+    "search_parameters",
+    "recommendations",
+    "best_rec_id",
+    "created_at",
+    "updated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "status": { "enum": ["ACTIVE", "COMPLETE", "CANCELED"] },
+    "algorithm": {
+      "enum": [
+        "bayesian",
+        "bfbo",
+        "hyperband",
+        "bohb",
+        "asha",
+        "pbt",
+        "dehb",
+        "hyperband_es",
+        "llm",
+        "hybrid",
+        "autoresearch"
+      ]
+    },
+    "algorithm_version": { "enum": ["skill-v1", "skill-v2"] },
+    "seed": { "type": "integer", "minimum": 0 },
+    "network_arch": { "type": "string", "minLength": 1 },
+    "action": { "type": "string", "minLength": 1 },
+    "metric_name": { "type": "string", "minLength": 1 },
+    "direction": { "enum": ["maximize", "minimize"] },
+    "max_recommendations": { "type": "integer", "minimum": 1 },
+    "max_concurrent": { "type": "integer", "minimum": 1, "maximum": 1024 },
+    "algorithm_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_epochs": { "type": "integer", "minimum": 1 },
+        "reduction_factor": { "type": "integer", "minimum": 2 },
+        "epoch_multiplier": { "type": "integer", "minimum": 1 },
+        "population_size": { "type": "integer", "minimum": 2 },
+        "max_generations": { "type": "integer", "minimum": 1 },
+        "eval_interval": { "type": "integer", "minimum": 1 },
+        "perturbation_factor": { "type": "number", "exclusiveMinimum": 1 },
+        "mutation_factor": { "type": "number", "exclusiveMinimum": 0, "maximum": 2 },
+        "crossover_probability": { "type": "number", "minimum": 0, "maximum": 1 },
+        "early_stop_threshold": { "type": "number", "minimum": 0 },
+        "min_early_stop_epochs": { "type": "integer", "minimum": 1 },
+        "kde_samples": { "type": "integer", "minimum": 8 },
+        "top_fraction": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "min_points_in_model": { "type": "integer", "minimum": 2 },
+        "max_trials": { "type": ["integer", "null"], "minimum": 1 },
+        "min_top_configs": { "type": "integer", "minimum": 1 },
+        "max_experiments": { "type": "integer", "minimum": 1 },
+        "research_program": { "type": ["object", "null"] },
+        "evolvable_text_parameters": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "llm_endpoint": { "type": ["string", "null"] },
+        "llm_model": { "type": ["string", "null"] },
+        "llm_temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+        "llm_max_tokens": { "type": "integer", "minimum": 1 },
+        "llm_timeout": { "type": "number", "exclusiveMinimum": 0 },
+        "llm_max_retries": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "llm_retry_delay": { "type": "number", "minimum": 0 }
+      }
+    },
+    "objectives": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/objective" }
+    },
+    "tracking": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wandb_enabled": { "type": "boolean" },
+        "wandb_project": { "type": ["string", "null"] },
+        "wandb_entity": { "type": ["string", "null"] },
+        "wandb_mode": { "enum": ["online", "offline", "disabled"] }
+      }
+    },
+    "candidate_count": { "type": "integer", "minimum": 32, "maximum": 65536 },
+    "search_schema_source": { "type": "string", "minLength": 1 },
+    "search_schema_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "base_spec_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "base_spec": { "$ref": "#/$defs/nestedDict" },
+    "search_parameters": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/searchParameter" }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/recommendation" }
+    },
+    "best_rec_id": { "type": ["string", "null"] },
+    "created_at": { "type": "string", "minLength": 1 },
+    "updated_at": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "objective": {
+      "type": "object",
+      "required": ["name", "direction", "weight", "scale"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "direction": { "enum": ["maximize", "minimize"] },
+        "weight": { "type": "number", "exclusiveMinimum": 0 },
+        "scale": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "jsonScalar": { "type": ["string", "number", "integer", "boolean", "null"] },
+    "jsonValue": {
+      "anyOf": [
+        { "$ref": "#/$defs/jsonScalar" },
+        { "type": "array", "items": { "$ref": "#/$defs/jsonValue" } },
+        { "type": "object", "additionalProperties": { "$ref": "#/$defs/jsonValue" } }
+      ]
+    },
+    "nestedDict": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[^.]+$" },
+      "additionalProperties": { "$ref": "#/$defs/nestedValue" }
+    },
+    "nestedValue": {
+      "anyOf": [
+        { "$ref": "#/$defs/jsonScalar" },
+        { "type": "array", "items": { "$ref": "#/$defs/nestedValue" } },
+        { "$ref": "#/$defs/nestedDict" }
+      ]
+    },
+    "searchParameter": {
+      "type": "object",
+      "required": ["name", "kind", "default", "scale"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["float", "int", "categorical", "bool"] },
+        "default": { "$ref": "#/$defs/jsonValue" },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/jsonValue" }
+        },
+        "scale": { "enum": ["linear", "log"] },
+        "math_cond": { "type": "string", "minLength": 1 },
+        "depends_on": { "type": "string", "minLength": 1 },
+        "parent_param": {
+          "type": ["string", "boolean"],
+          "description": "Schema marker retained for deterministic dependency ordering and model constraint adapters."
+        }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "required": ["job_id", "bound_at", "finished_at", "outcome", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "job_id": { "type": "string", "minLength": 1 },
+        "bound_at": { "type": "string", "minLength": 1 },
+        "finished_at": { "type": ["string", "null"] },
+        "outcome": { "enum": [null, "SUCCESS", "ERR_INFRA", "ERR_PROGRAM", "CANCELED"] },
+        "message": { "type": "string" }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "required": ["class", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "class": { "enum": ["ERR_PROGRAM", "CANCELED"] },
+        "message": { "type": "string" }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "required": [
+        "id",
+        "index",
+        "state",
+        "generated_at",
+        "vector",
+        "parameters",
+        "spec_overrides",
+        "spec",
+        "attempts",
+        "metric",
+        "checkpoint_uri",
+        "failure"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^rec-[0-9]{4,}$" },
+        "index": { "type": "integer", "minimum": 0 },
+        "state": { "enum": ["READY", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED"] },
+        "generated_at": { "type": "string", "minLength": 1 },
+        "vector": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/jsonValue" },
+          "description": "Dotted parameter pointers and their concrete values. These are pointers, not a model config."
+        },
+        "spec_overrides": { "$ref": "#/$defs/nestedDict" },
+        "spec": { "$ref": "#/$defs/nestedDict" },
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/attempt" } },
+        "metric": { "type": ["number", "null"] },
+        "checkpoint_uri": { "type": ["string", "null"] },
+        "artifact_uri": { "type": ["string", "null"] },
+        "failure": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/failure" }
+          ]
+        },
+        "config_id": { "type": "string", "pattern": "^config-[0-9]{4,}$" },
+        "budget": { "type": ["integer", "null"], "minimum": 1 },
+        "rung": { "type": ["integer", "null"], "minimum": 0 },
+        "generation": { "type": ["integer", "null"], "minimum": 0 },
+        "bracket": { "type": ["integer", "null"], "minimum": 0 },
+        "parent_rec_id": { "type": ["string", "null"] },
+        "resume_from_job_id": { "type": ["string", "null"] },
+        "objective_values": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "objective_score": { "type": ["number", "null"] },
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["step", "metrics", "observed_at"],
+            "additionalProperties": false,
+            "properties": {
+              "step": { "type": "integer", "minimum": 0 },
+              "metrics": {
+                "type": "object",
+                "additionalProperties": { "type": "number" }
+              },
+              "observed_at": { "type": "string", "minLength": 1 },
+              "feedback": {}
+            }
+          }
+        },
+        "feedback": {
+          "type": "array",
+          "items": {}
+        },
+        "decision": { "type": ["string", "null"] },
+        "metadata": { "type": "object" }
+      }
+    }
+  }
+}

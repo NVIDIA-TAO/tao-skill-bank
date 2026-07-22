@@ -232,13 +232,12 @@ A full example is in [§ 3](#3-reference-evalsjson-example).
 **No duplicated content** between `SKILL.md` and a reference, or across
 references. Move a block to exactly one place; leave a pointer, not a copy.
 
-### 2.6 SDK leak (model / data / application skills)
+### 2.6 SDK and optimizer-package leak
 
-No SDK symbols (`tao_sdk`, `script_runner`, `sdk.create_job`,
-`build_entrypoint`, …) anywhere under `skills/` — SKILL.md **or** a
-reference — **except** `skills/applications/tao-run-automl/`, which keeps the
-`nvidia-tao-automl` wheel and its transitive SDK. `scripts/validate-skills.sh`
-enforces this.
+No SDK or removed optimizer-package symbols (`tao_sdk`, `tao_automl`,
+`AutoMLRunner`, `script_runner`, `sdk.create_job`, `build_entrypoint`, …)
+anywhere under `skills/`—SKILL.md or a reference. Platform execution and AutoML
+state machines are skill-owned. `scripts/validate-skills.sh` enforces this.
 
 ### 2.7 Security scanner — PII / paths (HIGH, blocking)
 
@@ -329,4 +328,3 @@ Reference copy in-tree:
 execution ("Do NOT run any commands, scripts, web searches, or other tools —
 describe the plan only"). The eval sandbox crashes if the skill drives live
 research.
-

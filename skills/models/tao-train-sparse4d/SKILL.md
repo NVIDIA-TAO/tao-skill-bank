@@ -243,4 +243,8 @@ container/image failure and keep the exact checkpoint path visible.
 
 ## Spec Param / Parent Model Inference
 
-See `references/spec_param_inference.md` for the model-specific inference mappings from TAO Core `sparse4d.config.json` (the per-action spec-field to inference-function table) and the `parent_model`/`parent_job_id` checkpoint-resolution rules that generated runners apply with SDK helpers before `create_job()`.
+See `references/spec_param_inference.md` for the model-specific mappings from
+TAO Core `sparse4d.config.json` (per-action spec field to artifact rule) and the
+`parent_model`/`parent_job_id` checkpoint-resolution rules. Generated runners
+must resolve the parent job's recorded `results_dir`, select the exact artifact,
+write the nested spec field, and submit through the selected platform skill.

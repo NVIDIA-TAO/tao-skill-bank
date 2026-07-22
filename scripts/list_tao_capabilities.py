@@ -322,7 +322,7 @@ def format_capabilities_text(data: dict[str, Any]) -> str:
             "",
             "AutoML/HPO support:",
             "- AutoML is enabled from model metadata, so workflows for train-like "
-            "actions should route through AutoMLRunner when automl_policy=on "
+            "actions should route through the tao-run-automl step engine when automl_policy=on "
             "(the default), unless the user explicitly asks for a plain single "
             "action run or sets automl_policy=off. Single-shot compression "
             "actions route through AutoML when the user asks to optimize them "

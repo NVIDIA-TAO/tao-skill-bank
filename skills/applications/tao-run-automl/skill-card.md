@@ -1,5 +1,5 @@
 ## Description: <br>
-Run AutoML / hyperparameter optimization (HPO) for NVIDIA TAO networks using AutoMLRunner, handling algorithm selection, WandB experiment tracking, job execution on any TAO SDK platform, result interpretation, and per-recommendation custom evaluation hooks. <br>
+Run skill-owned AutoML / hyperparameter optimization (HPO) for NVIDIA TAO networks and actions, including all classical and LLM-guided algorithms, GEPA prompt optimization, multi-objective scoring, experiment tracking, native platform execution, and durable result handoff. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -20,8 +20,9 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [AutoML Preflight Concepts](references/automl-preflight-concepts.md) <br>
+- [Skill-Owned AutoML Step Engine](references/automl-sdk-free-bayesian.md) <br>
 - [AutoML Intent & Algorithms](references/automl-intent-algorithms.md) <br>
-- [AutoML Runner Configuration](references/automl-runner-configuration.md) <br>
+- [AutoML Engine Configuration](references/automl-runner-configuration.md) <br>
 - [AutoML Advanced Monitoring](references/automl-advanced-monitoring.md) <br>
 - [AutoML Examples](references/automl-examples.md) <br>
 - [Detailed Guide](references/detailed-guide.md) <br>

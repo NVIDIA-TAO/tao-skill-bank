@@ -7,7 +7,8 @@ the platform skills' **four-verb consumer contract**
 (`submit`/`status`/`logs`/`cancel`) over each platform's native CLI — `docker`,
 `kubectl`, `ssh`+`sbatch`, `brev`, or the vendored virtualenv runner — with
 every run tracked in a job-record.
-There is no `nvidia-tao-sdk`.
+Execution and AutoML orchestration are entirely skill-owned and use no NVIDIA
+Python SDK or AutoML wheel.
 
 The skill bank works **standalone**. Model and data skills run with just
 `docker run`; platform execution needs only the native CLI plus the bank's
@@ -86,19 +87,17 @@ All installed platforms — the bank's five plus any external platform skill
 (e.g. kratos) — are **equal-class peers, no default**. If the user hasn't
 chosen, ask.
 
-> AutoML hyperparameter search (`tao-run-automl`) is the one workflow that
-> additionally uses the `nvidia-tao-automl` wheel — and its transitive
-> `nvidia-tao-sdk` dependency — to pick each next config. That is contained to
-> that app skill; everything else runs SDK-free.
+> AutoML uses the bundled `automl_step.py` state engine for every supported
+> algorithm and action, the same four platform verbs for jobs, explicit metric
+> records for results, and `gepa_step.py` for batched prompt optimization.
 
 ## Never do
 
 - **Never write flat dotted spec keys in the actual spec.** Specs written to
   config files or passed into containers are **nested dicts**:
-  `{"train": {"num_epochs": 12}}`, not `{"train.num_epochs": 12}`. AutoMLRunner's
-  `spec_overrides` argument is the one exception: it accepts dotted path keys as
-  an override map and expands them into the nested spec before launch. Do not
-  pass that override map directly to a config file or container boundary.
+  `{"train": {"num_epochs": 12}}`, not `{"train.num_epochs": 12}`. AutoML
+  recommendation artifacts expose dotted parameter pointers for inspection,
+  but their executable `spec` field is always nested.
 - **Never default to one platform** when several would fit. If the user hasn't
   said which platform (Docker, SLURM, Kubernetes, Brev, virtualenv, or an
   installed external one), ask. Installed platforms are equal-class peers;
@@ -119,6 +118,6 @@ chosen, ask.
   `grep`, or `head` a credentials file (e.g. any `.env` the user may have
   created).
 - **Never assume anything beyond docker is present.** Model and data skills run
-  with just `docker`; platform execution needs only the native CLI
-  (`docker`/`kubectl`/`ssh`/`brev`) plus the bank's helper scripts — there is no
-  `nvidia-tao-sdk` to install. Run the chosen platform's Preflight first.
+  with just `docker`; native platform execution needs only the native CLI
+  (`docker`/`kubectl`/`ssh`/`brev`) plus the bank's helper scripts. Run the
+  chosen platform's Preflight first.

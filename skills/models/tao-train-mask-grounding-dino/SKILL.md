@@ -161,7 +161,7 @@ TensorRT engine.
 
 ## Spec Param / Parent Model Inference
 
-Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners should read this section and apply the mappings with SDK helpers before `create_job()`. This mirrors the old microservices `infer_params.py` flow.
+Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners must read the parent job record's fixed `results_dir`, select the exact artifact using the filename rules below, write the resulting path into the nested spec field, and submit through the selected platform skill. This is the skill-owned replacement for the old microservices `infer_params.py` flow.
 
 Inference mappings from TAO Core `mask_grounding_dino.config.json`:
 
@@ -192,9 +192,9 @@ Inference mappings from TAO Core `mask_grounding_dino.config.json`:
 | train | `train.pretrained_model_path` | `ptm_if_no_resume_model` | PTM when no resume checkpoint exists |
 | train | `train.resume_training_checkpoint_path` | `resume_model` | model file inferred from the current job results folder |
 
-For `parent_model` or `parent_model_folder`, pass the upstream train/export/AutoML child job id as `parent_job_id`. The SDK lists the parent result folder, filters checkpoint artifacts, and returns the selected model file or folder. Do not add these mappings back to `config.json` and do not patch generated runner scripts to guess checkpoint paths.
+For `parent_model` or `parent_model_folder`, retain the upstream train/export/AutoML child job id as `parent_job_id`. Read that job's immutable record to get `results_dir`, apply the model-specific artifact rules to select the exact file or folder, and write the concrete path into the nested spec. Do not add these mappings back to `config.json` or make an unvalidated path guess.
 
-When selecting a Mask Grounding DINO checkpoint outside the SDK resolver, match
+When selecting a Mask Grounding DINO checkpoint from the recorded results directory, match
 the intended epoch/step artifact exactly, for example
 `model_epoch_000_step_00049.pth`. The `mask_gdino_model_latest.pth` symlink is
 valid only when latest is explicitly requested. The parent PyTorch
