@@ -57,7 +57,7 @@ Persists in `~/.docker/config.json` across reboots. Re-run on `unauthorized` err
 docker run \
   --gpus all \                        # all GPUs (requires nvidia-container-toolkit)
   --rm \                              # delete container after exit (image is preserved)
-  --ipc=host \                        # shared mem for torchrun / DataLoader
+  --shm-size=8g \                     # shared mem for torchrun / DataLoader
   -v /host/data:/data \               # bind-mount input
   -v /host/results:/results \         # bind-mount output
   -e HF_TOKEN -e NGC_KEY \            # env-var passthrough (values from parent shell)
@@ -69,7 +69,7 @@ Notes:
 
 - `--gpus '"device=0,1"'` — specific GPUs (double-quote-escaped). Without nvidia-container-toolkit: `could not select device driver "" with capabilities: [[gpu]]`.
 - `--rm` — clean up the container at exit; omit when you want `docker logs` after exit.
-- `--ipc=host` — torchrun + PyTorch DataLoaders hit shared-memory limits otherwise. Required for multi-GPU training. Alternative: `--shm-size=8g`.
+- `--shm-size=8g` — torchrun + PyTorch DataLoaders exhaust the default 64 MB `/dev/shm` otherwise; size it for multi-GPU training and raise (e.g. `16g`) if you still hit `Bus error`.
 - `-v host:container` — bind mount; the command references container paths only.
 - `-e VAR` — passthrough from parent shell (no value needed if already set). Use this form for secrets.
 
@@ -88,7 +88,7 @@ For multi-step workflows on the same container (download → run → post-proces
 
 ```bash
 docker run -d --name <worker> \
-  --gpus all --ipc=host \
+  --gpus all --shm-size=8g \
   -v <mounts...> -e <envs...> \
   --entrypoint sh \
   <image> -c "tail -f /dev/null"
@@ -205,7 +205,7 @@ Most TAO training workloads don't need this — single container per job.
 
 **`no space left on device`** — root volume full. `docker system df` to inspect; relocate `data-root` (above) or `docker system prune -a --volumes`.
 
-**`Bus error` / `DataLoader worker exited unexpectedly`** — `/dev/shm` too small. Add `--ipc=host` or `--shm-size=8g`.
+**`Bus error` / `DataLoader worker exited unexpectedly`** — `/dev/shm` too small. Increase shared memory with `--shm-size` (e.g. `--shm-size=16g`).
 
 **`permission denied` on bind-mounted paths** — container UID ≠ host UID. Either `-u $(id -u):$(id -g)`, or pre-create host files owned by the host user, or `chmod 777` (dev only).
 
@@ -219,3 +219,4 @@ This skill covers the *how* of running docker on a GPU host. Platform-specific l
 - `tao-skill-bank:tao-run-platform` — optional Python layer wrapping docker invocations with Job handles, state persistence, and S3 I/O
 
 Model and data skills specify **what** image and command; they defer to this skill for the **how**.
+
