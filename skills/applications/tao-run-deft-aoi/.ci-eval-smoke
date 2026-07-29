@@ -1,2 +1,3 @@
 CI smoke marker — touches this skill so the Jenkins detect stage selects it
 for the eval fan-out. Safe to delete. Not referenced by SKILL.md/validate-skills.
+retrigger: validate-skills.sh synced to release/7.1.0 (AutoML needles relaxed).
