@@ -1,2 +1,2 @@
-CI smoke marker — touches this skill so detect selects it for the eval fan-out.
-visual-changenet is faster than deft-aoi. Safe to delete.
+CI smoke marker — visual-changenet only (deft-aoi excluded). Safe to delete.
+rev 2
