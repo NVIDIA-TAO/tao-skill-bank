@@ -1,0 +1,19 @@
+name: PR Reminder
+
+# Thin caller — all logic lives in the org-wide reusable workflow.
+# To roll this out to another NVIDIA-TAO repo, copy this file verbatim.
+# Requires org-level secrets TAO_PR_BOT_APP_ID / TAO_PR_BOT_PRIVATE_KEY
+# (inherited below).
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, edited]
+
+concurrency:
+  group: pr-reminder-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  remind:
+    uses: NVIDIA-TAO/.github/.github/workflows/pr-reminder.yml@main
+    secrets: inherit
