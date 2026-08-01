@@ -72,6 +72,7 @@ TRAIN_IMAGES_DIR = "/workspace/data/extracted/train/images_train"
 VAL_IMAGES_DIR = "/workspace/data/extracted/val/images_val"
 TEST_IMAGES_DIR = "/workspace/data/extracted/test/images_test"
 CLASSES_FILE = "/workspace/data/s3/classes.txt"
+WRITABLE_RESULTS_DIR = "/results"   # must be a writable bind, not the image CWD
 ```
 
 For local Docker, download the S3 archives, extract them first, and point
@@ -89,8 +90,25 @@ local Docker specs; the skill metadata declares these inputs as folders.
     "dataset.train_dataset.images_dir": TRAIN_IMAGES_DIR,
     "dataset.classes_file": CLASSES_FILE,
     "dataset.val_dataset.images_dir": VAL_IMAGES_DIR,
+    "dataset.root_dir": WRITABLE_RESULTS_DIR,
 }
 ```
+
+`dataset.root_dir` is **mandatory for train**, not just for export. `CLDataset`
+writes a `classes.txt` into `root_dir` during setup, so it must point at a
+writable bind mount (the results mount is the natural choice). The spec template
+defaults it to `''`, which makes the write land in the container working
+directory — that succeeds under a root container but fails under any runner that
+drops to a non-root user:
+
+```
+PermissionError: [Errno 13] Permission denied: 'classes.txt'
+  .../classification_pyt/dataloader/dataset.py, in CLDataset.__init__
+```
+
+TAO SDK's `DockerSDK` enables `run_as_user` (host UID:GID) whenever a writable
+results bind is present, so AutoML and any SDK-launched training hit this unless
+`dataset.root_dir` is set.
 
 **export (mandatory data sources):**
 ```python
