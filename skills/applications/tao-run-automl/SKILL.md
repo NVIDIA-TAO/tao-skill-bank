@@ -177,21 +177,21 @@ model skill recommends a smaller shape for evaluation than training, use that
 shape and call it out in the launch review.
 
 Share the eval metric number with the user in the launch review before asking
-for confirmation to launch recommendations. If the model has no packaged
-evaluate action, the eval dataset is missing, or the eval job fails, stop and
-report the blocker instead of silently falling back to a training-loss-only
-AutoML run. Continue without this baseline only when the user explicitly accepts
-that the run will optimize a proxy metric and will not have an impact baseline.
+for confirmation. If a starting checkpoint exists but the baseline cannot be
+produced — no packaged evaluate action, missing eval dataset, failed eval job —
+stop and report the blocker instead of silently falling back to a
+training-loss-only run.
 
-The AutoML runner owns final evaluation of the selected best checkpoint/model.
-When a runnable evaluate action and validation/eval data exist, pass a
-`final_eval_fn(best_rec, train_job_id)` callback to `AutoMLRunner.run`. The
-callback must evaluate the selected best checkpoint/model with the same metric,
-dataset, and direction used for the baseline, store a structured record under
-the workspace, and return the measured metric or a dict containing
-`metric_value` and metadata such as `record_path` and `job_id`. Do not run final
-evaluation as an agent-side step after `runner.run`; the returned result should
-contain `result["final_evaluation"]` with a concrete status and reason.
+**Training from scratch is the exception.** With no pretrained / parent / resume
+checkpoint the baseline has nothing to evaluate, so it is inapplicable rather
+than failed: record it unavailable with that reason and proceed.
+
+The runner owns final evaluation of the selected best checkpoint. When a
+runnable evaluate action and eval data exist, pass `final_eval_fn(best_rec,
+train_job_id)` to `AutoMLRunner.run` rather than evaluating agent-side after
+`runner.run`; the result then carries `result["final_evaluation"]` with a
+concrete status and reason. See `automl-preflight-concepts.md` for the callback
+contract and the from-scratch rules.
 
 ## Dependency And Data Preflight
 

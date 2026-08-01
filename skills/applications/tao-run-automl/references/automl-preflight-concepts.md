@@ -70,6 +70,13 @@ Before running AutoML:
    ```
 
    Substitute the matching import for `brev`, `slurm`, or `kubernetes`. Catch a missing platform extra during preflight, before spending time on an image pull or recommendation. Local Docker launches with the host UID:GID when a writable results bind is present, so any model dataloader that writes through a spec path must point that path at a writable mount.
+
+   **Baseline eval when training from scratch.** The required baseline is scoped to runs that have a starting checkpoint. With no pretrained, parent, or resume checkpoint, there is no starting model to evaluate, so the baseline is inapplicable rather than failed:
+
+   - Record the baseline as unavailable with the reason and surface it in the launch review.
+   - Proceed to recommendations; only the impact-versus-starting-point delta is unavailable.
+   - Supply `baseline_fn` or `automl_settings["baseline_metric"]` only when a checkpoint exists. `final_eval_fn` still applies; a from-scratch smoke test may explicitly use `reuse_best_metric_for_final_evaluation=True`.
+
 3. **Dataset**: Training data accessible from the compute backend. URI format depends on the SDK's platform:
    - Brev / cloud: `s3://bucket/path` (S3-compatible; do not generate `aws://...`)
    - Slurm / internal shared storage: an absolute shared filesystem path visible to the Slurm job, e.g. `/lustre/fsw/tao_datasets/<model>/train` and `/lustre/fsw/tao_datasets/<model>/eval`
