@@ -82,6 +82,11 @@ clearly and keep all child model actions in the resolved container image.
 python -c "import tao_automl; from tao_automl.runner import AutoMLRunner; print('OK')"
 ```
 
+Then verify the selected platform's SDK constructs — importing `tao_automl` does
+not prove the platform backend is installed (e.g. `DockerSDK()` raises
+`CredentialError` without the `docker` package). See
+`automl-preflight-concepts.md`.
+
 If missing, show the exact install command from `versions.yaml` and ask before
 installing:
 
@@ -300,13 +305,13 @@ model_skill = "<resolved-model-skill-directory>"
 skill_dir = skill_bank / "skills" / "models" / model_skill
 
 runner = AutoMLRunner(
+    sdk=sdk,
     skill_dir=str(skill_dir),
-    platform_sdk=sdk,
-    workspace_dir="<automl_workspace>",
+    action=action,                      # train, distill, prune, quantize, ...
 )
 
 result = runner.run(
-    automl_algorithm=algorithm,
+    workspace_path="<automl_workspace>",   # timestamp it to avoid collisions
     automl_settings=automl_settings,
     spec_overrides=spec_overrides,
     automl_hyperparameters=automl_hyperparameters,
