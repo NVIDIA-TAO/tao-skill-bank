@@ -9,11 +9,13 @@ license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit. Sub-skills declare additional requirements.
 metadata:
   author: REPLACE-WITH-AUTHOR-NAME
-  version: "0.1"
+  version: "0.1.0"
 allowed-tools: Read Bash
 ---
 
 # Skill Name
+
+> **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
 
 High-level description of what this workflow accomplishes end-to-end.
 

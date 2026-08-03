@@ -44,7 +44,9 @@ print(resolve_image('tao_toolkit.pyt'))
 ### Commit + PR
 
 ```bash
-git add versions.yaml
+python3 scripts/stamp_versions.py          # fan the bump out to every stamped skill pin
+python3 scripts/stamp_versions.py --check  # verify nothing is stale
+git add versions.yaml skills
 git commit -m "Bump tao_toolkit.pyt to 6.27.0-pyt"
 git push -u origin <your-branch>
 ```
@@ -62,7 +64,7 @@ wheels:
 +   tao_sdk_brev:     nvidia-tao-sdk[brev]==7.1.0rc1
 ```
 
-Every skill Preflight resolves its wheel key via `scripts/resolve_versions_key.py wheels.<key>`, so the new pin propagates automatically — no per-skill grep, no hardcoded URLs.
+Skill Preflights carry the pin as a stamped literal (annotated `# versions-key: wheels.<key>`), so after re-stamping the new pin propagates automatically — no per-skill grep, no hardcoded URLs.
 
 ### Internal RC versions
 

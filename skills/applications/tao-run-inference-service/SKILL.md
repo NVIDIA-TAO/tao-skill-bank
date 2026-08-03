@@ -22,6 +22,8 @@ tags:
 
 # TAO Inference Microservice
 
+> **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
+
 ## Instructions
 
 **To start an inference service:**

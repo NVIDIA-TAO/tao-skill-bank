@@ -1,25 +1,40 @@
-# versions.yaml — single source of truth for TAO container images and SDK wheels.
+# versions.yaml — build-time source of truth for TAO container images and SDK wheels.
 #
-# Skills reference these by dotted key in their `references/skill_info.yaml`
-# `container_image` field. CI bumps RC versions by editing this file; downstream
-# skills resolve their image at runtime via `tao_sdk.versions.resolve_image()`.
+# Skills are standalone: they carry literal image URIs and wheel pins, each
+# annotated with the key it came from ("# versions-key: images.tao_toolkit.pyt").
+# scripts/stamp_versions.py fans this file out to every annotated line on a
+# release bump, and `stamp_versions.py --check` (run in CI) fails if any
+# annotated line drifts from this file. Do not hand-edit stamped values in
+# skills — edit here and run the stamper.
 #
-# Both forms are valid in skill_info.yaml:
-#   container_image: tao_toolkit.pyt                                 # key reference (preferred)
-#   container_image: nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt       # absolute path (also valid)
+# Legacy key references (container_image: tao_toolkit.pyt) are still resolved
+# by the validator and the SDK, but new skills should carry the stamped
+# literal + marker form:
+#   container_image: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt  # versions-key: images.tao_toolkit.pyt
 #
-# Use absolute paths for experimental images, third-party registries, or one-off
-# skills not worth adding here. Add to this file when the image will be used by
-# more than one skill OR will be bumped on a release cadence.
+# Use unannotated absolute paths only for experimental images, third-party
+# registries, or one-offs (annotate those "# unpinned: <reason>"). Add a key
+# here when the image is used by more than one skill OR is bumped on a
+# release cadence.
+#
+# Registry-org policy: nvcr.io/nvstaging/* pins are RC-only — the public
+# nvcr.io/nvidia/tao org carries no 7.1.x tags until GA. At GA, flip the
+# nvstaging entries below to the released nvcr.io/nvidia/tao URIs and run
+# scripts/stamp_versions.py: every stamped site (model skill_info.yaml files
+# and platform-skill examples alike) picks up the public image in one pass.
+# Do not hand-swap orgs inside skill files — CI rejects stamps that do not
+# match this file. Skill prose must stay org-agnostic ("the org of the pinned
+# image") so only stamped pins ever name an org and the GA de-RC sweep is
+# exactly this file + one stamper run.
 
 images:
   tao_toolkit:
-    pyt:                nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt
-    deploy:             nvcr.io/nvidia/tao/tao-toolkit:7.0.1-deploy
-    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.0.1-data-services
-    cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
+    pyt:                nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt
+    deploy:             nvcr.io/nvidia/tao/tao-toolkit:7.1.0-deploy
+    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services
+    cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
-    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-embed
+    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
     vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
@@ -37,17 +52,17 @@ wheels:
   #
   # The `nvidia-tao-sdk` package consolidates what used to be multiple wheels
   # (tao-sdk, tao-sdk-brev). One entry per platform extra.
-  tao_sdk:            nvidia-tao-sdk==7.0.1
-  tao_sdk_brev:       nvidia-tao-sdk[brev]==7.0.1
-  tao_sdk_slurm:      nvidia-tao-sdk[slurm]==7.0.1
-  tao_sdk_kubernetes: nvidia-tao-sdk[kubernetes]==7.0.1
-  tao_sdk_docker:     nvidia-tao-sdk[docker]==7.0.1
-  tao_sdk_all:        nvidia-tao-sdk[all]==7.0.1
+  tao_sdk:            nvidia-tao-sdk==7.1.0
+  tao_sdk_brev:       nvidia-tao-sdk[brev]==7.1.0
+  tao_sdk_slurm:      nvidia-tao-sdk[slurm]==7.1.0
+  tao_sdk_kubernetes: nvidia-tao-sdk[kubernetes]==7.1.0
+  tao_sdk_docker:     nvidia-tao-sdk[docker]==7.1.0
+  tao_sdk_all:        nvidia-tao-sdk[all]==7.1.0
   # nvidia-tao-automl pulls nvidia-tao-sdk as a transitive dep. One entry per
   # platform extra; append `,llm` or `,wandb` to an extra at install time for
   # the agentic-search or experiment-tracking deps.
-  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.0.1
-  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.0.1
-  tao_automl_docker:     nvidia-tao-automl[docker]==7.0.1
-  tao_automl_brev:       nvidia-tao-automl[brev]==7.0.1
-  tao_automl_all:        nvidia-tao-automl[all]==7.0.1
+  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.1.0
+  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.1.0
+  tao_automl_docker:     nvidia-tao-automl[docker]==7.1.0
+  tao_automl_brev:       nvidia-tao-automl[brev]==7.1.0
+  tao_automl_all:        nvidia-tao-automl[all]==7.1.0

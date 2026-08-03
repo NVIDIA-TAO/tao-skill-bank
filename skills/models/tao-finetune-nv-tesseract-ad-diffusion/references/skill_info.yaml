@@ -1,0 +1,5 @@
+name: tao-finetune-nv-tesseract-ad-diffusion
+network_arch: nv-tesseract-ad-diffusion
+huggingface_model_ids:
+- nvidia/nv-tesseract-ad-diffusion
+execution_environment: uv

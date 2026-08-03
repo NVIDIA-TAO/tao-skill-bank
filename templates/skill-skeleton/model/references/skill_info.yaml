@@ -1,12 +1,19 @@
 name: REPLACE-WITH-SKILL-NAME
 type: model
-# container_image accepts EITHER form:
+# Exact Hugging Face repo IDs owned by this skill. Uncomment when a user asking
+# to train/fine-tune that repo should route here. Do not list dependency-only
+# backbones that this skill merely downloads.
+# huggingface_model_ids:
+# - namespace/repository
+# container_image: use the stamped-literal + versions-key marker form (below).
+# scripts/stamp_versions.py keeps it current on release bumps; CI rejects drift.
+# Legacy forms that still parse:
 #   - dotted key resolved against ../../../versions.yaml (preferred for shared images)
 #   - absolute registry URI (for one-off / experimental / third-party images)
 # Examples:
 #   container_image: tao_toolkit.pyt
-#   container_image: nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
-container_image: tao_toolkit.pyt
+#   container_image: <literal nvcr.io URI stamped from versions.yaml — see the live line below>
+container_image: nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
 required_credentials:
   - HF_TOKEN
 

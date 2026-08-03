@@ -294,15 +294,29 @@ def build_support_summary(manifests: list[dict[str, Any]]) -> dict[str, Any]:
         model = manifest["model"]
         actions = manifest.get("actions", {})
         failures = manifest.get("failures", {})
-        if "train" in actions:
+        supported_actions = []
+        for action, metadata in sorted(actions.items()):
+            supported_actions.append(
+                {
+                    "action": action,
+                    "schema": metadata["path"],
+                    "schema_status": f"{metadata['path']} is packaged and valid",
+                    "spec_template": metadata.get("spec_template"),
+                    "automl_default_parameters": metadata.get("automl_default_parameters", []),
+                }
+            )
+
+        if supported_actions:
+            train_action = actions.get("train", {})
             supported.append(
                 {
                     "model": model,
                     "network_arch": manifest.get("network_arch", model),
                     "automl_enabled": True,
-                    "train_schema": actions["train"]["path"],
-                    "train_spec_template": actions["train"].get("spec_template"),
-                    "automl_default_parameters": actions["train"].get("automl_default_parameters", []),
+                    "train_schema": train_action.get("path", "schemas/train.schema.json"),
+                    "train_spec_template": train_action.get("spec_template"),
+                    "automl_default_parameters": train_action.get("automl_default_parameters", []),
+                    "supported_actions": supported_actions,
                 }
             )
         else:
@@ -318,7 +332,7 @@ def build_support_summary(manifests: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "schema_version": 1,
-        "support_rule": "AutoML is enabled at model level; runnable AutoML also requires skills/models/<network>/schemas/train.schema.json to be packaged and valid.",
+        "support_rule": "AutoML is enabled at model level; runnable AutoML for an action also requires skills/models/<network>/schemas/<action>.schema.json to be packaged and valid.",
         "supported": sorted(supported, key=lambda item: item["model"]),
         "unsupported": sorted(unsupported, key=lambda item: item["model"]),
     }
@@ -365,7 +379,7 @@ def main() -> int:
         f"{failed_actions} action(s) failed."
     )
     if failed_actions:
-        print(f"See {(skill_bank / 'models' / 'schemas.manifest.json')}")
+        print(f"See {(skill_bank / 'skills' / 'models' / 'schemas.manifest.json')}")
     return 0 if generated_actions else 1
 
 

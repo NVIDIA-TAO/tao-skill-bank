@@ -94,6 +94,10 @@ def load_model_metadata(
             str(skill_info.get("name", "")).strip(),
         }
         aliases.update(str(alias).strip() for alias in skill_info.get("aliases", []))
+        aliases.update(
+            str(model_id).strip()
+            for model_id in skill_info.get("huggingface_model_ids", [])
+        )
         aliases = {alias for alias in aliases if alias}
         if requested in aliases or requested_casefold in {
             alias.casefold() for alias in aliases

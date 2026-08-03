@@ -18,6 +18,8 @@ tags:
 
 # Validate a TAO DAFT Dataset
 
+> **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
+
 ## Quick start
 
 ```bash

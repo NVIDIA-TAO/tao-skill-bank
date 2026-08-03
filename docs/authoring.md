@@ -14,6 +14,7 @@
   - Skills that require the SDK
   - `references/skill_info.yaml` schema
 - 5. Optional: `example/` reference output
+- 5b. Required: `evals/evals.json` (Tier-3 signing)
 - 6. Templates
 - 7. Add to `marketplace.json`
 - 8. Validate
@@ -49,20 +50,36 @@ That's it. The body must contain enough info for an agent to run the skill — t
 
 YAML between `---` markers at the top of `SKILL.md`.
 
+All fields below are **required**. The CI validator (`scripts/validate-skills.sh`) and the signing pipeline both enforce them — see [`skill-requirements.md`](skill-requirements.md) for the full gate list.
+
 ### Required fields
 
 ```yaml
 ---
 name: tao-<verb>-<object>     # kebab-case; product prefix `tao-`, verb after the prefix.
-                              # Approved verbs: train, deploy, finetune, tune, generate, run,
-                              # analyze, deploy, setup, call, list, prepare. Drop the word
-                              # "skill" from the name (it is redundant). ≤ 4 tokens, ≤ 64 chars.
+                              # Recommended verbs include: train, deploy, finetune, tune, generate,
+                              # run, analyze, setup, call, list, prepare, convert, mine, port,
+                              # route, validate. Drop the word "skill" from the name (it is
+                              # redundant). ≤ 5 tokens, ≤ 64 chars.
+                              # MUST equal the directory name (kebab-case) — the validator
+                              # and the signer both enforce this.
 description: >-               # 1-3 sentences. Include literal trigger phrases.
   What the skill does and when to use it. Use when the user asks to
   "convert annotations to DAFT", "package annotations in DAFT format",
   or mentions "Data Factory exports". List every trigger phrase the user
   is likely to say.
-license: Apache-2.0           # required — Apache-2.0 unless your skill has a different license
+                              # No literal `<` / XML-like tokens (the signer rejects
+                              # them as "Description contains XML tags"). Use "below"
+                              # or "under" instead of `<`.
+license: Apache-2.0           # Apache-2.0 unless your skill has a different license
+compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
+                              # Runtime requirements only. ≤ 500 characters.
+metadata:
+  author: NVIDIA Corporation  # MUST be exactly this string
+  version: "0.1.0"            # Strict semver "x.y.z". "0.1", "0.4", "0.1-ea" all fail.
+tags:                         # Non-empty list. Short keywords for browsing / tooling.
+  - <domain>
+  - <task>
 ---
 ```
 
@@ -73,21 +90,25 @@ words against it. Follow these rules:
 
 - **Shape:** `tao-<verb>-<object-or-outcome>`. The product prefix `tao-` always
   leads; the verb comes immediately after the prefix.
-- **Approved verbs:** `train`, `finetune`, `tune`, `deploy`, `run`, `generate`,
-  `analyze`, `setup`, `call`, `list`, `prepare`, `inspect`, `audit`, `migrate`,
-  `summarize`, `search`, `query`, `ask`, `ingest`. If you can't find a verb that
-  fits, the skill probably does too many things — split it.
+- **Recommended verbs (not exhaustive):** `train`, `finetune`, `tune`, `deploy`,
+  `run`, `generate`, `analyze`, `setup`, `call`, `list`, `prepare`, `inspect`,
+  `audit`, `migrate`, `summarize`, `search`, `query`, `ask`, `ingest`,
+  `convert`, `mine`, `port`, `route`, `validate`, `launch`. Pick a verb a user
+  would actually say. If none fits, the skill probably does too many things —
+  split it.
 - **Outcome over implementation.** Pick the user's word — "rca" or "frag" alone
   reads like internal jargon; pair it with `analyze-` / `generate-` or expand it.
 - **Drop the word "skill"** from the name (it is redundant per Marketing).
-- **Length:** ≤ 4 tokens, ≤ 64 characters. Multi-word network names like
-  `mask-grounding-dino` count as one logical noun and are allowed.
+- **Length:** ≤ 5 tokens, ≤ 64 characters. Multi-token network names like
+  `mask-grounding-dino` count as one logical noun.
 - **Lowercase, kebab-case, no underscores, no filler words** (`a`, `an`, `the`).
 - **Per-product subscope** (e.g. `tao-daft-` for TAO DAFT, `tao-deft-` for the
   DEFT loop) is fine — `tao-` still leads, then the subscope, then the verb,
   then the object: `tao-convert-dataset-format`, `tao-mine-aoi-images`.
 - **No personal namespacing.** Differentiate variants by scope, not by author
   (e.g. `tao-deploy-edge` vs `tao-deploy-cloud`, not `<author>/deploy`).
+- **`name:` must equal the directory name** (kebab-case). The validator and
+  signer both enforce this.
 
 Examples that pass:
 `tao-train-visual-changenet`, `tao-deploy-dino`, `tao-run-automl`,
@@ -98,7 +119,7 @@ Examples that fail:
 `dino` (no verb, no prefix), `visual-changenet-deploy` (verb at end), `mine-skill`
 (contains "skill"), `train_changenet` (underscore), `the-tao-trainer` (filler word).
 
-The validator fails CI when `license` is missing. `name` and `description` follow the standard Agent Skills spec.
+The validator fails CI when any of the required fields above is missing or malformed (strict semver, non-empty tags, ≤500-char compatibility, no `<` in description, `name == directory name`, etc.).
 
 **Description style guide** — DAFT-influenced:
 
@@ -106,17 +127,9 @@ The validator fails CI when `license` is missing. `name` and `description` follo
 - Follow with a *"Use when the user asks to '...', '...', '...'"* clause listing 2-5 literal trigger phrases. This drives auto-invocation; abstract descriptions don't trigger reliably.
 - Mention domain terms users actually say ("convert annotations", "fine-tune cosmos-rl", "k-NN mining"). Synonyms help.
 
-### Optional fields (validator warns when missing)
+### Field notes (required fields above)
 
-```yaml
-compatibility: Requires docker + nvidia-container-toolkit + NGC API key.
-metadata:
-  author: NVIDIA Corporation
-  version: "1.0"
-allowed-tools: Read Bash
-```
-
-**`compatibility:`** — runtime requirements only. Tools, packages, env vars, services the skill needs.
+**`compatibility:`** — runtime requirements only. Tools, packages, env vars, services the skill needs. **≤ 500 characters** (signer cap).
 
 > **Important:** the skill bank is **agent-harness-agnostic**. Do NOT prefix `compatibility:` with "Designed for <runtime>" or any specific harness — the same skill must work in any Agent Skills compatible agent. Describe runtime requirements only.
 
@@ -127,15 +140,13 @@ allowed-tools: Read Bash
 | `skills/platform/tao-run-on-brev` | `Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login.` |
 | `skills/platform/tao-run-platform` | `Requires Python 3.10+ and the nvidia-tao-sdk package (pip install nvidia-tao-sdk).` |
 | Local Python script (no container) | `Requires Python 3.8+ and Pillow.` (or whatever) |
-| Agent-prompt-driven | `Standalone — no external runtime requirements.` or omit the field. |
+| Agent-prompt-driven | `Standalone — no external runtime requirements.` |
 
 **`metadata.author`** — must be exactly `NVIDIA Corporation`. The validator fails CI on any other value (including personal names or all-caps variants).
 
-**`metadata.version`** — skill version (NOT tool/model version). Start at `"0.1"` for new skills; bump when the SKILL.md materially changes (new actions, schema changes, etc.).
+**`metadata.version`** — skill version (NOT tool/model version). **Strict semver `"x.y.z"`** — `"0.1"`, `"0.4"`, `"0.1-ea"` all fail at signing. Start at `"0.1.0"`; bump when the SKILL.md materially changes (new actions, schema changes, etc.).
 
-**`allowed-tools`** — declares frequently used tools for compatible runtimes. Whitespace-separated list. Common values: `Read Bash`, `Read Bash Write`. Use sparingly — only for tools the skill genuinely needs frequently.
-
-**`tags`** — list of short keywords for documentation, browsing, and our own catalog tooling. Examples:
+**`tags`** — non-empty list of short keywords for documentation, browsing, and our own catalog tooling. Tags are NOT used for skill auto-invocation — that's driven by `description` (and trigger phrases within it). Tags exist for human browsing and tooling. Lives in `SKILL.md` frontmatter only — `references/skill_info.yaml` does NOT carry tags (single source of truth). Example:
 
 ```yaml
 tags:
@@ -145,7 +156,13 @@ tags:
   - classification
 ```
 
-Tags are NOT used for skill auto-invocation — that's driven by `description` (and trigger phrases within it). Tags exist for human browsing and tooling. Lives in `SKILL.md` frontmatter only — `references/skill_info.yaml` does NOT carry tags (single source of truth).
+### Optional fields (validator warns when missing)
+
+**`allowed-tools`** — declares frequently used tools for compatible runtimes. Whitespace-separated list. Common values: `Read Bash`, `Read Bash Write`. Use sparingly — only for tools the skill genuinely needs frequently. Keep `Write` separated from `Skill` / `Task` (co-presence trips the signer's privilege-escalation scanner — see [`skill-requirements.md`](skill-requirements.md) § 2.8).
+
+```yaml
+allowed-tools: Read Bash
+```
 
 ### Body must be agent-runnable
 
@@ -207,10 +224,19 @@ Pure agent-only skills (e.g., HF model wrappers driven by a single `docker run`)
 
 Skills reference container images and SDK wheel versions through a single canonical file: `versions.yaml` at the bank's repo root. This is the **only** place to bump TAO container tags, IVA images, or SDK wheel versions when an RC ships.
 
-`references/skill_info.yaml` accepts two forms for `container_image`:
+`references/skill_info.yaml` carries a stamped literal for `container_image`,
+annotated with the versions.yaml key it is stamped from — skills stay standalone
+(no runtime versions.yaml lookup) while release bumps stay one-file edits:
 
 ```yaml
-# Preferred: dotted key — resolved against versions.yaml at runtime
+container_image: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt  # versions-key: images.tao_toolkit.pyt
+```
+
+`scripts/stamp_versions.py` rewrites every annotated line from `versions.yaml`
+(CI runs `--check` to reject drift). Two legacy forms also parse:
+
+```yaml
+# Legacy: dotted key — resolved against versions.yaml at runtime (pre-standalone skills)
 container_image: tao_toolkit.pyt
 
 # Also valid: absolute registry URI (for experimental / third-party / one-off images)
@@ -218,6 +244,44 @@ container_image: nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
 ```
 
 Use a key when the image is shared across more than one skill or expected to be bumped on a release cadence. Use an absolute URI for experiments or external images not worth promoting to the manifest.
+
+### Version pinning rules
+
+Every image or wheel pin in a skill must be one of three things — the versions
+check in CI (`scripts/stamp_versions.py --check`) reports anything else as a
+stray:
+
+1. **Release-managed pin** — stamped literal + marker on the same line. Use for
+   any `nvcr.io/nvidia/tao/*` image or `nvidia-tao-*` wheel:
+
+   ```bash
+   container_image: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt  # versions-key: images.tao_toolkit.pyt
+   pip install "nvidia-tao-sdk[slurm]==7.0.1"  # versions-key: wheels.tao_sdk_slurm
+   ```
+
+2. **Deliberate one-off** — third-party registry, experimental image, or
+   anything not bumped on the TAO release cadence. Annotate it so the stray
+   scan skips it, with a reason:
+
+   ```bash
+   docker run --rm alpine:3.20 chown -R "$(id -u)" /w  # unpinned: generic helper image, not release-managed
+   ```
+
+3. **Variable indirection for multi-line commands** — a `# versions-key:`
+   comment cannot sit on a `docker run` continuation line (the `#` would
+   swallow the trailing `\`). Define a stamped variable once, then reference
+   it:
+
+   ```bash
+   TAO_DEPLOY_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.0.1-deploy  # versions-key: images.tao_toolkit.deploy
+
+   docker run --gpus all --rm \
+     "$TAO_DEPLOY_IMAGE" \
+     dino gen_trt_engine -e /specs/spec.yaml
+   ```
+
+On a release bump, edit `versions.yaml` and run `scripts/stamp_versions.py` —
+never hand-edit a stamped value (CI rejects the drift either way).
 
 The validator enforces:
 
@@ -246,7 +310,7 @@ Most skills run with just docker (no Python SDK). A few skills are SDK-orchestra
 This skill needs the TAO SDK. `nvidia-tao-sdk` is on public PyPI and pinned in `versions.yaml`; Preflight blocks resolve the pin via `scripts/resolve_versions_key.py` (swap `wheels.tao_sdk_brev` for the extra you need — `_docker`, `_slurm`, `_kubernetes`, `_all`):
 
 ```bash
-PIN=$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_sdk_brev)
+PIN="nvidia-tao-sdk[brev]==7.0.1"  # versions-key: wheels.tao_sdk_brev
 python -c "import tao_sdk" 2>/dev/null || {
   echo "MISSING: nvidia-tao-sdk not installed. Run:"
   echo "  pip install \"$PIN\""
@@ -266,8 +330,13 @@ name: tao-train-my-network                      # follow the kebab + verb-object
 type: model | data | application | platform     # optional, useful for tooling
 required_credentials: [HF_TOKEN, NGC_KEY]
 
-# Models and data skills (containerized) — prefer the dotted key form (resolved against versions.yaml)
-container_image: tao_toolkit.pyt
+# Models only: exact HF repo IDs for which this skill owns the user-facing
+# train/fine-tune workflow. Required when applicable; do not list a dependency
+# backbone that this model merely downloads.
+huggingface_model_ids: [namespace/repository]
+
+# Models and data skills (containerized) — stamped literal + versions-key marker
+container_image: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt  # versions-key: images.tao_toolkit.pyt
 actions:
   train:
     command: visual_changenet train -e {config_path}
@@ -310,6 +379,51 @@ When to add:
 - ✅ Skills with format-sensitive outputs (specific JSON schemas).
 - ❌ Single-file outputs whose schema is documented inline.
 - ❌ Very large outputs (don't bloat the repo).
+
+## 5b. Required: `evals/evals.json` (Tier-3 signing)
+
+> **Don't confuse the two eval files.**
+>
+> | File | Required? | What it drives |
+> |---|---|---|
+> | `evals/evals.json` (this section) | **Required for signing** | Tier-3 AGENT_EVAL — no-execution routing/plan check. |
+> | `eval.config` (at the skill root) | **Optional, opt-in only** | TAO skill-execution-eval — live `docker run`, real datasets, real metrics. Onboard this only if you want live-execution coverage. Examples: [`skills/models/tao-train-visual-changenet/eval.config`](../skills/models/tao-train-visual-changenet/eval.config), [`skills/applications/tao-run-deft-aoi/eval.config`](../skills/applications/tao-run-deft-aoi/eval.config). |
+>
+> Adding `eval.config` does not waive the `evals/evals.json` requirement.
+
+The signing pipeline runs a Tier-3 agent-eval (AGENT_EVAL) against every skill. Presence of `evals/evals.json` at the skill root is what triggers that stage — skills shipped without it cannot be signed.
+
+```
+skills/<layer>/<skill-name>/
+├── SKILL.md
+└── evals/
+    └── evals.json
+```
+
+The file is a top-level JSON array. Each entry needs `id`, `question`, `expected_skill` (must equal the skill's `name:`), `ground_truth`, and a non-empty `expected_behavior` list. `expected_script` is optional (`null` if unused).
+
+Phrase the `question` as a **no-execution routing/plan check** — the eval sandbox rejects the `web_search` tool (HTTP 400) and crashes if the skill drives live research.
+
+```json
+[
+  {
+    "id": "tao-mine-aoi-images-basic",
+    "question": "A user request: \"Runs the DEFT embed-then-mine workflow for VCN AOI iterations — embeds the gap-analysis target parquet, embeds a source pool, and mines nearest-neighbour source images for downstream augmentation.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
+    "expected_skill": "tao-mine-aoi-images",
+    "expected_script": null,
+    "ground_truth": "Identify tao-mine-aoi-images as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
+    "expected_behavior": [
+      "Identifies tao-mine-aoi-images as the relevant skill",
+      "Outlines the documented workflow steps from SKILL.md",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]
+```
+
+In-tree reference: [`skills/data/tao-mine-aoi-images/evals/evals.json`](../skills/data/tao-mine-aoi-images/evals/evals.json).
+
+See [`skill-requirements.md`](skill-requirements.md) for the full signing-pipeline rule set (frontmatter strictness, size cap, security scanner, etc.) — those checks gate release independent of CI.
 
 ## 6. Templates
 
@@ -354,12 +468,20 @@ Do not also add the skill under `skills/core/`. That directory is only for Codex
 ./scripts/validate-skills.sh
 ```
 
-Errors (fail CI):
+Errors (fail CI — at parity with the signing pipeline; see [`skill-requirements.md`](skill-requirements.md)):
 
 - `marketplace.json` skill paths must resolve.
 - `skills/core/` must not contain symlink mirrors of canonical skills.
-- `SKILL.md` frontmatter must have `name`, `description`, and `license`.
+- `SKILL.md` frontmatter:
+  - `name` present and equal to the directory name (kebab-case).
+  - `description` present and contains no `<` / XML-like tokens.
+  - `license` present.
+  - `compatibility` present and ≤ 500 characters.
+  - `metadata.author` present and equal to `NVIDIA Corporation`.
+  - `metadata.version` present and strict semver `"x.y.z"` (`"0.1"` fails).
+  - `tags` present and non-empty.
 - `SKILL.md` body must have runnable info (Quick Start, docker run, scripts/, hooks/, or `references/skill_info.yaml`).
+- `evals/evals.json` must exist at the skill root, parse as a non-empty JSON array, and each entry must have `id`, `question`, `expected_skill`, `ground_truth`, and a non-empty `expected_behavior` list.
 - No `tao_sdk` symbol leaks into model/data/application skills (skills/platform/* exempt; tao-run-automl exempted as SDK-native workflow).
 - Hook paths in frontmatter must resolve.
 - Any `skill_info.yaml` or `model_info.yaml` parses, including `deploy/skill_info.yaml`.
@@ -368,8 +490,6 @@ Errors (fail CI):
 
 Warnings (printed but don't fail CI):
 
-- Missing `compatibility`.
-- Missing `metadata.author` or `metadata.version`.
 - Missing `allowed-tools`.
 
 CI runs the same script — fix errors before opening a PR; address warnings opportunistically.
@@ -389,6 +509,10 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 - [ ] Body has Quick Start (or scripts/, hooks/, references/skill_info.yaml) — agent-runnable.
 - [ ] If the skill is non-trivial: External Dependencies, CLI Reference, Output Structure, Known Pitfalls sections present.
 - [ ] If using `skill_info.yaml`: `container_image` set, each model/data action has `command`, `mode`, `inputs`, `outputs`, and `upload_excludes`.
+- [ ] If a model skill owns training/fine-tuning for a Hugging Face repo ID: add every exact public ID to `huggingface_model_ids`; do not rely only on prose, tags, or human aliases.
+- [ ] Every release-managed image/wheel pin carries a `# versions-key:` marker (or a stamped variable for multi-line commands); one-off images are annotated `# unpinned: <reason>`.
+- [ ] SKILL.md carries the standalone breadcrumb under its title (run `tao-setup` first when the session was not plugin-initialized) — copy it from any existing skill or the skeleton.
+- [ ] `scripts/stamp_versions.py --check` reports no errors and no new stray-pin warnings from your skill.
 - [ ] No SDK symbols (`tao_sdk`, `sdk.create_job`, etc.) in model/data/application skills (allowed in `skills/platform/*`).
 - [ ] Added to the marketplace manifest under the right plugin(s), when the packaging surface requires it.
 - [ ] No mirrored copy or symlink added under `skills/core/`.
