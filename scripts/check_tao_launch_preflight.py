@@ -28,7 +28,7 @@ REMOTE_SCHEMES = ("s3://", "azure://", "gs://", "http://", "https://")
 DEFAULT_GPU_SMOKE_IMAGE = os.environ.get("TAO_GPU_SMOKE_IMAGE", "ubuntu:22.04")
 DEFAULT_LOW_VRAM_THRESHOLD_GB = 50.0
 KNOWN_IMAGE_SMS = {
-    "cosmos-rl": ["sm_80", "sm_90", "sm_100", "sm_120"],
+    "cosmos-rl": ["sm_80", "sm_90", "sm_100", "sm_103", "sm_103a", "sm_120"],
 }
 
 
@@ -78,7 +78,7 @@ def parse_args() -> argparse.Namespace:
         metavar="LABEL=SM[,SM...]",
         help=(
             "Require target GPU architectures to be supported by a model/image, "
-            "for example cosmos_rl=sm_80,sm_90,sm_100,sm_120."
+            "for example cosmos_rl=sm_80,sm_90,sm_100,sm_103a,sm_120."
         ),
     )
     parser.add_argument(
@@ -87,7 +87,7 @@ def parse_args() -> argparse.Namespace:
         default=[],
         metavar="SM",
         help=(
-            "Known target GPU architecture such as sm_90 or 12.0. May be repeated. "
+            "Known target GPU architecture such as sm_90, sm_103a, or 12.0. May be repeated. "
             "If omitted, local nvidia-smi is used when an allowlist is provided."
         ),
     )
@@ -102,6 +102,15 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help="Require each counted target GPU to have at least this much memory in GiB.",
+    )
+    parser.add_argument(
+        "--gpu-min-total-memory-gb",
+        type=float,
+        default=None,
+        help=(
+            "Require the visible target GPUs to have at least this much cumulative "
+            "memory in decimal GB. This does not impose a GPU count or per-GPU size."
+        ),
     )
     parser.add_argument(
         "--target-gpu-count",
@@ -172,7 +181,7 @@ def parse_args() -> argparse.Namespace:
         metavar="SM[,SM...]",
         help=(
             "Supported GPU architectures for the selected image, for example "
-            "sm_80,sm_90,sm_100,sm_120. May be repeated. If omitted, known "
+            "sm_80,sm_90,sm_100,sm_103a,sm_120. May be repeated. If omitted, known "
             "limits are inferred from --container-image when possible."
         ),
     )
@@ -245,17 +254,26 @@ def normalize_gpu_arch(value: str) -> str:
     normalized = normalized.replace("-", "_")
     if not normalized:
         raise SystemExit("GPU architecture value must not be empty")
-    if re.fullmatch(r"sm_?\d{2,3}", normalized):
-        digits = normalized.split("_", 1)[-1] if "_" in normalized else normalized[2:]
-        return "sm_" + digits
-    if re.fullmatch(r"\d{2,3}", normalized):
+    if re.fullmatch(r"sm_?\d{2,3}[af]?", normalized):
+        arch = normalized.split("_", 1)[-1] if "_" in normalized else normalized[2:]
+        return "sm_" + arch
+    if re.fullmatch(r"\d{2,3}[af]?", normalized):
         return "sm_" + normalized
-    match = re.fullmatch(r"(\d+)\.(\d+)", normalized)
+    match = re.fullmatch(r"(\d+)\.(\d+)([af]?)", normalized)
     if match:
-        major, minor = match.groups()
-        return f"sm_{major}{minor}"
+        major, minor, suffix = match.groups()
+        return f"sm_{major}{minor}{suffix}"
     raise SystemExit(
-        f"Unsupported GPU architecture format: {value}. Use sm_90, 90, or 9.0."
+        f"Unsupported GPU architecture format: {value}. Use sm_90, sm_103a, 90, or 9.0."
+    )
+
+
+def gpu_arch_is_supported(target: str, supported: set[str]) -> bool:
+    """Match a compute capability to any target variant in the same SM family."""
+    target_family = re.sub(r"[af]$", "", normalize_gpu_arch(target))
+    return any(
+        re.sub(r"[af]$", "", normalize_gpu_arch(candidate)) == target_family
+        for candidate in supported
     )
 
 
@@ -428,7 +446,7 @@ def check_gpu_arch_allowlists(
     for label, allowed in allowlists.items():
         label_ok = True
         for arch in target_arches:
-            if arch not in allowed:
+            if not gpu_arch_is_supported(arch, allowed):
                 print(
                     f"GPU architecture unsupported for {label}: target={arch}, "
                     f"allowed={','.join(sorted(allowed))}"
@@ -446,16 +464,19 @@ def check_gpu_arch_allowlists(
 def check_gpu_resources(
     min_count: int | None,
     min_memory_gb: float | None,
+    min_total_memory_gb: float | None,
     target_count: int | None,
     target_memory_gb: list[float],
     skip_access: bool,
 ) -> bool:
-    if min_count is None and min_memory_gb is None:
+    if min_count is None and min_memory_gb is None and min_total_memory_gb is None:
         return True
     if min_count is not None and min_count <= 0:
         raise SystemExit("--gpu-min-count must be a positive integer")
     if min_memory_gb is not None and min_memory_gb <= 0:
         raise SystemExit("--gpu-min-memory-gb must be positive")
+    if min_total_memory_gb is not None and min_total_memory_gb <= 0:
+        raise SystemExit("--gpu-min-total-memory-gb must be positive")
 
     if target_memory_gb:
         memory_gb = list(target_memory_gb)
@@ -497,11 +518,28 @@ def check_gpu_resources(
         )
         return False
 
+    # nvidia-smi reports MiB and detect_local_gpu_memory_gb converts that to GiB.
+    # Convert the aggregate to decimal GB so nominal accelerator capacities can be
+    # expressed without making assumptions about GPU count or per-device size.
+    total_memory_gb = sum(memory_gb) * (1024**3 / 1_000_000_000)
+    if min_total_memory_gb is not None and total_memory_gb < min_total_memory_gb:
+        detected = ",".join(f"{value:.1f}GiB" for value in memory_gb)
+        print(
+            "GPU resource check failed: "
+            f"total_memory_gb={total_memory_gb:.1f} < "
+            f"required_total_memory_gb={min_total_memory_gb:g}; "
+            f"detected={detected}"
+        )
+        return False
+
     detected = ",".join(f"{value:.1f}GiB" for value in memory_gb)
     print(
         "GPU resources OK: "
         f"qualifying_gpus={qualifying}, required={required_count}, "
         f"min_memory_gb={min_memory_gb if min_memory_gb is not None else 'any'}, "
+        f"total_memory_gb={total_memory_gb:.1f}, "
+        "required_total_memory_gb="
+        f"{min_total_memory_gb if min_total_memory_gb is not None else 'any'}, "
         f"detected={detected}"
     )
     return True
@@ -864,9 +902,7 @@ def parse_sm_list(values: list[str]) -> list[str]:
         for item in value.split(","):
             sm = item.strip()
             if sm:
-                if sm.replace(".", "", 1).isdigit():
-                    sm = sm_from_compute_cap(sm)
-                sms.append(sm)
+                sms.append(normalize_gpu_arch(sm))
     return sms
 
 
@@ -1105,7 +1141,7 @@ def check_image_architecture(
             )
             ok = False
             continue
-        if sm not in supported_set:
+        if not gpu_arch_is_supported(sm, supported_set):
             print(
                 "Image architecture unsupported: "
                 f"image={container_image or '<selected-image>'} "
@@ -1597,6 +1633,7 @@ def main() -> int:
     gpu_resources_ok = check_gpu_resources(
         args.gpu_min_count,
         args.gpu_min_memory_gb,
+        args.gpu_min_total_memory_gb,
         args.target_gpu_count,
         args.target_gpu_memory_gb,
         args.skip_platform_access,

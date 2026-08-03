@@ -6,7 +6,7 @@
 
 AutoML enablement is model-level metadata (`automl_enabled: true` in
 skills/models/<network>/references/skill_info.yaml). Runnable AutoML support is then
-gated by the exact packaged train dataclass schema for each model.
+gated by the exact packaged dataclass schema for the selected action.
 """
 
 from __future__ import annotations
@@ -21,10 +21,12 @@ from typing import Any
 DEFAULT_SKILL_BANK = Path(
     os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
 )
-TRAIN_SCHEMA_REL = Path("schemas") / "train.schema.json"
+SCHEMA_DIR_REL = Path("schemas")
+TRAIN_SCHEMA_REL = SCHEMA_DIR_REL / "train.schema.json"
 SUPPORT_RULE = (
-    "AutoML is enabled at model level; runnable AutoML also requires "
-    "skills/models/<network>/schemas/train.schema.json to be packaged and valid."
+    "AutoML is enabled at model level; runnable AutoML for an action also "
+    "requires skills/models/<network>/schemas/<action>.schema.json to be packaged "
+    "and valid."
 )
 
 
@@ -48,6 +50,11 @@ def parse_args() -> argparse.Namespace:
         choices=("json", "text"),
         default="text",
         help="Output format.",
+    )
+    parser.add_argument(
+        "--action",
+        default="",
+        help="When --scope automl is used, filter support to one action.",
     )
     return parser.parse_args()
 
@@ -142,22 +149,33 @@ def load_model_schema_manifest(skill_bank: Path, model: str) -> dict[str, Any]:
     return load_json(path)
 
 
-def train_schema_status(skill_bank: Path, model: str) -> tuple[bool, str]:
-    """Return whether a model has a valid packaged train dataclass schema."""
-    schema_path = skill_bank.expanduser() / "skills" / "models" / model / TRAIN_SCHEMA_REL
+def action_schema_rel(action: str) -> Path:
+    """Return the relative schema path for an action."""
+    return SCHEMA_DIR_REL / f"{action}.schema.json"
+
+
+def action_schema_status(skill_bank: Path, model: str, action: str) -> tuple[bool, str]:
+    """Return whether a model has a valid packaged action dataclass schema."""
+    schema_rel = action_schema_rel(action)
+    schema_path = skill_bank.expanduser() / "skills" / "models" / model / schema_rel
     if not schema_path.exists():
-        return False, f"{TRAIN_SCHEMA_REL.as_posix()} is not packaged"
+        return False, f"{schema_rel.as_posix()} is not packaged"
 
     try:
         load_json(schema_path)
     except json.JSONDecodeError as exc:
-        return False, f"{TRAIN_SCHEMA_REL.as_posix()} is invalid JSON: {exc.msg}"
+        return False, f"{schema_rel.as_posix()} is invalid JSON: {exc.msg}"
     except OSError as exc:
-        return False, f"{TRAIN_SCHEMA_REL.as_posix()} cannot be read: {exc}"
+        return False, f"{schema_rel.as_posix()} cannot be read: {exc}"
     except ValueError as exc:
         return False, str(exc)
 
-    return True, f"{TRAIN_SCHEMA_REL.as_posix()} is packaged and valid"
+    return True, f"{schema_rel.as_posix()} is packaged and valid"
+
+
+def train_schema_status(skill_bank: Path, model: str) -> tuple[bool, str]:
+    """Return whether a model has a valid packaged train dataclass schema."""
+    return action_schema_status(skill_bank, model, "train")
 
 
 def build_model_records(skill_bank: Path) -> list[dict[str, Any]]:
@@ -185,13 +203,14 @@ def build_model_records(skill_bank: Path) -> list[dict[str, Any]]:
         schema_manifest = load_model_schema_manifest(skill_bank, model)
         has_train_schema, train_schema_reason = train_schema_status(skill_bank, model)
         schema_actions = schema_manifest.get("actions", {})
-        actions = metadata.get("actions", [])
-        if not isinstance(actions, list):
-            actions = []
-        if not actions and isinstance(schema_actions, dict):
-            actions = sorted(schema_actions)
-        if not actions:
-            actions = skill_info_actions(skill_bank, model)
+        metadata_actions = metadata.get("actions", [])
+        if not isinstance(metadata_actions, list):
+            metadata_actions = []
+        actions = set(metadata_actions)
+        if isinstance(schema_actions, dict):
+            actions.update(schema_actions)
+        actions.update(skill_info_actions(skill_bank, model))
+        actions = sorted(actions)
         failures = metadata.get("failures", {})
         if not isinstance(failures, dict):
             failures = {}
@@ -199,6 +218,15 @@ def build_model_records(skill_bank: Path) -> list[dict[str, Any]]:
             schema_failures = schema_manifest.get("failures", {})
             if isinstance(schema_failures, dict):
                 failures = schema_failures
+
+        action_schema_statuses = {}
+        for action in actions:
+            ok, reason = action_schema_status(skill_bank, model, action)
+            action_schema_statuses[action] = {
+                "schema": action_schema_rel(action).as_posix(),
+                "valid": ok,
+                "status": reason,
+            }
 
         records.append(
             {
@@ -217,8 +245,9 @@ def build_model_records(skill_bank: Path) -> list[dict[str, Any]]:
                 ),
                 "automl_blocked_reason": skill_info.get("automl_blocked_reason", ""),
                 "has_train_schema": has_train_schema,
-                "train_schema": f"models/{model}/{TRAIN_SCHEMA_REL.as_posix()}",
+                "train_schema": TRAIN_SCHEMA_REL.as_posix(),
                 "train_schema_status": train_schema_reason,
+                "action_schema_statuses": action_schema_statuses,
             }
         )
     return records
@@ -233,8 +262,36 @@ def build_all_models(skill_bank: Path) -> dict[str, Any]:
     }
 
 
-def build_automl_support(skill_bank: Path) -> dict[str, Any]:
-    """Return model-level AutoML support, validated against packaged train schemas."""
+def action_metadata(skill_bank: Path, model: str, action: str) -> dict[str, Any]:
+    """Return AutoML parameter metadata for a model action."""
+    schema_manifest = load_model_schema_manifest(skill_bank, model)
+    actions = schema_manifest.get("actions", {})
+    action_item = actions.get(action) if isinstance(actions, dict) else None
+    if isinstance(action_item, dict):
+        return {
+            "spec_template": action_item.get("spec_template"),
+            "automl_default_parameters": action_item.get("automl_default_parameters", []),
+            "automl_disabled_parameters": action_item.get("automl_disabled_parameters", []),
+        }
+
+    schema_rel = action_schema_rel(action)
+    schema_path = skill_bank.expanduser() / "skills" / "models" / model / schema_rel
+    if schema_path.exists():
+        schema = load_json(schema_path)
+        return {
+            "spec_template": f"references/spec_template_{action}.yaml",
+            "automl_default_parameters": schema.get("automl_default_parameters", []),
+            "automl_disabled_parameters": schema.get("automl_disabled_parameters", []),
+        }
+    return {
+        "spec_template": None,
+        "automl_default_parameters": [],
+        "automl_disabled_parameters": [],
+    }
+
+
+def build_automl_support(skill_bank: Path, action_filter: str = "") -> dict[str, Any]:
+    """Return model-level AutoML support, validated per packaged action schema."""
     automl_manifest = load_automl_manifest(skill_bank)
     model_records = {item["model"]: item for item in build_model_records(skill_bank)}
 
@@ -274,19 +331,64 @@ def build_automl_support(skill_bank: Path) -> dict[str, Any]:
             )
             continue
 
-        if record["has_train_schema"]:
+        candidate_actions = record["actions"]
+        if action_filter:
+            candidate_actions = [action for action in candidate_actions if action == action_filter]
+
+        supported_actions = []
+        unsupported_actions = []
+        for action in candidate_actions:
+            status = record["action_schema_statuses"].get(action, {})
+            if status.get("valid"):
+                manifest_item = supported_manifest.get(model, {})
+                action_manifest = {}
+                for item_action in manifest_item.get("supported_actions", []):
+                    if isinstance(item_action, dict) and item_action.get("action") == action:
+                        action_manifest = item_action
+                        break
+                metadata = action_metadata(skill_bank, model, action)
+                supported_actions.append(
+                    {
+                        "action": action,
+                        "schema": status.get("schema", action_schema_rel(action).as_posix()),
+                        "schema_status": status.get("status", ""),
+                        "spec_template": (
+                            action_manifest.get("spec_template")
+                            or metadata.get("spec_template")
+                        ),
+                        "automl_default_parameters": (
+                            metadata.get("automl_default_parameters")
+                            or action_manifest.get("automl_default_parameters", [])
+                        ),
+                    }
+                )
+            else:
+                unsupported_actions.append(
+                    {
+                        "action": action,
+                        "reason": status.get("status", f"{action_schema_rel(action).as_posix()} is not packaged"),
+                    }
+                )
+
+        if supported_actions:
             manifest_item = supported_manifest.get(model, {})
+            train_action = next(
+                (item for item in supported_actions if item["action"] == "train"),
+                {},
+            )
             item = {
                 "model": model,
                 "network_arch": record["network_arch"],
                 "automl_enabled": True,
-                "train_schema": TRAIN_SCHEMA_REL.as_posix(),
+                "train_schema": train_action.get("schema", TRAIN_SCHEMA_REL.as_posix()),
                 "train_schema_status": record["train_schema_status"],
                 "train_spec_template": (
                     manifest_item.get("train_spec_template")
                     or train_action_metadata(skill_bank, model).get("train_spec_template")
                 ),
                 "actions": record["actions"],
+                "supported_actions": supported_actions,
+                "unsupported_actions": unsupported_actions,
                 "automl_default_parameters": (
                     train_action_metadata(skill_bank, model).get("automl_default_parameters")
                     or manifest_item.get("automl_default_parameters", [])
@@ -295,13 +397,22 @@ def build_automl_support(skill_bank: Path) -> dict[str, Any]:
             supported.append(item)
             continue
 
+        if action_filter and not candidate_actions:
+            reason = f"action {action_filter!r} is not declared for this model"
+        elif unsupported_actions:
+            reason = "; ".join(
+                f"{item['action']}: {item['reason']}" for item in unsupported_actions
+            )
+        else:
+            reason = record["train_schema_status"]
         unsupported.append(
             {
                 "model": model,
                 "network_arch": record["network_arch"],
                 "automl_enabled": True,
-                "reason": record["train_schema_status"],
+                "reason": reason,
                 "train_schema_status": record["train_schema_status"],
+                "unsupported_actions": unsupported_actions,
             }
         )
 
@@ -310,9 +421,10 @@ def build_automl_support(skill_bank: Path) -> dict[str, Any]:
         "source": [
             "skills/models/<network>/references/skill_info.yaml",
             "skills/models/<network>/schemas/manifest.json",
-            "skills/models/<network>/schemas/train.schema.json",
+            "skills/models/<network>/schemas/<action>.schema.json",
         ],
         "support_rule": SUPPORT_RULE,
+        "action_filter": action_filter,
         "supported": supported,
         "unsupported": unsupported,
     }
@@ -348,12 +460,16 @@ def format_all_models_text(data: dict[str, Any]) -> str:
     """Format packaged model/action support for a human."""
     lines = ["Packaged TAO models and action schemas:"]
     for item in data["models"]:
+        train_schema = (
+            "train schema valid" if item["has_train_schema"]
+            else f"train schema {item['train_schema_status']}"
+        )
         lines.append(
-            "- {model} ({network_arch}): {actions}; train schema: {schema}".format(
+            "- {model} ({network_arch}): {actions}; {schema}".format(
                 model=item["model"],
                 network_arch=item["network_arch"],
                 actions=action_text(item["actions"]),
-                schema="valid" if item["has_train_schema"] else item["train_schema_status"],
+                schema=train_schema,
             )
         )
     return "\n".join(lines)
@@ -361,14 +477,19 @@ def format_all_models_text(data: dict[str, Any]) -> str:
 
 def format_automl_text(data: dict[str, Any]) -> str:
     """Format AutoML support for a human."""
-    lines = [data["support_rule"], "", "Supported AutoML models:"]
+    suffix = f" Action filter: {data['action_filter']}." if data.get("action_filter") else ""
+    lines = [data["support_rule"] + suffix, "", "Supported AutoML models/actions:"]
     if data["supported"]:
         for item in data["supported"]:
-            params = item.get("automl_default_parameters", [])
-            params_text = ", ".join(params) if params else "schema-defined defaults"
+            action_parts = []
+            for action_item in item.get("supported_actions", []):
+                params = action_item.get("automl_default_parameters", [])
+                params_text = ", ".join(params) if params else "schema-defined defaults"
+                action_parts.append(f"{action_item['action']} [{params_text}]")
+            actions_text = "; ".join(action_parts) if action_parts else "train"
             lines.append(
-                f"- {item['model']} ({item['network_arch']}): automl_enabled=true; train schema valid; "
-                f"AutoML parameters: {params_text}"
+                f"- {item['model']} ({item['network_arch']}): automl_enabled=true; "
+                f"actions: {actions_text}"
             )
     else:
         lines.append("- None")
@@ -390,7 +511,11 @@ def main() -> int:
     """Run the model listing helper."""
     args = parse_args()
     skill_bank = args.skill_bank.expanduser()
-    data = build_automl_support(skill_bank) if args.scope == "automl" else build_all_models(skill_bank)
+    data = (
+        build_automl_support(skill_bank, action_filter=args.action)
+        if args.scope == "automl"
+        else build_all_models(skill_bank)
+    )
 
     if args.format == "json":
         print(json.dumps(data, indent=2, sort_keys=True))

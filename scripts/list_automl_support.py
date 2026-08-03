@@ -29,13 +29,18 @@ def parse_args() -> argparse.Namespace:
         default="text",
         help="Output format.",
     )
+    parser.add_argument(
+        "--action",
+        default="",
+        help="Filter support to one action such as train, distill, prune, or quantize.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     """Run the support summary helper."""
     args = parse_args()
-    support = build_automl_support(args.skill_bank)
+    support = build_automl_support(args.skill_bank, action_filter=args.action)
     if args.format == "json":
         print(json.dumps(support, indent=2, sort_keys=True))
     else:

@@ -286,24 +286,27 @@ def format_capabilities_text(data: dict[str, Any]) -> str:
         [
             "",
             "AutoML/HPO support:",
-            "- AutoML is enabled from model metadata, so workflows that train a "
-            "model should route through AutoMLRunner when automl_policy=on "
+            "- AutoML is enabled from model metadata, so workflows for train-like "
+            "actions should route through AutoMLRunner when automl_policy=on "
             "(the default), unless the user explicitly asks for a plain single "
-            "run or sets automl_policy=off.",
-            "- Runnable AutoML still requires a valid packaged train schema. "
+            "action run or sets automl_policy=off. Single-shot compression "
+            "actions route through AutoML when the user asks to optimize them "
+            "or the workflow enables automl_policy=on.",
+            "- Runnable AutoML still requires a valid packaged schema for the "
+            "selected action. "
             f"Runnable models: {csv(automl_models)}",
             f"- Rule: {automl['support_rule']}",
         ]
     )
     if automl["unsupported"]:
         lines.append(
-            "- AutoML-enabled models waiting on train schema packaging: "
+            "- AutoML models/actions not currently runnable: "
             + "; ".join(
                 f"{item['model']} ({item['reason']})" for item in automl["unsupported"]
             )
         )
     else:
-        lines.append("- AutoML-enabled models waiting on train schema packaging: none")
+        lines.append("- AutoML models/actions not currently runnable: none")
 
     lines.extend(
         [

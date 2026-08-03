@@ -1,5 +1,5 @@
 ## Description: <br>
-Host setup for TAO GPU backends that checks and, after user approval, installs NVIDIA driver branch 580, CUDA Toolkit 13.0, and NVIDIA Container Toolkit 1.19.0 for Docker/local-Docker and Kubernetes GPU worker hosts. <br>
+Host setup for TAO GPU backends that checks and, after user approval, installs minimum-compatible NVIDIA driver, CUDA Toolkit, and NVIDIA Container Toolkit packages for Docker/local-Docker and Kubernetes GPU worker hosts. TAO-wide defaults can be overridden by model runtime profiles. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -69,7 +69,7 @@ Underlying evaluation signals used in this run: <br>
 | Efficiency | 1 | 95% (+68%) | 61% (-0%) |
 
 ## Skill Version(s): <br>
-0.1.0 (source: frontmatter) <br>
+0.1.1 (source: frontmatter) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

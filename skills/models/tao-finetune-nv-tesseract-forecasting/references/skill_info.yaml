@@ -1,0 +1,5 @@
+name: tao-finetune-nv-tesseract-forecasting
+network_arch: nv-tesseract-forecasting
+huggingface_model_ids:
+- nvidia/nv-tesseract-forecasting
+execution_environment: uv

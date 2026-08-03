@@ -11,12 +11,33 @@ need no Python.
 
 ## Discovery flow
 
+**Model-first routing is mandatory.** Before selecting a generic application
+skill, resolve the requested model name or Hugging Face ID with
+`scripts/resolve_tao_model.py --skill-bank <bank-root> --model <model-id>`.
+The resolver reads `skills/models/*/references/skill_info.yaml`, including
+`huggingface_model_ids` and legacy aliases. Exit `0` selects the dedicated model
+skill; only exit `3` means the ID is unclaimed and permits a generic workflow.
+Treat every other nonzero exit as a discovery failure, not permission to fall
+back. When a dedicated model skill matches, that model skill and its action
+metadata are authoritative. Do not route a matched TAO model through
+`tao-finetune-huggingface-model` merely because its checkpoint is hosted on
+Hugging Face.
+
+Model ownership lookup, skill selection, container selection, and required
+checkpoint-format preparation are internal orchestration. Do not require users
+to name a skill, negate the generic Hugging Face workflow, or specify a
+conversion format in their prompts. A normal model ID plus task must be enough.
+
 0. **Preflight the chosen platform.** Open `skills/platform/<chosen>/SKILL.md` and run
-   its Preflight section. If a missing prerequisite is a Python package that can
-   be installed with `python -m pip install ...`, install it in the active
-   Python environment, then rerun preflight. Bail on missing non-Python/system
-   prerequisites — do not draft launch commands against an unconfigured
-   environment.
+   its Preflight section. If the selected model's `references/skill_info.yaml`
+   declares `runtime_requirements.gpu_host`, pass those minimum-version
+   overrides to `tao-setup-nvidia-gpu-host`; otherwise use the TAO-wide
+   defaults. If the model is not resolved yet, run the generic check now and
+   rerun it with any model override after step 2. If a missing prerequisite is
+   a Python package that can be installed with `python -m pip install ...`,
+   install it in the active Python environment, then rerun preflight. Bail on
+   missing non-Python/system prerequisites — do not draft launch commands
+   against an unconfigured environment.
 
 1. **Read the task skill.** `skills/models/<arch>/SKILL.md` (network specifics),
    `skills/data/<name>/SKILL.md` (transforms), or `skills/applications/<name>/SKILL.md`
@@ -34,6 +55,9 @@ need no Python.
    - `actions.<action>.inputs` — declared input contract (paths + types)
    - `actions.<action>.outputs` — declared output contract (paths + types)
    - `actions.<action>.upload_excludes` — what NOT to upload back
+   - `runtime_requirements.gpu_host` — optional model-specific minimum driver,
+     CUDA Toolkit, and NVIDIA Container Toolkit versions; these override the
+     platform defaults for that model
    - `data_format` (if present)
 
 3. **Read the platform SKILL.md you'll dispatch to** for execution conventions
@@ -42,6 +66,12 @@ need no Python.
 4. **Resolve `container_image`.** If it's a dotted key (`tao_toolkit.pyt`),
    look it up in `${TAO_SKILL_BANK_PATH}/versions.yaml`. Absolute URIs
    (`nvcr.io/...`) are valid as-is.
+
+   The resolved model image is the default action runtime. Do not create a
+   training venv or select another image unless the user explicitly requests
+   that execution mode or supplies an image override. A Python environment used
+   by the SDK or AutoML controller is control-plane plumbing only; child model
+   actions still run in the resolved container image.
 
 5. **Construct the spec dict.** Concrete values, nested dicts. Outputs declared
    in `skill_info` are routed at runtime by the SDK via `TAO_JOB_ID` +
