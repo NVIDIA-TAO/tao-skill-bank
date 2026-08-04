@@ -1,0 +1,14 @@
+[
+  {
+    "id": "multi-eval-smoke-basic",
+    "question": "A user request: \"Run the multi-eval smoke skill.\" Identify which TAO skill applies and, reading only that skill's documentation, outline what it does. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
+    "expected_skill": "multi-eval-smoke",
+    "expected_script": null,
+    "ground_truth": "Identify multi-eval-smoke as the applicable skill and summarize that it is a CI-only smoke skill which writes and reads back small text files across three independent eval cases, with no model, container, or external dependency.",
+    "expected_behavior": [
+      "Identifies multi-eval-smoke as the relevant skill",
+      "Explains it is a CI smoke skill that writes and reads back small text files",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]

@@ -61,6 +61,7 @@
         "./skills/models/tao-finetune-cosmos-embed",
         "./skills/models/tao-finetune-nv-tesseract-ad-diffusion",
         "./skills/models/tao-finetune-nv-tesseract-forecasting",
+        "./skills/platform/multi-eval-smoke",
         "./skills/platform/tao-run-on-brev",
         "./skills/platform/tao-run-on-docker",
         "./skills/platform/tao-run-on-kubernetes",
