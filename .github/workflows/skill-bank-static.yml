@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# GitHub Actions port of the GitLab `validate-skills` job.
+#
+# The GitLab pipeline (.gitlab-ci.yml) does not run on GitHub, so this must
+# exist for the same guards to survive the cutover: marketplace/frontmatter
+# validation, version-pin drift, command hygiene, the platform four-verb
+# contract, and the rendered job templates.
+name: Skill Bank Static
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  static:
+    name: Validate skills, pins, and platform contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: pip install --quiet pyyaml pytest jsonschema
+
+      # Marketplace paths, frontmatter, runnable-body heuristic, SDK leaks.
+      - name: validate-skills
+        run: bash scripts/validate-skills.sh
+
+      # Every image/wheel pin must match versions.yaml AND carry a
+      # '# versions-key:' or '# unpinned:' annotation. Unannotated pins are how
+      # a two-major-versions-stale image shipped in a 7.1.0 release.
+      - name: Version pin drift
+        run: python3 scripts/stamp_versions.py --check --strict-strays
+
+      # scripts/tests: schema drift, command hygiene, platform contract.
+      # templates/tests: renders the SLURM/k8s job templates and asserts the
+      # rendezvous contract. Both are required — templates/tests was absent from
+      # CI for a while, which is exactly how k8s multi-node doc/template drift
+      # shipped unnoticed.
+      - name: Test suites
+        run: python3 -m pytest scripts/tests templates/tests -q
+
+      - name: NemoClaw integration (stdlib only)
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s integrations/nemoclaw/tests -v
