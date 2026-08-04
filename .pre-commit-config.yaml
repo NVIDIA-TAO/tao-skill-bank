@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+default_install_hook_types:
+- pre-commit
+- commit-msg
+repos:
+- repo: local
+  hooks:
+  - id: license-header
+    name: license header
+    description: Every source file must carry an SPDX license header.
+    entry: python .github/hooks/check_license_header.py
+    language: python
+    files: \.(py|sh)$
+    stages:
+    - pre-commit
+  - id: dco-signoff
+    name: DCO sign-off check
+    description: Every commit must carry a Developer Certificate of Origin sign-off.
+    entry: python .github/hooks/check_dco_signoff.py
+    language: python
+    stages:
+    - commit-msg
