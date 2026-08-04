@@ -292,10 +292,15 @@ For each `iterN` when the frozen Benchmark gate is unmet:
 9. `evaluate_proxy` — only when the loop continues.
 10. `proxy_rcca`
 
-After every iteration, render `DEFT_Loop_Report.html` with the reporter agent.
-Stop when the Benchmark contract passes, `max_iterations` is reached, or a
-hard stop occurs. Commit `loop_stop`, run the completion audit, then render one
-final report.
+`init_deft_state.py` writes the first `DEFT_Loop_Report.html`; every successful
+`commit_stage.py` call then refreshes it through the deterministic
+`scripts/render_report.py` post-commit hook. Stop when the Benchmark contract
+passes, `max_iterations` is reached, or a hard stop occurs. Commit `loop_stop`,
+run `render_report.py --require-terminal` after optional token alignment, then
+run the completion audit. The Cosmos-only report addition is a bounded prompt
+showcase sourced from recorded annotations; keep every other visual convention
+aligned with ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or
+hand-author report rendering.
 
 ## Stage References
 
@@ -307,7 +312,7 @@ final report.
 | Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
 | AnomalyGen | `paidf-anomalygen`, `mode=inference_only` | `references/paidf-anomalygen.md` |
 | Assemble / validate | bundled bare ShareGPT scripts | `references/aoi-annotation.md` |
-| State/log/report | bundled commit/audit scripts + reporter | `references/scripts-and-agents.md` |
+| State/log/report | bundled commit/audit scripts + deterministic report hook | `references/scripts-and-agents.md` |
 
 ## Hard Stops
 

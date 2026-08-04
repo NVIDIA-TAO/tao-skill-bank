@@ -17,6 +17,7 @@ import tempfile
 from typing import Any
 
 from metric_contract import render_target, validate_contract
+from render_report import render as render_html_report
 
 
 WORKFLOW = "tao-run-deft-aoi-cosmos3"
@@ -480,6 +481,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"init_deft_state: {exc}", file=sys.stderr)
         return 2
     print(f"init_deft_state: wrote {output}", file=sys.stderr)
+    try:
+        render_html_report(args.results_dir)
+    except Exception as exc:  # noqa: BLE001 - state initialization remains valid
+        print(f"init_deft_state: report hook failed: {exc}", file=sys.stderr)
     return 0
 
 

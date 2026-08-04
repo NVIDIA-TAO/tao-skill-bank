@@ -144,5 +144,8 @@ For an ordinary stop, commit `loop_stop` after a completed
 For a hard stop, commit the failed stage with `--status error`, then commit
 `loop_stop`. A failed terminal run is not KPI completion.
 
-Render the report after each completed iteration and once at loop end. The
-final completion claim requires `audit_deft_run.py --require-complete`.
+The `commit_stage.py` post-commit hook refreshes the report after every stage,
+including `loop_stop`. After optional token alignment, run
+`render_report.py --require-terminal` once so the final artifact contains the
+aligned evidence. The final completion claim requires
+`audit_deft_run.py --require-complete`.

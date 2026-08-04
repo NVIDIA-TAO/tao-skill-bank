@@ -135,7 +135,8 @@ Three stage types:
 
 - **SKILL** — read `references/<stage>.md` first, then invoke the matching `tao-skill-bank:*` skill via the Skill tool or its documented direct-container fallback. Stage→skill mapping and fallback contract are in `references/scripts-and-agents.md`.
 - **INLINE** — parent does the work directly (pre-flight, CSV assembly, leakage check).
-- **AGENT** — parent spawns a subagent. The only AGENT stage is `agents/reporter.md` for HTML rendering.
+- **HOOK** — `commit_stage.py` invokes `scripts/render_report.py` after each
+  valid commit. Report generation is deterministic and never delegated.
 
 For `tao-skill-bank:tao-train-visual-changenet`, pass a separate task name (`train`, `inference`, or `evaluate`); the `stage` value in `loop_log.jsonl` is still only `train` or `evaluate`.
 
@@ -149,19 +150,28 @@ After every stage finishes, before advancing:
 2. Invoke `commit_stage.py` once with the documented artifact flags. For an error use `--status error`; it sets the iteration failed. Never repair a rejected commit by editing JSON.
 3. Run `scripts/audit_deft_run.py --results-dir ${RESULTS_DIR}`. If it reports `INVALID`, halt and repair; do not advance on in-memory success.
 4. If the committed log status is `error` — halt, surface the disk evidence verbatim, **do not auto-retry**.
-5. If the committed log status is `ok` — print one status line in the standard format `[iter <N>/<max> · <stage>] <primary metric> · <duration> · next: <stage>` (e.g. `[iter 2/3 · evaluate] weighted escape cost 0.024 → 0.018 (target <=0.02) · 2m · next: loop_stop`). Use the contract's display name, direction, target, and unit. Then advance. Render `DEFT_Loop_Report.html` only at iteration end (`trigger="after-iteration"`) and at loop end (`trigger="loop-end"`); never inline.
+5. If the committed log status is `ok` — confirm that `commit_stage.py` did
+   not print `report hook failed`, then print one status line in the standard
+   format `[iter <N>/<max> · <stage>] <primary metric> · <duration> · next:
+   <stage>` (e.g. `[iter 2/3 · evaluate] weighted escape cost 0.024 → 0.018
+   (target <=0.02) · 2m · next: loop_stop`). Use the contract's display name,
+   direction, target, and unit. The post-commit hook has already refreshed
+   `DEFT_Loop_Report.html`; do not spawn a reporting agent.
 
 ## Reports
 
 - `results/iter${ITER}_summary.md` — ≤300 words; readable after context compaction.
 - `results/iter${ITER}/report.html` — RCA targets, branch outputs, filter decision, metric delta.
-- `results/DEFT_Loop_Report.html` — re-rendered after each completed iteration and at loop end by the `reporter` subagent (`agents/reporter.md`). The agent owns the entire render: it reads the template, the rendering protocol (`references/REPORT_RENDERING.md`), and disk state, then writes atomically. The parent's only responsibility is to spawn the agent — never render inline.
+- `results/DEFT_Loop_Report.html` — initialized by `init_deft_state.py` and
+  re-rendered after every committed stage by `commit_stage.py` through
+  `scripts/render_report.py`. The script reads the source template and disk
+  evidence, validates the full output, and writes atomically.
 
 ## Runtime Behavior
 
 Run without pausing. Between stages, run the audit and print only its one-line
-status/next action. Spawn the `reporter` only after a full iteration and at
-loop end. `commit_stage.py` appends exactly one event per stage. For background
+status/next action. `commit_stage.py` appends exactly one event per stage and
+refreshes the report through its post-commit hook. For background
 Docker work, redirect both streams, save its PID, poll one line or `tail -40`
 at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call.
 
@@ -177,7 +187,18 @@ at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call
    ```
 
    This rewrites every entry's `context_tokens` field with the real context size at stage end and adds a `tokens` object (`input`, `output`, `cache_read`, `cache_create`, `n_messages`, `models`). The next step's report includes the numbers.
-3. Spawn `reporter` with `trigger="loop-end"` to re-render `DEFT_Loop_Report.html` against the now-aligned log.
+3. Run the renderer once after token alignment so the final report includes
+   the backfilled usage fields:
+
+   ```bash
+   <this-skill-dir>/scripts/deft_python.sh \
+     <this-skill-dir>/scripts/render_report.py \
+     --results-dir "${RESULTS_DIR}" --require-terminal
+   ```
+
+   This is an explicit deterministic script call, not delegated work; the
+   preceding `loop_stop` commit already produced a valid report before token
+   alignment.
 4. Run `scripts/prepare_inference_spec.py` (see below).
 
 Before telling the user the loop is complete, run:

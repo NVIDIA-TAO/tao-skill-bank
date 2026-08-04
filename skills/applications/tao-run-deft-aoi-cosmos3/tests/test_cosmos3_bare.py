@@ -629,6 +629,18 @@ class StateMachineTests(unittest.TestCase):
             report = audit_deft_run.audit(results)
             self.assertEqual(report["status"], "COMPLETE")
             self.assertEqual(report["best_iteration"], "baseline")
+            html_report = results / "DEFT_Loop_Report.html"
+            self.assertTrue(html_report.is_file())
+            self.assertIn("KPI MET", html_report.read_text())
+            self.assertIsNone(
+                audit_deft_run._completion_report_error(results)
+            )
+            self.assertEqual(
+                audit_deft_run.main(
+                    ["--results-dir", str(results), "--require-complete"]
+                ),
+                0,
+            )
             phase = json.loads(
                 (results / "deft_state.json").read_text()
             )["iterations"]["baseline"]

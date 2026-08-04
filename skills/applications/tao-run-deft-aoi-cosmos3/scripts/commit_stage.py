@@ -18,6 +18,7 @@ from typing import Any
 from audit_deft_run import _expected_next, audit
 from log_stage import append_stage
 from record_metric_result import commit as commit_metric_result
+from render_report import render as render_html_report
 
 
 STAGES = (
@@ -399,6 +400,13 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
         else:
             _atomic_text(log_path, original_log)
         raise
+    # Keep reporting outside the state/log transaction: a presentation bug is
+    # surfaced to the caller without invalidating an otherwise valid commit.
+    try:
+        output = render_html_report(results_dir, audit_report=report)
+        report["report_path"] = str(output)
+    except Exception as exc:  # noqa: BLE001 - hook failures are non-transactional
+        report["report_render_error"] = str(exc)
     return report
 
 
@@ -454,6 +462,11 @@ def main(argv: list[str] | None = None) -> int:
         f"committed seq={last['seq']} {last['iter']}/{last['stage']} "
         f"status={last['status']} run={report['status']}"
     )
+    if report.get("report_render_error"):
+        print(
+            f"commit_stage: report hook failed: {report['report_render_error']}",
+            file=sys.stderr,
+        )
     return 0
 
 

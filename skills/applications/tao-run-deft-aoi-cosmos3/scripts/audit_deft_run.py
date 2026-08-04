@@ -190,8 +190,8 @@ def _next_action(
         )
     if status == "COMPLETE":
         return (
-            "render the final report and hand off the best evaluated model",
-            "references/REPORT_RENDERING.md",
+            "hand off the best evaluated model and auto-rendered final report",
+            None,
         )
     if not entries:
         return (
@@ -1049,6 +1049,35 @@ def _print_text(report: dict[str, Any]) -> None:
         print(f"ERROR: {error}")
 
 
+def _completion_report_error(results_dir: pathlib.Path) -> str | None:
+    """Return why the deterministic final HTML is missing/stale/invalid."""
+    results_dir = results_dir.expanduser().resolve()
+    report_path = results_dir / "DEFT_Loop_Report.html"
+    if not report_path.is_file() or report_path.stat().st_size == 0:
+        return f"final HTML report is missing or empty: {report_path}"
+    evidence = [results_dir / "deft_state.json", results_dir / "loop_log.jsonl"]
+    newest_evidence = max(
+        (path.stat().st_mtime_ns for path in evidence if path.exists()),
+        default=0,
+    )
+    if report_path.stat().st_mtime_ns < newest_evidence:
+        return "final HTML report is older than canonical state/log; rerun render_report.py"
+    text = report_path.read_text(encoding="utf-8")
+    required = (
+        "NVIDIA TAO · DEFT AOI",
+        "Dataset Isolation",
+        "Prompt Examples",
+        "Hard Stops / Warnings",
+        "--nvidia-green: #76b900",
+    )
+    missing = [token for token in required if token not in text]
+    if missing:
+        return "final HTML report is missing required content: " + ", ".join(missing)
+    if re.search(r"\{\{\s+[A-Z0-9_]+\s+\}\}", text):
+        return "final HTML report contains unfilled placeholders"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-dir", required=True, type=pathlib.Path)
@@ -1069,8 +1098,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.require_terminal and not report["terminal"]:
         return 1
-    if args.require_complete and report["status"] != "COMPLETE":
-        return 1
+    if args.require_complete:
+        if report["status"] != "COMPLETE":
+            return 1
+        report_error = _completion_report_error(args.results_dir)
+        if report_error:
+            print(f"ERROR: {report_error}", file=sys.stderr)
+            return 1
     return 0
 
 

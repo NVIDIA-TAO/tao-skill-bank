@@ -1,14 +1,16 @@
 # DEFT Loop Report Rendering Protocol
 
 Template: `references/DEFT_Loop_Report.html`. Output: `results/DEFT_Loop_Report.html`.
-Re-render after each completed iteration and at loop end. Embed all images as base64 data URIs so
-the file opens offline.
+`scripts/render_report.py` is the only renderer. `init_deft_state.py` invokes it
+once at loop start, and `commit_stage.py` invokes it as a post-commit hook after
+every stage, including `loop_stop`. Embed all images as base64 data URIs so the
+file opens offline.
 
 ## When to update which data
 
 | Stage trigger | New data available |
 |---|---|
-| Loop start (config loaded) | `{{ PROBLEM_STATEMENT_HTML }}`, `{{ APPROACH_HTML }}` — both populated immediately from `metric_contract`, max_iterations, and mining cos floor. Re-render every iteration so the cards are present from the first render. |
+| Loop start (config loaded) | `{{ PROBLEM_STATEMENT_HTML }}`, `{{ APPROACH_HTML }}` — both populated immediately from `metric_contract`, max_iterations, and mining cos floor. The initialization hook writes these cards in the first report. |
 | Baseline evaluate done | baseline primary `metric_result`, optional threshold, and evaluator diagnostics; `{{ KPI_DATASET_HTML }}` populated from the evaluation manifest scanned during baseline. |
 | Baseline RCA done | RCA insight, score distribution, evaluator diagnostics, and defect type rows; also refines `{{ KPI_DATASET_HTML }}`'s per-defect-type breakdown using `${results_dir}/baseline/rca_results/defect_type_rows.csv`. |
 | Iter N evaluate done | iter N primary metric, constraints, optional threshold, diagnostics, checkpoint |
@@ -56,21 +58,16 @@ even when the target is missed. The KPI banner in this case should use the neutr
 yellow "Best result so far" treatment shown in the template doc-comment, not the
 red "KPI NOT MET" treatment. Reporting the gap factually is the entire ask.
 
-## Minimal render pattern
+## Renderer entry point
 
-```python
-import datetime, json, pathlib
-
-template = pathlib.Path("references/DEFT_Loop_Report.html").read_text()
-html = (
-    template
-    .replace("{{ GENERATED_DATE }}", datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
-    # ... fill remaining placeholders from deft_state.json + latest stage outputs ...
-)
-pathlib.Path(f"{RESULTS_DIR}/DEFT_Loop_Report.html").write_text(html)
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/render_report.py \
+  --results-dir "${RESULTS_DIR}"
 ```
 
-Never defer to a single end-of-loop render — write after each completed iteration so the user can refresh and see progress without paying a render cost for every short stage.
+Do not copy this protocol into inline Python. The bundled script owns
+placeholder construction, escaping, validation, and atomic replacement. Use
+`--require-terminal` for a final manual verification/rebuild.
 
 ### CRITICAL: Always render in a single pass from the source template
 
@@ -186,8 +183,9 @@ attempt to render the old chart.
 
 These three pre-rendered HTML blocks sit between the hero and Progress Overview
 and provide the run's global context — mirroring the gap-analysis report
-sections "Problem Statement", "KPI Dataset Statistics", and "DEFT". The agent
-builds each as a Python string and substitutes it once per render. Schemas:
+sections "Problem Statement", "KPI Dataset Statistics", and "DEFT". The
+renderer builds each as a Python string and substitutes it once per render.
+Schemas:
 
 | Placeholder | Required pieces | Source on disk |
 |---|---|---|

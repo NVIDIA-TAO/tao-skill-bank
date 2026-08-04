@@ -40,6 +40,7 @@ import sys
 import tempfile
 
 from metric_contract import parse_target_expression, render_target, validate_contract
+from render_report import render as render_html_report
 
 
 _COMPLETED_STEP_VALUES = [
@@ -484,6 +485,10 @@ def main(argv: list[str] | None = None) -> int:
     state = build_state(args)
     write_atomic(out, state)
     print(f"init_deft_state: wrote {out}", file=sys.stderr)
+    try:
+        render_html_report(args.results_dir)
+    except Exception as exc:  # noqa: BLE001 - state initialization remains valid
+        print(f"init_deft_state: report hook failed: {exc}", file=sys.stderr)
     return 0
 
 

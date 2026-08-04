@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import json
+import pathlib
+import re
+import sys
+import tempfile
+import unittest
+
+
+SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
+SCRIPTS = SKILL_ROOT / "scripts"
+for module_name in ("audit_deft_run", "metric_contract", "render_report"):
+    sys.modules.pop(module_name, None)
+sys.path.insert(0, str(SCRIPTS))
+
+import audit_deft_run  # noqa: E402
+import render_report  # noqa: E402
+
+
+CHANGE_TEMPLATE = (
+    SKILL_ROOT.parent
+    / "tao-run-deft-aoi"
+    / "references"
+    / "DEFT_Loop_Report.html"
+)
+COSMOS_TEMPLATE = SKILL_ROOT / "references" / "DEFT_Loop_Report.html"
+
+
+def css_rules(template: pathlib.Path) -> dict[str, dict[str, str]]:
+    text = template.read_text(encoding="utf-8")
+    css = text.split("<style>", 1)[1].split("</style>", 1)[0]
+    css = css.split("@media", 1)[0]
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    rules: dict[str, dict[str, str]] = {}
+    for selector_group, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        for selector in selector_group.split(","):
+            selector = selector.strip()
+            if selector.startswith("/*") or selector.startswith("@"):
+                continue
+            declarations = rules.setdefault(selector, {})
+            for declaration in body.split(";"):
+                if ":" not in declaration:
+                    continue
+                name, value = declaration.split(":", 1)
+                declarations[name.strip()] = " ".join(value.split())
+    return rules
+
+
+def record(label: str, prompt: str = "Inspect.") -> dict:
+    return {
+        "images": ["target.png", "golden.png"],
+        "conversations": [
+            {"from": "human", "value": prompt},
+            {"from": "gpt", "value": label},
+        ],
+    }
+
+
+class CosmosReportRenderingTests(unittest.TestCase):
+    def test_matches_changenet_visual_contract_and_single_column_skeleton(self) -> None:
+        change = css_rules(CHANGE_TEMPLATE)
+        cosmos = css_rules(COSMOS_TEMPLATE)
+        contract = {
+            ":root": (
+                "--nvidia-green",
+                "--nvidia-green-light",
+                "--nvidia-yellow",
+                "--nvidia-red",
+                "--bg-dark",
+                "--bg-card",
+                "--bg-panel",
+                "--text-primary",
+                "--text-secondary",
+                "--text-muted",
+                "--border-soft",
+            ),
+            "body": (
+                "font-family",
+                "background",
+                "color",
+                "display",
+                "flex-direction",
+                "align-items",
+                "gap",
+                "padding",
+                "font-size",
+            ),
+            ".card": (
+                "width",
+                "background",
+                "border-radius",
+                "padding",
+                "box-shadow",
+                "position",
+                "overflow",
+            ),
+            ".card::before": ("height", "background"),
+            ".header": (
+                "display",
+                "justify-content",
+                "align-items",
+                "margin-bottom",
+            ),
+            ".chart-title": (
+                "font-size",
+                "font-weight",
+                "letter-spacing",
+                "color",
+                "line-height",
+            ),
+            ".chart-subtitle": (
+                "font-size",
+                "font-weight",
+                "color",
+                "margin-top",
+            ),
+            ".hero": (
+                "width",
+                "background",
+                "border-radius",
+                "padding",
+                "box-shadow",
+                "position",
+                "overflow",
+            ),
+            ".hero::before": ("height", "background"),
+            ".hero h1": (
+                "font-size",
+                "font-weight",
+                "letter-spacing",
+                "color",
+            ),
+            ".hero .meta": (
+                "display",
+                "gap",
+                "font-size",
+                "color",
+                "margin-top",
+                "flex-wrap",
+            ),
+            ".hero .meta-item strong": ("color", "font-weight"),
+            ".hero .meta-item .value": ("color", "font-weight"),
+            ".data-table": (
+                "width",
+                "border-collapse",
+                "margin-top",
+                "font-size",
+            ),
+            ".data-table th": (
+                "text-align",
+                "padding",
+                "font-size",
+                "font-weight",
+                "letter-spacing",
+                "text-transform",
+                "color",
+                "background",
+                "border-bottom",
+            ),
+            ".data-table td": (
+                "padding",
+                "color",
+                "border-bottom",
+                "vertical-align",
+            ),
+        }
+        for selector, properties in contract.items():
+            with self.subTest(selector=selector):
+                self.assertIn(selector, change)
+                self.assertIn(selector, cosmos)
+                self.assertEqual(
+                    {name: change[selector][name] for name in properties},
+                    {name: cosmos[selector][name] for name in properties},
+                )
+
+        cosmos_html = COSMOS_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn(".page, .grid { display: contents; }", cosmos_html)
+        self.assertNotIn('class="card half"', cosmos_html)
+        self.assertEqual(cosmos_html.count('class="card"'), 9)
+        self.assertEqual(cosmos_html.count('class="header"'), 9)
+
+    def test_nvidia_sections_terminal_proxy_semantics_and_escaping(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary) / "results"
+            workspace = pathlib.Path(temporary) / "workspace"
+            results.mkdir()
+            annotations: dict[str, str] = {}
+            inspection_prompt = "Compare <script>alert('prompt')</script> with golden."
+            for role, label in (("proxy", "NG"), ("benchmark", "NG"), ("mining", "OK")):
+                path = workspace / "annotations" / f"{role}.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    json.dumps([record(label, inspection_prompt)]), encoding="utf-8"
+                )
+                annotations[role] = str(path)
+            contract = {
+                "name": "recall_ng",
+                "display_name": "NG recall",
+                "operator": ">=",
+                "target": 1.0,
+                "unit": "",
+                "evaluator": {
+                    "type": "artifact",
+                    "producer": "scripts/analyze_gaps.py",
+                    "path_template": str(
+                        results / "{iter_label}/benchmark_metrics/metric_result.json"
+                    ),
+                },
+                "constraints": [
+                    {
+                        "name": "unknown_predictions",
+                        "display_name": "Unknown predictions",
+                        "operator": "<=",
+                        "target": 0,
+                        "unit": "",
+                    }
+                ],
+            }
+            state = {
+                "version": 3,
+                "workflow": "tao-run-deft-aoi-cosmos3",
+                "started_at": "2026-08-04T00:00:00+00:00",
+                "kpi_target": "NG recall >= 1",
+                "metric_contract": contract,
+                "results_dir": str(results),
+                "max_iterations": 1,
+                "current_iteration": 1,
+                "config": {
+                    "platform": "docker",
+                    "base_model": "nvidia/Cosmos3-Nano",
+                    "annotation_mode": "bare_okng",
+                    "annotations": annotations,
+                    "evaluation": {"benchmark": {"sha256": "abc123"}},
+                    "training": {"num_nodes": 1, "num_gpus": 2},
+                    "anomalygen": {"num_SDG": 20},
+                },
+                "iterations": {
+                    "iter1": {
+                        "status": "complete",
+                        "stage_completed": "benchmark_metrics",
+                        "benchmark_results_json": str(results / "iter1/benchmark/results.json"),
+                        "metric_result": {
+                            "name": "recall_ng",
+                            "value": 0.75,
+                            "unit": "",
+                            "constraints": {"unknown_predictions": 0},
+                            "metrics": {
+                                "accuracy": 0.8,
+                                "recall_ng": 0.75,
+                                "precision_ng": 1.0,
+                                "f1_ng": 0.857,
+                            },
+                            "confusion": {
+                                "fn_ng_to_ok_false_accept": 1,
+                                "fp_ok_to_ng_false_reject": 0,
+                            },
+                        },
+                    }
+                },
+                "_completed_step_values": [],
+                "_status_values": [],
+            }
+            (results / "deft_state.json").write_text(json.dumps(state), encoding="utf-8")
+            entries = [
+                {
+                    "seq": 1,
+                    "ts": "2026-08-04T00:01:00Z",
+                    "iter": "iter1",
+                    "stage": "benchmark_metrics",
+                    "status": "ok",
+                    "summary": "<img src=x onerror=alert(1)>",
+                    "duration_sec": 12,
+                },
+                {
+                    "seq": 2,
+                    "ts": "2026-08-04T00:02:00Z",
+                    "iter": "iter1",
+                    "stage": "loop_stop",
+                    "status": "ok",
+                    "summary": "max iterations",
+                    "duration_sec": 0,
+                },
+            ]
+            (results / "loop_log.jsonl").write_text(
+                "".join(json.dumps(entry) + "\n" for entry in entries),
+                encoding="utf-8",
+            )
+            output = render_report.render(results)
+            text = output.read_text(encoding="utf-8")
+            for heading in (
+                "NVIDIA TAO · DEFT AOI",
+                "Run Configuration &amp; Outcome",
+                "Dataset Isolation",
+                "Prompt Examples",
+                "Iteration Metrics",
+                "Pipeline Execution",
+                "Augmentation Volume",
+                "Artifacts",
+                "Hard Stops / Warnings",
+            ):
+                self.assertIn(heading, text)
+            self.assertIn("not run (terminal iteration)", text)
+            self.assertIn("Proxy · Benchmark · Mining", text)
+            self.assertIn("3 RECORDS", text)
+            self.assertIn("Compare &lt;script&gt;alert(&#x27;prompt&#x27;)&lt;/script&gt; with golden.", text)
+            self.assertNotIn(inspection_prompt, text)
+            self.assertIn("Exact assistant output", text)
+            self.assertIn("&lt;img src=x onerror=alert(1)&gt;", text)
+            self.assertNotIn("<img src=x onerror=alert(1)>", text)
+            self.assertNotRegex(text, r"\{\{\s+[A-Z0-9_]+\s+\}\}")
+            self.assertIsNone(audit_deft_run._completion_report_error(results))
+
+
+if __name__ == "__main__":
+    unittest.main()
