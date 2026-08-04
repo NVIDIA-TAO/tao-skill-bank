@@ -87,7 +87,9 @@ instance to stop billing. `$BANK` = `${TAO_SKILL_BANK_PATH}`.
   ```bash
   redact_secrets.py lint <<<"$REMOTE_CMD"     # no inline secrets; creds as -e VAR
   JOB_ID=$("$BANK/scripts/tao_job_record.py" open \
-    --platform brev --image "$IMG" --results-dir "$RESULTS_DIR")
+    --platform brev --image "$IMG" \
+    --network-arch "$ARCH" --action "$ACTION" \
+    --storage-tier "$TIER" --results-root "$RESULTS_ROOT")
   brev exec <instance> "docker run -d --name $JOB_ID ..."
   "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING \
     --backend-ref "<instance>/$JOB_ID"       # instance is part of the ref: the
