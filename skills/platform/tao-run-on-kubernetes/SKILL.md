@@ -270,11 +270,16 @@ This skill's Indexed Job path is intentionally simple and dependency-free; if yo
 **`No nvidia.com/gpu resources allocatable on the cluster`** — the GPU Operator (or NVIDIA Device Plugin) isn't installed. Install per the link above; verify with `kubectl get nodes -o jsonpath='{.items[*].status.allocatable}'`.
 
 **`ImagePullBackOff` / `ErrImagePull`** — the cluster can't pull the image. For nvcr.io: pre-create an image-pull secret in the namespace and reference it as the pod's `imagePullSecrets` in the rendered manifest:
+Feed the key over stdin — `--docker-password=$NGC_KEY` would put the secret in
+argv, where it is visible in the host's process table and shell history:
 ```bash
-kubectl create secret docker-registry ngc-pull-secret \
-  --docker-server=nvcr.io \
-  --docker-username='$oauthtoken' \
-  --docker-password=$NGC_KEY -n tao-jobs  # lint-ok: secret-on-argv
+kubectl create secret generic ngc-pull-secret -n tao-jobs \
+  --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson=/dev/stdin <<EOF
+{"auths": {"nvcr.io": {"username": "\$oauthtoken", "password": "${NGC_KEY}"}}}
+EOF
+# Verify without reading the secret back:
+kubectl get secret ngc-pull-secret -n tao-jobs >/dev/null && echo SECRET_OK
 ```
 
 **Pod stays `Pending` forever** — `kubectl describe pod -l job-name=$JOB_ID` shows the scheduling reason in the `Events`. Common causes: insufficient GPU capacity (`Insufficient nvidia.com/gpu`), no node matches the pod's `nodeSelector`, missing image-pull secret, or PVC mount failure.
