@@ -1,0 +1,149 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Nightly platform execution CI.
+#
+# The static workflow proves the platform skills SAY the right thing. Only
+# execution proves a real CLI ACCEPTS it: `brev exec <inst> -- <cmd> <args>` was
+# textually plausible and rejected by the actual CLI, which silently broke three
+# of Brev's four verbs. Two tiers:
+#
+#   contract — real tools, no cluster/credentials/GPU. Renders every vendored
+#              template and validates it (kubeconform offline; `kubectl
+#              --dry-run=client` is NOT a substitute, it contacts the API server
+#              to resolve API groups). Also asserts documented brev/kubectl
+#              invocations against the installed CLI's own signature.
+#
+#   smoke-cpu — live submit/status/logs/cancel on a CPU runner. This covers the
+#              verb LIFECYCLE (record open/mark, container create/inspect/logs/
+#              rm, manifest admission) and CLI syntax acceptance — the class the
+#              brev-exec regression belonged to. It explicitly does NOT cover
+#              anything GPU: `--gpus all` resolution, nvidia-container-toolkit,
+#              `nvidia.com/gpu` scheduling, or real TAO-image behaviour.
+#
+# GPU and SLURM tiers do NOT live here — see the note above the job list at the
+# bottom of this file. Both need resources GitHub-hosted runners cannot reach
+# (GPU hardware; an internal-only cluster login node), and this repo is public,
+# so they run on internal Jenkins via the blossom bridge instead.
+#
+# The CPU tier is a floor, not a substitute. Note the k8s templates hardcode
+# `nvidia.com/gpu`, so a pod rendered from them stays Pending forever on a
+# GPU-less cluster: the kind job below validates ADMISSION (the API server
+# accepts the manifest), not scheduling. Testing scheduling without hardware
+# needs a fake device plugin advertising nvidia.com/gpu capacity; testing
+# execution needs real GPUs.
+name: Platform Nightly
+
+on:
+  schedule:
+    - cron: '0 9 * * *'      # 09:00 UTC ≈ 02:00 PT
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Smoke targets (comma-separated: docker,kubernetes,slurm)'
+        default: 'docker,kubernetes'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Template + CLI contract (no cluster)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet pyyaml pytest jsonschema
+      - name: Install kubeconform (offline manifest schema validation)
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+      # Re-run the static suite so a nightly failure is never stale-config noise.
+      - run: python3 -m pytest scripts/tests templates/tests -q
+      - name: Render templates and validate with real tools
+        run: python3 scripts/ci/render_and_validate_templates.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: platform-nightly-contract
+          path: platform-nightly-report.md
+
+  smoke-docker-cpu:
+    name: "Four-verb smoke — docker (CPU: lifecycle only, no GPU coverage)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: submit / status / logs / cancel
+        run: bash scripts/ci/platform_smoke.sh docker
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: platform-nightly-smoke-docker
+          path: platform-nightly-report.md
+
+  smoke-kubernetes:
+    name: "Four-verb smoke — kubernetes (kind: admission only, not scheduling)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # A real API server, so `kubectl apply` genuinely admits the manifest —
+      # stronger than the offline schema check in `contract`, but still only
+      # ADMISSION: with no GPU capacity advertised, a pod requesting
+      # nvidia.com/gpu never leaves Pending, so scheduling stays unverified.
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: tao-platform-nightly
+      - name: submit / status / logs / cancel
+        run: bash scripts/ci/platform_smoke.sh kubernetes
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: platform-nightly-smoke-k8s
+          path: platform-nightly-report.md
+
+  # ─── GPU tier: an internal Jenkins job, NOT a GitHub Actions job ──────────
+  #
+  # This repo has no GPU runners on Actions, and adding self-hosted ones would
+  # be unsafe: tao-skill-bank is public, so a `pull_request`-triggered job on
+  # self-hosted hardware lets any fork PR execute arbitrary code on it.
+  #
+  # The established path is blossom (.github/workflows/blossom-ci.yml), which is
+  # a BRIDGE, not an executor: an authorized maintainer comments `/build`, and
+  # after a vulnerability scan the `Job-trigger` job runs
+  # `OPERATION: START-CI-JOB` against `secrets.CI_SERVER`, handing the work to
+  # internal Jenkins and posting the Jenkins log back to the PR. `runs-on:
+  # blossom` resolves to the runner `ci-server` — the bridge box, not a GPU
+  # host.
+  #
+  # So the GPU tier is a JENKINS job defined on the internal CI server, whose
+  # payload is this repo's own smoke script:
+  #
+  #     # docker — real TAO image, --gpus all, non-root --user
+  #     PLATFORM_SMOKE_GPU=1 bash scripts/ci/platform_smoke.sh docker
+  #
+  #     # kubernetes — a single GPU host suffices; minikube passes GPUs through,
+  #     # so no managed cluster is needed. The smoke reads allocatable
+  #     # nvidia.com/gpu and, when present, asserts the pod reaches Running
+  #     # rather than only checking admission.
+  #     minikube start --driver=docker --gpus all
+  #     bash scripts/ci/platform_smoke.sh kubernetes
+  #     minikube delete
+  #
+  # Per CONTRIBUTING, CI never runs automatically on NVIDIA runners — a
+  # maintainer comments `/build` per commit, which is what reaches Jenkins.
+  #
+  # That mode pulls the real TAO image (resolved from versions.yaml at runtime),
+  # runs `--gpus all` with a non-root --user, and is the only tier that can
+  # reproduce GPU-runtime and image-level faults — notably the
+  # `getpwuid(): uid not found` crash torch hits when the --user UID is absent
+  # from /etc/passwd. Keeping the payload in-repo means Jenkins stays a thin
+  # trigger and the test logic is reviewed like any other change.

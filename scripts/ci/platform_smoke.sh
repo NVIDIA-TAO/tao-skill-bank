@@ -22,7 +22,16 @@ TARGETS="${1:-docker}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RECORD="$REPO/scripts/tao_job_record.py"
 REPORT="${PLATFORM_SMOKE_REPORT:-$REPO/platform-nightly-report.md}"
-SMOKE_IMAGE="${PLATFORM_SMOKE_IMAGE:-busybox:1.36}"
+SMOKE_GPU="${PLATFORM_SMOKE_GPU:-0}"
+if [ "$SMOKE_GPU" = 1 ]; then
+  # Resolved from versions.yaml at runtime rather than pinned here: scripts/ is
+  # outside stamp_versions.py's scan roots (skills/, templates/), so a literal
+  # written here would be unmanaged and would silently go stale on the next
+  # release bump — the exact drift this repo's stamper exists to prevent.
+  SMOKE_IMAGE="${PLATFORM_SMOKE_IMAGE:-$(python3 "$REPO/scripts/resolve_versions_key.py" images.tao_toolkit.pyt)}"
+else
+  SMOKE_IMAGE="${PLATFORM_SMOKE_IMAGE:-busybox:1.36}"
+fi
 rc=0
 
 note() { printf '%s\n' "$*" | tee -a "$REPORT"; }
@@ -43,12 +52,22 @@ smoke_docker() {
           --network-arch smoke --action train --storage-tier A \
           --results-dir "${TMPDIR:-/tmp}/tao-smoke-$$" 2>/dev/null)" \
     || { fail "$p/submit" "tao_job_record.py open failed"; return 1; }
-  cid="$(docker run -d --name "$jid" --label "tao-job=$jid" \
+  local -a gpu_args=()
+  if [ "$SMOKE_GPU" = 1 ]; then
+    # Mirror the canonical launch: real GPUs plus a non-root identity, with the
+    # USER/LOGNAME exports that keep torch's import-time getpass.getuser() from
+    # crashing on a UID with no /etc/passwd entry.
+    gpu_args=(--gpus all
+              --user "$(id -u):$(id -g)"
+              -e "USER=$(id -un)" -e "LOGNAME=$(id -un)"
+              -e HOME=/tmp -e NGC_KEY)
+  fi
+  cid="$(docker run -d --name "$jid" --label "tao-job=$jid" "${gpu_args[@]+"${gpu_args[@]}"}" \
           "$SMOKE_IMAGE" sh -c 'echo tao-smoke-alive; sleep 30' 2>&1)" \
     || { fail "$p/submit" "docker run rejected: ${cid:0:200}"; return 1; }
   "$RECORD" mark "$jid" --state RUNNING --backend-ref "$cid" >/dev/null 2>&1 \
     || fail "$p/submit" "record mark RUNNING failed"
-  pass "$p/submit" "container $jid started"
+  pass "$p/submit" "container $jid started (image=$SMOKE_IMAGE gpu=$SMOKE_GPU)"
 
   # status
   state="$(docker inspect --format '{{.State.Status}}' "$jid" 2>/dev/null)"
