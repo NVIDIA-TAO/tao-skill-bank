@@ -137,3 +137,58 @@ def test_k8s_no_inline_creds():
     env = {e["name"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
     assert not any(k in env for k in ("AWS_SECRET_ACCESS_KEY", "NGC_KEY", "HF_TOKEN"))
     assert redact_secrets.scan(render(K8S, K8S_VALS)) == []
+
+
+def test_k8s_service_publishes_not_ready_addresses():
+    """Rank-0 DNS must resolve before any pod is Ready, or rendezvous deadlocks.
+
+    Non-zero ranks block on MASTER_ADDR, and a pod only goes Ready once the
+    workload is up — so without this the lookup NXDOMAINs and every rank waits
+    out the full distributed timeout.
+    """
+    svc, _ = k8s_docs()
+    assert svc["spec"].get("publishNotReadyAddresses") is True
+
+
+# Rendezvous vars the k8s skill documents as exported, mapped to the rendered
+# value each must carry. Guards doc/template drift in the direction that bites:
+# a documented `torchrun --nnodes=$NNODES` recipe renders as `--nnodes=` when
+# the template silently stops exporting it.
+DOCUMENTED_K8S_ENV = {
+    "WORLD_SIZE": "2",          # TAO convention: node count
+    "NUM_GPU_PER_NODE": "8",
+    "NNODES": "2",              # torchrun spelling of the same node count
+    "NPROC_PER_NODE": "8",      # torchrun spelling of GPUs per node
+    "MASTER_PORT": "29500",
+    "MASTER_ADDR": "dino-train-a1b2c3-0.dino-train-a1b2c3",
+}
+
+
+@pytest.mark.parametrize("var,expected", sorted(DOCUMENTED_K8S_ENV.items()))
+def test_k8s_documented_rendezvous_var_is_exported(var, expected):
+    _, job = k8s_docs()
+    env = {e["name"]: e["value"]
+           for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert var in env, f"{var} is documented in the k8s skill but not exported by the template"
+    assert env[var] == expected
+
+
+def test_k8s_skill_doc_and_template_env_agree():
+    """Every env var the skill's rendezvous table names must exist in the template.
+
+    Catches the drift class directly rather than via a hand-maintained list: if
+    someone documents a new var without templating it, this fails.
+    """
+    doc = (REPO / "skills/platform/tao-run-on-kubernetes/SKILL.md").read_text(encoding="utf-8")
+    # Rendezvous table rows look like: | `NNODES` | `num_nodes` | torchrun ... |
+    documented = set(re.findall(r"^\s*\|\s*`([A-Z][A-Z0-9_]+)`\s*\|", doc, re.M))
+    documented -= {"JOB_COMPLETION_INDEX"}  # injected by k8s itself, not by us
+    if not documented:
+        pytest.skip("no rendezvous env table found in the k8s skill")
+    _, job = k8s_docs()
+    exported = {e["name"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+    wrapper = job["spec"]["template"]["spec"]["containers"][0]["command"][2]
+    missing = {v for v in documented if v not in exported and f"{v}=" not in wrapper}
+    assert not missing, (
+        f"documented in tao-run-on-kubernetes/SKILL.md but never set by "
+        f"templates/k8s/indexed-job.yaml.tmpl: {sorted(missing)}")
