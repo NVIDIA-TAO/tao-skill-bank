@@ -44,7 +44,7 @@ creates (paths under `<workspace>` unless absolute):
 
 ```text
 <workspace>/
-├── .env                                     # NGC_KEY (nvcr.io/* pulls for all pinned images), HF_TOKEN (HuggingFace pre-flight pulls)
+├── .env                                     # NGC_KEY (nvcr.io/* pulls for all manifest-resolved images), HF_TOKEN (HuggingFace pre-flight pulls)
 ├── specs/baseline_spec.yaml                 # ChangeNet train/eval spec
 ├── train/base/
 │   ├── training_set.csv                     # seed training rows; four mandatory ChangeNet columns

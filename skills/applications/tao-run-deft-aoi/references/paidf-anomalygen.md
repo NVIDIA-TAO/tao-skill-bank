@@ -155,7 +155,7 @@ CKPT=$(find -L "$WS/augmentation/anomalygen/checkpoints/<project>" -path '*/ag_c
 : "${CKPT:?no AnomalyGen checkpoint directory with ag_config.yaml found under checkpoints/<project>}"
 COSMOS=$WS/augmentation/anomalygen/base_checkpoints
 RUN_DIR=$WS/results/run_<TS>/iter${N}/anomalygen
-: "${AG_IMAGE:=nvcr.io/nvidia/paidf-anomalygen:1.0.1}"  # versions-key: images.metropolis_sdg.paidf_anomalygen — reuses Pre-Flight export if set
+: "${AG_IMAGE:?AG_IMAGE unset — resolve images.metropolis_sdg.paidf_anomalygen from versions.yaml in Pre-Flight step 5}"
 mkdir -p $COSMOS $DS $(dirname $CKPT) $RUN_DIR/amp $RUN_DIR/sdg
 for p in "$COSMOS" "$DS" "$(dirname "$CKPT")"; do
   chmod 777 "$p" 2>/dev/null || echo "warning: could not chmod $p; continuing if it is readable"
