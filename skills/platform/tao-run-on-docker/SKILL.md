@@ -375,9 +375,9 @@ du -xhd1 <results_root> 2>/dev/null | sort -h
 find <results_root> -maxdepth 3 -printf '%u:%g %m %s %p\n' 2>/dev/null | head
 ```
 
-For a bind mount, clean only confirmed terminal job directories using the SDK
-retention path or a reviewed ownership repair; never assume `docker system
-prune` touches them. For Docker's own root, relocate `data-root` as described
+For a bind mount, clean only job directories whose record is in a terminal state
+(`tao_job_record.py get "$JOB_ID"`), via a reviewed ownership repair; never assume
+`docker system prune` touches them. For Docker's own root, relocate `data-root` as described
 above. `docker system prune -a --volumes` is destructive and may remove unused
 images and volumes belonging to other workflows, so run it only after explicit
 user approval and a reviewed `docker system df` inventory.
