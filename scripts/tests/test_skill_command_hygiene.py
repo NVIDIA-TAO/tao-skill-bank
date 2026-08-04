@@ -19,10 +19,18 @@ Guards two defect classes found in the 7.1.0 platform-skill audit:
    commands fail with ``could not look up instance "<word>"``. Remote commands
    must be a single quoted string: ``brev exec <instance> "<command>"``.
 
-A line that must legitimately show a banned pattern (documenting the
-anti-pattern in an error-pattern section) opts out with an inline marker:
-``lint-ok: secret-on-argv`` or ``lint-ok: brev-exec-form`` (HTML comments in
-markdown keep it invisible when rendered).
+Scope: in markdown, only lines inside shell fences (```bash / ```sh / …) are
+enforced — those are the commands a user copies. Prose that *describes* a banned
+pattern (an error-pattern section explaining what not to do) is documentation and
+is exempt automatically, with no marker needed. Every non-markdown file is
+enforced in full.
+
+That split is deliberate. The first version of this lint policed prose too, so
+every teaching sentence needed a ``lint-ok`` marker; those markers were then
+copy-pasted onto live commands during a merge, silencing a real defect (three of
+the four Brev verbs shipped broken behind ``lint-ok: brev-exec-form``). A marker
+inside a shell fence now means someone suppressed a genuine finding — treat it
+as a bug, not an annotation.
 """
 
 from __future__ import annotations
@@ -69,6 +77,35 @@ def _iter_files():
                 yield path
 
 
+SHELL_FENCE_RE = re.compile(r"^\s*```+\s*(bash|sh|shell|console|zsh)\b", re.I)
+FENCE_CLOSE_RE = re.compile(r"^\s*```+\s*$")
+
+
+def _executable_lines(path, text):
+    """Yield (lineno, line) for lines a user would actually run.
+
+    Markdown prose that merely *describes* a banned pattern (usually inside
+    backticks, in an error-pattern or "don't do this" section) is documentation,
+    not a command — policing it forced a ``lint-ok`` marker onto every teaching
+    sentence, and those markers then got copy-pasted onto genuinely broken
+    commands, which is how the brev-exec regression shipped. So in markdown only
+    shell fences are enforced; every other file type is enforced whole.
+    """
+    if path.suffix != ".md":
+        for lineno, line in enumerate(text.splitlines(), 1):
+            yield lineno, line
+        return
+    in_shell_fence = False
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if in_shell_fence:
+            if FENCE_CLOSE_RE.match(line) or line.strip().startswith("```"):
+                in_shell_fence = False
+                continue
+            yield lineno, line
+        elif SHELL_FENCE_RE.match(line):
+            in_shell_fence = True
+
+
 def test_no_banned_command_patterns():
     violations = []
     for path in _iter_files():
@@ -78,12 +115,15 @@ def test_no_banned_command_patterns():
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        for lineno, line in enumerate(text.splitlines(), 1):
+        for lineno, line in _executable_lines(path, text):
             for rule_id, pattern, why in RULES:
                 if pattern.search(line) and f"lint-ok: {rule_id}" not in line:
                     rel = path.relative_to(REPO_ROOT)
                     violations.append(
                         f"{rel}:{lineno}: [{rule_id}] {why}\n    {line.strip()}")
     assert not violations, (
-        "command-hygiene violations (annotate deliberate anti-pattern docs "
-        "with 'lint-ok: <rule-id>'):\n" + "\n".join(violations))
+        "command-hygiene violations in runnable code. These are commands a user "
+        "would copy — fix them rather than suppressing. A 'lint-ok: <rule-id>' "
+        "marker on a line inside a shell fence silences a REAL defect; prose "
+        "outside shell fences is already exempt and needs no marker:\n"
+        + "\n".join(violations))
