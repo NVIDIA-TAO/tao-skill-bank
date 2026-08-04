@@ -81,15 +81,30 @@ instance to stop billing. `$BANK` = `${TAO_SKILL_BANK_PATH}`.
 
 - **submit** — reach an instance (provision/reuse via the official Brev skill or
   MCP; reuse an existing instance by its `instance_id`; wait for readiness, above).
-  Then run the docker `submit` verb *inside* it: `open` the record (`--platform
-  brev`, `--backend-ref "<instance>/<container>"`),
-  `brev exec <instance> "docker run -d --name $JOB_ID ..."`, mark RUNNING.
+  Lint the assembled command, open the record to mint `$JOB_ID` **before** launch,
+  then run the docker `submit` verb *inside* the instance and mark RUNNING:
+
+  ```bash
+  redact_secrets.py lint <<<"$REMOTE_CMD"     # no inline secrets; creds as -e VAR
+  JOB_ID=$("$BANK/scripts/tao_job_record.py" open \
+    --platform brev --image "$IMG" --results-dir "$RESULTS_DIR")
+  brev exec <instance> "docker run -d --name $JOB_ID ..."
+  "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING \
+    --backend-ref "<instance>/$JOB_ID"       # instance is part of the ref: the
+                                             # container is unreachable without it
+  ```
 - **status / logs** — `brev exec <instance> "docker inspect $JOB_ID"` /
   `brev exec <instance> "docker logs $JOB_ID"`, mapped to the vocab exactly as
-  the docker verbs do.
-- **cancel / teardown** — `brev exec <instance> "docker rm -f $JOB_ID"`, then
-  for an ephemeral instance **`brev delete <instance>`** (stops billing), then mark
-  the record. Never leave an ephemeral instance running.
+  the docker verbs do. Recover `<instance>` from the record's `backend-ref`.
+- **cancel / teardown** — remove the container, then for an ephemeral instance
+  delete it (stops billing), then mark the record. Never leave an ephemeral
+  instance running:
+
+  ```bash
+  brev exec <instance> "docker rm -f $JOB_ID"
+  brev delete <instance>                      # ephemeral instances only
+  "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state CANCELED --source agent
+  ```
 
 ### `brev exec` argument form
 

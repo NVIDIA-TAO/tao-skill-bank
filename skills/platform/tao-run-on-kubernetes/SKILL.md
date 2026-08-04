@@ -1,8 +1,8 @@
 ---
 name: tao-run-on-kubernetes
-description: Kubernetes execution platform — submits TAO container jobs as single-pod k8s Jobs with NVIDIA GPU scheduling.
-  Use when running on EKS / GKE / AKS / on-prem clusters with the NVIDIA GPU Operator installed, or when integrating TAO
-  into an existing k8s-native ML platform.
+description: Kubernetes execution platform — submits TAO container jobs as k8s Jobs with NVIDIA GPU scheduling; single-pod
+  for one node, Indexed Jobs for multi-node distributed training. Use when running on EKS / GKE / AKS / on-prem clusters
+  with the NVIDIA GPU Operator installed, or when integrating TAO into an existing k8s-native ML platform.
 license: Apache-2.0
 compatibility: Requires GPU worker nodes with NVIDIA driver branch 580, CUDA Toolkit 13.0, and NVIDIA Container Toolkit 1.19.0; a `kubectl` client authenticated to the cluster; and the NVIDIA GPU Operator or device plugin. No nvidia-tao-sdk required — jobs are submitted with plain `kubectl`.
 metadata:
@@ -37,7 +37,7 @@ Operator/device plugin present.
 # driver/toolkit lifecycle is owned by the cloud provider or GPU Operator policy.
 if [ "${TAO_K8S_SKIP_NODE_RUNTIME_CHECK:-0}" != "1" ]; then
   TAO_SKILL_BANK_ROOT="${TAO_SKILL_BANK_ROOT:-$PWD}"
-  SETUP_SCRIPT="${TAO_SKILL_BANK_ROOT}/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh"
+  SETUP_SCRIPT="${TAO_SKILL_BANK_ROOT}/skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh"
 
   bash "$SETUP_SCRIPT" --backend kubernetes --check-only || {
     echo "MISSING: TAO Kubernetes GPU node runtime is not ready."
