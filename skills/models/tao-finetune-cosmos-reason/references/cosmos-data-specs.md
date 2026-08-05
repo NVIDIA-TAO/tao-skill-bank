@@ -58,7 +58,7 @@ Non-train actions such as `evaluate`, `inference`, and `quantize` stay in this m
 - **Dataset type:** vlm
 - **Formats:** llava
 - **Accepted dataset intents:** training, evaluation, testing
-- **Monitoring metric:** val/avg_loss, val/reward_avg, val/loss
+- **Monitoring metric:** `BERTScore_F1` for the default evaluation-backed AutoML free-form text workflow. Training-only observability metrics are `val/avg_loss`, `val/reward_avg`, and `val/loss`; the evaluate action does not emit them.
 - **Dataset URI examples:** `s3://bucket/cosmos/train`, `s3://bucket/cosmos/eval`, `/lustre/fsw/tao_datasets/cosmos_rl/train`, `/lustre/fsw/tao_datasets/cosmos_rl/eval`
 - **Input modes:** accept either dataset roots or direct spec-key paths. Root mode maps `<root>/annotations.json` plus `<root>` as the media path. Direct spec mode is valid when annotations and media live in different locations, for example `custom.train_dataset.annotation_path=/lustre/.../train.json` and `custom.train_dataset.media_path=/lustre/.../videos.tar.gz`.
 - **Media handling:** do not ask the user to choose `videos.tar.gz` vs `images.tar.gz` unless they are using direct spec mode or the model/action requires a single media archive. In root mode, pass the dataset root as the media path.
