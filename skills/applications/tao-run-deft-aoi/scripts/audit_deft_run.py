@@ -26,6 +26,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from collections import Counter
 from typing import Any
 
 from metric_contract import (
@@ -267,6 +268,144 @@ def _mining_summary_proof(
     if mined_rows is not None and kept != mined_rows:
         errors.append(
             f"{field}.kept_count={kept} disagrees with mined parquet rows={mined_rows}"
+        )
+
+
+def _csv_payload(
+    path: pathlib.Path,
+    field: str,
+    errors: list[str],
+) -> tuple[list[str], list[dict[str, str]]] | None:
+    """Read a non-empty CSV with a real header, recording audit errors."""
+    try:
+        with path.open(newline="") as handle:
+            reader = csv.DictReader(handle)
+            columns = list(reader.fieldnames or [])
+            rows = list(reader)
+    except (OSError, csv.Error) as exc:
+        errors.append(f"{field} cannot be read as CSV: {exc}")
+        return None
+    if not columns or any(not column.strip() for column in columns):
+        errors.append(f"{field} must have a non-empty CSV header")
+        return None
+    if not rows:
+        errors.append(f"{field} must contain at least one data row")
+        return None
+    return columns, rows
+
+
+def _row_key(row: dict[str, str], columns: list[str]) -> tuple[str, ...]:
+    """Return an exact, column-order-independent CSV row identity."""
+    return tuple(
+        "" if row.get(column) is None else str(row[column])
+        for column in columns
+    )
+
+
+def _training_merge_proof(
+    label: str,
+    info: dict[str, Any],
+    iterations: dict[str, Any],
+    errors: list[str],
+) -> None:
+    """Prove provenance alignment and monotonic ChangeNet Train growth."""
+    match = re.fullmatch(r"iter([1-9][0-9]*)", label)
+    if match is None:
+        return
+    number = int(match.group(1))
+    combined_value = info.get("combined_training_csv")
+    provenance_value = info.get("provenance_csv")
+    if not combined_value or not provenance_value:
+        return
+
+    combined_field = f"state.iterations.{label}.combined_training_csv"
+    provenance_field = f"state.iterations.{label}.provenance_csv"
+    combined_path = pathlib.Path(str(combined_value)).expanduser()
+    provenance_path = pathlib.Path(str(provenance_value)).expanduser()
+    if not combined_path.is_file() or not provenance_path.is_file():
+        return
+    combined_payload = _csv_payload(combined_path, combined_field, errors)
+    provenance_payload = _csv_payload(provenance_path, provenance_field, errors)
+    if combined_payload is None or provenance_payload is None:
+        return
+    combined_columns, combined_rows = combined_payload
+    provenance_columns, provenance_rows = provenance_payload
+    if "source" not in provenance_columns:
+        errors.append(f"{provenance_field} must contain a source column")
+        return
+    if len(provenance_rows) != len(combined_rows):
+        errors.append(
+            f"{provenance_field} must have one row per combined Train row; "
+            f"got provenance={len(provenance_rows)} train={len(combined_rows)}"
+        )
+        return
+
+    allowed_sources = (
+        {"base_train", "mining_pool"}
+        if number == 1
+        else {"previous_iter_train", "mining_pool"}
+    )
+    sources = [(row.get("source") or "").strip() for row in provenance_rows]
+    invalid_sources = sorted(set(sources) - allowed_sources)
+    if invalid_sources:
+        errors.append(
+            f"{provenance_field}.source contains invalid values for {label}: "
+            f"{invalid_sources}; allowed={sorted(allowed_sources)}"
+        )
+    required_source = "base_train" if number == 1 else "previous_iter_train"
+    if required_source not in sources:
+        errors.append(
+            f"{provenance_field}.source must include {required_source} for {label}"
+        )
+
+    if number == 1:
+        return
+    previous_label = f"iter{number - 1}"
+    previous_info = iterations.get(previous_label)
+    previous_value = (
+        previous_info.get("combined_training_csv")
+        if isinstance(previous_info, dict)
+        else None
+    )
+    if not previous_value:
+        errors.append(
+            f"state.iterations.{previous_label}.combined_training_csv is required "
+            f"to audit monotonic lineage for {label}"
+        )
+        return
+    previous_field = (
+        f"state.iterations.{previous_label}.combined_training_csv"
+    )
+    previous_path = pathlib.Path(str(previous_value)).expanduser()
+    if not previous_path.is_file():
+        return
+    previous_payload = _csv_payload(previous_path, previous_field, errors)
+    if previous_payload is None:
+        return
+    previous_columns, previous_rows = previous_payload
+    if set(previous_columns) != set(combined_columns):
+        errors.append(
+            f"{combined_field} columns must match {previous_field}; "
+            f"current={sorted(combined_columns)} previous={sorted(previous_columns)}"
+        )
+        return
+
+    identity_columns = sorted(combined_columns)
+    previous_records = Counter(
+        _row_key(row, identity_columns) for row in previous_rows
+    )
+    carried_records = Counter(
+        _row_key(row, identity_columns)
+        for row, source in zip(combined_rows, sources)
+        if source == "previous_iter_train"
+    )
+    missing = previous_records - carried_records
+    unexpected = carried_records - previous_records
+    if missing or unexpected:
+        errors.append(
+            f"{combined_field} must retain the exact {previous_label} Train rows "
+            "with source=previous_iter_train; "
+            f"missing={sum(missing.values())} unexpected={sum(unexpected.values())}"
         )
 
 
@@ -615,6 +754,9 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                 errors.append(
                     f"state.iterations.{label}.{field} is set but loop_log lacks {label}/{stage}"
                 )
+
+        if (label, "data_merge") in log_keys:
+            _training_merge_proof(label, info, iterations, errors)
 
         merge_report_value = info.get("merge_validation_report")
         if merge_report_value:

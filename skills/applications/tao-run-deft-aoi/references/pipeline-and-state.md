@@ -45,7 +45,12 @@ iteration executes:
 5. **[INLINE] Assemble training CSV** with monotonic growth:
    - Iter 1: `train/base/training_set.csv` + `mining_filter/mining_pool.csv`.
    - Iter N/resume: previous `train_combined_iter${N-1}.csv` + current `mining_filter/mining_pool.csv`. Never re-add `base_train` when using a previous combined CSV.
-   - Write a sibling `_provenance.csv` for every output row; `source ∈ {base_train, previous_iter_train, mining_pool}`.
+   - Write a sibling `_provenance.csv` with one aligned row per combined Train
+     row. For iter1, `source ∈ {base_train, mining_pool}`. For N>1,
+     `source ∈ {previous_iter_train, mining_pool}`; every row from the preceding
+     combined CSV must appear unchanged with `source=previous_iter_train`.
+     `audit_deft_run.py` enforces the row count, source vocabulary, and exact
+     multiset retention, so a non-monotonic merge is rolled back.
    - **`images_dir` for the iteration training spec** must be set to the workspace root (e.g. `/data/workspace/`), not `kpi/images/`. SDG rows already carry workspace-root-relative paths. Before concatenation, rewrite every iter1 base row's relative `input_path` and `golden_path` by prepending `kpi/images/` exactly once; do not merely change the spec. For iter N>1, the previous combined CSV is already in workspace coordinates and must not be prefixed again. If validation shows base files exist only after adding `kpi/images/`, fix the CSV and rerun validation; never bypass the FATAL.
    - **Normalize `label` case on every source before concatenation — base_train, previous_iter_train, SDG rows, and mined rows.** Preserve `PASS` uppercase and lowercase+strip everything else; write the normalized combined CSV before running `validate_training_csv.py`. See `references/visual-changenet.md` for the dataloader rule and the failure mode if you violate it.
 
