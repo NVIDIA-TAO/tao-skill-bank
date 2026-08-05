@@ -1,11 +1,34 @@
 # Contributing to TAO Skill Bank
 
-Thanks for contributing! Two requirements are enforced by CI on every pull request and must pass before it can merge:
+Thanks for contributing! This guide covers **how we work** — trunk-based development and how CI is triggered — and the two **requirements** CI enforces on every pull request: an **SPDX license header** on source files (the `license header` hook in **Static Tests**) and **DCO sign-off** on every commit (the **DCO** workflow). See [Running the checks locally](#running-the-checks-locally) to catch failures before you push.
 
-1. **SPDX license header** on source files — checked by the `license header` hook in the **Static Tests** workflow.
-2. **DCO sign-off** on every commit — checked by the **DCO** workflow.
+## Trunk-based development and backports
 
-Both run automatically on your PR. See [Running the checks locally](#running-the-checks-locally) to catch failures before you push.
+We practice **trunk-based development**: all changes land on **`main`** first, then are backported to release branches as needed.
+
+- **Open your PR against `main`**, not against a `release/*` branch.
+- If a fix should also ship in a release, add a **`release/X.Y.Z`** label to the PR — the label name matches the release branch (e.g. `release/7.1.0`). Add several labels to backport to multiple releases.
+- When the PR merges to `main`, **`tao-cherry-pick-bot`** cherry-picks the commit onto each labeled release branch:
+  - **Clean** cherry-pick → pushed straight to the release branch.
+  - **Conflict** → the bot opens a **draft PR** against the release branch and assigns + @-mentions you to resolve the conflicts, then mark it ready for review.
+- A summary comment on your original PR shows where each backport landed (and notes any label whose branch doesn't exist).
+
+If you open a PR directly against a `release/*` branch, `tao-pr-bot` will remind you to retarget it to `main` and add the label. Genuinely release-only fixes — code that no longer exists on `main` — are the exception: add the **`release-only`** label to keep such a PR on the release branch.
+
+## Running CI (the `/build` command)
+
+For security, CI does **not** run automatically on NVIDIA's runners — it is triggered per commit.
+
+**Internal developers**
+
+- Comment **`/build`** on your PR to run CI (`blossom-ci`) on the latest commit.
+- CI is pinned to the head commit, so **re-run `/build` after every push** — a stale run won't count.
+- Make sure `blossom-ci` (and the other checks) are green before merging.
+
+**External contributors**
+
+- You can't trigger CI yourself. Once an internal reviewer has reviewed and vetted your PR, a maintainer will run **`/build`** for you.
+- No action is needed on your side beyond addressing review feedback — just wait for the maintainer to trigger CI after the review is complete.
 
 ## License headers
 
