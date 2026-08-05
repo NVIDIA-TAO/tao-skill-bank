@@ -28,7 +28,8 @@ Before planning training, collect all of the following. Do not infer a path
 from history, another user, a prior job, an image, or a developer checkout.
 
 - `base_model_path_or_uri`; require `base_model_revision` for a URI/model ID.
-- `base_model_format`; for a URI this must be `qwen3_vl` or `cosmos3_omni`.
+- `base_model_format`; Nano URI inputs use `qwen3_vl` or `cosmos3_omni`.
+  Cosmos3-Edge is inferred as `cosmos3_edge` from the resolved model ID.
 - optional `prepared_checkpoint_path`; validate it instead of silently
   replacing it.
 - WTS: training/validation annotation paths and media roots.
@@ -47,6 +48,25 @@ from history, another user, a prior job, an image, or a developer checkout.
 The planner preserves each original path and reports an accessible `realpath`.
 Missing paths fail. No fallback dataset, checkpoint, cache, result directory,
 image, partition, account, mount, SSH key, or shared-storage root is allowed.
+
+### Public Cosmos3-Edge checkpoint contract
+
+For Cosmos3-Edge, accept the public Hugging Face model ID plus an immutable
+revision, or a complete local snapshot of that same public model. Do not ask
+the user for a second workload-specific checkpoint and do not copy or edit
+`processor_config.json` or `video_preprocessor_config.json` to create one.
+Keep the base-model fingerprint separate from the processor-profile
+fingerprint.
+
+The model-aware TAO profile supplies Edge runtime defaults: 6 sampled video
+frames, a 1280 x 720 per-frame reference budget (5,529,600 aggregate video
+pixels), sequence length 16,000, and `flash_attention_2`. These are runtime
+settings, not checkpoint contents. Record whether each value came from the
+skill profile or an explicit user override, include it in parity and cache
+keys, and require the normal compute-node smoke gate before full training.
+Framework receives the pixel budget through `WTS_VIDEO_MAX_PIXELS` or
+`AETC_VIDEO_MAX_PIXELS`; Nano keeps its native processor limit unless the user
+explicitly overrides it.
 
 ## Backend selection
 

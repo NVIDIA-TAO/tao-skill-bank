@@ -54,7 +54,10 @@ parallelism:
   replicate_degree: nodes
   global_world_size: nodes_times_gpus_per_node
 checkpoint:
-  input: qwen3_vl_hf_safetensors
+  input: public_hf_safetensors
+  accepted_inputs: [qwen3_vl_hf_safetensors, cosmos3_edge_public_hf_snapshot]
+  public_checkpoint_is_immutable: true
+  workload_specific_processor_overlay: forbidden
   output: torch_distributed_checkpoint
   cadence: epoch
   async_multinode: disabled
@@ -83,3 +86,20 @@ compatibility:
   worker_zero_prefetch: num_workers_zero_and_prefetch_none
   storage_dependencies: optional_for_local_shared_filesystem_runs
   host_source_mount: forbidden
+model_profiles:
+  cosmos3_edge:
+    source: public_huggingface_checkpoint
+    immutable_revision_required_for_uri: true
+    alternate_checkpoint_required: false
+    checkpoint_mutation: forbidden
+    runtime_defaults:
+      frames: 6
+      frame_width: 1280
+      frame_height: 720
+      max_video_pixels: 5529600
+      sequence_length: 16000
+      attention_implementation: flash_attention_2
+    environment_binding:
+      wts: WTS_VIDEO_MAX_PIXELS
+      aetc: AETC_VIDEO_MAX_PIXELS
+    provenance: base model and processor profile are fingerprinted separately

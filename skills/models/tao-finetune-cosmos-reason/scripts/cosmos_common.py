@@ -105,11 +105,26 @@ def inspect_model(value: str, revision: str = "", prepared: str = "") -> dict[st
         index = root / "model.safetensors.index.json"
         if not weight_files and not index.is_file():
             raise WorkflowError(f"base model contains no safetensors weights or index: {value}")
+        indexed_weight_files: list[str] = []
+        if index.is_file():
+            try:
+                index_payload = json.loads(index.read_text(encoding="utf-8"))
+                weight_map = index_payload.get("weight_map", {})
+            except json.JSONDecodeError as exc:
+                raise WorkflowError(f"model safetensors index is invalid: {index}: {exc}") from exc
+            if not isinstance(weight_map, dict) or not weight_map:
+                raise WorkflowError(f"model safetensors index has no weight_map: {index}")
+            indexed_weight_files = sorted(set(weight_map.values()))
+            for relative in indexed_weight_files:
+                if not isinstance(relative, str) or Path(relative).is_absolute() or ".." in Path(relative).parts:
+                    raise WorkflowError(f"model safetensors index contains an unsafe weight path: {relative!r}")
+                if not (root / relative).is_file():
+                    raise WorkflowError(f"model safetensors index references a missing weight file: {relative}")
         important = [
             "config.json", "generation_config.json", "model.safetensors.index.json",
             "tokenizer.json", "tokenizer_config.json", "processor_config.json",
             "preprocessor_config.json", "chat_template.json",
-        ] + weight_files
+        ] + weight_files + indexed_weight_files
         inventory = _file_inventory(root, important)
         result.update(
             {
