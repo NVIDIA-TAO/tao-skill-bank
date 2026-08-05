@@ -513,6 +513,7 @@ def _training_contract(args: argparse.Namespace) -> dict[str, Any]:
         "effective_global_batch": args.effective_global_batch,
         "optimizer": args.optimizer,
         "learning_rate": args.learning_rate,
+        "optimizer_epsilon": args.optimizer_epsilon,
         "scheduler": args.scheduler,
         "warmup": args.warmup,
         "weight_decay": args.weight_decay,
@@ -555,7 +556,7 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
             "compile": {"enabled": False, "compile_dynamic": True},
             "activation_checkpointing": {"mode": "full", "save_ops_regex": ["fmha"], "preserve_rng_state": True, "determinism_check": "default"},
         },
-        "optimizer": {"betas": [0.9, 0.999], "eps": 1e-8, "fused": True, "lr": args.learning_rate, "weight_decay": args.weight_decay, "keys_to_select": [], "keys_to_exclude": []},
+        "optimizer": {"betas": [0.9, 0.999], "eps": args.optimizer_epsilon, "fused": True, "lr": args.learning_rate, "weight_decay": args.weight_decay, "keys_to_select": [], "keys_to_exclude": []},
         "scheduler": {"cycle_lengths": [steps * epochs], "f_max": [1.0], "f_min": [0.0], "f_start": [1.0], "verbosity_interval": 0, "warm_up_steps": [args.warmup]},
         "trainer": {
             "distributed_parallelism": "fsdp", "grad_accum_iter": grad_accum, "logging_iter": 1,
@@ -590,6 +591,7 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "resume": False, "epoch": contract["epochs"], "compile": False,
         "train_batch_per_replica": args.effective_global_batch, "output_dir": args.container_checkpoint_dir,
         "optm_lr": args.learning_rate, "optm_impl": "foreach", "optm_weight_decay": args.weight_decay,
+        "epsilon": args.optimizer_epsilon,
         "optm_warmup_epochs": args.warmup, "optm_decay_type": args.scheduler,
         "optm_grad_norm_clip": args.gradient_clip, "param_dtype": args.precision,
     })
@@ -1394,6 +1396,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--epochs", type=int, default=1); parser.add_argument("--effective-global-batch", type=int, default=8)
     parser.add_argument("--rl-mini-batch", type=int, default=1); parser.add_argument("--validation-batch-size", type=int, default=1)
     parser.add_argument("--optimizer", default="AdamW"); parser.add_argument("--learning-rate", type=float, default=1e-5)
+    parser.add_argument("--optimizer-epsilon", type=float, default=1e-8)
     parser.add_argument("--scheduler", default="linear"); parser.add_argument("--warmup", type=int, default=0)
     parser.add_argument("--weight-decay", type=float, default=0.01); parser.add_argument("--gradient-clip", type=float, default=1.0)
     parser.add_argument("--precision", default="bfloat16"); parser.add_argument("--seed", type=int, default=42)
