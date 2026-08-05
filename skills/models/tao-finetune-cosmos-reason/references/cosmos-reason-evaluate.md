@@ -1,10 +1,30 @@
-# Cosmos-RL Evaluate and Datasets
+# Cosmos Evaluate and Datasets
 
 Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or platform/model skills, the current/compact source wins.
 
 ## Evaluate
 
 The `actions.evaluate` block in `references/skill_info.yaml` declares the action's inputs (annotation file + media folder + model) and outputs (results directory).
+
+### Framework DCP pre-action
+
+When `backend=cosmos-framework`, never pass a native Framework DCP directly to
+the generic action or ask the user to export it. First run the checked-in
+`scripts/framework_checkpoint_action.py plan` helper with the selected
+checkpoint, saved Framework config when it cannot be inferred, base-model
+identity/revision, and optional export directory. Then run `prepare` in the
+clean repository-derived Framework TAO action image. It invokes the
+Framework-owned exact-key exporter only when its manifest/config/DCP/base-model
+checks do not prove that a complete export already exists.
+
+Capture the helper JSON in the job metadata, run `verify` from the target
+compute frame, put its `action_model_path` in `model.model_name`, and launch
+`cosmos-framework-evaluate --config <config>`. The same pre-action contract
+applies to `cosmos-framework-inference` and
+`cosmos-framework-inference-microservice`, using `model_path`. Export child
+failure or provenance mismatch blocks the downstream action. Framework PEFT
+checkpoints are reconstructed from the saved config and merged by the native
+exporter; do not set `model.enable_lora=true` after that merge.
 
 ### Config format
 
@@ -20,7 +40,7 @@ dotted overrides such as `dataset.annotation_path`, `model.model_name`, and
 - Empty string (`""`) — General Evaluator. Auto-detects binary classification (yes/no) from ground truth and computes TP/FP/TN/FN/accuracy/precision/recall/F1.
 - `"its_directionality"` — ITS-specific evaluator for left/right/straight classification. Do NOT use for collision detection.
 
-### LoRA Evaluation
+### Cosmos-RL LoRA evaluation
 
 To evaluate a fine-tuned LoRA model, pass the checkpoint path via spec_overrides:
 
