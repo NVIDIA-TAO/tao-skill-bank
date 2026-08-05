@@ -12,6 +12,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -199,6 +200,26 @@ class BareAnnotationTests(unittest.TestCase):
             patch_eval_image_cap.apply_cap("engine = LLM(model=ckpt)\n", 2)
         with self.assertRaisesRegex(ValueError, "exactly one image cap"):
             patch_eval_image_cap.apply_cap(source + source, 2)
+
+    def test_eval_image_cap_probe_times_out(self) -> None:
+        timeout = patch_eval_image_cap.subprocess.TimeoutExpired(
+            cmd=["docker", "run"], timeout=120
+        )
+        with mock.patch.object(
+            patch_eval_image_cap.shutil, "which", return_value="/usr/bin/docker"
+        ), mock.patch.object(
+            patch_eval_image_cap.subprocess, "run", side_effect=timeout
+        ) as run:
+            with self.assertRaisesRegex(
+                ValueError,
+                "timed out after 120s.*pre-pull the image",
+            ):
+                patch_eval_image_cap.read_from_image(
+                    "example/cosmos:1",
+                    patch_eval_image_cap.CONTAINER_PATH,
+                    docker="docker",
+                )
+        self.assertEqual(run.call_args.kwargs["timeout"], 120)
 
     def test_media_root_one_level_too_deep_is_diagnosed(self) -> None:
         """Annotations resolve from the workspace root, not workspace/images."""

@@ -30,10 +30,14 @@ tags:
 
 ## Installation
 
-Install this application together with the companion TAO skills listed in
-`eval.config` so they resolve as `~/.claude/{models,data,platform,core}/...`.
-Provision a host Python with `pyarrow` and `yaml`; run bundled validation with
-`python -m unittest tests.test_cosmos3_bare` (pytest is optional, not required).
+Install this application as part of the full TAO skill-bank root, not as only
+the companion skill folders: `TAO_SKILL_BANK_PATH` must point at a directory
+containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
+`skills/{applications,models,data,platform,core}/...` tree listed in
+`eval.config`. Run bundled validation with the skill Python so dependencies
+match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
+tests.test_cosmos3_bare`. If that Python lacks `pyarrow` or `yaml`, install the
+small helper dependency there and rerun validation.
 
 ## Execution Contract
 

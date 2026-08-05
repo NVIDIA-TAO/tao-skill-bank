@@ -82,16 +82,22 @@ approval.
 Resolve, do not guess:
 
 ```bash
+: "${TAO_SKILL_BANK_PATH:?set TAO_SKILL_BANK_PATH to the installed TAO skill-bank root containing versions.yaml and scripts/resolve_versions_key.py}"
+test -f "$TAO_SKILL_BANK_PATH/versions.yaml" || { echo "missing $TAO_SKILL_BANK_PATH/versions.yaml" >&2; exit 2; }
+test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" >&2; exit 2; }
 COSMOS_RL_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.tao_toolkit.cosmos_rl
 )
 TAO_DS_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.tao_toolkit.data_services
 )
 AG_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.metropolis_sdg.paidf_anomalygen
 )
 ```

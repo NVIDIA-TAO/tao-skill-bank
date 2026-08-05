@@ -42,11 +42,18 @@ CAP_PATTERN = re.compile(
 def read_from_image(image: str, container_path: str, *, docker: str) -> str:
     if shutil.which(docker) is None:
         raise ValueError(f"{docker} not found on PATH")
-    proc = subprocess.run(
-        [docker, "run", "--rm", "--entrypoint", "cat", image, container_path],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(
+            [docker, "run", "--rm", "--entrypoint", "cat", image, container_path],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(
+            f"timed out after {exc.timeout}s reading {container_path} from {image}; "
+            "pre-pull the image or fix platform access before launch"
+        ) from exc
     if proc.returncode != 0:
         raise ValueError(
             f"could not read {container_path} from {image}: "
