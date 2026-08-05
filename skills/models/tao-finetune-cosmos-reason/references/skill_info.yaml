@@ -67,6 +67,19 @@ workflow_contract:
   - frame count
   - optimizer, scheduler, batch size, epochs, and random seed
   - backend and container digest
+  public_model_profiles:
+    cosmos3_edge:
+      checkpoint_input: public Hugging Face model ID at immutable revision or complete local snapshot
+      alternate_workload_checkpoint: false
+      checkpoint_mutation: false
+      runtime_processor_defaults:
+        frames: 6
+        frame_width: 1280
+        frame_height: 720
+        max_video_pixels: 5529600
+        sequence_length: 16000
+        attention_implementation: flash_attention_2
+      provenance: base checkpoint and runtime processor profile have independent fingerprints
 data_sources:
   train:
     custom.train_dataset.annotation_path:

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nvidia.com/tao/schemas/cosmos3-nano-train-request-v2.json",
-  "title": "Cosmos3-Nano TAO training request",
+  "$id": "https://nvidia.com/tao/schemas/cosmos3-train-request-v3.json",
+  "title": "Cosmos3 TAO training request",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -18,7 +18,7 @@
     "backend": {"enum": ["cosmos-framework", "cosmos-rl"]},
     "base_model_path_or_uri": {"type": "string", "minLength": 1},
     "base_model_revision": {"type": "string"},
-    "base_model_format": {"enum": ["qwen3_vl", "cosmos3_omni"]},
+    "base_model_format": {"enum": ["qwen3_vl", "cosmos3_omni", "cosmos3_edge"]},
     "prepared_checkpoint_path": {"type": "string"},
     "dataset": {
       "type": "object",
@@ -43,6 +43,18 @@
         "effective_global_batch": {"type": "integer", "minimum": 1},
         "learning_rate": {"type": "number", "exclusiveMinimum": 0},
         "seed": {"type": "integer"},
+        "video_profile": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "frames": {"type": "integer", "minimum": 1},
+            "frame_width": {"type": "integer", "minimum": 1},
+            "frame_height": {"type": "integer", "minimum": 1},
+            "max_video_pixels": {"type": "integer", "minimum": 1},
+            "sequence_length": {"type": "integer", "minimum": 1},
+            "attention_implementation": {"type": "string", "minLength": 1}
+          }
+        },
         "lora": {
           "type": "object",
           "additionalProperties": false,
