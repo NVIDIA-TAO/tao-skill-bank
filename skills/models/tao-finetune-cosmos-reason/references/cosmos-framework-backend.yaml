@@ -41,12 +41,12 @@ configuration:
   schema: cosmos_framework.configs.toml_config.sft_config
   entrypoint: python -m cosmos_framework.scripts.train --sft-toml=<config>
   unknown_keys: forbidden
-datasets:
-  wts:
-    native_adapter: cosmos_framework.configs.base.reasoner.experiment.wts_vlm.WTSLlavaDataset
+dataset_families:
+  video_conversation:
+    native_adapter: cosmos_framework.configs.base.reasoner.experiment.tao_video_sft.VideoConversationDataset
     runtime_inputs: [train_annotation, train_media_root, validation_annotation, validation_media_root]
-  aetc:
-    native_adapter: cosmos_framework.configs.base.reasoner.experiment.wts_vlm.TaoVlReasonDaftDataset
+  task_aware_video_reasoning:
+    native_adapter: cosmos_framework.data.generator.local_datasets.tao_vl_reason.TaoVlReasonDaftDataset
     format_package: nvidia-tao-daft
     runtime_inputs: [train_annotations, train_media_roots, validation_annotations, validation_media_roots, task_selection]
 parallelism:
@@ -99,7 +99,5 @@ model_profiles:
       max_video_pixels: 5529600
       sequence_length: 16000
       attention_implementation: flash_attention_2
-    environment_binding:
-      wts: WTS_VIDEO_MAX_PIXELS
-      aetc: AETC_VIDEO_MAX_PIXELS
+    environment_binding: TAO_VIDEO_MAX_PIXELS
     provenance: base model and processor profile are fingerprinted separately

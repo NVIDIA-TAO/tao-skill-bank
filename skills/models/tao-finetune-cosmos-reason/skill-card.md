@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers training Cosmos3-Nano or Cosmos3-Edge on WTS/AETC, running Cosmos-RL non-train actions, comparing backend parity, or launching Cosmos workflows from a fresh Docker/SLURM host. <br>
+Developers and engineers training Cosmos3-Nano or Cosmos3-Edge on customer-provided conversation-style or task-aware video datasets, running Cosmos-RL non-train actions, comparing backend parity, or launching Cosmos workflows from a fresh Docker/SLURM host. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>

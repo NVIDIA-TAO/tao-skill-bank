@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Evaluate Cosmos-RL checkpoints on WTS with bounded GB300 video decoding."""
+"""Evaluate Cosmos-RL checkpoints with bounded single-GPU video decoding."""
 
 import gc
 import logging
@@ -33,7 +33,7 @@ _read_video_torchvision = vision_process.VIDEO_READER_BACKENDS["torchvision"]
 
 
 def _read_video_torchvision_cached(element):
-    # WTS contains several questions per clip. Cache each sampled-frame tensor
+    # Conversation datasets may contain several questions per clip. Cache each sampled-frame tensor
     # and serialize torchvision/PyAV access for identical decode requests.
     key = (
         element.get("video"),
