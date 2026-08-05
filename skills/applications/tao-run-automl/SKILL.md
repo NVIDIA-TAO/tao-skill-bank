@@ -232,11 +232,9 @@ adjustment in `result["history"][i]["adjustments"]`.
 | `pbt` | Long training where schedules should mutate during training. | population and generation budget |
 | `llm`, `hybrid`, `autoresearch` | User explicitly wants LLM-guided search and has an endpoint configured. | LLM endpoint config plus budget |
 
-For `evaluate` or `inference`, default to Bayesian/BFBO-style search over the
-selected action's prompt, decoding, preprocessing, or runtime config knobs.
-Use a task metric from the action outputs/logs and set `direction` explicitly
-when the metric name is ambiguous. Do not use training-loss assumptions for
-actions that do not update weights.
+For `evaluate` or `inference`, use Bayesian/BFBO over packaged prompt,
+decoding, preprocessing, or runtime knobs. Select a metric from action output
+and set ambiguous directions explicitly; never infer training loss.
 
 For `distill`, use the same train-like policy when the distill action performs
 epoch-based optimization and writes checkpoints. For single-shot `prune` and
