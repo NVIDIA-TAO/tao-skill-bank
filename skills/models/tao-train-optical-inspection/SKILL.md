@@ -39,7 +39,8 @@ Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows st
 
 - **Dataset type:** optical_inspection
 - **Formats:** default
-- **Monitoring metric:** val_acc
+- **AutoML training metric:** `val_acc`, with `direction=maximize`
+- **Standalone evaluation metric:** `test_acc`, with `direction=maximize`
 
 ### Per-Action Dataset Requirements
 

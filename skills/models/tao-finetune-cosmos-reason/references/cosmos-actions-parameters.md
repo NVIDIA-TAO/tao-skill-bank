@@ -66,7 +66,7 @@ When the input declaration carries a `selective` block (`{annotation, format, ke
 
 - `results.json` — per-sample predictions with `video_id`, `response`, `question`, `gt`
 - Binary metrics: accuracy, balanced accuracy, precision, recall, F1
-- Text metrics: BLEU, ROUGE, BERTScore
+- Text metrics: `BLEU`, `ROUGE*`, and the emitted `BERTScore_F1` scalar
 - When Lustre is available, results write to Lustre for cross-job persistence (e.g., gap analysis reads directly), then upload to S3.
 
 ## Datasets
