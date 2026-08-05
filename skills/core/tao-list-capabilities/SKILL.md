@@ -44,7 +44,10 @@ enumerating capabilities from this skill or plugin metadata. Include:
 
 - Every top-level application workflow under `applications/` and what it can do.
 - Every top-level data workflow under `data/` and what it can do.
-- Supported execution platforms from `scripts/list_tao_platforms.py`.
+- Supported execution platforms, discovered from the installed platform skills
+  (tao-run-on-docker / -slurm / -kubernetes / -brev, plus any external one); on a
+  runtime that surfaces only the core router skills, read
+  `skills/platform/tao-run-on-*/SKILL.md` frontmatter.
 - The fine-tuning/deployment workflow coverage for models under `models/`: train,
   evaluate, inference, export, and TensorRT engine generation when those actions
   are present in the packaged schema manifest.

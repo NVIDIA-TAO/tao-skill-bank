@@ -20,6 +20,10 @@ checkpoint — all auto-download by default; bring-your-own to override.
 Pre-Flight only **probes** status and reports it — no side-effecting work
 happens before the user gate.
 
+This bootstrap applies only when network access is allowed. For air-gap mode,
+apply `references/air-gap.md`: skip download helpers and validate every staged
+input before running the per-iteration commands.
+
 ## Workspace Inputs
 
 Three independent inputs under `<workspace>/augmentation/anomalygen/` plus
@@ -124,7 +128,7 @@ directly) with:
 | Param | Value | Notes |
 |---|---|---|
 | `mode` | `inference_only` (or omit when calling wrappers directly) | DEFT loop never runs Phase 1 |
-| `checkpoint_dir` | `<workspace>/augmentation/anomalygen/checkpoints/<project>` | |
+| `checkpoint_dir` | Directory containing `ag_config.yaml` plus the staged iteration checkpoint; resolve `checkpoints/<project>` or its single nested override such as `checkpoints/<project>/nvidia/Cosmos-AnomalyGen-PCB-2B`. The normal layout has `checkpoints/latest_checkpoint.txt` and `checkpoints/model/iter_<step>.pt`; normalize a flat staged repo into a run-local view as shown below. | |
 | `step` | int parsed from `checkpoint_dir/checkpoints/latest_checkpoint.txt` | strip `iter_` prefix and `.pt` suffix |
 | `dataset_dir` | `<workspace>/augmentation/anomalygen/datasets/<project>/` | passed verbatim |
 | `clean_dir` | same as `dataset_dir` | |
@@ -142,23 +146,61 @@ directly) with:
 Used by both the bootstrap and the per-iteration calls:
 
 ```bash
-set -a; source <workspace>/.env; set +a
+# Never read or source a credentials file. Per-iteration calls use staged
+# assets and require no credential; HF_TOKEN is only for an explicitly
+# networked post-gate bootstrap.
 WS=<workspace>
 DS=$WS/augmentation/anomalygen/datasets/<project>
-CKPT=$WS/augmentation/anomalygen/checkpoints/<project>
+CKPT=$(find -L "$WS/augmentation/anomalygen/checkpoints/<project>" -path '*/ag_config.yaml' -print -quit | xargs dirname)  # -L follows a symlinked project checkpoint dir
+: "${CKPT:?no AnomalyGen checkpoint directory with ag_config.yaml found under checkpoints/<project>}"
 COSMOS=$WS/augmentation/anomalygen/base_checkpoints
 RUN_DIR=$WS/results/run_<TS>/iter${N}/anomalygen
-: "${AG_IMAGE:=nvcr.io/nvidia/paidf-anomalygen:1.0.0}"  # versions-key: images.metropolis_sdg.paidf_anomalygen — reuses Pre-Flight export if set
+: "${AG_IMAGE:=nvcr.io/nvidia/paidf-anomalygen:1.0.1}"  # versions-key: images.metropolis_sdg.paidf_anomalygen — reuses Pre-Flight export if set
 mkdir -p $COSMOS $DS $(dirname $CKPT) $RUN_DIR/amp $RUN_DIR/sdg
-chmod 777 $COSMOS $DS $(dirname $CKPT)   # container runs as uid 10000; without this the post-gate bootstrap fails with PermissionError on host-owned mounts
+for p in "$COSMOS" "$DS" "$(dirname "$CKPT")"; do
+  chmod 777 "$p" 2>/dev/null || echo "warning: could not chmod $p; continuing if it is readable"
+done
 ```
 
-Required env across every call: `HF_TOKEN`, `HF_HUB_DISABLE_XET=1`,
+After approval, normalize a flat HuggingFace snapshot without modifying the
+source cache. The published repository may stage `iter_000014000.pt` beside
+`ag_config.yaml`, while the container loads
+`checkpoints/model/iter_000014000.pt`. If the normal layout is already
+complete, keep `$CKPT` unchanged. Otherwise require exactly one root iteration
+file and build a lightweight view under the run directory:
+
+```bash
+if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ] ||
+   ! latest_name=$(sed -n '1p' "$CKPT/checkpoints/latest_checkpoint.txt") ||
+   [ ! -f "$CKPT/checkpoints/model/$(basename "$latest_name")" ]; then
+  mapfile -t staged_models < <(
+    find -L "$CKPT" -maxdepth 1 -type f -name 'iter_[0-9]*.pt' \
+      ! -name '*_reg_model.pt' | sort
+  )
+  if [ "${#staged_models[@]}" -ne 1 ]; then
+    echo "FATAL: expected one flat AnomalyGen iter checkpoint under $CKPT" >&2
+    exit 2
+  fi
+  model_name=$(basename "${staged_models[0]}")
+  CKPT_VIEW="$RUN_DIR/checkpoint_view"
+  mkdir -p "$CKPT_VIEW/checkpoints/model"
+  ln -sfn "$(realpath "$CKPT/ag_config.yaml")" "$CKPT_VIEW/ag_config.yaml"
+  ln -sfn "$(realpath "${staged_models[0]}")" \
+    "$CKPT_VIEW/checkpoints/model/$model_name"
+  printf '%s\n' "$model_name" > "$CKPT_VIEW/checkpoints/latest_checkpoint.txt"
+  CKPT="$CKPT_VIEW"
+fi
+```
+
+This normalization is a path adapter, not a download. Record the resulting
+`$CKPT` and derive `step` from its `latest_checkpoint.txt` before invoking
+Phase 2 or Phase 3.
+
+Required env for the per-iteration calls: `HF_HUB_OFFLINE=1`,
+`TRANSFORMERS_OFFLINE=1`, and
 `PYTHONPATH=/workspace/paidf-anomalygen`. Required workdir:
 `/workspace/paidf-anomalygen` (the `-m scripts.…` invocation needs CWD —
-this matches the container's `WORKDIR` / `ENV PYTHONPATH`; older revisions
-of this file used `/workspace/paidf-anomalygen`, which does not exist
-inside the current `paidf-anomalygen:1.0.0+` image).
+this matches the current container's `WORKDIR` / `ENV PYTHONPATH`).
 `${ANOMALYGEN_SCRIPTS}` is preset inside the container — do not export it
 on the host. Use **single quotes** around the inner `bash -lc` so the host
 shell doesn't expand `${ANOMALYGEN_SCRIPTS}`; use **double quotes with
@@ -225,7 +267,7 @@ STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' $CKPT/checkpoints/latest_checkpoint.t
 docker run --rm --gpus all --ipc=host --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
-  -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
+  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
   -v $WS:$WS -v $COSMOS:/workspace/paidf-anomalygen/checkpoints:ro \
   -w /workspace/paidf-anomalygen $AG_IMAGE \
   bash -lc "\${ANOMALYGEN_SCRIPTS}/prep_testcase.sh \
@@ -237,7 +279,7 @@ docker run --rm --gpus all --ipc=host --shm-size=16g \
 docker run --rm --gpus all --ipc=host --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
-  -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
+  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
   -v $WS:$WS -v $COSMOS:/workspace/paidf-anomalygen/checkpoints:ro \
   -w /workspace/paidf-anomalygen $AG_IMAGE \
   bash -lc "\${ANOMALYGEN_SCRIPTS}/run_sdg.sh \
@@ -260,13 +302,25 @@ Required mounts (per-iteration): `<workspace>:<workspace>` (same path) +
 └── timing_summary.json
 ```
 
+After verifying `SDG_result.csv`, `reconstructed_image/`, and
+`original_image/`, commit:
+
+```python
+phase = state["iterations"][f"iter{N}"]
+phase["anomalygen_sdg_csv"] = "<abs_path>/SDG_result.csv"
+phase["stage_completed"] = "anomalygen"
+```
+
+This snippet documents the schema only; never execute it as inline Python.
+
 ## Log Stage
 
 ```bash
-python3 <skill_root>/scripts/log_stage.py \
-    --log-path results/loop_log.jsonl \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+    --results-dir "${RESULTS_DIR}" \
     --iter-label iter${N} \
-    --stage anomalygen --status ok \
+    --stage anomalygen \
+    --anomalygen-sdg <absolute path to SDG_result.csv> \
     --summary "SDG: requested=N, AMP-allocated=M, generated=K by type"
 ```
 

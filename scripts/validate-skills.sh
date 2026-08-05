@@ -178,7 +178,7 @@ def iter_skill_files():
     for root, dirs, files in os.walk('.', followlinks=False):
         dirs[:] = [
             d for d in dirs
-            if d not in ('.git', 'plugins')
+            if d not in ('.git', 'plugins', '.venv', '.venv-tao')
             and 'templates/skill-skeleton' not in os.path.join(root, d)
             and not os.path.islink(os.path.join(root, d))
         ]
@@ -245,7 +245,6 @@ import os, sys, re
 # A SKILL.md is "runnable" if any of:
 #   - body has a "## Quick Start" or "## Quick start" heading
 #   - body has a `docker run` code block
-#   - body has a Python `sdk.create_job` call (for SDK-driven skills)
 #   - the skill dir has references/skill_info.yaml or references/model_info.yaml on disk
 # Skips templates/.
 errs = 0
@@ -254,7 +253,7 @@ def iter_skill_files():
     for root, dirs, files in os.walk('.', followlinks=False):
         dirs[:] = [
             d for d in dirs
-            if d not in ('.git', 'plugins')
+            if d not in ('.git', 'plugins', '.venv', '.venv-tao')
             and 'templates/skill-skeleton' not in os.path.join(root, d)
             and not os.path.islink(os.path.join(root, d))
         ]
@@ -267,14 +266,13 @@ for skill_md in iter_skill_files():
         content = f.read()
     has_qs = re.search(r'^##\s+quick ?start', content, re.IGNORECASE | re.MULTILINE)
     has_dr = 'docker run' in content
-    has_sdk = re.search(r'sdk\.create_job|BrevSDK', content)
     has_refs = (os.path.isfile(os.path.join(skill_dir, 'references/skill_info.yaml'))
                 or os.path.isfile(os.path.join(skill_dir, 'references/model_info.yaml')))
     # Local-Python or agent-prompt-driven skills: presence of scripts/ or hooks/ counts as runnable.
     has_scripts = os.path.isdir(os.path.join(skill_dir, 'scripts'))
     has_hooks = os.path.isdir(os.path.join(skill_dir, 'hooks'))
-    if not (has_qs or has_dr or has_sdk or has_refs or has_scripts or has_hooks):
-        print(f"ERROR: {skill_md} — no runnable info found. Add a Quick Start, docker run block, SDK call, references/skill_info.yaml, scripts/, or hooks/.", file=sys.stderr)
+    if not (has_qs or has_dr or has_refs or has_scripts or has_hooks):
+        print(f"ERROR: {skill_md} — no runnable info found. Add a Quick Start, docker run block, references/skill_info.yaml, scripts/, or hooks/.", file=sys.stderr)
         errs += 1
 sys.exit(errs)
 PY
@@ -335,7 +333,7 @@ errs = 0
 for root, dirs, files in os.walk('.', followlinks=False):
     dirs[:] = [
         d for d in dirs
-        if d not in ('.git', 'plugins')
+        if d not in ('.git', 'plugins', '.venv', '.venv-tao')
         and 'templates/skill-skeleton' not in os.path.join(root, d)
         and not os.path.islink(os.path.join(root, d))
     ]
@@ -359,42 +357,35 @@ sys.exit(errs)
 PY
 [ $? -eq 0 ] && ok "no oversize or nested SKILL.md" || errors=$((errors + $?))
 
-# ─── 4. no SDK leaks in model/data/application skills ───────────────────────
+# ─── 4. no SDK leaks (M9: SDK allowed only under tao-run-automl) ─────────────
 echo
-echo "=== 4. no SDK leaks in model/data/application skills ==="
+echo "=== 4. no SDK leaks (SDK allowed only under tao-run-automl) ==="
 python3 - <<'PY'
 import re, os, sys
-leak_re = re.compile(r'tao_sdk|TaoExecutionSDK|sdk\.create_job|sdk\.list_path|sdk\.check_path|execute_step|agent_runner|script_runner')
+# M9 eliminated the TAO execution SDK from the bank. Direct SDK symbols are
+# allowed ONLY under skills/applications/tao-run-automl/ — it keeps the
+# nvidia-tao-automl wheel and its transitive nvidia-tao-sdk dependency. A match
+# anywhere else (SKILL.md or a references/*.md) is a leak. Accurate negatives
+# ("no tao_sdk", "without the TAO SDK") are fine.
+leak_re = re.compile(r'tao_sdk|TaoExecutionSDK|sdk\.create_job|sdk\.list_path|sdk\.check_path|build_entrypoint|BrevSDK|SlurmSDK|KubernetesSDK|DockerSDK|script_runner')
+neg_re  = re.compile(r"no [`']?tao_sdk|no [`']?nvidia-tao-sdk|without the TAO SDK|there is no [`']?tao_sdk|SDK-free|no in-container", re.IGNORECASE)
+EXEMPT = './skills/applications/tao-run-automl/'
 errs = 0
-for root, dirs, files in os.walk('.'):
-    if any(x in root for x in ('.git', 'templates/skill-skeleton')):
+for root, dirs, files in os.walk('./skills'):
+    if any(x in root for x in ('.git', '.venv', '__pycache__')):
         continue
-    if 'SKILL.md' in files:
-        path = os.path.join(root, 'SKILL.md')
-        # Platform skills legitimately document the SDK
-        if path.startswith('./skills/platform/'):
+    in_refs = os.path.basename(root) == 'references'
+    for fn in files:
+        if fn != 'SKILL.md' and not (in_refs and fn.endswith('.md')):
             continue
-        # Application skills that are SDK-orchestrated (AutoML, etc.) are exempt.
-        # Add new ones here only after confirming they cannot run without the SDK.
-        if path in ('./skills/applications/tao-run-automl/SKILL.md',):
+        path = os.path.join(root, fn)
+        if path.startswith(EXEMPT):
             continue
-        # Models may have an "Optional: running via the TAO SDK" section
-        is_model = path.startswith('./skills/models/')
         with open(path) as f:
-            content = f.read()
-        matches = leak_re.findall(content)
-        if not matches:
-            continue
-        if is_model:
-            opt = re.search(r'##\s*Optional:.*?(?=\n##\s|\Z)', content, re.DOTALL | re.IGNORECASE)
-            if opt:
-                outside = leak_re.findall(content.replace(opt.group(0), ''))
-                if outside:
-                    print(f"ERROR: {path} — SDK symbols outside Optional SDK section: {outside[:3]}", file=sys.stderr); errs += 1
-                continue
-            print(f"ERROR: {path} — SDK symbols found: {matches[:3]}. Wrap in an 'Optional: running via the TAO SDK' section or remove.", file=sys.stderr); errs += 1
-        else:
-            print(f"ERROR: {path} — SDK symbols in non-model skill: {matches[:3]}", file=sys.stderr); errs += 1
+            hits = [ln.strip() for ln in f if leak_re.search(ln) and not neg_re.search(ln)]
+        if hits:
+            print(f"ERROR: {path} — SDK symbols (M9: allowed only under {EXEMPT}): {hits[:2]}", file=sys.stderr)
+            errs += 1
 sys.exit(errs)
 PY
 [ $? -eq 0 ] && ok "no SDK symbol leaks" || errors=$((errors + $?))
@@ -406,7 +397,7 @@ python3 - <<'PY'
 import re, os, sys, yaml
 errs = 0
 for root, dirs, files in os.walk('.'):
-    if any(x in root for x in ('.git', 'templates/skill-skeleton')):
+    if any(x in root for x in ('.git', 'templates/skill-skeleton', '.venv')):
         continue
     if 'SKILL.md' not in files: continue
     path = os.path.join(root, 'SKILL.md')
@@ -439,7 +430,7 @@ python3 - <<'PY'
 import json, os, sys
 errs = 0
 for root, dirs, files in os.walk('.'):
-    if any(x in root for x in ('.git', 'templates/skill-skeleton', 'plugins')):
+    if any(x in root for x in ('.git', 'templates/skill-skeleton', 'plugins', '.venv')):
         continue
     if 'SKILL.md' not in files:
         continue
@@ -544,7 +535,7 @@ def iter_metadata_files():
     for root, dirs, files in os.walk('.'):
         dirs[:] = [
             d for d in dirs
-            if d not in ('.git', 'templates', '.claude-plugin', '.codex-plugin')
+            if d not in ('.git', 'templates', '.claude-plugin', '.codex-plugin', '.venv', '.venv-tao')
         ]
         for fname in ('skill_info.yaml', 'model_info.yaml'):
             if fname in files:

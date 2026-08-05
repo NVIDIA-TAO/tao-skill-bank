@@ -34,7 +34,6 @@ cloud_storage:
   protocol: aws
   uri_format: s3://{bucket_name}/{path}
   metadata_key: aws
-sdk_module: tao_sdk.platforms.kubernetes.sdk
 features:
 - gpu-scheduling
 - failure-analysis

@@ -1,6 +1,6 @@
-# NVIDIA [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank)
+# NVIDIA [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skills-bank)
 
-Portable agent skills for training, evaluating, and running inference on NVIDIA TAO models. Works with Claude Code, Codex, Gemini CLI, or any coding agent that speaks the [Agent Skills open standard](https://agentskills.io). **Zero Python required** for local docker workflows on model skills — install the plugin, install docker + nvidia-container-toolkit, and an agent can run every skill by constructing `docker run` commands directly. For advanced features (job tracking, multi-node, S3 I/O wrapping), an optional Python layer — the [TAO Execution SDK](#optional-python-layer) — sits on top.
+Portable agent skills for training, evaluating, and running inference on NVIDIA TAO models. Works with Claude Code, Codex, Gemini CLI, or any coding agent that speaks the [Agent Skills open standard](https://agentskills.io). **Zero Python required** for local docker workflows — install the plugin, install docker + nvidia-container-toolkit, and an agent can run every skill by constructing `docker run` commands directly. Advanced features — job tracking, multi-node, S3 I/O — are built in, not bolted on: platform skills implement a four-verb execution contract over their native CLI with no `nvidia-tao-sdk`. See [Execution: no SDK required](#execution-no-sdk-required).
 
 ## Install
 
@@ -11,11 +11,11 @@ The skill bank works with both Claude Code and Codex. Pick the runtime you use.
 In a Claude Code session, add the marketplace and install the plugin:
 
 ```
-/plugin marketplace add https://github.com/NVIDIA-TAO/tao-skill-bank.git
+/plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
 /plugin install tao-skills@tao-skill-bank
 ```
 
-That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundles all 59 skills (every model, data, platform, and application). The plugin's [`SessionStart`](hooks/session_start.sh) hook loads the [`AGENTS.md`](AGENTS.md) identity at the start of every session.
+That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundles all 63 skills (every model, data, platform, and application). The plugin's [`SessionStart`](hooks/session_start.sh) hook loads the [`AGENTS.md`](AGENTS.md) identity at the start of every session.
 
 ### Codex
 
@@ -24,7 +24,7 @@ Codex setup has **two independent pieces** — the plugin (which surfaces the sk
 #### One command (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA-TAO/tao-skill-bank/main/scripts/install-codex-agents.sh | bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA-TAO/tao-skills-bank/main/scripts/install-codex-agents.sh | bash
 ```
 
 …or, if you've already cloned or extracted the repo from a zip, run
@@ -48,7 +48,7 @@ If you'd rather drive each step yourself:
 **1. Install the plugin.** Either use the VS Code Codex extension's plugin UI (select **TAO Skill Bank**), or from the CLI:
 
 ```bash
-codex plugin marketplace add https://github.com/NVIDIA-TAO/tao-skill-bank.git
+codex plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
 codex plugin add tao-skill-bank@tao-local-plugins
 ```
 
@@ -84,7 +84,7 @@ The vars each skill looks for (export only the ones your workflow needs):
 | `NGC_KEY` | `nvcr.io` image pulls — required by almost everything |
 | `HF_TOKEN` | gated HuggingFace models / `push_to_hub` |
 | `BREV_API_TOKEN` | `tao-run-on-brev` (optional — `brev login` also works) |
-| `ACCESS_KEY`, `SECRET_KEY`, `S3_BUCKET_NAME`, `S3_ENDPOINT_URL`, `CLOUD_REGION` | S3 / object-storage I/O via `script_runner` |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `AWS_ENDPOINT_URL`, `AWS_DEFAULT_REGION` | S3 / object-storage I/O via `tao-data-io` (legacy `ACCESS_KEY`/`SECRET_KEY` still accepted) |
 | `WANDB_API_KEY`, `WANDB_PROJECT` | WandB experiment logging (AutoML / HF fine-tune) |
 
 The plugin does **not** create, load, or source any credentials file. On session start the hook reports which of these it detects in the environment (names only). The agent never reads credential values — it only checks presence.
@@ -95,28 +95,9 @@ If a readiness check reports a missing CLI, container image, backbone, or creden
 
 > **Persisting secrets is your own responsibility.** If you'd rather not re-export each session, persist the exports yourself (shell rc, a sourced file, or a secrets manager) — the skill bank will not manage a credentials file on your behalf.
 
-### Environment variables
+### Do I need to install anything else?
 
-Skill-bank scripts resolve the repository or installed plugin root with:
-
-```bash
-SB="${TAO_SKILL_BANK_PATH:-${TAO_SKILL_BANK_ROOT:-$PWD}}"
-```
-
-| Var | Contract |
-|---|---|
-| `TAO_SKILL_BANK_PATH` | Canonical skill-bank root. The Claude Code `SessionStart` hook exports it from `$CLAUDE_PLUGIN_ROOT`; set it explicitly in other runtimes when the current directory is not the bank root. |
-| `TAO_SKILL_BANK_ROOT` | Legacy alias used by older snippets. Prefer `TAO_SKILL_BANK_PATH`; new snippets retain this only as a compatibility fallback. |
-
-The final `$PWD` fallback assumes the command is running from the skill-bank
-repository root. Paths inside the bank include the `skills/` layer: for
-example, the GPU host setup script is
-`skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh`,
-not `platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh`.
-
-### When does the SDK get installed?
-
-The TAO SDK is **opt-in** and installed lazily. Most skills (any model or data skill) run with just `docker run` and need no Python. Only `skills/platform/tao-run-platform` (`tao-run-platform`), the managed-platform skills (slurm/kubernetes/docker), and `skills/applications/tao-run-automl` (`tao-run-automl`) require the SDK; their Preflight blocks tell the agent to `pip install` the right extra the first time the skill is invoked. The SDK is on public PyPI; the exact pinned version lives in [`versions.yaml`](versions.yaml) and each Preflight resolves it via `scripts/resolve_versions_key.py`.
+No. Model and data skills run with just `docker run`; platform skills add job tracking, S3 I/O, and multi-node over their native CLI with no `nvidia-tao-sdk` — see [Execution: no SDK required](#execution-no-sdk-required). The one exception is AutoML search (`tao-run-automl`), whose Preflight lazily installs the `nvidia-tao-automl` wheel; its pin lives in [`versions.yaml`](versions.yaml) (`wheels.tao_automl_*`).
 
 ### Updating
 
@@ -178,31 +159,37 @@ image before long-running jobs start.
 |---|---|---|
 | `skills/models/` | Network-centric skills: containers, commands, data formats, checkpoints | `tao-finetune-cosmos-reason`, `tao-train-visual-changenet`, `tao-finetune-clip`, `tao-train-dino`, `tao-train-segformer`, … |
 | `skills/data/` | Data preparation, analysis, and enhancement | `tao-mine-aoi-images`, `tao-analyze-gaps-visual-changenet`, `tao-route-visual-changenet-samples`, `tao-analyze-gaps-vlm-bcq`, `tao-convert-dataset-format`, `tao-validate-dataset-format`, `tao-generate-image-grounding`, `tao-generate-referring-expressions`, `tao-generate-video-reasoning-annotations` |
-| `skills/platform/` | Where and how jobs run | `tao-run-on-docker` (conventions), `tao-run-on-brev` (instance-based GPU), `tao-run-on-slurm` (remote SLURM cluster), `tao-run-on-kubernetes` (k8s), `tao-run-on-local-docker` (local Docker daemon), `tao-run-platform` (optional Python SDK) |
+| `skills/platform/` | Where and how jobs run | `tao-run-on-docker` (local daemon or `DOCKER_HOST=ssh://`), `tao-run-on-brev` (instance-based GPU), `tao-run-on-slurm` (remote SLURM cluster), `tao-run-on-kubernetes` (k8s), `tao-run-on-virtualenv` (docker-free local venv), `tao-data-io` (S3/data staging), `tao-setup-nvidia-gpu-host` (host runtime) |
 | `skills/applications/` | End-to-end workflows composing the layers above | `tao-run-deft-aoi`, `tao-run-automl-deft-pipeline`, `tao-analyze-changenet-rca`, `tao-train-single-step`, `tao-run-automl`, `tao-finetune-huggingface-model`, `tao-port-huggingface-model`, `tao-run-inference-service` |
 
-Each skill is a directory with `SKILL.md` (agent-readable instructions). Optional `references/skill_info.yaml` provides structured metadata for SDK-orchestrated execution; optional `scripts/` bundles supporting code.
+Each skill is a directory with `SKILL.md` (agent-readable instructions). Optional `references/skill_info.yaml` provides structured metadata (container image, per-action command/mode/inputs/outputs) the agent uses to construct the container command; optional `scripts/` bundles supporting code.
 
 The `skills/core/` directory is not a second copy of the skill bank. It is the Codex plugin surface for small helper/router skills, such as capability discovery and launch intake. Canonical model, data, platform, and application skills live once in the layer directories above; do not add symlinks or copies under `skills/core/`.
 
-## Optional Python layer
+## Execution: no SDK required
 
-For users who want job handles, S3 I/O wrapping via `script_runner`, state persistence, multi-node distributed training, or failure analysis, the [TAO Execution SDK](https://pypi.org/project/nvidia-tao-sdk/) provides a single wheel with optional extras, published on public PyPI. The pinned version is centralized in [`versions.yaml`](versions.yaml) (`wheels.tao_sdk*`); resolve it rather than hardcoding a tag:
+Job tracking, S3 I/O, multi-node training, and failure-classified retries are
+all built into the bank — there is **no `nvidia-tao-sdk`**. Every platform skill
+implements the same **four-verb consumer contract** (`submit`/`status`/`logs`/
+`cancel`) over its native CLI (`docker`, `kubectl`, `ssh`+`sbatch`, `brev`, or
+the vendored virtualenv runner):
 
-```shell
-# Pinned specs (stamped from versions.yaml, the build-time source of truth):
-SB="${TAO_SKILL_BANK_PATH:-~/tao-skills-external}"
-pip install "nvidia-tao-sdk==7.0.1"             # versions-key: wheels.tao_sdk — core
-pip install "nvidia-tao-sdk[brev]==7.0.1"       # versions-key: wheels.tao_sdk_brev — + Brev (wraps brev CLI with Job handles)
-pip install "nvidia-tao-sdk[slurm]==7.0.1"      # versions-key: wheels.tao_sdk_slurm — + SLURM
-pip install "nvidia-tao-sdk[kubernetes]==7.0.1" # versions-key: wheels.tao_sdk_kubernetes — + Kubernetes
-pip install "nvidia-tao-sdk[docker]==7.0.1"     # versions-key: wheels.tao_sdk_docker — + local Docker
-pip install "nvidia-tao-sdk[all]==7.0.1"        # versions-key: wheels.tao_sdk_all — all platforms
+- **Job tracking** — `scripts/tao_job_record.py` mints a job id and binds
+  `results_dir` before launch (record-then-launch), then records state
+  transitions in a fixed vocabulary.
+- **S3 / data staging** — the `tao-data-io` skill stages inputs (storage tiers
+  A/B/C) and uploads results.
+- **Multi-node** — the SLURM/K8s multi-node templates in `templates/` plus the
+  NCCL probe (`scripts/nccl_allreduce_probe.py`).
+- **Retries** — infra-vs-program failure classification lives in
+  `tao-launch-workflow` (prose the agent applies, not a brittle regex table).
 
-# Or pin directly, e.g.: pip install "nvidia-tao-sdk[brev]==7.0.0"
-```
-
-You don't have to pre-install — the relevant skills (`tao-run-platform`, `tao-run-automl`) run a Preflight that prompts the agent to install the right extra on first use. If you're running locally on your own GPU or on Brev via `brev exec`, you don't need the SDK at all.
+These need only the platform CLI plus the bank's helper scripts — no wheel to
+install. The **one** exception is AutoML hyperparameter search
+(`tao-run-automl`), which uses the `nvidia-tao-automl` wheel (and its transitive
+`nvidia-tao-sdk` dependency) to pick each next config; its Preflight installs
+the right extra on first use. The pins live in [`versions.yaml`](versions.yaml)
+(`wheels.tao_automl_*`).
 
 ## Contributing a new skill
 
@@ -219,7 +206,7 @@ In brief:
 
 1. Pick the layer (`skills/models/`, `skills/data/`, `skills/platform/`, `skills/applications/`).
 2. Copy a template from [`templates/skill-skeleton/`](templates/skill-skeleton/) — `minimal/` for the bare path, `model/`, `data/`, `platform/`, or `workflow/` for richer scaffolding.
-3. Fill in frontmatter and SKILL.md body. Body must contain a `## Quick Start` section, a `docker run` block, an SDK call, or a link to `references/skill_info.yaml`.
+3. Fill in frontmatter and SKILL.md body. Body must contain a `## Quick Start` section, a `docker run` block, or a link to `references/skill_info.yaml`.
 4. Add `evals/evals.json` (required for Tier-3 signing — see [`docs/skill-requirements.md`](docs/skill-requirements.md) § 2.3). `eval.config` is optional and only needed if you want live-execution coverage.
 5. Add the skill path to [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) under the relevant plugin(s).
 6. Do not add a mirror entry under `skills/core/`; Codex helper skills route to the canonical layer directories.
@@ -239,7 +226,7 @@ tao-skills-external/
 │   └── plugin.json                   # Codex plugin manifest
 ├── .agents/
 │   └── plugins/marketplace.json      # Codex marketplace entry
-├── versions.yaml                     # single source of truth: container images + SDK wheel versions
+├── versions.yaml                     # single source of truth: container images + AutoML wheel versions
 ├── README.md
 ├── docs/
 │   ├── skill-requirements.md         # must-follow rules: naming + signing gates (read first)
@@ -252,11 +239,11 @@ tao-skills-external/
 │   ├── install-codex-agents.sh       # one-shot Codex install: marketplace + plugin + AGENTS.md
 │   └── migrate-to-version-keys.py    # one-shot: literal nvcr.io paths → versions.yaml keys
 └── skills/
-    ├── applications/                 # 8 end-to-end workflow skills
+    ├── applications/                 # 12 end-to-end workflow skills
     ├── data/                         # 10 data preparation/analysis skills
-    ├── models/                       # 34 network-centric skills
+    ├── models/                       # 53 network-centric skills
     ├── platform/                     # 7 compute backend / runtime skills
-    └── core/                         # 3 Codex helper/router skills; no mirrored skill symlinks
+    └── core/                         # 2 Codex helper/router skills; no mirrored skill symlinks
 ```
 
 ## CI
@@ -271,9 +258,9 @@ PRs must pass all three before merge.
 
 ## Design rules
 
-- **Docker-native first.** Every model skill must be runnable with just `docker run` + the contents of `SKILL.md`, and CI enforces it for `skills/models/`. SDK invocation is an optional enhancement, documented in `skills/platform/tao-run-platform`. Application and platform skills are exempt: orchestration, AutoML, Slurm, and Kubernetes are not always expressible as a single container invocation, so those layers may require the SDK. A model skill whose upstream workflow genuinely is not a TAO container sets `requires_external: true` in its frontmatter `metadata` so the exemption is explicit rather than silent.
+- **Docker-native first.** Every model/data skill should be runnable with just `docker run` + the contents of `SKILL.md`. Platform skills add tracking/staging/multi-node via the four-verb contract — no SDK.
 - **Generic docker conventions live once** in `skills/platform/tao-run-on-docker`. Other skills defer to it for `--gpus`, NGC auth, mount patterns, data-root relocation, etc.
-- **No SDK leaks in model/data/application skills.** `tao_sdk`-specific imports, `sdk.create_job` calls, and credential-file references belong only in `skills/platform/tao-run-platform`.
-- **Minimum-viable skill is `SKILL.md` only.** Add `references/skill_info.yaml` only when SDK orchestration or multi-action structured metadata earn their keep.
+- **No SDK in the bank.** `tao_sdk`-specific imports and `sdk.create_job`/`build_entrypoint` calls are allowed only under `skills/applications/tao-run-automl` (it keeps the `nvidia-tao-automl` wheel + its transitive SDK). `scripts/validate-skills.sh` enforces this.
+- **Minimum-viable skill is `SKILL.md` only.** Add `references/skill_info.yaml` only when multi-action structured metadata earns its keep.
 - **One canonical location per skill.** Model, data, platform, and application skills live only in their layer directories; `skills/core/` is for Codex helper/router skills, not mirrored copies.
 - **Prefer portability over cleverness.** A skill that works across three coding agents is more valuable than a skill that works perfectly in one.

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # Set up TAO capability on a NemoClaw sandbox via a host-side MCP server.
 #
 # The sandbox agent gets typed tools (list/read/write workspace, run/monitor/

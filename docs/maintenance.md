@@ -5,7 +5,7 @@
 - Bumping a container image
   - Verify the bump
   - Commit + PR
-- Bumping an SDK/AutoML wheel
+- Bumping the AutoML wheel
 - Adding a new image
 - When to use absolute paths instead of keys
 - Related: Python wheel install matrix
@@ -13,7 +13,7 @@
 
 All TAO container image tags **and** Python wheel pins live in **one file**: [`versions.yaml`](../versions.yaml) at the repo root. RC bumps and upgrades are a one-line edit there for both.
 
-Container images live under `images:`, Python wheels under `wheels:`. Skills resolve both by dotted key via `scripts/resolve_versions_key.py` — there are no hardcoded image tags or `pip install` URLs in skill bodies. See "Bumping an SDK/AutoML wheel" below.
+Container images live under `images:`, Python wheels under `wheels:`. Skills carry the resolved value as a **stamped literal** annotated with its dotted key (`# versions-key: images.<key>` / `# versions-key: wheels.<key>`); `scripts/stamp_versions.py` fans a `versions.yaml` edit out to every stamped pin and `stamp_versions.py --check` verifies nothing is stale in CI. See "Bumping the AutoML wheel" below.
 
 ## Bumping a container image
 
@@ -34,11 +34,8 @@ That's it. Every skill referencing `tao_toolkit.pyt` (28 of them today) automati
 ### Verify the bump
 
 ```bash
-./scripts/validate-skills.sh                        # confirms all key references still resolve
-python -c "
-from tao_sdk.versions import resolve_image
-print(resolve_image('tao_toolkit.pyt'))
-"   # expect the new tag
+./scripts/validate-skills.sh                        # confirms all image key references still resolve
+./scripts/resolve_tao_image.py --model tao-train-visual-changenet --action train   # expect the new tag
 ```
 
 ### Commit + PR
@@ -53,18 +50,25 @@ git push -u origin <your-branch>
 
 CI runs `validate-skills.sh` automatically. Merge once green.
 
-## Bumping an SDK/AutoML wheel
+## Bumping the AutoML wheel
 
-`nvidia-tao-sdk` and `nvidia-tao-automl` are on public PyPI and pinned in the `wheels:` section of `versions.yaml`. Bumping is a one-line edit per entry — symmetric with images:
+`nvidia-tao-automl` is the only wheel the bank installs directly — `tao-run-automl`
+uses it for hyperparameter search. It is on public PyPI and pinned in the
+`wheels:` section of `versions.yaml`. Bumping is a one-line edit per entry —
+symmetric with images:
 
 ```diff
 # versions.yaml
 wheels:
--   tao_sdk_brev:     nvidia-tao-sdk[brev]==7.0.0
-+   tao_sdk_brev:     nvidia-tao-sdk[brev]==7.1.0rc1
+-   tao_automl_brev:     nvidia-tao-automl[brev]==7.0.0
++   tao_automl_brev:     nvidia-tao-automl[brev]==7.1.0rc1
 ```
 
 Skill Preflights carry the pin as a stamped literal (annotated `# versions-key: wheels.<key>`), so after re-stamping the new pin propagates automatically — no per-skill grep, no hardcoded URLs.
+
+The AutoML wheel pulls `nvidia-tao-sdk` transitively; the `wheels.tao_sdk_*`
+entries are retained only to document that transitive dependency (the bank no
+longer installs the SDK directly) — they are not a user install path.
 
 ### Internal RC versions
 
@@ -107,18 +111,10 @@ Promote to a key (`versions.yaml` entry) when:
 - The image will be **bumped on a release cadence**.
 - You want to track it in changelogs / RC notes.
 
-## Related: Python wheel install matrix
+## Related: the AutoML wheel
 
-Users install the SDK by resolving the pin from `versions.yaml` (wheels are on public PyPI):
-
-```bash
-SB="${TAO_SKILL_BANK_PATH:-~/tao-skills-external}"
-pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk)"             # core only
-pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_brev)"        # + Brev handler
-pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_slurm)"       # + SLURM handler
-pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_kubernetes)"  # + Kubernetes handler
-pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_docker)"      # + local Docker handler
-pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_sdk_all)"         # all platforms
-```
-
-Legacy `tao-sdk` package: still installable as a thin alias that pulls in `nvidia-tao-sdk`. Prints a `DeprecationWarning` on import. Will be removed in a future major release.
+The only wheel the bank installs is `nvidia-tao-automl` (see *Bumping the AutoML
+wheel* above). It pulls `nvidia-tao-sdk` transitively; the `wheels.tao_sdk_*`
+keys in `versions.yaml` are retained only to document that transitive dependency
+— they are not a user install path. Everything else runs SDK-free over native
+platform CLIs (`docker`/`kubectl`/`ssh`/`brev`) plus the bank's helper scripts.

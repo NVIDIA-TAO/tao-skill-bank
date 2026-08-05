@@ -13,7 +13,7 @@
 # For a small seed training set (~200 rows, as is typical for a first DEFT run),
 # use num_epochs: 10. ChangeNet on a 150M-param C-RADIOv2-B backbone overfits a
 # few-hundred-row set quickly; beyond ~10 epochs val_loss climbs while train_loss
-# keeps falling, and FAR@recall=100% degrades. Raise epochs only as the combined
+# keeps falling, and held-out evaluation quality degrades. Raise epochs only as the combined
 # training CSV grows across iterations (mining + synthetic rows). 20 is reasonable
 # once you are in the low thousands of rows.
 # ------------------------------------------------------------------------------

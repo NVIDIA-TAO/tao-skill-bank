@@ -55,6 +55,7 @@ _VALID_STAGES = {
     "anomalygen",
     "routing",
     "data_mining",
+    "data_merge",
     "train",
     "loop_stop",
 }
@@ -187,9 +188,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--duration-sec",
-        required=True,
+        required=False,
+        default=0,
         type=int,
-        help="Stage wall-clock duration in seconds",
+        help=(
+            "Stage wall-clock duration in seconds. Defaults to 0 when the harness "
+            "did not capture a start time; do not guess a duration."
+        ),
     )
     parser.add_argument(
         "--context-tokens",

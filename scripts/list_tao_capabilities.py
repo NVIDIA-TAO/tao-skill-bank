@@ -12,14 +12,49 @@ import os
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from list_tao_models import build_all_models, build_automl_support
-from list_tao_platforms import prompt_defaults, supported_platforms
 
 
 DEFAULT_SKILL_BANK = Path(
     os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
 )
 FLOW_ACTIONS = ("train", "evaluate", "inference", "export", "gen_trt_engine")
+
+# Workflow-prompt defaults (formerly in platforms.manifest.json). There is no
+# central platform registry — platforms are discovered by scanning the installed
+# platform skills.
+PROMPT_DEFAULTS = {"long_running_enabled": True, "status_interval_minutes": 5}
+_DISPLAY_NAMES = {"slurm": "SLURM", "kubernetes": "Kubernetes", "docker": "Docker", "brev": "Brev"}
+
+
+def _read_frontmatter(skill_md: Path) -> dict[str, Any]:
+    """Parse the YAML frontmatter block at the top of a SKILL.md."""
+    parts = skill_md.read_text(encoding="utf-8").split("---", 2)
+    if len(parts) < 3 or parts[0].strip():
+        return {}
+    return yaml.safe_load(parts[1]) or {}
+
+
+def scan_platforms(skill_bank: Path) -> list[dict[str, Any]]:
+    """Discover execution platforms by scanning installed platform skills
+    (skills/platform/tao-run-on-*/SKILL.md) instead of a central manifest. Any
+    platform skill present in the tree self-registers — no registration step."""
+    root = skill_bank.expanduser() / "skills" / "platform"
+    platforms = []
+    for skill_md in sorted(root.glob("tao-run-on-*/SKILL.md")):
+        short = skill_md.parent.name[len("tao-run-on-"):]
+        desc = str(_read_frontmatter(skill_md).get("description", "")).strip()
+        desc = desc.split(". ")[0].rstrip(".") if desc else ""
+        platforms.append(
+            {
+                "name": short,
+                "display_name": _DISPLAY_NAMES.get(short, short.title()),
+                "description": desc,
+            }
+        )
+    return platforms
 
 
 def parse_args() -> argparse.Namespace:
@@ -196,9 +231,9 @@ def build_capabilities(skill_bank: Path) -> dict[str, Any]:
         "applications": application_capabilities(skill_bank),
         "data_workflows": data_capabilities(skill_bank),
         "platforms": {
-            "source": "skills/platform/platforms.manifest.json",
-            "prompt_defaults": prompt_defaults(skill_bank),
-            "supported": supported_platforms(skill_bank),
+            "source": "installed platform skills (skills/platform/tao-run-on-*)",
+            "prompt_defaults": PROMPT_DEFAULTS,
+            "supported": scan_platforms(skill_bank),
         },
         "model_workflows": {
             "source": "skills/models/schemas.manifest.json",

@@ -88,18 +88,18 @@ here.
 | Concern | Authoritative skill |
 |---|---|
 | GPU host runtime — NVIDIA driver 580, CUDA Toolkit 13.0, NVIDIA Container Toolkit 1.19.0 | [`tao-skill-bank:tao-setup-nvidia-gpu-host`](../../platform/tao-setup-nvidia-gpu-host/SKILL.md) |
-| `docker run` flags, NGC auth, `--gpus`, mounts, env passthrough, `--ipc=host`/`--shm-size`, common error modes | [`tao-skill-bank:tao-run-on-docker`](../../platform/tao-run-on-docker/SKILL.md) |
-| Local Docker job preflight (daemon reachable, GPU smoke) | [`tao-skill-bank:tao-run-on-local-docker`](../../platform/tao-run-on-local-docker/SKILL.md) |
+| `docker run` flags, NGC auth, `--gpus`, mounts, env passthrough, `--ipc=host`/`--shm-size`, common error modes, local/remote Docker job preflight (daemon reachable, GPU smoke) | [`tao-skill-bank:tao-run-on-docker`](../../platform/tao-run-on-docker/SKILL.md) |
 
-**Default platform:** `local-docker`. This workflow builds a one-off image
-(`run-<short>:latest`) and runs it on the local Docker daemon — the same
-pattern documented in the `tao-run-on-local-docker` skill. Ask the user only when
+**Default platform:** `docker`. This workflow builds a one-off image
+(`run-<short>:latest`) and runs it on the local Docker daemon — following the
+`docker run` conventions in `skills/platform/tao-run-on-docker/SKILL.md`. Ask the user only when
 they explicitly need a different backend (Brev for a remote GPU instance,
-SLURM/Kubernetes for managed scheduling); in that case read the chosen
-platform's skill (`tao-run-on-brev`, `tao-run-on-slurm`, `tao-run-on-kubernetes`,
-or `tao-run-on-local-docker`) and run its Preflight section first, then route
-the `docker run` commands in Steps 4–5 through that platform's execution
-pattern.
+SLURM/Kubernetes for managed scheduling); in that case run the chosen
+platform's Preflight section first, discover the execution platforms from the
+installed platform skills (tao-run-on-docker / -slurm / -kubernetes / -brev,
+plus any external one) by reading each platform skill's `## Credentials`
+section and `references/skill_info.yaml` — then route the
+`docker run` commands in Steps 4–5 through that platform's execution pattern.
 
 **GPU runtime preflight:** Step 2a runs the `tao-setup-nvidia-gpu-host` skill's
 `--check-only` mode. Do not duplicate the NCT / driver / `--gpus all` smoke

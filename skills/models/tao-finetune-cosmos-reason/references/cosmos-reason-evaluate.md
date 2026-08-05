@@ -4,7 +4,7 @@ Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `
 
 ## Evaluate
 
-The `actions.evaluate` block in `references/skill_info.yaml` declares the action's inputs (annotation file + media folder + model) and outputs (results directory). For SDK invocation see `skills/platform/tao-run-platform/SKILL.md`.
+The `actions.evaluate` block in `references/skill_info.yaml` declares the action's inputs (annotation file + media folder + model) and outputs (results directory).
 
 ### Config format
 

@@ -9,7 +9,7 @@ Why this exists: TAO's `ptm_utils.load_pretrained_weights()` passes
 URL or a HuggingFace repo id, so the weights file must physically exist on the
 host and be bind-mounted into the training container. Pre-Flight must stage it
 before launch; an unstaged backbone fails the run (URL -> FileNotFoundError,
-null -> silently degrades FAR@R=100%).
+null -> silently degrades held-out evaluation quality).
 
 This script downloads the backbone from HuggingFace and copies it to the
 workspace staging path. Idempotent: if a staged file already exists it is
@@ -89,12 +89,21 @@ def main() -> int:
         print(dest)
         return 0
 
+    if (
+        os.environ.get("HF_HUB_OFFLINE") == "1"
+        or os.environ.get("AIR_GAPPED") == "1"
+    ):
+        sys.exit(
+            f"stage_backbone: offline mode and staged file is missing: {dest}; "
+            "no install or download was attempted"
+        )
+
     try:
         from huggingface_hub import hf_hub_download
     except ImportError:
         sys.exit(
-            "stage_backbone: huggingface_hub is not installed. Install it into the "
-            "DEFT venv (pip install huggingface_hub) and retry."
+            "stage_backbone: huggingface_hub is not installed; provision it outside "
+            "this workflow or pre-stage the backbone file"
         )
 
     token = os.environ.get("HF_TOKEN") or None

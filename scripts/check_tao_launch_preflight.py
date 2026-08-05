@@ -16,6 +16,9 @@ import shlex
 import socket
 import subprocess
 import sys
+
+import yaml
+
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +26,6 @@ from typing import Any
 DEFAULT_SKILL_BANK = Path(
     os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
 )
-MANIFEST_REL = Path("skills") / "platform" / "platforms.manifest.json"
 REMOTE_SCHEMES = ("s3://", "azure://", "gs://", "http://", "https://")
 DEFAULT_GPU_SMOKE_IMAGE = os.environ.get("TAO_GPU_SMOKE_IMAGE", "ubuntu:22.04")
 DEFAULT_LOW_VRAM_THRESHOLD_GB = 50.0
@@ -45,7 +47,7 @@ def parse_args() -> argparse.Namespace:
         "--docker-host",
         help=(
             "Optional Docker daemon URL such as ssh://user@host. Sets "
-            "DOCKER_HOST for local-docker/remote-docker preflight."
+            "DOCKER_HOST for the docker platform (remote GPU box) preflight."
         ),
     )
     parser.add_argument(
@@ -205,19 +207,41 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_manifest(skill_bank: Path) -> dict[str, Any]:
-    with (skill_bank.expanduser() / MANIFEST_REL).open("r", encoding="utf-8") as f:
-        return json.load(f)
+# Docker is one daemon reachable three ways (local, DOCKER_HOST=ssh://, sudo);
+# they share one self-describing skill.
+PLATFORM_ALIASES = {"local-docker": "docker", "remote-docker": "docker"}
 
 
 def resolve_platform(skill_bank: Path, requested: str) -> dict[str, Any]:
-    normalized = requested.strip().lower()
-    for platform in load_manifest(skill_bank).get("platforms", []):
-        names = [platform.get("name", "")]
-        names.extend(platform.get("aliases", []))
-        if normalized in {str(name).lower() for name in names}:
-            return platform
-    raise SystemExit(f"Unknown platform: {requested}")
+    """Load the platform's SELF-DESCRIBING record from its own skill —
+    skills/platform/tao-run-on-<name>/references/skill_info.yaml — with no central
+    manifest. A credential-free platform may ship only a SKILL.md; then fall back to
+    a minimal record and SAY SO loudly, so the empty credential gate is never silent.
+    Only require-one-of credential groups and numeric wall-time caps genuinely need
+    the structured record; a single required env var is checked fine from prose."""
+    name = PLATFORM_ALIASES.get(requested.strip().lower(), requested.strip().lower())
+    info = (
+        skill_bank.expanduser()
+        / "skills" / "platform" / f"tao-run-on-{name}" / "references" / "skill_info.yaml"
+    )
+    if info.is_file():
+        record = yaml.safe_load(info.read_text(encoding="utf-8")) or {}
+        record.setdefault("name", name)
+        return record
+    print(
+        f"NOTE: no references/skill_info.yaml for platform '{name}' "
+        f"(skills/platform/tao-run-on-{name}/) — treating it as a self-describing, "
+        f"credential-free platform. The structured credential/resource gate is empty; "
+        f"rely on the skill's own Preflight prose. Add a skill_info.yaml only if this "
+        f"platform needs a require-one-of credential group or a wall-time cap.",
+        file=sys.stderr,
+    )
+    return {
+        "name": name,
+        "required_credentials": [],
+        "credential_groups": [],
+        "resource_defaults": {},
+    }
 
 
 def parse_paths(values: list[str]) -> list[tuple[str, str]]:
@@ -704,7 +728,7 @@ def has_unverified_remote_mounts(
     paths: list[tuple[str, str]],
     skip_access: bool,
 ) -> bool:
-    if skip_access or platform_name in {"slurm", "local-docker", "remote-docker"}:
+    if skip_access or platform_name in {"slurm", "docker", "local-docker", "remote-docker"}:
         return False
 
     failed = False
@@ -1594,7 +1618,7 @@ def main() -> int:
             args.json_sample_limit,
             args.skip_platform_access,
         )
-    elif name in {"local-docker", "remote-docker"}:
+    elif name in {"docker", "local-docker", "remote-docker"}:
         platform_ok = check_local_docker(
             paths,
             required_json_fields,
@@ -1606,7 +1630,7 @@ def main() -> int:
             parse_sm_list(args.image_supported_sm),
             args.min_gpu_memory_gb,
             args.low_vram_threshold_gb,
-            name == "remote-docker",
+            name == "remote-docker" or bool(args.docker_host or os.environ.get("DOCKER_HOST")),
         )
     elif name == "brev":
         platform_ok = check_brev(platform, args.skip_platform_access)

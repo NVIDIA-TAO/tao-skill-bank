@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Minimal TAO MCP server — runs TAO training containers on the host GPU.
 
 The NemoClaw sandbox agent calls this over MCP (Streamable HTTP); the host runs

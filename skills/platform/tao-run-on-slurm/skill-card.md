@@ -22,7 +22,6 @@ Mitigation: Review and scan skill before deployment. <br>
 - [slurm-ssh-credentials.md](references/slurm-ssh-credentials.md) <br>
 - [slurm-container-execution.md](references/slurm-container-execution.md) <br>
 - [slurm-preflight-storage.md](references/slurm-preflight-storage.md) <br>
-- [slurm-execution-sdk.md](references/slurm-execution-sdk.md) <br>
 - [detailed-guide.md](references/detailed-guide.md) <br>
 - [Agent Skills Open Standard](https://agentskills.io) <br>
 

@@ -27,7 +27,7 @@ Resolve everything possible before asking the user. In order:
    ```bash
    export TAO_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
    export TAO_DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
-   export AG_IMAGE=nvcr.io/nvidia/paidf-anomalygen:1.0.0  # versions-key: images.metropolis_sdg.paidf_anomalygen
+   export AG_IMAGE=nvcr.io/nvidia/paidf-anomalygen:1.0.1  # versions-key: images.metropolis_sdg.paidf_anomalygen
    ```
 
    | Env var | versions-key | Used by |

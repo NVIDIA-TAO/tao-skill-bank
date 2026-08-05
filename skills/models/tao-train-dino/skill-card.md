@@ -21,7 +21,6 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [DINO Data Specs](references/dino-data-specs.md) <br>
 - [DINO Actions and Error Patterns](references/dino-actions-errors.md) <br>
-- [DINO AutoML and SDK](references/dino-automl-sdk.md) <br>
 - [DINO Tuning and Multi-GPU](references/dino-tuning-multigpu.md) <br>
 - [TAO Deploy DINO](references/tao-deploy-dino.md) <br>
 - [Detailed Guide Map](references/detailed-guide.md) <br>

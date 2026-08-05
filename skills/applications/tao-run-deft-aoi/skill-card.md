@@ -1,5 +1,5 @@
 ## Description: <br>
-Run the full DEFT AOI improvement loop for NVIDIA TAO VisualChangeNet / ChangeNet PCB inspection models: baseline evaluate, RCA, Cosmos AnomalyGen / AMP synthetic defects, k-NN mining, retraining, and deployment gating until FAR / recall KPI targets are met. <br>
+Run the full DEFT AOI improvement loop for NVIDIA TAO VisualChangeNet / ChangeNet PCB inspection models: baseline evaluation, RCA, Cosmos AnomalyGen / AMP synthetic defects, k-NN mining, retraining, and deployment gating against a customer-defined primary metric and optional constraints. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache-2.0 AND CC-BY-4.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to run the complete DEFT AOI improvement loop for NVIDIA TAO VisualChangeNet PCB inspection models, iterating through baseline evaluation, root cause analysis, synthetic defect generation, data mining, and retraining until false-accept-rate and recall KPI targets are met. <br>
+Developers and engineers use this skill to run the complete DEFT AOI improvement loop for NVIDIA TAO VisualChangeNet PCB inspection models, iterating through baseline evaluation, root cause analysis, synthetic defect generation, data mining, and retraining until their approved metric contract passes or the iteration budget is exhausted. The metric may be minimized or maximized and can include customer-defined constraints. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -22,6 +22,7 @@ Mitigation: Review and scan skill before deployment. <br>
 - [Pipeline and State](references/pipeline-and-state.md) <br>
 - [Pre-Flight Checks](references/preflight.md) <br>
 - [Visual ChangeNet](references/visual-changenet.md) <br>
+- [Customer Metric Contract](references/metric-contract.md) <br>
 - [Data Layout](references/data-layout.md) <br>
 - [PAIDF AnomalyGen](references/paidf-anomalygen.md) <br>
 - [Scripts and Agents](references/scripts-and-agents.md) <br>

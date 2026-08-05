@@ -1,7 +1,7 @@
 # Visual ChangeNet — DEFT Loop Reference
 
 Read this when the parent runs the `train`, `inference`, or `evaluate` stage. The
-underlying skill `tao-skill-bank:visual-changenet` (`models/visual-changenet/SKILL.md`)
+underlying skill `tao-skill-bank:tao-train-visual-changenet` (`skills/models/tao-train-visual-changenet/SKILL.md`)
 owns the docker invocation, spec format, CSV format, lighting conventions, and error
 patterns — its `## Local Docker Invocation` section has the exact docker run command
 (including `--shm-size=8g`, backbone file mount, and how to override
@@ -17,20 +17,23 @@ unchanged for other workflows.
 ## DEFT-Loop Mount Layout
 
 ```
--v <workspace>/kpi/images:/data/datasets/NV_PCB_Siamese/images   # covers real + synthetic_iter*
+-v <workspace>:/data/workspace                                  # combined iter CSVs + staged images
+-v ${RESULTS_DIR}:/results                                      # canonical run root; never /results/iterN
+-v <workspace>/kpi/images:/data/datasets/NV_PCB_Siamese/images   # real validation/KPI images
 -v <workspace>/train/base:/data/datasets/NV_PCB_Siamese/csv      # training_set.csv, validation_set.csv
 -v <workspace>/kpi:/data/datasets/NV_PCB_Siamese/kpi             # testing_set.csv
+-v <workspace>/augmentation/backbone/c_radio_v2_b.safetensors:/data/pretrained_models/C-RADIOv2_B.safetensors  # C-RADIO backbone file
 ```
 
 ## Spec Key Paths (container-side)
 
 | What | Container path |
 |---|---|
-| Training CSV (iter N) | `/data/workspace/results/iter${N}/dataset/train_combined_iter${N}.csv` |
+| Training CSV (iter N) | `/data/workspace/results/run_<TS>/iter${N}/dataset/train_combined_iter${N}.csv` |
 | Validation CSV | `/data/datasets/NV_PCB_Siamese/csv/validation_set.csv` |
 | KPI test CSV | `/data/datasets/NV_PCB_Siamese/kpi/testing_set.csv` |
 | images_dir | `/data/datasets/NV_PCB_Siamese/images` |
-| Results dir (iter N) | `/results/iter${N}` |
+| Results dir (baseline / iter N) | `/results/baseline` / `/results/iter${N}` |
 
 ## Spec `output_dir` Contract
 
@@ -40,19 +43,37 @@ the iteration root, **not** to the iteration root itself:
 
 | Task | Required spec `output_dir` |
 |---|---|
-| baseline train | `${RESULTS_DIR}/baseline/train/` |
-| baseline inference | `${RESULTS_DIR}/baseline/inference/` |
-| baseline evaluate | `${RESULTS_DIR}/baseline/evaluate/` |
-| iter N train | `${RESULTS_DIR}/iter${N}/train/` |
-| iter N inference | `${RESULTS_DIR}/iter${N}/inference/` |
-| iter N evaluate | `${RESULTS_DIR}/iter${N}/evaluate/` |
+| baseline train | `/results/baseline/train/` |
+| baseline inference | `/results/baseline/inference/` |
+| baseline evaluate | `/results/baseline/evaluate/` |
+| iter N train | `/results/iter${N}/train/` |
+| iter N inference | `/results/iter${N}/inference/` |
+| iter N evaluate | `/results/iter${N}/evaluate/` |
 
-Writing to the iteration root (e.g. `${RESULTS_DIR}/baseline/`) causes the
+Writing to the iteration root (e.g. `/results/baseline/`) causes the
 parent's pre-create / checkpoint-discovery / Output Layout (see
 `SKILL.md → ## Output Layout`) to diverge from where TAO actually writes,
 which manifests as "checkpoint not found" downstream. Edit the spec to match
-the table above before launching; do not change the parent's pre-create
-convention.
+the container paths above before launching; they map to the corresponding
+`${RESULTS_DIR}/...` host directories through the single `/results` mount.
+Do not change or nest that mount.
+
+Before every train launch, validate these coupled spec invariants:
+
+- Use `--shm-size=8g` for ChangeNet and do not combine it with `--ipc=host`.
+  `--ipc=host` makes the container inherit a CI host `/dev/shm` that may be
+  only 64 MiB, causing a mid-epoch bus/shared-memory failure even though the
+  command also says `--shm-size=8g`.
+- `train.checkpoint_interval <= train.num_epochs`. A user override such as
+  `epoch 1` must also lower `checkpoint_interval`; otherwise TAO aborts before
+  the first epoch.
+- Derive inference/evaluate specs from the exact training spec and change only
+  task paths/checkpoint/results overrides. Do not reconstruct the model/loss
+  block: a loss/difference-module mismatch can load the checkpoint and then
+  fail at criterion construction.
+- Use the underlying skill's documented `visual_changenet <task> -e <spec>`
+  entrypoint. Do not switch to direct package-module/Hydra commands after an
+  error; their config-path semantics differ.
 
 ## DEFT Iter Training — Init Convention
 
@@ -72,6 +93,13 @@ train.resume_training_checkpoint_path=${prev_best_ckpt}
 
 Failure mode is silent: `Execution status: PASS` despite no training. Symptom: iter N's train output dir has no new `model_epoch_*.pth`. If you see this, switch the flag.
 
+`commit_stage.py --stage train` requires the exact training spec and rejects a
+checkpoint outside `${RESULTS_DIR}/<iter-label>/train/`. For iter N this means
+the baseline or previous-iteration checkpoint can initialize training, but it
+cannot be committed as iter N's output. Do not copy an old checkpoint into the
+new directory to satisfy this check; the file must be emitted by the successful
+current train invocation.
+
 ## Per-Iter Spec `images_dir` — Asymmetric
 
 When deriving `iter${N}_spec.yaml` from `baseline_spec.yaml`, **only `train_dataset.images_dir` moves to the workspace root**; the other dataset blocks keep the kpi-images mount:
@@ -87,19 +115,28 @@ A bulk `sed 's|/data/datasets/NV_PCB_Siamese/images|/data/workspace|g'` on the s
 
 ## Two-Checkpoint Compare
 
-Run inference on both the best-val checkpoint (lowest `val_loss`) and the latest checkpoint
-(highest epoch). `val_loss` and FAR@100%-recall can diverge — pick the checkpoint with
-**lower FAR@100%-recall**, not lower val_loss. See `scripts/analyze_kpi.py` for KPI sweep.
+Run inference on both the best-val checkpoint (lowest `val_loss`) and the
+latest checkpoint (highest epoch). `val_loss` and the customer's deployment
+metric can diverge. Run the evaluator from `state.metric_contract` on every
+candidate and select lowest for `<`/`<=` or highest for `>`/`>=`; never infer
+direction from the metric name.
+
+Only checkpoints from a train command that exited zero and whose TAO status
+JSONL contains no `FAILURE` entry are candidates. A checkpoint emitted before
+a failed batch is partial residue: log `train/status=error`, hard-stop, and do
+not run inference or evaluation on it.
 
 ## analyze_kpi.py
 
 ```bash
-python3 <skill_root>/scripts/analyze_kpi.py \
-    <workspace>/results/iter${N}/inference/<label>/inference.csv \
-    --output-dir <workspace>/results/iter${N}/inference/<label>
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/analyze_kpi.py \
+    ${RESULTS_DIR}/iter${N}/inference/<label>/inference.csv \
+    --output-dir ${RESULTS_DIR}/iter${N}/inference/<label>
 ```
 
-Key output line: `100% recall threshold: <T> (FAR=<FAR>%, ...)` — this is the KPI metric.
+Run the evaluator selected by `state.metric_contract` and commit its standard
+`metric_result.json`. Evaluator-specific diagnostics are secondary artifacts;
+command and artifact evaluators follow `references/metric-contract.md`.
 
 ## Output to deft_state.json
 
@@ -108,16 +145,34 @@ Key output line: `100% recall threshold: <T> (FAR=<FAR>%, ...)` — this is the 
   "iterations": {
     "iter${N}": {
       "status": "complete",
+      "stage_completed": "evaluate",
       "best_ckpt_path": "<abs_host_path>",
       "best_ckpt_kind": "best_val|latest",
-      "far_pct": <float>,
-      "threshold": <float>,
+      "metric_result": {
+        "name": "<metric_contract.name>",
+        "value": <float>,
+        "unit": "<metric_contract.unit>",
+        "passed": <bool>,
+        "constraints": {},
+        "evidence_path": "<abs_path>/metric_result.json"
+      },
+      "threshold": <float_or_null>,
       "val_loss": <float>,
-      "inference_csv": "<abs_host_path>"
+      "inference_csv": "<abs_host_path>",
+      "training_spec": "<abs_host_path_to_the_exact_iter_spec>"
     }
   }
 }
 ```
+
+The baseline uses the same shape at
+`state["iterations"]["baseline"]`. After train but before evaluate, commit
+`stage_completed="train"` and keep `status="in_progress"`.
+Pass the evaluator artifact and evidence paths to `scripts/commit_stage.py`;
+it invokes the metric recorder and writes the evaluate fields transactionally.
+Compatibility fields, when applicable, are written by the recorder. Treat the
+JSON above as schema, not an editing recipe; only the bundled scripts may write
+it.
 
 ## ChangeNet backbone resolution
 
@@ -131,21 +186,21 @@ Accepted forms (TAO 7.0.0-rc-224):
 | Local path to `.safetensors` file | ✓ works (`safetensors.torch.load_file`) |
 | `https://huggingface.co/...` URL | ✗ FileNotFoundError |
 | HF repo id like `nvidia/C-RADIOv2-B` | ✗ FileNotFoundError |
-| `null` or empty | ✗ silently degrades FAR@R=100%; failure mode looks like a training bug |
+| `null` or empty | ✗ silently degrades held-out evaluation quality; failure mode looks like a training bug |
 
 ### Pre-Flight responsibility
 
 Pre-Flight **must stage the backbone locally** before launch. The HuggingFace repo `nvidia/C-RADIOv2-B` ships only `model.safetensors` (no `.pth`). Use the packaged staging script (idempotent; reuses an existing staged file; hard-fails if it cannot produce one):
 
 ```bash
-STAGED=$(python3 <skill_root>/scripts/stage_backbone.py --workspace <workspace>)
+STAGED=$(<skill_root>/scripts/deft_python.sh <skill_root>/scripts/stage_backbone.py --workspace <workspace>)
 # STAGED -> <workspace>/augmentation/backbone/c_radio_v2_b.safetensors
 ```
 
 Equivalent manual recipe (only if running the script is not possible):
 
 ```bash
-python3 - <<'PY'
+<skill_root>/scripts/deft_python.sh - <<'PY'
 from huggingface_hub import hf_hub_download
 import shutil, os
 src = hf_hub_download(repo_id="nvidia/C-RADIOv2-B", filename="model.safetensors")
@@ -195,9 +250,25 @@ row["label"] = row["label"] if row["label"] == "PASS" else row["label"].lower().
 ## Log Stage
 
 ```bash
-python3 <skill_root>/scripts/log_stage.py \
-    --log-path results/loop_log.jsonl \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+    --results-dir "${RESULTS_DIR}" \
     --iter-label <baseline|iter${N}> \
-    --stage train --status ok \
-    --summary "FAR=X% threshold=Y val_loss=Z best_ckpt=<kind>"
+    --stage train \
+    --best-ckpt <absolute selected checkpoint> \
+    --best-ckpt-kind <best_val|latest> \
+    --training-spec <absolute exact training spec> \
+    --val-loss <float> \
+    --summary "Train: val_loss=Z best_ckpt=<kind>:<absolute path>"
+
+# Commit the evaluator result and ordered evaluate event together.
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+    --results-dir "${RESULTS_DIR}" \
+    --iter-label <baseline|iter${N}> \
+    --stage evaluate \
+    --metric-result <absolute evaluator result JSON> \
+    --best-ckpt <absolute selected checkpoint> \
+    --inference-csv <absolute inference CSV> \
+    --training-spec <absolute exact training spec> \
+    --threshold <float; include when required by the evaluator contract> \
+    --summary "Evaluate: <metric>=X <operator> target; threshold=Y|n/a"
 ```

@@ -4,7 +4,7 @@ license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit and a CUDA GPU. Pulls the `metropolis_sdg.paidf_anomalygen` image declared in `versions.yaml` at the skill bank root.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "1.0.1"
 allowed-tools: Read Bash
 description: >-
   Full PAIDF AnomalyGen pipeline — fine-tune on a new anomaly dataset, generate
@@ -74,8 +74,9 @@ DEFECT_DESC=assets/defect_spec_template.jsonl
 NUM_SDG=20
 MODEL_SIZE=2b
 
-# 2. Phase 0 — verify / download checkpoints (~140 GB; needs HF_TOKEN).
-${ANOMALYGEN_SCRIPTS}/check.sh || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh
+# 2. Phase 0 — verify / download checkpoints (~40 GB for the 2B default; needs HF_TOKEN).
+${ANOMALYGEN_SCRIPTS}/check.sh --model-sizes ${MODEL_SIZE^^} \
+    || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh --model-sizes ${MODEL_SIZE^^}
 
 # 3. Walk Phases 1→7 in order (see each Phase section).
 ```
@@ -219,11 +220,15 @@ checks.
 ## Phase 0 — checkpoints
 
 Read `references/finetune.md §Phase 0` for HF_TOKEN requirements and what gets
-downloaded (~140 GB). Verify first; download only what is missing.
+downloaded. Both scripts default to the **2B** base + t5-large (~40 GB); pass
+`--model-sizes ${MODEL_SIZE^^}` so the chain checks and fetches the base size
+this run actually uses (`2b`→`2B`, `14b`→`14B`) — otherwise a `14b` run
+silently passes the 2B-only check and never downloads its checkpoint. Verify
+first; download only what is missing.
 
 ```bash
-${ANOMALYGEN_SCRIPTS}/check.sh \
-    || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh
+${ANOMALYGEN_SCRIPTS}/check.sh --model-sizes ${MODEL_SIZE^^} \
+    || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh --model-sizes ${MODEL_SIZE^^}
 ```
 
 ---
@@ -343,8 +348,11 @@ Phase 7 **runs by default** (`nn_threshold=0.4`) on every `mode=full` and
 falls back to best-scoring non-passing regens and finally to dropped originals,
 so the final bucket always equals `num_SDG`.
 
-Run `python3 -m scripts.utilities.filter_with_regen`. It runs the final
-`run_eval.sh` internally — the only eval against `searched/`. Read
+Run `python3 -m scripts.utilities.filter_with_regen`. Pass `--allocation
+ag_inference/${NAME}/allocation.json` so regen targets the *intended*
+per-defect counts — without it a bucket left short (e.g. by an interrupted SDG)
+cannot be topped back up to `num_SDG`. It runs the final `run_eval.sh`
+internally — the only eval against `searched/`. Read
 `references/inference.md §Phase 7` for regen mechanics, source-column tracing,
 and the `regens/regen_summary.csv` schema; see
 `references/inference-commands.md §Phase 7` for the full command and flags.
@@ -354,22 +362,32 @@ and the `regens/regen_summary.csv` schema; see
 ## Output layout
 
 Every bucket that gets eval'd carries the same triad of files:
-`SDG_result.csv` (generation params + `nn_score`), `per_sample.csv`
-(per-sample nn + mnn), and `eval.log` (aggregate FID / per-defect avg).
-Buckets live under `results/<name>/` as `original/` (Phase 3+4), `searched/`
-(Phase 6 stitch + Phase 7 filter+regen+eval), `rounds/round_NN/` (Phase 5,
-plus `search_summary.csv`), and `regens/regen_NN/` (Phase 7, plus
-`regen_summary.csv`).
+`SDG_result.csv` (generation params + `nn_score` + `guardrail_pass`),
+`per_sample.csv` (per-sample nn + mnn), and `eval.log` (aggregate FID /
+per-defect avg). Buckets live under `results/<name>/` as `original/` (Phase
+3+4), `searched/` (Phase 6 stitch + Phase 7 filter+regen+eval),
+`rounds/round_NN/` (Phase 5, plus `search_summary.csv`), and `regens/regen_NN/`
+(Phase 7, plus `regen_summary.csv`).
+
+**Image content guardrail.** A SigLIP content-safety check runs on every
+generated image and records its verdict in `SDG_result.csv.guardrail_pass`
+(`1` safe / `0` blocked). A blocked image is **replaced with an all-black
+image** that still occupies its slot on disk, so counting files cannot detect
+it — never hand a `guardrail_pass=0` sample downstream. Blacked-out samples
+score near-zero `nn_score`, so Phase 7 regenerates them like any other
+sub-threshold sample. Disable with `ANOMALYGEN_IMAGE_GUARDRAIL=0`.
 
 See `references/output-layout.md` for the full directory tree with per-file
-annotations and the post-run **Verification** checklist (image counts per
-bucket, `search_summary.csv` / `regen_summary.csv` row checks, and the per-type
-`nn_score` / `mnn_score` / `fid` fields in each `eval.log`).
+annotations, the guardrail semantics, and the post-run **Verification**
+checklist (image counts per bucket, `search_summary.csv` /
+`regen_summary.csv` row checks, the per-type `nn_score` / `mnn_score` / `fid`
+fields in each `eval.log`, and the `guardrail_pass` sweep).
 
 ## Error handling
 
 Common pipeline failure modes (missing mask dirs, short/empty AMP output and
 the `0 entries written` halt, mid-round SDG failure resume, off-boundary
-`step`) are covered in `references/error-handling.md`; see also
-`references/finetune.md` and `references/inference.md` for phase-specific
-error handling.
+`step`, `validate_dataset.py`'s non-zero exit on any pairing issue, the
+2B-only `check.sh` default, and guardrail-blocked black images) are covered in
+`references/error-handling.md`; see also `references/finetune.md` and
+`references/inference.md` for phase-specific error handling.

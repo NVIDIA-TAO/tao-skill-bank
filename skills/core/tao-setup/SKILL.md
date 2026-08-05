@@ -80,14 +80,23 @@ with `[ -n "$VAR" ]`.
 
 3. **Pick an execution platform and read its skill** for mounts, env vars,
    and resource conventions: `tao-run-on-docker` conventions apply to any
-   local `docker run`; `tao-run-on-slurm`, `tao-run-on-kubernetes`,
-   `tao-run-on-brev`, and `tao-run-on-local-docker` cover managed dispatch.
+   local `docker run`; `tao-run-on-slurm`, `tao-run-on-kubernetes`, and
+   `tao-run-on-brev` cover managed dispatch; `tao-run-on-virtualenv` runs a
+   Python script docker-free in a local venv. Externally installed platform
+   skills (e.g. kratos) join as peers — no registration needed.
    The platforms are equal-class peers — if the user has not chosen, ask;
-   never default silently.
+   never default silently. Every platform skill implements the same
+   **four-verb consumer contract** (`submit`/`status`/`logs`/`cancel`) over its
+   native CLI (`docker`/`kubectl`/`ssh`+`sbatch`/`brev exec`) — there is no
+   `nvidia-tao-sdk`.
 
 4. **Construct the spec as nested dicts** (`{"train": {"num_epochs": 12}}`,
-   never flat dotted keys), confirm with the user, then dispatch via the
-   chosen platform's pattern and monitor per that platform's skill.
+   never flat dotted keys), confirm with the user, then **execute the four
+   verbs**: `tao-launch-workflow` drives the shared launch gate;
+   `scripts/tao_job_record.py open` mints the job id and binds `results_dir`
+   *before* launch (record-then-launch); the platform skill runs `submit`; then
+   monitor with `status`/`logs`, mapping native states to the fixed vocabulary
+   `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`.
 
 ## Conventions all TAO skills follow
 
@@ -105,6 +114,12 @@ with `[ -n "$VAR" ]`.
   minimum versions it has validated by declaring `runtime_requirements.gpu_host`
   in `references/skill_info.yaml`; pass those values to the shared host setup
   check rather than changing the defaults for unrelated models.
+- **Execution is SDK-free.** Job tracking (`scripts/tao_job_record.py`),
+  S3/data staging (`tao-data-io`, storage tiers A/B/C), and multi-node (the
+  SLURM/K8s templates + `scripts/nccl_allreduce_probe.py`) are built into the
+  bank — no `nvidia-tao-sdk`. The one exception is AutoML search
+  (`tao-run-automl`), which uses the `nvidia-tao-automl` wheel and its
+  transitive SDK.
 
 ## Optional: Codex agent identity
 

@@ -1,24 +1,24 @@
 # DEFT Loop Report Rendering Protocol
 
 Template: `references/DEFT_Loop_Report.html`. Output: `results/DEFT_Loop_Report.html`.
-Re-render after every stage and at loop end. Embed all images as base64 data URIs so
+Re-render after each completed iteration and at loop end. Embed all images as base64 data URIs so
 the file opens offline.
 
 ## When to update which data
 
 | Stage trigger | New data available |
 |---|---|
-| Loop start (config loaded) | `{{ PROBLEM_STATEMENT_HTML }}`, `{{ APPROACH_HTML }}` — both populated immediately from `deft_state.json` knobs (KPI target, max_iterations, mining cos floor). Re-render every iteration so the cards are present from the first render. |
-| Baseline evaluate done | baseline FAR, threshold, recall; `{{ KPI_DATASET_HTML }}` populated from the KPI eval manifest scanned during baseline. |
-| Baseline RCA done | RCA insight, score dist, recall-FAR table, defect type rows; also refines `{{ KPI_DATASET_HTML }}`'s per-defect-type breakdown using `${results_dir}/baseline/rca_results/defect_type_rows.csv`. |
-| Iter N evaluate done | iter N FAR, threshold, recall, checkpoint |
+| Loop start (config loaded) | `{{ PROBLEM_STATEMENT_HTML }}`, `{{ APPROACH_HTML }}` — both populated immediately from `metric_contract`, max_iterations, and mining cos floor. Re-render every iteration so the cards are present from the first render. |
+| Baseline evaluate done | baseline primary `metric_result`, optional threshold, and evaluator diagnostics; `{{ KPI_DATASET_HTML }}` populated from the evaluation manifest scanned during baseline. |
+| Baseline RCA done | RCA insight, score distribution, evaluator diagnostics, and defect type rows; also refines `{{ KPI_DATASET_HTML }}`'s per-defect-type breakdown using `${results_dir}/baseline/rca_results/defect_type_rows.csv`. |
+| Iter N evaluate done | iter N primary metric, constraints, optional threshold, diagnostics, checkpoint |
 | Iter N RCA done | updated RCA insight and tables |
-| Iter N AnomalyGen done | sample images (base64 thumbnails) for iter N |
+| Iter N AnomalyGen done | an explicit `AnomalyGen: enabled` status line, the `num_SDG` generated count, and sample images (base64 thumbnails) for iter N |
 | Iter N k-NN filtering done | knn_summary (`candidate_count`, `kept_count`, `rejected_count`), training row counts |
 | Loop stop (KPI met or max_iterations) | final status, `best_iter`, recommendations |
 
 Stub values for data not yet available:
-- future iter FAR/rows → render `—`
+- future iter metric/rows → render `—`
 - missing image columns → `.sample-img-placeholder`
 
 ## In-progress rendering rules
@@ -30,7 +30,7 @@ While the loop has not stopped:
 - Iteration table rows → only completed iterations; omit rows for unstarted iterations.
 - `{{ ITER_CARDS_HTML }}` → only emit cards for completed iterations.
 - KPI banner → empty string while running; inject it only on loop stop.
-- `{{ FAR_DATA_JSON }}` → include only data points from completed iterations.
+- `{{ METRIC_DATA_JSON }}` → primary-metric points from completed iterations.
 
 ## KPI status phrasing — be neutral, never say "NOT MET"
 
@@ -40,11 +40,16 @@ and any KPI banner copy:
 
 | Condition | `FINAL_KPI_STATUS` | `FINAL_KPI_STATUS_CLASS` |
 |---|---|---|
-| `best_far <= kpi_target` | `"MET"` | `"green"` |
-| `best_far > kpi_target` | `"{gap:.1f}pp from target"` (e.g. `"2.3pp from target"`) | `""` |
+| Contract comparison and every constraint pass | `"MET"` | `"green"` |
+| Contract misses | `"{absolute direction-aware gap}{unit} from target"` | `""` |
 | Loop still running | `"IN PROGRESS"` | `""` |
 
-Where `gap = best_far - kpi_target` (always positive in the not-met case).
+For `<`/`<=`, gap is `best_value - target`; for `>`/`>=`, gap is
+`target - best_value`. Show `pp` only when the metric unit is `%`; otherwise
+use the configured unit. Recompute rather than trusting a stored `passed` flag.
+When substituting `{{ PRIMARY_METRIC_UNIT }}`, use `%` directly and prepend one
+space for non-percent units (for example ` cost/board`) so value labels remain
+readable without encoding presentation whitespace in `metric_contract.unit`.
 
 Do **not** emit `"NOT MET"`, `"FAILED"`, the `red` CSS class, or red banner styling
 even when the target is missed. The KPI banner in this case should use the neutral
@@ -54,7 +59,7 @@ red "KPI NOT MET" treatment. Reporting the gap factually is the entire ask.
 ## Minimal render pattern
 
 ```python
-import datetime, pathlib
+import datetime, json, pathlib
 
 template = pathlib.Path("references/DEFT_Loop_Report.html").read_text()
 html = (
@@ -65,7 +70,7 @@ html = (
 pathlib.Path(f"{RESULTS_DIR}/DEFT_Loop_Report.html").write_text(html)
 ```
 
-Never defer to a single end-of-loop render — write after every stage so the user can refresh and see live progress.
+Never defer to a single end-of-loop render — write after each completed iteration so the user can refresh and see progress without paying a render cost for every short stage.
 
 ### CRITICAL: Always render in a single pass from the source template
 
@@ -88,7 +93,16 @@ html = (
     template                                              # from source, not output
     .replace('{{ GENERATED_DATE }}',           generated_date)
     .replace('{{ KPI_TARGET }}',               kpi_target)
-    .replace('{{ FAR_DATA_JSON }}',            far_data_json)
+    .replace('{{ PRIMARY_METRIC_LABEL }}',     primary_metric_label)
+    .replace('{{ PRIMARY_METRIC_UNIT }}',      primary_metric_unit)
+    .replace('{{ PRIMARY_METRIC_UNIT_JSON }}', json.dumps(primary_metric_unit))
+    .replace('{{ METRIC_DIRECTION_LABEL }}',  metric_direction_label)
+    .replace('{{ METRIC_DATA_JSON }}',         metric_data_json)
+    .replace('{{ METRIC_TARGET_VALUE }}',      metric_target_value)
+    .replace('{{ METRIC_Y_MIN }}',             metric_y_min)
+    .replace('{{ METRIC_Y_MAX }}',             metric_y_max)
+    .replace('{{ METRIC_Y_STEPS_JSON }}',      metric_y_steps_json)
+    .replace('{{ METRIC_MINIMIZES_JSON }}',    metric_minimizes_json)
     # ... ALL remaining tokens in one chain ...
     .replace('{{ RECOMMENDATIONS_HTML }}',     recommendations_html)
 )
@@ -153,13 +167,19 @@ blank charts with no error. Confirmed correct schemas from the template source:
 
 | Placeholder | Required JSON schema | JS field accessed |
 |---|---|---|
-| `{{ FAR_DATA_JSON }}` | `[{"label": "Baseline", "value": 48.16, "color": "#c2262d"}, ...]` | `d.value`, `d.color`, `d.label` |
+| `{{ METRIC_DATA_JSON }}` | `[{"label": "Baseline", "value": 0.018, "color": "#c2262d"}, ...]` for the configured primary metric | `d.value`, `d.color`, `d.label` |
 
-Common mistake: using `far` instead of `value`.
+Common mistake: using an evaluator-specific field instead of the generic `value`.
+
+Build the chart extent from the primary-metric values and target, add a small
+padding when the extent is non-zero, and emit numeric `METRIC_Y_MIN`,
+`METRIC_Y_MAX`, and tick values. `METRIC_MINIMIZES_JSON` is lowercase JSON
+`true` for `<` / `<=` and `false` for `>` / `>=`; it controls segment colors.
+Do not infer direction or a percent unit from the metric name.
 
 The training-data stacked bar chart (`DATA_DATA_JSON`, `DATA_Y_MAX`,
 `DATA_Y_STEPS_JSON`) was removed from the Progress Overview. The Augmentation
-Pool table below the FAR chart now carries that information instead — do not
+Pool table below the primary-metric chart now carries that information instead — do not
 attempt to render the old chart.
 
 ### Global context cards (Problem Statement / KPI Dataset / Approach)
@@ -171,7 +191,7 @@ builds each as a Python string and substitutes it once per render. Schemas:
 
 | Placeholder | Required pieces | Source on disk |
 |---|---|---|
-| `{{ PROBLEM_STATEMENT_HTML }}` | Task + model (Visual ChangeNet, PCB AOI binary classification), how FAR @ 100% Recall is computed (one-liner), failure modes targeted (real-image mining / synthetic NG-OK / iterative fine-tune). Bake the concrete KPI target into the copy — leaving `{{ KPI_TARGET }}` inside this block will not re-substitute. | `deft_state.json` → `kpi_target`, `recall_target`, `max_iterations` |
+| `{{ PROBLEM_STATEMENT_HTML }}` | Task + model, configured primary metric predicate, evaluator and constraints, plus failure modes targeted by mining/synthetic/fine-tuning. Keep evaluator diagnostics separate from the primary goal. Bake values directly into the block. | `deft_state.json` → `metric_contract`, `kpi_target`, `max_iterations` |
 | `{{ KPI_DATASET_HTML }}` | Totals (component crops + PASS/NO_PASS split), component categories, per-defect-type breakdown within NO_PASS, lighting variants, notable imbalances. Render as a one-paragraph summary + `.data-table` with one row per component category. | KPI eval manifest under `${results_dir}/baseline/eval/` + `${results_dir}/baseline/rca_results/defect_type_rows.csv`. If RCA has not yet run, omit the per-defect-type column and keep the totals paragraph only. |
 | `{{ APPROACH_HTML }}` | The five-stage iterative recipe (evaluate → RCA → route → augment via k-NN + AnomalyGen → fine-tune); cosine similarity floor; the run's headline lever (which augmentation source dominates). Render as a paragraph + `.insight` box. | `deft_state.json` → `mining_filter.cosine_threshold`, `max_iterations`; latest iter's `mining_pool.csv` (sdg vs mined ratio drives the headline lever). |
 
@@ -188,9 +208,9 @@ silently. Confirmed column counts from the template:
 
 | Placeholder | Columns (count) | Column names |
 |---|---|---|
-| `{{ ITERATION_TABLE_ROWS_HTML }}` | 8 | Phase, FAR @ 100% Recall, Δ vs Baseline, Threshold, Training Rows, Synthetic, Syn Ratio, Note |
+| `{{ ITERATION_TABLE_ROWS_HTML }}` | 8 | Phase, Primary Metric, Δ vs Baseline, Threshold, Training Rows, Synthetic, Syn Ratio, Note |
 | `{{ SCORE_DIST_ROWS_HTML }}` | 4 | Metric (Score Range), PASS, NO_PASS, Notes |
-| `{{ RECALL_FAR_ROWS_HTML }}` | 4 | Min Recall, FAR, Threshold, KPI |
+| `{{ EVALUATOR_DIAGNOSTIC_ROWS_HTML }}` | 4 | Measure, Value, Threshold, Status |
 | `{{ DEFECT_TYPE_ROWS_HTML }}` | 4 | Defect Type, Count, Score Range, Detectable at KPI threshold? |
 
 ### Verifying placeholder count
