@@ -17,6 +17,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 DEFAULT_SKILL_BANK = Path(
     os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
@@ -118,6 +120,49 @@ def load_skill_info(skill_bank: Path, model: str) -> dict[str, Any]:
     return data
 
 
+def load_backend_capabilities(skill_bank: Path, model: str) -> dict[str, Any]:
+    """Load backend/action matrices declared by shared model frontends."""
+    skill_dir = skill_bank.expanduser() / "skills" / "models" / model
+    path = skill_dir / "references" / "skill_info.yaml"
+    if not path.exists():
+        return {}
+    parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("backend_contracts"), dict):
+        return {}
+    backends: dict[str, Any] = {}
+    for name, relative in parsed["backend_contracts"].items():
+        contract_path = skill_dir / str(relative)
+        contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+        if not isinstance(contract, dict):
+            raise ValueError(f"{contract_path} must contain a YAML object")
+        actions = contract.get("actions", {})
+        backends[str(name)] = {
+            "container_image": contract.get("container_image"),
+            "contract": str(relative),
+            "actions": {
+                str(action): {
+                    "supported": bool(config.get("supported", False)) if isinstance(config, dict) else False,
+                    "native": bool(
+                        config.get(
+                            "native",
+                            bool(contract.get("native", False)) and bool(config.get("supported", False)),
+                        )
+                    )
+                    if isinstance(config, dict)
+                    else False,
+                    "reason": config.get("reason", "") if isinstance(config, dict) else "",
+                }
+                for action, config in actions.items()
+            }
+            if isinstance(actions, dict)
+            else {},
+        }
+    return {
+        "selection_policy": parsed.get("backend_selection", {}),
+        "implementations": backends,
+    }
+
+
 def skill_info_actions(skill_bank: Path, model: str) -> list[str]:
     """Read action names from a model skill_info.yaml without a YAML dependency."""
     path = skill_bank.expanduser() / "skills" / "models" / model / "references" / "skill_info.yaml"
@@ -200,6 +245,7 @@ def build_model_records(skill_bank: Path) -> list[dict[str, Any]]:
         if not isinstance(metadata, dict):
             metadata = {}
         skill_info = load_skill_info(skill_bank, model)
+        backend_capabilities = load_backend_capabilities(skill_bank, model)
         schema_manifest = load_model_schema_manifest(skill_bank, model)
         has_train_schema, train_schema_reason = train_schema_status(skill_bank, model)
         schema_actions = schema_manifest.get("actions", {})
@@ -248,6 +294,7 @@ def build_model_records(skill_bank: Path) -> list[dict[str, Any]]:
                 "train_schema": TRAIN_SCHEMA_REL.as_posix(),
                 "train_schema_status": train_schema_reason,
                 "action_schema_statuses": action_schema_statuses,
+                "backends": backend_capabilities,
             }
         )
     return records
@@ -472,6 +519,12 @@ def format_all_models_text(data: dict[str, Any]) -> str:
                 schema=train_schema,
             )
         )
+        implementations = item.get("backends", {}).get("implementations", {})
+        for backend, details in implementations.items():
+            supported = [
+                action for action, config in details.get("actions", {}).items() if config.get("supported")
+            ]
+            lines.append(f"  backend {backend}: {action_text(supported)}")
     return "\n".join(lines)
 
 

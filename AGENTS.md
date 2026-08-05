@@ -16,6 +16,16 @@ the `tao-data-io` skill) — no TAO SDK install.
 
 ## Discovery flow
 
+Model-first routing is mandatory. Resolve a supplied model ID with
+`scripts/resolve_tao_model.py` before selecting a generic workflow. When the
+request names an action or workload, pass `--action` and `--workload`. If the
+matched metadata declares `backend_contracts`, resolve the implementation
+before image/spec selection, show the backend and rationale, and use its
+packaged planner/contract. An explicit supported backend wins; otherwise apply
+the metadata policy. Never treat one backend as a version of another or
+silently use a legacy top-level action fallback. The shared Cosmos frontend
+uses `scripts/cosmos_workflow.py` for this step.
+
 0. **Preflight the chosen platform.** Open `skills/platform/<chosen>/SKILL.md` and run
    its Preflight section. If a missing prerequisite is a small Python helper that
    can be installed with `python -m pip install ...` (e.g. `boto3` for
@@ -40,6 +50,9 @@ the `tao-data-io` skill) — no TAO SDK install.
    - `actions.<action>.outputs` — declared output contract (paths + types)
    - `actions.<action>.upload_excludes` — what NOT to upload back
    - `data_format` (if present)
+   - `backend_contracts` / `backend_selection` / `backend_resolver` (if
+     present) — implementation-specific image, command, TOML, dataset,
+     topology, checkpoint, and structured-status contracts
 
 3. **Read the platform SKILL.md you'll dispatch to** for execution conventions
    (mounts, env vars, resource shapes, retry behavior, the four verbs).

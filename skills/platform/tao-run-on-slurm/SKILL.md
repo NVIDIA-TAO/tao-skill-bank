@@ -8,7 +8,7 @@ compatibility: Requires SSH access to a SLURM login node (passwordless via key a
   No nvidia-tao-sdk install is required; jobs are driven directly over ssh + sbatch/squeue/sacct/scancel.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.1.1"
 allowed-tools: Read Bash
 tags:
 - platform
@@ -85,7 +85,7 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    ```
 4. **Render** `templates/slurm/singlenode.sbatch.tmpl` — substitute every
    `@@<NAME>@@` (`JOB_NAME=$JOB_ID`, `NUM_GPUS`, `CPUS_PER_TASK`, `TIME`, `LOG_DIR`,
-   `IMAGE`, `CONTAINER_MOUNTS=/lustre`, `COMMAND=<bundle command reading the Lustre
+   `IMAGE`, `CONTAINER_MOUNTS=<RUNTIME_SUPPLIED_MOUNTS>`, `COMMAND=<bundle command reading the shared-storage
    spec>`, `SBATCH_EXTRA=` account/partition lines, `ENV_FILE=` the sidecar path or
    empty, `EXTRA_ENV=` any cluster NCCL knobs) → `<job_dir>/sbatch/job_$JOB_ID.sbatch`.
    **Lint + syntax-check before submit:** `redact_secrets.py lint <sbatch>` must
@@ -155,6 +155,32 @@ Same four verbs, with three additions at submit:
    the P2P hang triggers on a single node with 2+ GPUs.
 3. Tier-A Lustre, sidecar creds, record, and lint are unchanged.
 
+### Cosmos backend guardrails
+
+When `tao-finetune-cosmos-reason` resolves a backend, read that backend
+contract before rendering the SLURM command. Cosmos jobs require a prebuilt,
+compute-node-readable `.sqsh`; convert the selected image before the GPU
+allocation and do not substitute a direct registry reference in the training
+job. Stage the generated TOML and Framework status bridge on Lustre.
+
+- Cosmos Framework: one Pyxis task/container per node; inside each task set
+  `NODE_RANK=$SLURM_PROCID` and launch native torchrun with node count,
+  GPUs-per-node, master address/port. Set Framework HSDP shard degree to GPUs
+  per node and replicate degree to nodes. Use `--no-container-mount-home`,
+  `/workspace/.venv/bin/python`, `ulimit -n 65536`, and disable asynchronous DCP
+  for multi-node shared-SLURM runs.
+- Cosmos-RL: single-node uses its normal CLI. Validated policy-only multi-node
+  SFT starts the controller only on node zero and one policy replica on every
+  node; its spec uses global GPU count as shard size and one replicate. Enable
+  CUDA video driver capability and the image's PyNvVideoCodec path rather than
+  falling back to CPU decoding.
+
+For both backends, preserve the real `srun`/torchrun/policy exit code through
+cleanup and any requeue footer. A zero exit from a later shell command must not
+mask a failed training process. Treat SLURM `COMPLETED` as provisional until
+the Cosmos structured status contains terminal `SUCCESS`; then extract train
+and epoch validation metrics with the model skill's packaged helper.
+
 ## Storage
 
 Use shared-filesystem URIs, not local or `file://` paths; `tao-core` rejects
@@ -183,7 +209,7 @@ direct-spec modes, backend details, and the results-dir default.
    allocation* below.
 3. Write an sbatch script under `<job_dir>/sbatch/job_<job_id>.sbatch`.
 4. Submit `sbatch --export=ALL <script>`.
-5. Run the container with `srun --container-image=<image> --container-mounts=/lustre`.
+5. Run the container with `srun --container-image=<image> --container-mounts=<RUNTIME_SUPPLIED_MOUNTS>`.
 
 Accepted image formats: `/path/to/image.sqsh`, `registry#image:tag`,
 `docker://registry#image:tag`, and ordinary `registry/image:tag` (converted to
@@ -287,7 +313,7 @@ for the full credential list, microservices schema keys, and defaults.
   non-interactive public-key auth. Ask for this first in remediation; prefer it
   over the `SSH_AUTH_SOCK` agent-socket fallback.
 - **SLURM_BASE_RESULTS_DIR** (optional): base shared-filesystem path; default
-  `/lustre/fsw/portfolios/edgeai/users/<your-dir>` (your per-user Lustre dir).
+  a shared-storage root supplied and verified at runtime.
 - **SLURM_ACCOUNT** (usually required by site policy): account for `#SBATCH --account`.
 
 Do not ask for `SLURM_ACCOUNT` or `SLURM_BASE_RESULTS_DIR` in the initial
@@ -305,7 +331,7 @@ Defaults from `tao-core`:
 - `time_hours`: 4
 - `timeout_hours`: 3.8
 - `max_time_hours`: 4
-- `container_mounts`: `/lustre`
+- `container_mounts`: explicit source-to-target mounts supplied at runtime
 - `use_requeue`: true
 - `use_sqsh`: true
 

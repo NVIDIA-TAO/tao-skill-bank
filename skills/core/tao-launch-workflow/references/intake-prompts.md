@@ -13,18 +13,18 @@ I need these launch inputs before I can create specs or runner files:
 2. Dataset inputs. You can provide either mode:
    A) Root mode: give train/eval roots and I map required files automatically.
       Example Cosmos-RL:
-      train_root=/lustre/fsw/.../cosmos/train
+      train_root=<TRAIN_DATA_ROOT>
       -> custom.train_dataset.annotation_path=train_root/annotations.json
       -> custom.train_dataset.media_path=train_root
    B) Direct spec mode: give the exact config/spec parameters yourself.
       Example:
-      custom.train_dataset.annotation_path=/lustre/fsw/.../train_annotations.json
-      custom.train_dataset.media_path=/lustre/fsw/.../videos_train.tar.gz
-      custom.val_dataset.annotation_path=/lustre/fsw/.../eval_annotations.json
-      custom.val_dataset.media_path=/lustre/fsw/.../eval_videos/
+      custom.train_dataset.annotation_path=<TRAIN_ANNOTATION_PATH>
+      custom.train_dataset.media_path=<TRAIN_MEDIA_PATH>
+      custom.val_dataset.annotation_path=<VALIDATION_ANNOTATION_PATH>
+      custom.val_dataset.media_path=<VALIDATION_MEDIA_PATH>
 
    Platform examples:
-   - SLURM/Lustre: /lustre/fsw/.../data/train or lustre:///lustre/fsw/.../data/train
+   - SLURM/shared storage: <SHARED_TRAIN_PATH> or a platform URI supplied by the user
    - Brev/Kubernetes: s3://bucket/path/train and s3://bucket/path/eval
    - local-docker: /data/tao/<model>/train or file:///data/tao/<model>/eval
 

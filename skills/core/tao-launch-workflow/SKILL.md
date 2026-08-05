@@ -14,7 +14,7 @@ license: Apache-2.0
 compatibility: Requires the packaged TAO skill bank helper scripts.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.1.1"
 allowed-tools: Read Bash
 tags:
 - tao
@@ -172,6 +172,22 @@ When intake inputs are missing, ask with the exact prompt shape in
 `references/intake-prompts.md` (one consolidated ask, concrete examples,
 no invented defaults).
 
+## Implementation Backend Resolution
+
+After model ownership resolution, inspect the selected model's
+`references/skill_info.yaml`. If it declares `backend_contracts`, resolve the
+implementation before selecting an image or authoring a spec. An explicit
+backend wins when it supports the model/action; otherwise apply the packaged
+`backend_selection` policy and show its rationale. The selected backend
+contract—not the legacy top-level fallback—owns the image, entrypoint,
+configuration schema, data mappings, topology, checkpoint format, output
+layout, and status behavior. Never treat one backend as a version of another.
+
+Pass action, backend, and workload hints to the model resolver. When metadata
+declares a backend planner, use it. The shared Cosmos frontend, for example,
+uses `scripts/cosmos_workflow.py plan` to generate backend-native TOML and a
+launch sequence.
+
 ## Container Image Confirmation
 
 Before creating specs, runner scripts, workspaces, logs, state files, or
@@ -180,7 +196,8 @@ submitting a job, resolve the image for the selected model/action:
 ```bash
 ${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/resolve_tao_image.py \
   --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} \
-  --model <network> --action <action> --format text
+  --model <network> --action <action> --backend <auto-or-explicit> \
+  --workload <workload-hint> --format text
 ```
 
 If the helper is unavailable, read `skills/models/<network>/config.json`
@@ -262,15 +279,13 @@ Accept dataset inputs in either mode:
 - **Direct spec mode:** the user gives exact spec-key paths when annotations,
   media archives, videos, or image folders live in different places. Preserve
   those keys directly, for example
-  `custom.train_dataset.annotation_path=/lustre/.../train_annotations.json`
-  and `custom.train_dataset.media_path=/lustre/.../videos.tar.gz`.
+  `custom.train_dataset.annotation_path=<TRAIN_ANNOTATION_PATH>`
+  and `custom.train_dataset.media_path=<TRAIN_MEDIA_PATH>`.
 
 Ask for dataset examples that match the selected platform:
 
-- SLURM: shared cluster paths such as
-  `/lustre/fsw/portfolios/<team>/<your-dir>/data/<model>/train` (where
-  `<your-dir>` is your per-user directory on the cluster), or direct
-  spec paths under `/lustre/...`.
+- SLURM: explicit shared cluster paths supplied by the user and verified from
+  the allocated compute node; the skill has no site-specific storage default.
 - Brev, Kubernetes: usually `s3://bucket/path/train` and
   `s3://bucket/path/eval` unless the platform profile mounts shared storage.
 - Local Docker: local paths visible to the Docker host, such as
@@ -308,9 +323,23 @@ Before any side-effecting launch, show a concise review:
 - important model/workflow overrides that differ from template defaults
 - estimated runtime and the assumptions behind it
 - monitoring interval and whether chat-side monitoring will stay attached
+- implementation backend and selection rationale when the model exposes more
+  than one backend
 
 For AutoML, also show the algorithm, metric/direction, recommendation budget,
 search parameters, ranges, and generated/default recommendation details as
 described in `skills/applications/tao-run-automl/SKILL.md`. Ask for confirmation after
 this review. If the user supplied a time limit, flag any plan that exceeds it
 and offer concrete reductions before launch.
+
+## Structured Training Metrics
+
+When the model contract declares a structured status path or metric extractor,
+poll it alongside the native backend. Scheduler/container completion is not a
+successful training result by itself: require the model's terminal structured
+success record, collect concrete checkpoint events, and return final train
+loss plus every epoch validation-complete loss. Do not promote validation
+heartbeat/batch metrics or a train-loss line to epoch validation loss. If the
+process fails before its native logger exists, invoke the packaged status
+finalizer or report the real process exit failure; use raw log parsing only as
+a fallback.

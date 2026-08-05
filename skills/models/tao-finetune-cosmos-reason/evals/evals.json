@@ -38,5 +38,45 @@
       "Keeps validation epoch-based with validation.freq_in_epoch=1",
       "Does not infer step cadence from WTS, GB300, topology, or the runtime image"
     ]
+  },
+  {
+    "id": "tao-finetune-cosmos-reason-backend-selection",
+    "question": "Plan plain dense SFT for nvidia/Cosmos3-Nano on WTS without an explicit backend, then explain what changes if the request is evaluate instead. Do not execute anything.",
+    "expected_skill": "tao-finetune-cosmos-reason",
+    "expected_script": "scripts/cosmos_workflow.py",
+    "ground_truth": "Use the shared frontend. Plain Nano SFT defaults to native Cosmos Framework and reports why; evaluate defaults to Cosmos-RL because Framework has no native evaluate action. Do not silently assume Cosmos-RL for training.",
+    "expected_behavior": [
+      "Selects cosmos-framework for plain Nano SFT",
+      "Selects cosmos-rl for evaluate",
+      "Reports the backend-selection rationale",
+      "Keeps the backend-specific image, TOML, entrypoint, topology, and checkpoint contracts separate"
+    ]
+  },
+  {
+    "id": "tao-finetune-cosmos-reason-dense-sft-parity",
+    "question": "Plan a full WTS dense-SFT parity run on SLURM for Cosmos3-Nano. The validation loss must be reported after completion. Do not execute anything.",
+    "expected_skill": "tao-finetune-cosmos-reason",
+    "expected_script": "scripts/cosmos_workflow.py",
+    "ground_truth": "Preflight host/SSH/Pyxis/Enroot/shared storage/checkpoint/datasets, build a clean repository-derived image and new SQSH, fingerprint train and validation manifests and prompt, omit LoRA configuration, run a runtime-sized smoke first, then the full job after success. Monitor structured status and extract validation-complete loss rather than train loss or validation batch progress.",
+    "expected_behavior": [
+      "Requires a newly built SQSH and compute-node-visible runtime inputs before allocating full training GPUs",
+      "Requires qwen3_vl safetensors for Nano",
+      "Omits policy.lora for dense SFT",
+      "Runs the subset smoke before the full job",
+      "Reports structured train loss and epoch validation-complete loss"
+    ]
+  },
+  {
+    "id": "tao-finetune-cosmos-reason-framework-status",
+    "question": "Explain how a Cosmos Framework training run exposes TAO progress, validation loss, checkpoints, early failures, and completion without relying only on console logs. Do not execute anything.",
+    "expected_skill": "tao-finetune-cosmos-reason",
+    "expected_script": "scripts/extract_cosmos_metrics.py",
+    "ground_truth": "Use the native TAOStatusCallback for early failures, checkpoint completion, globally reduced token-weighted train/validation metrics, and terminal status; preserve the training child exit code separately and ignore validation heartbeat loss when extracting the final metric.",
+    "expected_behavior": [
+      "Uses the Framework TAOStatusCallback structured JSONL",
+      "Uses native Framework callbacks for checkpoint and early-failure records",
+      "Preserves the native training exit code",
+      "Uses extract_cosmos_metrics.py and ignores validation heartbeat loss for the final validation metric"
+    ]
   }
 ]

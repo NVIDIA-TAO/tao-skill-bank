@@ -1,14 +1,45 @@
-network_arch: cosmos-rl
+network_arch: cosmos-reason
 huggingface_model_ids:
 - nvidia/Cosmos3-Nano
+- nvidia/Cosmos3-Edge
 aliases:
 - Cosmos Reason 3
 - Cosmos3 Nano Reasoner
 - Cosmos3-Nano
+- Cosmos3-Edge
+- cosmos-rl
+- cosmos-framework
 automl_enabled: true
-container_image: nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-rl  # versions-key: images.tao_toolkit.cosmos_rl
-required_credentials:
-- HF_TOKEN
+container_image:
+  policy: repository_derived
+  runtime_input: image_tag
+backend_contracts:
+  cosmos-framework: references/cosmos-framework-backend.yaml
+  cosmos-rl: references/cosmos-rl-backend.yaml
+backend_resolver: scripts/cosmos_workflow.py
+backend_selection:
+  policy: explicit backend wins; otherwise select by model, action, and workflow and report the rationale
+  defaults:
+    train: cosmos-framework
+    evaluate: cosmos-rl
+    inference: cosmos-rl
+    quantize: cosmos-rl
+  rules:
+  - match: Cosmos3-Edge train
+    backend: cosmos-framework
+  - match: Cosmos3-Edge non-train
+    backend: unsupported-native
+  - match: Cosmos3-Nano AutoML or HPO train
+    backend: cosmos-rl
+  - match: Cosmos3-Nano plain SFT train
+    backend: cosmos-framework
+  - match: Cosmos3-Nano evaluate, inference, or quantize
+    backend: cosmos-rl
+  ambiguity_behavior: never silently assume cosmos-rl; emit backend and backend_selection_reason in the launch review
+required_credentials: []
+conditional_credentials:
+  HF_TOKEN: required only when fetching a gated Hugging Face checkpoint; not required for a complete local checkpoint
+  NGC_KEY: required only when pulling or converting an authenticated nvcr.io image; not required for an existing local image or SQSH
 data_format: llava
 gpu_spec_key: policy.parallelism.dp_shard_size
 node_spec_key: policy.parallelism.dp_replicate_size
@@ -17,6 +48,25 @@ runtime_requirements:
     min_driver_version: '580'
     min_cuda_version: '13.0'
     min_container_toolkit_version: '1.19.1'
+workflow_contract:
+  planner: scripts/cosmos_workflow.py
+  metric_extractor: scripts/extract_cosmos_metrics.py
+  smoke_gate:
+    default_for:
+    - wts
+    - aetc
+    train_samples: max(16, total_gpus)
+    validation_samples: max(8, total_gpus)
+    success_condition: finite globally weighted train/validation losses, completed checkpoint event, repository-evaluator accuracy coverage, child exit zero, and terminal structured SUCCESS
+  parity_fingerprint:
+  - train record and media fingerprints
+  - validation record and media fingerprints
+  - original and resolved runtime paths
+  - system prompt
+  - checkpoint identity and format
+  - frame count
+  - optimizer, scheduler, batch size, epochs, and random seed
+  - backend and container digest
 data_sources:
   train:
     custom.train_dataset.annotation_path:

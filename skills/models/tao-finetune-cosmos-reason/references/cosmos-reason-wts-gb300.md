@@ -1,8 +1,9 @@
 # WTS on a Single GB300
 
-Load this reference for Woven Traffic Safety (WTS) LoRA SFT or evaluation on a
-single NVIDIA GB300 with a Cosmos-RL image whose native BF16 Conv3D path cannot
-select a cuDNN engine.
+Load this reference only for an explicitly requested Woven Traffic Safety
+(WTS) LoRA/PEFT run or evaluation on a single NVIDIA GB300 with a Cosmos-RL
+image whose native BF16 Conv3D path cannot select a cuDNN engine. Dense SFT
+does not use this profile and must not emit a `policy.lora` table.
 
 ## Packaged runtime helpers
 
