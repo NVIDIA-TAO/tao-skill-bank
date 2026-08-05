@@ -24,6 +24,7 @@
         "./skills/applications/tao-port-huggingface-model",
         "./skills/applications/tao-run-deft-aoi",
         "./skills/applications/tao-run-deft-aoi-cosmos3",
+        "./skills/applications/tao-run-deft-cr-its-mining",
         "./skills/applications/tao-validate-recipe-transfer",
         "./skills/data/tao-mine-nearest-neighbors",
         "./skills/data/tao-mine-aoi-images",
