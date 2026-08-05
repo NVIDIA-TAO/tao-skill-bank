@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import subprocess
 import sys
@@ -209,6 +210,91 @@ def test_task_aware_paths_tasks_and_accuracy_coverage(tmp_path):
     assert "tao_vl_reason_daft_sft_example.py" in plan_rl["command"]
 
 
+def test_task_aware_question_answer_schema_is_supported_and_validated(tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "clip.mp4").write_bytes(b"video")
+    annotation = tmp_path / "annotations.json"
+    annotation.write_text(json.dumps({
+        "format": "tao-vl-reason-v1.0",
+        "metadata": {"task": "bcq"},
+        "items": [{
+            "video_id": "clip.mp4",
+            "question": "Did an event occur?",
+            "answer": "Yes",
+            "reasoning": "The event is visible.",
+        }],
+    }))
+    inspected = common.inspect_dataset(
+        dataset_family="auto", annotations=[str(annotation)], media_roots=[str(media)]
+    )
+    assert inspected["dataset_family"] == "task_aware_video_reasoning"
+    assert inspected["tasks"] == {"bcq": 1}
+
+    payload = json.loads(annotation.read_text())
+    del payload["items"][0]["answer"]
+    annotation.write_text(json.dumps(payload))
+    with pytest.raises(common.WorkflowError, match="question/answer"):
+        common.inspect_dataset(
+            dataset_family="auto", annotations=[str(annotation)], media_roots=[str(media)]
+        )
+
+
+def test_streamable_input_inspector_preserves_paths_and_planned_outputs(tmp_path):
+    model = make_model(tmp_path)
+    train_annotation, train_media = make_video_conversation(tmp_path, "train")
+    val_annotation, val_media = make_video_conversation(tmp_path, "validation")
+    planned = tmp_path / "new-results" / "job"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "scripts" / "cosmos_common.py"),
+            "inspect-inputs",
+            "--base-model-path-or-uri", str(model),
+            "--dataset-family", "auto",
+            "--train-annotation", str(train_annotation),
+            "--train-media-root", str(train_media),
+            "--validation-annotation", str(val_annotation),
+            "--validation-media-root", str(val_media),
+            "--runtime-path", f"results_dir={planned}",
+            "--fast-media-fingerprint",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["frame"] == "target_compute"
+    assert payload["model"]["supplied"]["original"] == str(model)
+    assert payload["runtime_paths"]["results_dir"]["original"] == str(planned)
+    assert payload["runtime_paths"]["results_dir"]["exists"] is False
+    assert payload["runtime_paths"]["results_dir"]["parent_writable"] is True
+
+
+def test_materialize_dataset_filters_tasks_limits_and_never_overwrites_source(tmp_path):
+    annotations, _ = make_task_aware_video(tmp_path, "train")
+    output = tmp_path / "generated" / "smoke.json"
+    result = common.materialize_dataset(
+        dataset_family="task_aware_video_reasoning",
+        annotations=[str(path) for path in annotations],
+        output_path=str(output),
+        selected_tasks=["mcq"],
+        sample_limit=3,
+    )
+    payload = json.loads(output.read_text())
+    assert result["record_count"] == 3
+    assert result["sample_limit"] == 3
+    assert {item["task"] for item in payload["items"]} == {"mcq"}
+    assert result["sha256"] == common.sha256_file(output)
+    with pytest.raises(common.WorkflowError, match="must not overwrite"):
+        common.materialize_dataset(
+            dataset_family="auto",
+            annotations=[str(annotations[0])],
+            output_path=str(annotations[0]),
+        )
+
+
 @pytest.mark.parametrize("dataset_family,experiment", [("video_conversation", "tao_video_conversation_edge"), ("task_aware_video_reasoning", "tao_task_aware_video_reasoning_edge")])
 def test_public_edge_checkpoint_uses_skill_runtime_profile(tmp_path, dataset_family, experiment):
     args = args_for(tmp_path, dataset_family=dataset_family, model_name="nvidia/Cosmos3-Edge")
@@ -379,6 +465,159 @@ def test_container_mount_translation_preserves_original_paths(tmp_path):
     assert plan["datasets"]["train"]["annotations"][0]["original"] == args.train_annotation[0]
     assert plan["environment"]["TAO_VIDEO_TRAIN_ANNOTATION"].startswith("/runtime/")
     assert plan["prepared_model_container_path"].startswith("/runtime/")
+    assert plan["config_container_path"] == "/runtime/spec.toml"
+    assert args.container_results_dir == "/runtime/results"
+    assert args.container_checkpoint_dir == "/runtime/checkpoints"
+    assert args.container_cache_dir == "/runtime/cache"
+
+
+def test_remote_slurm_plan_streams_inspection_without_local_lustre(monkeypatch, tmp_path):
+    local_args = args_for(tmp_path / "fixtures")
+    local_plan = workflow.build_plan(local_args)
+    local_prefix = str((tmp_path / "fixtures").resolve())
+    remote_prefix = "/cluster/runtime"
+
+    def remotize(value):
+        return json.loads(json.dumps(value).replace(local_prefix, remote_prefix))
+
+    remote_runtime_paths = {}
+    for label in ("results_dir", "checkpoint_dir", "cache_dir", "sqsh_cache_dir", "sqsh_path"):
+        path = f"{remote_prefix}/{label}"
+        remote_runtime_paths[label] = {
+            "original": path,
+            "expanded": path,
+            "resolved": None,
+            "exists": False,
+            "kind": "missing",
+            "nearest_existing_parent": remote_prefix,
+            "parent_writable": True,
+        }
+    inspection = {
+        "schema_version": 1,
+        "frame": "target_compute",
+        "verified_host": "login.example",
+        "model": remotize(local_plan["model"]),
+        "datasets": remotize(local_plan["datasets"]),
+        "runtime_paths": remote_runtime_paths,
+    }
+
+    args = args_for(tmp_path / "request")
+    args.platform = "slurm"
+    args.slurm_user = "user"
+    args.slurm_host = ["login.example"]
+    args.partition = "compute"
+    args.account = "project"
+    args.container_mount = [f"{remote_prefix}:{remote_prefix}"]
+    args.base_model_path_or_uri = f"{remote_prefix}/model"
+    args.train_annotation = [f"{remote_prefix}/train/manifest.json"]
+    args.train_media_root = [f"{remote_prefix}/train/media"]
+    args.validation_annotation = [f"{remote_prefix}/validation/manifest.json"]
+    args.validation_media_root = [f"{remote_prefix}/validation/media"]
+    args.results_dir = remote_runtime_paths["results_dir"]["original"]
+    args.checkpoint_dir = remote_runtime_paths["checkpoint_dir"]["original"]
+    args.cache_dir = remote_runtime_paths["cache_dir"]["original"]
+    args.sqsh_cache_dir = remote_runtime_paths["sqsh_cache_dir"]["original"]
+    args.sqsh_path = remote_runtime_paths["sqsh_path"]["original"] + ".sqsh"
+    args.write_spec = f"{remote_prefix}/generated/spec.toml"
+    inspection["runtime_paths"]["sqsh_path"]["original"] = args.sqsh_path
+    inspection["runtime_paths"]["sqsh_path"]["expanded"] = args.sqsh_path
+    monkeypatch.setattr(workflow, "_remote_inspection", lambda _args: inspection)
+
+    plan = workflow.build_plan(args)
+    assert plan["input_frame"] == {
+        "kind": "slurm_remote",
+        "verified_host": "login.example",
+        "inspection_transport": "repository_helper_streamed_over_ssh",
+    }
+    assert plan["model"]["supplied"]["original"] == f"{remote_prefix}/model"
+    assert plan["paths"]["results_dir"]["original"] == args.results_dir
+    assert plan["preflight"]["submission_host"] == "command -v ssh >/dev/null"
+    workflow.write_spec(args, plan)
+    assert plan["config"]["materialized"] is False
+    assert plan["config"]["resolved"] == args.write_spec
+    assert plan["config"]["container"] == args.write_spec
+
+
+def test_remote_slurm_materializes_config_and_rl_smoke_manifests(monkeypatch, tmp_path):
+    local_args = args_for(tmp_path / "fixtures", backend="cosmos-rl", run_mode="smoke")
+    local_plan = workflow.build_plan(local_args)
+    local_prefix = str((tmp_path / "fixtures").resolve())
+    remote_prefix = "/cluster/runtime"
+
+    def remotize(value):
+        return json.loads(json.dumps(value).replace(local_prefix, remote_prefix))
+
+    args = args_for(tmp_path / "request", backend="cosmos-rl", run_mode="smoke")
+    args.platform = "slurm"
+    args.slurm_user = "user"
+    args.slurm_host = ["login.example"]
+    args.partition = "compute"
+    args.account = "project"
+    args.container_mount = [f"{remote_prefix}:{remote_prefix}"]
+    args.base_model_path_or_uri = f"{remote_prefix}/model"
+    args.train_annotation = [f"{remote_prefix}/train/manifest.json"]
+    args.train_media_root = [f"{remote_prefix}/train/media"]
+    args.validation_annotation = [f"{remote_prefix}/validation/manifest.json"]
+    args.validation_media_root = [f"{remote_prefix}/validation/media"]
+    args.results_dir = f"{remote_prefix}/results"
+    args.checkpoint_dir = f"{remote_prefix}/checkpoints"
+    args.cache_dir = f"{remote_prefix}/cache"
+    args.sqsh_cache_dir = f"{remote_prefix}/sqsh-cache"
+    args.sqsh_path = f"{remote_prefix}/sqsh-cache/image.sqsh"
+    args.write_spec = f"{remote_prefix}/generated/spec.toml"
+    runtime_paths = {
+        label: {
+            "original": value,
+            "expanded": value,
+            "resolved": None,
+            "exists": False,
+            "kind": "missing",
+            "nearest_existing_parent": remote_prefix,
+            "parent_writable": True,
+        }
+        for label, value in {
+            "results_dir": args.results_dir,
+            "checkpoint_dir": args.checkpoint_dir,
+            "cache_dir": args.cache_dir,
+            "sqsh_cache_dir": args.sqsh_cache_dir,
+            "sqsh_path": args.sqsh_path,
+        }.items()
+    }
+    inspection = {
+        "schema_version": 1,
+        "frame": "target_compute",
+        "verified_host": "login.example",
+        "model": remotize(local_plan["model"]),
+        "datasets": remotize(local_plan["datasets"]),
+        "runtime_paths": runtime_paths,
+    }
+    monkeypatch.setattr(workflow, "_remote_inspection", lambda _args: inspection)
+    generated: list[tuple[str, str, int]] = []
+
+    def fake_materialize(_args, *, split, output_path, sample_limit, host):
+        generated.append((split, output_path, sample_limit))
+        return {"sha256": split[0] * 64, "record_count": sample_limit}
+
+    written = {}
+
+    def fake_write(_args, *, output_path, content, host):
+        written.update({"output": output_path, "content": content, "host": host})
+        return hashlib.sha256(content.encode()).hexdigest()
+
+    monkeypatch.setattr(workflow, "_remote_materialize_dataset", fake_materialize)
+    monkeypatch.setattr(workflow, "_remote_write_text", fake_write)
+    plan = workflow.build_plan(args)
+    workflow.write_spec(args, plan, allow_remote_write=True)
+
+    assert generated == [
+        ("train", f"{remote_prefix}/generated/train_smoke.json", 16),
+        ("validation", f"{remote_prefix}/generated/validation_smoke.json", 8),
+    ]
+    assert written["output"] == args.write_spec
+    assert written["host"] == "login.example"
+    assert plan["config"]["materialized"] is True
+    assert all(item["materialized"] for item in plan["generated_artifacts"])
+    assert plan["spec"]["custom"]["train_dataset"]["annotation_path"].endswith("train_smoke.json")
 
 
 def test_pairwise_parity_blocks_model_dataset_and_optimization_mismatch(tmp_path):

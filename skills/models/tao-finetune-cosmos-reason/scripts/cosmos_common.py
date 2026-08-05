@@ -7,11 +7,14 @@ filesystem location in its output originates in a runtime request.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
 import re
 import statistics
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -308,6 +311,18 @@ def inspect_dataset(
                     continue
                 if not _record_media(record):
                     schema_errors.append(f"{annotation_path}:{index}: task-aware record has no media field")
+                conversations = record.get("conversations") or record.get("messages")
+                has_conversation_target = isinstance(conversations, list) and len(conversations) >= 2
+                has_question_answer = (
+                    isinstance(record.get("question"), str)
+                    and bool(record.get("question", "").strip())
+                    and isinstance(record.get("answer"), str)
+                    and bool(record.get("answer", "").strip())
+                )
+                if not has_conversation_target and not has_question_answer:
+                    schema_errors.append(
+                        f"{annotation_path}:{index}: task-aware record needs either >=2 conversation turns or non-empty question/answer"
+                    )
             else:
                 raise WorkflowError(f"unsupported dataset family: {active_family}")
             width, height, fps, duration = _numeric_metadata(record, metadata)
@@ -502,3 +517,236 @@ def selected_environment(environment: Mapping[str, str]) -> dict[str, str]:
         "PYTORCH_CUDA_ALLOC_CONF", "NVIDIA_DRIVER_CAPABILITIES", "CUDA_FORWARD_COMPAT",
     }
     return {key: environment[key] for key in sorted(allow & set(environment))}
+
+
+def planned_path_identity(value: str) -> dict[str, Any]:
+    """Describe a requested output path without creating it.
+
+    Launch preflight runs before result/checkpoint/cache directories are created.
+    Preserve the requested value and prove that the closest existing parent is
+    writable instead of mutating the target merely to test it.
+    """
+    identity = path_identity(value)
+    if identity["exists"]:
+        identity.update(
+            {
+                "nearest_existing_parent": identity["resolved"],
+                "parent_writable": os.access(identity["resolved"], os.W_OK | os.X_OK),
+            }
+        )
+        return identity
+
+    expanded = Path(identity["expanded"])
+    parent = expanded.parent
+    while parent != parent.parent and not parent.exists():
+        parent = parent.parent
+    parent_exists = parent.exists()
+    identity.update(
+        {
+            "nearest_existing_parent": str(parent.resolve()) if parent_exists else None,
+            "parent_writable": bool(parent_exists and os.access(parent, os.W_OK | os.X_OK)),
+        }
+    )
+    return identity
+
+
+def _split_labeled_path(value: str) -> tuple[str, str]:
+    if "=" not in value:
+        raise WorkflowError("runtime paths must use LABEL=PATH syntax")
+    label, path = value.split("=", 1)
+    if not label.strip() or not path.strip():
+        raise WorkflowError("runtime paths must include a non-empty label and path")
+    return label.strip(), path.strip()
+
+
+def _inspect_inputs_cli(argv: Sequence[str]) -> dict[str, Any]:
+    parser = argparse.ArgumentParser(
+        prog="cosmos_common.py inspect-inputs",
+        description="Inspect Cosmos model and video-dataset inputs from their compute frame.",
+    )
+    parser.add_argument("--base-model-path-or-uri", required=True)
+    parser.add_argument("--base-model-revision", default="")
+    parser.add_argument("--prepared-checkpoint-path", default="")
+    parser.add_argument(
+        "--dataset-family",
+        choices=sorted(DATASET_FAMILIES),
+        default="auto",
+    )
+    parser.add_argument("--train-annotation", action="append", default=[])
+    parser.add_argument("--train-media-root", action="append", default=[])
+    parser.add_argument("--validation-annotation", action="append", default=[])
+    parser.add_argument("--validation-media-root", action="append", default=[])
+    parser.add_argument("--task", action="append", default=[])
+    parser.add_argument("--runtime-path", action="append", default=[])
+    parser.add_argument("--fast-media-fingerprint", action="store_true")
+    args = parser.parse_args(list(argv))
+
+    model = inspect_model(
+        args.base_model_path_or_uri,
+        args.base_model_revision,
+        args.prepared_checkpoint_path,
+    )
+    train = inspect_dataset(
+        dataset_family=args.dataset_family,
+        annotations=args.train_annotation,
+        media_roots=args.train_media_root,
+        selected_tasks=args.task,
+        verify_media_content=not args.fast_media_fingerprint,
+    )
+    validation = inspect_dataset(
+        dataset_family=args.dataset_family,
+        annotations=args.validation_annotation,
+        media_roots=args.validation_media_root,
+        selected_tasks=args.task,
+        verify_media_content=not args.fast_media_fingerprint,
+    )
+    if train["dataset_family"] != validation["dataset_family"]:
+        raise WorkflowError("training and validation annotations resolve to different dataset families")
+    assert_no_overlap(train, validation)
+    runtime_paths = {
+        label: planned_path_identity(path)
+        for label, path in map(_split_labeled_path, args.runtime_path)
+    }
+    return {
+        "schema_version": 1,
+        "frame": "target_compute",
+        "model": model,
+        "datasets": {"train": train, "validation": validation},
+        "runtime_paths": runtime_paths,
+    }
+
+
+def materialize_dataset(
+    *,
+    dataset_family: str,
+    annotations: Sequence[str],
+    output_path: str,
+    selected_tasks: Sequence[str] = (),
+    sample_limit: int = 0,
+) -> dict[str, Any]:
+    """Merge/filter annotations into one deterministic, atomic runtime manifest."""
+    if not annotations:
+        raise WorkflowError("at least one annotation is required for materialization")
+    if sample_limit < 0:
+        raise WorkflowError("sample_limit must be nonnegative")
+    normalized_tasks = {
+        item.casefold().replace("-", "_").replace(" ", "_")
+        for item in selected_tasks
+    }
+    output = Path(output_path).expanduser()
+    resolved_inputs = {Path(item).expanduser().resolve() for item in annotations}
+    if output.resolve() in resolved_inputs:
+        raise WorkflowError("materialized output must not overwrite a source annotation")
+
+    records: list[dict[str, Any]] = []
+    observed_families: set[str] = set()
+    for value in annotations:
+        annotation = Path(value).expanduser()
+        if not annotation.is_file():
+            raise WorkflowError(f"annotation path is inaccessible: {value}")
+        items, metadata = load_annotation(annotation)
+        observed = _detect_dataset_family(items, metadata)
+        observed_families.add(observed)
+        if dataset_family != "auto" and observed != dataset_family:
+            raise WorkflowError(
+                f"{annotation}: detected {observed}, requested {dataset_family}"
+            )
+        for item in items:
+            task = _record_task(item, metadata)
+            if normalized_tasks and task not in normalized_tasks:
+                continue
+            copied = dict(item)
+            if observed == "task_aware_video_reasoning" and task and not copied.get("task"):
+                copied["task"] = task
+            records.append(copied)
+    if len(observed_families) != 1:
+        raise WorkflowError(
+            f"annotation files mix incompatible dataset families: {sorted(observed_families)}"
+        )
+    if not records:
+        raise WorkflowError("materialization selected zero records")
+    if sample_limit:
+        records = records[:sample_limit]
+
+    resolved_family = next(iter(observed_families))
+    payload: Any
+    if resolved_family == "task_aware_video_reasoning":
+        payload = {
+            "format": "tao-vl-reason-v1.0",
+            "metadata": {"task": "mixed"},
+            "items": records,
+        }
+    else:
+        payload = records
+    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if not os.access(output.parent, os.W_OK | os.X_OK):
+        raise WorkflowError(f"materialization output parent is not writable: {output.parent}")
+    temporary_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", prefix=f".{output.name}.", suffix=".tmp",
+            dir=output.parent, delete=False,
+        ) as stream:
+            temporary_name = stream.name
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, output)
+    finally:
+        if temporary_name and Path(temporary_name).exists():
+            Path(temporary_name).unlink()
+    return {
+        "schema_version": 1,
+        "dataset_family": resolved_family,
+        "sample_limit": sample_limit,
+        "selected_tasks": sorted(normalized_tasks),
+        "record_count": len(records),
+        "output": path_identity(str(output)),
+        "sha256": sha256_file(output),
+    }
+
+
+def _materialize_dataset_cli(argv: Sequence[str]) -> dict[str, Any]:
+    parser = argparse.ArgumentParser(
+        prog="cosmos_common.py materialize-dataset",
+        description="Create a deterministic merged/smoke manifest in the target compute frame.",
+    )
+    parser.add_argument("--dataset-family", choices=sorted(DATASET_FAMILIES), default="auto")
+    parser.add_argument("--annotation", action="append", default=[])
+    parser.add_argument("--output-path", required=True)
+    parser.add_argument("--task", action="append", default=[])
+    parser.add_argument("--sample-limit", type=int, default=0)
+    args = parser.parse_args(list(argv))
+    return materialize_dataset(
+        dataset_family=args.dataset_family,
+        annotations=args.annotation,
+        output_path=args.output_path,
+        selected_tasks=args.task,
+        sample_limit=args.sample_limit,
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    values = list(sys.argv[1:] if argv is None else argv)
+    if not values or values[0] not in {"inspect-inputs", "materialize-dataset"}:
+        print(
+            "usage: cosmos_common.py {inspect-inputs,materialize-dataset} [options]",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        payload = (
+            _inspect_inputs_cli(values[1:])
+            if values[0] == "inspect-inputs"
+            else _materialize_dataset_cli(values[1:])
+        )
+    except WorkflowError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, sort_keys=True), file=sys.stderr)
+        return 2
+    print(json.dumps(payload, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

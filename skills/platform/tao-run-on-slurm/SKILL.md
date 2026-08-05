@@ -34,6 +34,11 @@ the cluster.
 
 Confirm `SLURM_USER` and `SLURM_HOSTNAME` are exported and passwordless SSH to a
 login host works (`ssh -o BatchMode=yes`).
+The launch host needs `ssh`, not local `sbatch`, `srun`, Enroot, or a Lustre
+mount. Preflight those scheduler, Pyxis, Enroot, and shared-storage dependencies
+on the selected remote login/compute frame. Model-specific inspectors may be
+streamed from the installed skill over SSH stdin; do not stage an ad-hoc source
+patch or treat the launch host as the SLURM frame.
 For private `nvcr.io` images, install `~/.config/enroot/.credentials` on the
 cluster once per (cluster, user): Pyxis/Enroot does not read `NGC_KEY` from the
 job env, and without persistent credentials, auth-gated pulls fail with "Could
@@ -161,7 +166,12 @@ When `tao-finetune-cosmos-reason` resolves a backend, read that backend
 contract before rendering the SLURM command. Cosmos jobs require a prebuilt,
 compute-node-readable `.sqsh`; convert the selected image before the GPU
 allocation and do not substitute a direct registry reference in the training
-job. Stage the generated TOML and Framework status bridge on Lustre.
+job. Use the model planner's explicit post-review `materialize` verb to write
+generated TOMLs and any merged/smoke manifests atomically on user-supplied
+shared storage, then verify their checksums before rendering or submitting the
+job. Planning and preflight must remain read-only and must not require the
+shared filesystem to be mounted on the SSH launch host. Stage the Framework
+status bridge in the repository-derived image, not as an ad hoc source patch.
 
 - Cosmos Framework: one Pyxis task/container per node; inside each task set
   `NODE_RANK=$SLURM_PROCID` and launch native torchrun with node count,
