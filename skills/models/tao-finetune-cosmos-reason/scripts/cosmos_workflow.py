@@ -54,6 +54,66 @@ ALIASES = {
 SUPPORTED_ACTIONS = {"train", "evaluate", "inference", "quantize"}
 
 
+def resolve_model_name(requested: str, base_model_path_or_uri: str) -> str:
+    """Resolve Nano versus Edge from explicit input or public checkpoint identity."""
+    if requested and requested.casefold() != "auto":
+        model_tier(requested)
+        return requested
+    normalized = base_model_path_or_uri.casefold().replace("_", "-")
+    if "cosmos3-edge" in normalized:
+        return "nvidia/Cosmos3-Edge"
+    if "cosmos3-nano" in normalized:
+        return "nvidia/Cosmos3-Nano"
+    path = Path(base_model_path_or_uri).expanduser()
+    config_path = path / "config.json"
+    if config_path.is_file():
+        try:
+            model_type = str(json.loads(config_path.read_text(encoding="utf-8")).get("model_type", ""))
+        except json.JSONDecodeError as exc:
+            raise WorkflowError(f"base model config.json is invalid: {config_path}: {exc}") from exc
+        if model_type == "cosmos3_edge":
+            return "nvidia/Cosmos3-Edge"
+        if model_type in {"qwen3_vl", "cosmos3_omni"}:
+            return "nvidia/Cosmos3-Nano"
+    raise WorkflowError("model tier is ambiguous; supply Cosmos3-Nano/Edge or a recognizable public checkpoint")
+
+
+def resolve_model_profile(args: argparse.Namespace, tier: str) -> dict[str, Any]:
+    """Resolve model-aware runtime policy without modifying checkpoint files."""
+    defaults = {
+        "nano": {"frames": 8, "sequence_length": 40960, "attention_implementation": "cosmos"},
+        "edge": {"frames": 6, "sequence_length": 16000, "attention_implementation": "flash_attention_2"},
+    }[tier]
+    frames = args.frames or defaults["frames"]
+    sequence_length = args.sequence_length or defaults["sequence_length"]
+    attention = args.attention_implementation if args.attention_implementation != "auto" else defaults["attention_implementation"]
+    if frames < 1 or sequence_length < 1:
+        raise WorkflowError("frames and sequence_length must be positive")
+    if args.video_frame_width < 1 or args.video_frame_height < 1:
+        raise WorkflowError("video frame width and height must be positive")
+    max_pixels = args.video_max_pixels or (
+        frames * args.video_frame_width * args.video_frame_height if tier == "edge" else 0
+    )
+    if max_pixels < 0:
+        raise WorkflowError("video_max_pixels must be nonnegative")
+    profile = {
+        "model_tier": tier,
+        "source": "user" if any((args.frames, args.sequence_length, args.video_max_pixels)) or args.attention_implementation != "auto" else "tao_skill_default",
+        "frames": frames,
+        "sequence_length": sequence_length,
+        "attention_implementation": attention,
+        "frame_width": args.video_frame_width,
+        "frame_height": args.video_frame_height,
+        "max_video_pixels": max_pixels or None,
+        "checkpoint_mutation": False,
+    }
+    args.frames = frames
+    args.sequence_length = sequence_length
+    args.attention_implementation = attention
+    args.video_max_pixels = max_pixels
+    return profile
+
+
 def load_yaml(path: Path) -> dict[str, Any]:
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -210,7 +270,7 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
     val_steps = math.ceil(smoke_val / world)
     epochs = contract["epochs"]
     spec: dict[str, Any] = {
-        "job": {"task": "vlm", "experiment": "aetc_daft_vlm" if args.workload == "aetc" else "wts_vlm", "project": "cosmos3_reasoner", "group": args.workload, "name": args.experiment_id, "wandb_mode": "disabled"},
+        "job": {"task": "vlm", "experiment": ("aetc_daft_vlm_edge" if args.workload == "aetc" else "wts_vlm_edge") if model_tier(args.model) == "edge" else ("aetc_daft_vlm" if args.workload == "aetc" else "wts_vlm"), "project": "cosmos3_reasoner", "group": args.workload, "name": args.experiment_id, "wandb_mode": "disabled"},
         "model": {
             "attn_implementation": args.attention_implementation, "precision": args.precision,
             "backbone": {"model_name": "${oc.env:VLM_SAFETENSORS_PATH}", "safetensors_path": "${oc.env:VLM_SAFETENSORS_PATH}"},
@@ -324,6 +384,9 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
             "AETC_VAL_MEDIA": val_media[0] if args.workload == "aetc" else "",
             "AETC_NUM_VIDEO_FRAMES": str(args.frames), "AETC_SYSTEM_PROMPT": args.system_prompt,
         })
+        if args.video_max_pixels:
+            common["WTS_VIDEO_MAX_PIXELS"] = str(args.video_max_pixels)
+            common["AETC_VIDEO_MAX_PIXELS"] = str(args.video_max_pixels)
         if args.run_mode == "smoke":
             common.update({"WTS_TRAIN_LIMIT": str(args.smoke_train_samples), "WTS_VAL_LIMIT": str(args.smoke_validation_samples), "AETC_TRAIN_LIMIT": str(args.smoke_train_samples), "AETC_VAL_LIMIT": str(args.smoke_validation_samples)})
     return common
@@ -451,18 +514,23 @@ def _model_preparation(args: argparse.Namespace, model: Mapping[str, Any]) -> tu
     supplied_format = args.base_model_format
     detected = model.get("format")
     if supplied_format == "auto":
-        if model.get("source_type") == "uri":
+        tier = model_tier(args.model)
+        if tier == "edge":
+            supplied_format = "cosmos3_edge"
+        elif model.get("source_type") == "uri":
             raise WorkflowError("base_model_format must be explicit for a model URI")
-        supplied_format = "qwen3_vl" if detected == "qwen3_vl" else "cosmos3_omni" if detected == "cosmos3_omni" else "unknown"
+        else:
+            supplied_format = "qwen3_vl" if detected == "qwen3_vl" else "cosmos3_omni" if detected == "cosmos3_omni" else "unknown"
     if args.prepared_checkpoint_path:
         prepared = model["prepared_checkpoint"]
-        if prepared.get("format") != "qwen3_vl":
-            raise WorkflowError("prepared_checkpoint_path must have model_type=qwen3_vl")
+        accepted = {"qwen3_vl"} if model_tier(args.model) == "nano" else {"cosmos3_edge", "nemotron_h", "nemotron_vl"}
+        if prepared.get("format") not in accepted:
+            raise WorkflowError(f"prepared_checkpoint_path has incompatible model_type={prepared.get('format')!r}")
         return args.prepared_checkpoint_path, {"required": False, "reason": "validated prepared checkpoint supplied", "output": prepared}
-    if model.get("source_type") == "local" and supplied_format == "qwen3_vl":
-        return args.base_model_path_or_uri, {"required": False, "reason": "base model is already qwen3_vl", "output": model["supplied"]}
+    if model.get("source_type") == "local" and supplied_format in {"qwen3_vl", "cosmos3_edge"}:
+        return args.base_model_path_or_uri, {"required": False, "reason": f"base model is already {supplied_format}; no processor overlay is created", "output": model["supplied"]}
     output = str((Path(args.checkpoint_dir).expanduser() / "prepared" / model["fingerprint"][:16]).resolve())
-    if supplied_format == "qwen3_vl":
+    if supplied_format in {"qwen3_vl", "cosmos3_edge"}:
         command = " ".join([
             "docker run --rm --entrypoint python",
             "-e HF_TOKEN",
@@ -478,8 +546,8 @@ def _model_preparation(args: argparse.Namespace, model: Mapping[str, Any]) -> tu
             ),
         ])
         return output, {
-            "required": True, "kind": "immutable_snapshot", "output": path_identity(output, required=False),
-            "command": command, "provenance": "fingerprint model/tokenizer/processor after download",
+            "required": True, "kind": "immutable_public_checkpoint_snapshot", "output": path_identity(output, required=False),
+            "command": command, "provenance": "fingerprint model/tokenizer/processor after download; do not modify checkpoint files",
         }
     if supplied_format != "cosmos3_omni":
         raise WorkflowError(f"unsupported Cosmos3-Nano base checkpoint format: {supplied_format}")
@@ -562,11 +630,14 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
 
 
 def build_plan(args: argparse.Namespace) -> dict[str, Any]:
+    args.model = resolve_model_name(args.model, args.base_model_path_or_uri)
     backend, reason = select_backend(model=args.model, action=args.action, backend=args.backend, workload=args.workload, comparative=args.comparative)
     if args.action != "train":
         raise WorkflowError("this planner currently materializes training; use the backend action contract for non-train actions")
-    if model_tier(args.model) != "nano":
-        raise WorkflowError("the reproducible paired workflow in this skill is scoped to Cosmos3-Nano")
+    tier = model_tier(args.model)
+    if tier == "edge" and backend != "cosmos-framework":
+        raise WorkflowError("Cosmos3-Edge training requires Cosmos Framework")
+    model_profile = resolve_model_profile(args, tier)
     if args.run_mode == "full" and (args.train_sample_limit or args.validation_sample_limit):
         raise WorkflowError("full runs must not contain a smoke/subset sample limit")
     if args.async_checkpoint and args.nodes > 1:
@@ -586,7 +657,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     contract = _training_contract(args)
     commits = _source_commits(args, backend)
     image = _image_plan(args, backend, commits)
-    processor_fingerprint = stable_hash({"revision": args.processor_revision, "frames": args.frames})
+    processor_fingerprint = stable_hash({"revision": args.processor_revision, "profile": model_profile})
     cache_keys = {
         split: hashlib.sha256(
             (
@@ -609,7 +680,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "model": model, "action": args.action, "workload": args.workload, "backend": backend,
         "model_preparation": model_preparation, "prepared_model_container_path": prepared_model_container,
         "backend_selection_reason": reason, "backend_contract": str(BACKEND_FILES[backend]),
-        "run_mode": args.run_mode, "training": contract,
+        "run_mode": args.run_mode, "training": contract, "processor_profile": model_profile,
         "datasets": {"train": train_data, "validation": val_data},
         "paths": {
             "results_dir": path_identity(args.results_dir), "checkpoint_dir": path_identity(args.checkpoint_dir),
@@ -891,7 +962,7 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
 
 
 def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> None:
-    parser.add_argument("--model", default="nvidia/Cosmos3-Nano")
+    parser.add_argument("--model", default="auto")
     parser.add_argument("--experiment-id", default="")
     parser.add_argument("--action", choices=sorted(SUPPORTED_ACTIONS), default="train")
     parser.add_argument("--backend", choices=("auto", "cosmos-framework", "cosmos-rl"), default="auto")
@@ -900,7 +971,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--platform", choices=("docker", "slurm"), default="slurm")
     parser.add_argument("--base-model-path-or-uri", default="")
     parser.add_argument("--base-model-revision", default="")
-    parser.add_argument("--base-model-format", choices=("auto", "qwen3_vl", "cosmos3_omni"), default="auto")
+    parser.add_argument("--base-model-format", choices=("auto", "qwen3_vl", "cosmos3_omni", "cosmos3_edge"), default="auto")
     parser.add_argument("--prepared-checkpoint-path", default="")
     parser.add_argument("--vlm-architecture-model-path-or-uri", default="")
     parser.add_argument("--vlm-architecture-model-revision", default="")
@@ -920,8 +991,10 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--scheduler", default="linear"); parser.add_argument("--warmup", type=int, default=0)
     parser.add_argument("--weight-decay", type=float, default=0.01); parser.add_argument("--gradient-clip", type=float, default=1.0)
     parser.add_argument("--precision", default="bfloat16"); parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--sequence-length", type=int, default=40960); parser.add_argument("--frames", type=int, default=8)
-    parser.add_argument("--system-prompt", default=""); parser.add_argument("--attention-implementation", default="cosmos")
+    parser.add_argument("--sequence-length", type=int, default=0); parser.add_argument("--frames", type=int, default=0)
+    parser.add_argument("--video-max-pixels", type=int, default=0); parser.add_argument("--video-frame-width", type=int, default=1280)
+    parser.add_argument("--video-frame-height", type=int, default=720)
+    parser.add_argument("--system-prompt", default=""); parser.add_argument("--attention-implementation", default="auto")
     parser.add_argument("--processor-revision", default="packaged"); parser.add_argument("--run-mode", choices=("smoke", "full"), default="full")
     parser.add_argument("--skip-smoke", action="store_true"); parser.add_argument("--smoke-train-samples", type=int, default=16)
     parser.add_argument("--smoke-validation-samples", type=int, default=8); parser.add_argument("--train-sample-limit", type=int, default=0)
@@ -1008,6 +1081,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             args.metadata.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         elif args.verb == "resolve":
+            args.model = resolve_model_name(args.model, args.base_model_path_or_uri)
             backend, reason = select_backend(model=args.model, action=args.action, backend=args.backend, workload=args.workload, comparative=args.comparative)
             result = {"schema_version": 2, "model": args.model, "backend": backend, "backend_selection_reason": reason, "backend_contract": str(BACKEND_FILES[backend])}
         else:

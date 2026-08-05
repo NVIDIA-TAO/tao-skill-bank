@@ -33,10 +33,10 @@ workflow = load_module("cosmos_workflow_test", SKILL / "scripts" / "cosmos_workf
 metric = load_module("cosmos_metrics_test", SKILL / "scripts" / "extract_cosmos_metrics.py")
 
 
-def make_model(tmp_path: Path) -> Path:
+def make_model(tmp_path: Path, model_type: str = "qwen3_vl") -> Path:
     model = tmp_path / "model"
     model.mkdir(parents=True)
-    (model / "config.json").write_text(json.dumps({"model_type": "qwen3_vl", "architectures": ["Qwen3VLForConditionalGeneration"]}))
+    (model / "config.json").write_text(json.dumps({"model_type": model_type, "architectures": ["Qwen3VLForConditionalGeneration"]}))
     (model / "model.safetensors").write_bytes(b"weights")
     (model / "tokenizer.json").write_text("{}")
     (model / "processor_config.json").write_text("{}")
@@ -74,8 +74,8 @@ def make_aetc(tmp_path: Path, split: str) -> tuple[list[Path], Path]:
     return annotations, media
 
 
-def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", workload: str = "wts", run_mode: str = "full", training_mode: str = "dense"):
-    model = make_model(tmp_path)
+def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", workload: str = "wts", run_mode: str = "full", training_mode: str = "dense", model_name: str = "nvidia/Cosmos3-Nano"):
+    model = make_model(tmp_path, "cosmos3_edge" if "Edge" in model_name else "qwen3_vl")
     if workload == "wts":
         train_annotations, train_media = [make_wts(tmp_path, "train")[0]], [tmp_path / "train" / "media"]
         val_annotations, val_media = [make_wts(tmp_path, "validation")[0]], [tmp_path / "validation" / "media"]
@@ -88,7 +88,7 @@ def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", workload: str
     ssh_key = tmp_path / "id_ed25519"; ssh_key.write_text("fixture")
     sqsh = tmp_path / "sqsh-cache" / "image.sqsh"; sqsh.write_bytes(b"sqsh")
     values = [
-        "plan", "--model", "nvidia/Cosmos3-Nano", "--backend", backend, "--action", "train",
+        "plan", "--model", model_name, "--backend", backend, "--action", "train",
         "--workload", workload, "--platform", "docker", "--run-mode", run_mode,
         "--training-mode", training_mode, "--base-model-path-or-uri", str(model),
         "--results-dir", str(tmp_path / "results"), "--checkpoint-dir", str(tmp_path / "checkpoints"),
@@ -134,6 +134,20 @@ def test_model_input_required_and_uri_revision_required(tmp_path):
         common.inspect_model("nvidia/Cosmos3-Nano")
     identity = common.inspect_model("nvidia/Cosmos3-Nano", "0123456789abcdef")
     assert identity["revision"] == "0123456789abcdef"
+
+
+def test_indexed_model_weights_are_validated_and_fingerprinted(tmp_path):
+    model = tmp_path / "indexed-model"
+    weights = model / "weights"
+    weights.mkdir(parents=True)
+    (model / "config.json").write_text(json.dumps({"model_type": "cosmos3_edge"}))
+    (weights / "model-00001-of-00001.safetensors").write_bytes(b"edge-weights")
+    (model / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {"layer.weight": "weights/model-00001-of-00001.safetensors"}}))
+    inspected = common.inspect_model(str(model))
+    assert "weights/model-00001-of-00001.safetensors" in {item["path"] for item in inspected["files"]}
+    (weights / "model-00001-of-00001.safetensors").unlink()
+    with pytest.raises(common.WorkflowError, match="missing weight file"):
+        common.inspect_model(str(model))
 
 
 def test_runtime_paths_are_preserved_and_resolved(tmp_path):
@@ -193,6 +207,65 @@ def test_aetc_paths_tasks_and_accuracy_coverage(tmp_path):
     args_rl = args_for(tmp_path / "rl", workload="aetc", backend="cosmos-rl")
     plan_rl = workflow.build_plan(args_rl)
     assert "tao_vl_reason_daft_sft_example.py" in plan_rl["command"]
+
+
+@pytest.mark.parametrize("workload,experiment", [("wts", "wts_vlm_edge"), ("aetc", "aetc_daft_vlm_edge")])
+def test_public_edge_checkpoint_uses_skill_runtime_profile(tmp_path, workload, experiment):
+    args = args_for(tmp_path, workload=workload, model_name="nvidia/Cosmos3-Edge")
+    plan = workflow.build_plan(args)
+
+    assert plan["backend"] == "cosmos-framework"
+    assert plan["model_preparation"]["required"] is False
+    assert "no processor overlay" in plan["model_preparation"]["reason"]
+    assert plan["prepared_model_container_path"] == str((tmp_path / "model").resolve())
+    assert plan["spec"]["job"]["experiment"] == experiment
+    assert plan["processor_profile"] == {
+        "model_tier": "edge",
+        "source": "tao_skill_default",
+        "frames": 6,
+        "sequence_length": 16000,
+        "attention_implementation": "flash_attention_2",
+        "frame_width": 1280,
+        "frame_height": 720,
+        "max_video_pixels": 5529600,
+        "checkpoint_mutation": False,
+    }
+    assert plan["environment"]["WTS_VIDEO_MAX_PIXELS"] == "5529600"
+    assert plan["environment"]["AETC_VIDEO_MAX_PIXELS"] == "5529600"
+
+
+def test_public_edge_uri_is_snapshotted_without_alternate_checkpoint(tmp_path):
+    args = args_for(tmp_path, model_name="nvidia/Cosmos3-Edge")
+    args.base_model_path_or_uri = "nvidia/Cosmos3-Edge"
+    args.base_model_revision = "0123456789abcdef"
+    plan = workflow.build_plan(args)
+
+    assert plan["model_preparation"]["kind"] == "immutable_public_checkpoint_snapshot"
+    assert plan["model_preparation"]["required"] is True
+    assert "processor overlay" not in plan["model_preparation"]["command"]
+    assert plan["processor_profile"]["checkpoint_mutation"] is False
+
+
+def test_model_tier_is_inferred_from_public_checkpoint_identity(tmp_path):
+    args = args_for(tmp_path, model_name="nvidia/Cosmos3-Edge")
+    args.model = "auto"
+    args.base_model_path_or_uri = "nvidia/Cosmos3-Edge"
+    args.base_model_revision = "0123456789abcdef"
+    plan = workflow.build_plan(args)
+    assert plan["model_name"] == "nvidia/Cosmos3-Edge"
+    assert plan["backend"] == "cosmos-framework"
+
+
+def test_edge_profile_explicit_override_is_recorded(tmp_path):
+    args = args_for(tmp_path, model_name="nvidia/Cosmos3-Edge")
+    args.frames = 4
+    args.video_max_pixels = 3686400
+    args.sequence_length = 12000
+    plan = workflow.build_plan(args)
+    assert plan["processor_profile"]["source"] == "user"
+    assert plan["processor_profile"]["frames"] == 4
+    assert plan["processor_profile"]["max_video_pixels"] == 3686400
+    assert plan["training"]["sequence_length"] == 12000
 
 
 def test_dataset_overlap_and_missing_media_fail(tmp_path):
