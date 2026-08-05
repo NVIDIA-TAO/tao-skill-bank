@@ -9,7 +9,7 @@ license: Apache-2.0
 compatibility: Docker with NVIDIA Container Toolkit, or SLURM with Pyxis/Enroot and a user-supplied shared-storage configuration.
 metadata:
   author: NVIDIA Corporation
-  version: "0.3.0"
+  version: "0.3.1"
 allowed-tools: Read Bash
 tags: [cosmos, vlm, sft, peft, video, reasoning, slurm]
 ---
@@ -74,13 +74,44 @@ Run `scripts/cosmos_workflow.py resolve` first.
 |---|---|
 | Cosmos3-Nano plain train | Cosmos Framework |
 | Cosmos3-Nano AutoML/HPO | Cosmos-RL |
-| Nano evaluate/inference/quantize | Cosmos-RL |
-| Cosmos3-Edge native train | Cosmos Framework |
+| Nano Framework-DCP export | Cosmos Framework |
+| Nano evaluate/inference/microservice with no explicit backend | Cosmos-RL |
+| Nano quantize | Cosmos-RL |
+| Cosmos3-Edge train/export/evaluate/inference/microservice | Cosmos Framework |
 
 An explicit supported backend wins. Comparative runs reject `auto`, so both
 sides of an experiment are deliberately forced. Framework-trained checkpoints
 use the native exact-key exporter, then the repository-backed TAO evaluation
 adapter. That does not make Framework a Cosmos-RL version.
+
+## Framework checkpoint pre-action
+
+Before every Framework `evaluate`, `inference`, or `inference_microservice`
+action, invoke `scripts/framework_checkpoint_action.py plan`. Do not ask the
+user to find or run an exporter manually. The helper preserves the supplied
+checkpoint path, detects a complete HF safetensors directory versus a native
+Framework DCP, infers the saved Framework config only from the checkpoint's
+standard run layout, and otherwise requires an explicit `config_file`.
+
+For DCP input, run the helper's `prepare` verb in the newly built Framework
+TAO action image before starting the requested action. Its runner may be local
+Docker or an `srun` Pyxis command supplied through `--command-prefix`. On
+SLURM, stage this checked-in helper and `cosmos_common.py` with checksums in the
+job input directory; mount only that job directory, not a source checkout.
+The helper invokes the repository-owned exact-key exporter, verifies the DCP
+metadata/config/base-model/revision/exported weights and manifest, writes
+`.tao_export_complete`, and returns `action_model_path`. Put that verified path
+into `model.model_name` for evaluation or `model_path` for inference and the
+microservice. Run `verify` once more from the target compute frame before the
+action child starts.
+
+An already verified export is reused without conversion. A stale or partial
+export is never silently accepted: `prepare` creates and verifies a sibling
+temporary export, preserves the invalid directory under an `.invalid-*` name,
+then atomically installs the replacement. Capture the pre-action JSON, child
+exit code, export manifest checksum, source checkpoint/config fingerprints,
+and final action child code in the job metadata. A failed export blocks the
+evaluate or inference allocation/action and emits terminal `FAILURE`.
 
 ## Required gates
 

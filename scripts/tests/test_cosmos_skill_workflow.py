@@ -32,6 +32,9 @@ def load_module(name: str, path: Path):
 common = load_module("cosmos_common", SKILL / "scripts" / "cosmos_common.py")
 workflow = load_module("cosmos_workflow_test", SKILL / "scripts" / "cosmos_workflow.py")
 metric = load_module("cosmos_metrics_test", SKILL / "scripts" / "extract_cosmos_metrics.py")
+framework_action = load_module(
+    "framework_checkpoint_action_test", SKILL / "scripts" / "framework_checkpoint_action.py"
+)
 
 
 def make_model(tmp_path: Path, model_type: str = "qwen3_vl") -> Path:
@@ -124,8 +127,152 @@ def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", dataset_famil
 def test_model_backend_resolution_and_comparative_explicitness():
     assert workflow.select_backend(model="Cosmos3-Nano", action="train", workload="training")[0] == "cosmos-framework"
     assert workflow.select_backend(model="Cosmos3-Nano", action="evaluate", workload="training")[0] == "cosmos-rl"
+    assert workflow.select_backend(model="Cosmos3-Nano", action="export", workload="training")[0] == "cosmos-framework"
+    assert workflow.select_backend(model="Cosmos3-Edge", action="evaluate", workload="training")[0] == "cosmos-framework"
+    assert workflow.select_backend(model="Cosmos3-Edge", action="inference_microservice", workload="training")[0] == "cosmos-framework"
     with pytest.raises(common.WorkflowError, match="backend selection"):
         workflow.select_backend(model="Cosmos3-Nano", action="train", backend="auto", comparative=True)
+
+
+def make_framework_dcp(tmp_path: Path) -> tuple[Path, Path, Path]:
+    run = tmp_path / "framework-run"
+    checkpoint = run / "checkpoints" / "epoch_1"
+    model_dcp = checkpoint / "model"
+    model_dcp.mkdir(parents=True)
+    (model_dcp / ".metadata").write_bytes(b"dcp-metadata")
+    (model_dcp / "__0_0.distcp").write_bytes(b"dcp-shard")
+    config = run / "config.yaml"
+    config.write_text("model:\n  _target_: cosmos_framework.model.generator.vlm_model.VLMModel\n")
+    base_model = make_model(tmp_path / "base-model")
+    return checkpoint, config, base_model
+
+
+def framework_action_args(
+    checkpoint: Path,
+    config: Path,
+    base_model: Path,
+    *,
+    verb: str = "plan",
+    export_dir: Path | None = None,
+):
+    values = [
+        verb,
+        "--action", "evaluate",
+        "--checkpoint-path", str(checkpoint),
+        "--config-file", str(config),
+        "--base-model-path-or-uri", str(base_model),
+        "--base-model-revision", "immutable-test-revision",
+        "--python-executable", sys.executable,
+    ]
+    if export_dir:
+        values += ["--export-dir", str(export_dir)]
+    return framework_action.parse_args(values)
+
+
+def write_framework_export(output: Path, checkpoint: Path, config: Path, base_model: Path) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}))
+    (output / "model.safetensors").write_bytes(b"exported-weights")
+    metadata = checkpoint / "model" / ".metadata"
+    manifest = {
+        "format": "cosmos-framework-vlm-dcp",
+        "checkpoint": str(checkpoint.resolve()),
+        "checkpoint_metadata_sha256": common.sha256_file(metadata),
+        "config": str(config.resolve()),
+        "config_sha256": common.sha256_file(config),
+        "base_model_path_or_uri": str(base_model.resolve()),
+        "base_model_revision": "immutable-test-revision",
+        "base_model_fingerprint": {
+            "kind": "local",
+            "source": str(base_model),
+            "sha256": framework_action._base_model_fingerprint(base_model),
+        },
+        "tensor_count": 1,
+        "lora": {"enabled": False},
+        "merged_adapters": 0,
+    }
+    (output / "export_manifest.json").write_text(json.dumps(manifest))
+    (output / "checkpoint.json").write_text(json.dumps({
+        "checkpoint_path": str(checkpoint.resolve()), "checkpoint_type": "vlm_dcp",
+    }))
+
+
+def test_framework_action_plan_exports_dcp_and_preserves_runtime_paths(tmp_path):
+    checkpoint, config, base_model = make_framework_dcp(tmp_path)
+    supplied = str(checkpoint.parent / "." / checkpoint.name)
+    args = framework_action_args(checkpoint, config, base_model)
+    args.checkpoint_path = supplied
+    plan = framework_action.build_plan(args)
+    assert plan["checkpoint_kind"] == "framework_dcp"
+    assert plan["checkpoint"]["original"] == supplied
+    assert plan["checkpoint"]["resolved"] == str(checkpoint.resolve())
+    assert plan["export_required"] is True
+    assert plan["export_state"] == "missing"
+    assert plan["action_model_path"].startswith(str(checkpoint.parent.parent / "hf_exports"))
+    assert framework_action.EXPORTER_MODULE in plan["pre_action"]["argv"]
+    assert plan["pre_action"]["argv"][plan["pre_action"]["argv"].index("--base-model-revision") + 1] == "immutable-test-revision"
+
+
+def test_framework_action_verified_export_is_reused_and_stale_export_is_rejected(tmp_path):
+    checkpoint, config, base_model = make_framework_dcp(tmp_path)
+    export = tmp_path / "exports" / "epoch_1"
+    write_framework_export(export, checkpoint, config, base_model)
+    args = framework_action_args(checkpoint, config, base_model, export_dir=export)
+    plan = framework_action.build_plan(args)
+    assert plan["export_required"] is False
+    assert plan["export_state"] == "verified_complete"
+    verified = framework_action.verify_export(
+        checkpoint_path=str(checkpoint), config_file=str(config), export_dir=str(export),
+        base_model_path_or_uri=str(base_model), base_model_revision="immutable-test-revision",
+    )
+    assert verified["ok"]
+    config.write_text(config.read_text() + "trainer: {}\n")
+    stale = framework_action.build_plan(args)
+    assert stale["export_required"] is True
+    assert stale["export_state"] == "stale_or_incomplete"
+    assert "fingerprint is stale" in stale["export_validation_error"]
+
+
+def test_framework_prepare_runs_export_once_then_reuses_it(tmp_path, monkeypatch):
+    checkpoint, config, base_model = make_framework_dcp(tmp_path)
+    export = tmp_path / "exports" / "epoch_1"
+    args = framework_action_args(checkpoint, config, base_model, verb="prepare", export_dir=export)
+    calls = []
+
+    def fake_run(command, check=False):
+        calls.append(command)
+        output = Path(command[command.index("--output-dir") + 1])
+        write_framework_export(output, checkpoint, config, base_model)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(framework_action.subprocess, "run", fake_run)
+    first = framework_action.prepare_export(args)
+    second = framework_action.prepare_export(args)
+    assert first["pre_action_result"] == "exported"
+    assert second["pre_action_result"] == "reused"
+    assert len(calls) == 1
+    assert (export / ".tao_export_complete").is_file()
+
+
+def test_framework_action_model_uri_requires_immutable_revision(tmp_path):
+    args = framework_action.parse_args([
+        "plan", "--action", "inference", "--checkpoint-path", "vendor/model-name",
+    ])
+    with pytest.raises(common.WorkflowError, match="immutable revision"):
+        framework_action.build_plan(args)
+
+
+def test_framework_action_contract_is_packaged_and_dataset_agnostic():
+    contract = workflow.load_yaml(workflow.BACKEND_FILES["cosmos-framework"])
+    pre_action = contract["checkpoint"]["action_preparation"]
+    assert pre_action["orchestrator"] == "scripts/framework_checkpoint_action.py"
+    assert set(pre_action["applies_before"]) == {"evaluate", "inference", "inference_microservice"}
+    assert contract["actions"]["evaluate"]["pre_action"] == "export_if_framework_dcp"
+    assert contract["actions"]["inference"]["command"].startswith("cosmos-framework-inference")
+    source = (SKILL / "scripts" / "framework_checkpoint_action.py").read_text(encoding="utf-8")
+    assert "cosmos_framework.scripts.export_vlm_dcp" in source
+    for forbidden in ("/lustre/", "rarunachalam", "wts", "aetc"):
+        assert forbidden not in source.casefold()
 
 
 def test_model_input_required_and_uri_revision_required(tmp_path):

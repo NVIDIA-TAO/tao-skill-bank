@@ -53,7 +53,9 @@ ALIASES = {
     "cosmos-framework": "cosmos-framework", "rl": "cosmos-rl",
     "cosmos_rl": "cosmos-rl", "cosmos-rl": "cosmos-rl",
 }
-SUPPORTED_ACTIONS = {"train", "evaluate", "inference", "quantize"}
+SUPPORTED_ACTIONS = {
+    "train", "export", "evaluate", "inference", "inference_microservice", "quantize",
+}
 
 
 def resolve_model_name(
@@ -173,9 +175,14 @@ def select_backend(*, model: str, action: str, backend: str = "auto", workload: 
     tier = model_tier(model)
     if selected == "auto":
         if tier == "edge":
-            if action != "train":
-                raise WorkflowError("Cosmos3-Edge non-train actions require an explicit exported-checkpoint adapter")
-            return "cosmos-framework", "Cosmos3-Edge training is native only in Cosmos Framework"
+            action_contract = load_yaml(BACKEND_FILES["cosmos-framework"]).get("actions", {}).get(action, {})
+            if not action_contract.get("supported"):
+                raise WorkflowError(
+                    f"Cosmos3-Edge does not support {action}: {action_contract.get('reason', 'unsupported')}"
+                )
+            return "cosmos-framework", "Cosmos3-Edge uses the Framework-native model and checkpoint action route"
+        if action == "export":
+            return "cosmos-framework", "Framework DCP export is owned by Cosmos Framework"
         if action != "train" or workload in {"automl", "hpo"}:
             return "cosmos-rl", "the requested action/schema is native to Cosmos-RL"
         return "cosmos-framework", "plain Cosmos3-Nano SFT defaults to the native Cosmos Framework trainer"

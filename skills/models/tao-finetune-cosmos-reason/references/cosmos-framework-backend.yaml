@@ -63,6 +63,15 @@ checkpoint:
   async_multinode: disabled
   exact_key_exporter: cosmos_framework.scripts.export_vlm_dcp
   exported_format: merged_hf_safetensors
+  action_preparation:
+    orchestrator: scripts/framework_checkpoint_action.py
+    applies_before: [evaluate, inference, inference_microservice]
+    detection: distinguish complete HF safetensors from Framework DCP by structure
+    default_export_dir: derived from the runtime checkpoint location and DCP-plus-config fingerprint
+    resources: one task and one GPU in the selected repository-derived action image
+    idempotency: reuse only after manifest, DCP metadata, config, base-model, revision, and weight validation
+    peft: reconstruct adapters from the saved Framework config and export merged safetensors
+    failure_behavior: block the requested action and preserve any invalid prior export for recovery
 status:
   native_callback: cosmos_framework.callbacks.tao_status.TAOStatusCallback
   structured_only: true
@@ -76,10 +85,26 @@ status:
   events: [started, validation_complete, checkpoint_complete, training_complete, success, failure]
 actions:
   train: {supported: true, implementation: native}
-  export: {supported: true, implementation: native_exact_key_exporter}
-  evaluate: {supported: true, implementation: tao_integration_adapter_after_export}
-  inference: {supported: true, implementation: tao_integration_adapter_after_export}
-  inference_microservice: {supported: true, implementation: tao_integration_adapter_after_export}
+  export:
+    supported: true
+    implementation: native_exact_key_exporter
+    orchestrator: scripts/framework_checkpoint_action.py
+    command: python -m cosmos_framework.scripts.export_vlm_dcp
+  evaluate:
+    supported: true
+    implementation: tao_integration_adapter_after_verified_export
+    pre_action: export_if_framework_dcp
+    command: cosmos-framework-evaluate --config <config>
+  inference:
+    supported: true
+    implementation: tao_integration_adapter_after_verified_export
+    pre_action: export_if_framework_dcp
+    command: cosmos-framework-inference <arguments>
+  inference_microservice:
+    supported: true
+    implementation: tao_integration_adapter_after_verified_export
+    pre_action: export_if_framework_dcp
+    command: cosmos-framework-inference-microservice <arguments>
   quantize: {supported: false, reason: no validated Framework checkpoint quantization route}
 compatibility:
   a100_qwen3_vl_patch_embed: native_per_model_linear_equivalent

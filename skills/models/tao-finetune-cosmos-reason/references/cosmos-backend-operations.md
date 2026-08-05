@@ -26,6 +26,18 @@ prepared representation. Framework DCP evaluation uses the native exact-key
 VLM exporter; PEFT adapters are reconstructed and merged before shared
 evaluation.
 
+For every Framework evaluate, inference, or inference-microservice request,
+the skill runs `scripts/framework_checkpoint_action.py plan` and then
+`prepare` before constructing the action command. The helper skips native HF
+safetensors inputs, but a Framework DCP is exported with the Framework
+repository's `cosmos_framework.scripts.export_vlm_dcp` entry point. The
+default output name includes the DCP-metadata and saved-config fingerprint.
+Reuse requires a matching export manifest, checkpoint record, DCP metadata
+hash, config path/hash, base-model identity/revision, and complete indexed
+weights. The returned `action_model_path` replaces the model field in the
+evaluate/inference request. Export failure is an action failure, not a reason
+to load an older export or checkpoint.
+
 ## SLURM preflight
 
 Validate SSH configuration without reading key contents, scheduler reachability,
