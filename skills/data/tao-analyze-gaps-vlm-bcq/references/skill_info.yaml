@@ -5,22 +5,19 @@ gpu_spec_key: null
 required_credentials: []
 actions:
   vlm_bcq:
-    command: gap_analysis vlm_bcq
-    mode: args
+    command: gap_analysis vlm_bcq -e {config_path}
+    config_format: yaml
+    mode: config
     inputs:
-      predictions-json:
+      predictions_json:
         type: file
-      videos-dir:
+      videos_dir:
         type: folder
         optional: true
     outputs:
-      results-dir:
+      results_dir:
         type: folder
     upload_excludes:
     - inputs/
-    args:
-      results_dir: '{results_dir}'
-      predictions_json: '{predictions_json}'
-      videos_dir: '{videos_dir}'
     defaults:
       videos_dir: ''
