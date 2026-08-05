@@ -45,21 +45,10 @@
 
   ── PRE-RENDERED HTML BLOCK REFERENCE ─────────────────────────────────────────
   {{ KPI_BANNER_HTML }}
-      Conditional banner. Use neutral phrasing when the target is not yet reached
-      (we are the product team — describe the gap, never say "NOT MET"). Example
-      for a run still short of target:
-        <div class="kpi-banner" style="background:rgba(255,188,1,0.10);border-color:rgba(255,188,1,0.35);">
-          <div class="icon" style="background:var(--nvidia-yellow);color:#000">i</div>
-          <div class="content">
-            <div class="title" style="color:var(--nvidia-yellow)">Best result so far</div>
-            <div class="body">After N iterations, best is
-              <strong>Iter X — Weighted escape cost = Y cost/board</strong>
-              (<strong>Z cost/board from target</strong>).
-              <strong>Next lever:</strong> one-liner.
-            </div>
-          </div>
-        </div>
-      KPI MET example (green):
+      Conditional banner. Emit only for KPI MET or a committed hard stop. Use
+      an empty string while the loop is running or when the iteration budget
+      ends short of target; never emit an informational `i` / gap banner. KPI
+      MET example (green):
         <div class="kpi-banner" style="background:rgba(118,185,0,0.12);border-color:rgba(118,185,0,0.4);">
           <div class="icon" style="background:var(--nvidia-green);color:#000">✓</div>
           <div class="content">
@@ -934,6 +923,36 @@
   </div>
 
   {{ KPI_BANNER_HTML }}
+</div>
+
+<!-- ════════════ RUN CONFIGURATION & OUTCOME ════════════ -->
+<div class="card">
+  <div class="header">
+    <div>
+      <div class="chart-title">Run Configuration &amp; Outcome</div>
+      <div class="chart-subtitle">Approved configuration, measured wall time, and the current canonical outcome</div>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Item</th><th>Details</th></tr></thead>
+    <tbody>{{ RUN_SUMMARY_ROWS_HTML }}</tbody>
+  </table>
+
+  <h3 class="sub-title" style="margin-top:28px">Training Set Growth</h3>
+  <div class="chart-subtitle">Raw k-NN candidates and generated SDG rows compared with net unique rows retained after the committed deduplicating merge</div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Iteration</th>
+        <th>KNN Raw Mined</th>
+        <th>SDG Generated</th>
+        <th>New Unique Images (After Dedup)</th>
+        <th>Training Set Total</th>
+        <th>Δ</th>
+      </tr>
+    </thead>
+    <tbody>{{ GROWTH_ROWS_HTML }}</tbody>
+  </table>
 </div>
 
 <!-- ════════════ PROBLEM STATEMENT ════════════ -->

@@ -98,13 +98,10 @@
   .hero .meta-item .value { color: var(--nvidia-green); font-weight: 700; }
 
   .kpi-banner { margin-top: 24px; padding: 18px 22px; background: rgba(118,185,0,0.12); border: 1px solid rgba(118,185,0,0.4); border-radius: 10px; display: flex; align-items: flex-start; gap: 14px; }
-  .kpi-banner.warn { background: rgba(255,188,1,0.10); border-color: rgba(255,188,1,0.35); }
   .kpi-banner.error { background: rgba(194,38,45,0.12); border-color: rgba(194,38,45,0.4); }
   .kpi-banner .icon { flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; background: var(--nvidia-green); color: #000; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; }
-  .kpi-banner.warn .icon { background: var(--nvidia-yellow); }
   .kpi-banner.error .icon { background: var(--nvidia-red); color: #fff; }
   .kpi-banner .title { font-size: 16px; font-weight: 700; color: var(--nvidia-green); margin-bottom: 3px; }
-  .kpi-banner.warn .title { color: var(--nvidia-yellow); }
   .kpi-banner.error .title { color: var(--nvidia-red); }
   .kpi-banner .body { color: var(--text-secondary); font-size: 15px; line-height: 1.5; }
 
@@ -172,10 +169,7 @@
       <div class="meta-item"><strong>Iterations</strong> &nbsp;<span class="value">{{ ITERATIONS_RUN }} / {{ MAX_ITERATIONS }}</span></div>
       <div class="meta-item"><strong>Run Status</strong> &nbsp;<span class="value">{{ RUN_STATUS }}</span></div>
     </div>
-    <div class="kpi-banner {{ BANNER_CLASS }}">
-      <div class="icon">{{ BANNER_ICON }}</div>
-      <div class="content"><div class="title">{{ KPI_STATUS }}</div><div class="body">{{ KPI_COPY }}</div></div>
-    </div>
+    {{ KPI_BANNER_HTML }}
   </header>
 
   <div class="grid">
@@ -191,6 +185,15 @@
         <div class="stat"><div class="stat-label">Best iteration</div><div class="stat-value green">{{ BEST_ITERATION }}</div></div>
         <div class="stat"><div class="stat-label">Best KPI</div><div class="stat-value green">{{ BEST_METRIC }}</div></div>
       </div>
+      <div class="chart-subtitle" style="margin-top:28px;margin-bottom:10px">DEFT Loop Experiment Summary</div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Item</th><th>Details</th></tr></thead><tbody>{{ RUN_SUMMARY_ROWS_HTML }}</tbody></table></div>
+      <div class="chart-subtitle" style="margin-top:28px;margin-bottom:10px">Training Set Growth</div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Iteration</th><th>KNN Raw Mined</th><th>SDG Generated</th><th>New Unique Images (After Dedup)</th><th>Training Set Total</th><th>Δ</th></tr></thead><tbody>{{ GROWTH_ROWS_HTML }}</tbody></table></div>
+    </section>
+
+    <section class="card">
+      <div class="header"><div><div class="chart-title">Benchmark KPI Trend</div><div class="chart-subtitle">Only frozen Benchmark results carry a pass/fail verdict.</div></div></div>
+      <div class="chart">{{ METRIC_CHART_HTML }}</div>
     </section>
 
     <section class="card">
@@ -205,13 +208,8 @@
     </section>
 
     <section class="card">
-      <div class="header"><div><div class="chart-title">Benchmark KPI Trend</div><div class="chart-subtitle">Only frozen Benchmark results carry a pass/fail verdict.</div></div></div>
-      <div class="chart">{{ METRIC_CHART_HTML }}</div>
-    </section>
-
-    <section class="card">
       <div class="header"><div><div class="chart-title">Augmentation Volume</div><div class="chart-subtitle">Synthetic and mined contribution by iteration.</div></div></div>
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>Iteration</th><th>SDG requested</th><th>AMP allocated</th><th>Generated</th><th>Defect types</th><th>Mining raw</th><th>Cosine-kept</th><th>New unique targets</th><th>Cumulative train</th></tr></thead><tbody>{{ AUGMENTATION_ROWS_HTML }}</tbody></table></div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Iteration</th><th>SDG requested</th><th>AMP allocated</th><th>Generated</th><th>Defect types</th><th>Mining raw</th><th>Cosine-kept</th><th>Batch unique targets</th><th>Cumulative train</th></tr></thead><tbody>{{ AUGMENTATION_ROWS_HTML }}</tbody></table></div>
     </section>
 
     <section class="card">

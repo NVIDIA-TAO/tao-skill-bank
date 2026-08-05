@@ -295,6 +295,7 @@ Required mounts (per-iteration): `<workspace>:<workspace>` (same path) +
 
 ```
 <output_dir>/
+├── allocation.json                         # Phase 2 defect -> AMP count proof
 ├── SDG_result.csv                          # one row per generated sample (image, mask, params, PSNR)
 ├── reconstructed_image/<T>+<A>_<idx>.png   # synthetic NG — ChangeNet input_path
 ├── original_image/<T>+<A>_<idx>.png        # paired OK — ChangeNet golden_path
@@ -303,11 +304,14 @@ Required mounts (per-iteration): `<workspace>:<workspace>` (same path) +
 ```
 
 After verifying `SDG_result.csv`, `reconstructed_image/`, and
-`original_image/`, commit:
+`original_image/`, keep Phase 2's `allocation.json` beside those outputs and
+commit:
 
 ```python
 phase = state["iterations"][f"iter{N}"]
 phase["anomalygen_sdg_csv"] = "<abs_path>/SDG_result.csv"
+phase["anomalygen_allocation_json"] = "<abs_path>/allocation.json"
+phase["anomalygen_amp_allocated"] = <sum of allocation.json counts>
 phase["stage_completed"] = "anomalygen"
 ```
 
@@ -321,9 +325,13 @@ This snippet documents the schema only; never execute it as inline Python.
     --iter-label iter${N} \
     --stage anomalygen \
     --anomalygen-sdg <absolute path to SDG_result.csv> \
+    --anomalygen-allocation <absolute path to allocation.json> \
+    --duration-sec "${STAGE_DURATION_SEC}" \
     --summary "SDG: requested=N, AMP-allocated=M, generated=K by type"
 ```
 
-When `M < N` (AMP yield gap), include both requested and allocated counts
+`commit_stage.py` derives `M` by summing the committed defect-to-count
+`allocation.json` and audits that disk proof on resume. When `M < N` (AMP
+yield gap), include both requested and allocated counts
 — that's the signal a reviewer needs to spot allocation-vs-generation
 bottlenecks.

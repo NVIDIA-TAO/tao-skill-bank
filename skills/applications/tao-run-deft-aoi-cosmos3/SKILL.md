@@ -51,7 +51,9 @@ Treat a run as a disk-backed state machine.
    launch review plus this skill's Pre-Flight Summary. Wait for one explicit
    approval.
 5. After approval, initialize `${RESULTS_DIR}/deft_state.json` exactly once
-   with `scripts/init_deft_state.py`. Never reinitialize a resumed run or edit
+   with `scripts/init_deft_state.py`. Pass the exact GPU model reported by the
+   selected platform's Preflight through `--gpu-model` (include accelerator
+   memory when available). Never reinitialize a resumed run or edit
    `deft_state.json` / `loop_log.jsonl` by hand.
 6. Before every stage, after context compaction, and before a completion claim,
    run:
@@ -71,7 +73,10 @@ Treat a run as a disk-backed state machine.
    `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`.
 8. Commit every completed or failed DEFT stage with
    `scripts/commit_stage.py`. It updates state and log atomically, then runs the
-   audit and rolls back on inconsistency.
+   audit and rolls back on inconsistency. Every commit requires a positive,
+   measured `--duration-sec`: use backend elapsed wall time for submitted jobs
+   and a host wall-clock timer for inline stages. Missing or zero durations are
+   rejected.
 9. Claim completion only after this exits zero:
 
    ```bash

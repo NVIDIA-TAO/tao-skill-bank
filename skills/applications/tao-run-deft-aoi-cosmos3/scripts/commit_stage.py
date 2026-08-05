@@ -109,6 +109,29 @@ def _required_json_file(value: pathlib.Path | None, flag: str) -> str:
     return path
 
 
+def _required_allocation(
+    value: pathlib.Path | None, flag: str
+) -> tuple[str, int]:
+    path = _required_file(value, flag)
+    try:
+        payload = json.loads(pathlib.Path(path).read_text())
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{flag} must be a JSON object: {path} ({exc})") from exc
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError(f"{flag} must be a non-empty defect-to-count JSON object")
+    invalid = {
+        str(defect): count
+        for defect, count in payload.items()
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0
+    }
+    if invalid:
+        raise ValueError(f"{flag} contains invalid allocation counts: {invalid}")
+    allocated = sum(payload.values())
+    if allocated <= 0:
+        raise ValueError(f"{flag} must allocate at least one sample")
+    return path, allocated
+
+
 def _required_checkpoint(value: pathlib.Path | None, flag: str) -> str:
     if value is None:
         raise ValueError(f"{flag} is required")
@@ -244,6 +267,15 @@ def _apply_success(
                 phase_root,
                 "--anomalygen-sdg",
             )
+            allocation, allocated = _required_allocation(
+                args.anomalygen_allocation, "--anomalygen-allocation"
+            )
+            phase["anomalygen_allocation_json"] = _within(
+                allocation,
+                phase_root,
+                "--anomalygen-allocation",
+            )
+            phase["anomalygen_amp_allocated"] = allocated
             phase["anomalygen_sharegpt_json"] = _within(
                 _required_json_file(
                     args.anomalygen_sharegpt, "--anomalygen-sharegpt"
@@ -312,6 +344,14 @@ def _apply_success(
 def commit(args: argparse.Namespace) -> dict[str, Any]:
     if not re.fullmatch(r"baseline|iter[1-9][0-9]*", args.iter_label):
         raise ValueError("--iter-label must be baseline or iterN")
+    if (
+        not isinstance(args.duration_sec, int)
+        or isinstance(args.duration_sec, bool)
+        or args.duration_sec <= 0
+    ):
+        raise ValueError(
+            "--duration-sec is required and must be a positive measured duration"
+        )
     if getattr(args, "skip", False) and args.stage not in SKIPPABLE_STAGES:
         raise ValueError(
             f"--skip is valid only for: {', '.join(SKIPPABLE_STAGES)}"
@@ -417,7 +457,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--stage", required=True, choices=STAGES)
     parser.add_argument("--status", choices=("ok", "error"), default="ok")
     parser.add_argument("--summary", required=True)
-    parser.add_argument("--duration-sec", type=int, default=0)
+    parser.add_argument(
+        "--duration-sec",
+        required=True,
+        type=int,
+        help="Measured wall-clock seconds for this stage; must be positive",
+    )
     parser.add_argument("--best-ckpt", type=pathlib.Path)
     parser.add_argument("--training-spec", type=pathlib.Path)
     parser.add_argument("--proxy-results", type=pathlib.Path)
@@ -429,6 +474,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--metric-result", type=pathlib.Path)
     parser.add_argument("--mining-targets", type=pathlib.Path)
     parser.add_argument("--anomalygen-sdg", type=pathlib.Path)
+    parser.add_argument("--anomalygen-allocation", type=pathlib.Path)
     parser.add_argument("--anomalygen-sharegpt", type=pathlib.Path)
     parser.add_argument(
         "--skip",

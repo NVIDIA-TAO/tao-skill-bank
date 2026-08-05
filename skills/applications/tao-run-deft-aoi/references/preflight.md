@@ -74,7 +74,29 @@ Resolve everything possible before asking the user. In order:
    **GPU-arch runnability probe.** Matching CPU arch isn't sufficient — the image's CUDA build must also support the host GPU's compute capability (e.g. DGX Spark `sm_121` vs a `cu128` build passes the manifest check but fails at the first CUDA call). Probe it directly: `docker run --rm --gpus all "$TAO_PYT_IMAGE" python3 -c "import torch; torch.zeros(1).cuda()"` — a non-zero exit or `no kernel image is available` means the build can't target this GPU; hard stop.
 
 7. Apply the path rule: pre-create iter dirs under `${RESULTS_DIR}/iter${ITER}/` and mount `<workspace>` into containers at the same absolute path. Workflows enforce their own container-level invariants (entrypoints, env vars); the loop just supplies the workspace mount and the resolved image URI.
-8. Verify GPU count. Probe the three AnomalyGen override slots under `augmentation/anomalygen/` (`checkpoints/<project>/`, `base_checkpoints/`, `datasets/<project>/`) and report their status in the Summary. **Empty slots are not missing — auto-fetch from HuggingFace is the default and requires no user action.** NVIDIA publishes the PCB fine-tuned checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on HuggingFace; paidf-anomalygen downloads them automatically on first use. Users who want to provide their own fine-tuned checkpoint or custom dataset can pre-stage the directory to override. Do not ask the user about missing AnomalyGen assets — treat empty slots as `will auto-fetch from HF (default)` and proceed. If `base_checkpoints/` is pre-staged, export its host path as `COSMOS_MODELS_DIR` for downstream mounts. Stage the ChangeNet pretrained backbone by running `scripts/stage_backbone.py --workspace <workspace>`, then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path` to the staged file and bind-mount it per `references/visual-changenet.md` → *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script exits non-zero; there is no URL fallback. See `references/paidf-anomalygen.md` for invocation and mount layout.
+8. Verify GPU count and record the exact GPU model plus memory reported by the
+   selected platform (for local Docker:
+   `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader`). Preserve
+   that string for `init_deft_state.py --gpu-model`; never substitute a local
+   GPU when the selected backend is remote. Probe the three AnomalyGen override
+   slots under `augmentation/anomalygen/` (`checkpoints/<project>/`,
+   `base_checkpoints/`, `datasets/<project>/`) and report their status in the
+   Summary. **Empty slots are not missing — auto-fetch from HuggingFace is the
+   default and requires no user action.** NVIDIA publishes the PCB fine-tuned
+   checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset
+   (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on HuggingFace;
+   paidf-anomalygen downloads them automatically on first use. Users who want
+   to provide their own fine-tuned checkpoint or custom dataset can pre-stage
+   the directory to override. Do not ask the user about missing AnomalyGen
+   assets — treat empty slots as `will auto-fetch from HF (default)` and
+   proceed. If `base_checkpoints/` is pre-staged, export its host path as
+   `COSMOS_MODELS_DIR` for downstream mounts. Stage the ChangeNet pretrained
+   backbone by running `scripts/stage_backbone.py --workspace <workspace>`,
+   then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path`
+   to the staged file and bind-mount it per `references/visual-changenet.md` →
+   *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script
+   exits non-zero; there is no URL fallback. See
+   `references/paidf-anomalygen.md` for invocation and mount layout.
 9. **GPU memory sanity check.** ChangeNet classify with C-RADIOv2-B (ViT-B) at the spec defaults (`batch_size: 64`, `image_width/height: 224`, `cls_weight: [1.0, 10.0]`, learnable difference modules) OOMs on a single 48GB-class GPU. Inspect `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` and warn if the assembled spec's `dataset.classify.batch_size` is too large for the available memory: as a rule of thumb, **≤ 16 on 48GB GPUs, ≤ 8 on 24GB GPUs**. Surface the recommendation in the Pre-Flight Summary's `GPUs` row — let the user accept or override before launch rather than failing 30 seconds into training.
 10. Run train/validation leakage check before resuming any prior run.
 
@@ -109,7 +131,7 @@ Once all checks pass, print this summary and **STOP — wait for explicit user a
 | Training Epochs                | N per iteration                                                                |
 | Num SDG                        | N synthetic samples per iteration                                              |
 | Mining cutoff                  | cosine ≥ <min_similarity> (default 0.9)                                        |
-| GPUs                           | N                                                                              |
+| Compute / GPUs                 | N GPU(s) · <exact model> (<memory>)                                             |
 | Resuming                       | yes — iter N complete / no                                                     |
 | Est. runtime                   | ~max_iterations × 33 min on RTX 6000 Ada — estimate only (+~Yh downloads if MISSING) |
 

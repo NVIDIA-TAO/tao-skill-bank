@@ -188,6 +188,225 @@ def _format_duration(seconds: Any) -> str:
     return f"{secs}s"
 
 
+def _metric_summary_html(
+    result: dict[str, Any] | None, contract: dict[str, Any]
+) -> str:
+    if result is None:
+        return "not available"
+    detail = (
+        f"{_escape(contract['display_name'])} = "
+        f"{_fmt(result.get('value'))}{_escape(_display_unit(contract['unit']))}"
+    )
+    values = result.get("constraints", {})
+    if isinstance(values, dict):
+        constraints: list[str] = []
+        for constraint in contract.get("constraints", []):
+            value = values.get(constraint.get("name"))
+            if value is None:
+                continue
+            constraints.append(
+                f"{_escape(constraint.get('display_name', constraint.get('name')))} "
+                f"{_fmt(value)}{_escape(_display_unit(str(constraint.get('unit', ''))))}"
+            )
+        if constraints:
+            detail += " @ " + ", ".join(constraints)
+    return detail
+
+
+def _dataset_summary_html(state: dict[str, Any]) -> str:
+    config = state.get("config", {})
+    if not isinstance(config, dict):
+        config = {}
+    rows = _csv_rows(pathlib.Path(str(config.get("kpi_test_csv", ""))))
+    if not rows:
+        return "dataset not available"
+    counts: dict[str, int] = {}
+    for row in rows:
+        label = str(
+            row.get("label", row.get("object_name", "Unlabeled"))
+        ).strip() or "Unlabeled"
+        counts[label] = counts.get(label, 0) + 1
+    ordered = sorted(
+        counts.items(),
+        key=lambda item: (item[0].upper() not in {"PASS", "OK"}, item[0].lower()),
+    )
+    breakdown = " / ".join(
+        f"{count:,} {_escape(label)}" for label, count in ordered
+    )
+    return f"{len(rows):,} rows: {breakdown}"
+
+
+def _recorded_duration_summary(
+    entries: list[dict[str, Any]], completed_iterations: int
+) -> str:
+    timed = [entry for entry in entries if entry.get("stage") != "loop_stop"]
+    durations = [
+        int(entry["duration_sec"])
+        for entry in timed
+        if isinstance(entry.get("duration_sec"), int)
+        and not isinstance(entry.get("duration_sec"), bool)
+        and int(entry["duration_sec"]) > 0
+    ]
+    if not durations:
+        return f"{completed_iterations} iterations · duration not recorded"
+    total = sum(durations)
+    missing = len(timed) - len(durations)
+    if missing:
+        return (
+            f"{completed_iterations} iterations · {_format_duration(total)} recorded · "
+            f"{missing} stage duration{'s' if missing != 1 else ''} missing"
+        )
+    if completed_iterations <= 0:
+        return f"0 iterations · {_format_duration(total)} recorded"
+    average = max(1, round(total / completed_iterations))
+    return (
+        f"{completed_iterations} iters × ~{_format_duration(average)} = "
+        f"{_format_duration(total)} total time"
+    )
+
+
+def _sdg_summary_html(
+    state: dict[str, Any], entries: list[dict[str, Any]]
+) -> str:
+    iterations = state.get("iterations", {})
+    if not isinstance(iterations, dict):
+        return "not available"
+    generated: list[int] = []
+    for label in sorted(iterations, key=_label_key):
+        if label == "baseline" or not isinstance(iterations[label], dict):
+            continue
+        phase = iterations[label]
+        count = (
+            0
+            if phase.get("anomalygen_skipped")
+            else _csv_row_count(phase.get("anomalygen_sdg_csv"))
+        )
+        if isinstance(count, int):
+            generated.append(count)
+    if not generated:
+        return "not available"
+    total = sum(generated)
+    average = round(total / len(generated))
+    detail = f"{average:,} images/iter · {total:,} total"
+    durations = [
+        int(entry["duration_sec"])
+        for entry in entries
+        if entry.get("stage") == "anomalygen"
+        and isinstance(entry.get("duration_sec"), int)
+        and not isinstance(entry.get("duration_sec"), bool)
+        and int(entry["duration_sec"]) > 0
+    ]
+    if durations:
+        detail += f" · {_format_duration(round(sum(durations) / len(durations)))} avg SDG time/iter"
+    else:
+        detail += " · SDG duration not recorded"
+    return detail
+
+
+def _mining_raw_count(phase: dict[str, Any]) -> int | None:
+    summary = phase.get("mining_summary")
+    if not isinstance(summary, str) or not summary:
+        return 0 if phase.get("data_mining_skipped") else None
+    rows = _csv_rows(pathlib.Path(summary))
+    if not rows:
+        return None
+    try:
+        value = int(rows[0]["candidate_count"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _growth_rows(state: dict[str, Any]) -> str:
+    config = state.get("config", {})
+    if not isinstance(config, dict):
+        config = {}
+    baseline_total = _csv_row_count(config.get("training_csv"))
+    rows = [
+        '<tr><td><strong>Baseline</strong></td><td class="num">0</td>'
+        '<td class="num">0</td><td class="num">0</td>'
+        f'<td class="num">{_fmt(baseline_total)}</td>'
+        '<td class="num">—</td></tr>'
+    ]
+    previous_total = baseline_total
+    iterations = state.get("iterations", {})
+    if not isinstance(iterations, dict):
+        return "\n".join(rows)
+    for label in sorted(iterations, key=_label_key):
+        phase = iterations[label]
+        if label == "baseline" or not isinstance(phase, dict):
+            continue
+        total = _csv_row_count(phase.get("combined_training_csv"))
+        sdg_generated = (
+            0
+            if phase.get("anomalygen_skipped")
+            else _csv_row_count(phase.get("anomalygen_sdg_csv"))
+        )
+        delta = (
+            total - previous_total
+            if isinstance(total, int) and isinstance(previous_total, int)
+            else None
+        )
+        new_unique = delta if isinstance(delta, int) and delta >= 0 else None
+        delta_html = (
+            "—"
+            if delta is None
+            else (f"+{delta:,}" if delta > 0 else f"{delta:,}")
+        )
+        rows.append(
+            f'<tr><td><strong>{_escape(label.title())}</strong></td>'
+            f'<td class="num">{_fmt(_mining_raw_count(phase))}</td>'
+            f'<td class="num">{_fmt(sdg_generated)}</td>'
+            f'<td class="num">{_fmt(new_unique)}</td>'
+            f'<td class="num">{_fmt(total)}</td>'
+            f'<td class="num">{delta_html}</td></tr>'
+        )
+        if isinstance(total, int):
+            previous_total = total
+    return "\n".join(rows)
+
+
+def _run_summary_rows(
+    state: dict[str, Any],
+    contract: dict[str, Any],
+    candidates: list[tuple[str, dict[str, Any], dict[str, Any]]],
+    entries: list[dict[str, Any]],
+) -> str:
+    config = state.get("config", {})
+    if not isinstance(config, dict):
+        config = {}
+    baseline = next(
+        (result for label, _, result in candidates if label == "baseline"), None
+    )
+    end_label, end_result = (
+        (candidates[-1][0], candidates[-1][2])
+        if candidates
+        else (None, None)
+    )
+    completed = sum(1 for label, _, _ in candidates if label != "baseline")
+    gpu = f"{_fmt(config.get('num_gpus'))}x {_fmt(config.get('gpu_model'))}"
+    baseline_detail = _metric_summary_html(baseline, contract)
+    if baseline is not None:
+        baseline_detail += f" ({_dataset_summary_html(state)})"
+    end_detail = _metric_summary_html(end_result, contract)
+    if end_label is not None and end_result is not None:
+        end_detail += f" ({_escape(end_label.title())})"
+    details = (
+        ("Prompt/Goal", f"Run DEFT loop · KPI: {_escape(render_target(contract))}"),
+        ("Model", "NVIDIA TAO Visual ChangeNet classification"),
+        ("GPU", gpu),
+        ("Baseline (pre-DEFT)", baseline_detail),
+        ("Data Routing", "AnomalyGen SDG &amp; k-NN Mining"),
+        ("Iterations × Time", _escape(_recorded_duration_summary(entries, completed))),
+        ("SDG Images", _escape(_sdg_summary_html(state, entries))),
+        ("End Result", end_detail),
+    )
+    return "\n".join(
+        f'<tr><td><strong>{_escape(item)}</strong></td><td>{detail}</td></tr>'
+        for item, detail in details
+    )
+
+
 def _iteration_rows(
     state: dict[str, Any],
     contract: dict[str, Any],
@@ -582,12 +801,7 @@ def render(
         gap_unit = "pp" if contract["unit"] == "%" else unit
         final_status = f"{_fmt(abs(gap))}{gap_unit} from target"
         final_class = ""
-        banner = (
-            '<div class="kpi-banner" style="background:rgba(255,188,1,0.10);border-color:rgba(255,188,1,0.35);">'
-            '<div class="icon" style="background:var(--nvidia-yellow);color:#000">i</div><div class="content">'
-            '<div class="title" style="color:var(--nvidia-yellow)">Best result so far</div>'
-            f'<div class="body">{_escape(best_label.title() if best_label else "The run")} finished <strong>{_escape(final_status)}</strong>.</div></div></div>'
-        )
+        banner = ""
     else:
         final_status = "NO EVALUATION"
         final_class = ""
@@ -618,6 +832,10 @@ def render(
         "MAX_ITERATIONS": _fmt(state.get("max_iterations")),
         "ITERATIONS_RUN": str(completed_iterations),
         "KPI_BANNER_HTML": banner,
+        "RUN_SUMMARY_ROWS_HTML": _run_summary_rows(
+            state, contract, candidates, entries
+        ),
+        "GROWTH_ROWS_HTML": _growth_rows(state),
         "PROBLEM_STATEMENT_HTML": problem_html,
         "KPI_DATASET_HTML": _dataset_card(state),
         "APPROACH_HTML": approach_html,
@@ -653,6 +871,8 @@ def render(
         raise ValueError("unfilled report placeholders: " + ", ".join(remaining))
     required = (
         "DEFT Loop Final Report",
+        "Run Configuration &amp; Outcome",
+        "Training Set Growth",
         "Progress Overview",
         "Per-Iteration Results",
         "Final Status",

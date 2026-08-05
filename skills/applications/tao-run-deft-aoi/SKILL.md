@@ -38,7 +38,8 @@ Treat this as a disk-backed state machine, not as a prose recipe.
    constraints. The approved `metric_contract` is the source of truth for
    evaluation, checkpoint selection, completion, and reporting.
 2. After the user approves the Summary, initialize `deft_state.json` once with
-   `scripts/init_deft_state.py`. Never hand-author or reinitialize it on resume.
+   `scripts/init_deft_state.py`, passing Preflight's exact GPU model/memory as
+   `--gpu-model`. Never hand-author or reinitialize it on resume.
 3. Run every bundled or inline host-Python command through
    `scripts/deft_python.sh`; it selects an already-provisioned interpreter on
    every shell invocation, so tool calls do not depend on a prior `export`.
@@ -65,6 +66,8 @@ Treat this as a disk-backed state machine, not as a prose recipe.
    fresh run; a later successful audit cannot legitimize fabricated history.
    For evaluate, pass the metric result,
    checkpoint, inference CSV, and threshold directly to `commit_stage.py`.
+   Pass positive measured `--duration-sec` from backend elapsed time or a host
+   timer; missing/zero durations are rejected.
 6. Claim the loop complete only when this exits zero:
 
    ```bash

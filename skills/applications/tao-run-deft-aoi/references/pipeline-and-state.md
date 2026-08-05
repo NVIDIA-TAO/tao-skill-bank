@@ -21,7 +21,7 @@ iteration executes:
 
 2. **[SKILL — `tao-skill-bank:tao-route-visual-changenet-samples`] Route weak samples.** Split the prior phase's `rca_gaps_parquet` into `routing_mining_parquet` and `routing_anomalygen_parquet` under the current `iterN` object. Downstream mining and AnomalyGen stages read those paths from disk. See `references/tao-route-visual-changenet-samples.md`.
 
-3. **[SKILL — `tao-skill-bank:paidf-anomalygen`] Run AMP + SDG.** Pass `dataset_dir` verbatim — no pool-staging, no parallel cache. Pre-create only `${RESULTS_DIR}/iter${N}/anomalygen/sdg/`. The four invariants that actually gate the run (cad_mask RGB preserved, `text` entries have prompts, clean+cad pairs by stem, `semantic_segmentation_labels.json` present) and the full parameter mapping live in `references/paidf-anomalygen.md`. Read it before invoking. Set `num_search_run=0` and `nn_threshold=0` to skip the SDG-quality phases (4–7) — the DEFT loop only needs the NG/OK pairs from Phase 3.
+3. **[SKILL — `tao-skill-bank:paidf-anomalygen`] Run AMP + SDG.** Pass `dataset_dir` verbatim — no pool-staging, no parallel cache. Pre-create only `${RESULTS_DIR}/iter${N}/anomalygen/sdg/`. Commit both `SDG_result.csv` and Phase 2's defect-to-count `allocation.json`; the latter is the canonical proof for AMP allocated. The four invariants that actually gate the run (cad_mask RGB preserved, `text` entries have prompts, clean+cad pairs by stem, `semantic_segmentation_labels.json` present) and the full parameter mapping live in `references/paidf-anomalygen.md`. Read it before invoking. Set `num_search_run=0` and `nn_threshold=0` to skip the SDG-quality phases (4–7) — the DEFT loop only needs the NG/OK pairs from Phase 3.
 
    If the committed `routing_anomalygen_parquet` has zero rows, do not launch
    the GPU generator. Set `anomalygen_skipped=true`, advance
@@ -79,6 +79,7 @@ iteration executes:
      --combined-csv "${RESULTS_DIR}/iter${ITER}/dataset/train_combined_iter${ITER}.csv" \
      --provenance-csv "${RESULTS_DIR}/iter${ITER}/dataset/train_combined_iter${ITER}_provenance.csv" \
      --merge-validation-report "${RESULTS_DIR}/iter${ITER}/dataset/merge_validation.json" \
+     --duration-sec "${STAGE_DURATION_SEC}" \
      --summary "validated combined training CSV"
    ```
 

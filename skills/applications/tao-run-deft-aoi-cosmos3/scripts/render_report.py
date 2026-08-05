@@ -20,7 +20,6 @@ import tempfile
 from typing import Any
 
 from metric_contract import (
-    MINIMIZING_OPERATORS,
     contract_from_state,
     pick_best,
     render_target,
@@ -229,6 +228,220 @@ def _duration(value: Any) -> str:
     return f"{seconds}s"
 
 
+def _metric_summary_html(
+    result: dict[str, Any] | None, contract: dict[str, Any]
+) -> str:
+    if result is None:
+        return "not available"
+    detail = (
+        f"{_escape(contract['display_name'])} = {_fmt(result.get('value'))}"
+        f"{_escape(str(contract.get('unit', '')))}"
+    )
+    values = result.get("constraints", {})
+    if isinstance(values, dict):
+        constraints: list[str] = []
+        for constraint in contract.get("constraints", []):
+            value = values.get(constraint.get("name"))
+            if value is None:
+                continue
+            constraints.append(
+                f"{_escape(constraint.get('display_name', constraint.get('name')))} "
+                f"{_fmt(value)}{_escape(str(constraint.get('unit', '')))}"
+            )
+        if constraints:
+            detail += " @ " + ", ".join(constraints)
+    return detail
+
+
+def _benchmark_summary_html(state: dict[str, Any]) -> str:
+    config = state.get("config", {})
+    if not isinstance(config, dict):
+        config = {}
+    annotations = config.get("annotations", {})
+    if not isinstance(annotations, dict):
+        annotations = {}
+    records = _json_records(annotations.get("benchmark"))
+    if not records:
+        return "Benchmark dataset not available"
+    ok, ng = _label_counts(records)
+    return f"Benchmark: {len(records):,} rows: {ok:,} OK / {ng:,} NG"
+
+
+def _recorded_duration_summary(
+    entries: list[dict[str, Any]], completed_iterations: int
+) -> str:
+    timed = [entry for entry in entries if entry.get("stage") != "loop_stop"]
+    durations = [
+        int(entry["duration_sec"])
+        for entry in timed
+        if isinstance(entry.get("duration_sec"), int)
+        and not isinstance(entry.get("duration_sec"), bool)
+        and int(entry["duration_sec"]) > 0
+    ]
+    if not durations:
+        return f"{completed_iterations} iterations · duration not recorded"
+    total = sum(durations)
+    missing = len(timed) - len(durations)
+    if missing:
+        return (
+            f"{completed_iterations} iterations · {_duration(total)} recorded · "
+            f"{missing} stage duration{'s' if missing != 1 else ''} missing"
+        )
+    if completed_iterations <= 0:
+        return f"0 iterations · {_duration(total)} recorded"
+    average = max(1, round(total / completed_iterations))
+    return (
+        f"{completed_iterations} iters × ~{_duration(average)} = "
+        f"{_duration(total)} total time"
+    )
+
+
+def _sdg_summary_html(
+    state: dict[str, Any], entries: list[dict[str, Any]]
+) -> str:
+    iterations = state.get("iterations", {})
+    if not isinstance(iterations, dict):
+        return "not available"
+    generated: list[int] = []
+    for label in sorted(iterations, key=_label_key):
+        if label == "baseline" or not isinstance(iterations[label], dict):
+            continue
+        phase = iterations[label]
+        if phase.get("anomalygen_skipped"):
+            generated.append(0)
+        elif phase.get("anomalygen_sdg_csv"):
+            generated.append(len(_csv_rows(phase.get("anomalygen_sdg_csv"))))
+    if not generated:
+        return "not available"
+    total = sum(generated)
+    average = round(total / len(generated))
+    detail = f"{average:,} images/iter · {total:,} total"
+    durations = [
+        int(entry["duration_sec"])
+        for entry in entries
+        if entry.get("stage") == "anomalygen"
+        and isinstance(entry.get("duration_sec"), int)
+        and not isinstance(entry.get("duration_sec"), bool)
+        and int(entry["duration_sec"]) > 0
+    ]
+    if durations:
+        detail += f" · {_duration(round(sum(durations) / len(durations)))} avg SDG time/iter"
+    else:
+        detail += " · SDG duration not recorded"
+    return detail
+
+
+def _assemble_counts(phase: dict[str, Any]) -> tuple[int | None, int | None]:
+    summary = _optional_json(phase.get("assemble_summary"))
+    total = _first_number(summary, ("output_records",))
+    unique = None
+    if isinstance(summary, dict):
+        unique_targets = summary.get("unique_target_images")
+        if isinstance(unique_targets, dict):
+            unique = _first_number(unique_targets, ("new_after_dedup",))
+    if total is None and phase.get("combined_training_json"):
+        total = len(_json_records(phase.get("combined_training_json")))
+    return (
+        int(total) if isinstance(total, (int, float)) else None,
+        int(unique) if isinstance(unique, (int, float)) else None,
+    )
+
+
+def _growth_rows(state: dict[str, Any]) -> str:
+    rows = [
+        '<tr><td><strong>Baseline</strong></td><td class="num">0</td>'
+        '<td class="num">0</td><td class="num">0</td><td class="num">0</td>'
+        '<td class="num">—</td></tr>'
+    ]
+    previous_total = 0
+    iterations = state.get("iterations", {})
+    if not isinstance(iterations, dict):
+        return "\n".join(rows)
+    for label in sorted(iterations, key=_label_key):
+        phase = iterations[label]
+        if label == "baseline" or not isinstance(phase, dict):
+            continue
+        mining_summary = _optional_json(phase.get("mining_summary"))
+        raw = _first_number(
+            mining_summary,
+            ("raw_candidates", "candidate_count", "input_rows", "raw_rows"),
+        )
+        if raw is None and phase.get("data_mining_skipped"):
+            raw = 0
+        sdg_generated = (
+            0
+            if phase.get("anomalygen_skipped")
+            else (
+                len(_csv_rows(phase.get("anomalygen_sdg_csv")))
+                if phase.get("anomalygen_sdg_csv")
+                else None
+            )
+        )
+        total, _batch_unique = _assemble_counts(phase)
+        delta = total - previous_total if total is not None else None
+        new_unique = delta if delta is not None and delta >= 0 else None
+        delta_html = (
+            "—"
+            if delta is None
+            else (f"+{delta:,}" if delta > 0 else f"{delta:,}")
+        )
+        rows.append(
+            f'<tr><td><strong>{_escape(label.title())}</strong></td>'
+            f'<td class="num">{_fmt(raw)}</td>'
+            f'<td class="num">{_fmt(sdg_generated)}</td>'
+            f'<td class="num">{_fmt(new_unique)}</td>'
+            f'<td class="num">{_fmt(total)}</td>'
+            f'<td class="num">{delta_html}</td></tr>'
+        )
+        if total is not None:
+            previous_total = total
+    return "\n".join(rows)
+
+
+def _run_summary_rows(
+    state: dict[str, Any],
+    contract: dict[str, Any],
+    candidates: list[tuple[str, dict[str, Any], dict[str, Any]]],
+    entries: list[dict[str, Any]],
+) -> str:
+    config = state.get("config", {})
+    if not isinstance(config, dict):
+        config = {}
+    training = config.get("training", {})
+    if not isinstance(training, dict):
+        training = {}
+    baseline = next(
+        (result for label, _, result in candidates if label == "baseline"), None
+    )
+    end_label, end_result = (
+        (candidates[-1][0], candidates[-1][2])
+        if candidates
+        else (None, None)
+    )
+    completed = sum(1 for label, _, _ in candidates if label != "baseline")
+    gpu = f"{_fmt(training.get('num_gpus'))}x {_fmt(training.get('gpu_model'))}"
+    baseline_detail = _metric_summary_html(baseline, contract)
+    if baseline is not None:
+        baseline_detail += f" ({_benchmark_summary_html(state)})"
+    end_detail = _metric_summary_html(end_result, contract)
+    if end_label is not None and end_result is not None:
+        end_detail += f" ({_escape(end_label.title())})"
+    details = (
+        ("Prompt/Goal", f"Run DEFT loop · KPI: {_escape(render_target(contract))}"),
+        ("Model", f"NVIDIA TAO Cosmos Reason 3 · {_fmt(config.get('base_model'))}"),
+        ("GPU", gpu),
+        ("Baseline (pre-DEFT)", baseline_detail),
+        ("Data Routing", "AnomalyGen SDG &amp; k-NN Mining"),
+        ("Iterations × Time", _escape(_recorded_duration_summary(entries, completed))),
+        ("SDG Images", _escape(_sdg_summary_html(state, entries))),
+        ("End Result", end_detail),
+    )
+    return "\n".join(
+        f'<tr><td><strong>{_escape(item)}</strong></td><td>{detail}</td></tr>'
+        for item, detail in details
+    )
+
+
 def _dataset_rows(state: dict[str, Any]) -> str:
     config = state.get("config", {})
     if not isinstance(config, dict):
@@ -372,15 +585,23 @@ def _augmentation_rows(state: dict[str, Any]) -> str:
         kept = phase.get("mining_mined_count")
         if kept is None:
             kept = _first_number(summary, ("kept_rows", "kept_count", "output_rows"))
-        assembled = _json_records(phase.get("combined_training_json"))
-        train_count = len(assembled) if assembled else None
-        new_unique = max(train_count - previous_train, 0) if train_count is not None else None
+        train_count, new_unique = _assemble_counts(phase)
+        if new_unique is None and train_count is not None:
+            new_unique = max(train_count - previous_train, 0)
         if train_count is not None:
             previous_train = train_count
-        allocated = _first_number(
-            _optional_json(phase.get("assemble_summary")),
-            ("amp_allocated", "allocated", "allocated_count"),
-        )
+        allocated = phase.get("anomalygen_amp_allocated")
+        if not isinstance(allocated, int) or isinstance(allocated, bool):
+            allocation = _optional_json(phase.get("anomalygen_allocation_json"))
+            if allocation and all(
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= 0
+                for value in allocation.values()
+            ):
+                allocated = sum(allocation.values())
+            else:
+                allocated = None
         rows.append(
             f'<tr><td><strong>{_escape(label.title())}</strong></td><td class="num">{_fmt(requested)}</td><td class="num">{_fmt(allocated)}</td>'
             f'<td class="num">{_fmt(generated)}</td><td>{_defect_breakdown(sdg_rows)}</td><td class="num">{_fmt(raw)}</td>'
@@ -414,6 +635,7 @@ def _artifact_rows(state: dict[str, Any], contract: dict[str, Any]) -> str:
         ("proxy_gaps_summary", "Proxy RCCA"),
         ("mining_targets_json", "Routing targets"),
         ("anomalygen_sdg_csv", "AnomalyGen SDG_result.csv"),
+        ("anomalygen_allocation_json", "AnomalyGen AMP allocation"),
         ("anomalygen_sharegpt_json", "AnomalyGen ShareGPT"),
         ("mining_mined_parquet", "Mined candidates"),
         ("mining_summary", "Mining filter summary"),
@@ -567,23 +789,22 @@ def render(
         run_status = "IN_PROGRESS"
 
     if run_status == "FAILED":
-        banner_class, banner_icon = "error", "!"
-        kpi_status = "RUN ENDED AT A HARD STOP"
-        kpi_copy = "Review the committed error event and audit findings below."
+        banner = (
+            '<div class="kpi-banner error"><div class="icon">!</div>'
+            '<div class="content"><div class="title">RUN ENDED AT A HARD STOP</div>'
+            '<div class="body">Review the committed error event and audit findings below.</div>'
+            "</div></div>"
+        )
     elif terminal and metric_passed:
-        banner_class, banner_icon = "", "✓"
-        kpi_status = "KPI MET"
-        kpi_copy = f"{best_label.title() if best_label else 'Best result'} satisfies the frozen Benchmark contract."
-    elif terminal and best_result:
-        banner_class, banner_icon = "warn", "i"
-        value = float(best_result["value"])
-        gap = value - contract["target"] if contract["operator"] in MINIMIZING_OPERATORS else contract["target"] - value
-        kpi_status = "BEST RESULT RECORDED"
-        kpi_copy = f"{abs(gap):.4g} from target after the approved iteration budget."
+        label = best_label.title() if best_label else "Best result"
+        banner = (
+            '<div class="kpi-banner"><div class="icon">✓</div>'
+            '<div class="content"><div class="title">KPI MET</div>'
+            f'<div class="body">{_escape(label)} satisfies the frozen Benchmark contract.</div>'
+            "</div></div>"
+        )
     else:
-        banner_class, banner_icon = "warn", "i"
-        kpi_status = "LOOP IN PROGRESS"
-        kpi_copy = "This report refreshes automatically after every committed stage."
+        banner = ""
 
     config = state.get("config", {})
     if not isinstance(config, dict):
@@ -593,7 +814,10 @@ def render(
         training = {}
     num_gpus = training.get("num_gpus")
     num_nodes = training.get("num_nodes")
-    compute_shape = f"{_fmt(num_nodes)} node(s) · {_fmt(num_gpus)} GPU(s)"
+    compute_shape = (
+        f"{_fmt(num_nodes)} node(s) · {_fmt(num_gpus)} GPU(s) · "
+        f"{_fmt(training.get('gpu_model'))}"
+    )
     completed_iterations = sum(1 for label, _, _ in candidates if label != "baseline")
     benchmark_hash = (
         config.get("evaluation", {}).get("benchmark", {}).get("sha256")
@@ -613,10 +837,7 @@ def render(
         "ITERATIONS_RUN": str(completed_iterations),
         "MAX_ITERATIONS": _fmt(state.get("max_iterations")),
         "RUN_STATUS": _escape(run_status),
-        "BANNER_CLASS": banner_class,
-        "BANNER_ICON": banner_icon,
-        "KPI_STATUS": _escape(kpi_status),
-        "KPI_COPY": _escape(kpi_copy),
+        "KPI_BANNER_HTML": banner,
         "PLATFORM": _fmt(config.get("platform")),
         "MODEL": _fmt(config.get("base_model")),
         "ANNOTATION_MODE": _fmt(config.get("annotation_mode", "bare_okng")),
@@ -625,6 +846,10 @@ def render(
         "FINISHED_AT": _fmt(last_ts),
         "BEST_ITERATION": _escape(best_label.title() if best_label else "not available"),
         "BEST_METRIC": best_metric,
+        "RUN_SUMMARY_ROWS_HTML": _run_summary_rows(
+            state, contract, candidates, entries
+        ),
+        "GROWTH_ROWS_HTML": _growth_rows(state),
         "DATASET_ROWS_HTML": _dataset_rows(state),
         "BENCHMARK_HASH": _fmt(benchmark_hash),
         "PROMPT_EXAMPLES_HTML": _prompt_examples(state),
@@ -644,6 +869,8 @@ def render(
     required = (
         "NVIDIA TAO · DEFT AOI",
         "Run Configuration &amp; Outcome",
+        "Training Set Growth",
+        "Benchmark KPI Trend",
         "Dataset Isolation",
         "Prompt Examples",
         "Iteration Metrics",

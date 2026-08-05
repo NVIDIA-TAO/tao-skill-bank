@@ -50,6 +50,7 @@ PATH_FIELDS = {
     "benchmark_metrics_summary",
     "mining_targets_json",
     "anomalygen_sdg_csv",
+    "anomalygen_allocation_json",
     "anomalygen_sharegpt_json",
     "mining_mined_parquet",
     "mining_summary",
@@ -97,6 +98,12 @@ FIELD_STAGE = {
     for stage, fields in STAGE_REQUIRED_FIELDS.items()
     for field in fields
 }
+FIELD_STAGE.update(
+    {
+        "anomalygen_allocation_json": "anomalygen",
+        "anomalygen_amp_allocated": "anomalygen",
+    }
+)
 
 
 def _driving_label(label: str) -> str | None:
@@ -341,6 +348,38 @@ def _json_list(
         errors.append(f"{field} root must be a list")
         return None
     return payload
+
+
+def _allocation_proof(
+    path: pathlib.Path | None,
+    recorded_count: Any,
+    field: str,
+    errors: list[str],
+) -> None:
+    payload = _json_object(path, field, errors)
+    if payload is None:
+        return
+    if not payload:
+        errors.append(f"{field} must be a non-empty defect-to-count object")
+        return
+    if any(
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 0
+        for value in payload.values()
+    ):
+        errors.append(f"{field} contains invalid allocation counts")
+        return
+    allocated = sum(payload.values())
+    if allocated <= 0:
+        errors.append(f"{field} must allocate at least one AMP")
+    if not isinstance(recorded_count, int) or isinstance(recorded_count, bool):
+        errors.append(f"{field} has no integer anomalygen_amp_allocated in state")
+    elif recorded_count != allocated:
+        errors.append(
+            f"{field} total={allocated} disagrees with "
+            f"anomalygen_amp_allocated={recorded_count}"
+        )
 
 
 def _parquet_rows(
@@ -611,6 +650,13 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                     errors.append(
                         f"{field} must be Proxy-only, non-aggregate RCCA output"
                     )
+            if field == "anomalygen_allocation_json":
+                _allocation_proof(
+                    path,
+                    phase.get("anomalygen_amp_allocated"),
+                    field,
+                    errors,
+                )
             if field in {
                 "proxy_results_json",
                 "benchmark_results_json",
@@ -702,6 +748,15 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                         "it is the validate_sharegpt.py --summary output, not "
                         "validate_split_contract.py --summary"
                     )
+
+        if (
+            phase.get("anomalygen_amp_allocated") is not None
+            and not phase.get("anomalygen_allocation_json")
+        ):
+            errors.append(
+                f"state.iterations.{label}.anomalygen_amp_allocated is set "
+                "without anomalygen_allocation_json"
+            )
 
         if (label, "data_mining") in log_keys:
             mined_rows = _parquet_rows(

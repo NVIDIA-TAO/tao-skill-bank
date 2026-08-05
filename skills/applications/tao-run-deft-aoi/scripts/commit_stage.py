@@ -69,6 +69,29 @@ def _required_file(path: pathlib.Path | None, name: str) -> str:
     return str(expanded.resolve())
 
 
+def _required_allocation(
+    path: pathlib.Path | None, name: str
+) -> tuple[str, int]:
+    resolved = _required_file(path, name)
+    try:
+        payload = json.loads(pathlib.Path(resolved).read_text())
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{name} must be a JSON object: {resolved} ({exc})") from exc
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError(f"{name} must be a non-empty defect-to-count JSON object")
+    invalid = {
+        str(defect): count
+        for defect, count in payload.items()
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0
+    }
+    if invalid:
+        raise ValueError(f"{name} contains invalid allocation counts: {invalid}")
+    allocated = sum(payload.values())
+    if allocated <= 0:
+        raise ValueError(f"{name} must allocate at least one sample")
+    return resolved, allocated
+
+
 def _require_within(path: str, root: pathlib.Path, name: str) -> str:
     resolved = pathlib.Path(path).resolve()
     try:
@@ -165,6 +188,11 @@ def _apply_success(
             phase["anomalygen_sdg_csv"] = _required_file(
                 args.anomalygen_sdg, "--anomalygen-sdg"
             )
+            allocation, allocated = _required_allocation(
+                args.anomalygen_allocation, "--anomalygen-allocation"
+            )
+            phase["anomalygen_allocation_json"] = allocation
+            phase["anomalygen_amp_allocated"] = allocated
     elif stage == "data_mining":
         if args.skip:
             phase["data_mining_skipped"] = True
@@ -223,6 +251,14 @@ def _apply_success(
 def commit(args: argparse.Namespace) -> dict[str, Any]:
     if not re.fullmatch(r"baseline|iter[1-9][0-9]*", args.iter_label):
         raise ValueError("--iter-label must be baseline or iterN (N >= 1)")
+    if (
+        not isinstance(args.duration_sec, int)
+        or isinstance(args.duration_sec, bool)
+        or args.duration_sec <= 0
+    ):
+        raise ValueError(
+            "--duration-sec is required and must be a positive measured duration"
+        )
     if args.skip and args.stage not in {"anomalygen", "data_mining"}:
         raise ValueError("--skip is valid only for anomalygen or data_mining")
 
@@ -334,7 +370,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--status", choices=("ok", "error"), default="ok")
     parser.add_argument("--summary", required=True)
-    parser.add_argument("--duration-sec", type=int, default=0)
+    parser.add_argument(
+        "--duration-sec",
+        required=True,
+        type=int,
+        help="Measured wall-clock seconds for this stage; must be positive",
+    )
     parser.add_argument("--skip", action="store_true")
     parser.add_argument("--best-ckpt", type=pathlib.Path)
     parser.add_argument("--best-ckpt-kind", choices=("best_val", "latest"))
@@ -349,6 +390,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--routing-mining", type=pathlib.Path)
     parser.add_argument("--routing-anomalygen", type=pathlib.Path)
     parser.add_argument("--anomalygen-sdg", type=pathlib.Path)
+    parser.add_argument("--anomalygen-allocation", type=pathlib.Path)
     parser.add_argument("--mining-parquet", type=pathlib.Path)
     parser.add_argument("--mining-summary", type=pathlib.Path)
     parser.add_argument("--mining-target-embeddings", type=pathlib.Path)

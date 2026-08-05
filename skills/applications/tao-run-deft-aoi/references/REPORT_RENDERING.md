@@ -10,14 +10,24 @@ file opens offline.
 
 | Stage trigger | New data available |
 |---|---|
-| Loop start (config loaded) | `{{ PROBLEM_STATEMENT_HTML }}`, `{{ APPROACH_HTML }}` — both populated immediately from `metric_contract`, max_iterations, and mining cos floor. The initialization hook writes these cards in the first report. |
+| Loop start (config loaded) | `{{ RUN_SUMMARY_ROWS_HTML }}`, baseline `{{ GROWTH_ROWS_HTML }}`, `{{ PROBLEM_STATEMENT_HTML }}`, and `{{ APPROACH_HTML }}`. The summary records the approved KPI, Visual ChangeNet identity, GPU count/model, routing, and available outcome evidence. |
 | Baseline evaluate done | baseline primary `metric_result`, optional threshold, and evaluator diagnostics; `{{ KPI_DATASET_HTML }}` populated from the evaluation manifest scanned during baseline. |
 | Baseline RCA done | RCA insight, score distribution, evaluator diagnostics, and defect type rows; also refines `{{ KPI_DATASET_HTML }}`'s per-defect-type breakdown using `${results_dir}/baseline/rca_results/defect_type_rows.csv`. |
 | Iter N evaluate done | iter N primary metric, constraints, optional threshold, diagnostics, checkpoint |
 | Iter N RCA done | updated RCA insight and tables |
 | Iter N AnomalyGen done | an explicit `AnomalyGen: enabled` status line, the `num_SDG` generated count, and sample images (base64 thumbnails) for iter N |
-| Iter N k-NN filtering done | knn_summary (`candidate_count`, `kept_count`, `rejected_count`), training row counts |
+| Iter N k-NN filtering / data merge done | `knn_summary.csv` supplies `KNN Raw Mined`; the committed combined training CSV supplies cumulative rows and the monotonic difference from the preceding total supplies `New Unique Images (After Dedup)` and `Δ`. |
 | Loop stop (KPI met or max_iterations) | final status, `best_iter`, recommendations |
+
+The **Run Configuration & Outcome** card always contains the two-column DEFT
+experiment summary followed by **Training Set Growth** with the exact columns
+`Iteration`, `KNN Raw Mined`, `SDG Generated`,
+`New Unique Images (After Dedup)`, `Training Set Total`, and `Δ`. `SDG
+Generated` is the row count of the committed `SDG_result.csv`; the two final
+growth columns come from the cumulative combined training CSV, so `New Unique
+Images (After Dedup)` always equals `Δ`. Runtime totals are sums of positive measured
+`duration_sec` values from `loop_log.jsonl`; identify partial historical logs
+as missing data rather than treating zero as elapsed time.
 
 Stub values for data not yet available:
 - future iter metric/rows → render `—`
@@ -31,14 +41,15 @@ While the loop has not stopped:
 - `{{ ITERATIONS_RUN }}` → count of iterations with `status == "complete"` at render time.
 - Iteration table rows → only completed iterations; omit rows for unstarted iterations.
 - `{{ ITER_CARDS_HTML }}` → only emit cards for completed iterations.
-- KPI banner → empty string while running; inject it only on loop stop.
+- KPI banner → empty string while running or when a terminal run misses the
+  target; inject it only for KPI MET or a committed hard stop.
 - `{{ METRIC_DATA_JSON }}` → primary-metric points from completed iterations.
 
 ## KPI status phrasing — be neutral, never say "NOT MET"
 
 We are the product team. When the target is not yet reached, describe the **gap**
-instead of stamping a failure label. Phrasing rules for `{{ FINAL_KPI_STATUS }}`
-and any KPI banner copy:
+in the final status panel instead of stamping a failure label. Phrasing rules
+for `{{ FINAL_KPI_STATUS }}`:
 
 | Condition | `FINAL_KPI_STATUS` | `FINAL_KPI_STATUS_CLASS` |
 |---|---|---|
@@ -53,10 +64,10 @@ When substituting `{{ PRIMARY_METRIC_UNIT }}`, use `%` directly and prepend one
 space for non-percent units (for example ` cost/board`) so value labels remain
 readable without encoding presentation whitespace in `metric_contract.unit`.
 
-Do **not** emit `"NOT MET"`, `"FAILED"`, the `red` CSS class, or red banner styling
-even when the target is missed. The KPI banner in this case should use the neutral
-yellow "Best result so far" treatment shown in the template doc-comment, not the
-red "KPI NOT MET" treatment. Reporting the gap factually is the entire ask.
+Do **not** emit `"NOT MET"`, `"FAILED"`, the `red` CSS class, or a KPI banner
+when the target is missed. In particular, never emit the yellow informational
+`i` / "Best result" banner. The final status panel and metric tables already
+report the gap factually.
 
 ## Renderer entry point
 

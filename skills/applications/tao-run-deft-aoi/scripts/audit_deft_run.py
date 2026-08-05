@@ -58,6 +58,7 @@ PATH_FIELDS = {
     "routing_mining_parquet",
     "routing_anomalygen_parquet",
     "anomalygen_sdg_csv",
+    "anomalygen_allocation_json",
     "mining_mined_parquet",
     "mining_parquet",  # legacy field: accepted but still checked
     "mining_summary",
@@ -84,6 +85,8 @@ FIELD_STAGE = {
     "routing_mining_parquet": "routing",
     "routing_anomalygen_parquet": "routing",
     "anomalygen_sdg_csv": "anomalygen",
+    "anomalygen_allocation_json": "anomalygen",
+    "anomalygen_amp_allocated": "anomalygen",
     "mining_mined_parquet": "data_mining",
     "mining_parquet": "data_mining",
     "mining_summary": "data_mining",
@@ -267,6 +270,40 @@ def _mining_summary_proof(
     if mined_rows is not None and kept != mined_rows:
         errors.append(
             f"{field}.kept_count={kept} disagrees with mined parquet rows={mined_rows}"
+        )
+
+
+def _allocation_proof(
+    path: pathlib.Path,
+    recorded_count: Any,
+    field: str,
+    errors: list[str],
+) -> None:
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"{field} is invalid JSON: {exc}")
+        return
+    if not isinstance(payload, dict) or not payload:
+        errors.append(f"{field} must be a non-empty defect-to-count object")
+        return
+    if any(
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 0
+        for value in payload.values()
+    ):
+        errors.append(f"{field} contains invalid allocation counts")
+        return
+    allocated = sum(payload.values())
+    if allocated <= 0:
+        errors.append(f"{field} must allocate at least one AMP")
+    if not isinstance(recorded_count, int) or isinstance(recorded_count, bool):
+        errors.append(f"{field} has no integer anomalygen_amp_allocated in state")
+    elif recorded_count != allocated:
+        errors.append(
+            f"{field} total={allocated} disagrees with "
+            f"anomalygen_amp_allocated={recorded_count}"
         )
 
 
@@ -615,6 +652,22 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                 errors.append(
                     f"state.iterations.{label}.{field} is set but loop_log lacks {label}/{stage}"
                 )
+
+        allocation_value = info.get("anomalygen_allocation_json")
+        if allocation_value:
+            allocation_path = pathlib.Path(str(allocation_value)).expanduser()
+            if allocation_path.is_file() and allocation_path.stat().st_size > 0:
+                _allocation_proof(
+                    allocation_path,
+                    info.get("anomalygen_amp_allocated"),
+                    f"state.iterations.{label}.anomalygen_allocation_json",
+                    errors,
+                )
+        elif info.get("anomalygen_amp_allocated") is not None:
+            errors.append(
+                f"state.iterations.{label}.anomalygen_amp_allocated is set "
+                "without anomalygen_allocation_json"
+            )
 
         merge_report_value = info.get("merge_validation_report")
         if merge_report_value:

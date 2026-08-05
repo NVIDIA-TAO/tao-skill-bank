@@ -14,34 +14,54 @@ panels. Model-specific content and evidence differ, but the report must not
 introduce a separate grid, card geometry, or visual hierarchy. The renderer
 test compares these shared CSS properties across both source templates.
 
+Render a hero KPI banner only when the KPI is met or the run ends at a committed
+hard stop. For in-progress runs and terminal runs that remain short of target,
+render no banner. Never show an informational `i`, `BEST RESULT RECORDED`, or
+`from target after the approved iteration budget` callout; the outcome panel
+and metric tables already carry that evidence.
+
 Required sections:
 
 1. **Run Configuration & Outcome** — platform, model, bare mode, KPI contract,
-   GPU/node shape, timestamps, current/terminal status.
-2. **Dataset Isolation** — Proxy/Benchmark/Mining input paths, per-iteration
+   GPU/node shape and exact GPU model, timestamps, current/terminal status; a
+   two-column DEFT experiment summary with baseline/end KPI, routing, total and
+   average measured runtime, and SDG throughput; then a Training Set Growth
+   table with `Iteration`, `KNN Raw Mined`, `SDG Generated`, `New Unique Images
+   (After Dedup)`, `Training Set Total`, and `Δ`. `SDG Generated` comes from
+   the committed CSV row count. `assemble_summary.json.output_records` owns the
+   cumulative total; its difference from the preceding total owns both New
+   Unique and `Δ`. The committed JSON length is a compatibility fallback, while
+   `unique_target_images.new_after_dedup` remains a batch diagnostic in
+   Augmentation Volume.
+2. **Benchmark KPI Trend** — immediately follows Run Configuration & Outcome;
+   only frozen Benchmark results carry a pass/fail verdict.
+3. **Dataset Isolation** — Proxy/Benchmark/Mining input paths, per-iteration
    AnomalyGen output, generated Train artifacts by iteration, OK/NG counts,
    Benchmark SHA-256, and role ownership. Attribute every Train record to its
    producer: mined real pairs or synthetic AnomalyGen pairs.
-3. **Prompt Examples** — up to three distinct first-user prompts read from the
+4. **Prompt Examples** — up to three distinct first-user prompts read from the
    recorded Proxy, Benchmark, and Mining annotations. Group identical prompts
    across roles, show their record count and exact `OK`/`NG` response contract,
    escape file-derived text, and truncate only the displayed preview at 600
    characters. Do not embed the rest of an annotation record.
-4. **Iteration Metrics** — for baseline and every completed iteration:
+5. **Iteration Metrics** — for baseline and every completed iteration:
    accuracy, NG recall, NG precision, NG F1, false accepts, false rejects,
    unknowns, KPI pass/fail. Label every figure with its source split; only
    Benchmark figures carry the KPI verdict.
-5. **Pipeline Execution** — ordered committed stage events and durations from
-   `loop_log.jsonl`.
-6. **Augmentation Volume** — per iteration and per producer. Mining: raw
+6. **Pipeline Execution** — ordered committed stage events and positive,
+   measured durations from `loop_log.jsonl`. Summary totals exclude the
+   administrative `loop_stop` event and label partial historical logs instead
+   of interpreting zero as elapsed time.
+7. **Augmentation Volume** — per iteration and per producer. Mining: raw
    candidates, cosine-kept paths. AnomalyGen: requested `num_SDG`,
-   AMP-allocated, generated, and the per-defect-type breakdown, or the
-   documented skip and its reason. Then newly added unique target images and
-   cumulative training records by iteration.
-7. **Artifacts** — baseline base-model reference, iteration checkpoints,
-   Proxy/Benchmark results, RCCA, mining, AnomalyGen `SDG_result.csv` and
-   generated ShareGPT, assembled JSON, and validation-report links/paths.
-8. **Hard Stops / Warnings** — canonical audit warnings and error event, if
+   AMP-allocated (the sum of the committed `allocation.json`), generated, and
+   the per-defect-type breakdown, or the documented skip and its reason. Then
+   batch-unique target images and cumulative training records by iteration.
+8. **Artifacts** — baseline base-model reference, iteration checkpoints,
+   Proxy/Benchmark results, RCCA, mining, AnomalyGen `SDG_result.csv`,
+   `allocation.json`, and generated ShareGPT, assembled JSON, and
+   validation-report links/paths.
+9. **Hard Stops / Warnings** — canonical audit warnings and error event, if
    present.
 
 Cosmos3 bare mode is a discrete OK/NG classifier.
