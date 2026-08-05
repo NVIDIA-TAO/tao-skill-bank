@@ -69,7 +69,7 @@ smoke gate.
 - platform: SSH, scheduler, Pyxis/Enroot, mount, permission, GPU, CUDA, NCCL,
   decoder, or storage failure;
 - model/data: incompatible checkpoint keys/config, missing media, duplicate or
-  overlapping records, unsupported AETC task;
+  overlapping records, incompatible structural family, or missing task metadata;
 - experiment parity: model, dataset, optimization, prompt/preprocessing, or
   evaluator mismatch;
 - runtime: OOM, distributed timeout, decoder error, checkpoint failure,

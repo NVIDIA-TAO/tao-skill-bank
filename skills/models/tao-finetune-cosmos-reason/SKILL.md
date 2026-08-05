@@ -2,7 +2,7 @@
 name: tao-finetune-cosmos-reason
 description: >-
   Shared Cosmos3 frontend that explicitly routes Cosmos Framework and
-  Cosmos-RL, validates runtime model/WTS/AETC/SLURM inputs, builds clean
+  Cosmos-RL, validates runtime model/video-dataset/SLURM inputs, builds clean
   repository-derived images, prepares checkpoints, gates full training on a
   smoke run, and returns token-weighted losses and task-aware accuracy.
 license: Apache-2.0
@@ -11,7 +11,7 @@ metadata:
   author: NVIDIA Corporation
   version: "0.3.0"
 allowed-tools: Read Bash
-tags: [cosmos, vlm, sft, peft, wts, aetc, slurm]
+tags: [cosmos, vlm, sft, peft, video, reasoning, slurm]
 ---
 
 # Cosmos3 TAO training
@@ -32,9 +32,8 @@ from history, another user, a prior job, an image, or a developer checkout.
   Cosmos3-Edge is inferred as `cosmos3_edge` from the resolved model ID.
 - optional `prepared_checkpoint_path`; validate it instead of silently
   replacing it.
-- WTS: training/validation annotation paths and media roots.
-- AETC: one or more training/validation annotation paths, media roots, and
-  optional task selection.
+- training/validation annotation paths and media roots for conversation-style
+  or task-aware video supervision, plus optional task selection.
 - explicit `backend` for a comparison; `cosmos-framework` or `cosmos-rl`.
 - `training_mode`; `dense` or `peft`. PEFT also requires rank, alpha, dropout,
   target modules, bias, RS-LoRA, modules-to-save, and adapter precision.
@@ -64,8 +63,7 @@ pixels), sequence length 16,000, and `flash_attention_2`. These are runtime
 settings, not checkpoint contents. Record whether each value came from the
 skill profile or an explicit user override, include it in parity and cache
 keys, and require the normal compute-node smoke gate before full training.
-Framework receives the pixel budget through `WTS_VIDEO_MAX_PIXELS` or
-`AETC_VIDEO_MAX_PIXELS`; Nano keeps its native processor limit unless the user
+Framework receives the pixel budget through `TAO_VIDEO_MAX_PIXELS`; Nano keeps its native processor limit unless the user
 explicitly overrides it.
 
 ## Backend selection
@@ -112,7 +110,7 @@ Execute these stages in order and persist their outputs.
    image ID/digest and SQSH SHA256; verify Pyxis/Enroot, mounts, non-root Python,
    packages, decoder, GPU memory/type, CUDA/PyTorch, NCCL, and storage on the
    allocated node.
-10. Run a smoke job for every distinct backend × dataset adapter × training
+10. Run a smoke job for every distinct backend × structural dataset family × training
     mode × checkpoint/evaluator path. Continue only on child exit zero,
     structured `SUCCESS`, finite global train/validation loss, checkpoint
     completion, and evaluator accuracy coverage.
@@ -126,17 +124,25 @@ Execute these stages in order and persist their outputs.
 
 ## Dataset contracts
 
-WTS accepts an explicit annotation JSON array plus explicit media root for each
-split. Records require media and at least a user/assistant conversation pair.
-Validate every record and media reference, not a prefix sample.
+Resolve datasets by structure, not by project, benchmark, directory, or file
+name. The supported families are:
 
-AETC accepts DAFT `tao-vl-reason-v1.0` item envelopes and the supported tasks:
-BCQ, MCQ, open-ended BCQ/MCQ, open QA, scene description, video
-summarization, temporal localization, temporal description, and causal
-linkage. BCQ/MCQ have deterministic accuracy. Generative tasks report their
-defined text/task metrics and are excluded from aggregate accuracy with a
-reason. Aggregate AETC accuracy is example-weighted over accuracy-defined
-tasks.
+- `video_conversation`: a JSON array with media and at least two ShareGPT,
+  LLaVA, or OpenAI-style conversation turns;
+- `task_aware_video_reasoning`: one or more item-envelope or array annotation
+  files with media, task identity, and conversation/response targets.
+
+Default `dataset_family` to `auto`, inspect every annotation, and require train
+and validation to resolve to the same family. Capture record count, unique
+media count, media reuse, extensions, byte-size distribution, task/metric
+metadata, and any declared width, height, FPS, and duration. Select processor,
+cache, smoke-size, and resource profiles from those characteristics and the
+model tier. Never branch on a customer dataset name.
+
+Tasks declaring accuracy participate in deterministic accuracy; common binary
+and multiple-choice task types are recognized. Generative tasks report their
+declared metrics and are excluded from aggregate accuracy with a reason.
+Aggregate accuracy is example-weighted over records with an accuracy definition.
 
 ## Dense and PEFT contracts
 

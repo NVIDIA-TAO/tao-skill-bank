@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build reproducible Cosmos3-Nano TAO plans from runtime-only inputs."""
+"""Build reproducible Cosmos3 TAO plans from runtime-only inputs."""
 
 from __future__ import annotations
 
@@ -78,7 +78,12 @@ def resolve_model_name(requested: str, base_model_path_or_uri: str) -> str:
     raise WorkflowError("model tier is ambiguous; supply Cosmos3-Nano/Edge or a recognizable public checkpoint")
 
 
-def resolve_model_profile(args: argparse.Namespace, tier: str) -> dict[str, Any]:
+def resolve_model_profile(
+    args: argparse.Namespace,
+    tier: str,
+    train_dataset: Mapping[str, Any],
+    validation_dataset: Mapping[str, Any],
+) -> dict[str, Any]:
     """Resolve model-aware runtime policy without modifying checkpoint files."""
     defaults = {
         "nano": {"frames": 8, "sequence_length": 40960, "attention_implementation": "cosmos"},
@@ -89,23 +94,34 @@ def resolve_model_profile(args: argparse.Namespace, tier: str) -> dict[str, Any]
     attention = args.attention_implementation if args.attention_implementation != "auto" else defaults["attention_implementation"]
     if frames < 1 or sequence_length < 1:
         raise WorkflowError("frames and sequence_length must be positive")
-    if args.video_frame_width < 1 or args.video_frame_height < 1:
+    resolution_profiles = [train_dataset["profile"]["resolution"], validation_dataset["profile"]["resolution"]]
+    measured_widths = [item["median_width"] for item in resolution_profiles if item["median_width"]]
+    measured_heights = [item["median_height"] for item in resolution_profiles if item["median_height"]]
+    frame_width = args.video_frame_width or int(max(measured_widths, default=1280))
+    frame_height = args.video_frame_height or int(max(measured_heights, default=720))
+    if frame_width < 1 or frame_height < 1:
         raise WorkflowError("video frame width and height must be positive")
+    pixels_per_frame = min(frame_width * frame_height, 1280 * 720) if tier == "edge" else frame_width * frame_height
     max_pixels = args.video_max_pixels or (
-        frames * args.video_frame_width * args.video_frame_height if tier == "edge" else 0
+        frames * pixels_per_frame if tier == "edge" else 0
     )
     if max_pixels < 0:
         raise WorkflowError("video_max_pixels must be nonnegative")
     profile = {
         "model_tier": tier,
-        "source": "user" if any((args.frames, args.sequence_length, args.video_max_pixels)) or args.attention_implementation != "auto" else "tao_skill_default",
+        "source": "user" if any((args.frames, args.sequence_length, args.video_max_pixels, args.video_frame_width, args.video_frame_height)) or args.attention_implementation != "auto" else "dataset_metadata" if measured_widths and measured_heights else "model_safe_default",
         "frames": frames,
         "sequence_length": sequence_length,
         "attention_implementation": attention,
-        "frame_width": args.video_frame_width,
-        "frame_height": args.video_frame_height,
+        "frame_width": frame_width,
+        "frame_height": frame_height,
         "max_video_pixels": max_pixels or None,
         "checkpoint_mutation": False,
+        "dataset_profile_fingerprints": {
+            "train": stable_hash(train_dataset["profile"]),
+            "validation": stable_hash(validation_dataset["profile"]),
+        },
+        "selection_basis": ["model_tier", "dataset_resolution_metadata", "record_count", "media_reuse", "explicit_overrides"],
     }
     args.frames = frames
     args.sequence_length = sequence_length
@@ -130,7 +146,7 @@ def model_tier(model: str) -> str:
     raise WorkflowError(f"unsupported Cosmos family: {model!r}")
 
 
-def select_backend(*, model: str, action: str, backend: str = "auto", workload: str = "wts", comparative: bool = False) -> tuple[str, str]:
+def select_backend(*, model: str, action: str, backend: str = "auto", workload: str = "training", comparative: bool = False) -> tuple[str, str]:
     action = action.casefold()
     if action not in SUPPORTED_ACTIONS:
         raise WorkflowError(f"unsupported Cosmos action: {action}")
@@ -270,7 +286,7 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
     val_steps = math.ceil(smoke_val / world)
     epochs = contract["epochs"]
     spec: dict[str, Any] = {
-        "job": {"task": "vlm", "experiment": ("aetc_daft_vlm_edge" if args.workload == "aetc" else "wts_vlm_edge") if model_tier(args.model) == "edge" else ("aetc_daft_vlm" if args.workload == "aetc" else "wts_vlm"), "project": "cosmos3_reasoner", "group": args.workload, "name": args.experiment_id, "wandb_mode": "disabled"},
+        "job": {"task": "vlm", "experiment": ("tao_task_aware_video_reasoning_edge" if args.dataset_family == "task_aware_video_reasoning" else "tao_video_conversation_edge") if model_tier(args.model) == "edge" else ("tao_task_aware_video_reasoning" if args.dataset_family == "task_aware_video_reasoning" else "tao_video_conversation"), "project": "cosmos3_reasoner", "group": args.dataset_family, "name": args.experiment_id, "wandb_mode": "disabled"},
         "model": {
             "attn_implementation": args.attention_implementation, "precision": args.precision,
             "backbone": {"model_name": "${oc.env:VLM_SAFETENSORS_PATH}", "safetensors_path": "${oc.env:VLM_SAFETENSORS_PATH}"},
@@ -347,7 +363,7 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         spec["policy"].pop("lora", None)
     spec["logging"].update({"logger": ["console", "tao"], "experiment_name": args.experiment_id, "project_name": "cosmos-rl-tao"})
     spec["custom"].update({
-        "train_dataset": {"annotation_path": train_manifest, "media_path": train_media[0], "media_root": train_media[0], "response_mode": "hybrid" if args.workload == "aetc" else "answer"},
+        "train_dataset": {"annotation_path": train_manifest, "media_path": train_media[0], "media_root": train_media[0], "response_mode": "hybrid" if args.dataset_family == "task_aware_video_reasoning" else "answer"},
         "val_dataset": {"annotation_path": val_manifest, "media_path": val_media[0], "media_root": val_media[0], "response_mode": "answer"},
         "vision": {"nframes": args.frames, "video_decoder": "pynvvideocodec", "cache_dir": args.container_cache_dir},
         "system_prompt": args.system_prompt,
@@ -373,22 +389,21 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
         common.update({
             "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "VLM_SAFETENSORS_PATH": prepared_model,
             "IMAGINAIRE_OUTPUT_ROOT": args.container_results_dir,
-            "WTS_TRAIN_ANNOTATION": train_annotations[0] if args.workload == "wts" else "",
-            "WTS_TRAIN_MEDIA": train_media[0] if args.workload == "wts" else "",
-            "WTS_VAL_ANNOTATION": val_annotations[0] if args.workload == "wts" else "",
-            "WTS_VAL_MEDIA": val_media[0] if args.workload == "wts" else "",
-            "WTS_NUM_VIDEO_FRAMES": str(args.frames), "WTS_SYSTEM_PROMPT": args.system_prompt,
-            "AETC_TRAIN_ANNOTATIONS": json.dumps(list(train_annotations)) if args.workload == "aetc" else "[]",
-            "AETC_TRAIN_MEDIA": train_media[0] if args.workload == "aetc" else "",
-            "AETC_VAL_ANNOTATIONS": json.dumps(list(val_annotations)) if args.workload == "aetc" else "[]",
-            "AETC_VAL_MEDIA": val_media[0] if args.workload == "aetc" else "",
-            "AETC_NUM_VIDEO_FRAMES": str(args.frames), "AETC_SYSTEM_PROMPT": args.system_prompt,
+            "TAO_VIDEO_DATASET_FAMILY": args.dataset_family,
+            "TAO_VIDEO_TRAIN_ANNOTATION": train_annotations[0],
+            "TAO_VIDEO_TRAIN_ANNOTATIONS": json.dumps(list(train_annotations)),
+            "TAO_VIDEO_TRAIN_MEDIA": train_media[0],
+            "TAO_VIDEO_TRAIN_MEDIA_ROOTS": json.dumps(list(train_media)),
+            "TAO_VIDEO_VAL_ANNOTATION": val_annotations[0],
+            "TAO_VIDEO_VAL_ANNOTATIONS": json.dumps(list(val_annotations)),
+            "TAO_VIDEO_VAL_MEDIA": val_media[0],
+            "TAO_VIDEO_VAL_MEDIA_ROOTS": json.dumps(list(val_media)),
+            "TAO_VIDEO_NUM_FRAMES": str(args.frames), "TAO_VIDEO_SYSTEM_PROMPT": args.system_prompt,
         })
         if args.video_max_pixels:
-            common["WTS_VIDEO_MAX_PIXELS"] = str(args.video_max_pixels)
-            common["AETC_VIDEO_MAX_PIXELS"] = str(args.video_max_pixels)
+            common["TAO_VIDEO_MAX_PIXELS"] = str(args.video_max_pixels)
         if args.run_mode == "smoke":
-            common.update({"WTS_TRAIN_LIMIT": str(args.smoke_train_samples), "WTS_VAL_LIMIT": str(args.smoke_validation_samples), "AETC_TRAIN_LIMIT": str(args.smoke_train_samples), "AETC_VAL_LIMIT": str(args.smoke_validation_samples)})
+            common.update({"TAO_VIDEO_TRAIN_LIMIT": str(args.smoke_train_samples), "TAO_VIDEO_VAL_LIMIT": str(args.smoke_validation_samples)})
     return common
 
 
@@ -401,7 +416,7 @@ def _command(args: argparse.Namespace, backend: str) -> str:
             "-m", "cosmos_framework.scripts.train", f"--sft-toml={args.container_spec_path}", "--",
         ]
         return " ".join(parts)
-    hook = "/opt/cosmos_rl/tao_vl_reason_daft_sft_example.py" if args.workload == "aetc" else "/opt/cosmos_rl/tao_sft_example.py"
+    hook = "/opt/cosmos_rl/tao_vl_reason_daft_sft_example.py" if args.dataset_family == "task_aware_video_reasoning" else "/opt/cosmos_rl/tao_sft_example.py"
     if args.nodes == 1:
         return f"cosmos-rl --config {shlex.quote(args.container_spec_path)} {hook}"
     return "\n".join([
@@ -589,7 +604,7 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
             "from cosmos_rl.utils.pynv_video_reader import register_pynv_video_reader",
             f"d=PyNvVideoCodec.SimpleDecoder({representative_media!r}, gpu_id=0, use_device_memory=False); assert len(d)>0",
         ])
-    if args.workload == "aetc":
+    if args.dataset_family == "task_aware_video_reasoning":
         imports.append("import nvidia_tao_daft")
     imports.extend([
         "p=torch.cuda.get_device_properties(0)",
@@ -637,7 +652,6 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     tier = model_tier(args.model)
     if tier == "edge" and backend != "cosmos-framework":
         raise WorkflowError("Cosmos3-Edge training requires Cosmos Framework")
-    model_profile = resolve_model_profile(args, tier)
     if args.run_mode == "full" and (args.train_sample_limit or args.validation_sample_limit):
         raise WorkflowError("full runs must not contain a smoke/subset sample limit")
     if args.async_checkpoint and args.nodes > 1:
@@ -648,12 +662,20 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     prepared_model, model_preparation = _model_preparation(args, model)
     train_annotations, train_media = _annotation_args(args, "train")
     val_annotations, val_media = _annotation_args(args, "validation")
-    train_data = inspect_dataset(workload=args.workload, annotations=train_annotations, media_roots=train_media, selected_tasks=args.aetc_task, verify_media_content=not args.fast_media_fingerprint)
-    val_data = inspect_dataset(workload=args.workload, annotations=val_annotations, media_roots=val_media, selected_tasks=args.aetc_task, verify_media_content=not args.fast_media_fingerprint)
+    train_data = inspect_dataset(dataset_family=args.dataset_family, annotations=train_annotations, media_roots=train_media, selected_tasks=args.task, verify_media_content=not args.fast_media_fingerprint)
+    val_data = inspect_dataset(dataset_family=args.dataset_family, annotations=val_annotations, media_roots=val_media, selected_tasks=args.task, verify_media_content=not args.fast_media_fingerprint)
+    if train_data["dataset_family"] != val_data["dataset_family"]:
+        raise WorkflowError("training and validation annotations resolve to different dataset families")
+    args.dataset_family = train_data["dataset_family"]
+    if args.dataset_family == "video_conversation" and (len(train_annotations) != 1 or len(val_annotations) != 1):
+        raise WorkflowError("video_conversation requires exactly one annotation file per split")
+    model_profile = resolve_model_profile(args, tier, train_data, val_data)
     assert_no_overlap(train_data, val_data)
     total_gpus = args.nodes * args.gpus_per_node
     if min(train_data["record_count"], val_data["record_count"]) < total_gpus:
         raise WorkflowError("train and validation datasets must each contain at least one record per global GPU")
+    args.smoke_train_samples = min(train_data["record_count"], max(args.smoke_train_samples, total_gpus))
+    args.smoke_validation_samples = min(val_data["record_count"], max(args.smoke_validation_samples, total_gpus))
     contract = _training_contract(args)
     commits = _source_commits(args, backend)
     image = _image_plan(args, backend, commits)
@@ -677,7 +699,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container)
     plan = {
         "schema_version": 2, "experiment_id": args.experiment_id, "model_name": args.model,
-        "model": model, "action": args.action, "workload": args.workload, "backend": backend,
+        "model": model, "action": args.action, "workflow": args.workload, "dataset_family": args.dataset_family, "backend": backend,
         "model_preparation": model_preparation, "prepared_model_container_path": prepared_model_container,
         "backend_selection_reason": reason, "backend_contract": str(BACKEND_FILES[backend]),
         "run_mode": args.run_mode, "training": contract, "processor_profile": model_profile,
@@ -689,7 +711,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         },
         "image": image, "sqsh": path_identity(args.sqsh_path, required=args.platform == "slurm"),
         "compute": {"platform": args.platform, "nodes": args.nodes, "gpus_per_node": args.gpus_per_node, "total_gpus": total_gpus, "cpus_per_task": args.cpus_per_task},
-        "cache_prewarm": {"required": backend == "cosmos-rl", "keys": cache_keys, "path": args.cache_dir, "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": True, "resumable": True},
+        "cache_prewarm": {"required": backend == "cosmos-rl", "keys": cache_keys, "path": args.cache_dir, "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": True, "resumable": True, "selection_basis": {"media_reuse": train_data["profile"]["media_reuse_class"], "record_count": train_data["record_count"], "resolution_class": train_data["profile"]["resolution"]["class"]}},
         "spec": spec, "environment": environment, "command": _command(args, backend),
         "config_container_path": args.container_spec_path,
         "smoke_gate": {"required": not args.skip_smoke and args.run_mode == "full", "train_samples": args.smoke_train_samples, "validation_samples": args.smoke_validation_samples, "criteria": ["child_exit_code=0", "terminal_status=SUCCESS", "finite_train_avg_loss", "finite_val_avg_loss", "checkpoint_event", "validation_accuracy_present"]},
@@ -715,13 +737,13 @@ def write_spec(args: argparse.Namespace, plan: dict[str, Any]) -> Path:
             items = payload.get("items", []) if isinstance(payload, dict) else payload
             for item in items:
                 copied = dict(item)
-                if args.workload == "aetc" and not copied.get("task"):
+                if args.dataset_family == "task_aware_video_reasoning" and not copied.get("task"):
                     copied["task"] = metadata.get("task")
                 records.append(copied)
         if limit:
             records = records[:limit]
         target = output.with_name(f"{split}_{'smoke' if limit else 'merged'}.json")
-        if args.workload == "aetc":
+        if args.dataset_family == "task_aware_video_reasoning":
             payload: Any = {"format": "tao-vl-reason-v1.0", "metadata": {"task": "mixed"}, "items": records}
         else:
             payload = records
@@ -801,7 +823,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
 def initial_metadata(args: argparse.Namespace, plan: Mapping[str, Any]) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
     return {
-        "schema_version": 1, "experiment_id": plan["experiment_id"], "dataset": plan["workload"],
+        "schema_version": 1, "experiment_id": plan["experiment_id"], "dataset": plan["dataset_family"],
         "training_mode": plan["training"]["training_mode"], "backend": plan["backend"], "tao_job_id": args.tao_job_id,
         "slurm": {
             "job_id": None, "submission_host": socket.gethostname(), "cluster": args.cluster,
@@ -967,7 +989,8 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--action", choices=sorted(SUPPORTED_ACTIONS), default="train")
     parser.add_argument("--backend", choices=("auto", "cosmos-framework", "cosmos-rl"), default="auto")
     parser.add_argument("--comparative", action="store_true")
-    parser.add_argument("--workload", choices=("wts", "aetc", "automl"), default="wts")
+    parser.add_argument("--workload", choices=("training", "automl"), default="training")
+    parser.add_argument("--dataset-family", choices=("auto", "video_conversation", "task_aware_video_reasoning"), default="auto")
     parser.add_argument("--platform", choices=("docker", "slurm"), default="slurm")
     parser.add_argument("--base-model-path-or-uri", default="")
     parser.add_argument("--base-model-revision", default="")
@@ -979,7 +1002,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--train-media-root", action="append", default=[])
     parser.add_argument("--validation-annotation", action="append", default=[])
     parser.add_argument("--validation-media-root", action="append", default=[])
-    parser.add_argument("--aetc-task", action="append", default=[])
+    parser.add_argument("--task", action="append", default=[])
     parser.add_argument("--training-mode", choices=("dense", "peft"), default="dense")
     parser.add_argument("--lora-rank", type=int, default=0); parser.add_argument("--lora-alpha", type=int, default=0)
     parser.add_argument("--lora-dropout", type=float, default=0.0); parser.add_argument("--lora-target-modules", action="append", default=[])
@@ -992,8 +1015,8 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--weight-decay", type=float, default=0.01); parser.add_argument("--gradient-clip", type=float, default=1.0)
     parser.add_argument("--precision", default="bfloat16"); parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--sequence-length", type=int, default=0); parser.add_argument("--frames", type=int, default=0)
-    parser.add_argument("--video-max-pixels", type=int, default=0); parser.add_argument("--video-frame-width", type=int, default=1280)
-    parser.add_argument("--video-frame-height", type=int, default=720)
+    parser.add_argument("--video-max-pixels", type=int, default=0); parser.add_argument("--video-frame-width", type=int, default=0)
+    parser.add_argument("--video-frame-height", type=int, default=0)
     parser.add_argument("--system-prompt", default=""); parser.add_argument("--attention-implementation", default="auto")
     parser.add_argument("--processor-revision", default="packaged"); parser.add_argument("--run-mode", choices=("smoke", "full"), default="full")
     parser.add_argument("--skip-smoke", action="store_true"); parser.add_argument("--smoke-train-samples", type=int, default=16)
