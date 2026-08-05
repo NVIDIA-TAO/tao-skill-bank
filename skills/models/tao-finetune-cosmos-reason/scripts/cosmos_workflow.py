@@ -30,8 +30,10 @@ from cosmos_common import (
     inspect_model,
     dataset_parity,
     model_parity,
+    materialize_dataset,
     optimization_parity,
     path_identity,
+    planned_path_identity,
     selected_environment,
     sha256_file,
     stable_hash,
@@ -54,7 +56,11 @@ ALIASES = {
 SUPPORTED_ACTIONS = {"train", "evaluate", "inference", "quantize"}
 
 
-def resolve_model_name(requested: str, base_model_path_or_uri: str) -> str:
+def resolve_model_name(
+    requested: str,
+    base_model_path_or_uri: str,
+    inspected_model: Mapping[str, Any] | None = None,
+) -> str:
     """Resolve Nano versus Edge from explicit input or public checkpoint identity."""
     if requested and requested.casefold() != "auto":
         model_tier(requested)
@@ -71,6 +77,12 @@ def resolve_model_name(requested: str, base_model_path_or_uri: str) -> str:
             model_type = str(json.loads(config_path.read_text(encoding="utf-8")).get("model_type", ""))
         except json.JSONDecodeError as exc:
             raise WorkflowError(f"base model config.json is invalid: {config_path}: {exc}") from exc
+        if model_type == "cosmos3_edge":
+            return "nvidia/Cosmos3-Edge"
+        if model_type in {"qwen3_vl", "cosmos3_omni"}:
+            return "nvidia/Cosmos3-Nano"
+    if inspected_model:
+        model_type = str(inspected_model.get("config", {}).get("model_type") or inspected_model.get("format") or "")
         if model_type == "cosmos3_edge":
             return "nvidia/Cosmos3-Edge"
         if model_type in {"qwen3_vl", "cosmos3_omni"}:
@@ -212,6 +224,215 @@ def _annotation_args(args: argparse.Namespace, split: str) -> tuple[list[str], l
     return annotations, media
 
 
+def _needs_remote_inspection(args: argparse.Namespace) -> bool:
+    if args.platform != "slurm":
+        return False
+    values = [
+        args.base_model_path_or_uri,
+        args.prepared_checkpoint_path,
+        args.results_dir,
+        args.checkpoint_dir,
+        args.cache_dir,
+        args.sqsh_cache_dir,
+        args.sqsh_path,
+        *args.train_annotation,
+        *args.train_media_root,
+        *args.validation_annotation,
+        *args.validation_media_root,
+    ]
+    return any(value and "://" not in value and not Path(value).expanduser().exists() for value in values)
+
+
+def _remote_inspection(args: argparse.Namespace) -> dict[str, Any]:
+    """Inspect SLURM-frame inputs by streaming the checked-in helper over SSH.
+
+    No source file or startup patch is created on the cluster.  The helper runs
+    from stdin and returns only structured identities/fingerprints.
+    """
+    if not args.slurm_user or not args.slurm_host:
+        raise WorkflowError("slurm_user and at least one slurm_host are required for remote input inspection")
+    if not args.ssh_key_path:
+        raise WorkflowError("ssh_key_path is required for remote input inspection")
+    key = Path(args.ssh_key_path).expanduser()
+    if not key.is_file():
+        raise WorkflowError(f"ssh_key_path is inaccessible: {args.ssh_key_path}")
+
+    remote_args = [
+        "python3", "-", "inspect-inputs",
+        "--base-model-path-or-uri", args.base_model_path_or_uri,
+        "--dataset-family", args.dataset_family,
+    ]
+    for option, value in (
+        ("--base-model-revision", args.base_model_revision),
+        ("--prepared-checkpoint-path", args.prepared_checkpoint_path),
+    ):
+        if value:
+            remote_args.extend([option, value])
+    for option, values in (
+        ("--train-annotation", args.train_annotation),
+        ("--train-media-root", args.train_media_root),
+        ("--validation-annotation", args.validation_annotation),
+        ("--validation-media-root", args.validation_media_root),
+        ("--task", args.task),
+    ):
+        for value in values:
+            remote_args.extend([option, value])
+    for label, value in (
+        ("results_dir", args.results_dir),
+        ("checkpoint_dir", args.checkpoint_dir),
+        ("cache_dir", args.cache_dir),
+        ("sqsh_cache_dir", args.sqsh_cache_dir),
+        ("sqsh_path", args.sqsh_path),
+    ):
+        remote_args.extend(["--runtime-path", f"{label}={value}"])
+    if args.fast_media_fingerprint:
+        remote_args.append("--fast-media-fingerprint")
+
+    source = Path(__file__).with_name("cosmos_common.py").read_text(encoding="utf-8")
+    failures: list[str] = []
+    for host in args.slurm_host:
+        ssh = [
+            "ssh", "-o", "BatchMode=yes", "-o", "PasswordAuthentication=no",
+            "-o", "PreferredAuthentications=publickey", "-o", "ConnectTimeout=15",
+            "-o", "StrictHostKeyChecking=yes", "-i", str(key), "-o", "IdentitiesOnly=yes",
+            f"{args.slurm_user}@{host}", shlex.join(remote_args),
+        ]
+        try:
+            result = subprocess.run(
+                ssh,
+                input=source,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=3600,
+            )
+        except subprocess.TimeoutExpired:
+            failures.append(f"{host}: remote input inspection timed out")
+            continue
+        if result.returncode:
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            failures.append(f"{host}: {detail[-1] if detail else f'exit {result.returncode}'}")
+            continue
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            failures.append(f"{host}: invalid remote inspection JSON: {exc}")
+            continue
+        if not isinstance(payload, dict) or payload.get("frame") != "target_compute":
+            failures.append(f"{host}: incomplete remote inspection payload")
+            continue
+        payload["verified_host"] = host
+        return payload
+    raise WorkflowError("remote SLURM input inspection failed: " + "; ".join(failures))
+
+
+def _ssh_command(args: argparse.Namespace, host: str, remote_command: str) -> list[str]:
+    key = Path(args.ssh_key_path).expanduser()
+    return [
+        "ssh", "-o", "BatchMode=yes", "-o", "PasswordAuthentication=no",
+        "-o", "PreferredAuthentications=publickey", "-o", "ConnectTimeout=15",
+        "-o", "StrictHostKeyChecking=yes", "-i", str(key), "-o", "IdentitiesOnly=yes",
+        f"{args.slurm_user}@{host}", remote_command,
+    ]
+
+
+def _remote_helper(
+    args: argparse.Namespace,
+    helper_args: Sequence[str],
+    *,
+    host: str,
+    timeout: int = 3600,
+) -> dict[str, Any]:
+    source = Path(__file__).with_name("cosmos_common.py").read_text(encoding="utf-8")
+    command = _ssh_command(args, host, shlex.join(["python3", "-", *helper_args]))
+    result = subprocess.run(
+        command, input=source, text=True, capture_output=True, check=False, timeout=timeout,
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise WorkflowError(
+            f"remote helper failed on {host}: {detail[-1] if detail else f'exit {result.returncode}'}"
+        )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise WorkflowError(f"remote helper returned invalid JSON on {host}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise WorkflowError(f"remote helper returned a non-object on {host}")
+    return payload
+
+
+def _remote_materialize_dataset(
+    args: argparse.Namespace,
+    *,
+    split: str,
+    output_path: str,
+    sample_limit: int,
+    host: str,
+) -> dict[str, Any]:
+    annotations, _ = _annotation_args(args, split)
+    helper_args = [
+        "materialize-dataset", "--dataset-family", args.dataset_family,
+        "--output-path", output_path, "--sample-limit", str(sample_limit),
+    ]
+    for annotation in annotations:
+        helper_args.extend(["--annotation", annotation])
+    for task in args.task:
+        helper_args.extend(["--task", task])
+    return _remote_helper(args, helper_args, host=host)
+
+
+def _remote_write_text(
+    args: argparse.Namespace,
+    *,
+    output_path: str,
+    content: str,
+    host: str,
+) -> str:
+    output = Path(output_path)
+    script = """set -Eeuo pipefail
+umask 077
+parent=$1
+target=$2
+mkdir -p -- "$parent"
+tmp=$(mktemp --tmpdir="$parent" ".${target##*/}.XXXXXX")
+trap 'rm -f -- "$tmp"' EXIT
+cat > "$tmp"
+chmod 0640 "$tmp"
+mv -f -- "$tmp" "$target"
+trap - EXIT
+sha256sum "$target"
+"""
+    remote = shlex.join(["bash", "-c", script, "tao-write", str(output.parent), str(output)])
+    result = subprocess.run(
+        _ssh_command(args, host, remote), input=content, text=True,
+        capture_output=True, check=False, timeout=120,
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise WorkflowError(
+            f"remote config write failed on {host}: {detail[-1] if detail else f'exit {result.returncode}'}"
+        )
+    fields = result.stdout.strip().split()
+    if not fields or not re.fullmatch(r"[0-9a-f]{64}", fields[0]):
+        raise WorkflowError(f"remote config checksum is invalid on {host}")
+    return fields[0]
+
+
+def _remote_file_sha256(args: argparse.Namespace, *, path: str, host: str) -> str:
+    remote = shlex.join(["sha256sum", "--", path])
+    result = subprocess.run(
+        _ssh_command(args, host, remote), text=True, capture_output=True,
+        check=False, timeout=120,
+    )
+    if result.returncode:
+        raise WorkflowError(f"required generated config is inaccessible on {host}: {path}")
+    fields = result.stdout.strip().split()
+    if not fields or not re.fullmatch(r"[0-9a-f]{64}", fields[0]):
+        raise WorkflowError(f"generated config checksum is invalid on {host}: {path}")
+    return fields[0]
+
+
 def _mount_mapping(value: str) -> tuple[Path, Path]:
     parts = value.split(":")
     if len(parts) < 2 or not parts[0] or not parts[1]:
@@ -238,6 +459,31 @@ def _containerize(args: argparse.Namespace, value: str) -> str:
     if args.platform == "slurm":
         raise WorkflowError(f"runtime path is not covered by a container mount: {value}")
     return str(source_path)
+
+
+def _align_container_runtime_paths(args: argparse.Namespace) -> None:
+    """Bind generated/runtime paths to their actual explicit container mounts."""
+    if args.platform != "slurm":
+        return
+    mappings = (
+        ("container_spec_path", "write_spec", "/specs/train.toml"),
+        ("container_results_dir", "results_dir", "/results"),
+        ("container_checkpoint_dir", "checkpoint_dir", "/results/checkpoints"),
+        ("container_cache_dir", "cache_dir", "/cache"),
+    )
+    for container_name, host_name, default in mappings:
+        host_value = getattr(args, host_name)
+        if not host_value:
+            continue
+        translated = _containerize(args, host_value)
+        current = getattr(args, container_name)
+        if current == default:
+            setattr(args, container_name, translated)
+        elif current != translated:
+            raise WorkflowError(
+                f"{container_name}={current!r} does not match the explicit mount mapping "
+                f"for {host_name}={host_value!r}; expected {translated!r}"
+            )
 
 
 def _training_contract(args: argparse.Namespace) -> dict[str, Any]:
@@ -617,7 +863,7 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
     path_checks = " && ".join(f"test -r {shlex.quote(value)}" for value in path_values)
     host = "command -v docker >/dev/null && docker version >/dev/null"
     if args.platform == "slurm":
-        host = "command -v ssh >/dev/null && command -v sbatch >/dev/null && command -v srun >/dev/null"
+        host = "command -v ssh >/dev/null"
         allocation = " && ".join([
             "command -v enroot >/dev/null", "srun --help 2>&1 | grep -q -- --container-image",
             f"test -r {shlex.quote(args.sqsh_path)}", path_checks,
@@ -645,7 +891,9 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
 
 
 def build_plan(args: argparse.Namespace) -> dict[str, Any]:
-    args.model = resolve_model_name(args.model, args.base_model_path_or_uri)
+    remote_inspection = _remote_inspection(args) if _needs_remote_inspection(args) else None
+    inspected_model = remote_inspection["model"] if remote_inspection else None
+    args.model = resolve_model_name(args.model, args.base_model_path_or_uri, inspected_model)
     backend, reason = select_backend(model=args.model, action=args.action, backend=args.backend, workload=args.workload, comparative=args.comparative)
     if args.action != "train":
         raise WorkflowError("this planner currently materializes training; use the backend action contract for non-train actions")
@@ -658,12 +906,21 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         raise WorkflowError("asynchronous distributed checkpointing is disabled for multi-node Cosmos runs")
     if not args.results_dir or not args.checkpoint_dir or not args.cache_dir:
         raise WorkflowError("results_dir, checkpoint_dir, and cache_dir are required runtime paths")
-    model = inspect_model(args.base_model_path_or_uri, args.base_model_revision, args.prepared_checkpoint_path)
+    _align_container_runtime_paths(args)
+    model = inspected_model or inspect_model(
+        args.base_model_path_or_uri,
+        args.base_model_revision,
+        args.prepared_checkpoint_path,
+    )
     prepared_model, model_preparation = _model_preparation(args, model)
     train_annotations, train_media = _annotation_args(args, "train")
     val_annotations, val_media = _annotation_args(args, "validation")
-    train_data = inspect_dataset(dataset_family=args.dataset_family, annotations=train_annotations, media_roots=train_media, selected_tasks=args.task, verify_media_content=not args.fast_media_fingerprint)
-    val_data = inspect_dataset(dataset_family=args.dataset_family, annotations=val_annotations, media_roots=val_media, selected_tasks=args.task, verify_media_content=not args.fast_media_fingerprint)
+    if remote_inspection:
+        train_data = remote_inspection["datasets"]["train"]
+        val_data = remote_inspection["datasets"]["validation"]
+    else:
+        train_data = inspect_dataset(dataset_family=args.dataset_family, annotations=train_annotations, media_roots=train_media, selected_tasks=args.task, verify_media_content=not args.fast_media_fingerprint)
+        val_data = inspect_dataset(dataset_family=args.dataset_family, annotations=val_annotations, media_roots=val_media, selected_tasks=args.task, verify_media_content=not args.fast_media_fingerprint)
     if train_data["dataset_family"] != val_data["dataset_family"]:
         raise WorkflowError("training and validation annotations resolve to different dataset families")
     args.dataset_family = train_data["dataset_family"]
@@ -697,6 +954,15 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     val_media_container = [_containerize(args, value) for value in val_media]
     spec = _framework_spec(args, train_data["record_count"], val_data["record_count"], contract) if backend == "cosmos-framework" else _rl_spec(args, contract, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, cache_keys)
     environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container)
+    remote_paths = remote_inspection.get("runtime_paths", {}) if remote_inspection else {}
+
+    def runtime_path(label: str, value: str, *, required: bool = True) -> dict[str, Any]:
+        if label in remote_paths:
+            return remote_paths[label]
+        if not value and not required:
+            return path_identity(value, required=False)
+        return planned_path_identity(value)
+
     plan = {
         "schema_version": 2, "experiment_id": args.experiment_id, "model_name": args.model,
         "model": model, "action": args.action, "workflow": args.workload, "dataset_family": args.dataset_family, "backend": backend,
@@ -704,12 +970,17 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "backend_selection_reason": reason, "backend_contract": str(BACKEND_FILES[backend]),
         "run_mode": args.run_mode, "training": contract, "processor_profile": model_profile,
         "datasets": {"train": train_data, "validation": val_data},
+        "input_frame": {
+            "kind": "slurm_remote" if remote_inspection else "submission_host",
+            "verified_host": remote_inspection.get("verified_host") if remote_inspection else None,
+            "inspection_transport": "repository_helper_streamed_over_ssh" if remote_inspection else "local_filesystem",
+        },
         "paths": {
-            "results_dir": path_identity(args.results_dir), "checkpoint_dir": path_identity(args.checkpoint_dir),
-            "cache_dir": path_identity(args.cache_dir), "sqsh_cache_dir": path_identity(args.sqsh_cache_dir, required=args.platform == "slurm"),
+            "results_dir": runtime_path("results_dir", args.results_dir), "checkpoint_dir": runtime_path("checkpoint_dir", args.checkpoint_dir),
+            "cache_dir": runtime_path("cache_dir", args.cache_dir), "sqsh_cache_dir": runtime_path("sqsh_cache_dir", args.sqsh_cache_dir, required=args.platform == "slurm"),
             "ssh_key_path": path_identity(args.ssh_key_path, required=args.platform == "slurm"),
         },
-        "image": image, "sqsh": path_identity(args.sqsh_path, required=args.platform == "slurm"),
+        "image": image, "sqsh": runtime_path("sqsh_path", args.sqsh_path, required=args.platform == "slurm"),
         "compute": {"platform": args.platform, "nodes": args.nodes, "gpus_per_node": args.gpus_per_node, "total_gpus": total_gpus, "cpus_per_task": args.cpus_per_task},
         "cache_prewarm": {"required": backend == "cosmos-rl", "keys": cache_keys, "path": args.cache_dir, "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": True, "resumable": True, "selection_basis": {"media_reuse": train_data["profile"]["media_reuse_class"], "record_count": train_data["record_count"], "resolution_class": train_data["profile"]["resolution"]["class"]}},
         "spec": spec, "environment": environment, "command": _command(args, backend),
@@ -722,33 +993,66 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     return plan
 
 
-def write_spec(args: argparse.Namespace, plan: dict[str, Any]) -> Path:
+def write_spec(
+    args: argparse.Namespace,
+    plan: dict[str, Any],
+    *,
+    allow_remote_write: bool = False,
+) -> Path:
     if not args.write_spec:
         raise WorkflowError("write_spec is required so the submitted config can be fingerprinted")
     output = Path(args.write_spec).expanduser()
-    output.parent.mkdir(parents=True, exist_ok=True)
     spec = copy.deepcopy(plan["spec"])
+    is_remote = plan.get("input_frame", {}).get("kind") == "slurm_remote"
+    verified_host = str(plan.get("input_frame", {}).get("verified_host") or "")
+    materializations: list[dict[str, Any]] = []
 
     def materialize(split: str, marker: str, limit: int = 0) -> str:
-        records: list[dict[str, Any]] = []
-        for entry in plan["datasets"][split]["annotation_manifest"]:
-            payload = json.loads(Path(entry["resolved"]).read_text(encoding="utf-8"))
-            metadata = payload.get("metadata", {}) if isinstance(payload, dict) else {}
-            items = payload.get("items", []) if isinstance(payload, dict) else payload
-            for item in items:
-                copied = dict(item)
-                if args.dataset_family == "task_aware_video_reasoning" and not copied.get("task"):
-                    copied["task"] = metadata.get("task")
-                records.append(copied)
-        if limit:
-            records = records[:limit]
         target = output.with_name(f"{split}_{'smoke' if limit else 'merged'}.json")
-        if args.dataset_family == "task_aware_video_reasoning":
-            payload: Any = {"format": "tao-vl-reason-v1.0", "metadata": {"task": "mixed"}, "items": records}
+        if is_remote:
+            record = {
+                "split": split,
+                "original": str(target),
+                "container": _containerize(args, str(target)),
+                "sample_limit": limit,
+                "materialized": False,
+            }
+            if allow_remote_write:
+                if not verified_host:
+                    raise WorkflowError("remote materialization has no verified SLURM login host")
+                result = _remote_materialize_dataset(
+                    args, split=split, output_path=str(target),
+                    sample_limit=limit, host=verified_host,
+                )
+                record.update(
+                    {
+                        "materialized": True,
+                        "sha256": result["sha256"],
+                        "record_count": result["record_count"],
+                    }
+                )
+            materializations.append(record)
         else:
-            payload = records
-        target.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        return _containerize(args, str(target.resolve()))
+            annotations, _ = _annotation_args(args, split)
+            result = materialize_dataset(
+                dataset_family=args.dataset_family,
+                annotations=annotations,
+                output_path=str(target),
+                selected_tasks=args.task,
+                sample_limit=limit,
+            )
+            materializations.append(
+                {
+                    "split": split,
+                    "original": str(target),
+                    "container": _containerize(args, str(target.resolve())),
+                    "sample_limit": limit,
+                    "materialized": True,
+                    "sha256": result["sha256"],
+                    "record_count": result["record_count"],
+                }
+            )
+        return materializations[-1]["container"]
 
     if plan["backend"] == "cosmos-rl":
         for split, marker, key in (
@@ -759,17 +1063,61 @@ def write_spec(args: argparse.Namespace, plan: dict[str, Any]) -> Path:
             smoke_limit = (args.smoke_train_samples if split == "train" else args.smoke_validation_samples) if args.run_mode == "smoke" else 0
             if current == marker or smoke_limit:
                 spec["custom"][key]["annotation_path"] = materialize(split, marker, smoke_limit)
-    output.write_text(dump_toml(spec), encoding="utf-8")
-    with output.open("rb") as stream:
-        tomllib.load(stream)
+    encoded = dump_toml(spec)
+    # Parse before any local or remote write so invalid TOML cannot cross the
+    # launch boundary.
+    tomllib.loads(encoded)
+    expected_sha256 = hashlib.sha256(encoded.encode()).hexdigest()
+    materialized = False
+    resolved = str(output) if is_remote else str(output.resolve())
+    if is_remote:
+        if allow_remote_write:
+            if not verified_host:
+                raise WorkflowError("remote config materialization has no verified SLURM login host")
+            actual_sha256 = _remote_write_text(
+                args, output_path=str(output), content=encoded, host=verified_host,
+            )
+            if actual_sha256 != expected_sha256:
+                raise WorkflowError(
+                    f"remote config checksum mismatch: expected {expected_sha256}, found {actual_sha256}"
+                )
+            materialized = True
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(encoded, encoding="utf-8")
+        materialized = True
     plan["config"] = {
         "original": args.write_spec,
-        "resolved": str(output.resolve()),
+        "resolved": resolved,
         "container": args.container_spec_path,
-        "sha256": sha256_file(output),
+        "sha256": expected_sha256,
+        "materialized": materialized,
+        "frame": "target_compute" if is_remote else "submission_host",
     }
+    plan["generated_artifacts"] = materializations
     plan["spec"] = spec
     return output
+
+
+def verify_materialized_spec(args: argparse.Namespace, plan: Mapping[str, Any]) -> None:
+    config = plan.get("config", {})
+    expected = str(config.get("sha256") or "")
+    if not expected:
+        raise WorkflowError("generated config has no expected checksum")
+    if plan.get("input_frame", {}).get("kind") == "slurm_remote":
+        host = str(plan.get("input_frame", {}).get("verified_host") or "")
+        if not host:
+            raise WorkflowError("remote config verification has no verified SLURM login host")
+        actual = _remote_file_sha256(args, path=args.write_spec, host=host)
+    else:
+        path = Path(args.write_spec).expanduser()
+        if not path.is_file():
+            raise WorkflowError(f"required generated config is inaccessible: {path}")
+        actual = sha256_file(path)
+    if actual != expected:
+        raise WorkflowError(
+            f"generated config is stale: expected SHA256 {expected}, found {actual}; rerun materialize"
+        )
 
 
 def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
@@ -955,10 +1303,15 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
     for key, value in plan["paths"].items():
         if key in {"sqsh_cache_dir", "ssh_key_path"} and args.platform != "slurm":
             continue
-        if not value["exists"]:
-            errors.append(f"runtime path is inaccessible on submission host: {key}={value['original']}")
+        if key == "ssh_key_path":
+            if not value["exists"]:
+                errors.append(f"runtime path is inaccessible on submission host: {key}={value['original']}")
+            continue
+        if not value["exists"] and not value.get("parent_writable"):
+            frame = "target SLURM frame" if args.platform == "slurm" else "submission host"
+            errors.append(f"runtime path has no writable parent on {frame}: {key}={value['original']}")
     if args.platform == "slurm":
-        for executable in ("ssh", "sbatch", "srun"):
+        for executable in ("ssh",):
             if shutil.which(executable) is None:
                 errors.append(f"missing SLURM prerequisite: {executable}")
         if not args.slurm_user or not args.slurm_host:
@@ -967,7 +1320,7 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
             errors.append("partition and account are required")
         if not args.sqsh_path.endswith(".sqsh"):
             errors.append("sqsh_path must name a .sqsh artifact")
-        elif not Path(args.sqsh_path).is_file():
+        elif not plan["sqsh"].get("exists") or plan["sqsh"].get("kind") != "file":
             errors.append("new SQSH has not been created from the planned image")
         if not args.container_mount:
             errors.append("at least one explicit SLURM container mount is required")
@@ -1055,7 +1408,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest="verb", required=True)
-    for verb in ("resolve", "plan", "preflight", "render-slurm"):
+    for verb in ("resolve", "plan", "preflight", "materialize", "render-slurm"):
         child = subs.add_parser(verb); add_arguments(child, require_inputs=verb != "resolve")
     child = subs.add_parser("validate-metadata"); child.add_argument("path", type=Path)
     child = subs.add_parser("verify-provenance"); child.add_argument("--plan", type=Path, required=True); child.add_argument("--provenance", type=Path, required=True)
@@ -1108,9 +1461,18 @@ def main(argv: list[str] | None = None) -> int:
             backend, reason = select_backend(model=args.model, action=args.action, backend=args.backend, workload=args.workload, comparative=args.comparative)
             result = {"schema_version": 2, "model": args.model, "backend": backend, "backend_selection_reason": reason, "backend_contract": str(BACKEND_FILES[backend])}
         else:
-            plan = build_plan(args); write_spec(args, plan)
+            plan = build_plan(args)
+            write_spec(args, plan, allow_remote_write=args.verb == "materialize")
             if args.verb == "preflight": result = local_preflight(args, plan)
-            elif args.verb == "render-slurm": result = render_slurm(args, plan)
+            elif args.verb == "materialize":
+                result = {
+                    "ok": True,
+                    "config": plan["config"],
+                    "generated_artifacts": plan.get("generated_artifacts", []),
+                }
+            elif args.verb == "render-slurm":
+                verify_materialized_spec(args, plan)
+                result = render_slurm(args, plan)
             else:
                 metadata = initial_metadata(args, plan); validate_metadata(metadata); plan["initial_metadata"] = metadata; result = plan
     except (OSError, json.JSONDecodeError, tomllib.TOMLDecodeError, WorkflowError, TypeError) as exc:
