@@ -28,7 +28,7 @@ To evaluate a fine-tuned LoRA model, pass the checkpoint path via spec_overrides
 spec_overrides={
     'model.model_name': 's3://bucket/results/{train_job_id}/safetensors/epoch_2',
     'model.enable_lora': True,
-    'model.base_model_path': 'hf_model://nvidia/Cosmos3-Nano',
+    'model.base_model_path': '<BASE_MODEL_PATH_OR_URI>',
     'evaluation.batch_size': 10,
 }
 ```
