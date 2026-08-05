@@ -11,25 +11,15 @@ import hashlib
 import json
 import os
 import re
+import statistics
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 
 URI_RE = re.compile(r"^(?:hf_model://|https?://|s3://|ngc://|hf://)")
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-AETC_TASKS = {
-    "bcq",
-    "mcq",
-    "bcq_openended",
-    "mcq_openended",
-    "open_qa",
-    "scene_description",
-    "video_summarization",
-    "temporal_localization",
-    "temporal_description",
-    "causal_linkage",
-}
-ACCURACY_TASKS = {"bcq", "mcq"}
+ACCURACY_TASKS = {"bcq", "mcq", "binary_choice", "multiple_choice"}
+DATASET_FAMILIES = {"auto", "video_conversation", "task_aware_video_reasoning"}
 MEDIA_FIELDS = ("video", "video_id", "image", "image_id", "media", "media_path")
 
 
@@ -209,9 +199,40 @@ def _record_task(record: Mapping[str, Any], metadata: Mapping[str, Any]) -> str:
     return str(value).strip().casefold().replace("-", "_").replace(" ", "_")
 
 
+def _detect_dataset_family(records: Sequence[Mapping[str, Any]], metadata: Mapping[str, Any]) -> str:
+    if metadata.get("task") or metadata.get("tasks") or any(_record_task(record, metadata) for record in records):
+        return "task_aware_video_reasoning"
+    if all(isinstance(record.get("conversations") or record.get("messages"), list) for record in records):
+        return "video_conversation"
+    raise WorkflowError("cannot infer dataset family from annotations; specify a supported structural family")
+
+
+def _numeric_metadata(record: Mapping[str, Any], metadata: Mapping[str, Any]) -> tuple[float | None, float | None, float | None, float | None]:
+    combined = {**metadata, **record}
+    resolution = combined.get("resolution")
+    width = combined.get("width") or combined.get("video_width")
+    height = combined.get("height") or combined.get("video_height")
+    if isinstance(resolution, Mapping):
+        width = width or resolution.get("width")
+        height = height or resolution.get("height")
+    elif isinstance(resolution, Sequence) and not isinstance(resolution, (str, bytes)) and len(resolution) >= 2:
+        width, height = width or resolution[0], height or resolution[1]
+    fps = combined.get("fps") or combined.get("video_fps")
+    duration = combined.get("duration") or combined.get("duration_seconds")
+
+    def number(value: Any) -> float | None:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    return number(width), number(height), number(fps), number(duration)
+
+
 def inspect_dataset(
     *,
-    workload: str,
+    dataset_family: str,
     annotations: Sequence[str],
     media_roots: Sequence[str],
     selected_tasks: Sequence[str] = (),
@@ -223,11 +244,10 @@ def inspect_dataset(
         raise WorkflowError("at least one runtime media root is required")
     if len(media_roots) not in {1, len(annotations)}:
         raise WorkflowError("supply one shared media root or one media root per annotation")
-    workload = workload.casefold()
+    dataset_family = dataset_family.casefold()
+    if dataset_family not in DATASET_FAMILIES:
+        raise WorkflowError(f"unsupported dataset family: {dataset_family}")
     requested_tasks = {item.casefold().replace("-", "_") for item in selected_tasks}
-    unknown = requested_tasks - AETC_TASKS
-    if unknown:
-        raise WorkflowError(f"unsupported AETC task selection: {sorted(unknown)}")
 
     annotation_ids = [path_identity(value) for value in annotations]
     media_ids = [path_identity(value) for value in media_roots]
@@ -244,11 +264,23 @@ def inspect_dataset(
     media_entries: dict[str, dict[str, Any]] = {}
     missing: list[dict[str, Any]] = []
     schema_errors: list[str] = []
+    observed_families: set[str] = set()
+    widths: list[float] = []
+    heights: list[float] = []
+    frame_rates: list[float] = []
+    durations: list[float] = []
+    task_metrics: dict[str, str] = {}
     for annotation_index, annotation_id in enumerate(annotation_ids):
         annotation_path = Path(annotation_id["resolved"])
         root_id = media_ids[0 if len(media_ids) == 1 else annotation_index]
         root = Path(root_id["resolved"])
         records, metadata = load_annotation(annotation_path)
+        observed_family = _detect_dataset_family(records, metadata)
+        observed_families.add(observed_family)
+        if dataset_family != "auto" and observed_family != dataset_family:
+            schema_errors.append(
+                f"{annotation_path}: detected {observed_family}, requested {dataset_family}"
+            )
         manifest_entries.append(
             {
                 "original": annotation_id["original"],
@@ -260,23 +292,39 @@ def inspect_dataset(
         )
         for index, record in enumerate(records):
             task = _record_task(record, metadata)
-            if workload == "wts":
-                conversations = record.get("conversations")
+            active_family = observed_family if dataset_family == "auto" else dataset_family
+            if active_family == "video_conversation":
+                conversations = record.get("conversations") or record.get("messages")
                 if not isinstance(conversations, list) or len(conversations) < 2:
-                    schema_errors.append(f"{annotation_path}:{index}: WTS record needs >=2 conversations")
+                    schema_errors.append(f"{annotation_path}:{index}: conversation record needs >=2 turns")
                 if not _record_media(record):
-                    schema_errors.append(f"{annotation_path}:{index}: WTS record has no media field")
-            elif workload == "aetc":
-                if task not in AETC_TASKS:
-                    schema_errors.append(f"{annotation_path}:{index}: missing/unsupported AETC task {task!r}")
+                    schema_errors.append(f"{annotation_path}:{index}: conversation record has no media field")
+                if requested_tasks:
+                    schema_errors.append("task selection is only valid for task-aware datasets")
+            elif active_family == "task_aware_video_reasoning":
+                if not task:
+                    schema_errors.append(f"{annotation_path}:{index}: task-aware record has no task")
                 if requested_tasks and task not in requested_tasks:
                     continue
                 if not _record_media(record):
-                    schema_errors.append(f"{annotation_path}:{index}: AETC record has no media field")
+                    schema_errors.append(f"{annotation_path}:{index}: task-aware record has no media field")
             else:
-                raise WorkflowError(f"unsupported dataset workload: {workload}")
+                raise WorkflowError(f"unsupported dataset family: {active_family}")
+            width, height, fps, duration = _numeric_metadata(record, metadata)
+            if width is not None:
+                widths.append(width)
+            if height is not None:
+                heights.append(height)
+            if fps is not None:
+                frame_rates.append(fps)
+            if duration is not None:
+                durations.append(duration)
+            metric = record.get("metric") or metadata.get("metric")
+            if task and isinstance(metric, str):
+                task_metrics[task] = metric.casefold().replace("-", "_")
             record_keys.append(_record_key(record))
-            task_counts[task or workload] = task_counts.get(task or workload, 0) + 1
+            task_key = task or "default"
+            task_counts[task_key] = task_counts.get(task_key, 0) + 1
             for relative in _record_media(record):
                 candidate = Path(relative)
                 media_path = candidate if candidate.is_absolute() else root / candidate
@@ -291,6 +339,9 @@ def inspect_dataset(
                     media_entries[resolved] = entry
     if schema_errors:
         raise WorkflowError("dataset schema validation failed: " + "; ".join(schema_errors[:20]))
+    if len(observed_families) != 1:
+        raise WorkflowError(f"annotation files mix incompatible dataset families: {sorted(observed_families)}")
+    resolved_family = next(iter(observed_families))
     if missing:
         raise WorkflowError("referenced media is missing: " + json.dumps(missing[:20], sort_keys=True))
     if not record_keys:
@@ -299,8 +350,49 @@ def inspect_dataset(
     if duplicate_count:
         raise WorkflowError(f"dataset contains {duplicate_count} duplicate logical records")
     media_manifest = sorted(media_entries.values(), key=lambda item: item["path"])
+    media_sizes = [entry["size"] for entry in media_manifest]
+    accuracy_tasks = sorted(
+        task for task in task_counts
+        if task in ACCURACY_TASKS or task_metrics.get(task) in {"accuracy", "exact_match_accuracy"}
+    )
+    profile = {
+        "family": resolved_family,
+        "record_count": len(record_keys),
+        "quantity_class": "small" if len(record_keys) < 10_000 else "medium" if len(record_keys) < 100_000 else "large",
+        "unique_media_count": len(media_manifest),
+        "records_per_media": len(record_keys) / max(len(media_manifest), 1),
+        "media_reuse_class": "reused" if len(record_keys) > len(media_manifest) else "mostly_unique",
+        "media_extensions": sorted({Path(item["path"]).suffix.casefold() for item in media_manifest}),
+        "media_bytes": {
+            "total": sum(media_sizes),
+            "min": min(media_sizes),
+            "median": statistics.median(media_sizes),
+            "max": max(media_sizes),
+        },
+        "resolution": {
+            "sample_count": min(len(widths), len(heights)),
+            "median_width": statistics.median(widths) if widths else None,
+            "median_height": statistics.median(heights) if heights else None,
+            "max_width": max(widths) if widths else None,
+            "max_height": max(heights) if heights else None,
+            "class": (
+                "unknown" if not widths or not heights
+                else "up_to_720p" if statistics.median(widths) * statistics.median(heights) <= 1280 * 720
+                else "up_to_1080p" if statistics.median(widths) * statistics.median(heights) <= 1920 * 1080
+                else "above_1080p"
+            ),
+        },
+        "video": {
+            "fps_sample_count": len(frame_rates),
+            "median_fps": statistics.median(frame_rates) if frame_rates else None,
+            "duration_sample_count": len(durations),
+            "median_duration_seconds": statistics.median(durations) if durations else None,
+        },
+        "annotation_metadata": [entry["metadata"] for entry in manifest_entries],
+    }
     return {
-        "workload": workload,
+        "dataset_family": resolved_family,
+        "profile": profile,
         "annotations": annotation_ids,
         "media_roots": media_ids,
         "annotation_manifest": manifest_entries,
@@ -317,8 +409,9 @@ def inspect_dataset(
         ),
         "tasks": task_counts,
         "metric_coverage": {
-            "accuracy_tasks": sorted(set(task_counts) & ACCURACY_TASKS),
-            "excluded_tasks": sorted(set(task_counts) - ACCURACY_TASKS),
+            "accuracy_tasks": accuracy_tasks,
+            "excluded_tasks": sorted(set(task_counts) - set(accuracy_tasks)),
+            "task_metrics": task_metrics,
             "aggregate": "example_weighted_over_accuracy_defined_tasks",
         },
     }

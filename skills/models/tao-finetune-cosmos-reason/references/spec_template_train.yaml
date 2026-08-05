@@ -36,7 +36,7 @@ train:
     dataloader_num_workers: 0
     conversation_column_name: conversations
     dataset:
-      name: wts
+      name: video_supervision
       test_size: 0
   fp8:
     enable_fp8: false

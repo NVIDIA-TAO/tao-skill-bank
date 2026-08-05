@@ -98,8 +98,8 @@ preflight helper.
 The production recommendation remains at least 4 GPUs with 80GB-class memory.
 A single high-memory GB300 is also supported when the selected image passes
 architecture introspection and the spec sets
-`policy.parallelism.dp_shard_size=1`; apply the WTS/GB300 guards in
-`cosmos-reason-wts-gb300.md` when that workflow is selected. A remote image
+`policy.parallelism.dp_shard_size=1`; apply the single-GPU video guards in
+`cosmos-reason-single-gpu-video.md` when that profile is selected. A remote image
 manifest that advertises `linux/arm64` only proves CPU architecture support; it
 does not prove CUDA SM support. `sm_121` must be blocked for this image unless
 direct runtime validation confirms support or the user chooses a compatible

@@ -2,12 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run Cosmos-RL SFT on WTS LLaVA video records on a GB300 GPU."""
+"""Run Cosmos-RL SFT on conversation-style video records on one GPU."""
 
 import argparse
 import json
 import threading
 import tomllib
+from copy import deepcopy
 from pathlib import Path
 
 import torch.nn.functional as F
@@ -39,8 +40,8 @@ def _patch_embed_forward_gb300(self, hidden_states):
 Qwen3VLVisionPatchEmbed.forward = _patch_embed_forward_gb300
 
 
-class WTSDataset(Dataset):
-    """Map WTS LLaVA annotations to Qwen3-VL conversation records on demand."""
+class VideoConversationDataset(Dataset):
+    """Map ShareGPT/LLaVA annotations to Qwen3-VL records on demand."""
 
     def __init__(
         self,
@@ -67,13 +68,38 @@ class WTSDataset(Dataset):
 
     def __getitem__(self, index):
         record = self.records[index]
-        conversations = record["conversations"]
-        question = conversations[0]["value"].replace("<video>", "").strip()
-        answer = conversations[1]["value"].strip()
-        video_path = self.media_root / record["video"]
+        media_value = next(
+            (record[field] for field in ("video", "video_id", "media", "media_path")
+             if isinstance(record.get(field), str)),
+            None,
+        )
+        if media_value is None:
+            raise ValueError(f"record {index} has no string video media field")
+        video_path = Path(media_value)
+        if not video_path.is_absolute():
+            video_path = self.media_root / video_path
         if not video_path.is_file():
             raise FileNotFoundError(video_path)
 
+        if isinstance(record.get("messages"), list):
+            messages = deepcopy(record["messages"])
+            if self.system_prompt and not any(message.get("role") == "system" for message in messages):
+                messages.insert(0, {"role": "system", "content": self.system_prompt})
+            for message in messages:
+                if message.get("role") != "user":
+                    continue
+                content = message.get("content", "")
+                if not isinstance(content, list):
+                    message["content"] = [
+                        {"type": "video", "video": str(video_path), "nframes": self.nframes},
+                        {"type": "text", "text": str(content)},
+                    ]
+                break
+            return messages
+
+        conversations = record["conversations"]
+        question = conversations[0]["value"].replace("<video>", "").strip()
+        answer = conversations[1]["value"].strip()
         messages = []
         if self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})
@@ -96,8 +122,8 @@ class WTSDataset(Dataset):
         return messages
 
 
-# WTS repeats each clip across several questions. Cache sampled tensors so later
-# records do not decode the same complete video again. A lock also prevents the
+# Conversation datasets may repeat media across questions. Cache sampled tensors
+# so later records do not decode the same complete video again. A lock prevents the
 # torchvision/PyAV bridge from opening the same file concurrently.
 _reader_lock = threading.Lock()
 _video_cache = {}
@@ -126,7 +152,7 @@ vision_process.VIDEO_READER_BACKENDS["torchvision"] = _read_video_cached
 def _dataset_from_section(raw_config, section_name):
     custom = raw_config["custom"]
     section = custom[section_name]
-    return WTSDataset(
+    return VideoConversationDataset(
         annotation_path=section["annotation_path"],
         media_root=section.get("media_root", section["media_path"]),
         system_prompt=custom.get("system_prompt", ""),

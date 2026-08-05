@@ -7,7 +7,7 @@
   "properties": {
     "schema_version": {"const": 1},
     "experiment_id": {"type": "string", "minLength": 1},
-    "dataset": {"enum": ["wts", "aetc"]},
+    "dataset": {"enum": ["video_conversation", "task_aware_video_reasoning"]},
     "training_mode": {"enum": ["dense", "peft"]},
     "backend": {"enum": ["cosmos-framework", "cosmos-rl"]},
     "slurm": {

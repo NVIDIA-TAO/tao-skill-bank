@@ -1,19 +1,19 @@
-# Cosmos WTS and AETC runtime data contract
+# Cosmos video-supervision runtime data contract
 
 The workflow has no dataset default. Every request supplies annotation and
 media paths for training and validation. Preserve the submitted string and add
 an accessible resolved path; never replace a missing input with another file.
 
-## WTS
+## Structural family: video conversation
 
 Each split has one JSON annotation array and one media root. Every item must
-have a media field (`video` for the native WTS contract) and at least two
+have a media field and at least two
 conversation turns. Validation checks the complete manifest, all referenced
 media, unique logical records, nonempty splits, train/validation overlap, and
 record/media fingerprints. A directory name alone is not enough: annotation
 and media mappings must be explicit in the generated backend spec.
 
-## AETC / TAO VL Reason
+## Structural family: task-aware video reasoning
 
 Each split accepts one or more annotation files and one shared media root or
 one media root per annotation. The canonical envelope is an object with
@@ -23,12 +23,26 @@ array. Task selection is optional but must produce at least one record.
 Supported task names are `bcq`, `mcq`, `bcq_openended`, `mcq_openended`,
 `open_qa`, `scene_description`, `video_summarization`,
 `temporal_localization`, `temporal_description`, and `causal_linkage`.
-Prompts, response targets, frame sampling, and media resolution come from the
-versioned DAFT adapter in the repository-derived image.
+Prompts and response targets come from the versioned task-aware adapter in the
+repository-derived image. Frame sampling and pixel budgets come from the
+model/dataset profile or explicit user overrides.
 
-BCQ and MCQ have deterministic accuracy. Other tasks retain their defined
-text/task metrics. They are excluded from aggregate accuracy and listed with a
-reason. The aggregate is example-weighted over accuracy-defined records.
+Tasks whose metadata declares `accuracy` or `exact_match_accuracy` participate
+in deterministic accuracy. Common binary-choice and multiple-choice task names
+are recognized. Other tasks retain their declared text/task metrics and are
+excluded from aggregate accuracy with a reason. The aggregate is
+example-weighted over accuracy-defined records.
+
+## Automatic profile discovery
+
+Infer the structural family from annotation envelopes and record fields unless
+the user explicitly supplies it. Record the inferred schema, record count,
+unique media count, media reuse ratio, file extensions and byte-size summary.
+When annotations contain width, height, FPS, or duration metadata, record their
+sample counts and distributions. Use these characteristics—not a dataset name
+or directory name—to select preprocessing, cache, smoke-size, and resource
+profiles. If resolution metadata is absent, use a conservative model-safe
+profile and require representative compute-node decoding during smoke.
 
 ## Smoke and full materialization
 
@@ -37,7 +51,7 @@ area and apply an explicit sample limit. It records the source manifest and
 fingerprint. A full plan rereads the original runtime annotations and rejects
 all sample-limit fields. A smoke manifest is never a full-run fallback.
 
-Cosmos-RL may merge multiple AETC annotations into a generated manifest while
+Cosmos-RL may merge multiple task-aware annotations into a generated manifest while
 preserving every original path and logical record fingerprint. Cosmos
 Framework consumes the explicit annotation list natively. Both representations
 must fingerprint to the same logical records and media before a comparison.

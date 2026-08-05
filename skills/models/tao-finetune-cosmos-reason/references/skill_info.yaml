@@ -53,8 +53,8 @@ workflow_contract:
   metric_extractor: scripts/extract_cosmos_metrics.py
   smoke_gate:
     default_for:
-    - wts
-    - aetc
+    - video_conversation
+    - task_aware_video_reasoning
     train_samples: max(16, total_gpus)
     validation_samples: max(8, total_gpus)
     success_condition: finite globally weighted train/validation losses, completed checkpoint event, repository-evaluator accuracy coverage, child exit zero, and terminal structured SUCCESS
@@ -80,6 +80,16 @@ workflow_contract:
         sequence_length: 16000
         attention_implementation: flash_attention_2
       provenance: base checkpoint and runtime processor profile have independent fingerprints
+  dataset_resolution:
+    default: auto
+    families: [video_conversation, task_aware_video_reasoning]
+    selection_inputs:
+    - annotation structure and metadata
+    - record and unique-media counts
+    - media reuse ratio and byte-size distribution
+    - declared resolution, FPS, and duration
+    - model tier and explicit user overrides
+    forbidden_routing_inputs: [dataset project name, benchmark name, directory basename, historical path]
 data_sources:
   train:
     custom.train_dataset.annotation_path:

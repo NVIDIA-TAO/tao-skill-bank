@@ -102,7 +102,7 @@ fine-tuned checkpoints for handoff.
   step-based cadence.
 - **validation.freq**: Run a complete validation pass every N optimizer steps.
   Use only when explicitly requested and account for the full dataset cost; on
-  WTS, a frequency of 20 dominated total runtime.
+  a large validation split, frequent complete passes can dominate total runtime.
 
 ### Logging
 - **logging.logger**: Options: `console`, `wandb`.
@@ -115,8 +115,8 @@ Cosmos-RL models are 8B parameters and use FSDP sharding. SFT requires at least
 per-device capacity. Set `dp_shard_size` to the actual visible GPU count and
 `dp_replicate_size=1` for a single node. The production recommendation remains
 8x A100 or H100 (80 GB each). A single high-memory GB300 is also viable with a
-compatible image, `dp_shard_size=1`, and the WTS/GB300 guards documented in
-`cosmos-reason-wts-gb300.md`. Every visible architecture must be supported by
+compatible image, `dp_shard_size=1`, and the single-GPU video guards documented in
+`cosmos-reason-single-gpu-video.md`. Every visible architecture must be supported by
 the selected image and pass the runtime CUDA-stack smoke test.
 
 Read `runtime_requirements.gpu_host` from `references/skill_info.yaml` and pass

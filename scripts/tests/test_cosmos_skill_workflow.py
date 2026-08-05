@@ -43,7 +43,7 @@ def make_model(tmp_path: Path, model_type: str = "qwen3_vl") -> Path:
     return model
 
 
-def make_wts(tmp_path: Path, split: str, count: int = 16) -> tuple[Path, Path]:
+def make_video_conversation(tmp_path: Path, split: str, count: int = 16) -> tuple[Path, Path]:
     root = tmp_path / split
     media = root / "media"
     media.mkdir(parents=True)
@@ -51,13 +51,13 @@ def make_wts(tmp_path: Path, split: str, count: int = 16) -> tuple[Path, Path]:
     for index in range(count):
         name = f"{split}-{index}.mp4"
         (media / name).write_bytes(f"video-{split}-{index}".encode())
-        records.append({"id": f"{split}-{index}", "video": name, "conversations": [{"from": "human", "value": "<video> question"}, {"from": "gpt", "value": "Yes"}]})
+        records.append({"id": f"{split}-{index}", "video": name, "width": 960, "height": 540, "fps": 24, "duration_seconds": 12, "conversations": [{"from": "human", "value": "<video> question"}, {"from": "gpt", "value": "Yes"}]})
     annotation = root / "manifest.json"
     annotation.write_text(json.dumps(records))
     return annotation, media
 
 
-def make_aetc(tmp_path: Path, split: str) -> tuple[list[Path], Path]:
+def make_task_aware_video(tmp_path: Path, split: str) -> tuple[list[Path], Path]:
     media = tmp_path / split / "media"
     media.mkdir(parents=True)
     annotations = []
@@ -74,14 +74,14 @@ def make_aetc(tmp_path: Path, split: str) -> tuple[list[Path], Path]:
     return annotations, media
 
 
-def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", workload: str = "wts", run_mode: str = "full", training_mode: str = "dense", model_name: str = "nvidia/Cosmos3-Nano"):
+def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", dataset_family: str = "video_conversation", run_mode: str = "full", training_mode: str = "dense", model_name: str = "nvidia/Cosmos3-Nano"):
     model = make_model(tmp_path, "cosmos3_edge" if "Edge" in model_name else "qwen3_vl")
-    if workload == "wts":
-        train_annotations, train_media = [make_wts(tmp_path, "train")[0]], [tmp_path / "train" / "media"]
-        val_annotations, val_media = [make_wts(tmp_path, "validation")[0]], [tmp_path / "validation" / "media"]
+    if dataset_family == "video_conversation":
+        train_annotations, train_media = [make_video_conversation(tmp_path, "train")[0]], [tmp_path / "train" / "media"]
+        val_annotations, val_media = [make_video_conversation(tmp_path, "validation")[0]], [tmp_path / "validation" / "media"]
     else:
-        train_annotations, train_root = make_aetc(tmp_path, "train")
-        val_annotations, val_root = make_aetc(tmp_path, "validation")
+        train_annotations, train_root = make_task_aware_video(tmp_path, "train")
+        val_annotations, val_root = make_task_aware_video(tmp_path, "validation")
         train_media, val_media = [train_root], [val_root]
     for name in ("results", "checkpoints", "cache", "sqsh-cache", "integration", "framework", "rl", "daft", "tao-core"):
         (tmp_path / name).mkdir(exist_ok=True)
@@ -89,7 +89,7 @@ def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", workload: str
     sqsh = tmp_path / "sqsh-cache" / "image.sqsh"; sqsh.write_bytes(b"sqsh")
     values = [
         "plan", "--model", model_name, "--backend", backend, "--action", "train",
-        "--workload", workload, "--platform", "docker", "--run-mode", run_mode,
+        "--workload", "training", "--dataset-family", dataset_family, "--platform", "docker", "--run-mode", run_mode,
         "--training-mode", training_mode, "--base-model-path-or-uri", str(model),
         "--results-dir", str(tmp_path / "results"), "--checkpoint-dir", str(tmp_path / "checkpoints"),
         "--cache-dir", str(tmp_path / "cache"), "--sqsh-cache-dir", str(tmp_path / "sqsh-cache"),
@@ -121,8 +121,8 @@ def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", workload: str
 
 
 def test_model_backend_resolution_and_comparative_explicitness():
-    assert workflow.select_backend(model="Cosmos3-Nano", action="train", workload="wts")[0] == "cosmos-framework"
-    assert workflow.select_backend(model="Cosmos3-Nano", action="evaluate", workload="wts")[0] == "cosmos-rl"
+    assert workflow.select_backend(model="Cosmos3-Nano", action="train", workload="training")[0] == "cosmos-framework"
+    assert workflow.select_backend(model="Cosmos3-Nano", action="evaluate", workload="training")[0] == "cosmos-rl"
     with pytest.raises(common.WorkflowError, match="backend selection"):
         workflow.select_backend(model="Cosmos3-Nano", action="train", backend="auto", comparative=True)
 
@@ -159,7 +159,7 @@ def test_runtime_paths_are_preserved_and_resolved(tmp_path):
     assert identity["resolved"] == str(path.resolve())
 
 
-def test_wts_framework_dense_spec_and_no_historical_paths(tmp_path):
+def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_path):
     args = args_for(tmp_path)
     plan = workflow.build_plan(args)
     workflow.write_spec(args, plan)
@@ -195,23 +195,23 @@ def test_framework_peft_spec_is_native_not_rl_schema(tmp_path):
     assert "policy" not in plan["spec"]
 
 
-def test_aetc_paths_tasks_and_accuracy_coverage(tmp_path):
-    args = args_for(tmp_path, workload="aetc")
+def test_task_aware_paths_tasks_and_accuracy_coverage(tmp_path):
+    args = args_for(tmp_path, dataset_family="task_aware_video_reasoning")
     plan = workflow.build_plan(args)
     assert plan["datasets"]["train"]["tasks"] == {"bcq": 8, "mcq": 8, "scene_description": 8}
     coverage = plan["datasets"]["validation"]["metric_coverage"]
     assert coverage["accuracy_tasks"] == ["bcq", "mcq"]
     assert coverage["excluded_tasks"] == ["scene_description"]
-    assert json.loads(plan["environment"]["AETC_TRAIN_ANNOTATIONS"]) == args.train_annotation
-    assert plan["spec"]["job"]["experiment"] == "aetc_daft_vlm"
-    args_rl = args_for(tmp_path / "rl", workload="aetc", backend="cosmos-rl")
+    assert json.loads(plan["environment"]["TAO_VIDEO_TRAIN_ANNOTATIONS"]) == args.train_annotation
+    assert plan["spec"]["job"]["experiment"] == "tao_task_aware_video_reasoning"
+    args_rl = args_for(tmp_path / "rl", dataset_family="task_aware_video_reasoning", backend="cosmos-rl")
     plan_rl = workflow.build_plan(args_rl)
     assert "tao_vl_reason_daft_sft_example.py" in plan_rl["command"]
 
 
-@pytest.mark.parametrize("workload,experiment", [("wts", "wts_vlm_edge"), ("aetc", "aetc_daft_vlm_edge")])
-def test_public_edge_checkpoint_uses_skill_runtime_profile(tmp_path, workload, experiment):
-    args = args_for(tmp_path, workload=workload, model_name="nvidia/Cosmos3-Edge")
+@pytest.mark.parametrize("dataset_family,experiment", [("video_conversation", "tao_video_conversation_edge"), ("task_aware_video_reasoning", "tao_task_aware_video_reasoning_edge")])
+def test_public_edge_checkpoint_uses_skill_runtime_profile(tmp_path, dataset_family, experiment):
+    args = args_for(tmp_path, dataset_family=dataset_family, model_name="nvidia/Cosmos3-Edge")
     plan = workflow.build_plan(args)
 
     assert plan["backend"] == "cosmos-framework"
@@ -221,17 +221,18 @@ def test_public_edge_checkpoint_uses_skill_runtime_profile(tmp_path, workload, e
     assert plan["spec"]["job"]["experiment"] == experiment
     assert plan["processor_profile"] == {
         "model_tier": "edge",
-        "source": "tao_skill_default",
+        "source": "dataset_metadata" if dataset_family == "video_conversation" else "model_safe_default",
         "frames": 6,
         "sequence_length": 16000,
         "attention_implementation": "flash_attention_2",
-        "frame_width": 1280,
-        "frame_height": 720,
-        "max_video_pixels": 5529600,
+        "frame_width": 960 if dataset_family == "video_conversation" else 1280,
+        "frame_height": 540 if dataset_family == "video_conversation" else 720,
+        "max_video_pixels": 3110400 if dataset_family == "video_conversation" else 5529600,
         "checkpoint_mutation": False,
+        "dataset_profile_fingerprints": plan["processor_profile"]["dataset_profile_fingerprints"],
+        "selection_basis": ["model_tier", "dataset_resolution_metadata", "record_count", "media_reuse", "explicit_overrides"],
     }
-    assert plan["environment"]["WTS_VIDEO_MAX_PIXELS"] == "5529600"
-    assert plan["environment"]["AETC_VIDEO_MAX_PIXELS"] == "5529600"
+    assert plan["environment"]["TAO_VIDEO_MAX_PIXELS"] == str(plan["processor_profile"]["max_video_pixels"])
 
 
 def test_public_edge_uri_is_snapshotted_without_alternate_checkpoint(tmp_path):
@@ -269,13 +270,45 @@ def test_edge_profile_explicit_override_is_recorded(tmp_path):
 
 
 def test_dataset_overlap_and_missing_media_fail(tmp_path):
-    annotation, media = make_wts(tmp_path, "same")
-    inspected = common.inspect_dataset(workload="wts", annotations=[str(annotation)], media_roots=[str(media)])
+    annotation, media = make_video_conversation(tmp_path, "same")
+    inspected = common.inspect_dataset(dataset_family="auto", annotations=[str(annotation)], media_roots=[str(media)])
     with pytest.raises(common.WorkflowError, match="overlap"):
         common.assert_no_overlap(inspected, inspected)
     records = json.loads(annotation.read_text()); (media / records[0]["video"]).unlink()
     with pytest.raises(common.WorkflowError, match="missing"):
-        common.inspect_dataset(workload="wts", annotations=[str(annotation)], media_roots=[str(media)])
+        common.inspect_dataset(dataset_family="auto", annotations=[str(annotation)], media_roots=[str(media)])
+
+
+def test_customer_dataset_family_and_profile_are_inferred_from_structure(tmp_path):
+    annotation, media = make_video_conversation(tmp_path / "customer-project", "split-alpha")
+    inspected = common.inspect_dataset(
+        dataset_family="auto", annotations=[str(annotation)], media_roots=[str(media)]
+    )
+    assert inspected["dataset_family"] == "video_conversation"
+    assert inspected["profile"]["quantity_class"] == "small"
+    assert inspected["profile"]["resolution"]["class"] == "up_to_720p"
+    assert inspected["profile"]["resolution"]["median_width"] == 960
+    assert inspected["profile"]["video"]["median_duration_seconds"] == 12
+
+
+def test_arbitrary_task_uses_declared_metric_instead_of_dataset_name(tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "clip.mp4").write_bytes(b"video")
+    annotation = tmp_path / "annotations.json"
+    annotation.write_text(json.dumps({
+        "metadata": {"task": "customer_hazard_decision", "metric": "accuracy"},
+        "items": [{
+            "id": "item-1", "video": "clip.mp4",
+            "conversations": [{"from": "human", "value": "question"}, {"from": "gpt", "value": "safe"}],
+        }],
+    }))
+    inspected = common.inspect_dataset(
+        dataset_family="auto", annotations=[str(annotation)], media_roots=[str(media)]
+    )
+    assert inspected["dataset_family"] == "task_aware_video_reasoning"
+    assert inspected["metric_coverage"]["accuracy_tasks"] == ["customer_hazard_decision"]
+    assert inspected["metric_coverage"]["task_metrics"] == {"customer_hazard_decision": "accuracy"}
 
 
 def test_smoke_limit_never_leaks_to_full(tmp_path):
@@ -344,7 +377,7 @@ def test_container_mount_translation_preserves_original_paths(tmp_path):
     args.partition = "p"; args.account = "a"; args.slurm_user = "u"; args.slurm_host = ["h"]
     plan = workflow.build_plan(args)
     assert plan["datasets"]["train"]["annotations"][0]["original"] == args.train_annotation[0]
-    assert plan["environment"]["WTS_TRAIN_ANNOTATION"].startswith("/runtime/")
+    assert plan["environment"]["TAO_VIDEO_TRAIN_ANNOTATION"].startswith("/runtime/")
     assert plan["prepared_model_container_path"].startswith("/runtime/")
 
 
@@ -445,8 +478,10 @@ def test_metadata_finalization_requires_child_and_tao_terminal_status(tmp_path):
 def test_request_and_metadata_schemas_and_no_environment_history():
     json.loads((SKILL / "schemas" / "train.schema.json").read_text())
     json.loads((SKILL / "schemas" / "cosmos-job-metadata.schema.json").read_text())
-    forbidden = ("/lustre", "/localhome", "rarunachalam", "wts_train", "wts_eval")
+    forbidden = ("/lustre", "/localhome", "rarunachalam")
     for path in SKILL.rglob("*"):
         if path.is_file() and path.suffix in {".py", ".md", ".yaml", ".yml", ".json"}:
             text = path.read_text(encoding="utf-8")
             assert not any(value in text for value in forbidden), path
+            development_dataset_names = ("w" + "ts", "ae" + "tc")
+            assert not any(value in text.casefold() for value in development_dataset_names), path
