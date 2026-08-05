@@ -14,7 +14,7 @@ paths before invoking a script.
 | `metric_contract.py` | Validate/compare the Benchmark KPI contract. |
 | `record_metric_result.py` | Bind `benchmark_metrics/metric_result.json` to an iteration. |
 | `validate_sharegpt.py` | Enforce two-image, exact bare OK/NG ShareGPT records. |
-| `validate_split_contract.py` | Enforce Proxy/Benchmark/Mining isolation, generated-Train lineage, and Benchmark hash. |
+| `validate_split_contract.py` | Enforce split isolation, monotonic generated-Train lineage, and Benchmark hash. |
 | `check_annotations.py` | Per-role field-contract check over all three workspace annotation files. `ROLE_CONTRACT` is the authoritative field list. |
 | `patch_eval_image_cap.py` | Raises the pinned image's 1-image-per-prompt evaluation cap to what bare_okng needs, and returns the read-only mount. Retires itself once the image is fixed. |
 | `analyze_gaps.py` | Proxy RCCA artifacts or Benchmark aggregate metric evidence. |

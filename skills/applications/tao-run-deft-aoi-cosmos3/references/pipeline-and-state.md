@@ -81,7 +81,9 @@ count against `max_iterations`.
    exclude Proxy and Benchmark targets.
 7. Run `validate_sharegpt.py --require-files` and
    `validate_split_contract.py` against the assembled Train file, passing
-   `--synthetic` when AnomalyGen produced records this iteration.
+   `--synthetic` when AnomalyGen produced records this iteration and
+   `--previous-train train_iter_<N-1>.json` for N>1. The latter makes historical
+   records eligible while proving that the current Train retained all of them.
 8. Retrain, then Benchmark-evaluate/gate. Stop when the gate passes or
    `N = max_iterations`. Only when the loop continues, Proxy-evaluate and run
    RCCA to seed the next iteration's routing.

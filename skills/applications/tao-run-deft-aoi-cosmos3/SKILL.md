@@ -169,9 +169,11 @@ generated iteration training file. There is no input Train annotation.
 Run `scripts/validate_split_contract.py` to prove that Proxy, Benchmark, and
 Mining targets are disjoint and that the frozen Benchmark annotation hash has
 not changed. When a generated Train file is supplied, the same validator
-requires its targets to come from Mining — or, with `--synthetic`, from the
-iteration's AnomalyGen output — and to remain disjoint from Proxy and
-Benchmark. Synthetic targets are held to the same evaluation isolation.
+requires its targets to come from Mining, the immediate `--previous-train`
+seed, or the current iteration's `--synthetic` AnomalyGen output, and to remain
+disjoint from Proxy and Benchmark. For iteration N>1, `--previous-train` is
+required and the validator proves that every preceding Train record was
+retained.
 
 ## KPI Isolation
 

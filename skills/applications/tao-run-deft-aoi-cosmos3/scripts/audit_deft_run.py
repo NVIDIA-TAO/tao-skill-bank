@@ -107,6 +107,37 @@ def _driving_label(label: str) -> str | None:
     return "baseline" if number == 1 else f"iter{number - 1}"
 
 
+def _training_lineage_roles(
+    label: str,
+    phase: dict[str, Any],
+    iterations: dict[str, Any],
+    role_paths: dict[str, pathlib.Path],
+    train_path: pathlib.Path,
+) -> dict[str, pathlib.Path]:
+    """Return every source that may contribute to this iteration's Train."""
+    train_roles = {**role_paths, "train": train_path}
+    synthetic_value = phase.get("anomalygen_sharegpt_json")
+    if synthetic_value:
+        train_roles["synthetic"] = pathlib.Path(str(synthetic_value))
+
+    number = _iteration_number(label)
+    if number > 1:
+        previous_label = f"iter{number - 1}"
+        previous_phase = iterations.get(previous_label)
+        previous_value = (
+            previous_phase.get("combined_training_json")
+            if isinstance(previous_phase, dict)
+            else None
+        )
+        if not previous_value:
+            raise ValueError(
+                f"state.iterations.{previous_label}.combined_training_json "
+                f"is required to audit monotonic lineage for {label}"
+            )
+        train_roles["previous_train"] = pathlib.Path(str(previous_value))
+    return train_roles
+
+
 def _load_state(path: pathlib.Path) -> dict[str, Any]:
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict):
@@ -633,17 +664,14 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                     and len(role_paths) == 3
                     and media_root.is_dir()
                 ):
-                    train_roles = {**role_paths, "train": path}
-                    # SKILL.md: a generated Train file's targets must come from
-                    # Mining "or, with --synthetic, from the iteration's
-                    # AnomalyGen output". Supply the recorded synthetic role so
-                    # an iteration that actually ran AnomalyGen can be audited;
-                    # without it, only the `anomalygen --skip` branch is ever
-                    # committable.
-                    synthetic_value = phase.get("anomalygen_sharegpt_json")
-                    if synthetic_value:
-                        train_roles["synthetic"] = pathlib.Path(synthetic_value)
                     try:
+                        train_roles = _training_lineage_roles(
+                            label,
+                            phase,
+                            iterations,
+                            role_paths,
+                            path,
+                        )
                         validate_splits(
                             train_roles,
                             media_root=media_root,
