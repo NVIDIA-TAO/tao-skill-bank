@@ -309,6 +309,7 @@ def test_runtime_paths_are_preserved_and_resolved(tmp_path):
 
 def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_path):
     args = args_for(tmp_path)
+    args.optimizer_epsilon = 1e-6
     plan = workflow.build_plan(args)
     workflow.write_spec(args, plan)
     assert plan["backend"] == "cosmos-framework"
@@ -316,6 +317,8 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
     assert plan["spec"]["model"]["parallelism"]["data_parallel_shard_degree"] == 8
     assert plan["spec"]["trainer"]["grad_accum_iter"] == 1
     assert plan["spec"]["trainer"]["max_iter"] == 2
+    assert plan["training"]["optimizer_epsilon"] == 1e-6
+    assert plan["spec"]["optimizer"]["eps"] == 1e-6
     assert "lora_enabled" not in plan["spec"]["model"]
     assert plan["datasets"]["train"]["annotations"][0]["original"] == args.train_annotation[0]
     source = Path(workflow.__file__).read_text(encoding="utf-8")
@@ -326,7 +329,10 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
 
 def test_cosmos_rl_peft_spec_has_equivalent_lora_and_cache(tmp_path):
     args = args_for(tmp_path, backend="cosmos-rl", training_mode="peft")
+    args.optimizer_epsilon = 1e-6
     plan = workflow.build_plan(args)
+    assert plan["training"]["optimizer_epsilon"] == 1e-6
+    assert plan["spec"]["train"]["epsilon"] == 1e-6
     lora = plan["spec"]["policy"]["lora"]
     assert lora == {
         "r": 16,
