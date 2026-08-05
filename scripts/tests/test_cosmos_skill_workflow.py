@@ -181,7 +181,20 @@ def test_cosmos_rl_peft_spec_has_equivalent_lora_and_cache(tmp_path):
     args = args_for(tmp_path, backend="cosmos-rl", training_mode="peft")
     plan = workflow.build_plan(args)
     lora = plan["spec"]["policy"]["lora"]
-    assert lora == {"dim": 16, "alpha": 32, "dropout": 0.05, "target_modules": ["q_proj", "v_proj"], "bias": "none", "use_rslora": True, "modules_to_save": [], "adapter_dtype": "bfloat16"}
+    assert lora == {
+        "r": 16,
+        "lora_alpha": 32,
+        "lora_dropout": 0.05,
+        "target_modules": ["q_proj", "v_proj"],
+        "bias": "none",
+        "use_rslora": True,
+        "modules_to_save": [],
+        "adapter_dtype": "bfloat16",
+    }
+    native_contract = workflow.load_yaml(workflow.BACKEND_FILES["cosmos-rl"])
+    schema = native_contract["configuration"]["peft_schema"]
+    assert set(lora) == set(schema["fields"])
+    assert not set(lora) & set(schema["forbidden_legacy_fields"])
     assert plan["cache_prewarm"]["required"]
     assert plan["spec"]["train"]["train_policy"]["require_complete_dataset_cache"]
     assert "dataloader_prefetch_factor" not in plan["spec"]["train"]["train_policy"]

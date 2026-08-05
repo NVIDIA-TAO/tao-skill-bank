@@ -600,7 +600,8 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     if args.training_mode == "peft":
         lora = contract["lora"]
         spec["policy"]["lora"] = {
-            "dim": lora["rank"], "alpha": lora["alpha"], "dropout": lora["dropout"],
+            "r": lora["rank"], "lora_alpha": lora["alpha"],
+            "lora_dropout": lora["dropout"],
             "target_modules": lora["target_modules"], "bias": lora["bias"],
             "use_rslora": lora["use_rslora"], "modules_to_save": lora["modules_to_save"],
             "adapter_dtype": lora["precision"],
