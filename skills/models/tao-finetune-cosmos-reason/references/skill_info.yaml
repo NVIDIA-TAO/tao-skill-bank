@@ -21,19 +21,21 @@ backend_selection:
   policy: explicit backend wins; otherwise select by model, action, and workflow and report the rationale
   defaults:
     train: cosmos-framework
+    export: cosmos-framework
     evaluate: cosmos-rl
     inference: cosmos-rl
+    inference_microservice: cosmos-rl
     quantize: cosmos-rl
   rules:
   - match: Cosmos3-Edge train
     backend: cosmos-framework
-  - match: Cosmos3-Edge non-train
-    backend: unsupported-native
+  - match: Cosmos3-Edge export, evaluate, inference, or inference_microservice
+    backend: cosmos-framework
   - match: Cosmos3-Nano AutoML or HPO train
     backend: cosmos-rl
   - match: Cosmos3-Nano plain SFT train
     backend: cosmos-framework
-  - match: Cosmos3-Nano evaluate, inference, or quantize
+  - match: Cosmos3-Nano evaluate, inference, inference_microservice, or quantize
     backend: cosmos-rl
   ambiguity_behavior: never silently assume cosmos-rl; emit backend and backend_selection_reason in the launch review
 required_credentials: []
@@ -50,6 +52,7 @@ runtime_requirements:
     min_container_toolkit_version: '1.19.1'
 workflow_contract:
   planner: scripts/cosmos_workflow.py
+  framework_checkpoint_action: scripts/framework_checkpoint_action.py
   metric_extractor: scripts/extract_cosmos_metrics.py
   smoke_gate:
     default_for:
@@ -90,6 +93,18 @@ workflow_contract:
     - declared resolution, FPS, and duration
     - model tier and explicit user overrides
     forbidden_routing_inputs: [dataset project name, benchmark name, directory basename, historical path]
+  backend_action_commands:
+    cosmos-framework:
+      export: python -m cosmos_framework.scripts.export_vlm_dcp
+      evaluate: cosmos-framework-evaluate --config {config_path}
+      inference: cosmos-framework-inference <arguments>
+      inference_microservice: cosmos-framework-inference-microservice <arguments>
+      required_pre_action: scripts/framework_checkpoint_action.py prepare
+    cosmos-rl:
+      evaluate: cosmos-rl-evaluate --config {config_path}
+      inference: cosmos-rl-inference <arguments>
+      inference_microservice: cosmos-rl-inference-microservice <arguments>
+      quantize: cosmos-rl-quantize <arguments>
 data_sources:
   train:
     custom.train_dataset.annotation_path:
