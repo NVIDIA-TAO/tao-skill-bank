@@ -15,18 +15,25 @@ Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `
 - **train.output_dir**: Output directory for checkpoints and logs.
 
 ### Model & Policy
-- **policy.model_name_or_path**: HuggingFace model path. The packaged default is `hf_model://nvidia/Cosmos3-Nano`. Override this only when the user provides a different HuggingFace model id, `hf_model://...` URI, or cluster-local snapshot path.
+- **policy.model_name_or_path**: Required runtime Hugging Face model URI or cluster-local snapshot path. URI sources also require an immutable revision.
 - **policy.model_max_length**: Context window size. Must be 40960 for video SFT. Affected by FPS, resolution, and prompt length.
 - **policy.model_gradient_checkpointing**: Save VRAM by recomputing activations. Keep true for large models.
 
 ### Parallelism (Multi-GPU / Multi-Node)
-- **policy.parallelism.dp_shard_size**: Data-parallel shard size. CRITICAL: should equal **GPUs per node** (the Cosmos-RL equivalent of `num_gpus`).
-- **policy.parallelism.dp_replicate_size**: Data-parallel replication = **node count** (equivalent of `num_nodes`). For single-node training set to 1.
+- **policy.parallelism.dp_shard_size**: Data-parallel shard size. For
+  single-node SFT it equals visible GPUs. The validated custom policy-only
+  multi-node launcher sets it to total policy ranks (nodes × GPUs per node).
+- **policy.parallelism.dp_replicate_size**: Keep 1 for the validated
+  single-node and custom policy-only multi-node SFT launchers.
 - **policy.parallelism.tp_size**: Tensor parallelism. Default 1.
 - **policy.parallelism.cp_size**: Context parallelism. Default 1.
 - **policy.parallelism.pp_size**: Pipeline parallelism. Default 1.
 
-For multi-node, set `dp_replicate_size = num_nodes` and `dp_shard_size = gpus_per_node`. Cosmos-RL handles the distributed init internally via FSDP — it does **not** rely on the platform-level `MASTER_ADDR` / `WORLD_SIZE` env vars the way `torchrun`-launched jobs do. Just submit with `gpu_count=<gpus_per_node>` and `num_nodes=<N>` on the SDK; the Cosmos-RL spec keys drive the actual sharding.
+For multi-node policy-only SFT, do not submit the single-node CLI unchanged.
+Start one controller on node zero and one policy replica on every node, pass
+`--ngpus`, `--nnodes`, and the SLURM rendezvous endpoint, and preserve the
+policy process exit code. Other Cosmos-RL role topologies must use their own
+declared contract; do not infer them from this SFT profile.
 
 Training and evaluation can use different Slurm shapes. If the user requests
 multi-node training and single-node evaluation, preserve that distinction:
@@ -80,7 +87,7 @@ For evaluate, pass the resolved LoRA folder directly:
 `model.model_name=<train_output_dir>/<timestamp>/safetensors/epoch_N`,
 `model.enable_lora=true`, and
 `model.base_model_path=<same base model used for training>` (default
-`hf_model://nvidia/Cosmos3-Nano`, or the local base-model snapshot path). For
+the user-supplied immutable model URI, or the local base-model snapshot path). For
 resume/retrain, pass the exact Cosmos checkpoint policy folder as a string:
 `train.resume=<train_output_dir>/<timestamp>/checkpoints/epoch_N/policy`.
 Avoid `train.resume=true` for local Docker epoch-based checkpoints because the

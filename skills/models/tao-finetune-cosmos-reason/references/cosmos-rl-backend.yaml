@@ -1,0 +1,83 @@
+schema_version: 2
+backend: cosmos-rl
+display_name: Cosmos-RL
+native_source_repository: cosmos-rl-github
+tao_integration_repository: cosmos-rl
+container_image:
+  policy: repository_derived
+  runtime_input: image_tag
+  no_historical_default: true
+build:
+  owner: cosmos-rl
+  dockerfile: Dockerfile.cosmos_rl
+  required_build_args:
+  - COSMOS_RL_BASE_IMAGE
+  - COSMOS_RL_COMMIT
+  - COSMOS_RL_TREE
+  - ACTIONS_COMMIT
+  - ACTIONS_TREE
+  - DAFT_COMMIT
+  - DAFT_TREE
+  - TAO_CORE_COMMIT
+  - TAO_CORE_TREE
+  - SOURCE_DIRTY
+  - BUILD_TIMESTAMP
+  clean_source_required: true
+  provenance_file: /opt/tao/image-provenance.json
+runtime:
+  shell: /bin/bash
+  python: /opt/venv/cosmos_rl/bin/python
+  working_directory: /workspace/cosmos_rl
+  non_root_executable_required: true
+  video_decoder: PyNvVideoCodec_2.2.0
+  driver_capabilities: [compute, utility, video]
+configuration:
+  format: toml
+  schema: cosmos_rl.policy.config.Config
+  entrypoint: cosmos-rl --config <config> <dataset_hook>
+datasets:
+  wts:
+    hook: /opt/cosmos_rl/tao_sft_example.py
+    runtime_inputs: [train_annotation, train_media_root, validation_annotation, validation_media_root]
+  aetc:
+    hook: /opt/cosmos_rl/tao_vl_reason_daft_sft_example.py
+    format_package: nvidia-tao-daft
+    runtime_inputs: [train_annotations, train_media_roots, validation_annotations, validation_media_roots, task_selection]
+parallelism:
+  controller: one_on_node_zero
+  policy_worker: one_replica_command_per_node
+  dp_shard_size: total_gpus
+  dp_replicate_size: 1
+  pipeline_parallelism_for_parity: 1
+checkpoint:
+  input: qwen3_vl_hf_safetensors
+  output: cosmos_rl_epoch_policy_and_hf_safetensors
+  cadence: epoch
+  async_multinode: disabled
+status:
+  native_logger: TAOStatusLogger
+  structured_only: true
+  metrics:
+  - train/avg_loss
+  - train/loss_numerator
+  - train/valid_label_count
+  - val/avg_loss
+  - val/loss_numerator
+  - val/valid_label_count
+  events: [started, validation_complete, checkpoint_complete, training_complete, success, failure]
+actions:
+  train: {supported: true, implementation: native}
+  export: {supported: true, implementation: native_checkpoint_export}
+  evaluate: {supported: true, implementation: tao_integration}
+  inference: {supported: true, implementation: tao_integration}
+  inference_microservice: {supported: true, implementation: tao_integration}
+  quantize: {supported: true, implementation: tao_integration}
+cache:
+  prewarm_required_for_full_video_runs: true
+  deterministic_key: dataset_plus_model_plus_processor
+  train_validation_keys_separate: true
+  completeness_manifest_required: true
+compatibility:
+  a100_qwen3_vl_patch_embed: native_per_model_linear_equivalent
+  worker_zero_prefetch: num_workers_zero_and_prefetch_omitted
+  host_source_mount: forbidden

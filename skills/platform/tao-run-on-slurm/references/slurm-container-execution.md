@@ -12,7 +12,7 @@ Container execution steps, monitoring, status mapping, cancellation, multi-node 
    `srun -n1 -p <conversion_partition> enroot import`.
 3. Write an sbatch script under `<job_dir>/sbatch/job_<job_id>.sbatch`.
 4. Submit `sbatch --export=ALL <script>`.
-5. Run the container with `srun --container-image=<image> --container-mounts=/lustre`.
+5. Run the container with `srun --container-image=<image> --container-mounts=<RUNTIME_SUPPLIED_MOUNTS>`.
 
 Image formats accepted by the handler:
 
