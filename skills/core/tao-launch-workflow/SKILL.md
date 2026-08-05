@@ -1,9 +1,15 @@
 ---
 name: tao-launch-workflow
 description: >-
-  Shared launch intake for any TAO workflow or action. Use when the user wants
-  to run TAO AutoML, train, evaluate, infer, export, generate TensorRT engines,
-  or launch DEFT/workflow jobs on an execution platform.
+  The mandatory pre-launch gate and four-verb execution contract for every TAO
+  workflow or action. Invoke BEFORE launching anything side-effecting — AutoML,
+  train, evaluate, inference, export, TensorRT engine generation, or
+  DEFT/application workflows — on any execution platform. Covers platform
+  selection, credentials, image confirmation, dataset intake, preflight, the
+  launch review, job records, monitoring, and failure/retry classification.
+  Trigger phrases include "train this model", "run AutoML", "launch on
+  SLURM/docker/k8s/brev/virtualenv", "evaluate my checkpoint", "start a TAO
+  job".
 license: Apache-2.0
 compatibility: Requires the packaged TAO skill bank helper scripts.
 metadata:
@@ -66,16 +72,70 @@ After the fix, rerun the relevant preflight and continue toward that request;
 do not stop at "blocker fixed" unless the user explicitly asked only for the
 repair.
 
+## The Four-Verb Execution Contract
+
+Once the launch gate passes and the producing model/data skill has authored the
+spec-bundle (schema: `tao-artifacts`), execution is exactly four verbs. Every
+platform skill implements them over its native CLI — the bank ships five
+(`tao-run-on-docker`, `-slurm`, `-kubernetes`, `-brev`, `-virtualenv`), and any
+externally installed platform skill joins the same contract (§ External
+platform skills); nothing else is platform-specific.
+`$BANK` = `${TAO_SKILL_BANK_PATH}`.
+
+- **submit(spec-bundle)** — resolve the data question first: if the inputs are
+  **already readable from the compute frame** (a local path, an existing mount —
+  tier A in place, the common local and the only air-gapped case), there is
+  nothing to stage — record tier A and move on. Invoke `tao-data-io` only on a
+  **frame mismatch** (remote URIs, cross-host paths, PTM fetches, tier-C result
+  uploads). Then lint the assembled command with `redact_secrets.py lint` and
+  **open the record and launch, in that order**:
+  ```bash
+  JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform <p> --image <img> \
+    --network-arch <arch> --action <action> --storage-tier <A|B|C> --results-root <root>)
+  # <native launch, naming the backend object after $JOB_ID>
+  "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING --backend-ref <ref>
+  ```
+- **status(id)** — poll the native backend, map to the fixed vocabulary
+  `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`; the native sub-state
+  (`ImagePullBackOff`, `PENDING`-resources, slurm `COMPLETING`) rides in the
+  transition `message`. Never read "what's running" from records — poll the backend.
+- **logs(id, tail)** — native log fetch.
+- **cancel(id)** — native cancel + orphan teardown, then `mark <id> --state CANCELED`.
+
+**Record-then-launch is the ordering invariant.** `open` mints the id and binds
+`results_dir` *before* any launch, and the id it returns is the only handle the
+launch can use — a submit that skipped the gate or the open has no id, so it
+cannot launch. This is what keeps a run recoverable across a context break:
+`results_dir` is recorded before the backend object (which K8s TTL or docker
+`--rm` may later delete) ever exists.
+
+### External platform skills
+
+No registry, no interface file: a platform skill **declares the contract by
+documenting the four verbs, and you verify by reading** before first use. A
+skill with only native primitives may be used by **inferring** the mapping
+(bank invariants still bind; the mapping goes in the launch review; persist
+what worked). Rules and the no-equivalent hard floor:
+`references/external-platforms.md`.
+
+### Failure analysis & retry
+
+When `status` reaches `ERROR`, read the log tail and **classify before any
+retry** — infrastructure faults are retriable (new record, `--retry-of`, up
+to 10), program faults never are. Full criteria, the two judgment calls
+(device-side asserts, downstream tracebacks), and the post-turn poller
+rules: `references/failure-analysis-retry.md`.
+
 ## Initial Questions
 
-After the user confirms what they want to do, ask for the execution platform
-using the packaged helper. Do not scan platform docs, skill folders, or config
-folders to build the choices.
-
-```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_tao_platforms.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} --format text
-```
+After the user confirms what they want to do, ask which **execution platform**
+should run it. Discover the choices from the **platform skills installed in this
+session** — you already see them by name and description (`tao-run-on-docker`,
+`-slurm`, `-kubernetes`, `-brev`, `-virtualenv`, plus any externally installed one such as the
+official `brev-cli` skill). There is no central platform registry to read. If
+your runtime surfaces only the core router skills (e.g. Codex), list the bank's
+platform skills by reading `skills/platform/tao-run-on-*/SKILL.md` frontmatter
+(name + one-line description) under `${TAO_SKILL_BANK_PATH}`.
 
 Then ask:
 
@@ -108,48 +168,9 @@ and provide the exact durable status command/log path.
 
 ## Missing-Input Prompt Shape
 
-When asking for launch inputs, include concrete examples and both dataset input
-modes. Do not ask only for "dataset root".
-
-Use this structure and adapt spec keys to the selected model/action:
-
-```text
-I need these launch inputs before I can create specs or runner files:
-
-1. Execution platform: brev, slurm, local-docker, or kubernetes.
-
-2. Dataset inputs. You can provide either mode:
-   A) Root mode: give train/eval roots and I map required files automatically.
-      Example Cosmos-RL:
-      train_root=/lustre/fsw/.../cosmos/train
-      -> custom.train_dataset.annotation_path=train_root/annotations.json
-      -> custom.train_dataset.media_path=train_root
-   B) Direct spec mode: give the exact config/spec parameters yourself.
-      Example:
-      custom.train_dataset.annotation_path=/lustre/fsw/.../train_annotations.json
-      custom.train_dataset.media_path=/lustre/fsw/.../videos_train.tar.gz
-      custom.val_dataset.annotation_path=/lustre/fsw/.../eval_annotations.json
-      custom.val_dataset.media_path=/lustre/fsw/.../eval_videos/
-
-   Platform examples:
-   - SLURM/Lustre: /lustre/fsw/.../data/train or lustre:///lustre/fsw/.../data/train
-   - Brev/Kubernetes: s3://bucket/path/train and s3://bucket/path/eval
-   - local-docker: /data/tao/<model>/train or file:///data/tao/<model>/eval
-
-3. Container image. I will resolve the default from packaged model metadata and
-   show it before launch, for example:
-   default image for <model>/<action>: <resolved container image>
-   Use this image, or provide image=<override> to pin a different TAO build.
-
-4. Compute shape required by the model, for example GPUs/nodes.
-
-5. Required credentials from platform/model docs, for example HF_TOKEN for
-   gated Hugging Face models.
-
-6. Monitoring preference. By default I monitor in this chat and post progress
-   every 5 minutes; choose 1-2 minutes for smoke tests or 10-15 minutes for
-   long training.
-```
+When intake inputs are missing, ask with the exact prompt shape in
+`references/intake-prompts.md` (one consolidated ask, concrete examples,
+no invented defaults).
 
 ## Container Image Confirmation
 
@@ -162,9 +183,8 @@ ${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/resolve_tao_image.py \
   --model <network> --action <action> --format text
 ```
 
-If the helper is unavailable, read `skills/models/<network>/config.json` through
-`SkillBank().get_model_config(network_arch)`. Resolve image fields in this
-order:
+If the helper is unavailable, read `skills/models/<network>/config.json`
+directly. Resolve image fields in this order:
 
 1. `actions.<action>.container_image`
 2. `actions.<action>.image`
@@ -188,19 +208,18 @@ engine generation, and application workflows that submit TAO containers.
 
 ## Credential Filtering
 
-After the user chooses a platform, get the credential list for only that
-platform:
+After the user chooses a platform, get the credential list for **only that
+platform** from the chosen skill itself — its `## Credentials` section and, if
+present, `references/skill_info.yaml` (`required_credentials`, `credential_groups`,
+`optional_credentials`). The launch preflight (`check_tao_launch_preflight.py`)
+reads that same per-skill `skill_info.yaml` to enforce the credential gate; a
+credential-free platform (e.g. Docker) may ship only prose, in which case rely on
+its Preflight section.
 
-```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_tao_platforms.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} \
-  --platform <platform> --format text
-```
-
-Ask only for credentials returned by that command, plus model-specific
+Ask only for credentials that platform actually needs, plus model-specific
 credentials from the selected model skill. Do not ask for Brev credentials on
-SLURM, Kubernetes, or local Docker. Do not ask for SLURM credentials on Brev,
-Kubernetes, or local Docker. Ask S3 credentials only when the selected
+SLURM, Kubernetes, or Docker. Do not ask for SLURM credentials on Brev,
+Kubernetes, or Docker. Ask S3 credentials only when the selected
 platform and the dataset/result URIs require `s3://` access.
 Credentials may already be present in the process environment or in a
 user-approved secret env file such as `~/.tao/secrets.env` or
@@ -226,10 +245,8 @@ If a required CLI/library is missing, say exactly what is missing and why it is
 needed, then ask before installing. Examples:
 
 - S3 dataset or results path -> require an S3-capable client such as `aws`.
-- SDK-backed platform launch -> require the platform-specific
-  `nvidia-tao-sdk[...]` extra.
-- Local Docker SDK path -> require the Docker Python client and the configured
-  Docker network.
+- Local Docker path -> require the Docker CLI and the configured Docker
+  network.
 
 After user approval and installation, rerun the same preflight. Do not create
 runner files or launch jobs between the failed check and the rerun.
@@ -269,112 +286,16 @@ filenames.
 ## Platform Preflight
 
 Run the selected platform's preflight checks before any launch artifact is
-created.
+created — prefer the packaged helper `scripts/check_tao_launch_preflight.py`
+(`--platform <p> --container-image <img> --path <label>=<path> ...`). It verifies
+credentials, client tools, platform/cluster/object-store access, dataset paths
+from the compute frame, GPU/runtime health, and image-architecture fit; treat any
+failure as blocking. Never use `--skip-platform-access` for a real launch.
 
-Prefer the packaged preflight helper when the needed inputs are available:
-
-```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/check_tao_launch_preflight.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} \
-  --platform <platform> \
-  --container-image <selected-image> \
-  --path train_annotation=<path> \
-  --path train_media=<path>
-```
-
-Pass exact direct spec paths when the user supplied them. For root-mode inputs,
-expand model-required files first, then pass those concrete annotation/media
-paths to the helper.
-
-If the helper reports a missing client tool such as `aws` for `s3://` path
-verification, install the smallest needed package after user approval, then
-rerun the same command with `--install-missing-tools` and do not proceed until
-the rerun verifies the paths.
-
-When the selected model skill warns that large S3 media should be staged, copy
-or extract the data once to platform-visible storage before creating launch
-artifacts, then validate those staged paths with the same preflight helper.
-Record the source URI and staged path in the run workspace so AutoML summaries
-can distinguish data staging time from training/evaluation time.
-
-For `local-docker` and `remote-docker`, always pass the selected image with
-`--container-image` after resolving `container_image` from
-`skill_info.yaml`/`versions.yaml`. The helper verifies Docker reachability,
-NVIDIA Container Toolkit registration, GPU memory, selected-image architecture
-compatibility when known, and a GPU-visible smoke container before launch. For
-`remote-docker`, pass `--docker-host` or export `DOCKER_HOST`; the helper queries
-GPUs and validates bind-mounted paths through the remote daemon instead of using
-local host state. If the selected or smoke image is not present on the target
-Docker host, ask before pulling it or rerun with `--pull-smoke-image` after
-approval.
-
-When a model skill lists annotation-level required fields, pass them with
-`--json-required-field <path-label>=<field>[,<field>...]` so schema/data
-content issues fail during preflight rather than inside the first training
-container. Do not add required annotation fields from old failure history; only
-enforce fields documented as required by the current model skill.
-For local JSON/JSONL annotation paths, the helper prints `records=<N>`; use the
-train annotation count as `automl_settings["train_sample_count"]` for
-sample-count-sensitive AutoML runs before recommendations are generated.
-If the model skill documents a run-local patch strategy for a missing required
-field, create the patched copy in the current run workspace, update the spec
-paths to that copy, and rerun the content check before launch. Do not ask the
-user to mutate source datasets unless the model skill says patching is
-impossible.
-
-Do not use `--skip-platform-access` for a real launch. That flag is only for
-dry environment checks or for cases where the user has already provided explicit
-manual proof of platform and storage access. If the helper cannot verify remote
-API, CLI, cluster, or object-store access, treat preflight as failed and do not
-generate launch artifacts.
-
-For SLURM:
-
-1. Require `SLURM_USER`, `SLURM_HOSTNAME`, a partition intent, and one of
-   `SSH_KEY_PATH` or `SSH_AUTH_SOCK`. If the user says to use the cluster
-   default partition, pass an empty partition/omit the partition directive; do
-   not substitute a site-specific value such as `batch`.
-   Use the selected platform helper's `Resource defaults` for runtime values.
-   For the packaged SLURM defaults, generate launchers with
-   `SLURM_TIME_HOURS=4` and `SLURM_TIMEOUT_HOURS=3.8`; never invent a
-   12-hour default for the 4-hour partition list.
-   Launching the orchestrator with `nohup` or in the background is allowed for
-   durability, but it does not satisfy chat monitoring by itself. After launch,
-   keep a foreground chat-side polling loop attached until terminal state or
-   explicit detach.
-2. Split comma-separated `SLURM_HOSTNAME`, resolve hosts where possible, and
-   require passwordless `ssh -o BatchMode=yes` to at least one host.
-3. If SSH fails, do not offer several equivalent choices. Ask for
-   `SSH_KEY_PATH=/path/to/private_key` and show the passwordless setup steps:
-   create a key if needed with
-   `ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519`; install it with
-   `ssh-copy-id -i ~/.ssh/id_ed25519.pub <SLURM_USER>@<login-host>`; trust the
-   host with `ssh-keyscan -H <login-host> >> ~/.ssh/known_hosts`; set
-   `chmod 600 ~/.ssh/id_ed25519`; verify with
-   `ssh -o BatchMode=yes -i ~/.ssh/id_ed25519 <SLURM_USER>@<login-host> 'hostname'`;
-   then rerun with `SSH_KEY_PATH=~/.ssh/id_ed25519`.
-4. After SSH passes, validate dataset annotation/media paths on the remote login
-   host with `test -e` or an equivalent read-only command.
-5. Only then create runner scripts, specs, workspaces, or submit jobs.
-6. For multi-GPU Slurm jobs, rely on the SDK Slurm backend to request
-   `--gpus-per-node=<N>`. Do not generate manual `--gpus=<N>` sbatch snippets;
-   that can spread GPUs across nodes and leave allocated GPUs idle.
-7. For full-matrix or multi-node launches, submit one smoke job first. Launch
-   the full matrix only after the smoke reaches training, emits the requested
-   metric/status record, and shows expected GPU utilization.
-
-For AutoML status, prefer structured controller/brain state and job metadata
-(`active_jobs.json`, `.automl/controller/*.json`, result JSON, and
-`results_dir/train/status.json`) before scanning raw logs. Parse logs only as a
-fallback or when the user specifically asks for log-level investigation.
-
-For local Docker, validate Docker/GPU access and local dataset paths before
-writing launch artifacts. For Brev and Kubernetes, validate API or
-cluster access plus object-storage credentials and `aws s3 ls` readability for
-`s3://` inputs before writing launch artifacts. For mounted shared-storage or
-PVC paths on those remote platforms, require manual proof that the path is
-mounted into the job environment; the helper fails closed rather than accepting
-unverified remote mount paths.
+See `references/platform-preflight.md` for the full per-platform detail (SLURM
+SSH/key setup + resource defaults, docker/remote-docker GPU + bind-mount checks,
+Brev/Kubernetes API + object-store checks, annotation content-field checks, and
+data staging).
 
 ## Runtime And Configuration Review
 

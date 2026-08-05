@@ -6,7 +6,7 @@ description: >-
   REPLACE-PLATFORM", or mentions the platform's distinctive concepts (e.g.,
   resource shape, instance, node group).
 license: Apache-2.0
-compatibility: REPLACE — examples — `Requires the brev CLI and an active brev login.` or `Requires the tao-sdk Python package (pip install 'tao-sdk[<platform>]') plus <PLATFORM>_API_TOKEN.`
+compatibility: REPLACE — examples — `Requires the brev CLI and an active brev login.` or `Requires kubectl configured against a GPU cluster and <PLATFORM>_API_TOKEN.`
 metadata:
   author: REPLACE-WITH-AUTHOR-NAME
   version: "0.1.0"
@@ -64,15 +64,20 @@ which <cli-name> || echo "MISSING: install from <url>"
   <command>
 ```
 
-### SDK workflow (optional, for tracking)
+### Execution — the four verbs
 
-```python
-from tao_sdk.<platform>_sdk import <Platform>SDK
-sdk = <Platform>SDK()
-job = sdk.create_job(...)
-```
+A platform skill is a **consumer**: it runs a model/data skill's spec-bundle by
+implementing `submit`/`status`/`logs`/`cancel` over the native CLI, mutating only
+the job-record. No SDK. See `tao-skill-bank:tao-launch-workflow` for the shared
+contract and `tao-skill-bank:tao-run-on-docker` for a worked example.
 
-See `tao-skill-bank:tao-run-platform` for SDK semantics.
+- **submit** — stage inputs via `tao-data-io`, lint the command with
+  `redact_secrets.py`, then `tao_job_record.py open` (mints the id + binds
+  `results_dir` *before* launch), launch naming the backend object after the id,
+  and `mark ... --state RUNNING`.
+- **status / logs** — poll the native backend; map states to the fixed vocab
+  `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`.
+- **cancel** — native cancel + teardown, then `mark ... --state CANCELED`.
 
 ## Platform-specific notes
 

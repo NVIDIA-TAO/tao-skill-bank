@@ -152,7 +152,7 @@ After `prep_testcase.sh` completes:
 - Output JSONL has `num_SDG` entries (minus logged AMP skips).
 - `allocation.json` sums to `num_SDG`.
 - `amp_samples.json` has exactly `num_SDG` records.
-- `<amp-output-dir>/<clean_stem>__<submask_stem>/<TEXTURE>+<ANOMALY>/seed0.png` exists per AMP record.
+- `<amp-output-dir>/<clean_stem>/<TEXTURE>+<ANOMALY>/<submask_stem>__seed0.png` exists per AMP record.
 
 ---
 

@@ -20,12 +20,18 @@ ${ANOMALYGEN_SCRIPTS}/run_round.sh \
 
 ## Phase 7 — filter + regen + eval
 
+`--allocation` points at prep-testcase's `allocation.json` so regen targets the
+*intended* per-defect counts. Without it, targets are read back from the source
+bucket, so a bucket left short (e.g. by an interrupted SDG) can never be topped
+up to `num_SDG`.
+
 ```bash
 python3 -m scripts.utilities.filter_with_regen \
     --searched-dir ${SEARCHED} \
     --per-sample-csv ${SEARCHED}/per_sample.csv \
     --threshold ${NN_THRESHOLD} \
     --num-sdg ${NUM_SDG} \
+    --allocation ag_inference/${NAME}/allocation.json \
     --rounds-dir ${ROUNDS} \
     --regens-dir ${REGENS} \
     --dataset-dir ${DATASET_DIR} \

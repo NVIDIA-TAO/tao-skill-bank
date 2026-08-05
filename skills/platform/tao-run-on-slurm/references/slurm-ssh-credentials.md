@@ -16,16 +16,7 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 "${SLURM_USER}@${SLURM_HOST}" "true" 2
   exit 1
 }
 
-# 2. Optional: TAO SDK wrapper for Job handles + S3 wrapping.
-# nvidia-tao-sdk is on public PyPI; pin lives in versions.yaml (wheels.tao_sdk_slurm).
-PIN=$("${TAO_SKILL_BANK_PATH:?}/scripts/resolve_versions_key.py" wheels.tao_sdk_slurm)
-python -c "import tao_sdk" 2>/dev/null || {
-  echo "Installing missing Python requirement: $PIN"
-  python -m pip install "$PIN"
-}
-python -c "import tao_sdk"
-
-# 3. Enroot credentials on the cluster for private nvcr.io images.
+# 2. Enroot credentials on the cluster for private nvcr.io images.
 # Pyxis on the compute nodes invokes enroot to import the Docker image. Enroot
 # does NOT read NGC_KEY from the SLURM job env — it requires persistent
 # credentials in ~/.config/enroot/.credentials on the login/compute nodes.
@@ -47,20 +38,20 @@ if [ -n "$NGC_KEY" ]; then
 fi
 ```
 
-If a check fails, the agent prompts the user to authorize the install/fix via Bash. Pip-installable Python requirements are the exception: install them automatically, then rerun preflight.
+If a check fails, the agent prompts the user to authorize the install/fix via Bash.
 
-The enroot-credentials step (#3) only needs to run **once per (cluster, user)** —
+The enroot-credentials step (#2) only needs to run **once per (cluster, user)** —
 subsequent SLURM sessions inherit the file. Use the `printf | ssh` heredoc
 pattern above so the `NGC_KEY` value never lands in shell history, intermediate
 files, or chat output. Do not `cat` or `echo` the value at any step. After the
-file is in place, both the SDK's SQSH pre-conversion job (which runs on
+file is in place, both the SQSH pre-conversion job (which runs on
 `sqsh_conversion_partition`) and the actual training job's Pyxis pull will
 authenticate as `$oauthtoken` against `nvcr.io`.
 
 ## Prerequisites
 
 Before any SLURM job can be submitted or any runner script is generated, the
-host running the TAO service or SDK must be able to log in to at least one host
+launch host must be able to log in to at least one host
 from `SLURM_HOSTNAME` over SSH **without an interactive password prompt**. The
 handler runs `sbatch`, `squeue`, `sacct`, `scancel`, and log tails
 non-interactively, so password or 2FA prompts will fail the job at submit or

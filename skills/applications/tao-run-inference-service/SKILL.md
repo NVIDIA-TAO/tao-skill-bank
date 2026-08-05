@@ -147,7 +147,7 @@ Read **`skills/platform/<platform>/SKILL.md`** and follow it to start the contai
 | **slurm** | `partition` and `account` — check `SLURM_PARTITION`/`SLURM_ACCOUNT` env vars; ask user if unset |
 | **kubernetes** | `namespace` (default: `default`); `image_pull_secret` (required for `nvcr.io` images) |
 
-**Port binding (local-docker and brev):** use **direct docker run** (not DockerSDK) so that `-p <host_port>:8080` can be passed and the container name equals `job_id` exactly.
+**Port binding (local-docker and brev):** use **direct docker run** so that `-p <host_port>:8080` can be passed and the container name equals `job_id` exactly.
 
 **Port allocation rule (local-docker and brev, REQUIRED for concurrent services):** Before starting a service, read the registry (`/tmp/tao-inf-ms-state.json`) and collect the set of `host_port` values from every existing entry on the same platform (and, for brev, the same `instance_id`). Pick the **lowest free port starting from 8080** that is not in that set — e.g. `host_port = next(p for p in range(8080, 8200) if p not in used_ports)`. The default `8080` only applies when no other service is running. This is what makes "start 3 services, each reachable at a distinct `host_url`" work; without it, services 2 and 3 fail with `bind: address already in use`. SLURM and kubernetes get distinct endpoints from their own platform mechanisms and do not need this step.
 

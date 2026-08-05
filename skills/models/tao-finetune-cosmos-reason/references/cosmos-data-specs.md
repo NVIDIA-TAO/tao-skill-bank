@@ -150,8 +150,7 @@ convert for Cosmos-RL unless those actions are added to the model metadata.
 cosmos-rl is `mode: config`. **Always start from the packaged
 `references/spec_template_<action>.yaml` for the requested action** — load it
 as your base spec via `yaml.safe_load(...)` and apply user overrides on top.
-Don't rebuild from scratch. See `skills/platform/tao-run-platform/SKILL.md`'s "Constructing the
-spec / args" section for the load-template-then-override pattern.
+Don't rebuild from scratch.
 
 ```python
 import yaml
@@ -163,7 +162,7 @@ specs = yaml.safe_load((skill / f"references/spec_template_{action}.yaml").read_
 # Now apply your overrides on top of `specs` (next section).
 ```
 
-The reference TOML (and the spec the model actually consumes) is **nested dicts**, not flat dotted keys. The dotted notation in the override examples below denotes *paths into the nested spec* — the agent must walk the path and assign at the leaf, not store the dotted string as a literal key. See `skills/platform/tao-run-platform/SKILL.md`'s "spec is nested dicts" callout.
+The reference TOML (and the spec the model actually consumes) is **nested dicts**, not flat dotted keys. The dotted notation in the override examples below denotes *paths into the nested spec* — the agent must walk the path and assign at the leaf, not store the dotted string as a literal key.
 
 ### Typical Spec Overrides
 

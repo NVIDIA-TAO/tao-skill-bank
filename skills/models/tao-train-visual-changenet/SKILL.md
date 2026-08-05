@@ -252,9 +252,9 @@ S3_EVAL = "s3://bucket/data/eval"
     "gen_trt_engine.tensorrt.calibration.cal_image_dir": [f"{S3_TRAIN}/images.tar.gz"],
 }
 ```
-## Optional: running via the TAO SDK
+## Running via local Docker
 
-When running without the TAO SDK (local docker), use the pinned TAO pyt image and invoke `visual_changenet <train|evaluate|inference|export|quantize>` directly. `--shm-size=8g` is required, the C-RADIO `.safetensors` must be mounted to `/data/pretrained_models/C-RADIOv2_B.safetensors`, and checkpoint/results_dir can be overridden on the command line. See `references/local-docker.md` for the full `docker run` command, mounts, and overrides.
+Use the pinned TAO pyt image and invoke `visual_changenet <train|evaluate|inference|export|quantize>` directly. `--shm-size=8g` is required, the C-RADIO `.safetensors` must be mounted to `/data/pretrained_models/C-RADIOv2_B.safetensors`, and checkpoint/results_dir can be overridden on the command line. See `references/local-docker.md` for the full `docker run` command, mounts, and overrides.
 
 ## Tasks
 
@@ -305,7 +305,7 @@ For checkpoint-not-found, CSV format mismatch, image extension mismatch, OOM, lo
 
 ## Spec Param / Parent Model Inference
 
-Model-specific parent-model mappings are declared in `references/skill_info.yaml` under `spec_params`, so generated runners and agents resolve checkpoints before `create_job()` instead of guessing file names. For `parent_model` or `parent_model_folder`, pass the upstream train/export/AutoML child job id as `parent_job_id`; the SDK lists the parent result folder, filters checkpoint artifacts, and returns the selected model file or folder. See `references/parent-model-inference.md` for the full per-action spec-field-to-inference-function mapping table.
+Model-specific parent-model mappings are declared in `references/skill_info.yaml` under `spec_params`, so agents resolve checkpoints before launching a job instead of guessing file names. For `parent_model` or `parent_model_folder`, pass the upstream train/export/AutoML child job id as the parent job id; list the parent result folder, filter checkpoint artifacts, and select the resolved model file or folder. See `references/parent-model-inference.md` for the full per-action spec-field-to-inference-function mapping table.
 
 ## Deployment
 

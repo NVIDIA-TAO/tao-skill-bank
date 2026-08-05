@@ -2,18 +2,30 @@
 
 ## Using Bundled Scripts
 
-Run bundled scripts from `scripts/` via `run_script()` when the harness provides it (it is a Claude Code plugin runtime helper, not a function defined in this repo); otherwise fall back to direct `python` invocation. Resolve every path argument to an absolute host path before calling. Concrete invocation examples are in `## Script Invocation` below.
+Run every bundled script through `scripts/deft_python.sh`. It loads
+an explicit `DEFT_PYTHON` candidate when supplied, otherwise probes workspace
+and preinstalled interpreters. It never invokes an installer, so it works
+across isolated Claude, Codex, and OpenCode shell calls.
+Resolve every path argument to an absolute host path before calling.
 
-Never write `loop_log.jsonl` via `echo` or inline `jq` — the `seq` invariant requires reading the live tail through `next_seq()`.
+Commit state and log changes only through `commit_stage.py`. Never write
+`deft_state.json` or `loop_log.jsonl` through inline Python, heredocs, an
+editor, echo, or jq.
 
 ## Available Scripts
 
 | Script | Purpose | Arguments |
 |---|---|---|
-| `scripts/log_stage.py` | Append a stage event to `results/loop_log.jsonl` (computes `seq` from disk; guarantees valid JSON). `--context-tokens` is an optional placeholder; real values come from `align_token_usage.py`. | `--log-path PATH --iter-label STR --stage {evaluate,rca,anomalygen,data_mining,train,loop_stop} --status {ok,error} --summary STR --duration-sec INT [--context-tokens INT]` |
+| `scripts/deft_python.sh` | Select an already-provisioned host Python with all core DEFT imports and execute it. Checks `DEFT_PYTHON`, workspace-local venvs, and preinstalled candidates; never installs packages. With no arguments, prints the selected absolute path. | `[PYTHON_ARG ...]`; env: `DEFT_PYTHON`, `WORKSPACE`, or `WORKSPACE_DIR` |
+| `scripts/resolve_versions_key.py` | Resolve a dotted image key from the installed skill bank's `versions.yaml`; discovers the bank from `--skill-bank`, `TAO_SKILL_BANK_PATH`, or the script's ancestors. | `KEY [--skill-bank PATH]` |
+| `scripts/audit_deft_run.py` | Read-only cross-check of `deft_state.json`, `loop_log.jsonl`, recorded artifact paths, mining parquet schemas/counts/TAO PASS logs, iteration checkpoint ownership, stage commits, and terminal status. Prints the safe next action/reference. Run on startup/resume, before every stage, after every stage commit, and before completion claims. `--require-terminal` accepts a finalized failed run for reporting; `--require-complete` requires metric/max-iteration proof. | `--results-dir PATH [--json] [--require-terminal] [--require-complete]` |
+| `scripts/metric_contract.py` | Shared stdlib parser/comparator for primary metrics, direction-aware best selection, constraints, and bundled-evaluator normalization. Import from sibling scripts; no CLI. | — |
+| `scripts/record_metric_result.py` | Internal evaluate helper: validate standard evaluator JSON, enforce a configured artifact path, recompute `passed`, and write evaluate evidence. `commit_stage.py` calls it transactionally. | Internal; standalone CLI retained for compatibility |
+| `scripts/commit_stage.py` | The only supported normal stage writer. Validate the ordered transition and artifact proofs, update state, append the log event, audit, and roll back both files on failure. Train requires an iteration-owned checkpoint plus the exact spec; mining requires both embedding parquets, all three TAO logs, filtered parquet/count, and summary. | `--results-dir PATH --iter-label STR --stage STAGE --summary STR [stage artifact flags] [--status ok|error] [--duration-sec INT]` |
+| `scripts/log_stage.py` | Low-level log writer used by `commit_stage.py`. Do not call it directly during normal orchestration because it cannot update state transactionally. | Internal/legacy |
 | `scripts/align_token_usage.py` | Backfill per-stage LLM token usage into `results/loop_log.jsonl` by parsing the Claude Code transcript JSONL. Run after the loop (or any time). Adds a `tokens` field per entry and refreshes `context_tokens`. | `--log-path PATH [--cwd PATH \| --project-dir PATH \| --transcript PATH ...] [--dry-run]` |
-| `scripts/analyze_kpi.py` | Compute FAR / threshold sweep on a ChangeNet inference CSV and pick the FAR @ 100%-recall operating point. | `csv_path` (positional) `[--output-dir PATH]` `[--label-column NAME=label]` `[--score-column NAME=siamese_score]` `[--pass-label NAME=PASS]` `[--bins INT=40]` |
-| `scripts/validate_training_csv.py` | Validate an assembled ChangeNet training CSV before launching training. Checks required columns and that every `input_path` / `golden_path` exists on disk. Stdlib only — no pandas required. | `--csv PATH --workspace-root PATH` |
+| `scripts/analyze_kpi.py` | Bundled threshold-sweep evaluator: emit standard `metric_result.json` plus diagnostic CSV/plots. Other customer metrics use the adapter contract in `references/metric-contract.md`. | `csv_path` (positional) `[--output-dir PATH]` `[--label-column NAME=label]` `[--score-column NAME=siamese_score]` `[--pass-label NAME=PASS]` `[--bins INT=40]` |
+| `scripts/validate_training_csv.py` | Validate an assembled ChangeNet training CSV before launching training. Checks required columns, every reconstructed `input_path` / `golden_path`, filename-shape mistakes, duplicates, and optional validation leakage; `--report-json` writes the required merge-validation proof. Stdlib only — no pandas required. | `--csv PATH --workspace-root PATH [--validation-csv PATH] [--report-json PATH] [--light NAME] [--image-ext EXT]` |
 | `scripts/init_deft_state.py` | Write a fresh `${RESULTS_DIR}/deft_state.json` from CLI args. Guarantees unique top-level keys. Atomic write; refuses to overwrite without `--force`. Use only on fresh runs; never on resume. | `--results-dir PATH --workspace PATH --kpi-target STR --max-iterations INT --num-gpus INT --num-epochs INT --num-sdg INT --project STR --step INT [--batch-size INT] [--top-k-per-target INT] [--knn-metric STR] [--min-similarity FLOAT] [--train-container STR] [--ag-container STR] [--force]` |
 | `scripts/changenet_data_pair_prepare.py` | Build the ChangeNet `(input, golden, label, object_name)` CSV from `_ng/` + `_ok/` image directories. NV_PCB_Siamese mode (`--images-dir`) emits the 14-column siamese CSV and copies images into the staged tree. | `--input-dir PATH --golden-dir PATH` `[--output PATH=dataset.csv]` `[--label STR]` `[--images-dir PATH]` `[--subdir NAME=sdg]` `[--light NAME=SolderLight]` `[--image-ext EXT=.jpg]` |
 | `scripts/prepare_inference_spec.py` | Write `best_model.json` + `best_model_inference_spec.yaml` from `deft_state.json` + the training spec. Run once at loop end. See `references/prepare-for-inference.md`. | `--results-dir PATH` |
@@ -21,68 +33,27 @@ Never write `loop_log.jsonl` via `echo` or inline `jq` — the `seq` invariant r
 
 ## Script Invocation
 
-Three ways to call a bundled script — pick by what the harness exposes.
-
-### `run_script()` (preferred when available)
-
-`run_script()` is a Claude Code plugin runtime helper — it is **not defined in this repo**, and importing it from any of the bundled scripts will fail. Use it only when the harness exposes it in the current execution context (check `globals()` for the name, or feature-detect with a try/except `NameError` wrapper). When the harness does not provide it, fall back to **Direct Python Invocation** below; both reach the same scripts. Resolve every path argument to an absolute host path before calling.
-
-```python
-run_script(
-    "scripts/log_stage.py",
-    args=[
-        "--log-path", f"{workspace_root}/results/loop_log.jsonl",
-        "--iter-label", iter_label,
-        "--stage", "anomalygen",
-        "--status", "ok",
-        "--summary", "generated 1024 triplets, 8 defect types",
-        "--duration-sec", str(duration_sec),
-    ],
-)
-```
-
-`--context-tokens` is optional and defaults to `0`. Bash and `run_script()` callers cannot measure LLM context, so they should omit it; real per-stage usage is filled in by `align_token_usage.py` after the loop (see below).
-
-### Direct Python Invocation
-
-Use direct `python` invocation only when `run_script()` is unavailable.
+Use one portable form in every harness:
 
 ```bash
-python scripts/log_stage.py \
-  --log-path /abs/path/results/loop_log.jsonl \
+<skill_root>/scripts/deft_python.sh \
+  <skill_root>/scripts/commit_stage.py \
+  --results-dir /abs/path/results/run_YYYYMMDD_HHMMSS \
   --iter-label iter1 \
   --stage anomalygen \
-  --status ok \
-  --summary "generated 1024 triplets, 8 defect types" \
-  --duration-sec 612
+  --anomalygen-sdg /abs/path/iter1/anomalygen/sdg/SDG_result.csv \
+  --summary "generated 10 pairs"
 ```
 
-### In-Process Library Use
-
-When the parent runs a stage in-process, prefer the library API. Pass `log_path` as `pathlib.Path`; `append_stage()` intentionally rejects plain strings.
-
-```python
-from log_stage import append_stage
-import pathlib
-
-append_stage(
-    pathlib.Path(f"{workspace_root}/results/loop_log.jsonl"),
-    iter_label="iter1",
-    stage="train",
-    status="ok",
-    summary="best_ckpt=ep049 FAR=0.42% threshold=0.31",
-    duration_sec=duration_sec,
-)
-```
-
-(The `seq`/never-`echo` invariant stated above applies to all three forms — the writer must compute `seq` from the live tail through `next_seq()`.)
+If no reliable start time was captured, omit `--duration-sec`; it records `0`.
+Do not invent a duration. Stage references list the required artifact flags.
 
 ### Aligning Per-Stage Token Usage (Post-Loop)
 
 `log_stage.py` cannot measure LLM token usage at write time. Run `align_token_usage.py` after the loop (or on demand) to backfill real per-stage numbers from the Claude Code transcript JSONL:
 
 ```bash
-python scripts/align_token_usage.py \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/align_token_usage.py \
   --log-path /abs/path/results/loop_log.jsonl \
   --cwd /abs/path/to/project-root
 ```
@@ -106,7 +77,7 @@ Task(
     f"Inputs:\n"
     f"  results_dir = {RESULTS_DIR}\n"
     f"  skill_root  = {skill_root}\n"
-    f"  trigger     = after-stage   # or 'loop-end' at the very end\n"
+    f"  trigger     = after-iteration   # or 'loop-end' at the very end\n"
   ),
 )
 ```
@@ -117,10 +88,11 @@ The agent prints one status line and exits. Never render `DEFT_Loop_Report.html`
 
 Each pipeline stage maps to one underlying skill in the bank. The matching
 `references/*.md` file layers DEFT-loop conventions (mounts, output dirs,
-`deft_state.json` updates, `log_stage.py` summary string) on top of the
-skill's generic instructions. **Read the reference file first, then invoke
-the skill via the Skill tool.** If a reference file is missing, stop and
-ask the user to reinstall the plugin.
+`deft_state.json` updates, `commit_stage.py` arguments) on top of the
+skill's generic instructions. **Read only the current stage's relevant
+section, then invoke the skill via the Skill tool or the direct-container
+fallback below. Never preload or `cat` all references/underlying skills.** If
+a reference file is missing, stop and ask the user to reinstall the plugin.
 
 | Stage(s) | Reference file | Underlying skill | Owns |
 |---|---|---|---|
@@ -130,9 +102,32 @@ ask the user to reinstall the plugin.
 | `routing` | `references/tao-route-visual-changenet-samples.md` | `tao-skill-bank:tao-route-visual-changenet-samples` | VCN weak-sample routing to mining and/or AnomalyGen, `mining_gaps.parquet` + `anomalygen_gaps.parquet` outputs, dropped-label warnings. |
 | `data_mining` (VCN path) | `references/tao-mine-aoi-images.md` | `tao-skill-bank:tao-mine-aoi-images` | Embed-then-mine workflow: target embedding, source-pool embedding, k-NN nearest-neighbour mining, `mined.parquet` output schema, encoder consistency requirement. |
 
+### Direct-container fallback
+
+Use this path only when the mapped Skill tool is unavailable and Docker, this
+skill source tree, the mapped underlying skill source, and the current stage's
+reference module are all present. Record `execution_path=direct-container` in
+the transcript. Read only the current stage overlay and mapped underlying
+skill, then execute their documented `docker run` or wrapper commands with the
+same approved arguments and absolute output paths. Do not infer a CLI, module,
+or reduced workflow from an error message; if the two documents do not provide
+a complete direct invocation for the stage, hard-stop with the missing command.
+In air-gap mode, apply `references/air-gap.md` and use only images already
+returned by `docker image inspect`.
+
+The fallback changes only the invocation mechanism. It must produce the same
+required artifacts and commit them through `scripts/commit_stage.py`. Never
+hand-edit state to reconcile an incorrectly mounted or incomplete run.
+
 ### Invariants
 
-**Path rule.** Use absolute host paths under `${RESULTS_DIR}/iter${ITER}/` for every stage's output, mount `<workspace>` into the container at the same path, pre-create dirs world-writable, and reject any config containing `output: /results/...` or any path outside `<workspace>`.
+**Path rule.** Record absolute host paths under `${RESULTS_DIR}` in state. For
+ChangeNet direct containers, use `-v "$WORKSPACE:/data/workspace"` and
+`-v "$RESULTS_DIR:/results"`; specs write baseline stages below
+`/results/baseline/<stage>` and iter N below `/results/iterN/<stage>`. Mining
+and AnomalyGen retain their stage reference's same-path workspace mounts.
+Never mount `${RESULTS_DIR}` at `/results/iterN`: that shifts ChangeNet outputs
+into run-level `train/` and `inference/` directories and invalidates proof.
 
 ## Workflow-level Pitfall — AutoML policy in the spec
 

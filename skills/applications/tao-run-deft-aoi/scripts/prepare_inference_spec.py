@@ -7,7 +7,7 @@ Produces two files under ``${RESULTS_DIR}/`` so downstream inference skills can
 consume the trained checkpoint without reading ``deft_state.json`` or the
 training spec directly:
 
-- ``best_model.json``                — handoff metadata (checkpoint, threshold, FAR)
+- ``best_model.json``                — checkpoint, operating threshold, and customer metric
 - ``best_model_inference_spec.yaml`` — a ready-to-run TAO inference spec built
                                        from the training spec used for the best
                                        iteration. Model / dataset config is
@@ -43,21 +43,36 @@ from typing import Any
 
 import yaml
 
+from metric_contract import contract_from_state, pick_best, result_from_iteration
 
-def _pick_best(state: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Return (iteration_label, iteration_dict) with the lowest far_pct."""
-    candidates: dict[str, dict[str, Any]] = {}
-    if "baseline" in state and "far_pct" in state["baseline"]:
-        candidates["baseline"] = state["baseline"]
+
+def _pick_best(
+    state: dict[str, Any]
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Return the best completed iteration according to the metric direction."""
+    contract = contract_from_state(state)
+    candidates: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     for label, info in state.get("iterations", {}).items():
-        if "far_pct" in info:
-            candidates[label] = info
+        if not isinstance(info, dict) or info.get("status") != "complete":
+            continue
+        result = result_from_iteration(info, contract)
+        if result is not None:
+            candidates.append((label, info, result))
+    # Read-only compatibility for runs created before baseline was normalized
+    # under state["iterations"]. New writers must never create this shape.
+    if "baseline" in state and isinstance(state["baseline"], dict):
+        legacy_result = result_from_iteration(state["baseline"], contract)
+        if legacy_result is not None and not any(
+            label == "baseline" for label, _, _ in candidates
+        ):
+            candidates.append(("baseline", state["baseline"], legacy_result))
     if not candidates:
         raise RuntimeError(
-            "no iteration in deft_state.json has far_pct — "
-            "loop may have exited before evaluate ran"
+            "no completed iteration in deft_state.json has the configured metric — "
+            "run audit_deft_run.py before preparing the handoff"
         )
-    return min(candidates.items(), key=lambda kv: kv[1]["far_pct"])
+    label, info, result = pick_best(candidates, contract)
+    return label, info, result, contract
 
 
 CHECKPOINT_MOUNT = "/model/best.pth"
@@ -65,7 +80,7 @@ CHECKPOINT_MOUNT = "/model/best.pth"
 
 def _build_inference_spec(
     train_spec: dict[str, Any],
-    threshold: float,
+    threshold: float | None,
 ) -> dict[str, Any]:
     """Transform a training spec into a minimal, runnable inference spec.
 
@@ -101,9 +116,10 @@ def _build_inference_spec(
         },
     }
 
-    # Threshold from KPI analysis is the operating point — overrides the
-    # spec default which is calibrated for a different dataset.
-    spec["model"].setdefault("classify", {})["eval_margin"] = float(threshold)
+    # Use an evaluator-selected operating point when supplied. A custom metric
+    # may intentionally evaluate the training spec's existing threshold.
+    if threshold is not None:
+        spec["model"].setdefault("classify", {})["eval_margin"] = float(threshold)
 
     # Strip training/evaluation data sources; consumer only needs infer_dataset.
     cls = spec["dataset"]["classify"]
@@ -132,30 +148,40 @@ def prepare(results_dir: pathlib.Path) -> dict[str, pathlib.Path]:
     state_path = results_dir / "deft_state.json"
     state = json.loads(state_path.read_text())
 
-    iter_label, best = _pick_best(state)
+    iter_label, best, metric_result, metric_contract = _pick_best(state)
 
-    train_spec_path = pathlib.Path(state["config"]["specs_file"])
+    train_spec_path = pathlib.Path(
+        best.get("training_spec") or state["config"]["specs_file"]
+    )
     if not train_spec_path.exists():
         raise FileNotFoundError(f"training spec not found: {train_spec_path}")
     train_spec = yaml.safe_load(train_spec_path.read_text())
 
     backbone_dir = pathlib.Path(state["config"]["backbone_weight_dir"])
-    backbone_files = sorted(backbone_dir.glob("*.ckpt")) + sorted(backbone_dir.glob("*.pth"))
+    backbone_files = (
+        sorted(backbone_dir.glob("*.ckpt"))
+        + sorted(backbone_dir.glob("*.pth"))
+        + sorted(backbone_dir.glob("*.safetensors"))
+    )
     backbone = str(backbone_files[0]) if backbone_files else str(backbone_dir)
 
+    threshold = best.get("threshold")
     handoff = {
-        "checkpoint":    best["best_ckpt_path"],
-        "threshold":     best["threshold"],
-        "far_pct":       best["far_pct"],
-        "iteration":     iter_label,
-        "backbone":      backbone,
-        "images_dir":    state["config"]["images_dir"],
+        "checkpoint": best["best_ckpt_path"],
+        "threshold": threshold,
+        "metric_contract": metric_contract,
+        "metric_result": metric_result,
+        "iteration": iter_label,
+        "backbone": backbone,
+        "images_dir": state["config"]["images_dir"],
         "training_spec": str(train_spec_path),
     }
+    if metric_contract["name"] == "far_pct":
+        handoff["far_pct"] = metric_result["value"]
 
     inference_spec = _build_inference_spec(
         train_spec=train_spec,
-        threshold=best["threshold"],
+        threshold=threshold,
     )
 
     json_path = results_dir / "best_model.json"

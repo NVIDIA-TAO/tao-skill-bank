@@ -204,9 +204,9 @@ specs = yaml.safe_load((skill / f"references/spec_template_{action}.yaml").read_
 
 The reference TOML (and the spec the model actually consumes) is **nested
 dicts**, not flat dotted keys. Dotted notation in override examples denotes
-*paths into the nested spec* — walk the path and assign at the leaf. See
-`skills/platform/tao-run-platform/SKILL.md`'s "spec is nested dicts" callout.
-Data source overrides are **mandatory for every action**.
+*paths into the nested spec* — walk the path and assign at the leaf, not store
+the dotted string as a literal key. Data source overrides are **mandatory for
+every action**.
 
 The packaged template keeps `custom.vision.nframes=8` for bounded 1-GPU memory;
 switch to `fps` only after checking token budget and GPU memory, and delete
@@ -256,6 +256,16 @@ flat-TOML config detail, task types (`""` General Evaluator vs
 results/metrics, and the datasets section.
 
 ## AutoML / HPO Notes
+
+**Baseline eval is required AutoML setup, not an optional question for the user.**
+Before launching AutoML for an accuracy objective, run the model's evaluate
+action once after preflight and before any recommendation jobs, on the same
+validation subset — using the selected base model or starting checkpoint,
+`task=""`, and the same prompt/metric setup planned for per-recommendation
+evaluation. Report that eval job id, result path, and accuracy in the launch
+review before asking for confirmation to start recommendations. The final AutoML
+summary must compare this baseline accuracy, every recommendation's accuracy, and
+the selected best recommendation.
 
 The packaged default base model is `hf_model://nvidia/Cosmos3-Nano`; apply it
 consistently to train (`policy.model_name_or_path`) and post-training evaluation

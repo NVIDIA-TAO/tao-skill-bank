@@ -20,7 +20,7 @@ Pass these as Hydra overrides to the `gap_analysis vcn_aoi` container (see `skil
 
 ## Output Directory
 
-`results/<baseline|iter${N}>/rca_results/<timestamp>/`
+`${RESULTS_DIR}/<baseline|iter${N}>/rca_results/<timestamp>/`
 
 Required files:
 - `kpi_gaps.parquet` — top-K weakest per label, expanded per lighting (columns: `filepath`, `label`, `siamese_score`, `weakness`)
@@ -34,24 +34,27 @@ If the model cannot reach `min_recall` at any threshold, `unreachable_kpi.txt` i
 ## Output to deft_state.json
 
 ```python
-# For baseline:
-state["baseline"]["rca_target_defects"] = [...]         # labels with FN / high-FP, sorted by impact
-state["baseline"]["rca_gaps_parquet"]   = "<abs_path>/kpi_gaps.parquet"
-state["baseline"]["rca_threshold"]      = <float>
-# For iter N:
-state["iterations"][f"iter{N}"]["rca_target_defects"] = [...]
-state["iterations"][f"iter{N}"]["rca_gaps_parquet"]   = "<abs_path>/kpi_gaps.parquet"
-state["iterations"][f"iter{N}"]["rca_threshold"]      = <float>
+label = "baseline" if running_baseline else f"iter{N}"
+phase = state["iterations"].setdefault(label, {"status": "in_progress"})
+phase["rca_target_defects"] = [...]  # labels with FN / high-FP, sorted by impact
+phase["rca_gaps_parquet"] = "<abs_path>/kpi_gaps.parquet"
+phase["rca_threshold"] = <float>
+phase["stage_completed"] = "rca"
 ```
 
 `rca_target_defects`: list of label strings present in misclassified / high-weakness samples, sorted by impact (FN count descending, then FP rate descending). The downstream routing stage reads `rca_gaps_parquet` directly from disk — write the absolute path here, not a relative one.
+The snippet documents the schema only; do not run it as inline Python. Commit
+the path and threshold with the command below.
 
 ## Log Stage
 
 ```bash
-python3 <skill_root>/scripts/log_stage.py \
-    --log-path results/loop_log.jsonl \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+    --results-dir "${RESULTS_DIR}" \
     --iter-label <baseline|iter${N}> \
-    --stage rca --status ok \
+    --stage rca \
+    --rca-gaps <absolute path to kpi_gaps.parquet> \
+    --rca-threshold <float> \
+    --rca-target-defect <label> ... \
     --summary "RCA (VCN): threshold=X recall=Y; gaps=K rows across N labels"
 ```

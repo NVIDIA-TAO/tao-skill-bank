@@ -51,3 +51,53 @@ LLM brain may otherwise propose legacy or invalid DINO backbone names.
 All model-specific metadata is documented in the Training Requirements table and
 `references/skill_info.yaml`. DINO data-source arrays are not auto-resolved from
 TAO Core metadata; provide dataset paths explicitly in the spec overrides.
+
+## Spec Param / Parent Model Inference
+
+Model-specific parent-model mappings belong in this MD file. For
+`parent_model`/`parent_model_folder`, pass the upstream train/export/AutoML
+child job id as the parent job id; list the parent result folder, filter
+checkpoint artifacts, and select the resolved model file or folder.
+
+DINO checkpoint layout:
+
+```text
+checkpoint format: pth
+checkpoint files: results_dir/train/model_epoch_<epoch>_step_<step>.pth
+latest alias: results_dir/train/dino_model_latest.pth
+evaluate.checkpoint: parent_model
+export.checkpoint: parent_model
+inference.checkpoint: parent_model
+quantize.model_path: parent_model
+distill.pretrained_teacher_model_path: parent_model
+```
+
+Full inference-mapping table (per action):
+
+| Action | Spec Field | Inference Function | Meaning |
+|---|---|---|---|
+| distill | `distill.pretrained_teacher_model_path` | `parent_model` | model file inferred from the parent job results folder |
+| distill | `encryption_key` | `key` | encryption key |
+| distill | `results_dir` | `output_dir` | current job results directory |
+| evaluate | `evaluate.checkpoint` | `parent_model` | model file inferred from the parent job results folder |
+| evaluate | `encryption_key` | `key` | encryption key |
+| evaluate | `results_dir` | `output_dir` | current job results directory |
+| export | `export.checkpoint` | `parent_model` | model file inferred from the parent job results folder |
+| export | `export.onnx_file` | `create_onnx_file` | output ONNX path |
+| export | `encryption_key` | `key` | encryption key |
+| export | `results_dir` | `output_dir` | current job results directory |
+| inference | `inference.checkpoint` | `parent_model` | model file inferred from the parent job results folder |
+| inference | `encryption_key` | `key` | encryption key |
+| inference | `results_dir` | `output_dir` | current job results directory |
+| quantize | `quantize.model_path` | `parent_model` | model file inferred from the parent job results folder |
+| quantize | `encryption_key` | `key` | encryption key |
+| quantize | `results_dir` | `output_dir` | current job results directory |
+| train | `model.pretrained_backbone_path` | `ptm_if_no_resume_model` | PTM when no resume checkpoint exists |
+| train | `train.pretrained_model_path` | `ptm_if_no_resume_model` | PTM when no resume checkpoint exists |
+| train | `train.resume_training_checkpoint_path` | `resume_model` | model file inferred from the current job results folder |
+| train | `encryption_key` | `key` | encryption key |
+| train | `results_dir` | `output_dir` | current job results directory |
+
+TensorRT mappings (`gen_trt_engine.onnx_file`, `evaluate.trt_engine`, and
+`inference.trt_engine`) live in `deploy/skill_info.yaml` because TensorRT runs
+through the DINO deploy workflow, not the PyT model skill.

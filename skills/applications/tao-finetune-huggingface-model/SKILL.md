@@ -128,15 +128,17 @@ a GPU host — read them first.
 | Concern | Authoritative skill |
 |---|---|
 | GPU host runtime (driver 580, CUDA Toolkit 13.0, NVIDIA Container Toolkit 1.19.0) | [`tao-skill-bank:tao-setup-nvidia-gpu-host`](../../platform/tao-setup-nvidia-gpu-host/SKILL.md) |
-| `docker run` flags, NGC auth, mounts, env passthrough | [`tao-skill-bank:tao-run-on-docker`](../../platform/tao-run-on-docker/SKILL.md) |
-| Local Docker job preflight (daemon, GPU smoke) | [`tao-skill-bank:tao-run-on-local-docker`](../../platform/tao-run-on-local-docker/SKILL.md) |
+| `docker run` flags, NGC auth, mounts, env passthrough, local/remote Docker job preflight (daemon, GPU smoke) | [`tao-skill-bank:tao-run-on-docker`](../../platform/tao-run-on-docker/SKILL.md) |
 
 **Default platform:** `local-docker` — build a one-off image (`run-<short>:latest`)
 and run it on the local Docker daemon. Ask only when the user explicitly needs a
 different backend (Brev remote GPU, SLURM/Kubernetes); then run that platform's
 Preflight first and route the Steps 4–5 `docker run` commands through it. The
 GPU-runtime and presence-only credential preflights (values never read), the
-canonical `docker run` flag set, the `list_tao_platforms.py` selection command, and
+canonical `docker run` flag set, discovery of the execution platforms from the
+installed platform skills (tao-run-on-docker / -slurm / -kubernetes / -brev, plus
+any external one; on a runtime that surfaces only the core router skills, read
+skills/platform/tao-run-on-*/SKILL.md frontmatter), and
 the workflow-specific flags (`--entrypoint /bin/bash -lc`, `PYTORCH_CUDA_ALLOC_CONF`,
 `--name hft_train`) are in `references/workflow-intake-preflight.md`.
 

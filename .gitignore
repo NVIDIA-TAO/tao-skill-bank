@@ -4,3 +4,15 @@
 
 validation-reports/
 .env.local
+
+# Python
+__pycache__/
+*.py[cod]
+
+# In-repo virtualenvs — never scan or commit
+.venv/
+.venv-tao/
+
+# Local session state
+tao_session_state.db*
+tao_session.db*

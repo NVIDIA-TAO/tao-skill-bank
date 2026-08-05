@@ -27,7 +27,7 @@ Load this file only when the compact `SKILL.md` points here for the current task
 
 ## Evaluate
 
-The `actions.evaluate` block in `references/skill_info.yaml` declares the action's inputs (annotation file + media folder + model) and outputs (results directory). For SDK invocation see `skills/platform/tao-run-platform/SKILL.md`.
+The `actions.evaluate` block in `references/skill_info.yaml` declares the action's inputs (annotation file + media folder + model) and outputs (results directory).
 
 ### Config format
 
@@ -253,7 +253,7 @@ fix with a compatible image, not as a platform resource incompatibility.
 
 ## Spec Param / Parent Model Inference
 
-Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners should read this section and apply the mappings with SDK helpers before `create_job()`. This mirrors the old microservices `infer_params.py` flow.
+Model-specific inference mappings belong in this MD file. Agents should read this section and apply the mappings before launching a job. This mirrors the old microservices `infer_params.py` flow.
 
 - **Checkpoint metadata:** format: safetensors, folder: true
 
@@ -271,4 +271,4 @@ Inference mappings from TAO Core `cosmos-rl.config.json`:
 | train | `train.output_dir` | `output_dir` | current job results directory |
 | train | `train.resume` | `resume_model` | exact checkpoint policy folder inferred from the current job results folder |
 
-For `parent_model` or `parent_model_folder`, pass the upstream train/export/AutoML child job id as `parent_job_id`. The SDK lists the parent result folder, filters checkpoint artifacts, and returns the selected model file or folder. Do not add these mappings back to `config.json` and do not patch generated runner scripts to guess checkpoint paths.
+For `parent_model` or `parent_model_folder`, pass the upstream train/export/AutoML child job id as the parent job id; list the parent result folder, filter checkpoint artifacts, and select the resolved model file or folder. Do not patch generated runner scripts to guess checkpoint paths.

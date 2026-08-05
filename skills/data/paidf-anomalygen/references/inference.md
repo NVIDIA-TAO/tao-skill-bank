@@ -347,8 +347,11 @@ as the final SDG bucket regardless of whether Phase 7 ran or whether
 `filter_with_regen.py` orchestrates a **re-AMP + re-pair** regen flow:
 
 1. **Initial filter** — partition source bucket into `passing_per_defect`
-   and `dropped_per_defect`. Read target allocation (per-defect count)
-   from the source bucket.
+   and `dropped_per_defect`. Target allocation (per-defect count) comes
+   from `--allocation` (the pipeline's `allocation.json`) when given,
+   else from the source bucket. Samples with no `nn_score` in
+   `per_sample.csv` are excluded from keep/fallback (logged; regen
+   replaces them).
 2. **Regen loop** — for each attempt up to **5**:
    * Compute `needed_per_defect = target_alloc - kept_per_defect`. If
      zero everywhere, stop.

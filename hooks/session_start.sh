@@ -14,9 +14,9 @@
 #      credentials in their own shell; the session inherits that environment.
 #   3. Surface clear setup hints if docker is missing.
 #
-# This hook does NOT install Python packages. The TAO SDK is opt-in and
-# installed lazily by the skills that need it (skills/platform/tao-run-platform,
-# skills/applications/tao-run-automl) via their Preflight blocks.
+# This hook does NOT install Python packages. The bank runs SDK-free over native
+# platform CLIs; the one wheel-dependent skill, skills/applications/tao-run-automl,
+# installs nvidia-tao-automl lazily via its Preflight block.
 
 set -u
 
@@ -40,11 +40,10 @@ if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -f "${CLAUDE_PLUGIN_ROOT}/AGENTS.md" ]]; t
   echo
 fi
 
-# ─── 1b. Make versions.yaml + skill bank discoverable to the SDK ──────────
-# The SDK's tao_sdk.versions module checks $TAO_SKILL_BANK_PATH for
-# versions.yaml. Plugin-installed users (pip install nvidia-tao-sdk + plugin
-# install tao-skill-bank) need this to resolve container_image keys like
-# `tao_toolkit.pyt`.
+# ─── 1b. Make versions.yaml + skill bank discoverable to the helper scripts ──
+# The bank's scripts (resolve_tao_image.py, tao_job_record.py) and templates/
+# read $TAO_SKILL_BANK_PATH to find versions.yaml. Plugin-installed users need
+# this set to resolve container_image keys like `tao_toolkit.pyt`.
 if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -n "${CLAUDE_ENV_FILE:-}" ]]; then
   echo "export TAO_SKILL_BANK_PATH=\"${CLAUDE_PLUGIN_ROOT}\"" >> "$CLAUDE_ENV_FILE"
 fi

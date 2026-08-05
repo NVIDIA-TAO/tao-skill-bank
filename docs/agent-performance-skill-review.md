@@ -1,5 +1,11 @@
 # TAO Skill Bank Agent Performance Review
 
+> **Historical note (M9, 2026-07-10):** the `tao-run-platform` and
+> `tao-run-on-local-docker` skills were removed in the SDK-elimination milestone;
+> execution now runs SDK-free over native platform CLIs (the four-verb contract).
+> References to those skills and to `build_entrypoint`/`*SDK` below are records of
+> the bank's state at review time, kept for provenance.
+
 ## Contents
 
 - Scope
@@ -156,7 +162,8 @@ Fixed:
 
 Impact:
 
-- Agents can select the correct `build_entrypoint(...)` shape from metadata.
+- Agents can select the correct spec serialization from the declared
+  `actions.<action>.mode` metadata (`config` / `args` / `passthrough`).
 - No launch path needs to guess whether to write a spec file, expand args, or
   run a passthrough command.
 

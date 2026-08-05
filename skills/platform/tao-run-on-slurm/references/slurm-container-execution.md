@@ -1,6 +1,6 @@
-# SLURM Container Execution, Monitoring, Multi-node, SDK, And Failures
+# SLURM Container Execution, Monitoring, Multi-node, And Failures
 
-Container execution steps, monitoring, status mapping, cancellation, multi-node env-var/sbatch detail, the TAO SDK path, the Lustre-not-S3 rule, auto-retry, and failure modes. If this reference conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or platform/model skills, the compact/current source wins.
+Container execution steps, monitoring, status mapping, cancellation, multi-node env-var/sbatch detail, the Lustre-not-S3 rule, retries, and failure modes. If this reference conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or platform/model skills, the compact/current source wins.
 
 ## Container Execution
 
@@ -23,54 +23,6 @@ Image formats accepted by the handler:
 
 SQSH conversion is cached by image name. For `:latest` images, cached SQSH is
 used unless `force_reconvert_latest` is enabled.
-
-## SQSH Conversion And Caching
-
-Pyxis pulls Docker images through enroot on the compute node. Without a
-pre-converted SQSH, every job pays the pull/extract cost inside its GPU
-allocation — on clusters with GPU-idle reapers that can kill the job outright.
-The SDK therefore converts once on a CPU partition and caches the result.
-Keep SQSH conversion enabled; do not disable it to route around conversion
-failures — fix the conversion instead.
-
-**Environment knobs** (read at `SlurmSDK` construction):
-
-| Env var | Default | Notes |
-|---|---|---|
-| `SLURM_USE_SQSH` | `true` | Leave enabled; direct pulls burn GPU allocation time. |
-| `SLURM_SQSH_CACHE_DIR` | base results dir | Where `.sqsh` files land. |
-| `SLURM_CONVERSION_PARTITION` | `cpu` | Must have wall-time ≥ conversion time. Large TAO images (9+ layers) take >30 min — pick a long-limit CPU partition (e.g. `cpu_long`) when the default partition caps at ~30 min. |
-| `SLURM_CONVERSION_TIMEOUT_MINUTES` | `30` | Raise to 120 for large images. |
-| `SLURM_CONVERSION_MEMORY_GB` | `32` | Extraction memory. |
-| `SLURM_ENROOT_TEMP_PATH` | `<cache_dir>/.enroot-tmp` | Layer-extraction workspace. **Must be on a filesystem with xattr support** — some shared filesystems (certain Lustre configs) reject enroot's whiteout conversion with "Operation not permitted". Node-local `/tmp` is usually safe; beware shared-path symlinks that resolve to a restricted filesystem, which make an override a silent no-op. |
-| `SLURM_FORCE_RECONVERT_LATEST` | `false` | Re-convert `:latest` tags. |
-
-**Cache semantics:** conversion runs once per image name, then every job — and
-every future session — reuses the cached file. The SDK verifies the SquashFS
-magic bytes (`hsqs`) before reuse, so partial files from killed conversions
-are rejected and re-converted automatically; no manual cleanup needed.
-Concurrent sessions dedupe via a deterministic job name (`tao-sqsh-<hash>`) —
-a second session waits on the in-flight conversion instead of double-writing.
-
-**Monitoring a conversion:**
-
-```bash
-squeue -u $USER -n tao-sqsh-<hash>            # scheduler state
-sattach <slurm_job_id>.0                       # live stdout (Ctrl+C detaches, job unaffected)
-ls -lh <cache_dir>/<image>.sqsh*               # .partial appears in the final squashfs-write phase
-```
-
-The phase sequence in the live log is: authenticate → fetch manifest →
-download layers → extract layers → convert whiteouts → create squashfs.
-Time-limit kills usually land in extract; xattr failures land in convert
-whiteouts.
-
-**Pre-staging manually** (avoids the first job paying conversion latency):
-
-```bash
-sbatch -p <long_cpu_partition> -A <account> -t 2:00:00 --mem=64G \
-  --wrap="enroot import -o <cache_dir>/<name>.sqsh docker://<registry>#<image>:<tag>"
-```
 
 ## Monitoring
 
@@ -99,7 +51,9 @@ Status mapping:
   logs match retriable infrastructure patterns, otherwise `Error`
 - `CANCELLED`, `PREEMPTED`, `REVOKED` -> `Canceled`
 - `TIMEOUT` -> `Error`
-- `SUSPENDED`, `STOPPED` -> `Paused`
+- `SUSPENDED`, `STOPPED` -> `Running` (still scheduler-owned and may resume;
+  the native sub-state rides in the transition message — same convention as
+  docker `paused`)
 
 ## Cancellation
 
@@ -109,24 +63,25 @@ jobs as successful cancellation.
 
 ## Multi-node training (distributed)
 
-SLURM is the platform of choice for large multi-node runs — pass `num_nodes > 1` and the SDK handles the sbatch directives + PyTorch-distributed env vars automatically.
+SLURM is the platform of choice for large multi-node runs — set `num_nodes > 1`
+and render `templates/slurm/multinode.sbatch.tmpl`, which is a strict superset of
+the single-node template: it adds the sbatch directives and PyTorch-distributed
+rendezvous env vars below. For example, `NUM_GPUS=8` (GPUs per node) with
+`WORLD_SIZE=4` node count gives 4 × 8 = 32 GPUs total; the training command is a
+`torchrun` reading the exported env vars, e.g.:
 
-```python
-job = sdk.create_job(
-    image='nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt',  # versions-key: images.tao_toolkit.pyt
-    command='torchrun --nnodes=$WORLD_SIZE --nproc-per-node=$NUM_GPU_PER_NODE '
-            '--node-rank=$NODE_RANK --master-addr=$MASTER_ADDR --master-port=$MASTER_PORT '
-            'train.py',
-    gpu_count=8,           # GPUs per node
-    num_nodes=4,           # 4 × 8 = 32 GPUs total
-    inputs={'/data/train.json': 'lustre:///lustre/.../coco/train.json'},
-    outputs=['/results/'],
-)
+```bash
+torchrun --nnodes=$WORLD_SIZE --nproc-per-node=$NUM_GPU_PER_NODE \
+  --node-rank=$NODE_RANK --master-addr=$MASTER_ADDR --master-port=$MASTER_PORT \
+  train.py
 ```
 
-### What the SDK generates
+(TAO entrypoints such as `dino train -e spec.yaml` build the torchrun invocation
+internally from `WORLD_SIZE` + `NUM_GPU_PER_NODE`.)
 
-The handler builds an `sbatch` script with:
+### What the rendered template generates
+
+The rendered multi-node `sbatch` script has:
 
 ```
 #SBATCH --nodes=N                    # node count
@@ -173,20 +128,7 @@ For TAO entrypoints (`dino train -e spec.yaml`, etc.) the container's entrypoint
 - PyTorch distributed (env-var rendezvous): <https://pytorch.org/docs/stable/elastic/run.html>
 - NCCL networking tuning (NCCL_SOCKET_IFNAME, NCCL_IB_HCA): <https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html>
 
-## Optional: via the TAO SDK
-
-The SDK install is covered in [Preflight](#preflight) — `pip install
-'nvidia-tao-sdk[slurm]'`. Use it when you want Job handles, the
-sbatch/`squeue`/`sacct` plumbing handled for you, run-folder durability via
-`ActionWorkflow`, **or convenient cloud-storage I/O** (the SDK's
-`build_entrypoint` inlines `script_runner` and dispatches `s3://`,
-`hf_model://`, and `ngc://` URIs to the right downloader; without the SDK you
-either pre-stage the data on Lustre or call `fsspec` / `huggingface-cli`
-yourself).
-
-When the SDK is in scope, read `tao-skill-bank:tao-run-platform` for the `SlurmSDK`
-kwarg reference (`num_nodes`, `partition`, `account`), `build_entrypoint`,
-and `ActionWorkflow`.
+## Lustre, not S3, for job inputs
 
 > **Use Lustre, not S3, for SLURM job inputs.** SLURM's scheduler enforces a
 > GPU-idle timeout: the GPU allocation starts the moment your job is
@@ -200,46 +142,24 @@ and `ActionWorkflow`.
 > datasets. K8s/Brev don't have this constraint because they don't
 > share SLURM's scheduler-idle policy.
 
-```python
-from tao_sdk.platforms.slurm import SlurmSDK
-from tao_sdk.script_runner import build_entrypoint
+Stage the entrypoint/spec files to Lustre, render the `sbatch` script with Pyxis
+`srun --container-image`, submit with `sbatch --parsable`, and parse
+`squeue`/`sacct` for status — driving `sbatch`/`srun` directly over SSH.
 
-ep = build_entrypoint(
-    command='dino train -e {config_path}',
-    specs=specs,                                           # config-mode (spec rewriting)
-    job_id='dino-train-1',
-)
+### Retry for infrastructure failures
 
-sdk = SlurmSDK()  # reads SLURM_USER, SLURM_HOSTNAME, SLURM_BASE_RESULTS_DIR from env
-job = sdk.create_job(
-    image='nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt',  # versions-key: images.tao_toolkit.pyt
-    command=ep['command'],
-    gpu_count=8,
-    num_nodes=2,                                           # multi-node supported
-    partition='batch',                                     # optional override
-    account='myproject',                                   # optional override
-)
+On an infrastructure-looking failure — `NODE_FAIL`, `BOOT_FAIL`, NCCL transport
+timeouts, CUDA driver init failures, GPU/IB link-down, OOM-killer node reaping,
+Xid errors, and similar retriable patterns — classify infra-vs-program from the
+job logs (M6) and re-submit the already-staged `sbatch` script; the user-facing
+`tao_job_record` id stays stable across resubmits while the underlying SLURM job
+id rotates.
 
-status = sdk.get_job_status(job.id)
-logs = sdk.get_job_logs(job.id, tail=200)
-```
-
-The SDK takes care of staging the entrypoint script to Lustre, generating the
-`sbatch` script with Pyxis `srun --container-image`, and parsing
-`squeue`/`sacct` for status. Without the SDK, drive `sbatch` and `srun`
-yourself.
-
-### Auto-retry for infrastructure failures
-
-Auto-retry is automatic in the SDK. `SlurmSDK` starts a monitor that polls
-`squeue`/`sacct`, keeps the user-facing `Job.id` stable, and resubmits the
-staged script for infrastructure-looking failures such as `NODE_FAIL`,
-`BOOT_FAIL`, NCCL transport timeouts, CUDA driver init failures, GPU/IB
-link-down, OOM-killer node reaping, Xid errors, and similar retriable patterns.
-
-Plain training failures surface immediately so a broken spec does not consume
-the retry budget. State persists in `tao_session_state.db`, and
-`#SBATCH --requeue` is enabled by default via `SLURM_USE_REQUEUE=true`.
+Plain training failures (`FAILED` with no matching pattern) surface immediately
+so a broken spec does not consume the retry budget. `#SBATCH --requeue` is
+enabled by default via `SLURM_USE_REQUEUE=true`, so SLURM itself re-queues the
+job on `NODE_FAIL` or pre-emption before any agent-level resubmit; set
+`SLURM_USE_REQUEUE=false` to opt out.
 
 ## Failure Modes
 
@@ -249,16 +169,7 @@ permissions, `known_hosts`, and key mounts. Re-run the
 
 **Local dataset path rejected**: Convert it to `lustre:///...` or copy it onto shared storage.
 
-**SQSH conversion timeout / whiteout failure**: Two failure modes — a
-conversion-partition wall-time limit shorter than the conversion time
-(`CANCELLED ... DUE TO TIME LIMIT` during layer extraction), or a shared
-filesystem without xattr support rejecting whiteout conversion
-(`enroot-aufs2ovlfs: ... Operation not permitted`). Both are fixed with the
-environment knobs in [SQSH Conversion And Caching](#sqsh-conversion-and-caching):
-`SLURM_CONVERSION_PARTITION`/`SLURM_CONVERSION_TIMEOUT_MINUTES` for the former,
-`SLURM_ENROOT_TEMP_PATH` (point it at node-local scratch) for the latter.
-Partial SQSH files are auto-rejected via magic-byte validation; no manual
-cleanup needed.
+**SQSH conversion timeout**: Increase `sqsh_conversion_timeout_minutes`, use a smaller image, or pre-stage the SQSH image.
 
 **Pyxis or Enroot unavailable**: The generated sbatch script depends on
 `srun --container-image`. Ask the cluster admin to enable Pyxis/Enroot or use a

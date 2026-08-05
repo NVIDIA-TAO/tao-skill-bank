@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Stdlib-only Docker launch helpers for the NemoClaw TAO bridge.
 
 Keeping command construction here lets ownership and path-confinement behavior

@@ -3,6 +3,12 @@
 The exact command sequence for Phase 1 (skip when `MODE=inference_only`). Step 3
 generates the training config — show it to the user and confirm before writing.
 
+Step 1 is a hard gate: `validate_dataset.py` exits non-zero when it finds *any*
+structure or image/mask pairing issue, not just when no anomaly types are
+detected. Fix the reported pairs (or remove the offending files) and re-run —
+the training dataloader asserts on exactly these and would otherwise crash
+mid-iteration.
+
 ```bash
 # Step 1: Validate dataset structure — derive anomaly types
 python3 -m scripts.utilities.validate_dataset ${DATASET_DIR}

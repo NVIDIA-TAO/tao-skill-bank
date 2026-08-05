@@ -11,25 +11,30 @@ In the mental model, Phase 1 → Phase 2 is a *spec file* AND the *winning check
 
 DEFT itself stays plain-train (`automl_policy: off` inside the DEFT loop is preserved).
 
-**Step 1 — Write the merged spec.** Deep-merge `result["best"]["specs"]` onto `<workspace>/specs/baseline_spec.yaml` (preserve dataset paths, model architecture, lighting layout; overwrite only the HPs AutoML tuned) and write to `<workspace>/specs/baseline_spec_automl.yaml`. Copy this onto the path DEFT reads:
+The handoff reads the **`best_rec.json`** the AutoML adapter emits
+(`tao-run-automl/references/best_rec_adapter.py`, schema `tao-artifacts/best_rec.schema.json`) —
+this is the SDK-free replacement for reaching into `result["best"]`.
+
+**Step 1 — Write the merged spec.** Deep-merge `best_rec["best"]["specs"]` onto `<workspace>/specs/baseline_spec.yaml` (preserve dataset paths, model architecture, lighting layout; overwrite only the HPs AutoML tuned) and write to `<workspace>/specs/baseline_spec_automl.yaml`. The adapter already **stripped the fidelity budget** (`num_epochs`) out of `specs` into `best_rec["best"]["observed_budget"]`, so the merge cannot overwrite DEFT's hand-authored baseline epoch count — do **not** merge `observed_budget`. Copy onto the path DEFT reads:
 
 ```bash
 cp <workspace>/specs/baseline_spec_automl.yaml <workspace>/specs/baseline_spec.yaml
 ```
 
-**Step 2 — Pre-seed DEFT's baseline.** Locate the winning AutoML rec's best checkpoint (the AutoMLRunner writes `result["best"]["best_checkpoint_path"]` — pass through `eval_fn` for FAR-@-100%-recall metric capture). Pick the DEFT run-id (timestamped subdir under `<workspace>/results/`) and create `${RESULTS_DIR}/baseline/train/`. Copy the AutoML checkpoint into that directory using the filename convention DEFT expects (`model_epoch_<EEE>_step_<SSS>.pth`).
+**Step 2 — Pre-seed DEFT's baseline.** The winning checkpoint is `best_rec["best"]["checkpoint_uri"]` (with `checkpoint_epoch`/`checkpoint_step` for the filename). Pick the DEFT run-id (timestamped subdir under `<workspace>/results/`), create `${RESULTS_DIR}/baseline/train/`, and copy the checkpoint there as `model_epoch_<EEE>_step_<SSS>.pth`. Verify it exists and is non-zero (`test -s` / `aws s3 ls`) before the cp — a missing warm-start checkpoint silently regresses Phase 2.
 
 **Step 3 — Initialise `deft_state.json` with baseline already done.** Use `tao-run-deft-aoi/scripts/init_deft_state.py` to write the initial state, then patch in the `iterations.baseline` entry:
 
 ```python
-import json, pathlib, shutil
+import json, pathlib
 
+best_rec = json.loads(pathlib.Path(f"{WORKSPACE}/best_rec.json").read_text())
 state_path = pathlib.Path(f"{RESULTS_DIR}/deft_state.json")
 state = json.loads(state_path.read_text())
 state["iterations"]["baseline"] = {
     "stage_completed": "train",                      # so DEFT's resume picks up at inference
-    "best_ckpt_path": str(baseline_ckpt_path),       # absolute host path
-    "train_metric": phase1_winning_metric,            # FAR @ 100% recall captured by Phase 1's eval_fn
+    "best_ckpt_path": str(baseline_ckpt_path),       # the copied model_epoch_<EEE>_step_<SSS>.pth
+    "train_metric": best_rec["best"]["score"],        # metric identity in best_rec["metric_name"]/["direction"]
     "source": "automl_phase1",                        # provenance flag — not a DEFT-generated checkpoint
 }
 state_path.write_text(json.dumps(state, indent=2))

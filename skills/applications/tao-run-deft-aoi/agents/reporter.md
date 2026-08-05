@@ -16,14 +16,24 @@ You receive these parameters in your prompt:
 - **skill_root**: absolute path to the `tao-run-deft-aoi` skill directory — `references/DEFT_Loop_Report.html` and `references/REPORT_RENDERING.md` live here
 - **trigger** (optional, default `"after-iteration"`): one of `"after-iteration"` (mid-loop render — most common), `"loop-end"` (final render after `loop_stop`), or the legacy `"after-stage"` (deprecated; behaved identically to `after-iteration` for placeholder logic but ran much more often). Controls in-progress stub behavior per `references/REPORT_RENDERING.md` § *In-progress rendering rules* — anything other than `"loop-end"` applies the in-progress rules.
 
+Before reading report inputs, run:
+
+```bash
+${skill_root}/scripts/deft_python.sh ${skill_root}/scripts/audit_deft_run.py --results-dir ${results_dir}
+```
+
+For `trigger="loop-end"`, also pass `--require-terminal`. If the audit exits
+non-zero, hard-stop and print its errors; never render a completion report from
+inconsistent or non-terminal state.
+
 ## Process
 
 ### Step 1 — Load canonical disk state
 
-1. Read `${results_dir}/deft_state.json` (current run state: KPI target, max_iterations, per-iteration status, best checkpoint, threshold, FAR).
+1. Read `${results_dir}/deft_state.json` (metric contract, max_iterations, per-iteration metric results, best checkpoint, optional threshold). Read `references/metric-contract.md` and use its configured primary metric.
 2. Read every line of `${results_dir}/loop_log.jsonl` (stage events, timings, statuses; the `tokens` field from `align_token_usage.py` if present).
 3. Read every `${results_dir}/iter*_summary.md` that exists.
-4. Read RCA artifacts when present: `${results_dir}/baseline/rca_results/` and `${results_dir}/iter*/rca_results/` (score distribution, recall-FAR sweep, per-defect breakdown).
+4. Read RCA artifacts when present: `${results_dir}/baseline/rca_results/` and `${results_dir}/iter*/rca_results/` (score distribution, evaluator diagnostics, per-defect breakdown).
 5. Read mining outputs when present for the augmentation table: `${results_dir}/iter*/mining_filter/knn_summary.csv` and `mining_pool.csv`.
 
 Trust the disk over any value the parent prompt provides except `results_dir`, `skill_root`, `trigger`. If a state file is malformed or missing while the loop appears to have progressed past its stage, hard-stop (see *Hard stops* below).
@@ -41,10 +51,10 @@ Per `REPORT_RENDERING.md` § *Strip the doc-comment header*. Use exact boundary 
 
 Build a single Python dict of all `{{ ... }}` substitutions from disk state.
 
-- **Simple tokens** (`{{ GENERATED_DATE }}`, `{{ KPI_TARGET }}`, `{{ BEST_FAR }}`, …): scalar strings derived from state.
+- **Simple tokens** (`{{ GENERATED_DATE }}`, `{{ KPI_TARGET }}`, `{{ PRIMARY_METRIC_LABEL }}`, `{{ PRIMARY_METRIC_UNIT }}`, `{{ METRIC_DIRECTION_LABEL }}`, `{{ BEST_METRIC_VALUE }}`, …): scalar strings derived from the metric contract/result. Use the generic metric placeholders declared by the template; evaluator-specific values belong in diagnostics, not headline tokens.
 - **`*_HTML` blocks**: assemble HTML in Python (`"\n".join(...)`); no template engine.
-- **`*_JSON` blocks**: dump compact JSON whose field names match the template's JavaScript exactly. See `REPORT_RENDERING.md` § *Chart data field names* and § *Table row schemas*. Wrong field names (e.g. `far` instead of `value`) silently render blank charts.
-- **Global context blocks** (`{{ PROBLEM_STATEMENT_HTML }}`, `{{ KPI_DATASET_HTML }}`, `{{ APPROACH_HTML }}`): build these on **every** render (including the very first, before any iteration completes) so the user always sees the run's framing. Bake concrete values (KPI target, max iterations, cosine threshold, dataset totals) directly into the HTML — these blocks are substituted with `.replace()` once, so any `{{ KPI_TARGET }}` left inside will not re-substitute. Schemas and disk sources are in `REPORT_RENDERING.md` § *Global context cards*.
+- **`*_JSON` blocks**: dump compact JSON whose field names match the template's JavaScript exactly. See `REPORT_RENDERING.md` § *Chart data field names* and § *Table row schemas*. A trend point must use the generic `value` field or the chart renders blank.
+- **Global context blocks** (`{{ PROBLEM_STATEMENT_HTML }}`, `{{ KPI_DATASET_HTML }}`, `{{ APPROACH_HTML }}`): build these on **every** render (including the very first, before any iteration completes) so the user always sees the run's framing. Bake the configured metric name, predicate, evaluator, constraints, max iterations, cosine threshold, and dataset totals directly into the HTML. Render evaluator diagnostics separately from the primary goal. These blocks are substituted with `.replace()` once, so nested placeholders will not re-substitute.
 
 Apply the in-progress rules from `REPORT_RENDERING.md` when `trigger != "loop-end"`:
 - `{{ FINAL_KPI_STATUS }}` → `"IN PROGRESS"`, class → `""`
@@ -53,13 +63,19 @@ Apply the in-progress rules from `REPORT_RENDERING.md` when `trigger != "loop-en
 - KPI banner → empty string
 - Chart data → only completed-iteration points
 
-For the final render (`trigger == "loop-end"`), follow `REPORT_RENDERING.md` §
-*KPI status phrasing — be neutral, never say "NOT MET"*. When `best_far > kpi_target`,
-render `{{ FINAL_KPI_STATUS }}` as `"{gap:.1f}pp from target"` and use the neutral
-yellow banner treatment — never emit `"NOT MET"`, the `red` CSS class, or red banner
-styling.
+For the final render (`trigger == "loop-end"`), recompute success with the
+contract operator and every constraint. Be neutral, never say `NOT MET`. For a
+miss, render the absolute direction-aware gap plus unit (use `pp` only for a
+percentage-point metric), for example `0.004 cost/board from target` or
+`1.2pp from target`. Use the neutral yellow banner treatment, never a red
+failure banner.
 
 ### Step 5 — Embed one representative sample pair as base64 thumbnails
+
+Before the sample pair, emit a literal status line in `{{ DATA_SAMPLES_HTML }}`:
+`AnomalyGen: enabled · num_SDG: <generated_count>`. Derive the count from the
+completed iteration's generated outputs; do not infer enabled status only from
+the presence of thumbnails.
 
 Emit **exactly one** `.sample-iter-block` containing **one** AnomalyGen input/output pair — not one per iteration. Pick the first existing pair (sorted by filename) from the best iteration; if the best iteration has no AnomalyGen output, fall back to the most recent iteration that does; if no iteration has output, emit two `<div class="sample-img-placeholder">No image</div>` cells.
 
@@ -80,6 +96,9 @@ html = (
     template
     .replace("{{ GENERATED_DATE }}", generated_date)
     .replace("{{ KPI_TARGET }}",     kpi_target)
+    .replace("{{ PRIMARY_METRIC_LABEL }}", primary_metric_label)
+    .replace("{{ PRIMARY_METRIC_UNIT }}", primary_metric_unit)
+    .replace("{{ METRIC_DIRECTION_LABEL }}", metric_direction_label)
     # ... ALL remaining tokens in one chain ...
     .replace("{{ RECOMMENDATIONS_HTML }}", recommendations_html)
 )
@@ -101,13 +120,13 @@ Write to `${results_dir}/DEFT_Loop_Report.html.tmp`, then `os.replace` it onto `
 Print exactly one line to stdout, then exit:
 
 ```
-reporter: wrote DEFT_Loop_Report.html (<bytes>B, <N>/<M> iterations complete, status=<IN PROGRESS|MET|<gap>pp from target>)
+reporter: wrote DEFT_Loop_Report.html (<bytes>B, <N>/<M> iterations complete, status=<IN PROGRESS|MET|<gap><unit> from target>)
 ```
 
 Examples:
 - `status=IN PROGRESS` — loop still running
-- `status=MET` — best FAR meets KPI
-- `status=2.3pp from target` — best FAR is 2.3 percentage points above the KPI ceiling
+- `status=MET` — the primary metric and constraints pass
+- `status=0.004 cost/board from target` — a minimizing cost metric is 0.004 above its ceiling
 
 Never print `status=NOT MET`.
 

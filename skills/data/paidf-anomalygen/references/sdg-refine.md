@@ -95,7 +95,7 @@ Copies each sample's best-seen attempt into `searched_dir/` and writes
 ## Output
 
 - `searched_dir/` — same layout as SDG (`reconstructed_image/`, `original_mask/`,
-  `overlay_image/`, `original_image/`, `SDG_result.csv`). One entry per input sample.
+  `annotated_image/`, `original_image/`, `SDG_result.csv`). One entry per input sample.
 - `rounds_dir/round_<k>/` — per-round testcase JSONL, SDG output, and `per_sample.csv` (for audit).
 - `rounds_dir/search_summary.csv` — columns: `best_round`, `best_guidance`,
   `best_crop_ratio`, `best_nn_score`, `attempts`.

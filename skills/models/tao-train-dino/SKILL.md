@@ -37,7 +37,6 @@ prefix.
 - `references/dino-data-specs.md` — dataset contracts, per-action dataset requirements, per-action spec-override examples (train, evaluate, export, deploy/gen_trt_engine, inference, quantize, distill), data-source arrays, checkpoint inference, and dataset layout.
 - `references/dino-actions-errors.md` — important parameters, default values, evaluate/export defaults, hardware, and the full error-pattern catalog.
 - `references/dino-tuning-multigpu.md` — full AutoML/HPO notes (metrics, hyperparameters, extractor) and multi-GPU spec consistency.
-- `references/dino-automl-sdk.md` — AutoML metrics, SDK orchestration internals, data-source gap, and spec-param/parent-model inference.
 - `references/tao-deploy-dino.md` — TensorRT deploy workflow.
 - `references/detailed-guide.md` — map to the detailed model guide.
 
@@ -152,9 +151,7 @@ local smoke runs, use `DINO_AUTOML_PROFILE`. Recommended metric is `mAP50`
 See `references/dino-tuning-multigpu.md` for the full multi-GPU spec-consistency
 rule (8-GPU example, NCCL timeout note) and the full AutoML/HPO notes (metric
 selection, `metric_extractor`, recommended hyperparameters, `weight_decay`
-behavior, dense-dataset resume guidance). See `references/dino-automl-sdk.md` for
-AutoML metric extractor code, SDK orchestration internals, and parent-model
-inference mappings.
+behavior, dense-dataset resume guidance, and parent-model inference mappings).
 
 ## Error Patterns
 
@@ -168,24 +165,15 @@ with diagnostics and fixes.
 
 ## Spec Param / Parent Model Inference
 
-Model-specific inference mappings belong in this MD file, not in `config.json`.
-Generated runners read the mappings and apply them with SDK helpers before
-`create_job()`. For `parent_model`/`parent_model_folder`, pass the upstream
-train/export/AutoML child job id as `parent_job_id`; the SDK lists the parent
-result folder, filters checkpoint artifacts, and returns the selected model.
+Model-specific inference mappings belong in this MD file. For
+`parent_model`/`parent_model_folder`, pass the upstream train/export/AutoML
+child job id as the parent job id; list the parent result folder, filter
+checkpoint artifacts, and select the resolved model.
 
-See `references/dino-automl-sdk.md` for the full inference-mapping table (per
-action: `parent_model`, `key`, `output_dir`, `ptm_if_no_resume_model`,
+See `references/dino-tuning-multigpu.md` for the full inference-mapping table
+(per action: `parent_model`, `key`, `output_dir`, `ptm_if_no_resume_model`,
 `resume_model`, `create_onnx_file`) and the TensorRT-mapping note. TensorRT
 mappings live in the deploy workflow, not the PyT model skill.
-
-## Optional: running via the TAO SDK
-
-When running DINO through the TAO SDK (`script_runner` orchestration, S3 I/O
-wrapping, AutoML), skills read `references/skill_info.yaml` for input and
-spec-param mappings. See `references/dino-automl-sdk.md` for SDK orchestration
-internals, including the data-sources gap and the `[0]`-indexed `inputs`
-declarations. Skip this when running locally with `docker run`.
 
 ## Deployment
 
