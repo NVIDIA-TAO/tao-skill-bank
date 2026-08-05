@@ -1,0 +1,2 @@
+CI smoke marker — touches the clip skill so detect selects it for the eval fan-out.
+Validates the executor infra-injection (--network=host) fixes the decord docker issue. DO NOT MERGE.
