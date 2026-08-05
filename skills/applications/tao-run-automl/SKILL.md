@@ -4,9 +4,8 @@ description: Run container-backed AutoML / hyperparameter optimization (HPO) for
   selection (bayesian, hyperband, asha, bohb, llm, hybrid, autoresearch), WandB experiment tracking, job execution on any TAO SDK
   platform, result interpretation, and per-rec custom evaluation hooks. Use when the user mentions TAO AutoML, hyperparameter
   optimization, HPO, automl, automl_settings, AutoMLRunner, tao_automl, bayesian search, hyperband, ASHA, LLM-guided search,
-  autoresearch, or wants to tune selected action parameters such as train/evaluate/inference/distill/prune/quantize for any TAO network.
-  Model actions use the model skill's resolved container image by default; venv training requires an explicit user request.
-  Platform-agnostic — runs on any SDK (Brev,
+  autoresearch, or wants to tune train/evaluate/inference/distill/prune/quantize for a TAO network. Model actions use the resolved
+  image; venv training requires an explicit request. Platform-agnostic — runs on any SDK (Brev,
   SLURM, Kubernetes, Docker).
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
