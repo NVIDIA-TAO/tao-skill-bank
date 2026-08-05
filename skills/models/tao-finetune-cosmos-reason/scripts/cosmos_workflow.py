@@ -522,6 +522,12 @@ def _training_contract(args: argparse.Namespace) -> dict[str, Any]:
         "sequence_length": args.sequence_length,
         "frames": args.frames,
         "system_prompt": args.system_prompt,
+        "train_response_mode": (
+            "hybrid" if args.dataset_family == "task_aware_video_reasoning" else "answer"
+        ),
+        "train_sample_multiplier": (
+            2 if args.dataset_family == "task_aware_video_reasoning" else 1
+        ),
         "validation_frequency_epochs": 1,
         "checkpoint_frequency_epochs": 1,
         "lora": lora,
@@ -535,7 +541,8 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
     grad_accum = args.effective_global_batch // world
     smoke_train = min(train_count, args.smoke_train_samples) if args.run_mode == "smoke" else train_count
     smoke_val = min(val_count, args.smoke_validation_samples) if args.run_mode == "smoke" else val_count
-    steps = math.ceil(smoke_train / args.effective_global_batch)
+    exposed_train_samples = smoke_train * int(contract["train_sample_multiplier"])
+    steps = math.ceil(exposed_train_samples / args.effective_global_batch)
     val_steps = math.ceil(smoke_val / world)
     epochs = contract["epochs"]
     spec: dict[str, Any] = {
@@ -657,7 +664,10 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
         if args.video_max_pixels:
             common["TAO_VIDEO_MAX_PIXELS"] = str(args.video_max_pixels)
         if args.run_mode == "smoke":
-            common.update({"TAO_VIDEO_TRAIN_LIMIT": str(args.smoke_train_samples), "TAO_VIDEO_VAL_LIMIT": str(args.smoke_validation_samples)})
+            train_limit = args.smoke_train_samples
+            if args.dataset_family == "task_aware_video_reasoning":
+                train_limit *= 2
+            common.update({"TAO_VIDEO_TRAIN_LIMIT": str(train_limit), "TAO_VIDEO_VAL_LIMIT": str(args.smoke_validation_samples)})
     return common
 
 
@@ -942,6 +952,18 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     args.smoke_train_samples = min(train_data["record_count"], max(args.smoke_train_samples, total_gpus))
     args.smoke_validation_samples = min(val_data["record_count"], max(args.smoke_validation_samples, total_gpus))
     contract = _training_contract(args)
+    logical_train_records = (
+        min(train_data["record_count"], args.smoke_train_samples)
+        if args.run_mode == "smoke"
+        else train_data["record_count"]
+    )
+    exposed_train_samples = logical_train_records * contract["train_sample_multiplier"]
+    contract.update({
+        "logical_train_records": logical_train_records,
+        "exposed_train_samples": exposed_train_samples,
+        "optimizer_updates": math.ceil(exposed_train_samples / args.effective_global_batch)
+        * contract["epochs"],
+    })
     commits = _source_commits(args, backend)
     image = _image_plan(args, backend, commits)
     processor_fingerprint = stable_hash({"revision": args.processor_revision, "profile": model_profile})

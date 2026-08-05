@@ -347,6 +347,40 @@ def test_cosmos_rl_peft_spec_has_equivalent_lora_and_cache(tmp_path):
     assert "dataloader_prefetch_factor" not in plan["spec"]["train"]["train_policy"]
 
 
+def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
+    framework_args = args_for(
+        tmp_path / "framework", backend="cosmos-framework",
+        dataset_family="task_aware_video_reasoning",
+    )
+    rl_args = args_for(
+        tmp_path / "rl", backend="cosmos-rl",
+        dataset_family="task_aware_video_reasoning",
+    )
+    framework = workflow.build_plan(framework_args)
+    rl = workflow.build_plan(rl_args)
+
+    for plan in (framework, rl):
+        assert plan["training"]["logical_train_records"] == 24
+        assert plan["training"]["train_response_mode"] == "hybrid"
+        assert plan["training"]["train_sample_multiplier"] == 2
+        assert plan["training"]["exposed_train_samples"] == 48
+        assert plan["training"]["optimizer_updates"] == 6
+    assert framework["spec"]["trainer"]["max_iter"] == 6
+
+
+def test_task_aware_smoke_limit_counts_logical_records_before_expansion(tmp_path):
+    args = args_for(
+        tmp_path, backend="cosmos-framework",
+        dataset_family="task_aware_video_reasoning", run_mode="smoke",
+    )
+    plan = workflow.build_plan(args)
+    assert plan["training"]["logical_train_records"] == 16
+    assert plan["training"]["exposed_train_samples"] == 32
+    assert plan["training"]["optimizer_updates"] == 4
+    assert plan["environment"]["TAO_VIDEO_TRAIN_LIMIT"] == "32"
+    assert plan["spec"]["trainer"]["max_iter"] == 4
+
+
 def test_framework_peft_spec_is_native_not_rl_schema(tmp_path):
     args = args_for(tmp_path, training_mode="peft")
     plan = workflow.build_plan(args)
