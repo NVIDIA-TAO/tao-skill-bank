@@ -535,6 +535,26 @@ def test_customer_dataset_family_and_profile_are_inferred_from_structure(tmp_pat
     assert inspected["profile"]["resolution"]["class"] == "up_to_720p"
     assert inspected["profile"]["resolution"]["median_width"] == 960
     assert inspected["profile"]["video"]["median_duration_seconds"] == 12
+    assert inspected["metric_coverage"]["accuracy_tasks"] == ["default"]
+    assert inspected["metric_coverage"]["task_metrics"] == {"default": "accuracy"}
+    assert inspected["metric_coverage"]["inferred_metrics"] == {
+        "default": "all conversation targets are deterministic classification labels"
+    }
+
+
+def test_free_form_video_conversation_does_not_invent_accuracy(tmp_path):
+    annotation, media = make_video_conversation(tmp_path, "free-form")
+    records = json.loads(annotation.read_text())
+    for record in records:
+        record["conversations"][-1]["value"] = "A detailed description of the road scene."
+    annotation.write_text(json.dumps(records))
+
+    inspected = common.inspect_dataset(
+        dataset_family="auto", annotations=[str(annotation)], media_roots=[str(media)]
+    )
+    assert inspected["metric_coverage"]["accuracy_tasks"] == []
+    assert inspected["metric_coverage"]["excluded_tasks"] == ["default"]
+    assert inspected["metric_coverage"]["inferred_metrics"] == {}
 
 
 def test_arbitrary_task_uses_declared_metric_instead_of_dataset_name(tmp_path):

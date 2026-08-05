@@ -24,6 +24,10 @@ MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ACCURACY_TASKS = {"bcq", "mcq", "binary_choice", "multiple_choice"}
 DATASET_FAMILIES = {"auto", "video_conversation", "task_aware_video_reasoning"}
 MEDIA_FIELDS = ("video", "video_id", "image", "image_id", "media", "media_path")
+CLASSIFICATION_LABEL_SETS = (
+    frozenset({"a", "b", "c", "d"}),
+    frozenset({"yes", "no"}),
+)
 
 
 class WorkflowError(ValueError):
@@ -202,6 +206,17 @@ def _record_task(record: Mapping[str, Any], metadata: Mapping[str, Any]) -> str:
     return str(value).strip().casefold().replace("-", "_").replace(" ", "_")
 
 
+def _conversation_target(record: Mapping[str, Any]) -> str | None:
+    conversations = record.get("conversations") or record.get("messages")
+    if not isinstance(conversations, list) or not conversations:
+        return None
+    final = conversations[-1]
+    if not isinstance(final, Mapping):
+        return None
+    value = final.get("value") if "value" in final else final.get("content")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
 def _detect_dataset_family(records: Sequence[Mapping[str, Any]], metadata: Mapping[str, Any]) -> str:
     if metadata.get("task") or metadata.get("tasks") or any(_record_task(record, metadata) for record in records):
         return "task_aware_video_reasoning"
@@ -273,6 +288,7 @@ def inspect_dataset(
     frame_rates: list[float] = []
     durations: list[float] = []
     task_metrics: dict[str, str] = {}
+    conversation_targets: dict[str, list[str]] = {}
     for annotation_index, annotation_id in enumerate(annotation_ids):
         annotation_path = Path(annotation_id["resolved"])
         root_id = media_ids[0 if len(media_ids) == 1 else annotation_index]
@@ -340,6 +356,10 @@ def inspect_dataset(
             record_keys.append(_record_key(record))
             task_key = task or "default"
             task_counts[task_key] = task_counts.get(task_key, 0) + 1
+            if active_family == "video_conversation":
+                target = _conversation_target(record)
+                if target is not None:
+                    conversation_targets.setdefault(task_key, []).append(target)
             for relative in _record_media(record):
                 candidate = Path(relative)
                 media_path = candidate if candidate.is_absolute() else root / candidate
@@ -366,6 +386,16 @@ def inspect_dataset(
         raise WorkflowError(f"dataset contains {duplicate_count} duplicate logical records")
     media_manifest = sorted(media_entries.values(), key=lambda item: item["path"])
     media_sizes = [entry["size"] for entry in media_manifest]
+    inferred_metrics: dict[str, str] = {}
+    for task, values in conversation_targets.items():
+        normalized = {value.casefold() for value in values}
+        if len(values) == task_counts[task] and any(
+            normalized <= labels for labels in CLASSIFICATION_LABEL_SETS
+        ):
+            task_metrics.setdefault(task, "accuracy")
+            inferred_metrics[task] = (
+                "all conversation targets are deterministic classification labels"
+            )
     accuracy_tasks = sorted(
         task for task in task_counts
         if task in ACCURACY_TASKS or task_metrics.get(task) in {"accuracy", "exact_match_accuracy"}
@@ -427,6 +457,7 @@ def inspect_dataset(
             "accuracy_tasks": accuracy_tasks,
             "excluded_tasks": sorted(set(task_counts) - set(accuracy_tasks)),
             "task_metrics": task_metrics,
+            "inferred_metrics": inferred_metrics,
             "aggregate": "example_weighted_over_accuracy_defined_tasks",
         },
     }
