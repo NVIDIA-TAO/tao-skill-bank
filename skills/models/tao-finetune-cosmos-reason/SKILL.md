@@ -100,12 +100,24 @@ Execute these stages in order and persist their outputs.
 6. Validate every annotation and referenced media file, record counts,
    duplicates, train/validation overlap, task selection, and fingerprints.
    Verify the resolved inputs again from an allocated compute node.
+   When SLURM storage is not mounted on the launch host, let
+   `cosmos_workflow.py` stream its checked-in `cosmos_common.py` inspector to a
+   login host over SSH. It runs from stdin, preserves remote `realpath` values,
+   and creates no remote script or source overlay. Do not require local Lustre,
+   `sbatch`, or `srun` on an SSH-based launch host.
 7. For Cosmos-RL full video runs, prewarm train and validation caches using
    separate deterministic dataset+model+processor keys. Require complete
    manifests and resumable entries. Never reuse an unproven cache.
 8. Generate backend-native TOML, environment, topology, preflight commands,
    parity data, and machine-readable job metadata. Full specs must contain no
-   sample limit.
+   sample limit. `plan` and `preflight` are read-only. After launch review,
+   invoke `cosmos_workflow.py materialize` to atomically create the TOML and
+   any merged/smoke manifest in the verified compute frame. For SSH-based
+   SLURM, the checked-in helper is streamed to the verified login host and the
+   generated files are written directly to user-supplied shared storage; do
+   not read a remote annotation through the launch host or copy a temporary
+   source patch to the cluster. The planner derives all in-container runtime
+   paths from explicit mount mappings and rejects an explicit mapping mismatch.
 9. Convert the newly built image to a new SQSH when SLURM is selected. Record
    image ID/digest and SQSH SHA256; verify Pyxis/Enroot, mounts, non-root Python,
    packages, decoder, GPU memory/type, CUDA/PyTorch, NCCL, and storage on the
@@ -114,7 +126,8 @@ Execute these stages in order and persist their outputs.
     mode × checkpoint/evaluator path. Continue only on child exit zero,
     structured `SUCCESS`, finite global train/validation loss, checkpoint
     completion, and evaluator accuracy coverage.
-11. Materialize a fresh full spec with all smoke limits removed. Launch with
+11. Materialize a fresh full spec with all smoke limits removed and verify its
+    SHA256 in the compute frame before rendering the job. Launch with
     `afterok` only after the smoke gate, monitor scheduler and structured TAO
     state to a terminal result, and preserve the child exit code independently
     of scheduler state.
