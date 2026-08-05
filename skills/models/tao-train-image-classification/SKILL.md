@@ -106,9 +106,9 @@ PermissionError: [Errno 13] Permission denied: 'classes.txt'
   .../classification_pyt/dataloader/dataset.py, in CLDataset.__init__
 ```
 
-TAO SDK's `DockerSDK` enables `run_as_user` (host UID:GID) whenever a writable
-results bind is present, so AutoML and any SDK-launched training hit this unless
-`dataset.root_dir` is set.
+The local Docker launcher uses the host UID:GID whenever a writable results
+bind is present, so non-root training hits this unless `dataset.root_dir` is
+set.
 
 **export (mandatory data sources):**
 ```python
