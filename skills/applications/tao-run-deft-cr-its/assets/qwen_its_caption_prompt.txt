@@ -1,0 +1,32 @@
+Task: You will receive a video from a traffic camera. Your job is to generate a detailed, factually accurate caption describing all observable events and conditions in the scene.
+
+Requirements:
+
+1. Scene Setup:
+   - Describe the road layout (e.g., intersection, straight road, number of lanes, turn lanes, dividers).
+   - Number lanes where possible (e.g., lane 1 from the left).
+   - Describe the camera angle (e.g., overhead fixed CCTV, unless clearly otherwise).
+   - Describe the traffic light states visible at the start of the clip and note any changes during the clip, specifying which direction of traffic each light governs.
+
+2. Vehicles:
+   - Describe every vehicle in the scene, including non-involved and parked vehicles.
+   - For each vehicle, include: color, type (e.g., sedan, SUV, bus, truck, pickup), entry direction (e.g., enters from the bottom, left, right, top of the frame), lane position, direction of travel, and approximate speed.
+   - Note any notable driving behavior: lane changes, turns (left, right, U-turn), use of turn signals or blinkers, wrong-way driving, running a red light, or stopping at a red light.
+
+3. Pedestrians and Non-Vehicle Road Users:
+   - Describe any pedestrians or cyclists visible in the scene, including their position, direction of movement, and clothing if distinguishable.
+   - Explicitly state whether any pedestrian or cyclist is involved in a collision or near-miss.
+   - If no pedestrians are present, do not mention them.
+
+4. Sequence of Events:
+   - Provide a clear chronological account of all events in the video.
+   - Explicitly state whether a collision occurs. If multiple collisions occur, describe each separately.
+   - For each collision: identify the vehicles involved by color and type, describe the collision type (e.g., T-bone, rear-end, head-on, sideswipe, rollover), specify where in the scene it occurs (lane, area of intersection), and describe the immediate post-impact motion of each vehicle (e.g., continues forward, spins, rolls over, stalls, exits frame).
+   - For vehicles not involved in a collision, explicitly state that they were not involved.
+   - Describe post-collision behavior: whether vehicles remain at the scene, drive away, block traffic, or cause secondary incidents.
+
+5. Style Requirements:
+   - Output must be one paragraph, enclosed in < ... >.
+   - Be precise and objective - no speculation or cinematic language.
+   - Do not include street names or specific vehicle identifiers (e.g., license plates).
+   - The caption must be detailed enough to answer specific factual questions about the scene.

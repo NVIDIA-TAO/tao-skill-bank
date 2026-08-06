@@ -1,0 +1,67 @@
+[
+  {
+    "id": "tao-run-deft-cr-its-basic",
+    "question": "A user asks to run DEFT for Cosmos Reason ITS binary video questions. Identify the applicable skill and outline its workflow without executing anything.",
+    "expected_skill": "tao-run-deft-cr-its",
+    "expected_script": null,
+    "ground_truth": "Identify tao-run-deft-cr-its and describe baseline evaluation, BCQ gap analysis, selected mining/GenAI data construction, annotation assembly, training, evaluation, and iteration.",
+    "expected_behavior": [
+      "Identifies tao-run-deft-cr-its",
+      "Explains that data_generation.mode selects mining, genai, or both",
+      "Outlines the iterative evaluation and training workflow",
+      "Does not execute commands"
+    ]
+  },
+  {
+    "id": "tao-run-deft-cr-its-mode-assembly",
+    "question": "Explain which annotations train iteration 1 for each tao-run-deft-cr-its data generation mode. Do not execute commands.",
+    "expected_skill": "tao-run-deft-cr-its",
+    "expected_script": null,
+    "ground_truth": "Mining uses mined annotations only; GenAI uses generated annotations plus an optional initial train dataset; both uses mined and generated annotations and never directly includes the original mining source dataset.",
+    "expected_behavior": [
+      "Distinguishes mining, genai, and both",
+      "Seeds only GenAI-only mode from the optional initial training dataset",
+      "Excludes raw source annotations from both mode",
+      "Explains later-iteration accumulation"
+    ]
+  },
+  {
+    "id": "tao-run-deft-cr-its-endpoint",
+    "question": "A GenAI-enabled tao-run-deft-cr-its run has no working captioning endpoint. Explain what the agent should do without executing commands.",
+    "expected_skill": "tao-run-deft-cr-its",
+    "expected_script": null,
+    "ground_truth": "The user must provide an externally managed VLM captioning base URL. Verify it before baseline evaluation, stop on failure, and do not start vLLM.",
+    "expected_behavior": [
+      "Requires a user-provided captioning endpoint",
+      "Verifies it before workloads",
+      "Does not launch vLLM",
+      "Stops and reports endpoint failure"
+    ]
+  },
+  {
+    "id": "tao-run-deft-cr-its-resume",
+    "question": "A tao-run-deft-cr-its run was interrupted after several stages. Explain how the agent determines the next stage without rerunning iteration 1. Do not execute commands.",
+    "expected_skill": "tao-run-deft-cr-its",
+    "expected_script": null,
+    "ground_truth": "Use the initialized run directory and resume_position.py. The append-only loop log drives the refreshed state and the configured data-generation mode determines which stages are expected.",
+    "expected_behavior": [
+      "Uses the existing initialized run directory",
+      "Names resume_position.py as the next-stage authority",
+      "Uses loop_log.jsonl and the configured mode",
+      "Does not restart iteration 1 by default"
+    ]
+  },
+  {
+    "id": "tao-run-deft-cr-its-multi-question",
+    "question": "Explain how the GenAI branch handles two failed KPI questions sharing one video. Do not execute commands.",
+    "expected_skill": "tao-run-deft-cr-its",
+    "expected_script": null,
+    "ground_truth": "Each media/question pair gets a stable gap id, PAIDF generates once for the shared media path, and its handoff expands back to both ids so both questions can become LLaVA records.",
+    "expected_behavior": [
+      "Keeps both question rows",
+      "Deduplicates PAIDF generation by media path",
+      "Expands the handoff back to every gap id",
+      "Does not collapse distinct questions"
+    ]
+  }
+]

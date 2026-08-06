@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Append one stage event to the DEFT CR ITS mining loop log."""
+"""Append one stage event to the DEFT CR ITS loop log."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ VALID_STATUSES = {"ok", "error", "skipped"}
 VALID_STAGES = {
     "validate_workflow",
     "init_state",
+    "verify_vlm_endpoint",
     "baseline_evaluate",
     "setup_embeddings",
     "cosmos_embed",
@@ -30,6 +31,10 @@ VALID_STAGES = {
     "mine_nearest_neighbors",
     "record_mined_paths",
     "build_llava_from_mining",
+    "prepare_paidf_input",
+    "paidf",
+    "build_llava_input",
+    "llava_conversion",
     "assemble_train_annotations",
     "train",
     "evaluate",

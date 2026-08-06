@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Validate the high-level DEFT CR ITS mining workflow YAML."""
+"""Validate the high-level DEFT CR ITS workflow YAML."""
 
 from __future__ import annotations
 
@@ -12,12 +12,18 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from workflow_common import (
+    DATA_GENERATION_MODES,
     MODALITY_CHOICES,
     absolute_path,
+    data_generation_mode,
     existing_absolute_path,
+    genai_enabled,
     load_yaml,
+    mining_enabled,
+    optional_mapping,
     optional_embedding_parquets,
     optional_bool,
     require_mapping,
@@ -73,6 +79,16 @@ def validate_cosmos_embed_template(path: Path) -> int:
     if not isinstance(num_gpus, int) or isinstance(num_gpus, bool) or num_gpus < 1:
         raise ValueError(f"{path}: inference.num_gpus must be a positive integer")
     return num_gpus
+
+
+def validate_captioning_endpoint(value: str) -> str:
+    """Validate the required OpenAI-compatible VLM captioning base URL."""
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(
+            "genai.vlm_captioning_endpoint must be an absolute http(s) base URL"
+        )
+    return value.rstrip("/")
 
 
 def load_llava_annotations(annotation_path: Path) -> list[dict[str, Any]]:
@@ -160,24 +176,34 @@ def validate_workflow_config(config: dict[str, Any], workspace: Path) -> dict[st
         "kpi_dataset",
     )
 
-    train_dataset = require_mapping(config, "train_dataset")
-    train_annotations = existing_absolute_path(
-        require_string(train_dataset, "train_dataset.annotations_path"),
-        workspace,
-        "train_dataset.annotations_path",
-        "file",
-    )
-    train_media_dir = existing_absolute_path(
-        require_string(train_dataset, "train_dataset.media_dir"),
-        workspace,
-        "train_dataset.media_dir",
-        "dir",
-    )
-    train_annotation_count = validate_annotations_match_media_dir(
-        train_annotations,
-        train_media_dir,
-        "train_dataset",
-    )
+    mode = data_generation_mode(config)
+    use_mining = mining_enabled(mode)
+    use_genai = genai_enabled(mode)
+
+    train_dataset = optional_mapping(config, "train_dataset")
+    if use_mining and train_dataset is None:
+        raise ValueError("train_dataset is required when data_generation.mode includes mining")
+    train_annotations: Path | None = None
+    train_media_dir: Path | None = None
+    train_annotation_count: int | None = None
+    if train_dataset is not None:
+        train_annotations = existing_absolute_path(
+            require_string(train_dataset, "train_dataset.annotations_path"),
+            workspace,
+            "train_dataset.annotations_path",
+            "file",
+        )
+        train_media_dir = existing_absolute_path(
+            require_string(train_dataset, "train_dataset.media_dir"),
+            workspace,
+            "train_dataset.media_dir",
+            "dir",
+        )
+        train_annotation_count = validate_annotations_match_media_dir(
+            train_annotations,
+            train_media_dir,
+            "train_dataset",
+        )
 
     cosmos_reason = require_mapping(config, "cosmos_reason")
     baseline_model = existing_absolute_path(
@@ -200,50 +226,95 @@ def validate_workflow_config(config: dict[str, Any], workspace: Path) -> dict[st
     )
     continual_model = optional_bool(cosmos_reason, "cosmos_reason.continual_model", False)
 
-    mining = require_mapping(config, "mining")
-    embeddings_spec_template = existing_absolute_path(
-        require_string(mining, "mining.embeddings_spec_template"),
-        workspace,
-        "mining.embeddings_spec_template",
-        "file",
-    )
-    embeddings_num_gpus = validate_cosmos_embed_template(embeddings_spec_template)
-    embeddings_modality = require_string(mining, "mining.embeddings_modality")
-    if embeddings_modality not in MODALITY_CHOICES:
-        choices = ", ".join(sorted(MODALITY_CHOICES))
-        raise ValueError(f"mining.embeddings_modality must be one of: {choices}")
-    mining_spec_template = existing_absolute_path(
-        require_string(mining, "mining.mining_spec_template"),
-        workspace,
-        "mining.mining_spec_template",
-        "file",
-    )
-    mine_unique_only = optional_bool(mining, "mining.mine_unique_only", True)
-    cosmos_embed_checkpoint = validate_optional_checkpoint(mining, workspace)
-    embedding_parquets = optional_embedding_parquets(mining, workspace, embeddings_modality)
+    embeddings_spec_template: Path | None = None
+    embeddings_num_gpus: int | None = None
+    embeddings_modality: str | None = None
+    mining_spec_template: Path | None = None
+    mine_unique_only: bool | None = None
+    cosmos_embed_checkpoint: str | None = None
+    embedding_parquets: dict[str, Path | None] = {"kpi": None, "train": None}
+    if use_mining:
+        mining = require_mapping(config, "mining")
+        embeddings_spec_template = existing_absolute_path(
+            require_string(mining, "mining.embeddings_spec_template"),
+            workspace,
+            "mining.embeddings_spec_template",
+            "file",
+        )
+        embeddings_num_gpus = validate_cosmos_embed_template(embeddings_spec_template)
+        embeddings_modality = require_string(mining, "mining.embeddings_modality")
+        if embeddings_modality not in MODALITY_CHOICES:
+            choices = ", ".join(sorted(MODALITY_CHOICES))
+            raise ValueError(f"mining.embeddings_modality must be one of: {choices}")
+        mining_spec_template = existing_absolute_path(
+            require_string(mining, "mining.mining_spec_template"),
+            workspace,
+            "mining.mining_spec_template",
+            "file",
+        )
+        mine_unique_only = optional_bool(mining, "mining.mine_unique_only", True)
+        cosmos_embed_checkpoint = validate_optional_checkpoint(mining, workspace)
+        embedding_parquets = optional_embedding_parquets(mining, workspace, embeddings_modality)
+
+    vlm_captioning_endpoint: str | None = None
+    paidf_num_gpus: int | None = None
+    generation_settings: Path | None = None
+    caption_prompt_file: Path | None = None
+    if use_genai:
+        genai = require_mapping(config, "genai")
+        vlm_captioning_endpoint = validate_captioning_endpoint(
+            require_string(genai, "genai.vlm_captioning_endpoint")
+        )
+        paidf_num_gpus = require_positive_int(genai, "genai.paidf_num_gpus")
+        generation_settings_value = genai.get("generation_settings")
+        if generation_settings_value not in (None, ""):
+            if not isinstance(generation_settings_value, str):
+                raise ValueError("genai.generation_settings must be a string or null")
+            generation_settings = existing_absolute_path(
+                generation_settings_value,
+                workspace,
+                "genai.generation_settings",
+                "file",
+            )
+        caption_prompt_value = genai.get("caption_prompt_file")
+        if caption_prompt_value not in (None, ""):
+            if not isinstance(caption_prompt_value, str):
+                raise ValueError("genai.caption_prompt_file must be a string or null")
+            caption_prompt_file = existing_absolute_path(
+                caption_prompt_value,
+                workspace,
+                "genai.caption_prompt_file",
+                "file",
+            )
 
     return {
         "workspace": str(workspace),
         "run_name": run_name,
         "max_iterations": max_iterations,
+        "data_generation_mode": mode,
+        "available_data_generation_modes": list(DATA_GENERATION_MODES),
         "kpi_annotations": str(kpi_annotations),
         "kpi_media_dir": str(kpi_media_dir),
         "kpi_annotation_count": kpi_annotation_count,
-        "train_annotations": str(train_annotations),
-        "train_media_dir": str(train_media_dir),
+        "train_annotations": str(train_annotations) if train_annotations else None,
+        "train_media_dir": str(train_media_dir) if train_media_dir else None,
         "train_annotation_count": train_annotation_count,
         "baseline_model": str(baseline_model),
         "base_evaluate_toml": str(base_evaluate_toml),
         "base_train_toml": str(base_train_toml),
         "continual_model": continual_model,
-        "embeddings_spec_template": str(embeddings_spec_template),
+        "embeddings_spec_template": str(embeddings_spec_template) if embeddings_spec_template else None,
         "embeddings_num_gpus": embeddings_num_gpus,
         "embeddings_modality": embeddings_modality,
         "cosmos_embed_checkpoint": cosmos_embed_checkpoint,
         "kpi_embeddings_parquet": str(embedding_parquets["kpi"]) if embedding_parquets["kpi"] else None,
         "train_embeddings_parquet": str(embedding_parquets["train"]) if embedding_parquets["train"] else None,
-        "mining_spec_template": str(mining_spec_template),
+        "mining_spec_template": str(mining_spec_template) if mining_spec_template else None,
         "mine_unique_only": mine_unique_only,
+        "vlm_captioning_endpoint": vlm_captioning_endpoint,
+        "paidf_num_gpus": paidf_num_gpus,
+        "generation_settings": str(generation_settings) if generation_settings else None,
+        "caption_prompt_file": str(caption_prompt_file) if caption_prompt_file else None,
     }
 
 

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for DEFT CR ITS mining workflow helper scripts."""
+"""Unit tests for DEFT CR ITS workflow helper scripts."""
 
 from __future__ import annotations
 
@@ -19,14 +19,16 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from assemble_train_annotations import assemble_annotations
+from build_llava_input import build_records as build_generated_llava_records
 from build_llava_from_mining import build_llava_records
 from compute_bcq_accuracy_metrics import compute_metrics, compute_metrics_file, extract_yes_no
 from cosmos_embed_outputs_to_parquet import consolidate_embeddings, raw_embeddings_dataframe
 from inspect_gap_analysis import write_status
 from log_stage import append_stage, next_seq, read_valid_events
 from prepare_gap_analysis_predictions import annotation_video_lookup, prepare_predictions, write_predictions
+from prepare_paidf_input import gap_entries
 from record_mined_paths import record_mined_paths
-from resume_position import INITIAL_STAGES, ITERATION_STAGES, resume_position
+from resume_position import initial_stages_for_mode, iteration_stages_for_mode, resume_position
 from setup_cosmos_reason_stage import generate_evaluate_toml, generate_train_toml, latest_safetensors_checkpoint
 from setup_for_cosmos_embed import collect_embedding_inputs, stage_provided_embedding_parquet
 from setup_iteration_mining import (
@@ -37,8 +39,8 @@ from setup_iteration_mining import (
     text_target_dataframe,
 )
 from summarize_bcq_accuracy_metrics import write_report
-from verify_workflow_yaml import validate_cosmos_embed_template
-from workflow_common import dataset_modalities, optional_embedding_parquets
+from verify_workflow_yaml import validate_cosmos_embed_template, validate_workflow_config
+from workflow_common import dataset_modalities, load_yaml, optional_embedding_parquets
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -134,6 +136,8 @@ def test_mining_targets_and_specs(tmp: Path) -> None:
 run:
   name: run1
   max_iterations: 1
+data_generation:
+  mode: mining
 kpi_dataset:
   annotations_path: {workspace}/data/kpi/annotations.json
   media_dir: {media}
@@ -204,13 +208,182 @@ def test_build_llava_from_mining_and_assemble(tmp: Path) -> None:
 
     previous = tmp / "previous.json"
     mined_annotations = tmp / "mined_annotations.json"
+    seed_media = tmp / "seed_media"
+    seed_media.mkdir()
     write_json(previous, [{"id": "seed", "video": "seed.mp4", "conversations": []}])
     write_json(mined_annotations, mined_records)
     first_iter_merged = assemble_annotations(None, [mined_annotations])
     assert [record["id"] for record in first_iter_merged] == ["source-collision", "source-raining"]
 
-    merged = assemble_annotations(previous, [mined_annotations])
+    merged = assemble_annotations(previous, [mined_annotations], seed_media)
     assert [record["id"] for record in merged] == ["seed", "source-collision", "source-raining"]
+    assert merged[0]["video"] == str(seed_media / "seed.mp4")
+
+
+def test_paidf_multi_question_handoff_and_mode_assembly(tmp: Path) -> None:
+    """PAIDF generates shared media once while retaining each failed question id."""
+    source_video = tmp / "kpi" / "shared.mp4"
+    source_video.parent.mkdir()
+    source_video.write_text("video", encoding="utf-8")
+    gaps = tmp / "gaps" / "kpi_gaps.jsonl"
+    write_jsonl(
+        gaps,
+        [
+            {
+                "video_id": str(source_video),
+                "question": "Is there a collision?",
+                "ground_truth": "yes",
+            },
+            {
+                "video_id": str(source_video),
+                "question": "Is a pedestrian involved?",
+                "ground_truth": "no",
+            },
+        ],
+    )
+    gap_rows = gap_entries(gaps)
+    assert len(gap_rows) == 2
+    assert len({row["id"] for row in gap_rows}) == 2
+    assert {row["media_path"] for row in gap_rows} == {str(source_video)}
+
+    generated_video = tmp / "run" / "iter_1" / "paidf" / "generated" / "shared.mp4"
+    generated_video.parent.mkdir(parents=True)
+    generated_video.write_text("generated", encoding="utf-8")
+    handoff = tmp / "generated_videos.jsonl"
+    write_jsonl(
+        handoff,
+        [
+            {
+                "id": row["id"],
+                "original_media_path": str(source_video),
+                "generated_video_path": str(generated_video),
+            }
+            for row in gap_rows
+        ],
+    )
+    generated_rows, skipped = build_generated_llava_records(gaps, handoff)
+    assert skipped == 0
+    assert [row["question"] for row in generated_rows] == [
+        "Is there a collision?",
+        "Is a pedestrian involved?",
+    ]
+    assert {row["video_path"] for row in generated_rows} == {str(generated_video)}
+
+    generated_llava = tmp / "generated_llava.json"
+    mined_llava = tmp / "mined_llava.json"
+    seed_llava = tmp / "seed_llava.json"
+    seed_media = tmp / "seed_media"
+    seed_media.mkdir()
+    write_json(
+        generated_llava,
+        [{"id": "generated", "video": str(generated_video), "conversations": []}],
+    )
+    write_json(
+        mined_llava,
+        [{"id": "mined", "video": str(source_video), "conversations": []}],
+    )
+    write_json(seed_llava, [{"id": "seed", "video": "seed.mp4", "conversations": []}])
+
+    genai_only = assemble_annotations(seed_llava, [generated_llava], seed_media)
+    assert [row["id"] for row in genai_only] == ["seed", "generated"]
+    both = assemble_annotations(None, [mined_llava, generated_llava])
+    assert [row["id"] for row in both] == ["mined", "generated"]
+    assert all(Path(row["video"]).is_absolute() for row in genai_only + both)
+
+
+def test_mode_validation_and_resume_stages(tmp: Path) -> None:
+    """GenAI can omit train data, while mining modes retain their source-pool contract."""
+    workspace = tmp / "workspace"
+    kpi_media = workspace / "data" / "kpi"
+    specs = workspace / "specs"
+    model = workspace / "model" / "baseline"
+    kpi_media.mkdir(parents=True)
+    specs.mkdir(parents=True)
+    model.mkdir(parents=True)
+    video = kpi_media / "sample.mp4"
+    video.write_text("video", encoding="utf-8")
+    annotations = kpi_media / "annotations.json"
+    write_json(
+        annotations,
+        [{"id": "kpi-1", "video": "sample.mp4", "conversations": []}],
+    )
+    evaluate_toml = specs / "evaluate.toml"
+    train_toml = specs / "train.toml"
+    write_yaml(
+        evaluate_toml,
+        'results_dir = ""\n[dataset]\nannotation_path = ""\nmedia_dir = ""\n[model]\nmodel_name = ""\n',
+    )
+    write_yaml(
+        train_toml,
+        'results_dir = ""\n[train]\noutput_dir = ""\n[policy]\nmodel_name_or_path = ""\n[custom.train_dataset]\nannotation_path = ""\nmedia_path = ""\n[custom.val_dataset]\nannotation_path = ""\nmedia_path = ""\n',
+    )
+    workflow = specs / "workflow.yaml"
+    write_yaml(
+        workflow,
+        f"""
+run:
+  name: genai-test
+  max_iterations: 2
+data_generation:
+  mode: genai
+kpi_dataset:
+  annotations_path: {annotations}
+  media_dir: {kpi_media}
+cosmos_reason:
+  baseline_model_path: {model}
+  base_evaluate_toml: {evaluate_toml}
+  base_train_toml: {train_toml}
+genai:
+  vlm_captioning_endpoint: https://caption.example.com/v1
+  paidf_num_gpus: 4
+  generation_settings: null
+  caption_prompt_file: null
+""",
+    )
+    resolved = validate_workflow_config(load_yaml(workflow), workspace)
+    assert resolved["data_generation_mode"] == "genai"
+    assert resolved["train_annotations"] is None
+    assert resolved["paidf_num_gpus"] == 4
+    assert initial_stages_for_mode("genai") == ("verify_vlm_endpoint", "baseline_evaluate")
+    assert iteration_stages_for_mode("genai", True) == (
+        "gap_analysis",
+        "prepare_paidf_input",
+        "paidf",
+        "build_llava_input",
+        "llava_conversion",
+        "assemble_train_annotations",
+        "train",
+        "evaluate",
+    )
+    both_stages = iteration_stages_for_mode("both", True)
+    assert both_stages.index("build_llava_from_mining") < both_stages.index("prepare_paidf_input")
+    assert both_stages[-3:] == ("assemble_train_annotations", "train", "evaluate")
+
+    run_dir = workspace / "results" / "genai-test"
+    train_annotations = run_dir / "iter_1" / "train" / "train_annotations.json"
+    write_json(
+        train_annotations,
+        [{"id": "generated", "video": str(run_dir / "iter_1" / "paidf" / "a.mp4")}],
+    )
+    generated_train_toml = generate_train_toml(
+        workspace,
+        workflow,
+        run_dir,
+        iteration=1,
+        train_annotations=train_annotations,
+        checkpoint_path=str(model),
+    )
+    assert f'media_path = "{workspace}"' in generated_train_toml.read_text(encoding="utf-8")
+
+    invalid_mining = load_yaml(workflow)
+    invalid_mining["data_generation"]["mode"] = "mining"
+    invalid_mining.pop("genai")
+    try:
+        validate_workflow_config(invalid_mining, workspace)
+    except ValueError as exc:
+        assert "train_dataset is required" in str(exc)
+    else:
+        raise AssertionError("mining mode without train_dataset must fail")
 
 
 def test_consolidated_embedding_parquets(tmp: Path) -> None:
@@ -413,6 +586,8 @@ def test_cosmos_reason_stage_configs(tmp: Path) -> None:
 run:
   name: run1
   max_iterations: 1
+data_generation:
+  mode: mining
 kpi_dataset:
   annotations_path: {kpi_ann}
   media_dir: {kpi_media}
@@ -474,6 +649,8 @@ def test_gap_status_and_explicit_run_dir(tmp: Path) -> None:
 run:
   name: ignored-by-explicit-run-dir
   max_iterations: 1
+data_generation:
+  mode: mining
 mining:
   embeddings_modality: text
 cosmos_reason:
@@ -482,7 +659,7 @@ cosmos_reason:
     )
     command = [
         sys.executable,
-        str(SCRIPT_DIR / "init_deft_cr_mining_state.py"),
+        str(SCRIPT_DIR / "init_deft_cr_state.py"),
         "--workspace",
         str(workspace),
         "--workflow-yaml",
@@ -617,9 +794,10 @@ def test_resilient_log_state_and_two_iteration_resume(tmp: Path) -> None:
         state_path,
         {
             "version": 1,
-            "workflow": "tao-run-deft-cr-its-mining",
+            "workflow": "tao-run-deft-cr-its",
             "run_dir": str(run_dir),
             "max_iterations": 2,
+            "data_generation_mode": "mining",
             "current_iteration": 0,
             "status": "initialized",
             "mine_unique_only": True,
@@ -656,7 +834,7 @@ def test_resilient_log_state_and_two_iteration_resume(tmp: Path) -> None:
     assert position["next_stage"] == "gap_analysis"
 
     for iteration in (1, 2):
-        for stage in ITERATION_STAGES:
+        for stage in iteration_stages_for_mode("mining", True):
             append_stage(
                 log_path,
                 iter_label=f"iter_{iteration}",
@@ -699,11 +877,12 @@ def test_resume_stops_after_zero_gap_iteration(tmp: Path) -> None:
             "status": "initialized",
             "current_iteration": 0,
             "max_iterations": 2,
+            "data_generation_mode": "mining",
             "mine_unique_only": True,
             "iterations": {},
         },
     )
-    for stage in INITIAL_STAGES:
+    for stage in initial_stages_for_mode("mining"):
         append_stage(
             log_path,
             iter_label="initialization",
@@ -796,6 +975,10 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         test_build_llava_from_mining_and_assemble(Path(tmpdir))
     with tempfile.TemporaryDirectory() as tmpdir:
+        test_paidf_multi_question_handoff_and_mode_assembly(Path(tmpdir))
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_mode_validation_and_resume_stages(Path(tmpdir))
+    with tempfile.TemporaryDirectory() as tmpdir:
         test_consolidated_embedding_parquets(Path(tmpdir))
     with tempfile.TemporaryDirectory() as tmpdir:
         test_combined_embedding_parquet_inputs(Path(tmpdir))
@@ -817,7 +1000,7 @@ def main() -> int:
         test_resume_stops_after_zero_gap_iteration(Path(tmpdir))
     with tempfile.TemporaryDirectory() as tmpdir:
         test_bcq_accuracy_metrics_and_report(Path(tmpdir))
-    print("test_deft_cr_mining_helpers.py: OK")
+    print("test_deft_cr_helpers.py: OK")
     return 0
 
 

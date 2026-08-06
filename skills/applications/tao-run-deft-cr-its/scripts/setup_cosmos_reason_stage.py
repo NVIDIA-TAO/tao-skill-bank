@@ -13,11 +13,14 @@ from typing import Any
 
 from workflow_common import (
     absolute_path,
+    data_generation_mode,
     dump_toml,
     existing_absolute_path,
     find_results_json,
+    genai_enabled,
     load_toml,
     load_yaml,
+    optional_mapping,
     path_in_workspace,
     require_mapping,
     require_string,
@@ -134,7 +137,8 @@ def generate_train_toml(
     """Generate a train TOML for one workflow iteration."""
     config = load_yaml(workflow_yaml)
     kpi_dataset = require_mapping(config, "kpi_dataset")
-    train_dataset = require_mapping(config, "train_dataset")
+    mode = data_generation_mode(config)
+    train_dataset = optional_mapping(config, "train_dataset")
     cosmos_reason = require_mapping(config, "cosmos_reason")
     base_train_toml = existing_absolute_path(
         require_string(cosmos_reason, "cosmos_reason.base_train_toml"),
@@ -142,12 +146,19 @@ def generate_train_toml(
         "cosmos_reason.base_train_toml",
         "file",
     )
-    train_media_dir = existing_absolute_path(
-        require_string(train_dataset, "train_dataset.media_dir"),
-        workspace,
-        "train_dataset.media_dir",
-        "dir",
-    )
+    if genai_enabled(mode):
+        # Assembled GenAI-mode annotations use absolute paths spanning source data and
+        # per-iteration PAIDF outputs, all of which live under the DEFT workspace.
+        train_media_dir = workspace
+    else:
+        if train_dataset is None:
+            raise ValueError("train_dataset is required for mining-only training")
+        train_media_dir = existing_absolute_path(
+            require_string(train_dataset, "train_dataset.media_dir"),
+            workspace,
+            "train_dataset.media_dir",
+            "dir",
+        )
     val_annotations = existing_absolute_path(
         require_string(kpi_dataset, "kpi_dataset.annotations_path"),
         workspace,
