@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# End-to-end verification: skill bank works standalone (no tao_sdk import required).
+# End-to-end verification: skill bank works without NVIDIA Python wheels.
 #
 # Requires: NVIDIA driver 580 + CUDA 13.0 + docker + nvidia-container-toolkit 1.19.0 + NGC login + 24GB+ VRAM GPU.
-# Does NOT require: pip install tao-sdk.
+# Does NOT require NVIDIA TAO SDK or AutoML wheels.
 #
 # Pass = every step returns 0. Fail = any step returns non-zero.
 
@@ -14,13 +14,13 @@ set -eo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-echo "=== 1. Confirm Python has no tao_sdk (validates 'no SDK required')"
-if python3 -c "import tao_sdk" 2>/dev/null; then
-  echo "FAIL: tao_sdk is importable. Re-run in a venv that lacks it:"
+echo "=== 1. Confirm Python has no NVIDIA TAO SDK/AutoML packages"
+if python3 -c "import tao_sdk" 2>/dev/null || python3 -c "import tao_automl" 2>/dev/null; then
+  echo "FAIL: a removed NVIDIA Python package is importable. Re-run in a clean venv:"
   echo "      python -m venv /tmp/standalone && source /tmp/standalone/bin/activate"
   exit 1
 else
-  echo "  OK: tao_sdk not importable — standalone env confirmed"
+  echo "  OK: removed packages are not importable — standalone env confirmed"
 fi
 
 echo

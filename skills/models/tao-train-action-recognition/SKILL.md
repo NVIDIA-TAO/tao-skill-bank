@@ -162,8 +162,8 @@ point at `.tar.gz` files.
 }
 ```
 
-For direct local-docker chaining without the SDK resolver, select the concrete
-checkpoint produced by training, for example
+For direct local-Docker chaining, select the concrete checkpoint produced by
+training from the parent job's recorded results directory, for example
 `model_epoch_000_step_00005.pth`, and pass that exact file to `evaluate`,
 `inference`, and `export`. Do not use the `ar_model_latest.pth` symlink unless
 the user explicitly requests latest-checkpoint behavior. For resume training,
@@ -214,7 +214,7 @@ validated.
 
 ## Spec Param / Parent Model Inference
 
-Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners should read this section and apply the mappings with SDK helpers before `create_job()`. This mirrors the old microservices `infer_params.py` flow.
+Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners must read the parent job record's fixed `results_dir`, select the exact artifact using the filename rules below, write the resulting path into the nested spec field, and submit through the selected platform skill. This is the skill-owned replacement for the old microservices `infer_params.py` flow.
 
 Inference mappings from TAO Core `action_recognition.config.json`:
 
@@ -236,4 +236,4 @@ Inference mappings from TAO Core `action_recognition.config.json`:
 | train | `results_dir` | `output_dir` | current job results directory |
 | train | `train.resume_training_checkpoint_path` | `resume_model` | model file inferred from the current job results folder |
 
-For `parent_model` or `parent_model_folder`, pass the upstream train/export/AutoML child job id as `parent_job_id`. The SDK lists the parent result folder, filters checkpoint artifacts, and returns the selected model file or folder. Do not add these mappings back to `config.json` and do not patch generated runner scripts to guess checkpoint paths.
+For `parent_model` or `parent_model_folder`, retain the upstream train/export/AutoML child job id as `parent_job_id`. Read that job's immutable record to get `results_dir`, apply the model-specific artifact rules to select the exact file or folder, and write the concrete path into the nested spec. Do not add these mappings back to `config.json` or make an unvalidated path guess.

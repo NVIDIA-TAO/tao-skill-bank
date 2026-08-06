@@ -1,6 +1,9 @@
 # Spec Param / Parent Model Inference
 
-Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners should read this section and apply the mappings with SDK helpers before `create_job()`.
+Model-specific inference mappings belong in this MD file, not in `config.json`.
+Generated runners must read the parent job record's fixed `results_dir`, select
+the exact artifact using the filename rules below, write it into the nested
+spec field, and submit through the selected platform skill.
 
 | Action | Spec Field | Inference Function | Meaning |
 |---|---|---|---|
@@ -30,4 +33,9 @@ Model-specific inference mappings belong in this MD file, not in `config.json`. 
 | train | `train.pretrained_model_path` | `ptm_if_no_resume_model` | PTM (bp2 ckpt) when no resume checkpoint exists |
 | train | `train.resume_training_checkpoint_path` | `resume_model` | model file inferred from current job results folder |
 
-For `parent_model` or `parent_model_folder`, pass the upstream train / export / AutoML child job id as `parent_job_id`. The SDK lists the parent result folder, filters checkpoint artifacts, and returns the selected model file or folder. For raw-bp2 use cases without a parent train job, set the `<action>.checkpoint` field explicitly to the bp2 file path. Do not patch generated runner scripts to guess checkpoint paths.
+For `parent_model` or `parent_model_folder`, retain the upstream train / export /
+AutoML child job id as `parent_job_id`. Read that job's immutable record to get
+`results_dir`, apply the artifact rules above to select the exact file or
+folder, and write the concrete path into the nested spec. For raw-bp2 use cases
+without a parent train job, set the `<action>.checkpoint` field explicitly to
+the bp2 file path. Do not make an unvalidated path guess.

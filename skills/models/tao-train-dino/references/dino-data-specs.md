@@ -335,10 +335,10 @@ Supported formats: coco, coco_raw.
 
 ### Evaluate Data Sources
 
-- **checkpoint**: `evaluate.checkpoint`, a `.pth` or `.tlt` model file. For SDK
-  train jobs and AutoML child train jobs, resolve it with `parent_model`
-  inference so the SDK lists the result folder and selects an actual checkpoint
-  file. Prefer concrete epoch/step files such as
+- **checkpoint**: `evaluate.checkpoint`, a `.pth` or `.tlt` model file. For
+  direct train jobs and AutoML child train jobs, retain `parent_job_id`, read
+  its immutable record's `results_dir`, and select an actual checkpoint file
+  using this model's filename rules. Prefer concrete epoch/step files such as
   `results_dir/train/model_epoch_000_step_00025.pth`. Use
   `dino_model_latest.pth` only when the user explicitly requests the latest
   checkpoint; it is a symlink alias and should not replace best/specific

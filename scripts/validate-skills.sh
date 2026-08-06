@@ -357,19 +357,16 @@ sys.exit(errs)
 PY
 [ $? -eq 0 ] && ok "no oversize or nested SKILL.md" || errors=$((errors + $?))
 
-# ─── 4. no SDK leaks (M9: SDK allowed only under tao-run-automl) ─────────────
+# ─── 4. no SDK or AutoML wheel leaks ────────────────────────────────────────
 echo
-echo "=== 4. no SDK leaks (SDK allowed only under tao-run-automl) ==="
+echo "=== 4. no SDK or AutoML wheel leaks ==="
 python3 - <<'PY'
 import re, os, sys
-# M9 eliminated the TAO execution SDK from the bank. Direct SDK symbols are
-# allowed ONLY under skills/applications/tao-run-automl/ — it keeps the
-# nvidia-tao-automl wheel and its transitive nvidia-tao-sdk dependency. A match
-# anywhere else (SKILL.md or a references/*.md) is a leak. Accurate negatives
-# ("no tao_sdk", "without the TAO SDK") are fine.
-leak_re = re.compile(r'tao_sdk|TaoExecutionSDK|sdk\.create_job|sdk\.list_path|sdk\.check_path|build_entrypoint|BrevSDK|SlurmSDK|KubernetesSDK|DockerSDK|script_runner')
-neg_re  = re.compile(r"no [`']?tao_sdk|no [`']?nvidia-tao-sdk|without the TAO SDK|there is no [`']?tao_sdk|SDK-free|no in-container", re.IGNORECASE)
-EXEMPT = './skills/applications/tao-run-automl/'
+# Execution and optimization are skill-owned. Accurate statements that the
+# dependency is absent are allowed; imports, install instructions, legacy
+# adapters, and wheel routing are not.
+leak_re = re.compile(r'tao_sdk|tao_automl|AutoMLRunner|nvidia-tao-automl|TaoExecutionSDK|sdk\.create_job|sdk\.list_path|sdk\.check_path|build_entrypoint|BrevSDK|SlurmSDK|KubernetesSDK|DockerSDK|script_runner')
+neg_re  = re.compile(r"no [`']?(?:tao_sdk|tao_automl|nvidia-tao-sdk|nvidia-tao-automl)|without (?:the )?TAO SDK|there is no [`']?(?:tao_sdk|tao_automl)|must not import|SDK-free|no in-container", re.IGNORECASE)
 errs = 0
 for root, dirs, files in os.walk('./skills'):
     if any(x in root for x in ('.git', '.venv', '__pycache__')):
@@ -379,16 +376,14 @@ for root, dirs, files in os.walk('./skills'):
         if fn != 'SKILL.md' and not (in_refs and fn.endswith('.md')):
             continue
         path = os.path.join(root, fn)
-        if path.startswith(EXEMPT):
-            continue
         with open(path) as f:
             hits = [ln.strip() for ln in f if leak_re.search(ln) and not neg_re.search(ln)]
         if hits:
-            print(f"ERROR: {path} — SDK symbols (M9: allowed only under {EXEMPT}): {hits[:2]}", file=sys.stderr)
+            print(f"ERROR: {path} — removed SDK/AutoML package symbols: {hits[:2]}", file=sys.stderr)
             errs += 1
 sys.exit(errs)
 PY
-[ $? -eq 0 ] && ok "no SDK symbol leaks" || errors=$((errors + $?))
+[ $? -eq 0 ] && ok "no SDK or AutoML wheel leaks" || errors=$((errors + $?))
 
 # ─── 5. hook paths resolve ──────────────────────────────────────────────────
 echo

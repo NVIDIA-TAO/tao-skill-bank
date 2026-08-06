@@ -285,7 +285,9 @@ hparams even when the current spec includes a valid `dataset.label_map`.
 
 ## Spec Param / Parent Model Inference
 
-Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners should read this section and apply the mappings with SDK helpers before `create_job()`. This mirrors the old microservices `infer_params.py` flow.
+Keep model-specific inference mappings here, not in `config.json`. Runners read
+the parent job record's fixed `results_dir`, select the exact artifact with the
+rules below, set the nested spec field, and submit through the platform skill.
 
 Inference mappings from TAO Core `oneformer.config.json`:
 
@@ -316,7 +318,9 @@ Inference mappings from TAO Core `oneformer.config.json`:
 | train | `train.pretrained_model` | `ptm_if_no_resume_model` | PTM when no resume checkpoint exists |
 | train | `train.resume_training_checkpoint_path` | `resume_model` | model file inferred from the current job results folder |
 
-For `parent_model` or `parent_model_folder`, pass the upstream train/export/AutoML child job id as `parent_job_id`. The SDK lists the parent result folder, filters checkpoint artifacts, and returns the selected model file or folder. Do not add these mappings back to `config.json` and do not patch generated runner scripts to guess checkpoint paths.
+For `parent_model` or `parent_model_folder`, retain the upstream job id as
+`parent_job_id`, resolve its recorded `results_dir`, and select the exact file
+or folder. Do not restore these mappings to `config.json` or guess paths.
 
 ## Deployment
 
