@@ -737,6 +737,8 @@ def test_framework_expands_one_shared_media_root_per_annotation(tmp_path):
     )
     assert len(json.loads(environment["TAO_VIDEO_TRAIN_MEDIA_ROOTS"])) == 2
     assert len(json.loads(environment["TAO_VIDEO_VAL_MEDIA_ROOTS"])) == 2
+    assert environment["IMAGINAIRE_OUTPUT_ROOT"] == args.container_checkpoint_dir
+    assert environment["TAO_RESULTS_ROOT"] == args.container_results_dir
 
 
 def test_requeue_rejected(tmp_path):

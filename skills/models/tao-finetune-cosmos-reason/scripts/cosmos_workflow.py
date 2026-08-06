@@ -659,7 +659,11 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
         framework_val_media = list(val_media) * len(val_annotations) if len(val_media) == 1 else list(val_media)
         common.update({
             "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "VLM_SAFETENSORS_PATH": prepared_model,
-            "IMAGINAIRE_OUTPUT_ROOT": args.container_results_dir,
+            # Framework derives DCP paths as
+            # $IMAGINAIRE_OUTPUT_ROOT/<project>/<group>/<name>/checkpoints.
+            # Keep those artifacts under the caller's checkpoint root; TAO
+            # status and logs remain explicitly routed to results above.
+            "IMAGINAIRE_OUTPUT_ROOT": args.container_checkpoint_dir,
             "TAO_VIDEO_DATASET_FAMILY": args.dataset_family,
             "TAO_VIDEO_TRAIN_ANNOTATION": train_annotations[0],
             "TAO_VIDEO_TRAIN_ANNOTATIONS": json.dumps(list(train_annotations)),
