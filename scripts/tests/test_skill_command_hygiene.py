@@ -58,6 +58,10 @@ RULES = (
     ("secret-on-argv",
      re.compile(r"-e\s+(?:%s)=\$" % SECRET_VARS),
      "docker -e VAR=$VAR puts the secret in argv; use the pass-through form -e VAR"),
+    ("nonexistent-cli-flag",
+     re.compile(r"kubectl\s+delete\b[^\n]*--propagation-policy"),
+     "kubectl delete has no --propagation-policy flag (that is an API field); "
+     "the CLI spelling is --cascade=foreground|background|orphan"),
     ("brev-exec-form",
      re.compile(r"brev exec\s+\S+\s+--\s"),
      'brev exec must take the remote command as ONE quoted string: '
