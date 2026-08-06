@@ -171,6 +171,12 @@ spec/template, and the selected platform's normal job submission path. If the
 model skill recommends a smaller shape for evaluation than training, use that
 shape and call it out in the launch review.
 
+Evaluation requires a usable checkpoint. For scratch training without a
+compatible starting checkpoint, run one minimal default training job outside
+the recommendation budget, resolve its epoch/step checkpoint, and evaluate it.
+Use that task metric for the baseline, `eval_fn`, selection, and
+`final_eval_fn`. Never evaluate an empty checkpoint or directory placeholder.
+
 Share the eval metric number with the user in the launch review before asking
 for confirmation to launch recommendations. If the model has no packaged
 evaluate action, the eval dataset is missing, or the eval job fails, stop and
