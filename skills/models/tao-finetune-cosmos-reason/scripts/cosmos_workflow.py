@@ -589,7 +589,10 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     spec = load_yaml(REFERENCES / "spec_template_train.yaml")
     spec["train"].update({
         "resume": False, "epoch": contract["epochs"], "compile": False,
-        "train_batch_per_replica": args.effective_global_batch, "output_dir": args.container_checkpoint_dir,
+        # Cosmos-RL's SFT worker interprets this as the per-DP-worker batch,
+        # despite the historical field name.  The global batch is therefore
+        # this value times dp_shard_size (replicate size is fixed at one).
+        "train_batch_per_replica": args.rl_mini_batch, "output_dir": args.container_checkpoint_dir,
         "optm_lr": args.learning_rate, "optm_impl": "foreach", "optm_weight_decay": args.weight_decay,
         "epsilon": args.optimizer_epsilon,
         "optm_warmup_epochs": args.warmup, "optm_decay_type": args.scheduler,
@@ -687,10 +690,11 @@ def _command(args: argparse.Namespace, backend: str) -> str:
         return f"cosmos-rl --config {shlex.quote(args.container_spec_path)} {hook}"
     return "\n".join([
         'export COSMOS_CONTROLLER_HOST="$MASTER_ADDR:18082"', 'controller_pid=""',
+        "launcher_dir=\"$(/opt/venv/cosmos_rl/bin/python -c 'import cosmos_rl; from pathlib import Path; print(Path(cosmos_rl.__file__).parent / \"launcher\")')\"",
         'if [[ "${SLURM_PROCID:-0}" == "0" ]]; then',
-        f"  launch_controller.sh --port 18082 --config {shlex.quote(args.container_spec_path)} --script {hook} &",
+        f"  bash \"$launcher_dir/launch_controller.sh\" --port 18082 --config {shlex.quote(args.container_spec_path)} --script {hook} &",
         '  controller_pid="$!"', "fi", "sleep 10", "set +e",
-        f"launch_replica.sh --type policy --ngpus {args.gpus_per_node} --nnodes {args.nodes} --rdzv-endpoint \"$MASTER_ADDR:$MASTER_PORT\" --config {shlex.quote(args.container_spec_path)} --script {hook}",
+        f"bash \"$launcher_dir/launch_replica.sh\" --type policy --ngpus {args.gpus_per_node} --nnodes {args.nodes} --rdzv-endpoint \"$MASTER_ADDR:$MASTER_PORT\" --config {shlex.quote(args.container_spec_path)} --script {hook}",
         'child_rc="$?"', "set -e", '[[ -z "$controller_pid" ]] || kill "$controller_pid" 2>/dev/null || true', 'exit "$child_rc"',
     ])
 
