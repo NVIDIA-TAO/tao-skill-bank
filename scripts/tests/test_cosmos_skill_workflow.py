@@ -363,6 +363,15 @@ def test_cosmos_rl_maps_common_constant_scheduler_to_native_none(tmp_path):
     assert plan["spec"]["train"]["optm_decay_type"] == "none"
 
 
+def test_cosmos_rl_resolves_sft_hook_from_installed_native_package(tmp_path):
+    plan = workflow.build_plan(args_for(tmp_path, backend="cosmos-rl"))
+
+    assert "Path(cosmos_rl.__file__).parent" in plan["command"]
+    assert "tools/custom_hooks" not in plan["command"]  # assembled with pathlib
+    assert "/opt/cosmos_rl/tao_sft_example.py" not in plan["command"]
+    assert 'test -f "$hook"' in plan["command"]
+
+
 def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
     framework_args = args_for(
         tmp_path / "framework", backend="cosmos-framework",

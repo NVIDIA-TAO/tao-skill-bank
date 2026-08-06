@@ -690,16 +690,27 @@ def _command(args: argparse.Namespace, backend: str) -> str:
             "-m", "cosmos_framework.scripts.train", f"--sft-toml={args.container_spec_path}", "--",
         ]
         return " ".join(parts)
-    hook = "/opt/cosmos_rl/tao_vl_reason_daft_sft_example.py" if args.dataset_family == "task_aware_video_reasoning" else "/opt/cosmos_rl/tao_sft_example.py"
+    hook_name = "tao_vl_reason_daft_sft_example.py" if args.dataset_family == "task_aware_video_reasoning" else "tao_sft_example.py"
+    hook_assignment = (
+        "hook=\"$(/opt/venv/cosmos_rl/bin/python -c "
+        "'import cosmos_rl; from pathlib import Path; "
+        f'print(Path(cosmos_rl.__file__).parent / "tools" / "custom_hooks" / "{hook_name}")'
+        ")\""
+    )
     if args.nodes == 1:
-        return f"cosmos-rl --config {shlex.quote(args.container_spec_path)} {hook}"
+        return "\n".join([
+            hook_assignment,
+            'test -f "$hook"',
+            f"cosmos-rl --config {shlex.quote(args.container_spec_path)} \"$hook\"",
+        ])
     return "\n".join([
+        hook_assignment, 'test -f "$hook"',
         'export COSMOS_CONTROLLER_HOST="$MASTER_ADDR:18082"', 'controller_pid=""',
         "launcher_dir=\"$(/opt/venv/cosmos_rl/bin/python -c 'import cosmos_rl; from pathlib import Path; print(Path(cosmos_rl.__file__).parent / \"launcher\")')\"",
         'if [[ "${SLURM_PROCID:-0}" == "0" ]]; then',
-        f"  bash \"$launcher_dir/launch_controller.sh\" --port 18082 --config {shlex.quote(args.container_spec_path)} --script {hook} &",
+        f"  bash \"$launcher_dir/launch_controller.sh\" --port 18082 --config {shlex.quote(args.container_spec_path)} --script \"$hook\" &",
         '  controller_pid="$!"', "fi", "sleep 10", "set +e",
-        f"bash \"$launcher_dir/launch_replica.sh\" --type policy --ngpus {args.gpus_per_node} --nnodes {args.nodes} --rdzv-endpoint \"$MASTER_ADDR:$MASTER_PORT\" --config {shlex.quote(args.container_spec_path)} --script {hook}",
+        f"bash \"$launcher_dir/launch_replica.sh\" --type policy --ngpus {args.gpus_per_node} --nnodes {args.nodes} --rdzv-endpoint \"$MASTER_ADDR:$MASTER_PORT\" --config {shlex.quote(args.container_spec_path)} --script \"$hook\"",
         'child_rc="$?"', "set -e", '[[ -z "$controller_pid" ]] || kill "$controller_pid" 2>/dev/null || true', 'exit "$child_rc"',
     ])
 
