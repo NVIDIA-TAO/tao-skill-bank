@@ -652,6 +652,8 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
         "TAO_STATUS_FILE": status_path,
     }
     if backend == "cosmos-framework":
+        framework_train_media = list(train_media) * len(train_annotations) if len(train_media) == 1 else list(train_media)
+        framework_val_media = list(val_media) * len(val_annotations) if len(val_media) == 1 else list(val_media)
         common.update({
             "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1", "VLM_SAFETENSORS_PATH": prepared_model,
             "IMAGINAIRE_OUTPUT_ROOT": args.container_results_dir,
@@ -659,11 +661,11 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
             "TAO_VIDEO_TRAIN_ANNOTATION": train_annotations[0],
             "TAO_VIDEO_TRAIN_ANNOTATIONS": json.dumps(list(train_annotations)),
             "TAO_VIDEO_TRAIN_MEDIA": train_media[0],
-            "TAO_VIDEO_TRAIN_MEDIA_ROOTS": json.dumps(list(train_media)),
+            "TAO_VIDEO_TRAIN_MEDIA_ROOTS": json.dumps(framework_train_media),
             "TAO_VIDEO_VAL_ANNOTATION": val_annotations[0],
             "TAO_VIDEO_VAL_ANNOTATIONS": json.dumps(list(val_annotations)),
             "TAO_VIDEO_VAL_MEDIA": val_media[0],
-            "TAO_VIDEO_VAL_MEDIA_ROOTS": json.dumps(list(val_media)),
+            "TAO_VIDEO_VAL_MEDIA_ROOTS": json.dumps(framework_val_media),
             "TAO_VIDEO_NUM_FRAMES": str(args.frames), "TAO_VIDEO_SYSTEM_PROMPT": args.system_prompt,
         })
         if args.video_max_pixels:
