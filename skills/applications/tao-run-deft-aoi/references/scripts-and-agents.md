@@ -1,4 +1,4 @@
-# Bundled Scripts and Agents
+# Bundled Scripts and Report Hook
 
 ## Using Bundled Scripts
 
@@ -21,12 +21,13 @@ editor, echo, or jq.
 | `scripts/audit_deft_run.py` | Read-only cross-check of `deft_state.json`, `loop_log.jsonl`, recorded artifact paths, mining parquet schemas/counts/TAO PASS logs, iteration checkpoint ownership, stage commits, and terminal status. Prints the safe next action/reference. Run on startup/resume, before every stage, after every stage commit, and before completion claims. `--require-terminal` accepts a finalized failed run for reporting; `--require-complete` requires metric/max-iteration proof. | `--results-dir PATH [--json] [--require-terminal] [--require-complete]` |
 | `scripts/metric_contract.py` | Shared stdlib parser/comparator for primary metrics, direction-aware best selection, constraints, and bundled-evaluator normalization. Import from sibling scripts; no CLI. | — |
 | `scripts/record_metric_result.py` | Internal evaluate helper: validate standard evaluator JSON, enforce a configured artifact path, recompute `passed`, and write evaluate evidence. `commit_stage.py` calls it transactionally. | Internal; standalone CLI retained for compatibility |
-| `scripts/commit_stage.py` | The only supported normal stage writer. Validate the ordered transition and artifact proofs, update state, append the log event, audit, and roll back both files on failure. Train requires an iteration-owned checkpoint plus the exact spec; mining requires both embedding parquets, all three TAO logs, filtered parquet/count, and summary. | `--results-dir PATH --iter-label STR --stage STAGE --summary STR [stage artifact flags] [--status ok|error] [--duration-sec INT]` |
+| `scripts/commit_stage.py` | The only supported normal stage writer. Validate the ordered transition and artifact proofs, update state, append the log event, audit, and roll back both files on failure; then invoke the non-transactional report hook. Train requires an iteration-owned checkpoint plus the exact spec; mining requires both embedding parquets, all three TAO logs, filtered parquet/count, and summary. | `--results-dir PATH --iter-label STR --stage STAGE --summary STR --duration-sec POSITIVE_INT [stage artifact flags] [--status ok|error]` |
+| `scripts/render_report.py` | Deterministically render the NVIDIA-styled, self-contained `DEFT_Loop_Report.html` from canonical state/log and recorded artifacts. Read the source template fresh, escape file-derived text, embed optional thumbnails, validate every placeholder/section, and replace atomically. Called automatically after initialization and every successful stage commit. | `--results-dir PATH [--require-terminal]` |
 | `scripts/log_stage.py` | Low-level log writer used by `commit_stage.py`. Do not call it directly during normal orchestration because it cannot update state transactionally. | Internal/legacy |
 | `scripts/align_token_usage.py` | Backfill per-stage LLM token usage into `results/loop_log.jsonl` by parsing the Claude Code transcript JSONL. Run after the loop (or any time). Adds a `tokens` field per entry and refreshes `context_tokens`. | `--log-path PATH [--cwd PATH \| --project-dir PATH \| --transcript PATH ...] [--dry-run]` |
 | `scripts/analyze_kpi.py` | Bundled threshold-sweep evaluator: emit standard `metric_result.json` plus diagnostic CSV/plots. Other customer metrics use the adapter contract in `references/metric-contract.md`. | `csv_path` (positional) `[--output-dir PATH]` `[--label-column NAME=label]` `[--score-column NAME=siamese_score]` `[--pass-label NAME=PASS]` `[--bins INT=40]` |
 | `scripts/validate_training_csv.py` | Validate an assembled ChangeNet training CSV before launching training. Checks required columns, every reconstructed `input_path` / `golden_path`, filename-shape mistakes, duplicates, and optional validation leakage; `--report-json` writes the required merge-validation proof. Stdlib only — no pandas required. | `--csv PATH --workspace-root PATH [--validation-csv PATH] [--report-json PATH] [--light NAME] [--image-ext EXT]` |
-| `scripts/init_deft_state.py` | Write a fresh `${RESULTS_DIR}/deft_state.json` from CLI args. Guarantees unique top-level keys. Atomic write; refuses to overwrite without `--force`. Use only on fresh runs; never on resume. | `--results-dir PATH --workspace PATH --kpi-target STR --max-iterations INT --num-gpus INT --num-epochs INT --num-sdg INT --project STR --step INT [--batch-size INT] [--top-k-per-target INT] [--knn-metric STR] [--min-similarity FLOAT] [--train-container STR] [--ag-container STR] [--force]` |
+| `scripts/init_deft_state.py` | Write a fresh `${RESULTS_DIR}/deft_state.json` from CLI args. Guarantees unique top-level keys. Atomic write; refuses to overwrite without `--force`. Use only on fresh runs; never on resume. | `--results-dir PATH --workspace PATH --kpi-target STR --max-iterations INT --num-gpus INT --gpu-model STR --num-epochs INT --num-sdg INT --project STR --step INT [--batch-size INT] [--top-k-per-target INT] [--knn-metric STR] [--min-similarity FLOAT] [--train-container STR] [--ag-container STR] [--force]` |
 | `scripts/changenet_data_pair_prepare.py` | Build the ChangeNet `(input, golden, label, object_name)` CSV from `_ng/` + `_ok/` image directories. NV_PCB_Siamese mode (`--images-dir`) emits the 14-column siamese CSV and copies images into the staged tree. | `--input-dir PATH --golden-dir PATH` `[--output PATH=dataset.csv]` `[--label STR]` `[--images-dir PATH]` `[--subdir NAME=sdg]` `[--light NAME=SolderLight]` `[--image-ext EXT=.jpg]` |
 | `scripts/prepare_inference_spec.py` | Write `best_model.json` + `best_model_inference_spec.yaml` from `deft_state.json` + the training spec. Run once at loop end. See `references/prepare-for-inference.md`. | `--results-dir PATH` |
 | `scripts/stage_backbone.py` | Stage the ChangeNet pretrained backbone locally (download from HF, copy into the workspace). Idempotent; reuses an existing staged file. Hard-fails (non-zero exit) if it cannot produce a staged file. Prints the staged absolute path as the last stdout line. | `(--workspace PATH \| --dest PATH) [--repo-id STR=nvidia/C-RADIOv2-B] [--filename STR=model.safetensors] [--stage-name STR=c_radio_v2_b.safetensors] [--force]` |
@@ -42,11 +43,17 @@ Use one portable form in every harness:
   --iter-label iter1 \
   --stage anomalygen \
   --anomalygen-sdg /abs/path/iter1/anomalygen/sdg/SDG_result.csv \
+  --anomalygen-allocation /abs/path/iter1/anomalygen/sdg/allocation.json \
+  --duration-sec "${STAGE_DURATION_SEC}" \
   --summary "generated 10 pairs"
 ```
 
-If no reliable start time was captured, omit `--duration-sec`; it records `0`.
-Do not invent a duration. Stage references list the required artifact flags.
+Set `STAGE_DURATION_SEC` from measured wall-clock evidence before committing:
+use the selected backend's elapsed time for submitted jobs, or time an inline
+host stage directly. Round a measured sub-second stage up to `1`; never invent
+a duration. `commit_stage.py` rejects an omitted, zero, or negative value so the
+report can always calculate per-stage and total runtime. Stage references list
+the required artifact flags.
 
 ### Aligning Per-Stage Token Usage (Post-Loop)
 
@@ -60,29 +67,26 @@ Do not invent a duration. Stage references list the required artifact flags.
 
 The script reads `~/.claude/projects/<slug>/*.jsonl` (slug derived from `--cwd`), attributes each assistant message's `usage` to the stage whose `(prev.ts, this.ts]` window contains it, and rewrites `loop_log.jsonl` atomically with a per-entry `tokens` field plus a refreshed `context_tokens`. The `tokens` field exposes `input`, `output`, `cache_read`, `cache_create` (and its `5m`/`1h` breakdown), `context_size_end`, and the list of `models` seen. Pass `--transcript PATH` (repeatable) or `--project-dir PATH` to override the auto-discovered location; `--dry-run` inspects output without rewriting the log.
 
-## Agents
+## Automatic report hook
 
-| Agent | Purpose | Invoke when |
-|---|---|---|
-| `agents/reporter.md` | Render `results/DEFT_Loop_Report.html` from disk state (`deft_state.json` + `loop_log.jsonl` + iter summaries + RCA artifacts) following `references/REPORT_RENDERING.md`. Atomic write; verifies all placeholders filled. | After each iteration completes (with `trigger="after-iteration"`) and once more at loop end (with `trigger="loop-end"`). Note: a per-stage trigger existed in earlier revisions and is no longer recommended — the spawn cost dominated for short stages. |
+`init_deft_state.py` writes the first report immediately after canonical state
+is initialized. `commit_stage.py` then calls `render_report.py` after every
+valid state/log commit, including failed-stage and `loop_stop` commits. The
+hook is deliberately outside the state transaction: a presentation error is
+printed as `report hook failed` but never rolls back a valid GPU-stage result.
 
-Spawn via the Task tool. Pass paths only, never values — the agent reads disk as the single source of truth:
+Normally do not invoke the renderer separately. If a hook reports an error,
+repair the named presentation input and run:
 
-```
-Task(
-  description="Render DEFT report",
-  subagent_type="general-purpose",
-  prompt=(
-    f"Read {skill_root}/agents/reporter.md and follow its instructions exactly.\n"
-    f"Inputs:\n"
-    f"  results_dir = {RESULTS_DIR}\n"
-    f"  skill_root  = {skill_root}\n"
-    f"  trigger     = after-iteration   # or 'loop-end' at the very end\n"
-  ),
-)
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/render_report.py \
+  --results-dir "${RESULTS_DIR}"
 ```
 
-The agent prints one status line and exits. Never render `DEFT_Loop_Report.html` inline in the parent — the whole point of this agent is to keep rendering alive when the parent's context is saturated.
+At loop end, add `--require-terminal` when verifying or manually rebuilding
+the final artifact. `agents/reporter.md` remains only as a compatibility
+wrapper for runtimes that explicitly invoke that legacy agent; it calls the
+same script and contains no rendering logic.
 
 ## Stage Reference Modules
 
