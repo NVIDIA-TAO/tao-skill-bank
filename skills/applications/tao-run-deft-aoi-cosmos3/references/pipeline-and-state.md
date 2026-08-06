@@ -62,7 +62,8 @@ count against `max_iterations`.
 1. Build `mining_targets.json` only from the preceding Proxy false-accept /
    false-reject artifacts. Never read Benchmark per-sample errors here.
 2. Run `paidf-anomalygen` in `inference_only` mode against the recorded
-   AnomalyGen project, then `emit_sdg_sharegpt.py` to turn each generated pair
+   AnomalyGen project. Commit Phase 2's defect-to-count `allocation.json` as
+   the canonical AMP-allocation evidence, then run `emit_sdg_sharegpt.py` to turn each generated pair
    into a bare `NG` record. When the driving Proxy RCCA recorded zero false
    accepts, commit `--skip` instead of launching the generator; the audit
    re-proves that against `false_accepts_json` on disk. See
@@ -118,6 +119,7 @@ All paths are absolute.
   --results-dir "$RESULTS_DIR" --iter-label iter1 --stage train \
   --best-ckpt "$RESULTS_DIR/iter1/train/safetensors/epoch_10" \
   --training-spec "$WORKSPACE/specs/train_spec.toml" \
+  --duration-sec "$STAGE_DURATION_SEC" \
   --summary "first mined-data Cosmos3 LoRA SFT completed"
 ```
 
@@ -129,6 +131,7 @@ All paths are absolute.
     "$RESULTS_DIR/baseline/benchmark_metrics/metrics_summary.json" \
   --metric-result \
     "$RESULTS_DIR/baseline/benchmark_metrics/metric_result.json" \
+  --duration-sec "$STAGE_DURATION_SEC" \
   --summary "frozen Benchmark KPI analyzed"
 ```
 
@@ -146,5 +149,8 @@ For an ordinary stop, commit `loop_stop` after a completed
 For a hard stop, commit the failed stage with `--status error`, then commit
 `loop_stop`. A failed terminal run is not KPI completion.
 
-Render the report after each completed iteration and once at loop end. The
-final completion claim requires `audit_deft_run.py --require-complete`.
+The `commit_stage.py` post-commit hook refreshes the report after every stage,
+including `loop_stop`. After optional token alignment, run
+`render_report.py --require-terminal` once so the final artifact contains the
+aligned evidence. The final completion claim requires
+`audit_deft_run.py --require-complete`.

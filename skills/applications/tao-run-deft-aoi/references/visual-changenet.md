@@ -258,6 +258,7 @@ row["label"] = row["label"] if row["label"] == "PASS" else row["label"].lower().
     --best-ckpt-kind <best_val|latest> \
     --training-spec <absolute exact training spec> \
     --val-loss <float> \
+    --duration-sec "${STAGE_DURATION_SEC}" \
     --summary "Train: val_loss=Z best_ckpt=<kind>:<absolute path>"
 
 # Commit the evaluator result and ordered evaluate event together.
@@ -270,5 +271,6 @@ row["label"] = row["label"] if row["label"] == "PASS" else row["label"].lower().
     --inference-csv <absolute inference CSV> \
     --training-spec <absolute exact training spec> \
     --threshold <float; include when required by the evaluator contract> \
+    --duration-sec "${STAGE_DURATION_SEC}" \
     --summary "Evaluate: <metric>=X <operator> target; threshold=Y|n/a"
 ```

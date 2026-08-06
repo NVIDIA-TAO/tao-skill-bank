@@ -21,6 +21,7 @@ CLI:
         --metric-evaluator ~/workspace/metrics/evaluate_quality.py \
         --max-iterations 2 \
         --num-gpus 4 \
+        --gpu-model "NVIDIA RTX PRO 6000 Blackwell (96 GB)" \
         --num-epochs 20 \
         --num-sdg 20 \
         --project nvpcb \
@@ -40,6 +41,7 @@ import sys
 import tempfile
 
 from metric_contract import parse_target_expression, render_target, validate_contract
+from render_report import render as render_html_report
 
 
 _COMPLETED_STEP_VALUES = [
@@ -148,6 +150,7 @@ def build_state(args: argparse.Namespace) -> dict:
             "backbone_weight_dir": str(ws / "augmentation" / "backbone"),
             "train_container": args.train_container,
             "num_gpus": args.num_gpus,
+            "gpu_model": args.gpu_model,
             "batch_size": args.batch_size,
             "num_epochs": args.num_epochs,
             "anomalygen": {
@@ -280,6 +283,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-iterations", required=True, type=int)
     parser.add_argument("--num-gpus", required=True, type=int)
+    parser.add_argument(
+        "--gpu-model",
+        required=True,
+        help=(
+            "Exact accelerator model recorded by the selected platform's "
+            "Preflight, including memory when available"
+        ),
+    )
     parser.add_argument("--num-epochs", required=True, type=int)
     parser.add_argument("--num-sdg", required=True, type=int)
     parser.add_argument("--project", required=True, help="AnomalyGen project name (e.g. nvpcb)")
@@ -437,6 +448,10 @@ def _build_metric_contract(args: argparse.Namespace) -> tuple[dict, str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    args.gpu_model = args.gpu_model.strip()
+    if not args.gpu_model:
+        print("init_deft_state: --gpu-model must not be empty", file=sys.stderr)
+        return 2
     try:
         args.metric_contract, args.kpi_target_text = _build_metric_contract(args)
     except ValueError as exc:
@@ -484,6 +499,10 @@ def main(argv: list[str] | None = None) -> int:
     state = build_state(args)
     write_atomic(out, state)
     print(f"init_deft_state: wrote {out}", file=sys.stderr)
+    try:
+        render_html_report(args.results_dir)
+    except Exception as exc:  # noqa: BLE001 - state initialization remains valid
+        print(f"init_deft_state: report hook failed: {exc}", file=sys.stderr)
     return 0
 
 

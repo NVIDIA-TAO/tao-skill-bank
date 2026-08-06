@@ -30,10 +30,14 @@ tags:
 
 ## Installation
 
-Install this application together with the companion TAO skills listed in
-`eval.config` so they resolve as `~/.claude/{models,data,platform,core}/...`.
-Provision a host Python with `pyarrow` and `yaml`; run bundled validation with
-`python -m unittest tests.test_cosmos3_bare` (pytest is optional, not required).
+Install this application as part of the full TAO skill-bank root, not as only
+the companion skill folders: `TAO_SKILL_BANK_PATH` must point at a directory
+containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
+`skills/{applications,models,data,platform,core}/...` tree listed in
+`eval.config`. Run bundled validation with the skill Python so dependencies
+match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
+tests.test_cosmos3_bare`. If that Python lacks `pyarrow` or `yaml`, install the
+small helper dependency there and rerun validation.
 
 ## Execution Contract
 
@@ -51,7 +55,9 @@ Treat a run as a disk-backed state machine.
    launch review plus this skill's Pre-Flight Summary. Wait for one explicit
    approval.
 5. After approval, initialize `${RESULTS_DIR}/deft_state.json` exactly once
-   with `scripts/init_deft_state.py`. Never reinitialize a resumed run or edit
+   with `scripts/init_deft_state.py`. Pass the exact GPU model reported by the
+   selected platform's Preflight through `--gpu-model` (include accelerator
+   memory when available). Never reinitialize a resumed run or edit
    `deft_state.json` / `loop_log.jsonl` by hand.
 6. Before every stage, after context compaction, and before a completion claim,
    run:
@@ -71,7 +77,10 @@ Treat a run as a disk-backed state machine.
    `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`.
 8. Commit every completed or failed DEFT stage with
    `scripts/commit_stage.py`. It updates state and log atomically, then runs the
-   audit and rolls back on inconsistency.
+   audit and rolls back on inconsistency. Every commit requires a positive,
+   measured `--duration-sec`: use backend elapsed wall time for submitted jobs
+   and a host wall-clock timer for inline stages. Missing or zero durations are
+   rejected.
 9. Claim completion only after this exits zero:
 
    ```bash
@@ -294,10 +303,15 @@ For each `iterN` when the frozen Benchmark gate is unmet:
 9. `evaluate_proxy` — only when the loop continues.
 10. `proxy_rcca`
 
-After every iteration, render `DEFT_Loop_Report.html` with the reporter agent.
-Stop when the Benchmark contract passes, `max_iterations` is reached, or a
-hard stop occurs. Commit `loop_stop`, run the completion audit, then render one
-final report.
+`init_deft_state.py` writes the first `DEFT_Loop_Report.html`; every successful
+`commit_stage.py` call then refreshes it through the deterministic
+`scripts/render_report.py` post-commit hook. Stop when the Benchmark contract
+passes, `max_iterations` is reached, or a hard stop occurs. Commit `loop_stop`,
+run `render_report.py --require-terminal` after optional token alignment, then
+run the completion audit. The Cosmos-only report addition is a bounded prompt
+showcase sourced from recorded annotations; keep every other visual convention
+aligned with ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or
+hand-author report rendering.
 
 ## Stage References
 
@@ -309,7 +323,7 @@ final report.
 | Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
 | AnomalyGen | `paidf-anomalygen`, `mode=inference_only` | `references/paidf-anomalygen.md` |
 | Assemble / validate | bundled bare ShareGPT scripts | `references/aoi-annotation.md` |
-| State/log/report | bundled commit/audit scripts + reporter | `references/scripts-and-agents.md` |
+| State/log/report | bundled commit/audit scripts + deterministic report hook | `references/scripts-and-agents.md` |
 
 ## Hard Stops
 

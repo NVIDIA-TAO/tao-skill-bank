@@ -12,6 +12,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -199,6 +200,26 @@ class BareAnnotationTests(unittest.TestCase):
             patch_eval_image_cap.apply_cap("engine = LLM(model=ckpt)\n", 2)
         with self.assertRaisesRegex(ValueError, "exactly one image cap"):
             patch_eval_image_cap.apply_cap(source + source, 2)
+
+    def test_eval_image_cap_probe_times_out(self) -> None:
+        timeout = patch_eval_image_cap.subprocess.TimeoutExpired(
+            cmd=["docker", "run"], timeout=120
+        )
+        with mock.patch.object(
+            patch_eval_image_cap.shutil, "which", return_value="/usr/bin/docker"
+        ), mock.patch.object(
+            patch_eval_image_cap.subprocess, "run", side_effect=timeout
+        ) as run:
+            with self.assertRaisesRegex(
+                ValueError,
+                "timed out after 120s.*pre-pull the image",
+            ):
+                patch_eval_image_cap.read_from_image(
+                    "example/cosmos:1",
+                    patch_eval_image_cap.CONTAINER_PATH,
+                    docker="docker",
+                )
+        self.assertEqual(run.call_args.kwargs["timeout"], 120)
 
     def test_media_root_one_level_too_deep_is_diagnosed(self) -> None:
         """Annotations resolve from the workspace root, not workspace/images."""
@@ -575,6 +596,21 @@ class IsolationAndMetricTests(unittest.TestCase):
 
 
 class StateMachineTests(unittest.TestCase):
+    def test_stage_commit_requires_positive_measured_duration(self) -> None:
+        base = [
+            "--results-dir",
+            "/tmp/cosmos3-duration-contract",
+            "--iter-label",
+            "baseline",
+            "--stage",
+            "loop_stop",
+            "--summary",
+            "done",
+        ]
+        with self.assertRaises(SystemExit):
+            commit_stage._parser().parse_args(base)
+        self.assertEqual(commit_stage.main([*base, "--duration-sec", "0"]), 2)
+
     def test_baseline_commit_to_completion(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -602,6 +638,8 @@ class StateMachineTests(unittest.TestCase):
                     str(workspace),
                     "--platform",
                     "docker",
+                    "--gpu-model",
+                    "NVIDIA H100 80GB HBM3",
                     "--max-iterations",
                     "1",
                     "--cosmos-container",
@@ -643,6 +681,8 @@ class StateMachineTests(unittest.TestCase):
                         "evaluate_benchmark",
                         "--benchmark-results",
                         str(benchmark_results),
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "Benchmark evaluation complete",
                     ]
@@ -676,6 +716,8 @@ class StateMachineTests(unittest.TestCase):
                         str(benchmark_dir / "metrics_summary.json"),
                         "--metric-result",
                         str(benchmark_dir / "metric_result.json"),
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "Benchmark KPI met",
                     ]
@@ -692,6 +734,8 @@ class StateMachineTests(unittest.TestCase):
                         "baseline",
                         "--stage",
                         "loop_stop",
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "Benchmark KPI met",
                     ]
@@ -701,6 +745,18 @@ class StateMachineTests(unittest.TestCase):
             report = audit_deft_run.audit(results)
             self.assertEqual(report["status"], "COMPLETE")
             self.assertEqual(report["best_iteration"], "baseline")
+            html_report = results / "DEFT_Loop_Report.html"
+            self.assertTrue(html_report.is_file())
+            self.assertIn("KPI MET", html_report.read_text())
+            self.assertIsNone(
+                audit_deft_run._completion_report_error(results)
+            )
+            self.assertEqual(
+                audit_deft_run.main(
+                    ["--results-dir", str(results), "--require-complete"]
+                ),
+                0,
+            )
             phase = json.loads(
                 (results / "deft_state.json").read_text()
             )["iterations"]["baseline"]
@@ -733,6 +789,8 @@ class StateMachineTests(unittest.TestCase):
                         str(workspace),
                         "--platform",
                         "docker",
+                        "--gpu-model",
+                        "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "2",
                         "--cosmos-container",
@@ -753,6 +811,8 @@ class StateMachineTests(unittest.TestCase):
                         "baseline",
                         "--stage",
                         stage,
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         f"baseline {stage}",
                         *extra,
@@ -839,6 +899,8 @@ class StateMachineTests(unittest.TestCase):
                 str(workspace),
                 "--platform",
                 "docker",
+                "--gpu-model",
+                "NVIDIA H100 80GB HBM3",
                 "--max-iterations",
                 "1",
                 "--cosmos-container",
@@ -882,6 +944,8 @@ class StateMachineTests(unittest.TestCase):
                             str(workspace),
                             "--platform",
                             "docker",
+                            "--gpu-model",
+                            "NVIDIA H100 80GB HBM3",
                             "--max-iterations",
                             "1",
                             "--cosmos-container",
@@ -950,6 +1014,8 @@ class StateMachineTests(unittest.TestCase):
                         str(workspace),
                         "--platform",
                         "docker",
+                        "--gpu-model",
+                        "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "1",
                         "--cosmos-container",
@@ -973,6 +1039,8 @@ class StateMachineTests(unittest.TestCase):
                         "evaluate_benchmark",
                         "--status",
                         "error",
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "cosmos-rl-evaluate exited 1 before writing results",
                     ]
@@ -1015,6 +1083,8 @@ class StateMachineTests(unittest.TestCase):
                         str(workspace),
                         "--platform",
                         "docker",
+                        "--gpu-model",
+                        "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "2",
                         "--cosmos-container",
@@ -1035,6 +1105,8 @@ class StateMachineTests(unittest.TestCase):
                         label,
                         "--stage",
                         stage,
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         f"{label} {stage}",
                         *extra,
@@ -1166,6 +1238,8 @@ class StateMachineTests(unittest.TestCase):
                         str(workspace),
                         "--platform",
                         "docker",
+                        "--gpu-model",
+                        "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "2",
                         "--cosmos-container",
@@ -1187,6 +1261,8 @@ class StateMachineTests(unittest.TestCase):
                             label,
                             "--stage",
                             stage,
+                            "--duration-sec",
+                            "1",
                             "--summary",
                             f"{label} {stage}",
                             *extra,
@@ -1306,6 +1382,8 @@ class StateMachineTests(unittest.TestCase):
                         "--stage",
                         "anomalygen",
                         "--skip",
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "attempted unjustified skip",
                     ]
@@ -1315,6 +1393,9 @@ class StateMachineTests(unittest.TestCase):
 
             sdg_csv = write_sdg_output(
                 results / "iter1/anomalygen/sdg", ["PCB+bridge_00000"]
+            )
+            allocation = write_json(
+                results / "iter1/anomalygen/sdg/allocation.json", {"bridge": 1}
             )
             synthetic_json = results / "iter1/anomalygen/sdg_sharegpt.json"
             self.assertEqual(
@@ -1342,8 +1423,18 @@ class StateMachineTests(unittest.TestCase):
                 "anomalygen",
                 "--anomalygen-sdg",
                 str(sdg_csv),
+                "--anomalygen-allocation",
+                str(allocation),
                 "--anomalygen-sharegpt",
                 str(synthetic_json),
+            )
+            state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(
+                state["iterations"]["iter1"]["anomalygen_amp_allocated"], 1
+            )
+            self.assertEqual(
+                state["iterations"]["iter1"]["anomalygen_allocation_json"],
+                str(allocation.resolve()),
             )
 
             mining_dir = results / "iter1/mining"
