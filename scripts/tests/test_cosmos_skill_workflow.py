@@ -655,6 +655,7 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     args.slurm_user = "user"; args.slurm_host = ["login.example"]
     args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
     args.container_mount = [f"{tmp_path}:{tmp_path}"]
+    args.timeout = "03:48:00"
     plan = workflow.build_plan(args); workflow.write_spec(args, plan)
     assert "--no-container-remap-root" in plan["preflight"]["container_runtime"]
     script = workflow.render_slurm(args, plan)
@@ -662,12 +663,25 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert script.index("#SBATCH --account=") < script.index("set -Eeuo pipefail")
     assert "#SBATCH --no-requeue" in script and "--container-image=" in script
     assert "--no-container-remap-root" in script
+    assert "timeout --signal=TERM --kill-after=30s 13680s srun" in script
     assert 'exit "$child_rc"' in script
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
     # Controlled child failure uses the same capture idiom as the generated job.
     result = subprocess.run(["bash", "-c", "set -Eeuo pipefail; rc=0; set +e; bash -c 'exit 17'; rc=$?; set -e; exit $rc"])
     assert result.returncode == 17
     assert subprocess.run(["sh", "-n"], input=script, text=True).returncode != 0 or "#!/usr/bin/env bash" in script
+
+
+def test_slurm_script_rejects_invalid_child_timeout(tmp_path):
+    args = args_for(tmp_path)
+    args.platform = "slurm"; args.partition = "compute"; args.account = "project"
+    args.slurm_user = "user"; args.slurm_host = ["login.example"]
+    args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
+    args.container_mount = [f"{tmp_path}:{tmp_path}"]
+    plan = workflow.build_plan(args); workflow.write_spec(args, plan)
+    args.timeout = "03:99:00"
+    with pytest.raises(common.WorkflowError, match="child timeout"):
+        workflow.render_slurm(args, plan)
 
 
 def test_framework_spec_uses_only_current_strict_sft_schema_keys(tmp_path):

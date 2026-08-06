@@ -1180,6 +1180,17 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         raise WorkflowError("SLURM partition, account, and SQSH path are required")
     if args.use_requeue:
         raise WorkflowError("requeue is disabled by default and is not validated for Cosmos training")
+    try:
+        timeout_hours, timeout_minutes, timeout_seconds = (
+            int(value) for value in args.timeout.split(":")
+        )
+    except (ValueError, AttributeError) as exc:
+        raise WorkflowError("child timeout must use HH:MM:SS format") from exc
+    if timeout_hours < 0 or not 0 <= timeout_minutes < 60 or not 0 <= timeout_seconds < 60:
+        raise WorkflowError("child timeout must use valid HH:MM:SS fields")
+    child_timeout_seconds = timeout_hours * 3600 + timeout_minutes * 60 + timeout_seconds
+    if child_timeout_seconds <= 0:
+        raise WorkflowError("child timeout must be greater than zero")
     sqsh = Path(args.sqsh_path)
     if not args.container_mount:
         raise WorkflowError("at least one explicit container mount is required for SLURM")
@@ -1188,6 +1199,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     native = plan["command"]
     wrapped = "\n".join(["ulimit -n 65536", "ulimit -s unlimited", "ulimit -l unlimited 2>/dev/null || true", native])
     srun = " ".join(filter(None, [
+        "timeout", "--signal=TERM", "--kill-after=30s", f"{child_timeout_seconds}s",
         "srun", f"--nodes={args.nodes}", f"--ntasks={args.nodes}", "--ntasks-per-node=1",
         f"--gpus-per-node={args.gpus_per_node}", f"--cpus-per-task={args.cpus_per_task}",
         "--no-container-remap-root", f"--container-image={shlex.quote(str(sqsh))}",
