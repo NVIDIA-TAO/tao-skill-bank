@@ -1,8 +1,8 @@
 ---
 name: tao-run-on-kubernetes
-description: Kubernetes execution platform — submits TAO container jobs as single-pod k8s Jobs with NVIDIA GPU scheduling.
-  Use when running on EKS / GKE / AKS / on-prem clusters with the NVIDIA GPU Operator installed, or when integrating TAO
-  into an existing k8s-native ML platform.
+description: Kubernetes execution platform — submits TAO container jobs as k8s Jobs with NVIDIA GPU scheduling; single-pod
+  for one node, Indexed Jobs for multi-node distributed training. Use when running on EKS / GKE / AKS / on-prem clusters
+  with the NVIDIA GPU Operator installed, or when integrating TAO into an existing k8s-native ML platform.
 license: Apache-2.0
 compatibility: Requires GPU worker nodes with NVIDIA driver branch 580, CUDA Toolkit 13.0, and NVIDIA Container Toolkit 1.19.0; a `kubectl` client authenticated to the cluster; and the NVIDIA GPU Operator or device plugin. No nvidia-tao-sdk required — jobs are submitted with plain `kubectl`.
 metadata:
@@ -37,7 +37,7 @@ Operator/device plugin present.
 # driver/toolkit lifecycle is owned by the cloud provider or GPU Operator policy.
 if [ "${TAO_K8S_SKIP_NODE_RUNTIME_CHECK:-0}" != "1" ]; then
   TAO_SKILL_BANK_ROOT="${TAO_SKILL_BANK_ROOT:-$PWD}"
-  SETUP_SCRIPT="${TAO_SKILL_BANK_ROOT}/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh"
+  SETUP_SCRIPT="${TAO_SKILL_BANK_ROOT}/skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh"
 
   bash "$SETUP_SCRIPT" --backend kubernetes --check-only || {
     echo "MISSING: TAO Kubernetes GPU node runtime is not ready."
@@ -55,7 +55,11 @@ command -v kubectl >/dev/null 2>&1 || {
 }
 kubectl cluster-info >/dev/null 2>&1 || {
   echo "MISSING: no reachable cluster (kubeconfig at ~/.kube/config, \$KUBECONFIG, or in-pod service account)."
-  echo "Configure kubectl (e.g., 'aws eks update-kubeconfig --name my-cluster') or set \$KUBECONFIG."
+  echo "Configure kubectl for your cluster, or set \$KUBECONFIG:"
+  echo "  EKS: aws eks update-kubeconfig --name <cluster> --region <region>"
+  echo "  GKE: gcloud container clusters get-credentials <cluster> --region <region>"
+  echo "  AKS: az aks get-credentials --resource-group <rg> --name <cluster>"
+  echo "  local: minikube start   (see 'Local cluster' below)"
   exit 1
 }
 
@@ -166,7 +170,7 @@ kubectl logs -l "job-name=$JOB_ID" --tail "${N:-200}"
 ### cancel
 
 ```bash
-kubectl delete job "$JOB_ID" --propagation-policy=Foreground   # also deletes the pods
+kubectl delete job "$JOB_ID" --cascade=foreground   # also deletes the pods
 kubectl delete secret "tao-creds-$JOB_ID" --ignore-not-found    # tear down the per-job Secret
 "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state CANCELED --source agent
 ```
@@ -187,6 +191,51 @@ Same four verbs, plus:
    `cancel` deletes the Job (Foreground) and the Service.
 4. **NCCL probe first** (as SLURM) — a 2-node all-reduce with a timeout; on hang,
    set the cluster NCCL env and re-probe; cache per cluster.
+
+## Local cluster (development, CI, and evals)
+
+A throwaway local cluster is enough to exercise everything except GPU
+execution: manifest admission, the four verbs, job-record wiring, and log
+plumbing. Useful for developing against this skill without burning cluster
+quota, and it is what an agent-driven eval should provision for itself.
+
+```bash
+# minikube — works without Docker (vfkit driver on Apple Silicon; use
+# --driver=docker on Linux/Intel where a daemon is available).
+minikube start --driver=vfkit --cpus=2 --memory=3g
+kubectl get nodes                      # STATUS Ready before submitting
+
+# teardown — the cluster is disposable, delete it when done
+minikube delete
+```
+
+`kind` is an alternative (`kind create cluster` / `kind delete cluster`) but
+requires a working Docker daemon; minikube's vfkit/qemu drivers do not.
+
+**Two things will keep a rendered TAO Job `Pending` on a local cluster.** Both
+are prerequisites, not bugs, and both were confirmed against minikube:
+
+1. **The PVC must exist.** The templates mount `@@PVC_CLAIM@@`; without it the
+   scheduler reports `persistentvolumeclaim "<name>" not found` — and this
+   surfaces *before* any GPU complaint, so it masks the next issue. minikube's
+   default StorageClass binds a plain PVC immediately:
+   ```bash
+   kubectl create -f - <<'EOF'
+   apiVersion: v1
+   kind: PersistentVolumeClaim
+   metadata: {name: edgeai-datasets}
+   spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
+   EOF
+   ```
+2. **GPU capacity must be advertised.** With the PVC satisfied, a Job requesting
+   `nvidia.com/gpu` reports `0/1 nodes are available: 1 Insufficient
+   nvidia.com/gpu` and waits forever. A local cluster has no GPU operator, so
+   either render with `NUM_GPUS=0` for a lifecycle-only check, or install a fake
+   device plugin to test *scheduling* without hardware. Real GPU execution needs
+   a real GPU cluster.
+
+So a local cluster validates **admission and lifecycle**, never GPU execution —
+size any smoke test or eval accordingly.
 
 ## GPU Operator dependency
 
@@ -270,11 +319,16 @@ This skill's Indexed Job path is intentionally simple and dependency-free; if yo
 **`No nvidia.com/gpu resources allocatable on the cluster`** — the GPU Operator (or NVIDIA Device Plugin) isn't installed. Install per the link above; verify with `kubectl get nodes -o jsonpath='{.items[*].status.allocatable}'`.
 
 **`ImagePullBackOff` / `ErrImagePull`** — the cluster can't pull the image. For nvcr.io: pre-create an image-pull secret in the namespace and reference it as the pod's `imagePullSecrets` in the rendered manifest:
+Feed the key over stdin — `--docker-password=$NGC_KEY` would put the secret in
+argv, where it is visible in the host's process table and shell history:
 ```bash
-kubectl create secret docker-registry ngc-pull-secret \
-  --docker-server=nvcr.io \
-  --docker-username='$oauthtoken' \
-  --docker-password=$NGC_KEY -n tao-jobs  # lint-ok: secret-on-argv
+kubectl create secret generic ngc-pull-secret -n tao-jobs \
+  --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson=/dev/stdin <<EOF
+{"auths": {"nvcr.io": {"username": "\$oauthtoken", "password": "${NGC_KEY}"}}}
+EOF
+# Verify without reading the secret back:
+kubectl get secret ngc-pull-secret -n tao-jobs >/dev/null && echo SECRET_OK
 ```
 
 **Pod stays `Pending` forever** — `kubectl describe pod -l job-name=$JOB_ID` shows the scheduling reason in the `Events`. Common causes: insufficient GPU capacity (`Insufficient nvidia.com/gpu`), no node matches the pod's `nodeSelector`, missing image-pull secret, or PVC mount failure.
