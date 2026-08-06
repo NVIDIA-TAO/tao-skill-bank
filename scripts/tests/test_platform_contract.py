@@ -22,6 +22,7 @@ Live execution smokes belong in the nightly platform pipeline instead.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -180,3 +181,39 @@ def test_job_record_required_flags_match_the_script():
         assert f'"{flag}"' in open_block, (
             f"{flag} is listed as required here but no longer appears in "
             f"tao_job_record.py's `open` parser — update JOB_RECORD_OPEN_REQUIRED")
+
+
+# Scripts the platform skills invoke DIRECTLY (as `"$BANK/scripts/x.py" ...`
+# rather than `python3 .../x.py`) must carry the executable bit, or every
+# documented submit sequence dies at step one with "permission denied".
+DIRECT_EXEC_RE = re.compile(
+    r'"?\$\{?(?:BANK|TAO_SKILL_BANK_PATH|TAO_SKILL_BANK_ROOT)\}?/(scripts/[A-Za-z0-9_./-]+\.(?:py|sh))"?\s')
+
+
+def test_directly_invoked_scripts_are_executable():
+    """Any script a platform skill execs directly must be mode 755 in git.
+
+    This shipped broken: tao_job_record.py and redact_secrets.py were added as
+    100644 while every other script in scripts/ was 100755, so the first line of
+    `submit` failed with "permission denied" on all five platforms. The git mode
+    is what matters — a local chmod does not travel, so assert on the index.
+    """
+    referenced = set()
+    for skill_md in PLATFORM_DIR.rglob("*.md"):
+        if "__pycache__" in skill_md.parts:
+            continue
+        referenced.update(DIRECT_EXEC_RE.findall(skill_md.read_text(encoding="utf-8")))
+    assert referenced, "no directly-invoked bank scripts found — has the invocation style changed?"
+
+    modes = subprocess.run(
+        ["git", "ls-files", "-s", *sorted(referenced)],
+        cwd=REPO, capture_output=True, text=True,
+    ).stdout
+    recorded = {line.split("\t")[-1]: line.split()[0] for line in modes.splitlines() if line}
+
+    not_executable = sorted(p for p, m in recorded.items() if m != "100755")
+    missing = sorted(referenced - set(recorded))
+    assert not missing, f"platform skills reference scripts absent from git: {missing}"
+    assert not not_executable, (
+        f"referenced directly by a platform skill but not executable in git "
+        f"(chmod +x and commit the mode): {not_executable}")
