@@ -513,8 +513,8 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 ## Checklist
 
 - [ ] Skill directory is kebab-case at the right layer.
-- [ ] Frontmatter has `name`, `description` with trigger phrases, `license: Apache-2.0`.
-- [ ] Optional: `compatibility`, `metadata.author`, `metadata.version`, `allowed-tools` populated.
+- [ ] Frontmatter has all required fields: `name`, `description` with trigger phrases, `license: Apache-2.0`, `compatibility`, `metadata.author`, `metadata.version`, and `tags`.
+- [ ] Optional frontmatter field `allowed-tools` populated (validator warns when missing).
 - [ ] Body has Quick Start (or scripts/, hooks/, references/skill_info.yaml) — agent-runnable.
 - [ ] If the skill is non-trivial: External Dependencies, CLI Reference, Output Structure, Known Pitfalls sections present.
 - [ ] If using `skill_info.yaml`: `container_image` set, each model/data action has `command`, `mode`, `inputs`, `outputs`, and `upload_excludes`.
