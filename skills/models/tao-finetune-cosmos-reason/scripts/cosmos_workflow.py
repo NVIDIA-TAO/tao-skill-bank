@@ -637,6 +637,8 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "vision": {"nframes": args.frames, "video_decoder": "pynvvideocodec", "cache_dir": args.container_cache_dir},
         "system_prompt": args.system_prompt,
     })
+    if args.video_override_map:
+        spec["custom"]["video_override_map"] = _containerize(args, args.video_override_map)
     return spec
 
 
@@ -654,6 +656,8 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
         "TAO_API_RESULTS_DIR": args.container_results_dir,
         "TAO_STATUS_FILE": status_path,
     }
+    if args.video_override_map:
+        common["TAO_VIDEO_OVERRIDE_MAP"] = _containerize(args, args.video_override_map)
     if backend == "cosmos-framework":
         framework_train_media = list(train_media) * len(train_annotations) if len(train_media) == 1 else list(train_media)
         framework_val_media = list(val_media) * len(val_annotations) if len(val_media) == 1 else list(val_media)
@@ -993,7 +997,20 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     })
     commits = _source_commits(args, backend)
     image = _image_plan(args, backend, commits)
-    processor_fingerprint = stable_hash({"revision": args.processor_revision, "profile": model_profile})
+    if bool(args.video_override_map) != bool(args.video_override_fingerprint):
+        raise WorkflowError("video_override_map and video_override_fingerprint must be supplied together")
+    if args.video_override_fingerprint and not re.fullmatch(r"[0-9a-f]{64}", args.video_override_fingerprint):
+        raise WorkflowError("video_override_fingerprint must be a lowercase SHA256 digest")
+    decoder_artifact = {
+        "path": args.video_override_map or None,
+        "sha256": args.video_override_fingerprint or None,
+        "enabled": bool(args.video_override_map),
+    }
+    processor_fingerprint = stable_hash({
+        "revision": args.processor_revision,
+        "profile": model_profile,
+        "decoder_artifact": decoder_artifact,
+    })
     cache_keys = {
         split: hashlib.sha256(
             (
@@ -1026,6 +1043,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "model_preparation": model_preparation, "prepared_model_container_path": prepared_model_container,
         "backend_selection_reason": reason, "backend_contract": str(BACKEND_FILES[backend]),
         "run_mode": args.run_mode, "training": contract, "processor_profile": model_profile,
+        "decoder_artifact": decoder_artifact,
         "datasets": {"train": train_data, "validation": val_data},
         "input_frame": {
             "kind": "slurm_remote" if remote_inspection else "submission_host",
@@ -1284,6 +1302,12 @@ def parity_report(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str
         "validation_dataset": dataset_parity(left["datasets"]["validation"], right["datasets"]["validation"]),
         "optimization": optimization_parity(left["training"], right["training"]),
     }
+    decoder_equal = left.get("decoder_artifact") == right.get("decoder_artifact")
+    checks["decoder_artifact"] = {
+        "status": "equivalent" if decoder_equal else "invalid_mismatch",
+        "left": left.get("decoder_artifact"),
+        "right": right.get("decoder_artifact"),
+    }
     evaluator_left = left.get("metric_contract", {}).get("accuracy", {})
     evaluator_right = right.get("metric_contract", {}).get("accuracy", {})
     evaluator_equal = evaluator_left == evaluator_right
@@ -1449,6 +1473,8 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--sequence-length", type=int, default=0); parser.add_argument("--frames", type=int, default=0)
     parser.add_argument("--video-max-pixels", type=int, default=0); parser.add_argument("--video-frame-width", type=int, default=0)
     parser.add_argument("--video-frame-height", type=int, default=0)
+    parser.add_argument("--video-override-map", default="")
+    parser.add_argument("--video-override-fingerprint", default="")
     parser.add_argument("--system-prompt", default=""); parser.add_argument("--attention-implementation", default="auto")
     parser.add_argument("--processor-revision", default="packaged"); parser.add_argument("--run-mode", choices=("smoke", "full"), default="full")
     parser.add_argument("--skip-smoke", action="store_true"); parser.add_argument("--smoke-train-samples", type=int, default=16)
