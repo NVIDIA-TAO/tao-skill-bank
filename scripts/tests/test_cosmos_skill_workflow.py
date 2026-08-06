@@ -353,6 +353,16 @@ def test_cosmos_rl_peft_spec_has_equivalent_lora_and_cache(tmp_path):
     assert "dataloader_prefetch_factor" not in plan["spec"]["train"]["train_policy"]
 
 
+def test_cosmos_rl_maps_common_constant_scheduler_to_native_none(tmp_path):
+    args = args_for(tmp_path, backend="cosmos-rl")
+    args.scheduler = "constant"
+
+    plan = workflow.build_plan(args)
+
+    assert plan["training"]["scheduler"] == "constant"
+    assert plan["spec"]["train"]["optm_decay_type"] == "none"
+
+
 def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
     framework_args = args_for(
         tmp_path / "framework", backend="cosmos-framework",

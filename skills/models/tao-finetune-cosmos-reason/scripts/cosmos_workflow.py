@@ -595,7 +595,10 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "train_batch_per_replica": args.rl_mini_batch, "output_dir": args.container_checkpoint_dir,
         "optm_lr": args.learning_rate, "optm_impl": "foreach", "optm_weight_decay": args.weight_decay,
         "epsilon": args.optimizer_epsilon,
-        "optm_warmup_epochs": args.warmup, "optm_decay_type": args.scheduler,
+        # Cosmos-RL names a constant schedule "none"; the common parity
+        # contract and Framework continue to expose it as "constant".
+        "optm_warmup_epochs": args.warmup,
+        "optm_decay_type": "none" if args.scheduler == "constant" else args.scheduler,
         "optm_grad_norm_clip": args.gradient_clip, "param_dtype": args.precision,
     })
     spec["train"]["ckpt"].update({"enable_checkpoint": True, "save_freq_in_epoch": 1, "save_mode": "async" if args.async_checkpoint else "sync", "max_keep": args.max_checkpoints})
