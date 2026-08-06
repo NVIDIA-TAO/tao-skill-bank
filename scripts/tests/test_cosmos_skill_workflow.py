@@ -637,9 +637,11 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
     args.container_mount = [f"{tmp_path}:{tmp_path}"]
     plan = workflow.build_plan(args); workflow.write_spec(args, plan)
+    assert "--no-container-remap-root" in plan["preflight"]["container_runtime"]
     script = workflow.render_slurm(args, plan)
     assert script.startswith("#!/usr/bin/env bash\nset -Eeuo pipefail")
     assert "#SBATCH --no-requeue" in script and "--container-image=" in script
+    assert "--no-container-remap-root" in script
     assert 'exit "$child_rc"' in script
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
     # Controlled child failure uses the same capture idiom as the generated job.
