@@ -62,7 +62,22 @@ Before running AutoML:
 
 1. **Shared launch preflight**: Run the `tao-launch-workflow` intake pattern first. AutoML must not create runner files, workspaces, state files, logs, compatibility shims, or install dependencies until the selected platform's credentials, access check, dataset visibility, model credentials, container image confirmation, and compute shape are satisfied. This prevents wasting the AutoML budget on fake recommendation failures caused by SSH, storage, image, or credential setup.
 2. **SDK credentials**: env vars read from the session environment (export them in your shell before launching). Required env vars depend on which SDK you choose — see each platform's SKILL.md (`skills/platform/tao-run-on-brev`, `skills/platform/tao-run-on-slurm`, `skills/platform/tao-run-on-kubernetes`, `skills/platform/tao-run-on-local-docker`). Before asking for credentials, read the chosen platform skill's `## Credentials` section and `references/skill_info.yaml` (required_credentials / credential_groups). Ask only for the credentials listed there. For example, SLURM needs SLURM credentials and not Brev or S3 credentials; Kubernetes and local Docker do not need SLURM or Brev credentials. Ask S3 credentials only when the selected platform and dataset/result URIs use `s3://`. For container pulls: `NGC_KEY`. The agent never reads values — only checks presence with `[ -n "$VAR_NAME" ]`. Construct the SDK with no arguments — e.g., `BrevSDK()`, `SlurmSDK()`, `KubernetesSDK()`, or `DockerSDK()`.
-2. **Dataset**: Training data accessible from the compute backend. URI format depends on the SDK's platform:
+
+   **Verify the SDK actually constructs before generating runner files.** A successful `import tao_automl` does not prove the selected AutoML platform extra is installed. Instantiate the SDK class for the chosen platform, for example:
+
+   ```bash
+   python -c "from tao_sdk.platforms.docker import DockerSDK; DockerSDK(); print('OK')"
+   ```
+
+   Substitute the matching import for `brev`, `slurm`, or `kubernetes`. Catch a missing platform extra during preflight, before spending time on an image pull or recommendation. Local Docker launches with the host UID:GID when a writable results bind is present, so any model dataloader that writes through a spec path must point that path at a writable mount.
+
+   **Baseline eval when training from scratch.** The required baseline is scoped to runs that have a starting checkpoint. With no pretrained, parent, or resume checkpoint, there is no starting model to evaluate, so the baseline is inapplicable rather than failed:
+
+   - Record the baseline as unavailable with the reason and surface it in the launch review.
+   - Proceed to recommendations; only the impact-versus-starting-point delta is unavailable.
+   - Supply `baseline_fn` or `automl_settings["baseline_metric"]` only when a checkpoint exists. `final_eval_fn` still applies; a from-scratch smoke test may explicitly use `reuse_best_metric_for_final_evaluation=True`.
+
+3. **Dataset**: Training data accessible from the compute backend. URI format depends on the SDK's platform:
    - Brev / cloud: `s3://bucket/path` (S3-compatible; do not generate `aws://...`)
    - Slurm / internal shared storage: an absolute shared filesystem path visible to the Slurm job, e.g. `/lustre/fsw/tao_datasets/<model>/train` and `/lustre/fsw/tao_datasets/<model>/eval`
    - Azure: `azure://container/path`
