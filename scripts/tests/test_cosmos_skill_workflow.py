@@ -674,6 +674,21 @@ def test_rl_sft_batch_is_per_dp_worker_and_multinode_launchers_are_packaged(tmp_
     assert 'bash "$launcher_dir/launch_replica.sh"' in plan["command"]
 
 
+def test_framework_expands_one_shared_media_root_per_annotation(tmp_path):
+    args = args_for(tmp_path)
+    environment = workflow._env(
+        args,
+        "cosmos-framework",
+        "/model",
+        ["/train-a.json", "/train-b.json"],
+        ["/train-media"],
+        ["/val-a.json", "/val-b.json"],
+        ["/val-media"],
+    )
+    assert len(json.loads(environment["TAO_VIDEO_TRAIN_MEDIA_ROOTS"])) == 2
+    assert len(json.loads(environment["TAO_VIDEO_VAL_MEDIA_ROOTS"])) == 2
+
+
 def test_requeue_rejected(tmp_path):
     args = args_for(tmp_path); args.platform = "slurm"; args.partition = "p"; args.account = "a"; args.use_requeue = True
     args.container_mount = [f"{tmp_path}:{tmp_path}"]
