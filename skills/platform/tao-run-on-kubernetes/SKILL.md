@@ -170,7 +170,7 @@ kubectl logs -l "job-name=$JOB_ID" --tail "${N:-200}"
 ### cancel
 
 ```bash
-kubectl delete job "$JOB_ID" --propagation-policy=Foreground   # also deletes the pods
+kubectl delete job "$JOB_ID" --cascade=foreground   # also deletes the pods
 kubectl delete secret "tao-creds-$JOB_ID" --ignore-not-found    # tear down the per-job Secret
 "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state CANCELED --source agent
 ```
