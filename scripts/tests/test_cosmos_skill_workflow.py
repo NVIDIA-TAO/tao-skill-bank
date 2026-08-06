@@ -658,6 +658,22 @@ def test_framework_spec_uses_only_current_strict_sft_schema_keys(tmp_path):
     assert "dcp_async_mode_enabled" not in plan["spec"]["checkpoint"]
 
 
+def test_rl_sft_batch_is_per_dp_worker_and_multinode_launchers_are_packaged(tmp_path):
+    args = args_for(tmp_path)
+    args.backend = "cosmos-rl"
+    args.rl_mini_batch = 1
+    args.effective_global_batch = 8
+    plan = workflow.build_plan(args)
+    assert plan["spec"]["train"]["train_batch_per_replica"] == 1
+
+    args.nodes = 2
+    args.effective_global_batch = 16
+    plan = workflow.build_plan(args)
+    assert "Path(cosmos_rl.__file__).parent" in plan["command"]
+    assert 'bash "$launcher_dir/launch_controller.sh"' in plan["command"]
+    assert 'bash "$launcher_dir/launch_replica.sh"' in plan["command"]
+
+
 def test_requeue_rejected(tmp_path):
     args = args_for(tmp_path); args.platform = "slurm"; args.partition = "p"; args.account = "a"; args.use_requeue = True
     args.container_mount = [f"{tmp_path}:{tmp_path}"]
