@@ -556,7 +556,7 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
             "compile": {"enabled": False, "compile_dynamic": True},
             "activation_checkpointing": {"mode": "full", "save_ops_regex": ["fmha"], "preserve_rng_state": True, "determinism_check": "default"},
         },
-        "optimizer": {"betas": [0.9, 0.999], "eps": args.optimizer_epsilon, "fused": True, "lr": args.learning_rate, "weight_decay": args.weight_decay, "keys_to_select": [], "keys_to_exclude": []},
+        "optimizer": {"betas": [0.9, 0.999], "eps": args.optimizer_epsilon, "fused": True, "lr": args.learning_rate, "weight_decay": args.weight_decay, "keys_to_select": []},
         "scheduler": {"cycle_lengths": [steps * epochs], "f_max": [1.0], "f_min": [0.0], "f_start": [1.0], "verbosity_interval": 0, "warm_up_steps": [args.warmup]},
         "trainer": {
             "distributed_parallelism": "fsdp", "grad_accum_iter": grad_accum, "logging_iter": 1,
@@ -565,7 +565,7 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
             "validation_freq_in_epoch": 1, "run_validation_on_start": False,
             "callbacks": {"compile_tokenizer": {"compile_after_iterations": 3, "enabled": False}, "grad_clip": {"clip_norm": args.gradient_clip, "force_finite": False}, "tao": {"enabled": True, "experiment_name": args.experiment_id, "logging_interval": 1, "validation_heartbeat_interval": 50}},
         },
-        "checkpoint": {"keys_to_skip_loading": [], "load_path": "???", "save_iter": steps, "save_freq_in_epoch": 1, "dcp_async_mode_enabled": args.nodes == 1 and args.async_checkpoint},
+        "checkpoint": {"keys_to_skip_loading": [], "load_path": "???", "save_iter": steps, "save_freq_in_epoch": 1},
         "dataloader_train": {"max_samples_per_batch": 1, "max_sequence_length": args.sequence_length},
     }
     if args.training_mode == "peft":
