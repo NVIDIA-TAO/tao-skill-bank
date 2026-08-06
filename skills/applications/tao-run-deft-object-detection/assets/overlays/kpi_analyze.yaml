@@ -14,9 +14,10 @@ visualize.platform: local      # TAO: local. Pinned so a loop stage cannot acqui
                                # a wandb credential dependency.
 
 kpi.iou_threshold: 0.5         # TAO: 0.5
-kpi.conf_threshold: 0.3        # TAO: 0.5. Composes with the threshold inference
-                               # already applied at write time rather than
-                               # replacing it, so the two filters compound.
+kpi.conf_threshold: 0.0        # TAO: 0.5. Inference writes its labels at 0.0, so
+                               # scoring at 0.0 covers the full PR curve. Sweeping
+                               # this re-scores existing labels without re-running
+                               # inference: pass --allow-overlay-override.
 kpi.num_recall_points: 11      # TAO: 11. 11-point interpolated AP (VOC); 101
                                # selects COCO-style and shifts every reported AP.
 kpi.ignore_sqwidth: 40         # TAO: 0. Excludes boxes below this square-width

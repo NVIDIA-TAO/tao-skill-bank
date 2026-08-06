@@ -269,7 +269,9 @@ TAO writes one KITTI-style `.txt` per image into `inference/labels/`, plus annot
 <class_name> 0.00 0 0.00 <x1> <y1> <x2> <y2> 0.00 0.00 0.00 0.00 0.00 0.00 0.00 <score>
 ```
 
-Boxes are absolute `xyxy`. Detections below `inference.conf_threshold` are **already dropped at write time**, so the downstream gap-analysis and KPI stages see a pre-filtered set. If a later stage applies its own confidence threshold, it composes with this one rather than replacing it — keep them consistent or the two filters silently compound.
+Boxes are absolute `xyxy`. Detections below `inference.conf_threshold` are **already dropped at write time**, so it bounds what every later stage can see: a downstream threshold composes with this one rather than replacing it, and no stage can recover a box inference did not write.
+
+That is the reason to keep it at `0.0`. The labels then carry the full curve, and gap analysis and KPI are free to pick any threshold independently — including scoring the same labels repeatedly at several thresholds, which costs a re-run of KPI rather than a re-run of inference. A non-zero value here forecloses that permanently and silently compounds with whatever a later stage applies.
 
 ## Commit
 
