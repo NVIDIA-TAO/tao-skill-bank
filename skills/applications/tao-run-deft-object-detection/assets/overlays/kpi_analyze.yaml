@@ -1,34 +1,28 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# `analytics kpi_analyze` — the settings that do not vary per run.
-# Applied over the spec `analytics default_specs` emits. Paths, `visualize.tag`
-# and `data.kpi_sources` vary per phase and stay as --set.
+# `analytics kpi_analyze` — the settings that do not vary per run, applied over
+# the spec `analytics default_specs` emits. Paths, `visualize.tag` and
+# `data.kpi_sources` are run-specific and stay as --set.
 #
-# Every value here differs from, or is silently inherited from, a TAO default.
-# The comparison as of tao-toolkit-ds:7.0.1:
+# The comment on each line is what TAO emits by default, so the cost of removing
+# the line is visible without diffing against a container.
 
 data.input_format: KITTI       # TAO: KITTI. Uppercase here, lowercase in
                                # `gap_analysis object_detection` in the same image.
-visualize.platform: local      # TAO: local. Pinned so a loop stage can never
-                               # acquire a wandb credential dependency.
+visualize.platform: local      # TAO: local. Pinned so a loop stage cannot acquire
+                               # a wandb credential dependency.
 
 kpi.iou_threshold: 0.5         # TAO: 0.5
-kpi.num_recall_points: 11      # TAO: 11 — but a run that sets 101 switches from
-                               # VOC-style 11-point interpolated AP to COCO-style
-                               # 101-point, moving every AP in the report.
-kpi.ignore_sqwidth: 40         # TAO: 0 — this is the field that drifted. Omitting
-                               # it scores small boxes the reference excludes, so
-                               # the numbers describe a different box set.
+kpi.conf_threshold: 0.3        # TAO: 0.5. Composes with the threshold inference
+                               # already applied at write time rather than
+                               # replacing it, so the two filters compound.
+kpi.num_recall_points: 11      # TAO: 11. 11-point interpolated AP (VOC); 101
+                               # selects COCO-style and shifts every reported AP.
+kpi.ignore_sqwidth: 40         # TAO: 0. Excludes boxes below this square-width
+                               # from scoring; 0 scores small boxes the reference
+                               # set excludes.
 kpi.filter: false              # TAO: false
-kpi.is_internal: false         # TAO: false. True drops every class except person
-                               # and appends a Summary row, changing what the
-                               # report means while still exiting 0.
-
-# UNRESOLVED — this value is contested, see references/tao-analyze-detection-kpi.md.
-# That doc specifies 0.3. references/grounding-dino.md says a downstream threshold
-# *composes* with the one inference already applied at write time, and to keep them
-# consistent — and inference and gap_analysis are both 0.0. The completed 5k/100k
-# runs used 0.0. Left at the documented 0.3 rather than resolved silently; changing
-# it is this one line.
-kpi.conf_threshold: 0.3
+kpi.is_internal: false         # TAO: false. True keeps only `person` and appends
+                               # a Summary row, changing what the report means
+                               # while still exiting 0.
