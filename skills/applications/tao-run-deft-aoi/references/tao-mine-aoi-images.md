@@ -158,5 +158,6 @@ This snippet documents the schema only; use `commit_stage.py` for the write.
     --mining-source-log <absolute path to source_embeddings.log> \
     --mining-knn-log <absolute path to nearest_neighbors.log> \
     --mining-count <int> \
+    --duration-sec "${STAGE_DURATION_SEC}" \
     --summary "Mining (VCN): mined=N_mined source images for N_targets targets"
 ```

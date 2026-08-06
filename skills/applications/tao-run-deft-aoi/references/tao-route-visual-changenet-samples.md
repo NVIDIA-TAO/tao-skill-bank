@@ -52,5 +52,6 @@ The snippet documents the schema only; use `commit_stage.py` for the write.
     --stage routing \
     --routing-mining <absolute path to mining_gaps.parquet> \
     --routing-anomalygen <absolute path to anomalygen_gaps.parquet> \
+    --duration-sec "${STAGE_DURATION_SEC}" \
     --summary "Routing: mining=N_mn rows, anomalygen=N_ag rows; N_drop labels dropped"
 ```

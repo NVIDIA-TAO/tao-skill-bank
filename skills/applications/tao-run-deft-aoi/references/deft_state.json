@@ -29,6 +29,7 @@
     "backbone_weight_dir": "/home/user/workspace/augmentation/backbone",
     "train_container": "<resolved from versions.yaml::images.tao_toolkit.pyt at init time>",
     "num_gpus": 4,
+    "gpu_model": "NVIDIA RTX PRO 6000 Blackwell (96 GB)",
     "batch_size": 16,
     "num_epochs": 10,
     "anomalygen": {

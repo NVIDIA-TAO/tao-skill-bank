@@ -50,6 +50,7 @@ PATH_FIELDS = {
     "benchmark_metrics_summary",
     "mining_targets_json",
     "anomalygen_sdg_csv",
+    "anomalygen_allocation_json",
     "anomalygen_sharegpt_json",
     "mining_mined_parquet",
     "mining_summary",
@@ -97,6 +98,12 @@ FIELD_STAGE = {
     for stage, fields in STAGE_REQUIRED_FIELDS.items()
     for field in fields
 }
+FIELD_STAGE.update(
+    {
+        "anomalygen_allocation_json": "anomalygen",
+        "anomalygen_amp_allocated": "anomalygen",
+    }
+)
 
 
 def _driving_label(label: str) -> str | None:
@@ -190,8 +197,8 @@ def _next_action(
         )
     if status == "COMPLETE":
         return (
-            "render the final report and hand off the best evaluated model",
-            "references/REPORT_RENDERING.md",
+            "hand off the best evaluated model and auto-rendered final report",
+            None,
         )
     if not entries:
         return (
@@ -341,6 +348,38 @@ def _json_list(
         errors.append(f"{field} root must be a list")
         return None
     return payload
+
+
+def _allocation_proof(
+    path: pathlib.Path | None,
+    recorded_count: Any,
+    field: str,
+    errors: list[str],
+) -> None:
+    payload = _json_object(path, field, errors)
+    if payload is None:
+        return
+    if not payload:
+        errors.append(f"{field} must be a non-empty defect-to-count object")
+        return
+    if any(
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 0
+        for value in payload.values()
+    ):
+        errors.append(f"{field} contains invalid allocation counts")
+        return
+    allocated = sum(payload.values())
+    if allocated <= 0:
+        errors.append(f"{field} must allocate at least one AMP")
+    if not isinstance(recorded_count, int) or isinstance(recorded_count, bool):
+        errors.append(f"{field} has no integer anomalygen_amp_allocated in state")
+    elif recorded_count != allocated:
+        errors.append(
+            f"{field} total={allocated} disagrees with "
+            f"anomalygen_amp_allocated={recorded_count}"
+        )
 
 
 def _parquet_rows(
@@ -611,6 +650,13 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                     errors.append(
                         f"{field} must be Proxy-only, non-aggregate RCCA output"
                     )
+            if field == "anomalygen_allocation_json":
+                _allocation_proof(
+                    path,
+                    phase.get("anomalygen_amp_allocated"),
+                    field,
+                    errors,
+                )
             if field in {
                 "proxy_results_json",
                 "benchmark_results_json",
@@ -702,6 +748,15 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                         "it is the validate_sharegpt.py --summary output, not "
                         "validate_split_contract.py --summary"
                     )
+
+        if (
+            phase.get("anomalygen_amp_allocated") is not None
+            and not phase.get("anomalygen_allocation_json")
+        ):
+            errors.append(
+                f"state.iterations.{label}.anomalygen_amp_allocated is set "
+                "without anomalygen_allocation_json"
+            )
 
         if (label, "data_mining") in log_keys:
             mined_rows = _parquet_rows(
@@ -1049,6 +1104,35 @@ def _print_text(report: dict[str, Any]) -> None:
         print(f"ERROR: {error}")
 
 
+def _completion_report_error(results_dir: pathlib.Path) -> str | None:
+    """Return why the deterministic final HTML is missing/stale/invalid."""
+    results_dir = results_dir.expanduser().resolve()
+    report_path = results_dir / "DEFT_Loop_Report.html"
+    if not report_path.is_file() or report_path.stat().st_size == 0:
+        return f"final HTML report is missing or empty: {report_path}"
+    evidence = [results_dir / "deft_state.json", results_dir / "loop_log.jsonl"]
+    newest_evidence = max(
+        (path.stat().st_mtime_ns for path in evidence if path.exists()),
+        default=0,
+    )
+    if report_path.stat().st_mtime_ns < newest_evidence:
+        return "final HTML report is older than canonical state/log; rerun render_report.py"
+    text = report_path.read_text(encoding="utf-8")
+    required = (
+        "NVIDIA TAO · DEFT AOI",
+        "Dataset Isolation",
+        "Prompt Examples",
+        "Hard Stops / Warnings",
+        "--nvidia-green: #76b900",
+    )
+    missing = [token for token in required if token not in text]
+    if missing:
+        return "final HTML report is missing required content: " + ", ".join(missing)
+    if re.search(r"\{\{\s+[A-Z0-9_]+\s+\}\}", text):
+        return "final HTML report contains unfilled placeholders"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-dir", required=True, type=pathlib.Path)
@@ -1069,8 +1153,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.require_terminal and not report["terminal"]:
         return 1
-    if args.require_complete and report["status"] != "COMPLETE":
-        return 1
+    if args.require_complete:
+        if report["status"] != "COMPLETE":
+            return 1
+        report_error = _completion_report_error(args.results_dir)
+        if report_error:
+            print(f"ERROR: {report_error}", file=sys.stderr)
+            return 1
     return 0
 
 

@@ -56,5 +56,6 @@ the path and threshold with the command below.
     --rca-gaps <absolute path to kpi_gaps.parquet> \
     --rca-threshold <float> \
     --rca-target-defect <label> ... \
+    --duration-sec "${STAGE_DURATION_SEC}" \
     --summary "RCA (VCN): threshold=X recall=Y; gaps=K rows across N labels"
 ```

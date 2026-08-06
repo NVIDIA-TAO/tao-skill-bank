@@ -17,18 +17,38 @@ Resolve everything possible before asking the user. In order:
 
    | Variable | Required for | Image prefix it gates |
    |---|---|---|
-   | `NGC_KEY` | All nvcr.io image pulls — TAO toolkit (train/infer/deploy/data services) and the paidf-anomalygen SDG container | the registry orgs of the pinned image URIs in step 5 |
+   | `NGC_KEY` | All nvcr.io image pulls — TAO toolkit (train/infer/deploy/data services) and the paidf-anomalygen SDG container | the registry orgs of the manifest-resolved image URIs in step 5 |
    | `HF_TOKEN` | Pre-Flight HuggingFace model downloads (ChangeNet backbone, Cosmos diffusion, T5, C-RADIO-V3, DINOv2, SAM2, Qwen-VL, SigLIP) — cached under `augmentation/anomalygen/base_checkpoints/`. Also gates the PCB reference dataset auto-fetch. | huggingface.co |
 
-   Both variables must be non-empty. The single `NGC_KEY` must have read access to every registry org referenced by the pinned image URIs in step 5 (TAO Toolkit and paidf-anomalygen images). If either is missing, show the user `.env.example` (next to this skill), ask them to copy it to `<workspace>/.env` and fill in values, and do not proceed until set.
+   Both variables must be non-empty. The single `NGC_KEY` must have read access to every registry org referenced by the image URIs resolved in step 5 (TAO Toolkit and Metropolis SDG). If either is missing, show the user `.env.example` (next to this skill), ask them to copy it to `<workspace>/.env` and fill in values, and do not proceed until set.
 4. `docker login nvcr.io` once with `NGC_KEY` (username `$oauthtoken`, password = the key). nvcr.io stores one credential per host. Do not fall back to host-side TAO wrappers.
-5. **Export the pinned container image env vars.** The rest of this skill — including the Pre-Flight Summary's `docker image inspect` line, every stage launch, and the `references/*.md` files — references three env vars. They are **not** defined elsewhere; the pinned URIs below are stamped from the release manifest. `export` them so all downstream commands see them:
+5. **Resolve and export the version-managed container image env vars.** The rest of this skill — including the Pre-Flight Summary's `docker image inspect` line, every stage launch, and the `references/*.md` files — references three env vars. Resolve every value from the installed skill bank's `versions.yaml`; never copy a tag into this document or preserve a tag from an earlier run:
 
    ```bash
-   export TAO_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
-   export TAO_DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
-   export AG_IMAGE=nvcr.io/nvidia/paidf-anomalygen:1.0.1  # versions-key: images.metropolis_sdg.paidf_anomalygen
+   TAO_PYT_IMAGE=$(
+     <skill_root>/scripts/deft_python.sh \
+       "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+       images.tao_toolkit.pyt --skill-bank "$TAO_SKILL_BANK_PATH"
+   )
+   TAO_DS_IMAGE=$(
+     <skill_root>/scripts/deft_python.sh \
+       "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+       images.tao_toolkit.data_services --skill-bank "$TAO_SKILL_BANK_PATH"
+   )
+   AG_IMAGE=$(
+     <skill_root>/scripts/deft_python.sh \
+       "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+       images.metropolis_sdg.paidf_anomalygen --skill-bank "$TAO_SKILL_BANK_PATH"
+   )
+   : "${TAO_PYT_IMAGE:?versions key images.tao_toolkit.pyt did not resolve}"
+   : "${TAO_DS_IMAGE:?versions key images.tao_toolkit.data_services did not resolve}"
+   : "${AG_IMAGE:?versions key images.metropolis_sdg.paidf_anomalygen did not resolve}"
+   export TAO_PYT_IMAGE TAO_DS_IMAGE AG_IMAGE
    ```
+
+   Hard-stop on any resolver error. `versions.yaml` is authoritative even when
+   a reference, cached transcript, or previously installed plugin mentions a
+   different tag.
 
    | Env var | versions-key | Used by |
    |---|---|---|
@@ -54,7 +74,29 @@ Resolve everything possible before asking the user. In order:
    **GPU-arch runnability probe.** Matching CPU arch isn't sufficient — the image's CUDA build must also support the host GPU's compute capability (e.g. DGX Spark `sm_121` vs a `cu128` build passes the manifest check but fails at the first CUDA call). Probe it directly: `docker run --rm --gpus all "$TAO_PYT_IMAGE" python3 -c "import torch; torch.zeros(1).cuda()"` — a non-zero exit or `no kernel image is available` means the build can't target this GPU; hard stop.
 
 7. Apply the path rule: pre-create iter dirs under `${RESULTS_DIR}/iter${ITER}/` and mount `<workspace>` into containers at the same absolute path. Workflows enforce their own container-level invariants (entrypoints, env vars); the loop just supplies the workspace mount and the resolved image URI.
-8. Verify GPU count. Probe the three AnomalyGen override slots under `augmentation/anomalygen/` (`checkpoints/<project>/`, `base_checkpoints/`, `datasets/<project>/`) and report their status in the Summary. **Empty slots are not missing — auto-fetch from HuggingFace is the default and requires no user action.** NVIDIA publishes the PCB fine-tuned checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on HuggingFace; paidf-anomalygen downloads them automatically on first use. Users who want to provide their own fine-tuned checkpoint or custom dataset can pre-stage the directory to override. Do not ask the user about missing AnomalyGen assets — treat empty slots as `will auto-fetch from HF (default)` and proceed. If `base_checkpoints/` is pre-staged, export its host path as `COSMOS_MODELS_DIR` for downstream mounts. Stage the ChangeNet pretrained backbone by running `scripts/stage_backbone.py --workspace <workspace>`, then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path` to the staged file and bind-mount it per `references/visual-changenet.md` → *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script exits non-zero; there is no URL fallback. See `references/paidf-anomalygen.md` for invocation and mount layout.
+8. Verify GPU count and record the exact GPU model plus memory reported by the
+   selected platform (for local Docker:
+   `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader`). Preserve
+   that string for `init_deft_state.py --gpu-model`; never substitute a local
+   GPU when the selected backend is remote. Probe the three AnomalyGen override
+   slots under `augmentation/anomalygen/` (`checkpoints/<project>/`,
+   `base_checkpoints/`, `datasets/<project>/`) and report their status in the
+   Summary. **Empty slots are not missing — auto-fetch from HuggingFace is the
+   default and requires no user action.** NVIDIA publishes the PCB fine-tuned
+   checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset
+   (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on HuggingFace;
+   paidf-anomalygen downloads them automatically on first use. Users who want
+   to provide their own fine-tuned checkpoint or custom dataset can pre-stage
+   the directory to override. Do not ask the user about missing AnomalyGen
+   assets — treat empty slots as `will auto-fetch from HF (default)` and
+   proceed. If `base_checkpoints/` is pre-staged, export its host path as
+   `COSMOS_MODELS_DIR` for downstream mounts. Stage the ChangeNet pretrained
+   backbone by running `scripts/stage_backbone.py --workspace <workspace>`,
+   then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path`
+   to the staged file and bind-mount it per `references/visual-changenet.md` →
+   *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script
+   exits non-zero; there is no URL fallback. See
+   `references/paidf-anomalygen.md` for invocation and mount layout.
 9. **GPU memory sanity check.** ChangeNet classify with C-RADIOv2-B (ViT-B) at the spec defaults (`batch_size: 64`, `image_width/height: 224`, `cls_weight: [1.0, 10.0]`, learnable difference modules) OOMs on a single 48GB-class GPU. Inspect `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` and warn if the assembled spec's `dataset.classify.batch_size` is too large for the available memory: as a rule of thumb, **≤ 16 on 48GB GPUs, ≤ 8 on 24GB GPUs**. Surface the recommendation in the Pre-Flight Summary's `GPUs` row — let the user accept or override before launch rather than failing 30 seconds into training.
 10. Run train/validation leakage check before resuming any prior run.
 
@@ -89,7 +131,7 @@ Once all checks pass, print this summary and **STOP — wait for explicit user a
 | Training Epochs                | N per iteration                                                                |
 | Num SDG                        | N synthetic samples per iteration                                              |
 | Mining cutoff                  | cosine ≥ <min_similarity> (default 0.9)                                        |
-| GPUs                           | N                                                                              |
+| Compute / GPUs                 | N GPU(s) · <exact model> (<memory>)                                             |
 | Resuming                       | yes — iter N complete / no                                                     |
 | Est. runtime                   | ~max_iterations × 33 min on RTX 6000 Ada — estimate only (+~Yh downloads if MISSING) |
 
@@ -118,7 +160,7 @@ Fill the `Image` column with the actual URI resolved in Pre-Flight step 5
 (i.e. the value of the env var), not the literal `${VAR}` placeholder.
 Print one row per env var so the audit trail shows exactly which tag will run.
 
-| Env var          | Image (pinned in Pre-Flight step 5)                                            | Status     |
+| Env var          | Image (resolved in Pre-Flight step 5)                                          | Status     |
 | ---------------- | ------------------------------------------------------------------------------ | ---------- |
 | `TAO_PYT_IMAGE`  | `<$TAO_PYT_IMAGE>` (key: `images.tao_toolkit.pyt`)                             | OK/MISSING |
 | `AG_IMAGE`       | `<$AG_IMAGE>` (key: `images.metropolis_sdg.paidf_anomalygen`)                 | OK/MISSING |
@@ -133,7 +175,7 @@ cat <workspace>/augmentation/anomalygen/checkpoints/<project>/checkpoints/latest
 cat <workspace>/augmentation/anomalygen/datasets/<project>/defect_spec.jsonl | python3 -c "import sys,json; [print(json.loads(l)['defect_type']) for l in sys.stdin]"
 nvidia-smi --list-gpus | wc -l
 # ${TAO_PYT_IMAGE}, ${AG_IMAGE}, ${TAO_DS_IMAGE} are exported by Pre-Flight step 5
-# (pinned URIs stamped from the release manifest). Loop per-image so the
+# (URIs resolved from the installed versions.yaml). Loop per-image so the
 # output maps 1:1 to the Docker Images table rows above (you can't fill a
 # per-row Status column from a single aggregate "grep -c sha256" count).
 for var in TAO_PYT_IMAGE AG_IMAGE TAO_DS_IMAGE; do

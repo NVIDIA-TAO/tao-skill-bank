@@ -82,16 +82,22 @@ approval.
 Resolve, do not guess:
 
 ```bash
+: "${TAO_SKILL_BANK_PATH:?set TAO_SKILL_BANK_PATH to the installed TAO skill-bank root containing versions.yaml and scripts/resolve_versions_key.py}"
+test -f "$TAO_SKILL_BANK_PATH/versions.yaml" || { echo "missing $TAO_SKILL_BANK_PATH/versions.yaml" >&2; exit 2; }
+test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" >&2; exit 2; }
 COSMOS_RL_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.tao_toolkit.cosmos_rl
 )
 TAO_DS_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.tao_toolkit.data_services
 )
 AG_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.metropolis_sdg.paidf_anomalygen
 )
 ```
@@ -236,7 +242,10 @@ present an unset `NGC_KEY` as a problem when the pull succeeds anyway.
 
 Record:
 
-- GPUs per node and node count;
+- GPUs per node, node count, and the exact GPU model plus memory reported by
+  the selected platform. Preserve that exact string for
+  `init_deft_state.py --gpu-model`; never report the local host's accelerator
+  for a remote Docker, Kubernetes, SLURM, Brev, or external-platform run;
 - `policy.parallelism.dp_shard_size` and `dp_replicate_size`;
 - LoRA rank/alpha/target modules;
 - epochs, batch size, learning rate;
@@ -279,7 +288,7 @@ record-then-launch ordering must be explicit.
 | Next Train | `train_iter_<N>.json`, created after Proxy RCA and Mining selection | workflow |
 | KPI | <metric operator target> + unknown_predictions <= 0 | user/default |
 | Iterations | <N> | user |
-| Train shape | <nodes x GPUs; epochs; batch; LR; LoRA> | user/spec/default |
+| Train shape | <nodes x GPUs; exact GPU model/memory; epochs; batch; LR; LoRA> | user/spec/platform |
 | Mining | <top-K; cosine floor> | user/default |
 | AnomalyGen | <project; num_SDG; asset status> | user/default |
 | Cosmos-RL image | <resolved URI> | versions.yaml |
