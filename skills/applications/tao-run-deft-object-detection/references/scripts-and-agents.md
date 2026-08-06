@@ -27,13 +27,13 @@ These replace internal container images from the reference pipeline whose script
 
 ### Stage overlays
 
-`assets/overlays/<stage>.yaml` holds the settings a stage documents but that do
-not vary per run. They exist because a value written only in prose is a value
-nobody sets: a field the caller does not mention keeps whatever `default_specs`
-or the Hydra schema emitted, and TAO's default is not always what this skill
-documents. `kpi.ignore_sqwidth` is the worked example — TAO emits 0, the
-reference pipeline uses 40, and a run that never mentions it scores a different
-set of boxes with nothing anywhere reporting a difference.
+`assets/overlays/<stage>.yaml` holds the settings a stage needs but that do not
+vary per run. A field nobody mentions keeps whatever `default_specs` or the Hydra
+schema emitted, and TAO's default is not always the value the stage wants:
+`kpi.ignore_sqwidth` is 0 by default against the reference pipeline's 40, and the
+only symptom of the difference is that a different set of boxes gets scored. Each
+overlay line carries TAO's default in a comment, so the cost of removing it is
+visible without diffing against a container.
 
 | overlay | stage | notably pins |
 |---|---|---|

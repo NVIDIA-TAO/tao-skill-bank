@@ -56,9 +56,9 @@ The resulting `kpi:` block:
 ```yaml
 kpi:
   iou_threshold: 0.5
-  conf_threshold: 0.3        # contested — see the overlay's comment
-  num_recall_points: 11      # 101 switches to COCO-style AP and moves every number
-  ignore_sqwidth: 40         # TAO defaults to 0 — this is the field that drifted
+  conf_threshold: 0.3        # composes with inference's, rather than replacing it
+  num_recall_points: 11      # 11-point interpolated AP; 101 selects COCO-style
+  ignore_sqwidth: 40         # TAO emits 0, which scores smaller boxes
   filter: false
   is_internal: false
 ```

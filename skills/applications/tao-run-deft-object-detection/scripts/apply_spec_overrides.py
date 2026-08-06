@@ -18,17 +18,16 @@ Two kinds of override, deliberately separated:
 ``--set KEY=VALUE``
     Only what varies per run — paths, checkpoints, GPU counts.
 
-The split exists because a value that lives in prose is a value nobody sets. A
-field the caller does not mention keeps whatever ``default_specs`` or the Hydra
-schema emitted, which is not always what the skill documents: TAO's analytics
-default for ``kpi.ignore_sqwidth`` is 0 where the reference pipeline uses 40, so
-omitting it scores a different set of boxes and nothing anywhere reports a
-difference. Held in a file, the value is applied on every run and shows up in a
-diff when it changes.
+A field nobody mentions keeps whatever ``default_specs`` or the Hydra schema
+emitted, which is not always the value the stage needs — TAO's analytics default
+for ``kpi.ignore_sqwidth`` is 0 against the reference pipeline's 40, and the only
+symptom is that a different set of boxes gets scored. Keeping those values in a
+file applies them on every run and surfaces a change as a diff.
 
-A ``--set`` naming a key the overlay already set is an error: that collision is
-the drift this guards against. ``--allow-overlay-override`` permits it for the
-cases where a run genuinely must differ, and says so on stderr.
+A ``--set`` naming a key the overlay already set is an error, since a stage
+overriding its own documented setting is the case worth catching.
+``--allow-overlay-override`` permits it where a run genuinely must differ, and
+says so on stderr.
 
 Keys are dotted paths into nested mappings. Values are parsed as YAML scalars, so
 ``8`` is an int, ``true`` a bool, ``null`` None, ``[a, b]`` a list, and anything
