@@ -892,7 +892,8 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
         ])
         container = " ".join([
             "srun", "--nodes=1", "--ntasks=1", f"--gpus={args.gpus_per_node}",
-            f"--container-image={shlex.quote(args.sqsh_path)}", "bash -lc", shlex.quote(container_check),
+            "--no-container-remap-root", f"--container-image={shlex.quote(args.sqsh_path)}",
+            "bash -lc", shlex.quote(container_check),
         ])
     else:
         allocation = path_checks
@@ -1169,7 +1170,8 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     srun = " ".join(filter(None, [
         "srun", f"--nodes={args.nodes}", f"--ntasks={args.nodes}", "--ntasks-per-node=1",
         f"--gpus-per-node={args.gpus_per_node}", f"--cpus-per-task={args.cpus_per_task}",
-        f"--container-image={shlex.quote(str(sqsh))}", mount_args, "bash -lc", shlex.quote(wrapped),
+        "--no-container-remap-root", f"--container-image={shlex.quote(str(sqsh))}",
+        mount_args, "bash -lc", shlex.quote(wrapped),
     ]))
     lines = [
         "#!/usr/bin/env bash", "set -Eeuo pipefail", f"#SBATCH --partition={args.partition}",
