@@ -1316,8 +1316,15 @@ def finalize_metadata(
         raise WorkflowError("child-process exit-code file is invalid") from exc
     if not status_file.is_file():
         raise WorkflowError("TAO structured status file is missing")
-    status_payload = json.loads(status_file.read_text(encoding="utf-8"))
-    records = status_payload if isinstance(status_payload, list) else status_payload.get("records", [status_payload])
+    status_text = status_file.read_text(encoding="utf-8")
+    try:
+        status_payload = json.loads(status_text)
+        records = status_payload if isinstance(status_payload, list) else status_payload.get("records", [status_payload])
+    except json.JSONDecodeError:
+        try:
+            records = [json.loads(line) for line in status_text.splitlines() if line.strip()]
+        except json.JSONDecodeError as exc:
+            raise WorkflowError("TAO structured status is neither JSON nor JSONL") from exc
     if not records or not isinstance(records[-1], Mapping):
         raise WorkflowError("TAO structured status contains no terminal record")
     tao_terminal = str(records[-1].get("status", "")).upper()
