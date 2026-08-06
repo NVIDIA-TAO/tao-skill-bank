@@ -1011,6 +1011,13 @@ def test_metadata_finalization_requires_child_and_tao_terminal_status(tmp_path):
         scheduler_reason=None, scheduler_exit_code="0:0", allocated_nodes=["node-a"], job_id="123",
     )
     assert finalized["terminal_tao_status"] == "SUCCESS"
+    jsonl = tmp_path / "status-jsonl.json"
+    jsonl.write_text('{"status":"RUNNING"}\n{"status":"SUCCESS"}\n')
+    jsonl_finalized = workflow.finalize_metadata(
+        workflow.initial_metadata(args, plan), child_exit_file=child, status_file=jsonl,
+        scheduler_state="COMPLETED", scheduler_reason=None, scheduler_exit_code="0:0",
+    )
+    assert jsonl_finalized["terminal_tao_status"] == "SUCCESS"
     child.write_text("9\n")
     failed = workflow.finalize_metadata(
         workflow.initial_metadata(args, plan), child_exit_file=child, status_file=status,
