@@ -7,7 +7,28 @@
 Completes the pair: ``emit_default_spec.py`` produces the canonical spec with
 ``???`` on mandatory fields, this fills them, and no spec is ever hand-edited.
 
-    --set dataset.batch_size=8 --set inference.checkpoint=/abs/model.pth
+    --overlay assets/overlays/kpi_analyze.yaml --set results_dir=/abs/out
+
+Two kinds of override, deliberately separated:
+
+``--overlay FILE``
+    The stage's documented, run-independent settings, held in version control as
+    a flat dotted-key mapping. Repeatable; applied in order, before ``--set``.
+
+``--set KEY=VALUE``
+    Only what varies per run — paths, checkpoints, GPU counts.
+
+The split exists because a value that lives in prose is a value nobody sets. A
+field the caller does not mention keeps whatever ``default_specs`` or the Hydra
+schema emitted, which is not always what the skill documents: TAO's analytics
+default for ``kpi.ignore_sqwidth`` is 0 where the reference pipeline uses 40, so
+omitting it scores a different set of boxes and nothing anywhere reports a
+difference. Held in a file, the value is applied on every run and shows up in a
+diff when it changes.
+
+A ``--set`` naming a key the overlay already set is an error: that collision is
+the drift this guards against. ``--allow-overlay-override`` permits it for the
+cases where a run genuinely must differ, and says so on stderr.
 
 Keys are dotted paths into nested mappings. Values are parsed as YAML scalars, so
 ``8`` is an int, ``true`` a bool, ``null`` None, ``[a, b]`` a list, and anything
@@ -24,6 +45,7 @@ refuse to launch a container against an incomplete spec.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -79,6 +101,32 @@ def set_path(tree: dict, dotted: str, value, allow_new: bool,
     return repr(previous)
 
 
+def load_overlay(path: Path) -> dict[str, object]:
+    """Load a flat ``dotted.key: value`` overlay.
+
+    Flat rather than nested so each setting is one line: a nested block would
+    diff as a block, and a reviewer checking whether ``kpi.ignore_sqwidth`` is
+    still 40 would have to read the surrounding structure to find out.
+
+    A mapping value is rejected for the same reason it would be wrong: writing
+    ``kpi: {iou_threshold: 0.5}`` replaces the whole ``kpi`` block, silently
+    dropping every sibling the schema had emitted.
+    """
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: expected a mapping of dotted keys, got {type(data).__name__}")
+    for key, value in data.items():
+        if not isinstance(key, str):
+            raise ValueError(f"{path}: key {key!r} is not a string")
+        if isinstance(value, dict):
+            raise ValueError(
+                f"{path}: {key!r} has a mapping value. Use one dotted key per leaf "
+                f"({key}.<field>: <value>) — assigning a whole block replaces it and "
+                "drops the fields the schema emitted alongside."
+            )
+    return data
+
+
 def remaining_mandatory(tree, prefix: str = "") -> list[str]:
     found: list[str] = []
     if isinstance(tree, dict):
@@ -97,12 +145,21 @@ def parse_args() -> argparse.Namespace:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--spec", required=True, help="Spec to modify.")
     parser.add_argument("--out", default=None, help="Where to write. Defaults to --spec.")
+    parser.add_argument("--overlay", action="append", default=[], metavar="FILE",
+                        help="The stage's documented settings as a flat dotted-key YAML. "
+                             "Repeatable; applied in order, before --set.")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
-                        help="Dotted key and YAML-parsed value. Repeatable.")
+                        help="Run-specific dotted key and YAML-parsed value. Repeatable.")
+    parser.add_argument("--allow-overlay-override", action="store_true",
+                        help="Permit a --set to change a key an overlay already set. "
+                             "Without it that collision is an error.")
     parser.add_argument("--allow-new", action="store_true",
                         help="Permit creating keys absent from the spec.")
     parser.add_argument("--require-no-mandatory", action="store_true",
                         help="Exit non-zero if any ??? remains after the overrides.")
+    parser.add_argument("--report-json", default=None,
+                        help="Record every key applied and its source, so a run can be "
+                             "audited without re-deriving what the overlay contained.")
     return parser.parse_args()
 
 
@@ -124,23 +181,67 @@ def main() -> int:
         # later one raises.
         applied: list[str] = []
         materialised: set[str] = set()
+        record: dict[str, dict] = {}
+
+        # Overlays first, so --set carries only what varies per run and a
+        # collision between the two is detectable rather than last-write-wins.
+        from_overlay: dict[str, str] = {}
+        for overlay_arg in args.overlay:
+            overlay_path = Path(overlay_arg).expanduser().resolve()
+            if not overlay_path.is_file():
+                raise FileNotFoundError(f"--overlay does not exist: {overlay_path}")
+            for dotted, value in load_overlay(overlay_path).items():
+                try:
+                    previous = set_path(tree, dotted.strip(), value,
+                                        args.allow_new, materialised)
+                except KeyError as exc:
+                    raise KeyError(
+                        f"{exc.args[0]} — from overlay {overlay_path.name}; no changes "
+                        "were written, the spec is unmodified"
+                    ) from exc
+                from_overlay[dotted.strip()] = overlay_path.name
+                record[dotted.strip()] = {"source": overlay_path.name, "value": value}
+                applied.append(f"  {dotted.strip()}: {previous} -> {value!r}  [{overlay_path.name}]")
+
         for item in args.set:
             if "=" not in item:
                 raise ValueError(f"--set expects KEY=VALUE, got {item!r}")
             dotted, raw = item.split("=", 1)
+            dotted = dotted.strip()
+            if dotted in from_overlay and not args.allow_overlay_override:
+                raise ValueError(
+                    f"--set {dotted} collides with overlay {from_overlay[dotted]}, which "
+                    "already set it. An overlay holds the stage's documented settings, so "
+                    "a --set that changes one is the drift this guards against. Pass "
+                    "--allow-overlay-override if this run genuinely must differ."
+                )
+            if dotted in from_overlay:
+                print(f"NOTE: --set {dotted} overrides overlay {from_overlay[dotted]}",
+                      file=sys.stderr)
             try:
-                previous = set_path(tree, dotted.strip(), parse_value(raw),
+                previous = set_path(tree, dotted, parse_value(raw),
                                     args.allow_new, materialised)
             except KeyError as exc:
                 raise KeyError(
                     f"{exc.args[0]} — no changes were written; the spec is unmodified"
                 ) from exc
-            applied.append(f"  {dotted.strip()}: {previous} -> {raw}")
+            record[dotted] = {"source": "--set", "value": parse_value(raw)}
+            applied.append(f"  {dotted}: {previous} -> {raw}")
 
         out = Path(args.out).expanduser().resolve() if args.out else spec_path
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(tree, fh, sort_keys=False, default_flow_style=False)
+        if args.report_json:
+            rp = Path(args.report_json).expanduser().resolve()
+            rp.parent.mkdir(parents=True, exist_ok=True)
+            rp.write_text(json.dumps({
+                "spec": str(spec_path),
+                "out": str(out),
+                "overlays": [Path(o).name for o in args.overlay],
+                "applied": record,
+            }, indent=2, default=str), encoding="utf-8")
+
         for line in applied:
             print(line)
         print(f"spec -> {out}")

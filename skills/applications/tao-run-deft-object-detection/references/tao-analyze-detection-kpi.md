@@ -25,27 +25,42 @@ Do not add metric-based stopping logic here. If the user wants target-gated stop
 
 ## Spec
 
-Write per-phase under `${RESULTS_DIR}/<phase>/kpi/kpi_analyze.yaml`:
+Do not hand-write it. Emit `analytics default_specs`, then apply the overlay —
+`assets/overlays/kpi_analyze.yaml` holds every documented setting, so a field
+cannot keep a TAO default just because nobody typed it:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
+  --stage kpi_analyze --ds-image "$TAO_DS_IMAGE" \
+  --out "${RESULTS_DIR}/<phase>/kpi_spec.yaml"
+
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
+  --spec "${RESULTS_DIR}/<phase>/kpi_spec.yaml" \
+  --overlay <skill_root>/assets/overlays/kpi_analyze.yaml \
+  --set results_dir="${RESULTS_DIR}/<phase>/kpi" \
+  --set visualize.tag=<phase> \
+  --set data.kpi_sources="[{image_dir: <KPI images>, ground_truth_ann_path: <KPI labels>, inference_ann_path: ${RESULTS_DIR}/<phase>/inference/labels}]" \
+  --set data.mapping=<class-mapping YAML> \
+  --set data.image_dir=<KPI images> \
+  --set data.ann_path=<KPI labels> \
+  --report-json "${RESULTS_DIR}/<phase>/kpi_overrides.json" \
+  --require-no-mandatory
+```
+
+Everything in the overlay is fixed; everything in `--set` is a path or a phase
+label. A `--set` naming a key the overlay already set is rejected — that
+collision is the drift the split exists to prevent.
+
+The resulting `kpi:` block:
 
 ```yaml
-data:
-  input_format: KITTI        # UPPERCASE — see below
-  kpi_sources:
-  - image_dir: <absolute path to the KPI image dir>
-    ground_truth_ann_path: <absolute path to KPI ground-truth labels>
-    inference_ann_path: <absolute path to ${RESULTS_DIR}/<phase>/inference/labels>
-  mapping: <absolute path to the class-mapping YAML>
-visualize:
-  platform: local            # avoids a wandb dependency inside the loop
-  tag: <phase>
 kpi:
   iou_threshold: 0.5
-  conf_threshold: 0.3
-  num_recall_points: 11
-  ignore_sqwidth: 40
+  conf_threshold: 0.3        # contested — see the overlay's comment
+  num_recall_points: 11      # 101 switches to COCO-style AP and moves every number
+  ignore_sqwidth: 40         # TAO defaults to 0 — this is the field that drifted
   filter: false
   is_internal: false
-results_dir: <absolute path to ${RESULTS_DIR}/<phase>/kpi>
 ```
 
 **`input_format` is uppercase here.** `analytics kpi_analyze` accepts only `KITTI` or `COCO`. This differs from `gap_analysis object_detection` in the same container, which takes lowercase `kitti` / `coco`. The two stages in this loop therefore spell the same format differently — that is expected, not a typo to "fix".

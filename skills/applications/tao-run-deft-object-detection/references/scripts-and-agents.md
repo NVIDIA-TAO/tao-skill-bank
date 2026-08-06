@@ -23,7 +23,34 @@ These replace internal container images from the reference pipeline whose script
 |---|---|---|
 | `fetch_gdino_checkpoint.py` | Pre-Flight | Resolve the Grounding DINO zero-shot checkpoint, downloading `nvidia/tao/grounding_dino:...trainable_v1.1` from NGC when the user supplied none. Idempotent; prints the path on stdout. Verified bit-identical to the hand-staged copy it replaces. |
 | `emit_default_spec.py` | any stage | Emit a stage's starting spec from TAO: `default_specs` for annotations/analytics, the Hydra schema dump for grounding_dino/codetr, a shipped asset for gap_analysis/tmm/embedding (TAO emits none). Reports mandatory fields grouped by block. |
-| `apply_spec_overrides.py` | any stage | Set values in an emitted spec by dotted key, YAML-typed. Refuses unknown keys unless `--allow-new`, and `--require-no-mandatory` blocks launching a container against a spec that still has `???`. |
+| `apply_spec_overrides.py` | any stage | Apply the stage's `--overlay` (its documented settings, from `assets/overlays/`) then `--set` (only what varies per run), by dotted key and YAML-typed. A `--set` colliding with an overlay key is an error unless `--allow-overlay-override`. Refuses unknown keys unless `--allow-new`; `--require-no-mandatory` blocks launching a container against a spec that still has `???`; `--report-json` records every key and its source. |
+
+### Stage overlays
+
+`assets/overlays/<stage>.yaml` holds the settings a stage documents but that do
+not vary per run. They exist because a value written only in prose is a value
+nobody sets: a field the caller does not mention keeps whatever `default_specs`
+or the Hydra schema emitted, and TAO's default is not always what this skill
+documents. `kpi.ignore_sqwidth` is the worked example — TAO emits 0, the
+reference pipeline uses 40, and a run that never mentions it scores a different
+set of boxes with nothing anywhere reporting a difference.
+
+| overlay | stage | notably pins |
+|---|---|---|
+| `kitti_to_coco.yaml` | `annotations convert` KITTI→COCO | `kitti.project: coco` — names the output file every later step looks for |
+| `coco_to_odvg.yaml` | `annotations convert` COCO→ODVG | formats only |
+| `codetr_inference.yaml` | pool pseudo-labelling | `conf_threshold: 0.3`; `input_width`/`input_height: 640` — left null the run is ~4× slower *and* produces different boxes |
+| `grounding_dino_inference.yaml` | baseline + per-iteration inference | `conf_threshold: 0.0` (keep the full PR curve), `log_scale: auto`, `class_embed_bias: true` |
+| `kpi_analyze.yaml` | scoring | `num_recall_points: 11`, `ignore_sqwidth: 40` |
+
+`grounding_dino train` has no overlay: it is built from the full
+`assets/train_grounding_dino.yaml` template rather than emitted-then-overridden,
+so its values are already in a file under version control.
+
+Two things deliberately stay out of the overlays. Paths, checkpoints and GPU
+counts vary per run. And `dataset.infer_data_sources.captions` is the label map —
+a detection takes the class of the caption token it matched, by position — so it
+must be derived from the run's classes, never pinned.
 | `build_kpi_mapping.py` | `kpi_analyze` | Narrow the supplied KPI class mapping to the run's target classes, aliases verbatim. A class the model cannot predict would otherwise score a constant 0 and compress the mAP trend. |
 | `build_pool_input_parquet.py` | `prep` | List the pool image directory into the `filepath` parquet `embedding image_embeddings` reads. Absolute paths, symlinks resolved, sorted — so the same directory always yields the same parquet. |
 | `make_pool_val_split.py` | `prep` | Carve a validation COCO from 10% of the prepared pool, rewriting category ids to **0-based**. `grounding_dino train` cannot run without a validation source, and its loader uses `category_id` verbatim as a dense label index, so a conventional 1-based COCO overflows on the last class. |

@@ -49,13 +49,18 @@ Both forms take identical arguments. Substitute `$CODETR` wherever this document
 ```yaml
 inference:
   checkpoint: <co-detr checkpoint>
-  conf_threshold: 0.3          # reference value; TAO defaults to 0.5
   category_mapping:            # emitted by scripts/build_fold_mapping.py
     bicycle:   ["bicycle", "motorcycle"]
     car:       ["car", "bus", "truck"]
     person:    ["person"]
     road_sign: ["road_sign", "traffic light", "stop sign"]
 ```
+
+`assets/overlays/codetr_inference.yaml` supplies the rest — `conf_threshold: 0.3`
+(TAO defaults to 0.5) and `input_width`/`input_height: 640`. Apply it to the
+emitted spec before launching; leaving the resolution null makes the run roughly
+4× slower **and** produces different boxes, because the input is then sized by the
+augmentation path instead, and neither symptom is reported.
 
 From `category_mapping.py`: unmapped originals are dropped, a name claimed by two groups keeps the first with a warning, names absent from the classmap are warned about and ignored, an empty remap raises, and output category IDs are assigned `0..K-1` **in the order the mapping is written**.
 
@@ -130,18 +135,24 @@ Targets become COCO categories, then ODVG labels, then the Grounding DINO captio
 
 ## Step 3 — KITTI → COCO
 
-```yaml
-# ${PREP_DIR}/kitti_to_coco.yaml
-data:
-  input_format: "KITTI"
-  output_format: "COCO"
-kitti:
-  image_dir: <pool images>
-  label_dir: ${PREP_DIR}/inference/labels     # Co-DETR's output, already folded
-  mapping:   ${PREP_DIR}/kitti_mapping.yaml   # identity over the targets
-  project:   coco                             # names the output file — see below
-results_dir: <workspace>/source_pool          # NOT a scratch dir — see below
+Emit `annotations default_specs`, then apply `assets/overlays/kitti_to_coco.yaml`
+(which pins the formats and `kitti.project`) plus the run's paths:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
+  --spec "${PREP_DIR}/kitti_to_coco.yaml" \
+  --overlay <skill_root>/assets/overlays/kitti_to_coco.yaml \
+  --set kitti.image_dir=<pool images> \
+  --set kitti.label_dir="${PREP_DIR}/inference/labels" \
+  --set kitti.mapping="${PREP_DIR}/kitti_mapping.yaml" \
+  --set results_dir=<workspace>/source_pool \
+  --require-no-mandatory
 ```
+
+`label_dir` is Co-DETR's output, already folded; `mapping` is the identity over
+the targets. `results_dir` is **not** a scratch dir — see below. The overlay pins
+`kitti.project: coco`, which names the output file `coco.json` that the verify
+step and the ODVG conversion both look for.
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
@@ -196,14 +207,13 @@ Pass `--allow-empty-classes` only when a class is listed defensively and its abs
 
 ## Step 5 — COCO → ODVG
 
-```yaml
-# ${PREP_DIR}/coco_to_odvg.yaml
-data:
-  input_format: "COCO"
-  output_format: "ODVG"
-coco:
-  ann_file: <the COCO json written by step 3>
-results_dir: <workspace>/source_pool/odvg
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
+  --spec "${PREP_DIR}/coco_to_odvg.yaml" \
+  --overlay <skill_root>/assets/overlays/coco_to_odvg.yaml \
+  --set coco.ann_file=<the COCO json written by step 3> \
+  --set results_dir=<workspace>/source_pool/odvg \
+  --require-no-mandatory
 ```
 
 ```bash

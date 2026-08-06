@@ -121,31 +121,34 @@ by inspecting tensors.
 
 ## Reference inference spec
 
-Both traps above are settings, not code, so here is the spec that has them right. This is the
-reference pipeline's spec with only the paths repointed — use it as the default and change a
-value only with a reason.
+Both traps above are settings, not code, and settings that live only in prose are settings
+nobody applies. They are therefore held in `assets/overlays/grounding_dino_inference.yaml`
+and applied on every run:
 
-```yaml
-inference:
-  conf_threshold: 0.0        # keep the full PR curve; gap analysis and KPI both score it
-dataset:
-  infer_data_sources:
-    image_dir:
-      - <config.kpi_images_dir>
-    captions: ["bicycle", "car", "person", "road_sign"]   # ORDER IS THE LABEL MAP — see below
-  max_labels: 4              # must equal len(captions)
-  batch_size: 8
-model:
-  backbone: swin_tiny_224_1k
-  num_feature_levels: 4
-  dec_layers: 6
-  enc_layers: 6
-  num_queries: 900
-  dropout_ratio: 0.0
-  dim_feedforward: 2048
-  log_scale: auto            # never null — see above
-  class_embed_bias: True     # must match the checkpoint — see above
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
+  --spec "${RESULTS_DIR}/<phase>/infer_grounding_dino.yaml" \
+  --overlay <skill_root>/assets/overlays/grounding_dino_inference.yaml \
+  --set inference.checkpoint=<checkpoint> \
+  --set inference.num_gpus="$NUM_GPUS" \
+  --set results_dir="${RESULTS_DIR}/<phase>" \
+  --set dataset.infer_data_sources.image_dir="[<config.kpi_images_dir>]" \
+  --set dataset.infer_data_sources.captions='["bicycle", "car", "person", "road_sign"]' \
+  --set dataset.max_labels=4 \
+  --require-no-mandatory
 ```
+
+The overlay pins `inference.conf_threshold: 0.0` (keep the full PR curve — gap analysis and
+KPI both score these labels), `log_scale: auto`, `class_embed_bias: true`, `batch_size: 8`
+and the model geometry. What stays in `--set` is the checkpoint, the paths, the GPU count,
+and — deliberately — `captions` and `max_labels`.
+
+**`captions` is never pinned in the overlay**, because it is the label map and belongs to the
+run's class set, not to the stage. It must list every class the ground truth contains, not
+just the classes being trained: a class present in the ground truth and absent from `captions`
+can never be predicted, so every one of its boxes is a false negative *and* its objects
+resurface as false positives on whichever caption the model matches instead. `max_labels`
+must equal `len(captions)`.
 
 **`captions` order is the label map.** Grounding DINO has no class list; it assigns a detection
 to a class by the *position* of the caption token it matched. Reorder the list and every
