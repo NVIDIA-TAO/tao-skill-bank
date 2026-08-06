@@ -17,17 +17,16 @@ from workflow_common import absolute_path
 
 INITIAL_STAGES = (
     "baseline_evaluate",
-    "setup_embeddings",
+    "prepare_cosmos_embed_inference",
     "cosmos_embed",
     "convert_embeddings",
 )
 ITERATION_STAGES = (
     "gap_analysis",
-    "build_mining_target",
+    "prepare_nearest_neighbor_mining",
     "mine_nearest_neighbors",
     "record_mined_paths",
-    "build_llava_from_mining",
-    "assemble_train_annotations",
+    "prepare_cosmos_reason_train",
     "train",
     "evaluate",
 )
@@ -49,16 +48,26 @@ def stage_is_complete(event: dict[str, Any] | None) -> bool:
     return event is not None and event.get("status") in {"ok", "skipped"}
 
 
-def read_gap_status(run_dir: Path, iteration: int) -> dict[str, Any] | None:
-    """Read one iteration's gap status, returning None when it was not written."""
-    status_path = run_dir / f"iter_{iteration}" / "gaps" / "gap_status.json"
-    if not status_path.is_file():
-        return None
-    with status_path.open("r", encoding="utf-8") as handle:
-        status = json.load(handle)
-    if not isinstance(status, dict) or not isinstance(status.get("has_gaps"), bool):
-        raise ValueError(f"{status_path}: expected a JSON object with boolean 'has_gaps'")
-    return status
+def count_gap_rows(gaps_jsonl: Path) -> int:
+    """Count valid weak-sample rows, treating absent output as zero gaps."""
+    if not gaps_jsonl.exists():
+        return 0
+    if not gaps_jsonl.is_file():
+        raise FileNotFoundError(f"gaps JSONL is not a file: {gaps_jsonl}")
+
+    count = 0
+    with gaps_jsonl.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{gaps_jsonl}:{line_number}: invalid JSON: {exc}") from exc
+            if not isinstance(row, dict):
+                raise ValueError(f"{gaps_jsonl}:{line_number}: expected a JSON object")
+            count += 1
+    return count
 
 
 def resume_position(
@@ -100,15 +109,8 @@ def resume_position(
         iter_label = f"iter_{iteration}"
         gap_event = latest.get((iter_label, "gap_analysis"))
         if stage_is_complete(gap_event) and run_dir is not None:
-            gap_status = read_gap_status(run_dir, iteration)
-            if gap_status is None:
-                return {
-                    "workflow_status": "running",
-                    "next_iteration": iteration,
-                    "next_stage": "gap_analysis",
-                    "reason": "gap analysis has no gap_status.json completion artifact",
-                }
-            if not gap_status["has_gaps"]:
+            gaps_jsonl = run_dir / iter_label / "gaps" / "kpi_gaps.jsonl"
+            if count_gap_rows(gaps_jsonl) == 0:
                 return {
                     "workflow_status": "running",
                     "next_iteration": None,

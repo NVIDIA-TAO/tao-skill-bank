@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Initialize the state file for a DEFT CR ITS mining workflow run."""
+"""Initialize a DEFT CR ITS mining workflow run and its state snapshot."""
 
 from __future__ import annotations
 

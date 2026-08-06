@@ -176,7 +176,7 @@ def filter_source_pool(source_parquet: Path, mined_log_parquet: Path, output_fil
     return len(filtered)
 
 
-def setup_iteration_mining(
+def prepare_nearest_neighbor_mining(
     workspace: Path,
     workflow_yaml: Path,
     run_dir: Path,
@@ -260,7 +260,13 @@ def main() -> int:
         raise ValueError("--iteration must be >= 1")
     if not gaps_jsonl.is_file():
         raise FileNotFoundError(f"gaps JSONL does not exist: {gaps_jsonl}")
-    setup_iteration_mining(workspace, workflow_yaml, run_dir, args.iteration, gaps_jsonl)
+    prepare_nearest_neighbor_mining(
+        workspace,
+        workflow_yaml,
+        run_dir,
+        args.iteration,
+        gaps_jsonl,
+    )
     return 0
 
 
