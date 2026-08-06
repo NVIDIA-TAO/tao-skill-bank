@@ -694,7 +694,7 @@ def _command(args: argparse.Namespace, backend: str) -> str:
     hook_assignment = (
         "hook=\"$(/opt/venv/cosmos_rl/bin/python -c "
         "'import cosmos_rl; from pathlib import Path; "
-        f'print(Path(cosmos_rl.__file__).parent / "tools" / "custom_hooks" / "{hook_name}")'
+        f"print(Path(cosmos_rl.__file__).parent / \"tools\" / \"custom_hooks\" / \"{hook_name}\")'"
         ")\""
     )
     if args.nodes == 1:

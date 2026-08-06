@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -364,12 +365,23 @@ def test_cosmos_rl_maps_common_constant_scheduler_to_native_none(tmp_path):
 
 
 def test_cosmos_rl_resolves_sft_hook_from_installed_native_package(tmp_path):
-    plan = workflow.build_plan(args_for(tmp_path, backend="cosmos-rl"))
+    args = args_for(tmp_path, backend="cosmos-rl")
+    plan = workflow.build_plan(args)
 
     assert "Path(cosmos_rl.__file__).parent" in plan["command"]
     assert "tools/custom_hooks" not in plan["command"]  # assembled with pathlib
     assert "/opt/cosmos_rl/tao_sft_example.py" not in plan["command"]
     assert 'test -f "$hook"' in plan["command"]
+    args.platform = "slurm"; args.partition = "compute"; args.account = "project"
+    args.slurm_user = "user"; args.slurm_host = ["login.example"]
+    args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
+    args.container_mount = [f"{tmp_path}:{tmp_path}"]
+    script = workflow.render_slurm(args, plan)
+    child_argv = shlex.split(script.split("set +e\n", 1)[1].split("\nchild_rc=", 1)[0])
+    nested = subprocess.run(
+        ["bash", "-n", "-c", child_argv[-1]], capture_output=True, text=True
+    )
+    assert nested.returncode == 0, nested.stderr
 
 
 def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
@@ -666,6 +678,11 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert "timeout --signal=TERM --kill-after=30s 13680s srun" in script
     assert 'exit "$child_rc"' in script
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
+    child_argv = shlex.split(script.split("set +e\n", 1)[1].split("\nchild_rc=", 1)[0])
+    assert child_argv[-2] == "-lc"
+    assert subprocess.run(
+        ["bash", "-n", "-c", child_argv[-1]], capture_output=True, text=True
+    ).returncode == 0
     # Controlled child failure uses the same capture idiom as the generated job.
     result = subprocess.run(["bash", "-c", "set -Eeuo pipefail; rc=0; set +e; bash -c 'exit 17'; rc=$?; set -e; exit $rc"])
     assert result.returncode == 17
