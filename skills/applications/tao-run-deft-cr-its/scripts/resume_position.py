@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Report the next unfinished stage for a DEFT CR ITS mining run."""
+"""Report the next unfinished stage for a DEFT CR ITS run."""
 
 from __future__ import annotations
 
@@ -12,25 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from log_stage import read_valid_events, rebuild_state
-from workflow_common import absolute_path
-
-
-INITIAL_STAGES = (
-    "baseline_evaluate",
-    "prepare_cosmos_embed_inference",
-    "cosmos_embed",
-    "convert_embeddings",
-)
-ITERATION_STAGES = (
-    "gap_analysis",
-    "prepare_nearest_neighbor_mining",
-    "mine_nearest_neighbors",
-    "record_mined_paths",
-    "prepare_cosmos_reason_train",
-    "train",
-    "evaluate",
-    "cleanup_cosmos_reason_training",
-)
+from workflow_common import absolute_path, genai_enabled, mining_enabled
 
 
 def latest_events(events: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
@@ -47,6 +29,32 @@ def latest_events(events: list[dict[str, Any]]) -> dict[tuple[str, str], dict[st
 def stage_is_complete(event: dict[str, Any] | None) -> bool:
     """Return whether a latest stage event represents completed work."""
     return event is not None and event.get("status") in {"ok", "skipped"}
+
+
+def initial_stages_for_mode(mode: str) -> tuple[str, ...]:
+    """Return initialization stages enabled by one data-generation mode."""
+    stages: list[str] = []
+    if genai_enabled(mode):
+        stages.append("verify_vlm_endpoint")
+    stages.append("baseline_evaluate")
+    if mining_enabled(mode):
+        stages.extend(("prepare_cosmos_embed_inference", "cosmos_embed", "convert_embeddings"))
+    return tuple(stages)
+
+
+def iteration_stages_for_mode(mode: str, mine_unique_only: bool) -> tuple[str, ...]:
+    """Return ordered per-iteration stages enabled by one mode."""
+    stages = ["gap_analysis"]
+    if mining_enabled(mode):
+        stages.extend(("prepare_nearest_neighbor_mining", "mine_nearest_neighbors"))
+        if mine_unique_only:
+            stages.append("record_mined_paths")
+    if genai_enabled(mode):
+        stages.extend(("prepare_paidf_input", "paidf", "build_llava_input", "llava_conversion"))
+    stages.extend(
+        ("prepare_cosmos_reason_train", "train", "evaluate", "cleanup_cosmos_reason_training")
+    )
+    return tuple(stages)
 
 
 def count_gap_rows(gaps_jsonl: Path) -> int:
@@ -88,7 +96,8 @@ def resume_position(
             "reason": "loop_stop already logged",
         }
 
-    for stage in INITIAL_STAGES:
+    mode = state.get("data_generation_mode", "mining")
+    for stage in initial_stages_for_mode(mode):
         candidates = [event for (_, event_stage), event in latest.items() if event_stage == stage]
         event = max(candidates, key=lambda item: item["seq"], default=None)
         if not stage_is_complete(event):
@@ -103,9 +112,7 @@ def resume_position(
     if not isinstance(max_iterations, int) or max_iterations < 1:
         raise ValueError("deft_state.json is missing a positive max_iterations")
     mine_unique_only = bool(state.get("mine_unique_only", True))
-    iteration_stages = tuple(
-        stage for stage in ITERATION_STAGES if mine_unique_only or stage != "record_mined_paths"
-    )
+    iteration_stages = iteration_stages_for_mode(mode, mine_unique_only)
     for iteration in range(1, max_iterations + 1):
         iter_label = f"iter_{iteration}"
         gap_event = latest.get((iter_label, "gap_analysis"))

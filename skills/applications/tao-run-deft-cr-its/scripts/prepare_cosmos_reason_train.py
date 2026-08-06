@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Prepare mined annotations and configuration for Cosmos Reason training."""
+"""Prepare derived annotations and configuration for Cosmos Reason training."""
 
 from __future__ import annotations
 
@@ -14,11 +14,16 @@ import pandas as pd
 
 from workflow_common import (
     absolute_path,
+    data_generation_mode,
     dump_toml,
     existing_absolute_path,
+    genai_enabled,
     load_json_array,
     load_toml,
     load_yaml,
+    mining_enabled,
+    normalize_media_path,
+    optional_mapping,
     path_in_workspace,
     require_mapping,
     require_string,
@@ -52,6 +57,8 @@ def build_llava_records(
         )
 
     mined = neighbors[[source_col]].drop_duplicates().rename(columns={source_col: "source_filepath"})
+    if mined.empty:
+        return []
     mined = mined.merge(
         source_metadata,
         left_on="source_filepath",
@@ -118,23 +125,56 @@ def annotation_id(record: dict[str, Any], source: Path, index: int) -> str:
     return value
 
 
+def absolute_video(
+    record: dict[str, Any],
+    source: Path,
+    media_dir: Path | None,
+) -> dict[str, Any]:
+    """Return a copied LLaVA record with an absolute video path."""
+    video = record.get("video")
+    if not isinstance(video, str) or not video:
+        raise ValueError(f"{source}: annotation {record.get('id')!r} is missing non-empty 'video'")
+    if Path(video).is_absolute():
+        video_path = Path(normalize_media_path(video))
+    else:
+        if media_dir is None:
+            raise ValueError(
+                f"{source}: annotation {record.get('id')!r} has relative video path {video!r}; "
+                "provide its media directory"
+            )
+        video_path = Path(normalize_media_path(str(media_dir / video)))
+    copied = dict(record)
+    copied["video"] = str(video_path)
+    return copied
+
+
 def assemble_annotations(
     previous_annotations: Path | None,
-    mined_annotations: Path,
+    current_annotations: list[Path],
+    previous_media_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Merge previous and current mined annotations, deduplicated by LLaVA id."""
-    sources = [path for path in (previous_annotations, mined_annotations) if path is not None]
+    """Merge prior/seed and current derived annotations, deduplicated by LLaVA id."""
+    sources: list[tuple[Path, Path | None, bool]] = []
+    if previous_annotations is not None:
+        sources.append((previous_annotations, previous_media_dir, False))
+    sources.extend((path, None, True) for path in current_annotations)
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for source in sources:
+    current_count = 0
+    for source, media_dir, is_current in sources:
         if not source.is_file():
             raise FileNotFoundError(f"annotation source does not exist: {source}")
-        for index, record in enumerate(load_json_array(source), start=1):
+        source_records = load_json_array(source)
+        if is_current:
+            current_count += len(source_records)
+        for index, record in enumerate(source_records, start=1):
             record_id = annotation_id(record, source, index)
             if record_id in seen:
                 continue
-            records.append(record)
+            records.append(absolute_video(record, source, media_dir))
             seen.add(record_id)
+    if current_count == 0:
+        raise RuntimeError("no new mined or generated annotations were available for this iteration")
     return records
 
 
@@ -212,7 +252,8 @@ def generate_train_toml(
     """Write the Cosmos Reason training TOML for one iteration."""
     config = load_yaml(workflow_yaml)
     kpi_dataset = require_mapping(config, "kpi_dataset")
-    train_dataset = require_mapping(config, "train_dataset")
+    mode = data_generation_mode(config)
+    train_dataset = optional_mapping(config, "train_dataset")
     cosmos_reason = require_mapping(config, "cosmos_reason")
     base_train_toml = existing_absolute_path(
         require_string(cosmos_reason, "cosmos_reason.base_train_toml"),
@@ -220,12 +261,19 @@ def generate_train_toml(
         "cosmos_reason.base_train_toml",
         "file",
     )
-    train_media_dir = existing_absolute_path(
-        require_string(train_dataset, "train_dataset.media_dir"),
-        workspace,
-        "train_dataset.media_dir",
-        "dir",
-    )
+    if genai_enabled(mode):
+        # Generated annotations use absolute paths under per-iteration PAIDF outputs,
+        # while combined mode can also include absolute paths from the source dataset.
+        train_media_dir = workspace
+    else:
+        if train_dataset is None:
+            raise ValueError("train_dataset is required for mining-only training")
+        train_media_dir = existing_absolute_path(
+            require_string(train_dataset, "train_dataset.media_dir"),
+            workspace,
+            "train_dataset.media_dir",
+            "dir",
+        )
     val_annotations = existing_absolute_path(
         require_string(kpi_dataset, "kpi_dataset.annotations_path"),
         workspace,
@@ -265,22 +313,52 @@ def prepare_training(
         raise ValueError("iteration must be >= 1")
     iteration_dir = run_dir / f"iter_{iteration}"
     mined_annotations = iteration_dir / "mining" / "mined_train_annotations.json"
+    generated_annotations = iteration_dir / "genai" / "generated_llava_annotations.json"
     train_annotations = iteration_dir / "train" / "train_annotations.json"
 
-    mined_records = build_llava_records(
-        iteration_dir / "mining" / "mined_neighbors.parquet",
-        run_dir / "embedding_parquets" / "train" / "embeddings.parquet",
-        run_dir / "cosmos_embed_output" / "train" / "lookup.parquet",
-    )
-    write_json_array(mined_annotations, mined_records)
+    config = load_yaml(workflow_yaml)
+    mode = data_generation_mode(config)
+    outputs: dict[str, Path] = {}
+    current_annotations: list[Path] = []
+    if mining_enabled(mode):
+        mined_records = build_llava_records(
+            iteration_dir / "mining" / "mined_neighbors.parquet",
+            run_dir / "embedding_parquets" / "train" / "embeddings.parquet",
+            run_dir / "cosmos_embed_output" / "train" / "lookup.parquet",
+        )
+        write_json_array(mined_annotations, mined_records)
+        current_annotations.append(mined_annotations)
+        outputs["mined_annotations"] = mined_annotations
+    if genai_enabled(mode) and generated_annotations.is_file():
+        current_annotations.append(generated_annotations)
+        outputs["generated_annotations"] = generated_annotations
 
-    previous_annotations = None
+    previous_annotations: Path | None = None
+    previous_media_dir: Path | None = None
     if iteration > 1:
         previous_annotations = run_dir / f"iter_{iteration - 1}" / "train" / "train_annotations.json"
-    assembled_records = assemble_annotations(previous_annotations, mined_annotations)
+    elif mode == "genai":
+        train_dataset = optional_mapping(config, "train_dataset")
+        if train_dataset is not None:
+            previous_annotations = existing_absolute_path(
+                require_string(train_dataset, "train_dataset.annotations_path"),
+                workspace,
+                "train_dataset.annotations_path",
+                "file",
+            )
+            previous_media_dir = existing_absolute_path(
+                require_string(train_dataset, "train_dataset.media_dir"),
+                workspace,
+                "train_dataset.media_dir",
+                "dir",
+            )
+    assembled_records = assemble_annotations(
+        previous_annotations,
+        current_annotations,
+        previous_media_dir,
+    )
     write_json_array(train_annotations, assembled_records)
 
-    config = load_yaml(workflow_yaml)
     checkpoint_path = training_checkpoint(config, workspace, run_dir, iteration)
     train_toml = generate_train_toml(
         workspace,
@@ -290,12 +368,14 @@ def prepare_training(
         train_annotations=train_annotations,
         checkpoint_path=checkpoint_path,
     )
-    return {
-        "mined_annotations": mined_annotations,
-        "train_annotations": train_annotations,
-        "checkpoint": checkpoint_path,
-        "toml": train_toml,
-    }
+    outputs.update(
+        {
+            "train_annotations": train_annotations,
+            "checkpoint": checkpoint_path,
+            "toml": train_toml,
+        }
+    )
+    return outputs
 
 
 def parse_args() -> argparse.Namespace:

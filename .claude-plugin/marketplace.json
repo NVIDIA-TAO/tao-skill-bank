@@ -25,7 +25,7 @@
         "./skills/applications/tao-run-deft-aoi",
         "./skills/applications/tao-run-deft-aoi-cosmos3",
         "./skills/applications/tao-run-deft-iaa",
-        "./skills/applications/tao-run-deft-cr-its-mining",
+        "./skills/applications/tao-run-deft-cr-its",
         "./skills/applications/tao-validate-recipe-transfer",
         "./skills/applications/tao-run-deft-object-detection",
         "./skills/data/tao-mine-nearest-neighbors",

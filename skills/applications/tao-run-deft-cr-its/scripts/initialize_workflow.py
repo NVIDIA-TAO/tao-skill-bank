@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Initialize a DEFT CR ITS mining workflow run and its state snapshot."""
+"""Initialize a DEFT CR ITS workflow run and its state snapshot."""
 
 from __future__ import annotations
 
@@ -15,7 +15,11 @@ from workflow_common import (
     absolute_path,
     atomic_write_json,
     copy_workflow_yaml_to_run_dir,
+    data_generation_mode,
+    genai_enabled,
     load_yaml,
+    mining_enabled,
+    optional_mapping,
     path_in_workspace,
     require_mapping,
     workflow_run_dir,
@@ -25,11 +29,12 @@ from workflow_common import (
 def build_state(workspace: Path, workflow_yaml: Path, run_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     """Create the initial workflow state payload."""
     run = require_mapping(config, "run")
-    mining = require_mapping(config, "mining")
+    mode = data_generation_mode(config)
+    mining = optional_mapping(config, "mining") or {}
     cosmos_reason = require_mapping(config, "cosmos_reason")
     return {
         "version": 1,
-        "workflow": "tao-run-deft-cr-its-mining",
+        "workflow": "tao-run-deft-cr-its",
         "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "workspace": str(workspace),
         "workflow_yaml": str(workflow_yaml),
@@ -37,8 +42,11 @@ def build_state(workspace: Path, workflow_yaml: Path, run_dir: Path, config: dic
         "max_iterations": run["max_iterations"],
         "current_iteration": 0,
         "status": "initialized",
-        "embedding_modality": mining["embeddings_modality"],
-        "mine_unique_only": bool(mining.get("mine_unique_only", True)),
+        "data_generation_mode": mode,
+        "mining_enabled": mining_enabled(mode),
+        "genai_enabled": genai_enabled(mode),
+        "embedding_modality": mining.get("embeddings_modality"),
+        "mine_unique_only": bool(mining.get("mine_unique_only", True)) if mining_enabled(mode) else None,
         "continual_model": bool(cosmos_reason.get("continual_model", False)),
         "baseline_results_json": None,
         "iterations": {},

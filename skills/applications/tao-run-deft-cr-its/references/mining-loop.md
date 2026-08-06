@@ -1,8 +1,8 @@
-# DEFT CR ITS Mining Loop Reference
+# DEFT CR ITS Workflow And Mining Reference
 
-Use this reference when running the iteration loop after the DEFT workspace and `workflow.yaml` have been validated.
+Use this reference for the common baseline, gap-analysis, training, evaluation, and reporting stages. Run the Cosmos Embed and nearest-neighbor sections only when `data_generation.mode` is `mining` or `both`.
 
-Resolve `DEFT_SKILL_ROOT` to the absolute directory containing the installed `tao-run-deft-cr-its-mining/SKILL.md`. The plugin runtime or agent resolves it; never ask the user for this path. Use `run_script()` for bundled helpers when available, otherwise use the direct `python3 "$DEFT_SKILL_ROOT/scripts/<name>.py"` commands below. The user's working directory does not need to be the plugin or repository root.
+Resolve `DEFT_SKILL_ROOT` to the absolute directory containing the installed `tao-run-deft-cr-its/SKILL.md`. The plugin runtime or agent resolves it; never ask the user for this path. Use `run_script()` for bundled helpers when available, otherwise use the direct `python3 "$DEFT_SKILL_ROOT/scripts/<name>.py"` commands below. The user's working directory does not need to be the plugin or repository root.
 
 ## Stage Skills
 
@@ -14,11 +14,12 @@ Read each underlying skill before invoking its stage. The workflow layers iterat
 | Cosmos Embed inference | `tao-finetune-cosmos-embed` | Inference command, image, credentials, mounts, and submitted job. |
 | VLM BCQ gap analysis | `tao-analyze-gaps-vlm-bcq` | Gap spec generation, data-services action, image, and outputs. |
 | Nearest-neighbor mining | `tao-mine-nearest-neighbors` | Default template, spec validation, data-services action, image, and outputs. |
+| PAIDF generation | `paidf-cosmos-predict` | Endpoint verification, generation settings, PAIDF execution, monitoring, and generated/failed handoffs. |
 | Job execution | Selected `tao-run-on-*` platform skill | Resource allocation, submission, status, logs, and terminal-state detection. |
 
 ## Initialization
 
-If the user does not provide custom Cosmos Reason or Cosmos Embed templates, copy them from `$DEFT_SKILL_ROOT/assets/` into `<deft_workspace>/specs/`. Use `tao-mine-nearest-neighbors` to copy its bundled default template when the user does not provide a mining template. Point `workflow.yaml` at the workspace copies.
+If the user does not provide custom Cosmos Reason templates, copy them from `$DEFT_SKILL_ROOT/assets/` into `<deft_workspace>/specs/`. When mining is enabled, also copy the Cosmos Embed template and use `tao-mine-nearest-neighbors` to copy its bundled default template. Point `workflow.yaml` at the workspace copies.
 
 Initialize a run once:
 
@@ -87,6 +88,8 @@ The metrics script reads `response`/`gt` and also accepts `answer`/`ground_truth
 
 ## Mining Embeddings
 
+Skip this entire section when `data_generation.mode` is `genai`.
+
 Prepare fixed KPI/train Cosmos Embed inputs once:
 
 ```bash
@@ -151,7 +154,11 @@ python3 "$DEFT_SKILL_ROOT/scripts/prepare_gap_analysis_predictions.py" \
 
 Invoke `tao-analyze-gaps-vlm-bcq` with `predictions_json=$PREDICTIONS_JSON`, no `videos_dir` because the prepared ids are absolute paths, `results_dir=$RUN_DIR/iter_${ITER}/gaps`, and `output_spec=$RUN_DIR/iter_${ITER}/gaps/vlm_bcq_spec.yaml`. Let that skill use its bundled helper to generate the spec and run the action.
 
-`KPI_ANNOTATIONS_JSON` is `kpi_dataset.annotations_path` from `workflow.yaml`. The preparation script preserves every prediction row and changes only `video_id`; multiple annotation ids may therefore resolve to the same video path while retaining their separate questions. After the submitted container exits successfully, count the valid JSON-object rows in `$RUN_DIR/iter_${ITER}/gaps/kpi_gaps.jsonl` and report that weak-sample count. A missing or empty file after successful completion means there are no weak samples. In that case, log `loop_stop` with reason `no_weak_samples`; otherwise continue with mining. On resume, `resume_position.py` performs this validation and count directly from `kpi_gaps.jsonl`.
+`KPI_ANNOTATIONS_JSON` is `kpi_dataset.annotations_path` from `workflow.yaml`. The preparation script preserves every prediction row and changes only `video_id`; multiple annotation ids may therefore resolve to the same video path while retaining their separate questions. After the submitted container exits successfully, count the valid JSON-object rows in `$RUN_DIR/iter_${ITER}/gaps/kpi_gaps.jsonl` and report that weak-sample count. A missing or empty file after successful completion means there are no weak samples. In that case, log `loop_stop` with reason `no_weak_samples`; otherwise continue with each branch enabled by `data_generation.mode`. On resume, `resume_position.py` performs this validation and count directly from `kpi_gaps.jsonl`.
+
+### Mining Branch
+
+Run steps 2 through 4 only when `data_generation.mode` is `mining` or `both`. For GenAI, follow [genai-loop.md](genai-loop.md) after gap analysis.
 
 2. **Prepare nearest-neighbor mining**:
 
@@ -190,9 +197,9 @@ python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_train.py" \
   --iteration "$ITER"
 ```
 
-Nearest-neighbor output contains only selected source filepaths. The preparation script joins those paths back to the train embeddings parquet to recover each source row's modality, writes `$RUN_DIR/iter_<N>/mining/mined_train_annotations.json`, accumulates it into `$RUN_DIR/iter_<N>/train/train_annotations.json`, and writes `$RUN_DIR/iter_<N>/train/specs/train.toml`. A text source path selects its corresponding train question; a video source path selects every train annotation row whose `video_path` matches. Output records preserve the source `annotation_id` as their LLaVA `id` and are deduplicated by that stable id.
+When mining is enabled, nearest-neighbor output contains selected source filepaths. The preparation script joins those paths back to the train embeddings parquet to recover each source row's modality and writes `$RUN_DIR/iter_<N>/mining/mined_train_annotations.json`. When GenAI is enabled, it also reads `$RUN_DIR/iter_<N>/genai/generated_llava_annotations.json` when that file exists. It merges the enabled current sources with the prior iteration according to `SKILL.md`, writes `$RUN_DIR/iter_<N>/train/train_annotations.json`, and writes `$RUN_DIR/iter_<N>/train/specs/train.toml`. All output video paths are absolute and records are deduplicated by stable LLaVA `id`.
 
-Iteration 1 trains on mined annotations only; `train_dataset.annotations_path` remains a mining source pool and is not inserted directly. Later iterations accumulate the previous iteration's assembled annotations. Iteration 1 starts from `cosmos_reason.baseline_model_path`. Later iterations use the checkpoint recorded in the previous iteration's generated evaluate TOML only when `cosmos_reason.continual_model: true`; otherwise they start from the baseline.
+Mining-only iteration 1 trains on mined annotations only. GenAI-only iteration 1 may seed from the optional initial `train_dataset`; combined mode never inserts that initial dataset. Later iterations accumulate the previous iteration's assembled annotations. Iteration 1 starts from `cosmos_reason.baseline_model_path`. Later iterations use the checkpoint recorded in the previous iteration's generated evaluate TOML only when `cosmos_reason.continual_model: true`; otherwise they start from the baseline.
 
 6. **Train Cosmos Reason**: use `tao-finetune-cosmos-reason` train with `$RUN_DIR/iter_<N>/train/specs/train.toml`. Keep monitoring the submitted job until it reaches terminal success. Do not infer completion from checkpoint files appearing during training.
 

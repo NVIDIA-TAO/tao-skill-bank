@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared helpers for the DEFT CR ITS mining workflow scripts."""
+"""Shared helpers for the DEFT CR ITS workflow scripts."""
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised only on missi
 
 
 MODALITY_CHOICES = ("text", "video", "both")
+DATA_GENERATION_MODES = ("mining", "genai", "both")
 
 
 def absolute_path(path: str | Path) -> Path:
@@ -116,6 +117,14 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    """Write JSON objects as stable JSONL."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 def load_yaml(path: Path) -> dict[str, Any]:
     """Load YAML and require a mapping at the document root."""
     with path.open("r", encoding="utf-8") as handle:
@@ -187,6 +196,16 @@ def require_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
     return value
 
 
+def optional_mapping(payload: dict[str, Any], key: str) -> dict[str, Any] | None:
+    """Return an optional child mapping, rejecting non-mapping values."""
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be an object when provided")
+    return value
+
+
 def require_string(section: dict[str, Any], dotted_key: str) -> str:
     """Return a required non-empty string from a config section."""
     key = dotted_key.rsplit(".", 1)[-1]
@@ -203,6 +222,26 @@ def optional_bool(section: dict[str, Any], dotted_key: str, default: bool) -> bo
     if not isinstance(value, bool):
         raise ValueError(f"{dotted_key} must be true or false")
     return value
+
+
+def data_generation_mode(config: dict[str, Any]) -> str:
+    """Return the required mining/GenAI workflow mode."""
+    section = require_mapping(config, "data_generation")
+    mode = require_string(section, "data_generation.mode")
+    if mode not in DATA_GENERATION_MODES:
+        choices = ", ".join(DATA_GENERATION_MODES)
+        raise ValueError(f"data_generation.mode must be one of: {choices}")
+    return mode
+
+
+def mining_enabled(mode: str) -> bool:
+    """Return whether a workflow mode includes nearest-neighbor mining."""
+    return mode in {"mining", "both"}
+
+
+def genai_enabled(mode: str) -> bool:
+    """Return whether a workflow mode includes PAIDF generation."""
+    return mode in {"genai", "both"}
 
 
 def existing_absolute_path(value: str, workspace: Path, label: str, expected: str) -> Path:
