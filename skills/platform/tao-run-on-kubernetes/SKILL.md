@@ -55,7 +55,11 @@ command -v kubectl >/dev/null 2>&1 || {
 }
 kubectl cluster-info >/dev/null 2>&1 || {
   echo "MISSING: no reachable cluster (kubeconfig at ~/.kube/config, \$KUBECONFIG, or in-pod service account)."
-  echo "Configure kubectl (e.g., 'aws eks update-kubeconfig --name my-cluster') or set \$KUBECONFIG."
+  echo "Configure kubectl for your cluster, or set \$KUBECONFIG:"
+  echo "  EKS: aws eks update-kubeconfig --name <cluster> --region <region>"
+  echo "  GKE: gcloud container clusters get-credentials <cluster> --region <region>"
+  echo "  AKS: az aks get-credentials --resource-group <rg> --name <cluster>"
+  echo "  local: minikube start   (see 'Local cluster' below)"
   exit 1
 }
 
@@ -187,6 +191,51 @@ Same four verbs, plus:
    `cancel` deletes the Job (Foreground) and the Service.
 4. **NCCL probe first** (as SLURM) — a 2-node all-reduce with a timeout; on hang,
    set the cluster NCCL env and re-probe; cache per cluster.
+
+## Local cluster (development, CI, and evals)
+
+A throwaway local cluster is enough to exercise everything except GPU
+execution: manifest admission, the four verbs, job-record wiring, and log
+plumbing. Useful for developing against this skill without burning cluster
+quota, and it is what an agent-driven eval should provision for itself.
+
+```bash
+# minikube — works without Docker (vfkit driver on Apple Silicon; use
+# --driver=docker on Linux/Intel where a daemon is available).
+minikube start --driver=vfkit --cpus=2 --memory=3g
+kubectl get nodes                      # STATUS Ready before submitting
+
+# teardown — the cluster is disposable, delete it when done
+minikube delete
+```
+
+`kind` is an alternative (`kind create cluster` / `kind delete cluster`) but
+requires a working Docker daemon; minikube's vfkit/qemu drivers do not.
+
+**Two things will keep a rendered TAO Job `Pending` on a local cluster.** Both
+are prerequisites, not bugs, and both were confirmed against minikube:
+
+1. **The PVC must exist.** The templates mount `@@PVC_CLAIM@@`; without it the
+   scheduler reports `persistentvolumeclaim "<name>" not found` — and this
+   surfaces *before* any GPU complaint, so it masks the next issue. minikube's
+   default StorageClass binds a plain PVC immediately:
+   ```bash
+   kubectl create -f - <<'EOF'
+   apiVersion: v1
+   kind: PersistentVolumeClaim
+   metadata: {name: edgeai-datasets}
+   spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
+   EOF
+   ```
+2. **GPU capacity must be advertised.** With the PVC satisfied, a Job requesting
+   `nvidia.com/gpu` reports `0/1 nodes are available: 1 Insufficient
+   nvidia.com/gpu` and waits forever. A local cluster has no GPU operator, so
+   either render with `NUM_GPUS=0` for a lifecycle-only check, or install a fake
+   device plugin to test *scheduling* without hardware. Real GPU execution needs
+   a real GPU cluster.
+
+So a local cluster validates **admission and lifecycle**, never GPU execution —
+size any smoke test or eval accordingly.
 
 ## GPU Operator dependency
 
