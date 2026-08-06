@@ -66,6 +66,7 @@
         "./skills/models/tao-finetune-nv-tesseract-ad-diffusion",
         "./skills/models/tao-finetune-nv-tesseract-forecasting",
         "./skills/models/tao-finetune-video-clip",
+        "./skills/models/tao-train-codetr",
         "./skills/platform/tao-run-on-brev",
         "./skills/platform/tao-run-on-virtualenv",
         "./skills/platform/tao-run-on-docker",
