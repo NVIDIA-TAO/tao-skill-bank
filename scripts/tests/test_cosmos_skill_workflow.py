@@ -651,6 +651,13 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert subprocess.run(["sh", "-n"], input=script, text=True).returncode != 0 or "#!/usr/bin/env bash" in script
 
 
+def test_framework_spec_uses_only_current_strict_sft_schema_keys(tmp_path):
+    args = args_for(tmp_path)
+    plan = workflow.build_plan(args)
+    assert "keys_to_exclude" not in plan["spec"]["optimizer"]
+    assert "dcp_async_mode_enabled" not in plan["spec"]["checkpoint"]
+
+
 def test_requeue_rejected(tmp_path):
     args = args_for(tmp_path); args.platform = "slurm"; args.partition = "p"; args.account = "a"; args.use_requeue = True
     args.container_mount = [f"{tmp_path}:{tmp_path}"]
