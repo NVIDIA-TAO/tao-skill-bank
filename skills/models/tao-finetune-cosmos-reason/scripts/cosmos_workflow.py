@@ -1174,7 +1174,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         mount_args, "bash -lc", shlex.quote(wrapped),
     ]))
     lines = [
-        "#!/usr/bin/env bash", "set -Eeuo pipefail", f"#SBATCH --partition={args.partition}",
+        "#!/usr/bin/env bash", f"#SBATCH --partition={args.partition}",
         f"#SBATCH --account={args.account}", f"#SBATCH --nodes={args.nodes}", f"#SBATCH --ntasks={args.nodes}",
         "#SBATCH --ntasks-per-node=1", f"#SBATCH --gpus-per-node={args.gpus_per_node}",
         f"#SBATCH --cpus-per-task={args.cpus_per_task}", f"#SBATCH --time={args.time_limit}", "#SBATCH --no-requeue",
@@ -1187,7 +1187,8 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     if args.exclusive:
         lines.append("#SBATCH --exclusive")
     lines.extend([
-        "", f"mkdir -p {shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id)))}",
+        "", "set -Eeuo pipefail",
+        f"mkdir -p {shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id)))}",
         f"export TAO_CHILD_EXIT_FILE={shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id) / 'child_exit_code'))}",
         env_exports, 'export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)"',
         f"export MASTER_PORT={args.master_port}", "child_rc=0", "set +e", srun, 'child_rc="$?"', "set -e",
