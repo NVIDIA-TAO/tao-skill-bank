@@ -311,7 +311,7 @@ actions:
     upload_excludes:
     - inputs/
   train:
-    command: cosmos-rl --config {config_path} /opt/cosmos_rl/tao_sft_example.py
+    command: cosmos-rl --config {config_path} package://cosmos_rl/tools/custom_hooks/tao_sft_example.py
     config_format: toml
     mode: config
     inputs:
