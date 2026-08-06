@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Generate Cosmos Embed inference specs and lookup files from workflow.yaml.
+"""Prepare Cosmos Embed inference specs and lookup files from workflow.yaml.
 
 Cosmos Embed can race when multiple GPU workers try to download the same Hugging Face
 checkpoint during startup. This script resolves remote HF checkpoints before inference

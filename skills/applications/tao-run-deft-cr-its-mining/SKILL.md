@@ -80,7 +80,7 @@ The run directory layout is:
 └── ...
 ```
 
-`workflow.yaml` is a copy of the high-level config that produced the run. `loop_log.jsonl` is the append-only event source for resume, and every stage-log append atomically refreshes `deft_state.json` as its current snapshot. `baseline/evaluate/` stores the initial evaluation of the baseline model. Each completed evaluation also stores `bcq_accuracy_metrics.json`. The run-level `bcq_accuracy_report.md` and `bcq_accuracy_summary.json` compare the baseline with every completed iteration. `cosmos_embed_output/kpi/` and `cosmos_embed_output/train/` store raw Cosmos Embed setup and inference outputs. `embedding_parquets/kpi/` and `embedding_parquets/train/` store the fixed mining-ready parquet artifacts computed once from the KPI and train datasets. Each `iter_<N>/` directory stores the artifacts for one DEFT improvement iteration.
+`workflow.yaml` is a copy of the high-level config that produced the run. `loop_log.jsonl` is the append-only event source for resume, and every stage-log append atomically refreshes `deft_state.json` as its current snapshot. `baseline/evaluate/` stores the initial evaluation of the baseline model. Each completed evaluation also stores `bcq_accuracy_metrics.json`. The run-level `bcq_accuracy_report.md` and `bcq_accuracy_summary.json` compare the baseline with every completed iteration. `cosmos_embed_output/kpi/` and `cosmos_embed_output/train/` store raw Cosmos Embed preparation and inference outputs. `embedding_parquets/kpi/` and `embedding_parquets/train/` store the fixed mining-ready parquet artifacts computed once from the KPI and train datasets. Each `iter_<N>/` directory stores the artifacts for one DEFT improvement iteration.
 
 ### Workflow Configuration
 
@@ -135,12 +135,12 @@ If the user does not provide custom Cosmos Reason or Cosmos Embed templates, cop
 Initialize a run once after validation:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/init_deft_cr_mining_state.py" \
+python3 "$DEFT_SKILL_ROOT/scripts/initialize_workflow.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml"
 ```
 
-Use the printed `run_dir` as `RUN_DIR` for every later command. If `run.name` is `null`, never ask another setup script to derive the run directory again; pass `--run-dir "$RUN_DIR"` so all stages write into the initialized run.
+Use the printed `run_dir` as `RUN_DIR` for every later command. If `run.name` is `null`, never ask another preparation script to derive the run directory again; pass `--run-dir "$RUN_DIR"` so all stages write into the initialized run.
 
 Do not use `--force` for an ordinary resume. It rewrites the state/config snapshot but intentionally leaves `loop_log.jsonl` and all stage artifacts in place. Use it only to repair the snapshot for the same run; choose a new `run.name` for a clean restart. Before resuming, run `$DEFT_SKILL_ROOT/scripts/resume_position.py --run-dir "$RUN_DIR"` and continue from the reported stage.
 
@@ -152,22 +152,22 @@ Run baseline evaluation once before the DEFT iteration loop. This evaluates `cos
 
 Initialize mining embeddings once before the DEFT iteration loop. The KPI and train datasets are fixed for the run, so their Cosmos Embed outputs are reusable across all iterations.
 
-Use `scripts/setup_for_cosmos_embed.py` to prepare the Cosmos Embed inference specs from `workflow.yaml`. The KPI dataset requires the modality or modalities selected by `mining.embeddings_modality`; the train dataset always requires text and video. If the user provides a complete dataset Parquet under `mining.embedding_parquets.kpi` or `.train`, the setup script stages it at `$RUN_DIR/embedding_parquets/<dataset>/embeddings.parquet` and generates no inference specs for that dataset. While staging, it remaps text embedding identifiers from the source run's question files to the current run's lookup by question content; embeddings and video identifiers are preserved. If the dataset value is `null` or omitted, the script generates every required modality spec for that dataset. Partial per-modality reuse is not supported. If `mining.cosmos_embed_checkpoint_path` is an absolute local path, the script uses it for generated specs. If it is a remote Hugging Face model id, with or without the `hf_model://` prefix, the script downloads or reuses it under `<deft_workspace>/hf_cache` and writes the local downloaded checkpoint path into the generated inference specs. If the field is `null`, the script uses `nvidia/Cosmos-Embed1-224p`.
+Use `scripts/prepare_cosmos_embed_inference.py` to prepare the Cosmos Embed inference specs from `workflow.yaml`. The KPI dataset requires the modality or modalities selected by `mining.embeddings_modality`; the train dataset always requires text and video. If the user provides a complete dataset Parquet under `mining.embedding_parquets.kpi` or `.train`, the preparation script stages it at `$RUN_DIR/embedding_parquets/<dataset>/embeddings.parquet` and generates no inference specs for that dataset. While staging, it remaps text embedding identifiers from the source run's question files to the current run's lookup by question content; embeddings and video identifiers are preserved. If the dataset value is `null` or omitted, the script generates every required modality spec for that dataset. Partial per-modality reuse is not supported. If `mining.cosmos_embed_checkpoint_path` is an absolute local path, the script uses it for generated specs. If it is a remote Hugging Face model id, with or without the `hf_model://` prefix, the script downloads or reuses it under `<deft_workspace>/hf_cache` and writes the local downloaded checkpoint path into the generated inference specs. If the field is `null`, the script uses `nvidia/Cosmos-Embed1-224p`.
 
-The script downloads remote HF checkpoints before Cosmos Embed runs because Cosmos Embed startup can race when `inference.num_gpus > 1` and multiple workers try to download the same model at once. If both combined dataset Parquets are provided, the setup script does not need the checkpoint and does not download it.
+The script downloads remote HF checkpoints before Cosmos Embed runs because Cosmos Embed startup can race when `inference.num_gpus > 1` and multiple workers try to download the same model at once. If both combined dataset Parquets are provided, the preparation script does not need the checkpoint and does not download it.
 
-Use `scripts/setup_for_cosmos_embed.py` once. It prepares both the KPI dataset and the train dataset:
+Use `scripts/prepare_cosmos_embed_inference.py` once. It prepares both the KPI dataset and the train dataset:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/setup_for_cosmos_embed.py" \
+python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_embed_inference.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml" \
   --run-dir "$RUN_DIR"
 ```
 
-The setup script prepares only the missing embedding specs under the initialized `RUN_DIR`. Initialization owns the `$RUN_DIR/workflow.yaml` snapshot; this stage does not derive a new run or overwrite that snapshot.
+The preparation script writes only the missing embedding specs under the initialized `RUN_DIR`. Initialization owns the `$RUN_DIR/workflow.yaml` snapshot; this stage does not derive a new run or overwrite that snapshot.
 
-For each dataset without a supplied combined Parquet, the setup script writes all required modality-specific inference specs under `cosmos_embed_output/<dataset>/specs/`, creates raw Cosmos Embed result directories, stages text questions as files for stable joins, and writes `lookup.parquet`. After inference, the conversion script gathers those separate modality outputs into one mining-facing file per dataset. Each row contains `filepath`, `embedding`, and `modality`:
+For each dataset without a supplied combined Parquet, the preparation script writes all required modality-specific inference specs under `cosmos_embed_output/<dataset>/specs/`, creates raw Cosmos Embed result directories, stages text questions as files for stable joins, and writes `lookup.parquet`. After inference, the conversion script gathers those separate modality outputs into one mining-facing file per dataset. Each row contains `filepath`, `embedding`, and `modality`:
 
 ```text
 $RUN_DIR/embedding_parquets/kpi/embeddings.parquet
@@ -178,7 +178,7 @@ The KPI parquet contains only the selected modality or modalities. The train par
 
 ### Run Cosmos Embed Inference
 
-Use the `tao-finetune-cosmos-embed` skill's inference action for each generated inference spec. That model skill owns the Cosmos Embed container image, action command, credentials, and platform-specific mount behavior. This workflow skill owns only the generated specs and the downstream conversion into mining-ready parquet files. Do not run inference or conversion for a dataset whose combined Parquet was supplied and staged during setup. See `references/mining-loop.md` for exact commands, permission repair, and conversion.
+Use the `tao-finetune-cosmos-embed` skill's inference action for each generated inference spec. That model skill owns the Cosmos Embed container image, action command, credentials, and platform-specific mount behavior. This workflow skill owns only the generated specs and the downstream conversion into mining-ready parquet files. Do not run inference or conversion for a dataset whose combined Parquet was supplied and staged during preparation. See `references/mining-loop.md` for exact commands, permission repair, and conversion.
 
 The generated lookup Parquet uses `annotation_id` for the original LLaVA `id` and `video_path` for resolved media. Do not rename either column to `video_id`; that external field belongs to Cosmos Reason and gap-analysis records.
 
@@ -191,26 +191,25 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 | Stage | Complete when |
 | --- | --- |
 | `validate_workflow` | `verify_workflow_yaml.py` exits successfully. |
-| `init_state` | `$RUN_DIR/workflow.yaml` and `$RUN_DIR/deft_state.json` exist. |
+| `initialize_workflow` | `$RUN_DIR/workflow.yaml` and `$RUN_DIR/deft_state.json` exist. |
 | `baseline_evaluate` | The evaluate job exits successfully, exactly one baseline `results.json` is found, and `baseline/evaluate/bcq_accuracy_metrics.json` exists. |
-| `setup_embeddings` | Each dataset has a lookup parquet and either all required Cosmos Embed specs or a staged combined embedding Parquet. |
+| `prepare_cosmos_embed_inference` | Each dataset has a lookup parquet and either all required Cosmos Embed specs or a staged combined embedding Parquet. |
 | `cosmos_embed` | Every generated Cosmos Embed inference spec has completed successfully through the underlying skill. |
 | `convert_embeddings` | `embedding_parquets/{kpi,train}/embeddings.parquet` exist; train contains both modalities and KPI contains the selected modalities. |
-| `gap_analysis` | `$RUN_DIR/iter_<N>/gaps/predictions.json` exists, the container exits successfully, and `gap_status.json` records the weak-sample count. |
-| `build_mining_target` | One target parquet, optional filtered source parquet, and one nearest-neighbor spec exist. |
+| `gap_analysis` | `$RUN_DIR/iter_<N>/gaps/predictions.json` exists and the container exits successfully. The workflow counts valid rows directly from `kpi_gaps.jsonl`; missing or empty output after successful completion means zero weak samples. |
+| `prepare_nearest_neighbor_mining` | One target parquet, optional filtered source parquet, and one nearest-neighbor spec exist. |
 | `mine_nearest_neighbors` | One mined-neighbor parquet and mining summary exist. |
 | `record_mined_paths` | When `mine_unique_only` is true, `$RUN_DIR/mining/mined_paths_log.parquet` exists; otherwise the stage is logged as skipped. |
-| `build_llava_from_mining` | `$RUN_DIR/iter_<N>/mining/mined_train_annotations.json` exists. |
-| `assemble_train_annotations` | `$RUN_DIR/iter_<N>/train/train_annotations.json` exists and is valid JSON. |
-| `train` | Cosmos Reason training job exits successfully and `latest-checkpoint` returns a checkpoint path. |
-| `evaluate` | Cosmos Reason evaluation job exits successfully, exactly one iteration `results.json` is found, and its `bcq_accuracy_metrics.json` exists. |
+| `prepare_cosmos_reason_train` | Mined and accumulated LLaVA annotations plus `train/specs/train.toml` exist. |
+| `train` | The Cosmos Reason training job reaches terminal success. |
+| `evaluate` | Evaluation preparation finds the latest completed training checkpoint, the evaluation job exits successfully, exactly one iteration `results.json` is found, and its `bcq_accuracy_metrics.json` exists. |
 | `loop_stop` | Stop reason is logged and `bcq_accuracy_report.md` plus `bcq_accuracy_summary.json` compare the baseline with every completed iteration. |
 
 ## Troubleshooting
 
 **Prediction id does not match an annotation**: Confirm the evaluation used the same KPI annotations configured by `kpi_dataset.annotations_path`. Every Cosmos Reason result `video_id` must match a LLaVA annotation `id` or an already-resolved annotation `video` path.
 
-**No target embeddings matched**: Check that `gaps/predictions.json` and gap-analysis `video_id` paths match the KPI LLaVA media paths used during embedding setup. Text mode also requires the question text to match after removing `<video>` and trailing “Answer with yes or no.”
+**No target embeddings matched**: Check that `gaps/predictions.json` and gap-analysis `video_id` paths match the KPI LLaVA media paths used during embedding preparation. Text mode also requires the question text to match after removing `<video>` and trailing “Answer with yes or no.”
 
 **Mined neighbors do not join to train lookup**: Confirm every mined `filepath` exists in `embedding_parquets/train/embeddings.parquet`. Its `modality` determines whether the path must match train `lookup.parquet` `filepath` for text or `video_path` for video.
 
