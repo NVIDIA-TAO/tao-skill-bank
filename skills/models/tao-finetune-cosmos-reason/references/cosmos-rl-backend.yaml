@@ -41,10 +41,10 @@ configuration:
     forbidden_legacy_fields: [dim, alpha, dropout]
 dataset_families:
   video_conversation:
-    hook: /opt/cosmos_rl/tao_sft_example.py
+    hook: package://cosmos_rl/tools/custom_hooks/tao_sft_example.py
     runtime_inputs: [train_annotation, train_media_root, validation_annotation, validation_media_root]
   task_aware_video_reasoning:
-    hook: /opt/cosmos_rl/tao_vl_reason_daft_sft_example.py
+    hook: package://cosmos_rl/tools/custom_hooks/tao_vl_reason_daft_sft_example.py
     format_package: nvidia-tao-daft
     runtime_inputs: [train_annotations, train_media_roots, validation_annotations, validation_media_roots, task_selection]
 parallelism:
