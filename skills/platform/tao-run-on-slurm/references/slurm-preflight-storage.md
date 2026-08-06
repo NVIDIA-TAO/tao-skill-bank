@@ -158,8 +158,8 @@ handler via `SSH_AUTH_SOCK`.
   below; do not bury this behind several alternate choices.
 - **SSH_AUTH_SOCK** (advanced fallback): SSH agent socket with an accepted key
   already loaded. Prefer `SSH_KEY_PATH` in user-facing remediation prompts.
-- **SLURM_BASE_RESULTS_DIR** (optional): Base shared filesystem path. Default
-  convention from `tao-core` is `/lustre/fsw/portfolios/edgeai/users/<user>`.
+- **SLURM_BASE_RESULTS_DIR** (required for tracked Cosmos workflows): Base
+  shared filesystem path supplied explicitly at runtime; there is no site default.
 - **SLURM_ACCOUNT** (usually required by site policy): Account charged by
   `#SBATCH --account`.
 
@@ -197,18 +197,18 @@ dataset paths. Prefer shared filesystem URIs:
 
 Accept either dataset roots or direct spec-key paths:
 
-- Root mode: `/lustre/.../<model>/train`, which model skills map to required
+- Root mode: `<SHARED_TRAIN_ROOT>`, which model skills map to required
   files such as `<root>/annotations.json` and `<root>` as media path.
 - Direct spec mode: exact fields such as
-  `custom.train_dataset.annotation_path=/lustre/.../train.json` and
-  `custom.train_dataset.media_path=/lustre/.../videos.tar.gz`.
+  `custom.train_dataset.annotation_path=<TRAIN_ANNOTATION_PATH>` and
+  `custom.train_dataset.media_path=<TRAIN_MEDIA_PATH>`.
 
 After passwordless SSH succeeds and before generating scripts, validate each
 required dataset file/path from the login host:
 
 ```bash
 ssh -o BatchMode=yes <SLURM_USER>@<working-login-host> \
-  'test -e /lustre/.../annotations.json && test -e /lustre/.../media_or_archive'
+  'test -e <ANNOTATION_PATH> && test -e <MEDIA_PATH>'
 ```
 
 If the remote `test -e` fails, stop and ask for corrected paths or for the data
@@ -239,13 +239,11 @@ If you have not set up passwordless access yet:
 After that, rerun with SSH_KEY_PATH=~/.ssh/id_ed25519.
 ```
 
-Results default to:
+Results are supplied at runtime, for example:
 
 ```text
-/lustre/fsw/portfolios/edgeai/<your-dir>/results/<job_id>
+<SHARED_RESULTS_ROOT>/<job_id>
 ```
-
-`<your-dir>` is your per-user directory on the cluster's Lustre share.
 
 The runner sets `TAO_API_RESULTS_DIR` to the parent results directory because
 container code appends the job id when writing status and artifacts.

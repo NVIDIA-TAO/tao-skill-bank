@@ -37,7 +37,7 @@ resource_defaults:
   timeout_hours: 3.8
   max_time_hours: 4
   partition: polar,polar3,polar4,grizzly
-  container_mounts: /lustre
+  container_mounts: runtime-supplied
   use_sqsh: true
   sqsh_conversion_partition: cpu
   sqsh_conversion_timeout_minutes: 30

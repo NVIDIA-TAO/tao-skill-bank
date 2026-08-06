@@ -71,9 +71,6 @@
         "train"
       ],
       "automl_default_parameters": [
-        "policy.lora.lora_alpha",
-        "policy.lora.lora_dropout",
-        "policy.lora.r",
         "train.optm_weight_decay",
         "train.optm_decay_type",
         "train.optm_lr",
@@ -81,7 +78,7 @@
       ],
       "automl_enabled": true,
       "model": "tao-finetune-cosmos-reason",
-      "network_arch": "cosmos-rl",
+      "network_arch": "cosmos-reason",
       "supported_actions": [
         {
           "action": "evaluate",
@@ -109,9 +106,6 @@
         {
           "action": "train",
           "automl_default_parameters": [
-            "policy.lora.lora_alpha",
-            "policy.lora.lora_dropout",
-            "policy.lora.r",
             "train.optm_weight_decay",
             "train.optm_decay_type",
             "train.optm_lr",

@@ -2,6 +2,10 @@
 
 Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or platform/model skills, the current/compact source wins.
 
+This is the Cosmos-RL backend supplement. First resolve the shared frontend
+with `scripts/cosmos_workflow.py`; do not use this reference to select a
+backend. Plain Nano/Edge SFT may resolve to Cosmos Framework.
+
 ## Launch Intake Reminder
 
 When prompting for Cosmos-RL train or AutoML data, list the actual spec keys as
@@ -17,10 +21,10 @@ For root mode, explain the automatic mapping: `train_root` maps to
 `custom.train_dataset.media_path=train_root`; `eval_root` maps the same way for
 `custom.val_dataset`.
 
-Before train or AutoML runner generation, read the pinned action=train
-container image from `references/skill_info.yaml` (`container_image`), show the
-exact image to the user, and ask whether to use it or override with
-`image=<override>`. Do not silently launch on the default image. This skill does not package a
+Before train or AutoML runner generation, resolve the Cosmos-RL backend
+contract and its pinned action image, show the exact image to the user, and ask
+whether to use it or override with `image=<override>`. Do not read the shared
+top-level fallback as the plain-SFT default. This skill does not package a
 `skills/models/tao-finetune-cosmos-reason/config.json` file.
 
 The same metadata declares model-level GPU host minimums. They override the
@@ -45,10 +49,10 @@ shared helper:
 
 ```bash
 scripts/check_tao_launch_preflight.py --platform slurm \
-  --path train_annotation=/lustre/.../train/annotations.json \
-  --path train_media=/lustre/.../train \
-  --path val_annotation=/lustre/.../eval/annotations.json \
-  --path val_media=/lustre/.../eval \
+  --path train_annotation=<TRAIN_ANNOTATION_PATH> \
+  --path train_media=<TRAIN_MEDIA_ROOT> \
+  --path val_annotation=<VALIDATION_ANNOTATION_PATH> \
+  --path val_media=<VALIDATION_MEDIA_ROOT> \
   --gpu-min-total-memory-gb 256 \
   --gpu-arch-allowlist cosmos_rl=sm_80,sm_90,sm_100,sm_103,sm_103a,sm_120
 ```
@@ -94,8 +98,8 @@ preflight helper.
 The production recommendation remains at least 4 GPUs with 80GB-class memory.
 A single high-memory GB300 is also supported when the selected image passes
 architecture introspection and the spec sets
-`policy.parallelism.dp_shard_size=1`; apply the WTS/GB300 guards in
-`cosmos-reason-wts-gb300.md` when that workflow is selected. A remote image
+`policy.parallelism.dp_shard_size=1`; apply the single-GPU video guards in
+`cosmos-reason-single-gpu-video.md` when that profile is selected. A remote image
 manifest that advertises `linux/arm64` only proves CPU architecture support; it
 does not prove CUDA SM support. `sm_121` must be blocked for this image unless
 direct runtime validation confirms support or the user chooses a compatible
@@ -203,7 +207,7 @@ scripts/check_tao_launch_preflight.py --platform <platform> \
 ```
 
 The packaged train/evaluate/inference/quantize templates default to
-`hf_model://nvidia/Cosmos3-Nano` for base-model fields. Override that only when
+the user-supplied immutable model URI or local path for base-model fields. Resolve it only when
 the user provides a different HuggingFace model id, `hf_model://...` URI, or
 cluster-local snapshot path.
 

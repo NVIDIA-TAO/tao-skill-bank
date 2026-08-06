@@ -1383,6 +1383,25 @@ def check_slurm(
     else:
         working_host = hosts[0]
 
+    if not skip_access:
+        runtime_command = (
+            "command -v sbatch >/dev/null && "
+            "command -v srun >/dev/null && "
+            "command -v sacct >/dev/null && "
+            "command -v enroot >/dev/null && "
+            "srun --help 2>&1 | grep -q -- --container-image"
+        )
+        result = run(ssh_command(working_host, runtime_command), timeout=30)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            reason = detail[-1] if detail else f"exit {result.returncode}"
+            print(
+                "Remote SLURM/Pyxis/Enroot preflight failed: "
+                f"host={working_host}: {reason}"
+            )
+            return False
+        print(f"Remote SLURM/Pyxis/Enroot tools OK: {working_host}")
+
     for label, raw_path in paths:
         path = normalize_local_path(raw_path)
         if path is None:

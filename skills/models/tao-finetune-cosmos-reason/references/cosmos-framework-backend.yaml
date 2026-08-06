@@ -1,0 +1,128 @@
+schema_version: 2
+backend: cosmos-framework
+display_name: Cosmos Framework
+native_source_repository: cosmos-framework
+tao_integration_repository: cosmos-rl
+container_image:
+  policy: repository_derived
+  runtime_input: image_tag
+  no_historical_default: true
+build:
+  stages:
+  - owner: cosmos-framework
+    dockerfile: Dockerfile
+    purpose: native trainer, callbacks, exporter, model and dataset support
+    required_build_args: [SOURCE_COMMIT, SOURCE_TREE, SOURCE_DIRTY, BUILD_TIMESTAMP]
+  - owner: cosmos-rl
+    dockerfile: Dockerfile
+    purpose: TAO evaluate/inference adapter and DAFT/TAO packages
+    required_build_args:
+    - COSMOS_FRAMEWORK_BASE_IMAGE
+    - ACTIONS_COMMIT
+    - ACTIONS_TREE
+    - DAFT_COMMIT
+    - DAFT_TREE
+    - TAO_CORE_COMMIT
+    - TAO_CORE_TREE
+    - EXPECTED_FRAMEWORK_COMMIT
+    - SOURCE_DIRTY
+    - BUILD_TIMESTAMP
+  clean_source_required: true
+  provenance_file: /opt/tao/image-provenance.json
+runtime:
+  shell: /bin/bash
+  python: /workspace/.venv/bin/python
+  torchrun: /workspace/.venv/bin/torchrun
+  working_directory: /workspace
+  non_root_executable_required: true
+  video_decoder: torchcodec_cuda
+configuration:
+  format: toml
+  schema: cosmos_framework.configs.toml_config.sft_config
+  entrypoint: python -m cosmos_framework.scripts.train --sft-toml=<config>
+  unknown_keys: forbidden
+dataset_families:
+  video_conversation:
+    native_adapter: cosmos_framework.configs.base.reasoner.experiment.tao_video_sft.VideoConversationDataset
+    runtime_inputs: [train_annotation, train_media_root, validation_annotation, validation_media_root]
+  task_aware_video_reasoning:
+    native_adapter: cosmos_framework.data.generator.local_datasets.tao_vl_reason.TaoVlReasonDaftDataset
+    format_package: nvidia-tao-daft
+    runtime_inputs: [train_annotations, train_media_roots, validation_annotations, validation_media_roots, task_selection]
+parallelism:
+  shard_degree: gpus_per_node
+  replicate_degree: nodes
+  global_world_size: nodes_times_gpus_per_node
+checkpoint:
+  input: public_hf_safetensors
+  accepted_inputs: [qwen3_vl_hf_safetensors, cosmos3_edge_public_hf_snapshot]
+  public_checkpoint_is_immutable: true
+  workload_specific_processor_overlay: forbidden
+  output: torch_distributed_checkpoint
+  cadence: epoch
+  async_multinode: disabled
+  exact_key_exporter: cosmos_framework.scripts.export_vlm_dcp
+  exported_format: merged_hf_safetensors
+  action_preparation:
+    orchestrator: scripts/framework_checkpoint_action.py
+    applies_before: [evaluate, inference, inference_microservice]
+    detection: distinguish complete HF safetensors from Framework DCP by structure
+    default_export_dir: derived from the runtime checkpoint location and DCP-plus-config fingerprint
+    resources: one task and one GPU in the selected repository-derived action image
+    idempotency: reuse only after manifest, DCP metadata, config, base-model, revision, and weight validation
+    peft: reconstruct adapters from the saved Framework config and export merged safetensors
+    failure_behavior: block the requested action and preserve any invalid prior export for recovery
+status:
+  native_callback: cosmos_framework.callbacks.tao_status.TAOStatusCallback
+  structured_only: true
+  metrics:
+  - train/avg_loss
+  - train/loss_numerator
+  - train/valid_label_count
+  - val/avg_loss
+  - val/loss_numerator
+  - val/valid_label_count
+  events: [started, validation_complete, checkpoint_complete, training_complete, success, failure]
+actions:
+  train: {supported: true, implementation: native}
+  export:
+    supported: true
+    implementation: native_exact_key_exporter
+    orchestrator: scripts/framework_checkpoint_action.py
+    command: python -m cosmos_framework.scripts.export_vlm_dcp
+  evaluate:
+    supported: true
+    implementation: tao_integration_adapter_after_verified_export
+    pre_action: export_if_framework_dcp
+    command: cosmos-framework-evaluate --config <config>
+  inference:
+    supported: true
+    implementation: tao_integration_adapter_after_verified_export
+    pre_action: export_if_framework_dcp
+    command: cosmos-framework-inference <arguments>
+  inference_microservice:
+    supported: true
+    implementation: tao_integration_adapter_after_verified_export
+    pre_action: export_if_framework_dcp
+    command: cosmos-framework-inference-microservice <arguments>
+  quantize: {supported: false, reason: no validated Framework checkpoint quantization route}
+compatibility:
+  a100_qwen3_vl_patch_embed: native_per_model_linear_equivalent
+  worker_zero_prefetch: num_workers_zero_and_prefetch_none
+  storage_dependencies: optional_for_local_shared_filesystem_runs
+  host_source_mount: forbidden
+model_profiles:
+  cosmos3_edge:
+    source: public_huggingface_checkpoint
+    immutable_revision_required_for_uri: true
+    alternate_checkpoint_required: false
+    checkpoint_mutation: forbidden
+    runtime_defaults:
+      frames: 6
+      frame_width: 1280
+      frame_height: 720
+      max_video_pixels: 5529600
+      sequence_length: 16000
+      attention_implementation: flash_attention_2
+    environment_binding: TAO_VIDEO_MAX_PIXELS
+    provenance: base model and processor profile are fingerprinted separately
