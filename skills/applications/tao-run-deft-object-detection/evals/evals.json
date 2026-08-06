@@ -1,0 +1,33 @@
+[
+  {
+    "id": "tao-run-deft-object-detection-basic",
+    "question": "A user request: \"Use the tao-run-deft-object-detection skill to improve my Grounding DINO model.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
+    "expected_skill": "tao-run-deft-object-detection",
+    "expected_script": null,
+    "ground_truth": "Identify tao-run-deft-object-detection as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
+    "expected_behavior": [
+      "Identifies tao-run-deft-object-detection as the relevant skill",
+      "States that the baseline runs inference then kpi_analyze against a zero-shot checkpoint and does NOT train",
+      "Lists the seven iteration stages in order: gap_analysis, embed, mine, stage, train, inference, kpi_analyze",
+      "Mentions the single user gate at the Pre-Flight Summary before the loop becomes autonomous",
+      "Notes that mAP is reported rather than gated, so the loop runs to max_iterations",
+      "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-run-deft-object-detection-stage-skills",
+    "question": "Reading only the tao-run-deft-object-detection skill documentation, which underlying TAO skills does each of its iteration stages invoke, and which stages are bundled glue rather than a skill? Do NOT run any commands, scripts, or web searches.",
+    "expected_skill": "tao-run-deft-object-detection",
+    "expected_script": null,
+    "ground_truth": "gap_analysis uses tao-analyze-gaps-od-map; embed uses tao-generate-image-embeddings; mine uses tao-mine-od-images; train and inference use tao-train-grounding-dino; kpi_analyze uses tao-analyze-detection-kpi. The stage step is bundled glue with no leaf skill.",
+    "expected_behavior": [
+      "Maps gap_analysis to tao-analyze-gaps-od-map",
+      "Maps embed to tao-generate-image-embeddings",
+      "Maps mine to tao-mine-od-images",
+      "Maps train and inference to tao-train-grounding-dino",
+      "Maps kpi_analyze to tao-analyze-detection-kpi",
+      "Identifies the stage step as bundled glue with no underlying skill",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]
