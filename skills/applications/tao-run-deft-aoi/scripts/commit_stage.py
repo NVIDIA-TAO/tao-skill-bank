@@ -203,7 +203,15 @@ def _apply_success(
                     args.mining_parquet,
                     "--mining-parquet",
                 ),
+                "mining_candidate_parquet": (
+                    args.mining_candidates,
+                    "--mining-candidates",
+                ),
                 "mining_summary": (args.mining_summary, "--mining-summary"),
+                "mining_history_summary": (
+                    args.mining_history_summary,
+                    "--mining-history-summary",
+                ),
                 "mining_target_embeddings": (
                     args.mining_target_embeddings,
                     "--mining-target-embeddings",
@@ -226,6 +234,11 @@ def _apply_success(
                 phase[field] = _require_within(
                     _required_file(path, flag), phase_root, flag
                 )
+            phase["mining_history"] = _require_within(
+                _required_file(args.mining_history, "--mining-history"),
+                results_dir,
+                "--mining-history",
+            )
             if args.mining_count is None or args.mining_count < 0:
                 raise ValueError("--mining-count is required and must be >= 0")
             phase["mining_mined_count"] = args.mining_count
@@ -392,7 +405,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--anomalygen-sdg", type=pathlib.Path)
     parser.add_argument("--anomalygen-allocation", type=pathlib.Path)
     parser.add_argument("--mining-parquet", type=pathlib.Path)
+    parser.add_argument("--mining-candidates", type=pathlib.Path)
     parser.add_argument("--mining-summary", type=pathlib.Path)
+    parser.add_argument("--mining-history", type=pathlib.Path)
+    parser.add_argument("--mining-history-summary", type=pathlib.Path)
     parser.add_argument("--mining-target-embeddings", type=pathlib.Path)
     parser.add_argument("--mining-source-embeddings", type=pathlib.Path)
     parser.add_argument("--mining-target-log", type=pathlib.Path)

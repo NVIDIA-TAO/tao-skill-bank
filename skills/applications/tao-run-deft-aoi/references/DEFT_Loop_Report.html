@@ -293,7 +293,7 @@
           <td class="num pos">total (sdg + mined)</td>
         </tr>
       sdg_count   = rows in mining_pool.csv where source == sdg_pool (all AnomalyGen output)
-      mined_count = rows in mining_pool.csv where source == mined (cosine similarity ≥ 0.9)
+      mined_count = novel rows in mining_pool.csv where source == mined after cosine + cross-iteration history filtering
       total       = sdg_count + mined_count
 
   {{ METRIC_Y_STEPS_JSON }}

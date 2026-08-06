@@ -286,8 +286,11 @@ For each `iterN` when the frozen Benchmark gate is unmet:
    record with `scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
    the driving Proxy RCCA recorded zero false accepts, and even then generating
    is often still worthwhile — see `references/paidf-anomalygen.md`.
-3. `data_mining` — invoke `tao-mine-aoi-images`, then apply the configured
-   cosine floor with `scripts/filter_mined_by_cosine.py`.
+3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
+   floor with `scripts/filter_mined_by_cosine.py`, then run the mapped skill's
+   history-aware post-processing so a filepath selected by a prior iteration
+   cannot enter Train again. The default top-K remains 5; preserve an explicit
+   user value and increase it only when the history summary shows low novelty.
 4. `assemble_data` — align mined target paths to Mining source prompts,
    golden references, and exact labels with `scripts/emit_mined_sharegpt.py`;
    create `train_iter_1.json` from the mined and synthetic records only after
@@ -331,7 +334,8 @@ Commit an error stage and do not auto-retry for: invalid disk state; a rich or
 non-exact training label; a JSONL or non-array annotation input; an
 an unconverted Cosmos Reason 3 checkpoint still in native Omni format at a
 Cosmos-RL boundary;
-missing/ambiguous mined-to-source alignment; target overlap among
+missing/ambiguous mined-to-source alignment; missing/tampered mining history,
+cross-iteration mined filepath duplication; target overlap among
 Proxy/Benchmark/Mining; a generated Train target outside Mining and AnomalyGen
 output, or overlapping Proxy/Benchmark; a changed Benchmark hash; any Benchmark
 error used for routing; missing/empty mining output; a failed or empty

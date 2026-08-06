@@ -185,6 +185,11 @@ def build_state(args: argparse.Namespace) -> dict:
                 "top_k_per_target": args.top_k_per_target,
                 "metric": args.knn_metric,
                 "min_similarity": args.min_similarity,
+                "history_aware": {
+                    "enabled": True,
+                    "identity": "filepath",
+                    "history_file": str(rd / "mining_history.json"),
+                },
             },
         },
         "iterations": {},

@@ -4,16 +4,29 @@
 from __future__ import annotations
 
 import csv
+import json
 import pathlib
 import sys
 import tempfile
 import unittest
+
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 import audit_deft_run  # noqa: E402
+
+DATA_SKILL_SCRIPTS = (
+    SKILL_ROOT.parents[1]
+    / "data"
+    / "tao-mine-aoi-images"
+    / "scripts"
+)
+sys.path.insert(0, str(DATA_SKILL_SCRIPTS))
+import filter_mined_history  # noqa: E402
 
 
 TRAIN_COLUMNS = [
@@ -161,6 +174,162 @@ class ChangeNetMonotonicAuditTests(unittest.TestCase):
 
             self.assertTrue(
                 any("one row per combined Train row" in error for error in errors)
+            )
+
+    def test_history_audit_accepts_disjoint_iteration_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            history = root / "mining_history.json"
+            state = {
+                "config": {
+                    "mining_filter": {
+                        "top_k_per_target": 25,
+                        "history_aware": {
+                            "enabled": True,
+                            "history_file": str(history),
+                        },
+                    }
+                }
+            }
+            phases = []
+            for iteration, values in (
+                (1, ["a.png", "b.png"]),
+                (2, ["b.png", "c.png"]),
+            ):
+                directory = root / f"iter{iteration}"
+                directory.mkdir()
+                candidates = directory / "mined_candidates.parquet"
+                output = directory / "mined.parquet"
+                summary = directory / "mining_history_summary.json"
+                pq.write_table(pa.table({"filepath": values}), candidates)
+                result = filter_mined_history.select_novel_samples(
+                    candidate_parquet=candidates,
+                    output_parquet=output,
+                    history_file=history,
+                    summary_file=summary,
+                    iteration=iteration,
+                    topn=25,
+                )
+                phases.append(
+                    {
+                        "mining_history": str(history),
+                        "mining_history_summary": str(summary),
+                        "mining_candidate_parquet": str(candidates),
+                        "mining_mined_parquet": str(output),
+                        "mining_mined_count": result["selected_count"],
+                    }
+                )
+
+            errors: list[str] = []
+            audit_deft_run._mining_history_proof(
+                "iter2", phases[1], state, 2, 1, errors
+            )
+
+            self.assertEqual(errors, [])
+
+    def test_history_audit_rejects_cross_iteration_reselection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            history = root / "mining_history.json"
+            candidates = root / "iter1/mined_candidates.parquet"
+            output = root / "iter1/mined.parquet"
+            summary = root / "iter1/mining_history_summary.json"
+            candidates.parent.mkdir()
+            pq.write_table(pa.table({"filepath": ["a.png"]}), candidates)
+            result = filter_mined_history.select_novel_samples(
+                candidate_parquet=candidates,
+                output_parquet=output,
+                history_file=history,
+                summary_file=summary,
+                iteration=1,
+                topn=25,
+            )
+            ledger = json.loads(history.read_text())
+            duplicate = dict(ledger["iterations"][0])
+            duplicate["iteration"] = 2
+            duplicate["selected_filepaths"] = ["a.png"]
+            ledger["iterations"].append(duplicate)
+            history.write_text(json.dumps(ledger))
+            state = {
+                "config": {
+                    "mining_filter": {
+                        "top_k_per_target": 25,
+                        "history_aware": {
+                            "enabled": True,
+                            "history_file": str(history),
+                        },
+                    }
+                }
+            }
+            errors: list[str] = []
+
+            audit_deft_run._mining_history_proof(
+                "iter1",
+                {
+                    "mining_history": str(history),
+                    "mining_history_summary": str(summary),
+                    "mining_candidate_parquet": str(candidates),
+                    "mining_mined_parquet": str(output),
+                    "mining_mined_count": result["selected_count"],
+                },
+                state,
+                1,
+                1,
+                errors,
+            )
+
+            self.assertTrue(any("reselects 1 prior" in error for error in errors))
+
+    def test_history_audit_rejects_ledger_output_identity_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            history = root / "mining_history.json"
+            candidates = root / "iter1/mined_candidates.parquet"
+            output = root / "iter1/mined.parquet"
+            summary = root / "iter1/mining_history_summary.json"
+            candidates.parent.mkdir()
+            pq.write_table(pa.table({"filepath": ["a.png"]}), candidates)
+            result = filter_mined_history.select_novel_samples(
+                candidate_parquet=candidates,
+                output_parquet=output,
+                history_file=history,
+                summary_file=summary,
+                iteration=1,
+                topn=25,
+            )
+            ledger = json.loads(history.read_text())
+            ledger["iterations"][0]["selected_filepaths"] = ["other.png"]
+            history.write_text(json.dumps(ledger))
+            state = {
+                "config": {
+                    "mining_filter": {
+                        "top_k_per_target": 25,
+                        "history_aware": {
+                            "enabled": True,
+                            "history_file": str(history),
+                        },
+                    }
+                }
+            }
+            errors: list[str] = []
+
+            audit_deft_run._mining_history_proof(
+                "iter1",
+                {
+                    "mining_history": str(history),
+                    "mining_history_summary": str(summary),
+                    "mining_candidate_parquet": str(candidates),
+                    "mining_mined_parquet": str(output),
+                    "mining_mined_count": result["selected_count"],
+                },
+                state,
+                1,
+                1,
+                errors,
+            )
+
+            self.assertTrue(
+                any("disagree with the final mined parquet" in error for error in errors)
             )
 
 

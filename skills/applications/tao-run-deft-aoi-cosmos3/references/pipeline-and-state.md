@@ -70,7 +70,13 @@ count against `max_iterations`.
    `references/paidf-anomalygen.md`.
 3. Invoke `tao-mine-aoi-images` on the recorded Mining pool. Persist raw mined
    paths and source/target embeddings under the current iteration.
-4. Run `filter_mined_by_cosine.py`; a zero-row result is a hard stop.
+4. Run `filter_mined_by_cosine.py` into `mined_candidates.parquet`; a zero-row
+   result is a hard stop. Then run the mapped skill's
+   `filter_mined_history.py` to remove filepaths selected by every prior
+   iteration and write the final `mined_filtered.parquet`, per-iteration
+   summary, and run-level ledger. A zero-row novel result is also a hard stop;
+   surface the recommendation to increase top-K above the default 5 or expand the
+   Mining pool.
 5. Run `emit_mined_sharegpt.py` to align every mined path to exactly one Mining
    source record. It inherits the source prompt, golden reference, and exact
    label.

@@ -23,6 +23,24 @@ MODEL_ROOT = (
     SKILL_ROOT.parents[1] / "models" / "tao-finetune-cosmos-reason"
 )
 sys.path.insert(0, str(SCRIPTS))
+DATA_MINING_SCRIPTS = (
+    SKILL_ROOT.parents[1] / "data" / "tao-mine-aoi-images" / "scripts"
+)
+sys.path.insert(0, str(DATA_MINING_SCRIPTS))
+
+# The ChangeNet DEFT skill has scripts with the same top-level module names.
+# Pytest may collect that suite first in one interpreter; clear only those
+# ambiguous imports before loading the Cosmos3-local state machine modules.
+for module_name in (
+    "audit_deft_run",
+    "commit_stage",
+    "init_deft_state",
+    "log_stage",
+    "metric_contract",
+    "record_metric_result",
+    "render_report",
+):
+    sys.modules.pop(module_name, None)
 
 import analyze_gaps  # noqa: E402
 import assemble_training_json  # noqa: E402
@@ -32,6 +50,7 @@ import commit_stage  # noqa: E402
 import emit_mined_sharegpt  # noqa: E402
 import emit_sdg_sharegpt  # noqa: E402
 import filter_mined_by_cosine  # noqa: E402
+import filter_mined_history  # noqa: E402
 import init_deft_state  # noqa: E402
 import patch_eval_image_cap  # noqa: E402
 import validate_sharegpt  # noqa: E402
@@ -1440,9 +1459,22 @@ class StateMachineTests(unittest.TestCase):
             mining_dir = results / "iter1/mining"
             mining_dir.mkdir(parents=True)
             mined = mining_dir / "mined_filtered.parquet"
+            mining_candidates = mining_dir / "mined_candidates.parquet"
+            mining_history_summary = mining_dir / "mining_history_summary.json"
+            mining_history = results / "mining_history.json"
             source_embeddings = mining_dir / "source_embeddings.parquet"
             target_embeddings = mining_dir / "target_embeddings.parquet"
-            pq.write_table(pa.table({"filepath": ["mining.png"]}), mined)
+            pq.write_table(
+                pa.table({"filepath": ["mining.png"]}), mining_candidates
+            )
+            history_result = filter_mined_history.select_novel_samples(
+                candidate_parquet=mining_candidates,
+                output_parquet=mined,
+                history_file=mining_history,
+                summary_file=mining_history_summary,
+                iteration=1,
+                topn=5,
+            )
             embedding_table = pa.table(
                 {"filepath": ["mining.png"], "embedding": [[1.0, 0.0]]}
             )
@@ -1457,14 +1489,20 @@ class StateMachineTests(unittest.TestCase):
                 "data_mining",
                 "--mining-parquet",
                 str(mined),
+                "--mining-candidates",
+                str(mining_candidates),
                 "--mining-summary",
                 str(mining_summary),
+                "--mining-history",
+                str(mining_history),
+                "--mining-history-summary",
+                str(mining_history_summary),
                 "--mining-target-embeddings",
                 str(target_embeddings),
                 "--mining-source-embeddings",
                 str(source_embeddings),
                 "--mining-count",
-                "1",
+                str(history_result["selected_count"]),
             )
 
             assemble_dir = results / "iter1/assemble"
@@ -1546,6 +1584,9 @@ class StateMachineTests(unittest.TestCase):
             iter2_sdg_csv = write_sdg_output(
                 results / "iter2/anomalygen/sdg", ["PCB+bridge_00001"]
             )
+            iter2_allocation = write_json(
+                results / "iter2/anomalygen/sdg/allocation.json", {"bridge": 1}
+            )
             iter2_synthetic = results / "iter2/anomalygen/sdg_sharegpt.json"
             self.assertEqual(
                 emit_sdg_sharegpt.main(
@@ -1567,6 +1608,8 @@ class StateMachineTests(unittest.TestCase):
                 "anomalygen",
                 "--anomalygen-sdg",
                 str(iter2_sdg_csv),
+                "--anomalygen-allocation",
+                str(iter2_allocation),
                 "--anomalygen-sharegpt",
                 str(iter2_synthetic),
             )
@@ -1574,6 +1617,12 @@ class StateMachineTests(unittest.TestCase):
             iter2_mining_dir = results / "iter2/mining"
             iter2_mining_dir.mkdir(parents=True)
             iter2_mined = iter2_mining_dir / "mined_filtered.parquet"
+            iter2_mining_candidates = (
+                iter2_mining_dir / "mined_candidates.parquet"
+            )
+            iter2_history_summary = (
+                iter2_mining_dir / "mining_history_summary.json"
+            )
             iter2_source_embeddings = (
                 iter2_mining_dir / "source_embeddings.parquet"
             )
@@ -1581,7 +1630,16 @@ class StateMachineTests(unittest.TestCase):
                 iter2_mining_dir / "target_embeddings.parquet"
             )
             pq.write_table(
-                pa.table({"filepath": ["mining_iter2.png"]}), iter2_mined
+                pa.table({"filepath": ["mining_iter2.png"]}),
+                iter2_mining_candidates,
+            )
+            iter2_history_result = filter_mined_history.select_novel_samples(
+                candidate_parquet=iter2_mining_candidates,
+                output_parquet=iter2_mined,
+                history_file=mining_history,
+                summary_file=iter2_history_summary,
+                iteration=2,
+                topn=5,
             )
             iter2_embedding_table = pa.table(
                 {
@@ -1600,14 +1658,20 @@ class StateMachineTests(unittest.TestCase):
                 "data_mining",
                 "--mining-parquet",
                 str(iter2_mined),
+                "--mining-candidates",
+                str(iter2_mining_candidates),
                 "--mining-summary",
                 str(iter2_mining_summary),
+                "--mining-history",
+                str(mining_history),
+                "--mining-history-summary",
+                str(iter2_history_summary),
                 "--mining-target-embeddings",
                 str(iter2_target_embeddings),
                 "--mining-source-embeddings",
                 str(iter2_source_embeddings),
                 "--mining-count",
-                "1",
+                str(iter2_history_result["selected_count"]),
             )
 
             iter2_assemble_dir = results / "iter2/assemble"

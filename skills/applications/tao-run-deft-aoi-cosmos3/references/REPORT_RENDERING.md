@@ -56,7 +56,10 @@ Required sections:
    candidates, cosine-kept paths. AnomalyGen: requested `num_SDG`,
    AMP-allocated (the sum of the committed `allocation.json`), generated, and
    the per-defect-type breakdown, or the documented skip and its reason. Then
-   batch-unique target images and cumulative training records by iteration.
+   mining candidates, already-mined rejects, newly selected novel target
+   images, and cumulative training records by iteration. Read the
+   per-iteration history summary and run-level ledger; surface any
+   recommendation to increase top-K or expand the pool.
 8. **Artifacts** — baseline base-model reference, iteration checkpoints,
    Proxy/Benchmark results, RCCA, mining, AnomalyGen `SDG_result.csv`,
    `allocation.json`, and generated ShareGPT, assembled JSON, and
