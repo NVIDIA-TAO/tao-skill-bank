@@ -1,6 +1,6 @@
 network_arch: tao-analyze-detection-kpi
 type: data
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.1-rc-200-x86  # versions-key: images.tao_toolkit.data_services
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.1-rc-200-x86  # unpinned: held at the build this skill is validated against; repin once 7.1.0-data-services is confirmed to carry the action
 gpu_spec_key: null
 required_credentials: []
 actions:
