@@ -44,6 +44,19 @@ this bank), `PI_KIT_TURN_BUDGET` optional.
 - Authored against `tao-run-automl` with the 7.0.1 AutoMLRunner wheel
   (DockerSDK path: explicit `mounts` required via platform kwargs), VCN
   classify on an AOI workspace, Pi harness.
+- **Known drift vs the current bank (measured live):** the runner builds rec
+  specs from the bank's `tao-train-visual-changenet` spec template, which now
+  includes `train.checkpointer` and targets the bank's current image pin
+  (`tao-toolkit:7.1.0-pyt` in `versions.yaml`). This pack's default
+  `TRAIN_IMG` is the validated-era `6.26.3-pyt`, whose schema rejects that
+  key — every recommendation fails at Hydra schema merge ("Key 'checkpointer'
+  not in 'CNTrainExpConfig'"), the runner marks `runner_finished FAIL`, and
+  the driver halts (verified: removing that one key from the same rec spec
+  trains normally on 6.26.3). Remedy: set `TRAIN_IMG` to the image generation
+  the bank's spec template targets (currently 7.1.0-pyt) and re-validate, or
+  run against a bank checkout whose template matches your pinned image.
+  Baseline eval (card 10) is unaffected — it copies `$WS/specs/baseline_spec.yaml`,
+  not the bank template.
 - The dataset/model specifics (VCN classify spec fields, AOI CSV layout) are
   baked into the cards — that is what makes them cheap to execute. For a
   different network or dataset, re-author the pack (kit skill → authoring
