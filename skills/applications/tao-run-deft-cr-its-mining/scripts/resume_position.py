@@ -29,6 +29,7 @@ ITERATION_STAGES = (
     "prepare_cosmos_reason_train",
     "train",
     "evaluate",
+    "cleanup_cosmos_reason_training",
 )
 
 

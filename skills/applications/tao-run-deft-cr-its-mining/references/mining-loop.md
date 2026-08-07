@@ -217,6 +217,15 @@ python3 "$DEFT_SKILL_ROOT/scripts/compute_bcq_accuracy_metrics.py" \
 
 Report the printed accuracy, balanced accuracy, false-positive count, false-negative count, and unparseable count in the iteration update. Log both files as `evaluate` artifacts. The evaluate stage is not complete until `bcq_accuracy_metrics.json` exists. Use `ITERATION_RESULTS_JSON` as the next iteration's `PREVIOUS_RESULTS_JSON`.
 
+8. **Clean Cosmos Reason training checkpoints**: after evaluation and metric computation complete, remove the large resumable Cosmos-RL checkpoints while retaining the exported safetensors used by later iterations:
+
+```bash
+python3 "$DEFT_SKILL_ROOT/scripts/cleanup_cosmos_reason_training.py" \
+  --train-dir "$RUN_DIR/iter_${ITER}/train"
+```
+
+The command removes only `<timestamp>/checkpoints/` and its `best/checkpoints` link. It preserves every `<timestamp>/safetensors/epoch_<N>` export, training logs, specs, and annotations. It refuses to delete anything unless at least one safetensors epoch export exists, and writes `$RUN_DIR/iter_<N>/train/checkpoint_cleanup.json`. Log that report as the `cleanup_cosmos_reason_training` artifact before starting the next iteration. If Docker ownership prevents cleanup, restore write access to the iteration train directory with `restore_docker_mount_permissions.py` and the Cosmos Reason image, then retry this stage.
+
 ## Final Accuracy Report
 
 After the loop stops because it reached `max_iterations` or found no weak samples, generate the baseline/iteration report. Also generate it after a failed run when baseline metrics are available, so completed evaluations are not lost from the final account.
@@ -245,4 +254,5 @@ This writes `$RUN_DIR/bcq_accuracy_report.md` and `$RUN_DIR/bcq_accuracy_summary
 | `prepare_cosmos_reason_train` | Mined and accumulated LLaVA annotations plus `train/specs/train.toml` exist. |
 | `train` | The Cosmos Reason training job reaches terminal success. |
 | `evaluate` | Evaluation preparation finds the latest completed training checkpoint, the evaluation job exits successfully, exactly one iteration `results.json` is found, and its `bcq_accuracy_metrics.json` exists. |
+| `cleanup_cosmos_reason_training` | `train/checkpoint_cleanup.json` exists, all timestamped `checkpoints/` directories and `best/checkpoints` links are absent, and the listed safetensors exports still exist. |
 | `loop_stop` | Stop reason is logged; the run-level Markdown and JSON accuracy reports cover the baseline and every completed iteration. |
