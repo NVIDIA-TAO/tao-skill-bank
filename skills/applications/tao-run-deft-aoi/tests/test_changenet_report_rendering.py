@@ -488,6 +488,11 @@ class ReportRenderingTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(rc, 0)
+            state = json.loads((results / "deft_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["config"]["images_dir"],
+                str((root / "workspace" / "images").resolve()),
+            )
             report = results / "DEFT_Loop_Report.html"
             self.assertTrue(report.is_file())
             self.assertIn("IN PROGRESS", report.read_text(encoding="utf-8"))

@@ -35,7 +35,7 @@ file — keeping them in sync is the script's job.
   },
   "iteration":      "iter1",
   "backbone":       "/abs/path/to/c_radio_v2_b.ckpt",
-  "images_dir":     "/abs/path/to/kpi/images",
+  "images_dir":     "/abs/path/to/workspace/images",
   "training_spec":  "/abs/path/to/baseline_spec.yaml"
 }
 ```

@@ -17,7 +17,7 @@ template (`references/baseline_spec.yaml`), and offer to scaffold the tree.
 | `train/base/training_set.csv` | Seed training rows using the four mandatory ChangeNet columns below. ~200 rows is a normal first-run size. |
 | `train/base/validation_set.csv` | Held-out rows, same schema. Must not overlap training (the loop hard-stops on leakage). |
 | `kpi/testing_set.csv` | KPI test rows, same schema. This is what FAR / recall is measured on. |
-| `kpi/images/` | The actual image files referenced by every CSV above (real inspection captures + their golden references). |
+| `images/` | The canonical image root referenced by every CSV above (real inspection captures + their golden references). |
 | `.env` | `NGC_KEY` + `HF_TOKEN`. Copy `.env.example`. |
 
 **Auto-fetched on first use (do not pre-stage unless air-gapped):** the
@@ -45,17 +45,17 @@ creates (paths under `<workspace>` unless absolute):
 ```text
 <workspace>/
 ├── .env                                     # NGC_KEY (nvcr.io/* pulls for all manifest-resolved images), HF_TOKEN (HuggingFace pre-flight pulls)
+├── images/                                  # canonical real-image root shared by train, validation, KPI, and mining CSVs
+│   └── golden/images/                       # golden/reference component crops
 ├── specs/baseline_spec.yaml                 # ChangeNet train/eval spec
 ├── train/base/
 │   ├── training_set.csv                     # seed training rows; four mandatory ChangeNet columns
 │   └── validation_set.csv                   # held-out rows; checked for leakage against every train CSV
 ├── kpi/
-│   ├── images/                              # KPI test images (real data only — no generated images here)
-│   └── testing_set.csv                      # labels live in the CSV
+│   └── testing_set.csv                      # labels live in the CSV; paths resolve against <workspace>/images
 ├── augmentation/
 │   ├── mining_pool/
-│   │   ├── mining_pool.csv                  # append-only production-line samples; paths relative to this dir
-│   │   └── images/                          # source images referenced by mining_pool.csv (e.g. *_SolderLight.jpg)
+│   │   └── mining_pool.csv                  # append-only production-line samples; VCN paths resolve against <workspace>/images
 │   └── anomalygen/                          # [Optional] User override slots for AnomalyGen assets.
 │       │                                    # If pre-staged, the loop uses these host paths verbatim.
 │       │                                    # If absent, the paidf-anomalygen skill handles asset acquisition
@@ -87,6 +87,13 @@ matters — keep `PASS` exactly, lowercase + strip everything else (see
 in the CSV: `{light}` is a key in `dataset.classify.input_map` (for example,
 `SolderLight`), and `{image_ext}` is `dataset.classify.image_ext` (for example,
 `.jpg`).
+
+The canonical host image directory is `<workspace>/images`. A legacy
+`<workspace>/kpi/images` directory or symlink is accepted only as a fallback;
+Pre-Flight resolves the real path once, records it as `config.images_dir`, and
+every Docker launch mounts that recorded directory. Do not require the legacy
+symlink and do not infer that images are present from a stale workspace
+snapshot.
 
 Example row:
 ```

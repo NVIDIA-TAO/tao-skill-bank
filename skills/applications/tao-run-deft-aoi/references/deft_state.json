@@ -25,7 +25,7 @@
     "training_csv": "/home/user/workspace/train/base/training_set.csv",
     "validation_csv": "/home/user/workspace/train/base/validation_set.csv",
     "kpi_test_csv": "/home/user/workspace/kpi/testing_set.csv",
-    "images_dir": "/home/user/workspace/kpi/images",
+    "images_dir": "/home/user/workspace/images",
     "mining_pool_csv": "/home/user/workspace/augmentation/mining_pool/mining_pool.csv",
     "backbone_weight_dir": "/home/user/workspace/augmentation/backbone",
     "train_container": "<resolved from versions.yaml::images.tao_toolkit.pyt at init time>",

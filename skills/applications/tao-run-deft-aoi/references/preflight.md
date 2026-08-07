@@ -6,6 +6,16 @@ Resolve everything possible before asking the user. In order:
 
 1. Locate workspace root, specs, CSVs, checkpoints, augmentation assets. Derive a timestamped run directory: `RESULTS_DIR=<workspace>/results/run_$(date +%Y%m%d_%H%M%S)`. If resuming an existing run, set `RESULTS_DIR` to the existing run directory instead (detect by checking for `results/run_*/deft_state.json`). All references to `results/` throughout this skill mean `${RESULTS_DIR}/`.
 
+   **Resolve the real-image root before any Docker launch.** Prefer the
+   canonical `<workspace>/images`; accept `<workspace>/kpi/images` only as a
+   legacy fallback. Resolve symlinks, export the absolute result as
+   `IMAGES_DIR`, and hard-stop if neither directory exists. Run
+   `scripts/validate_training_csv.py` against each base CSV with
+   `--workspace-root "$IMAGES_DIR"` so at least the CSV-declared input and
+   golden paths are proven to resolve on disk. `init_deft_state.py` records the
+   same resolved directory as `config.images_dir`; all ChangeNet containers
+   must mount that state value rather than reconstructing a path from `kpi/`.
+
    **Host Python deps.** The DEFT loop needs `pandas`, `numpy`, `matplotlib` (KPI analysis), `pyarrow` (parquet I/O for routing and mining), `huggingface_hub` (backbone staging), and `boto3` (S3 ops). Verify with `python3 -c "import pandas, numpy, matplotlib, pyarrow, huggingface_hub, boto3"`. If any are missing, set up a venv:
    ```bash
    python3 -m venv ~/.venvs/deft

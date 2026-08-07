@@ -25,7 +25,9 @@ If `routing_mining_parquet` is absent from `deft_state.json` or the file does no
 
 The only valid source is `<workspace>/augmentation/mining_pool/mining_pool.csv`
 plus its declared source images and golden-pair contract. If that CSV is absent
-or empty, stop in Pre-Flight. Never scan `kpi/images/` to invent source rows.
+or empty, stop in Pre-Flight. Resolve its VCN row paths against
+`state.config.images_dir`; never scan the workspace image tree to invent source
+rows.
 For selected PASS rows in OK-only source pools, stage the source OK image as the
 golden pair when no separate golden tree exists; for selected non-PASS rows,
 missing golden files remain a hard stop.

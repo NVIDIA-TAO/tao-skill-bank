@@ -123,6 +123,19 @@ def _resolve_anomalygen_checkpoint_dir(ws: pathlib.Path, project: str) -> pathli
     return base
 
 
+def _resolve_workspace_images_dir(ws: pathlib.Path) -> pathlib.Path:
+    """Resolve the canonical real-image root with legacy-layout fallback."""
+    canonical = ws / "images"
+    if canonical.is_dir():
+        return canonical.resolve()
+    legacy = ws / "kpi" / "images"
+    if legacy.is_dir():
+        return legacy.resolve()
+    # Keep a deterministic canonical path so Pre-Flight reports the missing
+    # input instead of silently recording the obsolete legacy location.
+    return canonical.resolve()
+
+
 def build_state(args: argparse.Namespace) -> dict:
     ws = args.workspace.resolve()
     rd = args.results_dir.resolve()
@@ -144,7 +157,7 @@ def build_state(args: argparse.Namespace) -> dict:
             "training_csv": str(ws / "train" / "base" / "training_set.csv"),
             "validation_csv": str(ws / "train" / "base" / "validation_set.csv"),
             "kpi_test_csv": str(ws / "kpi" / "testing_set.csv"),
-            "images_dir": str(ws / "kpi" / "images"),
+            "images_dir": str(_resolve_workspace_images_dir(ws)),
             "mining_pool_csv": str(
                 ws / "augmentation" / "mining_pool" / "mining_pool.csv"
             ),
