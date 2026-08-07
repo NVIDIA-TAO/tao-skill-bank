@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Recorder hook (PostToolUse, matcher: Bash) — append every substantive
 # executed command to the run's commands.log so later sessions and later runs
 # LOAD AND RUN instead of re-deriving.

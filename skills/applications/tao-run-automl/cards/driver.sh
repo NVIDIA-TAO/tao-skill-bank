@@ -38,7 +38,9 @@ MODEL=${MODEL:-nim/nvidia/qwen/qwen3.6-35b-a3b:off}
 export WS SB VENV TRAIN_IMG
 export PI_KIT_WS="$WS"
 export PI_KIT_RUN_PREFIX="automl2_"
-export PI_KIT_TURN_BUDGET=${PI_KIT_TURN_BUDGET:-90}
+# 120 clears every legitimately-completed session measured in the study
+# while still killing 300-700-call wedges.
+export PI_KIT_TURN_BUDGET=${PI_KIT_TURN_BUDGET:-120}
 
 PI_FLAGS=(-p -na --system-prompt "$SYSPROMPT"
   --tools read,bash,edit,write --no-context-files --no-skills --no-extensions
@@ -123,6 +125,12 @@ ${CMDS:-<none>}"
   # recorder's commands.log: it is harness telemetry, appended even on stuck
   # rounds, and counting it would defeat the 5-round no-progress abort.
   NEWF=$(find "$RD" -newer "$RUN_HOME/.round_marker" -type f ! -name 'commands.log' 2>/dev/null | head -1)
+  # Grace before counting no-progress: a detached launch can take a few seconds
+  # to appear in docker ps after the session exits.
+  if [ "$after" -eq "$before" ] && ! working && [ -z "$NEWF" ]; then
+    sleep 20
+    NEWF=$(find "$RD" -newer "$RUN_HOME/.round_marker" -type f ! -name 'commands.log' 2>/dev/null | head -1)
+  fi
   if [ "$after" -eq "$before" ] && ! working && [ -z "$NEWF" ]; then
     noop=$((noop+1)); echo "[a-driver] no progress ($noop)" >> "$LOG"
     [ $noop -ge 5 ] && { echo "[a-driver] ABORT: 5 no-progress rounds" >> "$LOG"; exit 1; }

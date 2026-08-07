@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Tokenomics accounting for Pi agent session JSONL files.
 
 Implements docs/MEASURE_FIRST.md from the tokenomics repo against Pi's session

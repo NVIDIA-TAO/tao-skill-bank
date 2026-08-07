@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Guard hook (PreToolUse, matcher: Bash) — block known dead ends BEFORE the
 # agent burns tokens on them.
 #

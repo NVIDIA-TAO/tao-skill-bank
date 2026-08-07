@@ -59,13 +59,16 @@ the driver or a helper script.
 ## Quick start — run a shipped card pack
 
 ```bash
+# plugin installs export TAO_SKILL_BANK_PATH automatically; standalone users set it first:
+export TAO_SKILL_BANK_PATH=/path/to/tao-skill-bank
+
 # one-time: scaffold ~/.tao-kit/kit.env and check harness prerequisites
 bash "$TAO_SKILL_BANK_PATH/skills/core/tao-token-efficient-execution/scripts/install.sh"
 
 # edit ~/.tao-kit/kit.env: set WS (and VENV for the AutoML pack) and MODEL;
 # export your provider's API key in your shell — never put it in kit.env.
-# then launch a pack driver detached:
-nohup bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-automl/cards/driver.sh" > /dev/null 2>&1 &
+# then launch a pack driver detached (leave stderr attached: config errors print immediately):
+nohup bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-automl/cards/driver.sh" > /dev/null &
 
 # monitor
 tail -f ~/.tao-kit/automl/driver.log

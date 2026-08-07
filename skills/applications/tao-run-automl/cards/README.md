@@ -29,8 +29,9 @@ on the last ok mark, and halts when the latest mark is a FAIL (no auto-retry).
 ## Run it
 
 ```bash
-# prerequisites: kit install done, WS + VENV set in ~/.tao-kit/kit.env, API key exported
-nohup bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-automl/cards/driver.sh" > /dev/null 2>&1 &
+# prerequisites: kit install done, WS + VENV set in ~/.tao-kit/kit.env, API key exported.
+# Standalone (no plugin): export TAO_SKILL_BANK_PATH=/path/to/tao-skill-bank first.
+nohup bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-automl/cards/driver.sh" > /dev/null &
 tail -f ~/.tao-kit/automl/driver.log
 ```
 
