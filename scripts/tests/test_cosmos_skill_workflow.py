@@ -403,6 +403,32 @@ def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
         assert plan["training"]["exposed_train_samples"] == 48
         assert plan["training"]["optimizer_updates"] == 6
     assert framework["spec"]["trainer"]["max_iter"] == 6
+    assert rl["cache_prewarm"]["required"] is False
+    assert rl["spec"]["train"]["train_policy"]["enable_dataset_cache"] is False
+    assert rl["spec"]["validation"]["enable_dataset_cache"] is False
+    assert "require_complete_dataset_cache" not in rl["spec"]["train"]["train_policy"]
+    assert "cache_dir" not in rl["spec"]["custom"]["vision"]
+    assert rl["spec"]["train"]["optm_impl"] == "fused"
+
+
+def test_task_aware_constant_schedule_keeps_lr_factor_at_one(tmp_path):
+    framework_args = args_for(
+        tmp_path / "framework", backend="cosmos-framework",
+        dataset_family="task_aware_video_reasoning",
+    )
+    rl_args = args_for(
+        tmp_path / "rl", backend="cosmos-rl",
+        dataset_family="task_aware_video_reasoning",
+    )
+    framework_args.scheduler = "constant"
+    rl_args.scheduler = "constant"
+
+    framework = workflow.build_plan(framework_args)
+    rl = workflow.build_plan(rl_args)
+
+    assert framework["spec"]["scheduler"]["f_min"] == [1.0]
+    assert rl["spec"]["train"]["optm_decay_type"] == "none"
+    assert rl["spec"]["train"]["optm_min_lr_factor"] == 1.0
 
 
 def test_task_aware_smoke_limit_counts_logical_records_before_expansion(tmp_path):
