@@ -25,8 +25,9 @@ waits on container activity, and halts on committed errors (no auto-retry).
 
 ```bash
 # prerequisites: kit install done (see the kit skill), WS set in ~/.tao-kit/kit.env,
-# workspace prepared per ../SKILL.md (NV_PCB_Siamese layout), API key exported
-nohup bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/cards/driver.sh" > /dev/null 2>&1 &
+# workspace prepared per ../SKILL.md (NV_PCB_Siamese layout), API key exported.
+# Standalone (no plugin): export TAO_SKILL_BANK_PATH=/path/to/tao-skill-bank first.
+nohup bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/cards/driver.sh" > /dev/null &
 tail -f ~/.tao-kit/deft-aoi/driver.log
 ```
 

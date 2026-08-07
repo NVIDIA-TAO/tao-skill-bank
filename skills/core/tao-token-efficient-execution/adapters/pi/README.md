@@ -22,5 +22,7 @@ blocked and what to do instead.
 
 Set by pack drivers; set them yourself only when running sessions by hand:
 `PI_KIT_TURN_BUDGET`, `PI_KIT_RD`, `PI_KIT_WS`, `PI_KIT_RUN_PREFIX`,
-`PI_KIT_RECORD_PATTERNS` (bare `WS`/`RD`/`ITER` are honored as fallbacks when
-the `PI_KIT_*` names are unset, for hand-run sessions).
+`PI_KIT_RECORD_PATTERNS`. For hand-run sessions the guard also honors bare
+`RD`/`ITER` and the recorder honors bare `WS`; the recorder deliberately
+trusts only `PI_KIT_RD` for the run dir (a bare-RD fallback could misfile
+records into a previous run's commands.log).

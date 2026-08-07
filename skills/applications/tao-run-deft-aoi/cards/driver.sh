@@ -43,7 +43,9 @@ SYSPROMPT="You are a precise task executor operating in a bash environment on a 
 MODEL=${MODEL:-nim/nvidia/qwen/qwen3.6-35b-a3b:off}
 export WS TRAIN_IMG DS_IMG SKILL_ROOT DPY
 export PI_KIT_WS="$WS"
-export PI_KIT_TURN_BUDGET=${PI_KIT_TURN_BUDGET:-90}
+# 120 clears every legitimately-completed session measured in the study
+# (heaviest DEFT stage: 117 calls) while still killing 300-700-call wedges.
+export PI_KIT_TURN_BUDGET=${PI_KIT_TURN_BUDGET:-120}
 
 PI_FLAGS=(-p -na --system-prompt "$SYSPROMPT"
   --tools read,bash,edit,write --no-context-files --no-skills --no-extensions
@@ -143,6 +145,9 @@ ${CMDS:-<none>}"
   before=$( [ -f "$RD/loop_log.jsonl" ] && wc -l < "$RD/loop_log.jsonl" || echo 0 )
   timeout 2400 pi "${PI_FLAGS[@]}" --model "$MODEL" "$PROMPT" >> "$LOG" 2>&1
   after=$( [ -f "$RD/loop_log.jsonl" ] && wc -l < "$RD/loop_log.jsonl" || echo 0 )
+  # Grace before counting no-progress: a card's detached docker launch can take
+  # a few seconds to appear in docker ps after the session exits (observed live).
+  if [ "$after" -eq "$before" ] && ! working; then sleep 20; fi
   if [ "$after" -eq "$before" ] && ! working; then
     noop=$((noop+1)); echo "[driver] no progress ($noop consecutive)" >> "$LOG"
     [ $noop -ge 5 ] && { echo "[driver] ABORT: 5 no-progress rounds" >> "$LOG"; exit 1; }
