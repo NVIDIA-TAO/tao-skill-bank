@@ -19,13 +19,16 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
 import pathlib
+import posixpath
 import re
 import subprocess
 import sys
+from collections import Counter
 from typing import Any
 
 from metric_contract import (
@@ -58,9 +61,13 @@ PATH_FIELDS = {
     "routing_mining_parquet",
     "routing_anomalygen_parquet",
     "anomalygen_sdg_csv",
+    "anomalygen_allocation_json",
     "mining_mined_parquet",
+    "mining_candidate_parquet",
     "mining_parquet",  # legacy field: accepted but still checked
     "mining_summary",
+    "mining_history",
+    "mining_history_summary",
     "mining_target_embeddings",
     "mining_source_embeddings",
     "mining_target_log",
@@ -84,9 +91,14 @@ FIELD_STAGE = {
     "routing_mining_parquet": "routing",
     "routing_anomalygen_parquet": "routing",
     "anomalygen_sdg_csv": "anomalygen",
+    "anomalygen_allocation_json": "anomalygen",
+    "anomalygen_amp_allocated": "anomalygen",
     "mining_mined_parquet": "data_mining",
+    "mining_candidate_parquet": "data_mining",
     "mining_parquet": "data_mining",
     "mining_summary": "data_mining",
+    "mining_history": "data_mining",
+    "mining_history_summary": "data_mining",
     "mining_target_embeddings": "data_mining",
     "mining_source_embeddings": "data_mining",
     "mining_target_log": "data_mining",
@@ -105,7 +117,10 @@ STAGE_REQUIRED_FIELD_SETS = {
     "data_mining": (
         (
             "mining_mined_parquet",
+            "mining_candidate_parquet",
             "mining_summary",
+            "mining_history",
+            "mining_history_summary",
             "mining_target_embeddings",
             "mining_source_embeddings",
             "mining_target_log",
@@ -200,6 +215,50 @@ def _parquet_proof(
     return rows
 
 
+def _parquet_filepaths(
+    path: pathlib.Path,
+    field: str,
+    errors: list[str],
+) -> list[str] | None:
+    """Read and normalize filepath identities from a mining parquet."""
+    try:
+        import pyarrow.parquet as pq
+
+        values = pq.read_table(path, columns=["filepath"])["filepath"].to_pylist()
+    except ModuleNotFoundError as exc:
+        if exc.name != "pyarrow":
+            errors.append(f"{field} filepaths cannot be read: {exc}")
+            return None
+        helper = pathlib.Path(__file__).with_name("deft_python.sh")
+        payload = (
+            "import json, sys; import pyarrow.parquet as pq; "
+            "t = pq.read_table(sys.argv[1], columns=['filepath']); "
+            "print(json.dumps(t['filepath'].to_pylist()))"
+        )
+        try:
+            values = json.loads(
+                subprocess.check_output(
+                    [str(helper), "-c", payload, str(path)], text=True
+                )
+            )
+        except Exception as fallback_exc:
+            errors.append(
+                f"{field} filepaths cannot be read: {exc}; "
+                f"fallback via deft_python.sh failed: {fallback_exc}"
+            )
+            return None
+    except Exception as exc:
+        errors.append(f"{field} filepaths cannot be read: {exc}")
+        return None
+    normalized = [
+        posixpath.normpath(str(value or "").strip().replace("\\", "/"))
+        for value in values
+    ]
+    if any(value in {"", "."} for value in normalized):
+        errors.append(f"{field} contains an empty filepath")
+    return normalized
+
+
 def _tao_pass_log(path: pathlib.Path, field: str, errors: list[str]) -> None:
     try:
         text = path.read_text(errors="replace")
@@ -215,8 +274,7 @@ def _tao_pass_log(path: pathlib.Path, field: str, errors: list[str]) -> None:
 
 def _mining_summary_proof(
     path: pathlib.Path,
-    mined_rows: int | None,
-    recorded_count: Any,
+    candidate_rows: int | None,
     field: str,
     errors: list[str],
 ) -> None:
@@ -257,16 +315,396 @@ def _mining_summary_proof(
         )
     if not math.isfinite(threshold):
         errors.append(f"{field}.similarity_threshold must be finite")
-    if not isinstance(recorded_count, int) or isinstance(recorded_count, bool):
-        errors.append(f"{field} has no integer mining_mined_count in state")
-    elif kept != recorded_count:
+    if candidate_rows is not None and kept != candidate_rows:
         errors.append(
-            f"{field}.kept_count={kept} disagrees with mining_mined_count="
-            f"{recorded_count}"
+            f"{field}.kept_count={kept} disagrees with pre-history candidate "
+            f"parquet rows={candidate_rows}"
         )
-    if mined_rows is not None and kept != mined_rows:
+
+
+def _file_sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _mining_history_proof(
+    label: str,
+    info: dict[str, Any],
+    state: dict[str, Any],
+    candidate_rows: int | None,
+    mined_rows: int | None,
+    errors: list[str],
+) -> None:
+    """Prove that history-aware mining selected disjoint per-iteration paths."""
+    match = re.fullmatch(r"iter([1-9][0-9]*)", label)
+    if match is None:
+        return
+    number = int(match.group(1))
+    history_value = info.get("mining_history")
+    summary_value = info.get("mining_history_summary")
+    candidate_value = info.get("mining_candidate_parquet")
+    output_value = info.get("mining_mined_parquet")
+    if not all((history_value, summary_value, candidate_value, output_value)):
+        return
+    history_path = pathlib.Path(str(history_value)).expanduser()
+    summary_path = pathlib.Path(str(summary_value)).expanduser()
+    candidate_path = pathlib.Path(str(candidate_value)).expanduser()
+    output_path = pathlib.Path(str(output_value)).expanduser()
+    if not all(
+        path.is_file()
+        for path in (history_path, summary_path, candidate_path, output_path)
+    ):
+        return
+
+    configured = state.get("config", {}).get("mining_filter", {})
+    if not isinstance(configured, dict):
+        errors.append("state.config.mining_filter must be an object")
+        return
+    configured_history = configured.get("history_aware")
+    if (
+        not isinstance(configured_history, dict)
+        or configured_history.get("enabled") is not True
+    ):
         errors.append(
-            f"{field}.kept_count={kept} disagrees with mined parquet rows={mined_rows}"
+            "state.config.mining_filter.history_aware.enabled must be true"
+        )
+        return
+    configured_path = pathlib.Path(
+        str(configured_history.get("history_file") or "")
+    ).expanduser()
+    if configured_path.resolve() != history_path.resolve():
+        errors.append(
+            f"state.iterations.{label}.mining_history must match configured "
+            f"history_file: {history_path} != {configured_path}"
+        )
+    configured_topn = configured.get("top_k_per_target")
+
+    try:
+        history = json.loads(history_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(
+            f"state.iterations.{label}.mining_history is invalid: {exc}"
+        )
+        return
+    if not isinstance(history, dict) or history.get("version") != 1:
+        errors.append(
+            f"state.iterations.{label}.mining_history must have version=1"
+        )
+        return
+    if history.get("identity") != "filepath":
+        errors.append(
+            f"state.iterations.{label}.mining_history identity must be filepath"
+        )
+    entries = history.get("iterations")
+    if not isinstance(entries, list):
+        errors.append(
+            f"state.iterations.{label}.mining_history.iterations must be a list"
+        )
+        return
+
+    actual_numbers: list[int] = []
+    all_selected: set[str] = set()
+    current: dict[str, Any] | None = None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            errors.append("mining_history iterations must contain only objects")
+            continue
+        try:
+            entry_number = int(entry.get("iteration", 0))
+        except (TypeError, ValueError):
+            errors.append("mining_history iteration number must be an integer")
+            continue
+        actual_numbers.append(entry_number)
+        selected = entry.get("selected_filepaths")
+        if not isinstance(selected, list):
+            errors.append(
+                f"mining_history iteration {entry_number} lacks selected_filepaths"
+            )
+            continue
+        normalized = [
+            posixpath.normpath(
+                str(value or "").strip().replace("\\", "/")
+            )
+            for value in selected
+        ]
+        if any(value in {"", "."} for value in normalized):
+            errors.append(
+                f"mining_history iteration {entry_number} has empty filepath"
+            )
+        if len(normalized) != len(set(normalized)):
+            errors.append(
+                f"mining_history iteration {entry_number} contains duplicate filepaths"
+            )
+        overlap = all_selected.intersection(normalized)
+        if overlap:
+            errors.append(
+                f"mining_history iteration {entry_number} reselects "
+                f"{len(overlap)} prior filepaths"
+            )
+        all_selected.update(normalized)
+        if entry.get("selected_count") != len(normalized):
+            errors.append(
+                f"mining_history iteration {entry_number} selected_count disagrees"
+            )
+        for path_field, hash_field in (
+            ("candidate_parquet", "candidate_sha256"),
+            ("output_parquet", "output_sha256"),
+            ("summary_file", "summary_sha256"),
+        ):
+            artifact = pathlib.Path(str(entry.get(path_field) or ""))
+            expected_hash = str(entry.get(hash_field) or "")
+            if (
+                not artifact.is_absolute()
+                or not artifact.is_file()
+                or not expected_hash
+            ):
+                errors.append(
+                    f"mining_history iteration {entry_number} has invalid "
+                    f"{path_field} proof"
+                )
+                continue
+            if _file_sha256(artifact) != expected_hash:
+                errors.append(
+                    f"mining_history iteration {entry_number} "
+                    f"{path_field} hash mismatch"
+                )
+        if entry_number == number:
+            current = entry
+
+    if actual_numbers != list(range(1, len(entries) + 1)):
+        errors.append(
+            "mining_history iterations must be contiguous from 1; "
+            f"found {actual_numbers}"
+        )
+    if history.get("cumulative_unique_count") != len(all_selected):
+        errors.append(
+            "mining_history cumulative_unique_count disagrees with ledger"
+        )
+    if current is None:
+        errors.append(f"mining_history has no committed iteration {number}")
+        return
+
+    expected_paths = {
+        "candidate_parquet": candidate_path.resolve(),
+        "output_parquet": output_path.resolve(),
+        "summary_file": summary_path.resolve(),
+    }
+    for field, expected in expected_paths.items():
+        actual = pathlib.Path(str(current.get(field) or "")).expanduser()
+        if actual.resolve() != expected:
+            errors.append(
+                f"mining_history iteration {number} {field} disagrees with state"
+            )
+    if current.get("topn") != configured_topn:
+        errors.append(
+            f"mining_history iteration {number} topn={current.get('topn')} "
+            f"disagrees with configured top_k_per_target={configured_topn}"
+        )
+    recorded_count = info.get("mining_mined_count")
+    if current.get("selected_count") != recorded_count:
+        errors.append(
+            f"mining_history iteration {number} selected_count disagrees with "
+            "mining_mined_count"
+        )
+    if mined_rows is not None and current.get("selected_count") != mined_rows:
+        errors.append(
+            f"mining_history iteration {number} selected_count disagrees with "
+            "parquet rows"
+        )
+    output_filepaths = _parquet_filepaths(
+        output_path,
+        f"state.iterations.{label}.mining_mined_parquet",
+        errors,
+    )
+    if (
+        output_filepaths is not None
+        and output_filepaths != current.get("selected_filepaths")
+    ):
+        errors.append(
+            f"mining_history iteration {number} selected_filepaths disagree "
+            "with the final mined parquet"
+        )
+
+    try:
+        summary = json.loads(summary_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(
+            f"state.iterations.{label}.mining_history_summary is invalid: {exc}"
+        )
+        return
+    if not isinstance(summary, dict):
+        errors.append(
+            f"state.iterations.{label}.mining_history_summary must be an object"
+        )
+        return
+    expected_summary = {
+        "iteration": number,
+        "topn": configured_topn,
+        "selected_count": recorded_count,
+        "already_mined_count": current.get("already_mined_count"),
+    }
+    for field, expected in expected_summary.items():
+        if summary.get(field) != expected:
+            errors.append(
+                f"state.iterations.{label}.mining_history_summary.{field}="
+                f"{summary.get(field)!r} disagrees with {expected!r}"
+            )
+    if (
+        candidate_rows is not None
+        and summary.get("candidate_row_count") != candidate_rows
+    ):
+        errors.append(
+            f"state.iterations.{label}.mining_history_summary."
+            "candidate_row_count disagrees with candidate parquet rows"
+        )
+    if summary.get("candidate_unique_count") != (
+        summary.get("already_mined_count", 0)
+        + summary.get("selected_count", 0)
+    ):
+        errors.append(
+            f"state.iterations.{label}.mining_history_summary unique counts "
+            "disagree"
+        )
+
+
+def _csv_payload(
+    path: pathlib.Path,
+    field: str,
+    errors: list[str],
+) -> tuple[list[str], list[dict[str, str]]] | None:
+    """Read a non-empty CSV with a real header, recording audit errors."""
+    try:
+        with path.open(newline="") as handle:
+            reader = csv.DictReader(handle)
+            columns = list(reader.fieldnames or [])
+            rows = list(reader)
+    except (OSError, csv.Error) as exc:
+        errors.append(f"{field} cannot be read as CSV: {exc}")
+        return None
+    if not columns or any(not column.strip() for column in columns):
+        errors.append(f"{field} must have a non-empty CSV header")
+        return None
+    if not rows:
+        errors.append(f"{field} must contain at least one data row")
+        return None
+    return columns, rows
+
+
+def _row_key(row: dict[str, str], columns: list[str]) -> tuple[str, ...]:
+    """Return an exact, column-order-independent CSV row identity."""
+    return tuple(
+        "" if row.get(column) is None else str(row[column])
+        for column in columns
+    )
+
+
+def _training_merge_proof(
+    label: str,
+    info: dict[str, Any],
+    iterations: dict[str, Any],
+    errors: list[str],
+) -> None:
+    """Prove provenance alignment and monotonic ChangeNet Train growth."""
+    match = re.fullmatch(r"iter([1-9][0-9]*)", label)
+    if match is None:
+        return
+    number = int(match.group(1))
+    combined_value = info.get("combined_training_csv")
+    provenance_value = info.get("provenance_csv")
+    if not combined_value or not provenance_value:
+        return
+
+    combined_field = f"state.iterations.{label}.combined_training_csv"
+    provenance_field = f"state.iterations.{label}.provenance_csv"
+    combined_path = pathlib.Path(str(combined_value)).expanduser()
+    provenance_path = pathlib.Path(str(provenance_value)).expanduser()
+    if not combined_path.is_file() or not provenance_path.is_file():
+        return
+    combined_payload = _csv_payload(combined_path, combined_field, errors)
+    provenance_payload = _csv_payload(provenance_path, provenance_field, errors)
+    if combined_payload is None or provenance_payload is None:
+        return
+    combined_columns, combined_rows = combined_payload
+    provenance_columns, provenance_rows = provenance_payload
+    if "source" not in provenance_columns:
+        errors.append(f"{provenance_field} must contain a source column")
+        return
+    if len(provenance_rows) != len(combined_rows):
+        errors.append(
+            f"{provenance_field} must have one row per combined Train row; "
+            f"got provenance={len(provenance_rows)} train={len(combined_rows)}"
+        )
+        return
+
+    allowed_sources = (
+        {"base_train", "mining_pool"}
+        if number == 1
+        else {"previous_iter_train", "mining_pool"}
+    )
+    sources = [(row.get("source") or "").strip() for row in provenance_rows]
+    invalid_sources = sorted(set(sources) - allowed_sources)
+    if invalid_sources:
+        errors.append(
+            f"{provenance_field}.source contains invalid values for {label}: "
+            f"{invalid_sources}; allowed={sorted(allowed_sources)}"
+        )
+    required_source = "base_train" if number == 1 else "previous_iter_train"
+    if required_source not in sources:
+        errors.append(
+            f"{provenance_field}.source must include {required_source} for {label}"
+        )
+
+    if number == 1:
+        return
+    previous_label = f"iter{number - 1}"
+    previous_info = iterations.get(previous_label)
+    previous_value = (
+        previous_info.get("combined_training_csv")
+        if isinstance(previous_info, dict)
+        else None
+    )
+    if not previous_value:
+        errors.append(
+            f"state.iterations.{previous_label}.combined_training_csv is required "
+            f"to audit monotonic lineage for {label}"
+        )
+        return
+    previous_field = (
+        f"state.iterations.{previous_label}.combined_training_csv"
+    )
+    previous_path = pathlib.Path(str(previous_value)).expanduser()
+    if not previous_path.is_file():
+        return
+    previous_payload = _csv_payload(previous_path, previous_field, errors)
+    if previous_payload is None:
+        return
+    previous_columns, previous_rows = previous_payload
+    if set(previous_columns) != set(combined_columns):
+        errors.append(
+            f"{combined_field} columns must match {previous_field}; "
+            f"current={sorted(combined_columns)} previous={sorted(previous_columns)}"
+        )
+        return
+
+    identity_columns = sorted(combined_columns)
+    previous_records = Counter(
+        _row_key(row, identity_columns) for row in previous_rows
+    )
+    carried_records = Counter(
+        _row_key(row, identity_columns)
+        for row, source in zip(combined_rows, sources)
+        if source == "previous_iter_train"
+    )
+    missing = previous_records - carried_records
+    unexpected = carried_records - previous_records
+    if missing or unexpected:
+        errors.append(
+            f"{combined_field} must retain the exact {previous_label} Train rows "
+            "with source=previous_iter_train; "
+            f"missing={sum(missing.values())} unexpected={sum(unexpected.values())}"
         )
 
 
@@ -616,6 +1054,9 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                     f"state.iterations.{label}.{field} is set but loop_log lacks {label}/{stage}"
                 )
 
+        if (label, "data_merge") in log_keys:
+            _training_merge_proof(label, info, iterations, errors)
+
         merge_report_value = info.get("merge_validation_report")
         if merge_report_value:
             merge_report_path = pathlib.Path(str(merge_report_value)).expanduser()
@@ -681,10 +1122,12 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
 
         mining_fields = {
             "mining_mined_parquet": ({"filepath"}, False),
+            "mining_candidate_parquet": ({"filepath"}, False),
             "mining_target_embeddings": ({"filepath", "embedding"}, True),
             "mining_source_embeddings": ({"filepath", "embedding"}, True),
         }
         mined_rows: int | None = None
+        candidate_rows: int | None = None
         if (label, "data_mining") in log_keys and not info.get(
             "data_mining_skipped"
         ):
@@ -711,6 +1154,8 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                 )
                 if field == "mining_mined_parquet":
                     mined_rows = rows
+                elif field == "mining_candidate_parquet":
+                    candidate_rows = rows
                 if require_rows and rows is not None and rows <= 0:
                     errors.append(
                         f"state.iterations.{label}.{field} must contain rows"
@@ -750,11 +1195,18 @@ def audit(results_dir: pathlib.Path) -> dict[str, Any]:
                         )
                     _mining_summary_proof(
                         summary_path,
-                        mined_rows,
-                        info.get("mining_mined_count"),
+                        candidate_rows,
                         f"state.iterations.{label}.mining_summary",
                         errors,
                     )
+            _mining_history_proof(
+                label,
+                info,
+                state,
+                candidate_rows,
+                mined_rows,
+                errors,
+            )
 
         result: dict[str, Any] | None = None
         if contract is not None:
@@ -1023,6 +1475,29 @@ def _print_text(report: dict[str, Any]) -> None:
         print(f"ERROR: {error}")
 
 
+def _completion_report_error(results_dir: pathlib.Path) -> str | None:
+    """Return why the deterministic final HTML is missing/stale/invalid."""
+    results_dir = results_dir.expanduser().resolve()
+    report_path = results_dir / "DEFT_Loop_Report.html"
+    if not report_path.is_file() or report_path.stat().st_size == 0:
+        return f"final HTML report is missing or empty: {report_path}"
+    evidence = [results_dir / "deft_state.json", results_dir / "loop_log.jsonl"]
+    newest_evidence = max(
+        (path.stat().st_mtime_ns for path in evidence if path.exists()),
+        default=0,
+    )
+    if report_path.stat().st_mtime_ns < newest_evidence:
+        return "final HTML report is older than canonical state/log; rerun render_report.py"
+    text = report_path.read_text(encoding="utf-8")
+    required = ("DEFT Loop Final Report", "Final Status", "--nvidia-green: #76b900")
+    missing = [token for token in required if token not in text]
+    if missing:
+        return "final HTML report is missing required content: " + ", ".join(missing)
+    if re.search(r"\{\{\s+[A-Z0-9_]+\s+\}\}", text):
+        return "final HTML report contains unfilled placeholders"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--results-dir", required=True, type=pathlib.Path)
@@ -1051,8 +1526,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.require_terminal and not report["terminal"]:
         return 1
-    if args.require_complete and report["status"] != "COMPLETE":
-        return 1
+    if args.require_complete:
+        if report["status"] != "COMPLETE":
+            return 1
+        report_error = _completion_report_error(args.results_dir)
+        if report_error:
+            print(f"ERROR: {report_error}", file=sys.stderr)
+            return 1
     return 0
 
 

@@ -109,6 +109,7 @@ as one audited transaction:
   --inference-csv "${INFERENCE_CSV}" \
   --training-spec "${ITER_TRAINING_SPEC}" \
   --threshold "${THRESHOLD}" \
+  --duration-sec "${STAGE_DURATION_SEC}" \
   --summary "Evaluate: ${METRIC_NAME}=${METRIC_VALUE}"
 ```
 
