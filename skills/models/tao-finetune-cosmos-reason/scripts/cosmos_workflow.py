@@ -697,7 +697,7 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     spec["custom"].update({
         "train_dataset": {"annotation_path": train_manifest, "media_path": train_media[0], "media_root": train_media[0], "response_mode": "hybrid" if args.dataset_family == "task_aware_video_reasoning" else "answer"},
         "val_dataset": {"annotation_path": val_manifest, "media_path": val_media[0], "media_root": val_media[0], "response_mode": "answer"},
-        "vision": {"nframes": args.frames, "video_decoder": "pynvvideocodec"},
+        "vision": {"nframes": args.frames, "video_decoder": "torchvision"},
         "system_prompt": args.system_prompt,
     })
     if use_dataset_cache:
@@ -963,11 +963,13 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
         ])
     else:
         imports.extend([
-            "import cosmos_rl", "import PyNvVideoCodec", "import ctypes", "ctypes.CDLL('libnvcuvid.so.1')",
+            "import cosmos_rl", "import av", "import os", "import ctypes", "ctypes.CDLL('libnvcuvid.so.1')",
             "from cosmos_rl.utils.runtime_dependency_contract import verify_deepep, verify_vllm_conv3d",
             "verify_deepep()", "verify_vllm_conv3d()",
-            "from cosmos_rl.utils.pynv_video_reader import register_pynv_video_reader",
-            f"d=PyNvVideoCodec.SimpleDecoder({representative_media!r}, gpu_id=0, use_device_memory=False); assert len(d)>0",
+            "import qwen_vl_utils.vision_process as vp",
+            "assert os.environ.get('FORCE_QWENVL_VIDEO_READER') == 'torchvision'",
+            "assert vp.get_video_reader_backend() == 'torchvision'",
+            f"c=av.open({representative_media!r}); frame=next(c.decode(video=0)); assert frame is not None; c.close()",
         ])
     if args.dataset_family == "task_aware_video_reasoning":
         imports.append("import nvidia_tao_daft")

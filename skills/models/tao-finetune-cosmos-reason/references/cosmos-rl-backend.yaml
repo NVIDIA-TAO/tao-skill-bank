@@ -29,7 +29,7 @@ runtime:
   python: /opt/venv/cosmos_rl/bin/python
   working_directory: /workspace/cosmos_rl
   non_root_executable_required: true
-  video_decoder: PyNvVideoCodec_2.2.0
+  video_decoder: torchvision_PyAV_system_FFmpeg_NVDEC
   driver_capabilities: [compute, utility, video]
 configuration:
   format: toml

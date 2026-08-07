@@ -68,8 +68,10 @@ resource limits without credentials.
 
 ## Decoder and cache recovery
 
-Framework uses its native CUDA TorchCodec path. Cosmos-RL uses repository-owned
-PyNvVideoCodec with correct pitch/stride handling. Worker count zero requires
+Framework uses its native CUDA TorchCodec path. The release Cosmos-RL image uses
+qwen-vl-utils' torchvision path backed by source-built PyAV and the restricted
+system FFmpeg/NVDEC codecs; Decord and PyNvVideoCodec are intentionally absent.
+Worker count zero requires
 prefetch to be absent or null. Full Cosmos-RL video runs prewarm separate train
 and validation caches before model allocation. Cache keys combine dataset,
 model, and processor fingerprints; completeness manifests and every entry are
