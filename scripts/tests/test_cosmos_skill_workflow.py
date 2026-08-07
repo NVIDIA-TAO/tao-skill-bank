@@ -681,6 +681,8 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert "#SBATCH --no-requeue" in script and "--container-image=" in script
     assert "--no-container-remap-root" in script
     assert "--no-container-mount-home" in script
+    assert 'export HOME="/tmp/tao-${TAO_JOB_ID:?TAO_JOB_ID must be set}-${SLURM_PROCID:-0}"' in script
+    assert 'mkdir -p -m 700 "$HOME"' in script
     assert "timeout --signal=TERM --kill-after=30s 13680s srun" in script
     assert 'exit "$child_rc"' in script
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0

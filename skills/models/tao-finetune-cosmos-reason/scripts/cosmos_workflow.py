@@ -1223,7 +1223,14 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     mount_args = " ".join(f"--container-mounts={shlex.quote(value)}" for value in args.container_mount)
     env_exports = "\n".join(f"export {key}={shlex.quote(value)}" for key, value in plan["environment"].items())
     native = plan["command"]
-    wrapped = "\n".join(["ulimit -n 65536", "ulimit -s unlimited", "ulimit -l unlimited 2>/dev/null || true", native])
+    wrapped = "\n".join([
+        'export HOME="/tmp/tao-${TAO_JOB_ID:?TAO_JOB_ID must be set}-${SLURM_PROCID:-0}"',
+        'mkdir -p -m 700 "$HOME"',
+        "ulimit -n 65536",
+        "ulimit -s unlimited",
+        "ulimit -l unlimited 2>/dev/null || true",
+        native,
+    ])
     srun = " ".join(filter(None, [
         "timeout", "--signal=TERM", "--kill-after=30s", f"{child_timeout_seconds}s",
         "srun", f"--nodes={args.nodes}", f"--ntasks={args.nodes}", "--ntasks-per-node=1",
