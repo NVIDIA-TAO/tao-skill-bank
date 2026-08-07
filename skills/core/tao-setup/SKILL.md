@@ -42,6 +42,10 @@ done
 # 3. NGC registry login (needed for nvcr.io image pulls). Key goes over
 #    stdin — never as an argv flag, where it lands in the process table.
 [ -n "${NGC_KEY:-}" ] && printf '%s' "$NGC_KEY" | docker login nvcr.io -u '$oauthtoken' --password-stdin
+
+# 4. Token-efficient execution kit (recommended): preflight + scaffold
+#    ~/.tao-kit/kit.env. Non-invasive; see skills/core/tao-token-efficient-execution.
+bash "${TAO_SKILL_BANK_PATH}/skills/core/tao-token-efficient-execution/scripts/install.sh"
 ```
 
 If Docker or the NVIDIA host runtime is missing, use the
@@ -64,6 +68,20 @@ with `[ -n "$VAR" ]`.
 - `WANDB_API_KEY` — experiment tracking (optional)
 - `ACCESS_KEY` / `SECRET_KEY` / `S3_BUCKET_NAME` / `S3_ENDPOINT_URL` — S3 I/O
 - `BREV_API_TOKEN` — Brev platform dispatch
+
+## Token-efficient execution (recommended for repeated workflows)
+
+Step 4 of the Quick Start installs the execution kit
+(`skills/core/tao-token-efficient-execution`): compiled **card packs** run
+application workflows as fresh per-stage sessions instead of one long
+conversation (measured 74-91% cheaper, 4-5x lower peak context, and the only
+mode validated on small execution models). Setup only scaffolds the config;
+the routing rule applies at launch time: **when a card pack exists for the
+requested workflow (`skills/applications/<skill>/cards/`), prefer its
+`driver.sh` over in-conversation stage execution.** The `tao-launch-workflow`
+gate still applies in full — the driver launch is the side-effecting action
+it reviews. Packs ship today for `tao-run-deft-aoi` and `tao-run-automl`; the
+kit's authoring prompt compiles packs for other workflows.
 
 ## Discovery flow (how TAO skills chain)
 

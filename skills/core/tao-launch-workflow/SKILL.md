@@ -28,6 +28,30 @@ tags:
 
 Use this skill before launching any TAO workflow or model action.
 
+## Step 0 — Execution Mode: Card Packs (check first)
+
+Before running a multi-stage application workflow inside this conversation,
+check whether a compiled card pack ships next to the application skill:
+
+```bash
+ls "${TAO_SKILL_BANK_PATH}/skills/applications/<skill>/cards/" 2>/dev/null
+```
+
+- **Pack exists** → prefer the token-efficient path: the pack's `driver.sh`
+  runs the workflow as fresh per-stage sessions (measured 74-91% cheaper than
+  in-conversation execution, and the only mode validated on small models).
+  Read the pack's `README.md` for required env, complete THIS gate's items
+  1-9 for the launch review, then start the pack driver detached instead of
+  executing stages in this conversation. Monitor via the driver log and the
+  run dir's progress marks.
+- **No pack** → execute normally through this gate. If the workflow will be
+  run repeatedly, suggest compiling a pack once with a strong model — see
+  `skills/core/tao-token-efficient-execution` (authoring prompt + contracts).
+
+The card path replaces only in-conversation stage execution; it never skips
+this gate. A pack driver launch is side-effecting work and requires the same
+confirmed launch review.
+
 ## Quick Start
 
 Run the platform helper, ask for platform and monitoring preferences, then run

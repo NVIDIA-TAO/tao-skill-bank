@@ -82,6 +82,28 @@ echo "The skill bank does not create or load a credentials file; persisting"
 echo "secrets to disk is your own responsibility."
 echo
 
+# ─── 2b. Token-efficient execution — advertise shipped card packs ─────────
+# Card packs run application workflows as fresh per-stage sessions (74-91%
+# cheaper than in-conversation execution). This block injects the routing
+# rule so every session sees it before executing a covered workflow.
+if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+  _tao_packs=""
+  for _p in "${CLAUDE_PLUGIN_ROOT}"/skills/applications/*/cards; do
+    [[ -d "$_p" ]] && _tao_packs="${_tao_packs} $(basename "$(dirname "$_p")")"
+  done
+  if [[ -n "${_tao_packs// /}" ]]; then
+    echo "## Token-efficient execution"
+    echo
+    echo "Card packs are available for:${_tao_packs}. Before executing one of these"
+    echo "workflows stage-by-stage in this conversation, prefer the pack's"
+    echo "\`cards/driver.sh\` (fresh per-stage sessions; read the pack README for"
+    echo "required env). The \`tao-launch-workflow\` gate still applies in full —"
+    echo "the driver launch is the side-effecting action it reviews. Framework:"
+    echo "\`skills/core/tao-token-efficient-execution\`."
+    echo
+  fi
+fi
+
 # ─── 3. Docker preflight ──────────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
   echo "## ⚠ Docker missing"
