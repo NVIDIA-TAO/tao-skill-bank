@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# `codetr inference` — pool pseudo-labelling, the settings that do not vary per
+# run, applied over the Hydra schema dump. The checkpoint, classmap, image_dir,
+# results_dir, num_gpus and `inference.category_mapping` are run-specific and stay
+# as --set; the mapping is emitted by build_fold_mapping.py.
+
+inference.conf_threshold: 0.3  # TAO: 0.5. Applied at write time, so it is the
+                               # quality control on the pseudo-labels — every box
+                               # above it becomes training data.
+
+inference.input_width: 640     # TAO: null, which defers sizing to the
+inference.input_height: 640    # augmentation path: roughly 4x slower and a
+                               # different set of boxes, neither of them reported.
