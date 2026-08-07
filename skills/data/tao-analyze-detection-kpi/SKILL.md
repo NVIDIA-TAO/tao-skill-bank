@@ -32,7 +32,7 @@ analytics kpi_analyze -e /absolute/path/to/kpi_analyze.yaml
 
 ## Inputs
 
-The user can provide either an existing spec or the fields needed to generate one.
+The user provides either a finished spec or the paths to fill into the template.
 
 Required spec fields:
 
@@ -43,7 +43,9 @@ Required spec fields:
 | `data.mapping` | Path to a class-mapping YAML: a list of single-key dicts whose value is a **LIST** of aliases. See `assets/example_mapping.yaml` — a bare string here silently zeroes every metric. |
 | `results_dir` | Output directory for `kpi_calc.csv`. |
 
-Common optional fields:
+Common optional fields. The `Default` column is what TAO DS uses when the field is
+absent; `assets/default_kpi_analyze.yaml` already carries the recommended value
+for each, so filling the template needs none of them changed:
 
 | Field | Default | Meaning |
 |---|---:|---|
@@ -88,22 +90,36 @@ Do not pass `--user $(id -u):$(id -g)`; some TAO DS images call `getpass.getuser
 
 ## Generate A Spec
 
-If the user provides paths instead of a ready spec:
+If the user provides paths instead of a ready spec, copy the template and fill in
+the `null`s. Every tuning value it already carries is the one this stage wants —
+change one only deliberately.
 
 ```bash
-python3 skills/data/tao-analyze-detection-kpi/scripts/prepare_kpi_analyze_spec.py \
-  --image-dir /absolute/path/kpi/images \
-  --ground-truth-ann-path /absolute/path/kpi/labels \
-  --inference-ann-path /absolute/path/results/inference/labels \
-  --mapping /absolute/path/mapping.yaml \
-  --results-dir /absolute/path/results/analyze_kpi \
-  --output-spec /absolute/path/specs/kpi_analyze.yaml \
-  --input-format KITTI \
-  --iou-threshold 0.5 \
-  --conf-threshold 0.3
+cp skills/data/tao-analyze-detection-kpi/assets/default_kpi_analyze.yaml "$SPEC"
 ```
 
-Pass `--image-dir` / `--ground-truth-ann-path` / `--inference-ann-path` once per KPI source; the three lists are zipped in order into `data.kpi_sources`.
+Fill `data.kpi_sources` (one entry per source), `data.mapping` and `results_dir`,
+all as absolute paths, then validate:
+
+```bash
+python3 skills/data/tao-analyze-detection-kpi/scripts/verify_kpi_analyze_spec.py --spec "$SPEC"
+```
+
+```yaml
+data:
+  input_format: KITTI
+  kpi_sources:
+  - image_dir: /absolute/path/kpi/images               # no trailing slash
+    ground_truth_ann_path: /absolute/path/kpi/labels
+    inference_ann_path: /absolute/path/results/inference/labels
+  mapping: /absolute/path/mapping.yaml
+results_dir: /absolute/path/results/analyze_kpi
+```
+
+The template is the only place a default value lives, so nothing can disagree
+with it. `verify` reports the three settings that change what the numbers mean —
+`conf_threshold`, `num_recall_points`, `ignore_sqwidth` — so the spec that ran is
+recoverable from its output.
 
 ## Preflight
 
