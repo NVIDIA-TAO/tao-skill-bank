@@ -1,7 +1,8 @@
 {
-  "version": 3,
+  "version": 4,
   "workflow": "tao-run-deft-aoi-cosmos3",
   "started_at": "2026-07-28T00:00:00+00:00",
+  "status": "in_progress",
   "kpi_target": "NG recall >= 1",
   "metric_contract": {
     "name": "recall_ng",
@@ -110,6 +111,7 @@
     }
   },
   "iterations": {},
+  "events": [],
   "_completed_step_values": [
     "train",
     "evaluate_benchmark",

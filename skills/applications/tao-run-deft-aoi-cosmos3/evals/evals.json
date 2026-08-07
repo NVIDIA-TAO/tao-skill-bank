@@ -19,15 +19,15 @@
     ]
   },
   {
-    "id": "tao-run-deft-aoi-cosmos3-resume-audit",
+    "id": "tao-run-deft-aoi-cosmos3-resume-state",
     "question": "Resume the existing Cosmos3 DEFT AOI run at $RESULTS_DIR and determine the only safe next action without launching work.",
     "expected_skill": "tao-run-deft-aoi-cosmos3",
-    "expected_script": "scripts/audit_deft_run.py",
-    "ground_truth": "Run the read-only audit, trust canonical state/log and recorded artifacts, stop on INVALID, and read only read_before_action before constructing another stage.",
+    "expected_script": null,
+    "ground_truth": "Read $RESULTS_DIR/deft_state.json as the single source of truth, use its status, current iteration, iteration status, completed stage, and latest event to identify the next stage, then read only that stage reference.",
     "expected_behavior": [
-      "Runs scripts/audit_deft_run.py --results-dir $RESULTS_DIR",
-      "Stops on DEFT_RUN_STATUS=INVALID",
-      "Uses read_before_action as the stage reference",
+      "Reads $RESULTS_DIR/deft_state.json before any stage command",
+      "Uses state status, current_iteration, stage_completed, and the latest event to identify progress",
+      "Reads only the next stage's reference before later work",
       "Does not mutate files or launch a job"
     ]
   },

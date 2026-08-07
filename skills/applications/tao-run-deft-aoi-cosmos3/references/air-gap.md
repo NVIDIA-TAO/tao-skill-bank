@@ -26,5 +26,5 @@ In air-gap mode:
 - stop on a missing asset instead of substituting a model, image, evaluator, or
   reduced workflow.
 
-The same user gate, job-record ordering, four verbs, state audit, frozen
+The same user gate, job-record ordering, four verbs, state contract, frozen
 Benchmark hash, and bare annotation contract still apply.

@@ -14,11 +14,11 @@ import unittest
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
-for module_name in ("audit_deft_run", "metric_contract", "render_report"):
+for module_name in ("align_token_usage", "metric_contract", "render_report"):
     sys.modules.pop(module_name, None)
 sys.path.insert(0, str(SCRIPTS))
 
-import audit_deft_run  # noqa: E402
+import align_token_usage  # noqa: E402
 import render_report  # noqa: E402
 
 
@@ -62,6 +62,60 @@ def record(label: str, prompt: str = "Inspect.") -> dict:
 
 
 class CosmosReportRenderingTests(unittest.TestCase):
+    def test_token_alignment_updates_state_events_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            state_path = root / "deft_state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "status": "complete",
+                        "events": [
+                            {
+                                "seq": 1,
+                                "ts": "2026-08-04T00:01:00+00:00",
+                                "iter": "baseline",
+                                "stage": "evaluate_benchmark",
+                                "context_tokens": 0,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            transcript = root / "session.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": "2026-08-04T00:00:30+00:00",
+                        "message": {
+                            "model": "test-model",
+                            "usage": {
+                                "input_tokens": 10,
+                                "output_tokens": 2,
+                                "cache_read_input_tokens": 3,
+                                "cache_creation_input_tokens": 4,
+                            },
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            state, events, messages = align_token_usage.align(
+                state_path, [transcript]
+            )
+            align_token_usage.write_atomic(state_path, state)
+
+            committed = json.loads(state_path.read_text())
+            self.assertEqual(len(events), 1)
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(committed["status"], "complete")
+            self.assertEqual(committed["events"][0]["context_tokens"], 17)
+            self.assertEqual(committed["events"][0]["tokens"]["output"], 2)
+
     def test_matches_changenet_visual_contract_and_single_column_skeleton(self) -> None:
         change = css_rules(CHANGE_TEMPLATE)
         cosmos = css_rules(COSMOS_TEMPLATE)
@@ -222,9 +276,10 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 ],
             }
             state = {
-                "version": 3,
+                "version": 4,
                 "workflow": "tao-run-deft-aoi-cosmos3",
                 "started_at": "2026-08-04T00:00:00+00:00",
+                "status": "complete",
                 "kpi_target": "NG recall >= 1",
                 "metric_contract": contract,
                 "results_dir": str(results),
@@ -300,7 +355,6 @@ class CosmosReportRenderingTests(unittest.TestCase):
                     "anomalygen_amp_allocated": 20,
                 }
             )
-            (results / "deft_state.json").write_text(json.dumps(state), encoding="utf-8")
             entries = [
                 {
                     "seq": 1,
@@ -321,10 +375,8 @@ class CosmosReportRenderingTests(unittest.TestCase):
                     "duration_sec": 0,
                 },
             ]
-            (results / "loop_log.jsonl").write_text(
-                "".join(json.dumps(entry) + "\n" for entry in entries),
-                encoding="utf-8",
-            )
+            state["events"] = entries
+            (results / "deft_state.json").write_text(json.dumps(state), encoding="utf-8")
             output = render_report.render(results)
             text = output.read_text(encoding="utf-8")
             for heading in (
@@ -368,7 +420,6 @@ class CosmosReportRenderingTests(unittest.TestCase):
             self.assertIn("&lt;img src=x onerror=alert(1)&gt;", text)
             self.assertNotIn("<img src=x onerror=alert(1)>", text)
             self.assertNotRegex(text, r"\{\{\s+[A-Z0-9_]+\s+\}\}")
-            self.assertIsNone(audit_deft_run._completion_report_error(results))
 
     def test_growth_uses_cumulative_delta_not_batch_unique_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

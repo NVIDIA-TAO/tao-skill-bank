@@ -58,36 +58,27 @@ Treat a run as a disk-backed state machine.
    with `scripts/init_deft_state.py`. Pass the exact GPU model reported by the
    selected platform's Preflight through `--gpu-model` (include accelerator
    memory when available). Never reinitialize a resumed run or edit
-   `deft_state.json` / `loop_log.jsonl` by hand.
+   `deft_state.json` by hand.
 6. Before every stage, after context compaction, and before a completion claim,
-   run:
-
-   ```bash
-   <skill_root>/scripts/deft_python.sh \
-     <skill_root>/scripts/audit_deft_run.py --results-dir "${RESULTS_DIR}"
-   ```
-
-   Stop and repair the listed disk inconsistency when it prints
-   `DEFT_RUN_STATUS=INVALID`. Read only the reported `read_before_action`
-   reference before continuing.
+   re-read `${RESULTS_DIR}/deft_state.json`. Use its `status`,
+   `current_iteration`, `iterations.*.status`, `stage_completed`, and latest
+   `events` entry to resume. Do not infer progress from assistant prose or
+   from an artifact that is not recorded in state.
 7. Submit each GPU stage through the chosen platform's four verbs:
    `submit` / `status` / `logs` / `cancel`. The `submit` verb must open the
    job-record before native launch; the returned id is the only launch handle.
    Poll the backend, not the job-record, and map state to
    `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`.
 8. Commit every completed or failed DEFT stage with
-   `scripts/commit_stage.py`. It updates state and log atomically, then runs the
-   audit and rolls back on inconsistency. Every commit requires a positive,
-   measured `--duration-sec`: use backend elapsed wall time for submitted jobs
-   and a host wall-clock timer for inline stages. Missing or zero durations are
-   rejected.
-9. Claim completion only after this exits zero:
-
-   ```bash
-   <skill_root>/scripts/deft_python.sh \
-     <skill_root>/scripts/audit_deft_run.py \
-     --results-dir "${RESULTS_DIR}" --require-complete
-   ```
+   `scripts/commit_stage.py`. It verifies the stage inputs and atomically
+   updates both the resume snapshot and ordered `events` array in state. Every
+   commit requires a positive, measured `--duration-sec`: use backend elapsed
+   wall time for submitted jobs and a host wall-clock timer for inline stages.
+   Missing or zero durations are rejected.
+9. Claim completion only after a successful `loop_stop` commit and a fresh
+   read of `deft_state.json` shows `status == "complete"`,
+   `iterations.baseline.status == "complete"`, and the final iteration's
+   `status == "complete"`.
 
 Never place secrets in a spec, command, transcript, job-record, or chat. Check
 credential presence only, for example
@@ -310,11 +301,11 @@ For each `iterN` when the frozen Benchmark gate is unmet:
 `commit_stage.py` call then refreshes it through the deterministic
 `scripts/render_report.py` post-commit hook. Stop when the Benchmark contract
 passes, `max_iterations` is reached, or a hard stop occurs. Commit `loop_stop`,
-run `render_report.py --require-terminal` after optional token alignment, then
-run the completion audit. The Cosmos-only report addition is a bounded prompt
-showcase sourced from recorded annotations; keep every other visual convention
-aligned with ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or
-hand-author report rendering.
+then run `render_report.py --require-terminal` after optional token alignment.
+The Cosmos-only report addition is a bounded prompt showcase sourced from
+recorded annotations; keep every other visual convention aligned with
+ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or hand-author
+report rendering.
 
 ## Stage References
 
@@ -326,7 +317,7 @@ hand-author report rendering.
 | Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
 | AnomalyGen | `paidf-anomalygen`, `mode=inference_only` | `references/paidf-anomalygen.md` |
 | Assemble / validate | bundled bare ShareGPT scripts | `references/aoi-annotation.md` |
-| State/log/report | bundled commit/audit scripts + deterministic report hook | `references/scripts-and-agents.md` |
+| State/report | bundled state commit + deterministic report hook | `references/scripts-and-agents.md` |
 
 ## Hard Stops
 

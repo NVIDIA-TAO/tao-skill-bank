@@ -217,8 +217,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
 
     # Specs are staged before state is initialized. Checking them here keeps the
     # failure recoverable: state is written exactly once and must never be
-    # hand-edited, so a state that already points at absent specs leaves the run
-    # INVALID from its first audit with no legal way forward.
+    # hand-edited, so do not persist paths that are already known to be absent.
     specs = _resolve_specs(workspace, args)
     missing_specs = [
         f"{role}={path}" for role, path in specs.items() if not path.is_file()
@@ -240,11 +239,12 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     base_model = canonicalize_base_model(args.base_model)
 
     return {
-        "version": 3,
+        "version": 4,
         "workflow": WORKFLOW,
         "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(
             timespec="seconds"
         ),
+        "status": "in_progress",
         "kpi_target": render_target(contract),
         "metric_contract": contract,
         "results_dir": str(results_dir),
@@ -342,6 +342,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             },
         },
         "iterations": {},
+        "events": [],
         "_completed_step_values": STAGES,
         "_status_values": STATUSES,
     }

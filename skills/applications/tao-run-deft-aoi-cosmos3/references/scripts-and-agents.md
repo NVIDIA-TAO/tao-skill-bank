@@ -7,10 +7,8 @@ paths before invoking a script.
 
 | Script | Purpose |
 |---|---|
-| `init_deft_state.py` | Initialize version-3 Cosmos3 state once; freeze Benchmark hash and bare mode. |
-| `audit_deft_run.py` | Read-only state/log/artifact audit and resume oracle, including AMP-allocation sum proof. |
-| `commit_stage.py` | Atomically commit one stage and roll back on failed audit; AnomalyGen records both generated CSV and allocation JSON. |
-| `log_stage.py` | Ordered JSONL writer used by `commit_stage.py`; do not call for normal stage commits. |
+| `init_deft_state.py` | Initialize version-4 Cosmos3 state once; freeze Benchmark hash and bare mode. |
+| `commit_stage.py` | Validate one stage's inputs and atomically update the state snapshot plus ordered event; AnomalyGen records both generated CSV and allocation JSON. |
 | `metric_contract.py` | Validate/compare the Benchmark KPI contract. |
 | `record_metric_result.py` | Bind `benchmark_metrics/metric_result.json` to an iteration. |
 | `validate_sharegpt.py` | Enforce two-image, exact bare OK/NG ShareGPT records. |
@@ -23,7 +21,7 @@ paths before invoking a script.
 | `emit_mined_sharegpt.py` | Align filtered paths to Mining prompts, golden images, and labels. |
 | `assemble_training_json.py` | Monotonic bare training-data merge with dedupe/leakage checks. |
 | `align_token_usage.py` | Backfill stage token accounting after a run when a transcript is available. |
-| `render_report.py` | Deterministically render the self-contained NVIDIA-styled HTML report from canonical state/log and recorded artifacts, including escaped annotation prompt examples; validate required sections/placeholders and replace atomically. |
+| `render_report.py` | Deterministically render the self-contained NVIDIA-styled HTML report from state and recorded artifacts, including escaped annotation prompt examples; validate required sections/placeholders and replace atomically. |
 
 `init_deft_state.py` requires `--gpu-model` with the exact model string from
 the selected platform's Preflight. `commit_stage.py` requires a positive
@@ -41,7 +39,7 @@ isolation, OK/NG analysis, filtering, and assembly scripts.
 ## Automatic report hook
 
 `init_deft_state.py` invokes `render_report.py` after writing canonical state.
-`commit_stage.py` invokes it again after every valid state/log commit,
+`commit_stage.py` invokes it again after every valid state commit,
 including error and `loop_stop` commits. The hook is outside the state
 transaction: it reports `report hook failed` without rolling back a valid
 stage result.

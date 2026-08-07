@@ -67,10 +67,10 @@ Before every train launch, validate these coupled spec invariants:
 - `train.checkpoint_interval <= train.num_epochs`. A user override such as
   `epoch 1` must also lower `checkpoint_interval`; otherwise TAO aborts before
   the first epoch.
-- Derive inference/evaluate specs from the exact training spec and change only
-  task paths/checkpoint/results overrides. Do not reconstruct the model/loss
-  block: a loss/difference-module mismatch can load the checkpoint and then
-  fail at criterion construction.
+- Derive inference/evaluate specs from the exact training spec. Preserve the
+  model/loss block, but set `dataset.classify.augmentation_config.augment=false`,
+  then change only task paths/checkpoint/results overrides. A loss/difference-
+  module mismatch can load the checkpoint and then fail at criterion construction.
 - Use the underlying skill's documented `visual_changenet <task> -e <spec>`
   entrypoint. Do not switch to direct package-module/Hydra commands after an
   error; their config-path semantics differ.

@@ -76,23 +76,6 @@ def _optional_json(path_value: Any) -> Any:
         return None
 
 
-def _read_log(path: pathlib.Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    entries: list[dict[str, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid loop_log.jsonl line {line_number}: {exc}") from exc
-        if not isinstance(entry, dict):
-            raise ValueError(f"loop_log.jsonl line {line_number} must be an object")
-        entries.append(entry)
-    return entries
-
-
 def _json_records(path_value: Any) -> list[dict[str, Any]]:
     payload = _optional_json(path_value)
     if not isinstance(payload, list):
@@ -670,22 +653,15 @@ def _artifact_rows(state: dict[str, Any], contract: dict[str, Any]) -> str:
     return "\n".join(rows)
 
 
-def _warnings(
-    entries: list[dict[str, Any]], audit_report: dict[str, Any] | None
-) -> str:
+def _warnings(entries: list[dict[str, Any]]) -> str:
     messages: list[tuple[str, str]] = []
-    if audit_report:
-        for message in audit_report.get("errors", []):
-            messages.append(("error", str(message)))
-        for message in audit_report.get("warnings", []):
-            messages.append(("warn", str(message)))
     for entry in entries:
         if entry.get("status") == "error":
             messages.append(
                 ("error", f"{entry.get('iter')}/{entry.get('stage')}: {entry.get('summary')}")
             )
     if not messages:
-        return '<div class="notice"><strong>No hard stops or audit warnings.</strong> Canonical state is internally consistent at render time.</div>'
+        return '<div class="notice"><strong>No committed hard stops.</strong> No error event is recorded in deft_state.json.</div>'
     return "\n".join(
         f'<div class="notice {kind}"><strong>{"Hard stop" if kind == "error" else "Warning"}:</strong> {_escape(message)}</div>'
         for kind, message in messages
@@ -757,11 +733,7 @@ def _atomic_write(path: pathlib.Path, text: str) -> None:
         raise
 
 
-def render(
-    results_dir: pathlib.Path,
-    *,
-    audit_report: dict[str, Any] | None = None,
-) -> pathlib.Path:
+def render(results_dir: pathlib.Path) -> pathlib.Path:
     results_dir = results_dir.expanduser().resolve()
     state_path = results_dir / "deft_state.json"
     if not state_path.is_file():
@@ -770,29 +742,35 @@ def render(
     if not isinstance(state, dict):
         raise ValueError("deft_state.json root must be an object")
     contract = contract_from_state(state)
-    entries = _read_log(results_dir / "loop_log.jsonl")
+    raw_entries = state.get("events", [])
+    if not isinstance(raw_entries, list):
+        raise ValueError("state.events must be an array")
+    entries = [entry for entry in raw_entries if isinstance(entry, dict)]
+    stored_status = str(state.get("status", "")).lower()
+    if stored_status not in {"in_progress", "complete", "failed"}:
+        stored_status = (
+            "failed"
+            if any(entry.get("status") == "error" for entry in entries)
+            else (
+                "complete"
+                if entries and entries[-1].get("stage") == "loop_stop"
+                else "in_progress"
+            )
+        )
     candidates = _metric_candidates(state, contract)
     best_label: str | None = None
     best_result: dict[str, Any] | None = None
     if candidates:
         best_label, _, best_result = pick_best(candidates, contract)
     metric_passed = bool(best_result and result_passes(contract, best_result)[0])
-    terminal = bool(entries and entries[-1].get("stage") == "loop_stop")
-    has_error = any(entry.get("status") == "error" for entry in entries)
-    if audit_report:
-        run_status = str(audit_report.get("status", "IN_PROGRESS"))
-    elif terminal and has_error:
-        run_status = "FAILED"
-    elif terminal:
-        run_status = "COMPLETE"
-    else:
-        run_status = "IN_PROGRESS"
+    terminal = stored_status in {"complete", "failed"}
+    run_status = stored_status.upper()
 
     if run_status == "FAILED":
         banner = (
             '<div class="kpi-banner error"><div class="icon">!</div>'
             '<div class="content"><div class="title">RUN ENDED AT A HARD STOP</div>'
-            '<div class="body">Review the committed error event and audit findings below.</div>'
+            '<div class="body">Review the latest error event in deft_state.json before retrying the failed stage.</div>'
             "</div></div>"
         )
     elif terminal and metric_passed:
@@ -858,7 +836,7 @@ def render(
         "METRIC_ROWS_HTML": _metric_rows(candidates, contract, best_label),
         "STAGE_ROWS_HTML": _stage_rows(entries),
         "ARTIFACT_ROWS_HTML": _artifact_rows(state, contract),
-        "WARNING_ROWS_HTML": _warnings(entries, audit_report),
+        "WARNING_ROWS_HTML": _warnings(entries),
     }
     rendered = TEMPLATE_PATH.read_text(encoding="utf-8")
     for name, value in values.items():
@@ -891,21 +869,27 @@ def render(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results-dir", required=True, type=pathlib.Path)
-    parser.add_argument("--require-terminal", action="store_true")
+    parser.add_argument(
+        "--require-terminal",
+        action="store_true",
+        help="Refuse to render unless deft_state.json records a terminal status.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        from audit_deft_run import audit
-
-        report = audit(args.results_dir.expanduser().resolve())
-        if report["status"] == "INVALID":
-            raise ValueError("audit failed: " + "; ".join(report["errors"]))
-        if args.require_terminal and not report["terminal"]:
-            raise ValueError("--require-terminal requested but loop_stop is not committed")
-        output = render(args.results_dir, audit_report=report)
+        state = _read_json(
+            args.results_dir.expanduser().resolve() / "deft_state.json"
+        )
+        if not isinstance(state, dict):
+            raise ValueError("deft_state.json root must be an object")
+        if args.require_terminal and state.get("status") not in {"complete", "failed"}:
+            raise ValueError(
+                "--require-terminal requested but deft_state.json is not terminal"
+            )
+        output = render(args.results_dir)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"render_report: {exc}", file=sys.stderr)
         return 2

@@ -35,4 +35,4 @@ targets are fractions in `[0, 1]`.
 
 `benchmark_metrics/metric_result.json` must match the configured name, unit,
 value, and constraints. `record_metric_result.py` adds its absolute path as
-evidence; the audit re-reads that file and rejects drift.
+evidence; `commit_stage.py` validates it before recording the stage.

@@ -2,11 +2,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Atomically commit one Cosmos3 DEFT AOI stage and audit the result."""
+"""Atomically commit one Cosmos3 DEFT AOI stage to ``deft_state.json``.
+
+The state file contains both the resume snapshot and ordered stage events, so
+the run has one durable source of truth.
+"""
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import pathlib
@@ -15,8 +20,6 @@ import sys
 import tempfile
 from typing import Any
 
-from audit_deft_run import _expected_next, audit
-from log_stage import append_stage
 from record_metric_result import commit as commit_metric_result
 from render_report import render as render_html_report
 
@@ -154,47 +157,36 @@ def _within(path: str, root: pathlib.Path, flag: str) -> str:
     return str(resolved)
 
 
-def _load_log(path: pathlib.Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    entries: list[dict[str, Any]] = []
-    for line_number, raw in enumerate(path.read_text().splitlines(), 1):
-        if not raw.strip():
-            continue
-        try:
-            entry = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"loop_log line {line_number} is invalid JSON: {exc}"
-            ) from exc
-        if not isinstance(entry, dict):
-            raise ValueError(f"loop_log line {line_number} must be an object")
-        entries.append(entry)
-    return entries
-
-
-def _validate_transition(
-    entries: list[dict[str, Any]], iter_label: str, stage: str
-) -> None:
-    key = (iter_label, stage)
-    if any((entry.get("iter"), entry.get("stage")) == key for entry in entries):
-        raise ValueError(f"stage already committed: {iter_label}/{stage}")
-    if not entries:
-        if key != ("baseline", "evaluate_benchmark"):
-            raise ValueError(
-                "the first stage must be baseline/evaluate_benchmark"
-            )
-        return
-    allowed = _expected_next(entries[-1])
-    if key not in allowed:
-        rendered = ", ".join(
-            f"{label}/{name}" for label, name in sorted(allowed)
-        )
-        previous = entries[-1]
-        raise ValueError(
-            f"illegal transition {previous.get('iter')}/{previous.get('stage')} "
-            f"-> {iter_label}/{stage}; expected [{rendered or 'end-of-log'}]"
-        )
+def _append_event(
+    state: dict[str, Any], args: argparse.Namespace
+) -> dict[str, Any]:
+    events = state.setdefault("events", [])
+    if not isinstance(events, list):
+        raise ValueError("state.events must be an array")
+    sequence = max(
+        (
+            event.get("seq", 0)
+            for event in events
+            if isinstance(event, dict)
+            and isinstance(event.get("seq"), int)
+            and not isinstance(event.get("seq"), bool)
+        ),
+        default=0,
+    ) + 1
+    event = {
+        "seq": sequence,
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(
+            timespec="seconds"
+        ),
+        "iter": args.iter_label,
+        "stage": args.stage,
+        "status": args.status,
+        "summary": args.summary,
+        "duration_sec": args.duration_sec,
+        "context_tokens": 0,
+    }
+    events.append(event)
+    return event
 
 
 def _apply_success(
@@ -259,7 +251,7 @@ def _apply_success(
         if args.skip:
             # Documented branch skip: the driving Proxy RCCA found no false
             # accepts, so there is no under-detection gap for synthetic
-            # defects to close. The audit re-proves this against disk.
+            # defects to close.
             phase["anomalygen_skipped"] = True
         else:
             phase["anomalygen_sdg_csv"] = _within(
@@ -347,10 +339,11 @@ def _apply_success(
     if stage != "loop_stop":
         phase["stage_completed"] = stage
         # benchmark_metrics completes a stopping iteration (record_metric_result
-        # sets status=complete). A continuing iteration then runs Proxy to seed
-        # the next round and completes at proxy_rcca, so neither stage may
-        # demote the phase back to in_progress.
-        if stage not in ("benchmark_metrics", "proxy_rcca"):
+        # sets status=complete). A continuing iteration becomes complete again
+        # only after Proxy RCCA has seeded the next round.
+        if stage == "proxy_rcca":
+            phase["status"] = "complete"
+        elif stage != "benchmark_metrics":
             phase["status"] = "in_progress"
 
 
@@ -371,32 +364,31 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
         )
     results_dir = args.results_dir.expanduser().resolve()
     state_path = results_dir / "deft_state.json"
-    log_path = results_dir / "loop_log.jsonl"
     if not state_path.is_file():
         raise ValueError(f"state file not found: {state_path}")
     original_state = state_path.read_text()
-    original_log = log_path.read_text() if log_path.exists() else None
     state = json.loads(original_state)
-    if pathlib.Path(str(state.get("results_dir", ""))).resolve() != results_dir:
-        raise ValueError("state.results_dir does not match --results-dir")
-    entries = _load_log(log_path)
-    _validate_transition(entries, args.iter_label, args.stage)
+    if not isinstance(state, dict):
+        raise ValueError("deft_state.json root must be an object")
 
     try:
+        state["version"] = 4
         iterations = state.get("iterations")
         if not isinstance(iterations, dict):
             raise ValueError("state.iterations must be an object")
-        if args.stage != "loop_stop":
-            phase = iterations.setdefault(
-                args.iter_label, {"status": "in_progress"}
+        phase = iterations.setdefault(args.iter_label, {"status": "in_progress"})
+        if not isinstance(phase, dict):
+            raise ValueError(
+                f"state.iterations.{args.iter_label} must be an object"
             )
-            if not isinstance(phase, dict):
-                raise ValueError(
-                    f"state.iterations.{args.iter_label} must be an object"
-                )
-            if args.status == "error":
-                phase["status"] = "failed"
-            elif args.stage == "benchmark_metrics":
+        if args.status == "error":
+            phase["status"] = "failed"
+            state["status"] = "failed"
+            state["completed_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(timespec="seconds")
+        elif args.stage != "loop_stop":
+            if args.stage == "benchmark_metrics":
                 commit_metric_result(
                     argparse.Namespace(
                         state_path=state_path,
@@ -423,40 +415,42 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 _apply_success(phase, args, results_dir)
             else:
                 _apply_success(phase, args, results_dir)
+            state["status"] = "in_progress"
+            state.pop("completed_at", None)
+        else:
+            baseline = iterations.get("baseline")
+            if not isinstance(baseline, dict) or baseline.get("status") != "complete":
+                raise ValueError(
+                    "loop_stop requires iterations.baseline.status=complete"
+                )
+            if phase.get("status") != "complete":
+                raise ValueError(
+                    f"loop_stop requires iterations.{args.iter_label}.status=complete"
+                )
+            state["status"] = "complete"
+            state["completed_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(timespec="seconds")
 
         match = re.fullmatch(r"iter([1-9][0-9]*)", args.iter_label)
         if match:
             state["current_iteration"] = max(
                 int(match.group(1)), int(state.get("current_iteration", 0))
             )
+        event = _append_event(state, args)
         _atomic_json(state_path, state)
-        append_stage(
-            log_path,
-            iter_label=args.iter_label,
-            stage=args.stage,
-            status=args.status,
-            summary=args.summary,
-            duration_sec=args.duration_sec,
-        )
-        report = audit(results_dir)
-        if report["status"] == "INVALID":
-            raise ValueError(
-                "post-commit audit failed: " + "; ".join(report["errors"])
-            )
     except Exception:
         _atomic_text(state_path, original_state)
-        if original_log is None:
-            try:
-                log_path.unlink()
-            except FileNotFoundError:
-                pass
-        else:
-            _atomic_text(log_path, original_log)
         raise
-    # Keep reporting outside the state/log transaction: a presentation bug is
+    report = {
+        "status": str(state.get("status", "in_progress")).upper(),
+        "terminal": state.get("status") in {"complete", "failed"},
+        "last_committed": event,
+    }
+    # Keep reporting outside the state transaction: a presentation bug is
     # surfaced to the caller without invalidating an otherwise valid commit.
     try:
-        output = render_html_report(results_dir, audit_report=report)
+        output = render_html_report(results_dir)
         report["report_path"] = str(output)
     except Exception as exc:  # noqa: BLE001 - hook failures are non-transactional
         report["report_render_error"] = str(exc)

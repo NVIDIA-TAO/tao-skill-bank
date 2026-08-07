@@ -319,5 +319,5 @@ Then stop. Remind the user that approval permits checkpoint preparation,
 post-gate spec/state creation, any flagged AnomalyGen asset bootstrap, and GPU
 submissions. After approval, prepare and
 validate the Qwen3-VL checkpoint, write the staged specs with concrete nested
-values, initialize state once, audit it, then begin baseline frozen Benchmark
-evaluation.
+values, initialize state once, re-read it, then begin baseline frozen
+Benchmark evaluation.

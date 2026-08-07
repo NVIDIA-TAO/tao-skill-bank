@@ -35,9 +35,8 @@ A completed iteration therefore ends at `benchmark_metrics` when the gate
 stopped the run, and at `proxy_rcca` when it continued. The final iteration of
 any run has Benchmark artifacts but no Proxy artifacts.
 
-An error event may transition only to `loop_stop`. Every successful stage has
-exactly one state update and exactly one ordered log entry. The bundled
-`commit_stage.py` owns both writes.
+Every successful or failed stage has exactly one state update and one ordered
+event. The bundled `commit_stage.py` owns that write.
 
 ## Baseline
 
@@ -65,8 +64,8 @@ count against `max_iterations`.
    AnomalyGen project. Commit Phase 2's defect-to-count `allocation.json` as
    the canonical AMP-allocation evidence, then run `emit_sdg_sharegpt.py` to turn each generated pair
    into a bare `NG` record. When the driving Proxy RCCA recorded zero false
-   accepts, commit `--skip` instead of launching the generator; the audit
-   re-proves that against `false_accepts_json` on disk. See
+   accepts, commit `--skip` instead of launching the generator after checking
+   the recorded `false_accepts_json` on disk. See
    `references/paidf-anomalygen.md`.
 3. Invoke `tao-mine-aoi-images` on the recorded Mining pool. Persist raw mined
    paths and source/target embeddings under the current iteration.
@@ -100,21 +99,27 @@ only newly mined and newly generated, validated records; `train_iter_<N>.json`
 for `N > 1` starts from the preceding Train artifact and adds only newly mined
 and newly generated, validated records.
 
-## State fields
+## State
 
-`deft_state.json` contains:
+`deft_state.json` is the only persistent loop record. Initialize it once with
+`init_deft_state.py`, then mutate it only through `commit_stage.py`; never
+hand-edit or reinitialize it. It contains:
 
 - immutable run identity, results directory, metric contract, and maximum
   iterations;
 - platform, model, image, spec, annotation, media-root, compute, and mining
   configuration;
 - the frozen Benchmark SHA-256;
-- one `iterations.<label>` object whose `stage_completed` matches the last
-  successful log event for that label;
-- absolute artifact paths under `${RESULTS_DIR}/<label>`.
+- one `iterations.<label>` object whose `stage_completed` matches the latest
+  successful event for that label;
+- absolute artifact paths under `${RESULTS_DIR}/<label>`;
+- an `events` array with a strict, monotonically increasing `seq`, UTC
+  timestamp, iteration, stage, `ok|error`, non-empty summary, measured
+  duration, and context-token placeholder.
 
-`loop_log.jsonl` contains a strict, gap-free `seq`, UTC timestamp, iteration,
-stage, `ok|error`, non-empty summary, duration, and context-token placeholder.
+Before every stage, re-read `deft_state.json`. Use the latest event plus
+`iterations.<label>.status` and `stage_completed` to resume. A failed stage may
+be retried after its cause is fixed; the retry becomes a new state event.
 
 ## Stage commit examples
 
@@ -141,22 +146,24 @@ All paths are absolute.
   --summary "frozen Benchmark KPI analyzed"
 ```
 
-Run the audit before constructing each next command. Its
-`read_before_action` output is the resume oracle.
+Re-read `deft_state.json` before constructing each next command and continue
+from its latest event and `stage_completed` value.
 
 ## Stop and completion
 
 For an ordinary stop, commit `loop_stop` after a completed
-`benchmark_metrics`. The audit accepts a successful stop only when:
+`benchmark_metrics` only when:
 
 - at least one completed Benchmark result passes the metric contract; or
 - a completed `iterN` has `N >= max_iterations`.
 
-For a hard stop, commit the failed stage with `--status error`, then commit
-`loop_stop`. A failed terminal run is not KPI completion.
+For a hard stop, commit the failed stage with `--status error` and halt. The
+state becomes `failed`; a failed terminal run is not KPI completion.
 
 The `commit_stage.py` post-commit hook refreshes the report after every stage,
 including `loop_stop`. After optional token alignment, run
 `render_report.py --require-terminal` once so the final artifact contains the
 aligned evidence. The final completion claim requires
-`audit_deft_run.py --require-complete`.
+a fresh state read showing `status == "complete"`, a complete baseline, and a
+complete final iteration. A hard-stop claim instead requires
+`status == "failed"`.
