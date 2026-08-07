@@ -1,0 +1,18 @@
+network_arch: tao-generate-image-embeddings
+type: data
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.1-rc-200-x86  # unpinned: held at the build this skill is validated against; repin once 7.1.0-data-services is confirmed to carry the action
+gpu_spec_key: null
+required_credentials: []
+actions:
+  image_embeddings:
+    command: embedding image_embeddings -e {config_path}
+    config_format: yaml
+    mode: config
+    inputs:
+      input_parquet:
+        type: file
+    outputs:
+      output_parquet:
+        type: file
+    upload_excludes:
+    - inputs/
