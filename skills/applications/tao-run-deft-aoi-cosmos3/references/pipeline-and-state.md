@@ -62,14 +62,21 @@ count against `max_iterations`.
 1. Build `mining_targets.json` only from the preceding Proxy false-accept /
    false-reject artifacts. Never read Benchmark per-sample errors here.
 2. Run `paidf-anomalygen` in `inference_only` mode against the recorded
-   AnomalyGen project, then `emit_sdg_sharegpt.py` to turn each generated pair
+   AnomalyGen project. Commit Phase 2's defect-to-count `allocation.json` as
+   the canonical AMP-allocation evidence, then run `emit_sdg_sharegpt.py` to turn each generated pair
    into a bare `NG` record. When the driving Proxy RCCA recorded zero false
    accepts, commit `--skip` instead of launching the generator; the audit
    re-proves that against `false_accepts_json` on disk. See
    `references/paidf-anomalygen.md`.
 3. Invoke `tao-mine-aoi-images` on the recorded Mining pool. Persist raw mined
    paths and source/target embeddings under the current iteration.
-4. Run `filter_mined_by_cosine.py`; a zero-row result is a hard stop.
+4. Run `filter_mined_by_cosine.py` into `mined_candidates.parquet`; a zero-row
+   result is a hard stop. Then run the mapped skill's
+   `filter_mined_history.py` to remove filepaths selected by every prior
+   iteration and write the final `mined_filtered.parquet`, per-iteration
+   summary, and run-level ledger. A zero-row novel result is also a hard stop;
+   surface the recommendation to increase top-K above the default 5 or expand the
+   Mining pool.
 5. Run `emit_mined_sharegpt.py` to align every mined path to exactly one Mining
    source record. It inherits the source prompt, golden reference, and exact
    label.
@@ -81,7 +88,9 @@ count against `max_iterations`.
    exclude Proxy and Benchmark targets.
 7. Run `validate_sharegpt.py --require-files` and
    `validate_split_contract.py` against the assembled Train file, passing
-   `--synthetic` when AnomalyGen produced records this iteration.
+   `--synthetic` when AnomalyGen produced records this iteration and
+   `--previous-train train_iter_<N-1>.json` for N>1. The latter makes historical
+   records eligible while proving that the current Train retained all of them.
 8. Retrain, then Benchmark-evaluate/gate. Stop when the gate passes or
    `N = max_iterations`. Only when the loop continues, Proxy-evaluate and run
    RCCA to seed the next iteration's routing.
@@ -116,6 +125,7 @@ All paths are absolute.
   --results-dir "$RESULTS_DIR" --iter-label iter1 --stage train \
   --best-ckpt "$RESULTS_DIR/iter1/train/safetensors/epoch_10" \
   --training-spec "$WORKSPACE/specs/train_spec.toml" \
+  --duration-sec "$STAGE_DURATION_SEC" \
   --summary "first mined-data Cosmos3 LoRA SFT completed"
 ```
 
@@ -127,6 +137,7 @@ All paths are absolute.
     "$RESULTS_DIR/baseline/benchmark_metrics/metrics_summary.json" \
   --metric-result \
     "$RESULTS_DIR/baseline/benchmark_metrics/metric_result.json" \
+  --duration-sec "$STAGE_DURATION_SEC" \
   --summary "frozen Benchmark KPI analyzed"
 ```
 
@@ -144,5 +155,8 @@ For an ordinary stop, commit `loop_stop` after a completed
 For a hard stop, commit the failed stage with `--status error`, then commit
 `loop_stop`. A failed terminal run is not KPI completion.
 
-Render the report after each completed iteration and once at loop end. The
-final completion claim requires `audit_deft_run.py --require-complete`.
+The `commit_stage.py` post-commit hook refreshes the report after every stage,
+including `loop_stop`. After optional token alignment, run
+`render_report.py --require-terminal` once so the final artifact contains the
+aligned evidence. The final completion claim requires
+`audit_deft_run.py --require-complete`.

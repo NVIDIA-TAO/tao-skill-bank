@@ -12,6 +12,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -22,6 +23,24 @@ MODEL_ROOT = (
     SKILL_ROOT.parents[1] / "models" / "tao-finetune-cosmos-reason"
 )
 sys.path.insert(0, str(SCRIPTS))
+DATA_MINING_SCRIPTS = (
+    SKILL_ROOT.parents[1] / "data" / "tao-mine-aoi-images" / "scripts"
+)
+sys.path.insert(0, str(DATA_MINING_SCRIPTS))
+
+# The ChangeNet DEFT skill has scripts with the same top-level module names.
+# Pytest may collect that suite first in one interpreter; clear only those
+# ambiguous imports before loading the Cosmos3-local state machine modules.
+for module_name in (
+    "audit_deft_run",
+    "commit_stage",
+    "init_deft_state",
+    "log_stage",
+    "metric_contract",
+    "record_metric_result",
+    "render_report",
+):
+    sys.modules.pop(module_name, None)
 
 import analyze_gaps  # noqa: E402
 import assemble_training_json  # noqa: E402
@@ -31,6 +50,7 @@ import commit_stage  # noqa: E402
 import emit_mined_sharegpt  # noqa: E402
 import emit_sdg_sharegpt  # noqa: E402
 import filter_mined_by_cosine  # noqa: E402
+import filter_mined_history  # noqa: E402
 import init_deft_state  # noqa: E402
 import patch_eval_image_cap  # noqa: E402
 import validate_sharegpt  # noqa: E402
@@ -199,6 +219,26 @@ class BareAnnotationTests(unittest.TestCase):
             patch_eval_image_cap.apply_cap("engine = LLM(model=ckpt)\n", 2)
         with self.assertRaisesRegex(ValueError, "exactly one image cap"):
             patch_eval_image_cap.apply_cap(source + source, 2)
+
+    def test_eval_image_cap_probe_times_out(self) -> None:
+        timeout = patch_eval_image_cap.subprocess.TimeoutExpired(
+            cmd=["docker", "run"], timeout=120
+        )
+        with mock.patch.object(
+            patch_eval_image_cap.shutil, "which", return_value="/usr/bin/docker"
+        ), mock.patch.object(
+            patch_eval_image_cap.subprocess, "run", side_effect=timeout
+        ) as run:
+            with self.assertRaisesRegex(
+                ValueError,
+                "timed out after 120s.*pre-pull the image",
+            ):
+                patch_eval_image_cap.read_from_image(
+                    "example/cosmos:1",
+                    patch_eval_image_cap.CONTAINER_PATH,
+                    docker="docker",
+                )
+        self.assertEqual(run.call_args.kwargs["timeout"], 120)
 
     def test_media_root_one_level_too_deep_is_diagnosed(self) -> None:
         """Annotations resolve from the workspace root, not workspace/images."""
@@ -432,6 +472,78 @@ class IsolationAndMetricTests(unittest.TestCase):
             )
             self.assertEqual(mixed_summary["target_overlap"]["train:synthetic"], 1)
 
+            # Iteration 2 must retain iteration 1, including historical
+            # synthetic records that are neither in Mining nor in iteration
+            # 2's AnomalyGen output.
+            current_synthetic = write_json(
+                root / "synthetic_iter2.json",
+                [record("sdg/iter2.png", "sdg/orig2.png", "NG")],
+            )
+            monotonic_train = write_json(
+                root / "train_iter2.json",
+                [
+                    record("mining.png", "golden.png", "OK"),
+                    record("sdg/PCB+bridge_00000.png", "sdg/orig.png", "NG"),
+                    record("sdg/iter2.png", "sdg/orig2.png", "NG"),
+                ],
+            )
+            with self.assertRaisesRegex(ValueError, "must come from the Mining"):
+                validate_split_contract.validate(
+                    {
+                        **role_paths,
+                        "synthetic": current_synthetic,
+                        "train": monotonic_train,
+                    },
+                    media_root=root,
+                    expected_benchmark_sha256=expected,
+                )
+
+            monotonic_roles = {
+                **role_paths,
+                "previous_train": mixed_train,
+                "synthetic": current_synthetic,
+                "train": monotonic_train,
+            }
+            monotonic_summary = validate_split_contract.validate(
+                monotonic_roles,
+                media_root=root,
+                expected_benchmark_sha256=expected,
+            )
+            self.assertEqual(
+                monotonic_summary["roles"]["previous_train"],
+                "previous_iteration_train",
+            )
+            self.assertEqual(
+                monotonic_summary["target_overlap"]["train:previous_train"],
+                2,
+            )
+
+            dropped_history = write_json(
+                root / "train_iter2_dropped_history.json",
+                [
+                    record("mining.png", "golden.png", "OK"),
+                    record("sdg/iter2.png", "sdg/orig2.png", "NG"),
+                ],
+            )
+            with self.assertRaisesRegex(
+                ValueError, "retain every record from --previous-train"
+            ):
+                validate_split_contract.validate(
+                    {**monotonic_roles, "train": dropped_history},
+                    media_root=root,
+                    expected_benchmark_sha256=expected,
+                )
+
+            audit_roles = audit_deft_run._training_lineage_roles(
+                "iter2",
+                {"anomalygen_sharegpt_json": str(current_synthetic)},
+                {"iter1": {"combined_training_json": str(mixed_train)}},
+                role_paths,
+                monotonic_train,
+            )
+            self.assertEqual(audit_roles["previous_train"], mixed_train)
+            self.assertEqual(audit_roles["synthetic"], current_synthetic)
+
             # A synthetic board that also sits in an evaluation split is leakage.
             leaking_synthetic = write_json(
                 root / "synthetic_leak.json",
@@ -503,6 +615,21 @@ class IsolationAndMetricTests(unittest.TestCase):
 
 
 class StateMachineTests(unittest.TestCase):
+    def test_stage_commit_requires_positive_measured_duration(self) -> None:
+        base = [
+            "--results-dir",
+            "/tmp/cosmos3-duration-contract",
+            "--iter-label",
+            "baseline",
+            "--stage",
+            "loop_stop",
+            "--summary",
+            "done",
+        ]
+        with self.assertRaises(SystemExit):
+            commit_stage._parser().parse_args(base)
+        self.assertEqual(commit_stage.main([*base, "--duration-sec", "0"]), 2)
+
     def test_baseline_commit_to_completion(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -530,6 +657,8 @@ class StateMachineTests(unittest.TestCase):
                     str(workspace),
                     "--platform",
                     "docker",
+                    "--gpu-model",
+                    "NVIDIA H100 80GB HBM3",
                     "--max-iterations",
                     "1",
                     "--cosmos-container",
@@ -571,6 +700,8 @@ class StateMachineTests(unittest.TestCase):
                         "evaluate_benchmark",
                         "--benchmark-results",
                         str(benchmark_results),
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "Benchmark evaluation complete",
                     ]
@@ -604,6 +735,8 @@ class StateMachineTests(unittest.TestCase):
                         str(benchmark_dir / "metrics_summary.json"),
                         "--metric-result",
                         str(benchmark_dir / "metric_result.json"),
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "Benchmark KPI met",
                     ]
@@ -620,6 +753,8 @@ class StateMachineTests(unittest.TestCase):
                         "baseline",
                         "--stage",
                         "loop_stop",
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "Benchmark KPI met",
                     ]
@@ -629,6 +764,18 @@ class StateMachineTests(unittest.TestCase):
             report = audit_deft_run.audit(results)
             self.assertEqual(report["status"], "COMPLETE")
             self.assertEqual(report["best_iteration"], "baseline")
+            html_report = results / "DEFT_Loop_Report.html"
+            self.assertTrue(html_report.is_file())
+            self.assertIn("KPI MET", html_report.read_text())
+            self.assertIsNone(
+                audit_deft_run._completion_report_error(results)
+            )
+            self.assertEqual(
+                audit_deft_run.main(
+                    ["--results-dir", str(results), "--require-complete"]
+                ),
+                0,
+            )
             phase = json.loads(
                 (results / "deft_state.json").read_text()
             )["iterations"]["baseline"]
@@ -661,6 +808,8 @@ class StateMachineTests(unittest.TestCase):
                         str(workspace),
                         "--platform",
                         "docker",
+                        "--gpu-model",
+                        "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "2",
                         "--cosmos-container",
@@ -681,6 +830,8 @@ class StateMachineTests(unittest.TestCase):
                         "baseline",
                         "--stage",
                         stage,
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         f"baseline {stage}",
                         *extra,
@@ -767,6 +918,8 @@ class StateMachineTests(unittest.TestCase):
                 str(workspace),
                 "--platform",
                 "docker",
+                "--gpu-model",
+                "NVIDIA H100 80GB HBM3",
                 "--max-iterations",
                 "1",
                 "--cosmos-container",
@@ -810,6 +963,8 @@ class StateMachineTests(unittest.TestCase):
                             str(workspace),
                             "--platform",
                             "docker",
+                            "--gpu-model",
+                            "NVIDIA H100 80GB HBM3",
                             "--max-iterations",
                             "1",
                             "--cosmos-container",
@@ -878,6 +1033,8 @@ class StateMachineTests(unittest.TestCase):
                         str(workspace),
                         "--platform",
                         "docker",
+                        "--gpu-model",
+                        "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "1",
                         "--cosmos-container",
@@ -901,6 +1058,8 @@ class StateMachineTests(unittest.TestCase):
                         "evaluate_benchmark",
                         "--status",
                         "error",
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "cosmos-rl-evaluate exited 1 before writing results",
                     ]
@@ -943,6 +1102,8 @@ class StateMachineTests(unittest.TestCase):
                         str(workspace),
                         "--platform",
                         "docker",
+                        "--gpu-model",
+                        "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "2",
                         "--cosmos-container",
@@ -963,6 +1124,8 @@ class StateMachineTests(unittest.TestCase):
                         label,
                         "--stage",
                         stage,
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         f"{label} {stage}",
                         *extra,
@@ -1078,9 +1241,12 @@ class StateMachineTests(unittest.TestCase):
                 ("benchmark", "benchmark_kpi.json", "NG"),
                 ("mining", "mining_pool.json", "OK"),
             ):
+                records = [record(f"{role}.png", "golden.png", label)]
+                if role == "mining":
+                    records.append(record("mining_iter2.png", "golden.png", label))
                 annotation_paths[role] = write_json(
                     workspace / "annotations" / filename,
-                    [record(f"{role}.png", "golden.png", label)],
+                    records,
                 )
             self.assertEqual(
                 init_deft_state.main(
@@ -1091,8 +1257,10 @@ class StateMachineTests(unittest.TestCase):
                         str(workspace),
                         "--platform",
                         "docker",
+                        "--gpu-model",
+                        "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
-                        "1",
+                        "2",
                         "--cosmos-container",
                         "example/cosmos:1",
                         "--mining-container",
@@ -1112,6 +1280,8 @@ class StateMachineTests(unittest.TestCase):
                             label,
                             "--stage",
                             stage,
+                            "--duration-sec",
+                            "1",
                             "--summary",
                             f"{label} {stage}",
                             *extra,
@@ -1231,6 +1401,8 @@ class StateMachineTests(unittest.TestCase):
                         "--stage",
                         "anomalygen",
                         "--skip",
+                        "--duration-sec",
+                        "1",
                         "--summary",
                         "attempted unjustified skip",
                     ]
@@ -1240,6 +1412,9 @@ class StateMachineTests(unittest.TestCase):
 
             sdg_csv = write_sdg_output(
                 results / "iter1/anomalygen/sdg", ["PCB+bridge_00000"]
+            )
+            allocation = write_json(
+                results / "iter1/anomalygen/sdg/allocation.json", {"bridge": 1}
             )
             synthetic_json = results / "iter1/anomalygen/sdg_sharegpt.json"
             self.assertEqual(
@@ -1267,16 +1442,39 @@ class StateMachineTests(unittest.TestCase):
                 "anomalygen",
                 "--anomalygen-sdg",
                 str(sdg_csv),
+                "--anomalygen-allocation",
+                str(allocation),
                 "--anomalygen-sharegpt",
                 str(synthetic_json),
+            )
+            state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(
+                state["iterations"]["iter1"]["anomalygen_amp_allocated"], 1
+            )
+            self.assertEqual(
+                state["iterations"]["iter1"]["anomalygen_allocation_json"],
+                str(allocation.resolve()),
             )
 
             mining_dir = results / "iter1/mining"
             mining_dir.mkdir(parents=True)
             mined = mining_dir / "mined_filtered.parquet"
+            mining_candidates = mining_dir / "mined_candidates.parquet"
+            mining_history_summary = mining_dir / "mining_history_summary.json"
+            mining_history = results / "mining_history.json"
             source_embeddings = mining_dir / "source_embeddings.parquet"
             target_embeddings = mining_dir / "target_embeddings.parquet"
-            pq.write_table(pa.table({"filepath": ["mining.png"]}), mined)
+            pq.write_table(
+                pa.table({"filepath": ["mining.png"]}), mining_candidates
+            )
+            history_result = filter_mined_history.select_novel_samples(
+                candidate_parquet=mining_candidates,
+                output_parquet=mined,
+                history_file=mining_history,
+                summary_file=mining_history_summary,
+                iteration=1,
+                topn=5,
+            )
             embedding_table = pa.table(
                 {"filepath": ["mining.png"], "embedding": [[1.0, 0.0]]}
             )
@@ -1291,14 +1489,20 @@ class StateMachineTests(unittest.TestCase):
                 "data_mining",
                 "--mining-parquet",
                 str(mined),
+                "--mining-candidates",
+                str(mining_candidates),
                 "--mining-summary",
                 str(mining_summary),
+                "--mining-history",
+                str(mining_history),
+                "--mining-history-summary",
+                str(mining_history_summary),
                 "--mining-target-embeddings",
                 str(target_embeddings),
                 "--mining-source-embeddings",
                 str(source_embeddings),
                 "--mining-count",
-                "1",
+                str(history_result["selected_count"]),
             )
 
             assemble_dir = results / "iter1/assemble"
@@ -1362,14 +1566,171 @@ class StateMachineTests(unittest.TestCase):
                 str(validation_report),
             )
             train("iter1")
-            # max_iterations=1, so iter1 stops at the gate and skips Proxy.
-            evaluate_arc("iter1", correct=False, continuing=False)
+
+            # The first iteration remains below target, so its Proxy RCCA
+            # drives a second augmentation cycle.
+            evaluate_arc("iter1", correct=False, continuing=True)
+            iter2_targets = write_json(
+                results / "iter2/routing/mining_targets.json",
+                [{"filepath": "proxy.png", "label": "NG"}],
+            )
+            commit(
+                "iter2",
+                "routing",
+                "--mining-targets",
+                str(iter2_targets),
+            )
+
+            iter2_sdg_csv = write_sdg_output(
+                results / "iter2/anomalygen/sdg", ["PCB+bridge_00001"]
+            )
+            iter2_allocation = write_json(
+                results / "iter2/anomalygen/sdg/allocation.json", {"bridge": 1}
+            )
+            iter2_synthetic = results / "iter2/anomalygen/sdg_sharegpt.json"
+            self.assertEqual(
+                emit_sdg_sharegpt.main(
+                    [
+                        "--sdg-csv",
+                        str(iter2_sdg_csv),
+                        "--media-root",
+                        str(root),
+                        "--prompt-from",
+                        str(annotation_paths["mining"]),
+                        "--output",
+                        str(iter2_synthetic),
+                    ]
+                ),
+                0,
+            )
+            commit(
+                "iter2",
+                "anomalygen",
+                "--anomalygen-sdg",
+                str(iter2_sdg_csv),
+                "--anomalygen-allocation",
+                str(iter2_allocation),
+                "--anomalygen-sharegpt",
+                str(iter2_synthetic),
+            )
+
+            iter2_mining_dir = results / "iter2/mining"
+            iter2_mining_dir.mkdir(parents=True)
+            iter2_mined = iter2_mining_dir / "mined_filtered.parquet"
+            iter2_mining_candidates = (
+                iter2_mining_dir / "mined_candidates.parquet"
+            )
+            iter2_history_summary = (
+                iter2_mining_dir / "mining_history_summary.json"
+            )
+            iter2_source_embeddings = (
+                iter2_mining_dir / "source_embeddings.parquet"
+            )
+            iter2_target_embeddings = (
+                iter2_mining_dir / "target_embeddings.parquet"
+            )
+            pq.write_table(
+                pa.table({"filepath": ["mining_iter2.png"]}),
+                iter2_mining_candidates,
+            )
+            iter2_history_result = filter_mined_history.select_novel_samples(
+                candidate_parquet=iter2_mining_candidates,
+                output_parquet=iter2_mined,
+                history_file=mining_history,
+                summary_file=iter2_history_summary,
+                iteration=2,
+                topn=5,
+            )
+            iter2_embedding_table = pa.table(
+                {
+                    "filepath": ["mining_iter2.png"],
+                    "embedding": [[1.0, 0.0]],
+                }
+            )
+            pq.write_table(iter2_embedding_table, iter2_source_embeddings)
+            pq.write_table(iter2_embedding_table, iter2_target_embeddings)
+            iter2_mining_summary = write_json(
+                iter2_mining_dir / "cosine_filter_summary.json",
+                {"kept_rows": 1, "min_similarity": 0.9},
+            )
+            commit(
+                "iter2",
+                "data_mining",
+                "--mining-parquet",
+                str(iter2_mined),
+                "--mining-candidates",
+                str(iter2_mining_candidates),
+                "--mining-summary",
+                str(iter2_mining_summary),
+                "--mining-history",
+                str(mining_history),
+                "--mining-history-summary",
+                str(iter2_history_summary),
+                "--mining-target-embeddings",
+                str(iter2_target_embeddings),
+                "--mining-source-embeddings",
+                str(iter2_source_embeddings),
+                "--mining-count",
+                str(iter2_history_result["selected_count"]),
+            )
+
+            iter2_assemble_dir = results / "iter2/assemble"
+            iter2_mined_sharegpt = write_json(
+                iter2_assemble_dir / "mined_sharegpt.json",
+                [record("mining_iter2.png", "golden.png", "OK")],
+            )
+            iter2_records, iter2_summary = assemble_training_json.assemble(
+                combined,
+                [iter2_mined_sharegpt, iter2_synthetic],
+                dedupe=True,
+                validation_paths=[
+                    annotation_paths["proxy"],
+                    annotation_paths["benchmark"],
+                ],
+            )
+            iter2_combined = write_json(
+                iter2_assemble_dir / "train_iter_2.json", iter2_records
+            )
+            iter2_assemble_summary = write_json(
+                iter2_assemble_dir / "assemble_summary.json", iter2_summary
+            )
+            self.assertEqual(len(iter2_records), 4)
+            # Regression: this commit used to roll back because iter1's
+            # synthetic target was absent from both Mining and iter2 synthetic.
+            commit(
+                "iter2",
+                "assemble_data",
+                "--mined-sharegpt",
+                str(iter2_mined_sharegpt),
+                "--combined-training",
+                str(iter2_combined),
+                "--assemble-summary",
+                str(iter2_assemble_summary),
+            )
+            iter2_validation_summary = validate_sharegpt.validate_records(
+                iter2_records,
+                media_root=root,
+                require_files=False,
+            )
+            iter2_validation_report = write_json(
+                results / "iter2/validate/validation_report.json",
+                iter2_validation_summary,
+            )
+            commit(
+                "iter2",
+                "validate_data",
+                "--validation-report",
+                str(iter2_validation_report),
+            )
+            train("iter2")
+            # max_iterations=2, so iter2 stops at the gate and skips Proxy.
+            evaluate_arc("iter2", correct=False, continuing=False)
             report = audit_deft_run.audit(results)
             self.assertIn("loop_stop", report["next_action"])
-            commit("iter1", "loop_stop")
+            commit("iter2", "loop_stop")
             report = audit_deft_run.audit(results)
             self.assertEqual(report["status"], "COMPLETE")
-            self.assertEqual(report["current_iteration"], 1)
+            self.assertEqual(report["current_iteration"], 2)
 
 
 if __name__ == "__main__":

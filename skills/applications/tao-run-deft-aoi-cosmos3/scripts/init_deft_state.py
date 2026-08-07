@@ -17,6 +17,7 @@ import tempfile
 from typing import Any
 
 from metric_contract import render_target, validate_contract
+from render_report import render as render_html_report
 
 
 WORKFLOW = "tao-run-deft-aoi-cosmos3"
@@ -280,6 +281,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "annotation_source": "generated_from_mining_and_anomalygen",
                 "num_gpus": args.num_gpus,
                 "num_nodes": args.num_nodes,
+                "gpu_model": args.gpu_model,
                 "num_epochs": args.num_epochs,
                 "batch_size": args.batch_size,
                 "learning_rate": args.learning_rate,
@@ -293,6 +295,11 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "top_k_per_target": args.top_k_per_target,
                 "metric": "cosine",
                 "min_similarity": args.min_similarity,
+                "history_aware": {
+                    "enabled": True,
+                    "identity": "filepath",
+                    "history_file": str(results_dir / "mining_history.json"),
+                },
             },
             "anomalygen": {
                 "sub_skill": "paidf-anomalygen",
@@ -395,6 +402,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mining-annotations", type=pathlib.Path)
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--num-nodes", type=int, default=1)
+    parser.add_argument(
+        "--gpu-model",
+        required=True,
+        help=(
+            "Exact accelerator model recorded by the selected platform's "
+            "Preflight, including memory when available"
+        ),
+    )
     parser.add_argument("--num-epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -438,6 +453,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    args.gpu_model = args.gpu_model.strip()
+    if not args.gpu_model:
+        print("init_deft_state: --gpu-model must not be empty", file=sys.stderr)
+        return 2
     positive = {
         "max_iterations": args.max_iterations,
         "num_gpus": args.num_gpus,
@@ -480,6 +499,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"init_deft_state: {exc}", file=sys.stderr)
         return 2
     print(f"init_deft_state: wrote {output}", file=sys.stderr)
+    try:
+        render_html_report(args.results_dir)
+    except Exception as exc:  # noqa: BLE001 - state initialization remains valid
+        print(f"init_deft_state: report hook failed: {exc}", file=sys.stderr)
     return 0
 
 

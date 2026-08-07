@@ -111,6 +111,7 @@ AnomalyGen writes one synthetic defect per row of `SDG_result.csv`:
 
 ```text
 <output_dir>/
+├── allocation.json                       # Phase 2 defect -> AMP count proof
 ├── SDG_result.csv
 ├── reconstructed_image/<T>+<A>_<idx>.png   # generated defect  -> images[0], the AOI board
 └── original_image/<T>+<A>_<idx>.png        # clean source      -> images[1], the golden reference
@@ -152,7 +153,8 @@ To skip, commit a documented branch skip instead of launching the generator:
 ```bash
 "$SKILL_ROOT/scripts/deft_python.sh" "$SKILL_ROOT/scripts/commit_stage.py" \
   --results-dir "$RESULTS_DIR" --iter-label "iter${N}" --stage anomalygen \
-  --skip --summary "no Proxy false accepts; synthetic defects not indicated"
+  --skip --duration-sec "$STAGE_DURATION_SEC" \
+  --summary "no Proxy false accepts; synthetic defects not indicated"
 ```
 
 The driving RCCA is `baseline` for `iter1` and `iter${N-1}` for later
@@ -192,15 +194,19 @@ be automatic.
 "$SKILL_ROOT/scripts/deft_python.sh" "$SKILL_ROOT/scripts/commit_stage.py" \
   --results-dir "$RESULTS_DIR" --iter-label "iter${N}" --stage anomalygen \
   --anomalygen-sdg "$RESULTS_DIR/iter${N}/anomalygen/sdg/SDG_result.csv" \
+  --anomalygen-allocation "$RESULTS_DIR/iter${N}/anomalygen/sdg/allocation.json" \
   --anomalygen-sharegpt "$RESULTS_DIR/iter${N}/anomalygen/sdg_sharegpt.json" \
+  --duration-sec "$STAGE_DURATION_SEC" \
   --summary "SDG: requested=N, AMP-allocated=M, generated=K by defect type"
 ```
 
-When `M < N`, report both requested and allocated counts — that gap is the
+`commit_stage.py` derives `M` by summing the committed defect-to-count
+`allocation.json` and the audit rechecks it from disk. When `M < N`, report
+both requested and allocated counts — that gap is the
 signal a reviewer needs to spot an allocation bottleneck rather than a
 generation one.
 
-Both artifacts must land under the stage's bound results directory. `--skip`
+All three artifacts must land under the stage's bound results directory. `--skip`
 and the two artifact flags are mutually exclusive; the audit rejects a phase
 that records both.
 

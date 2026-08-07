@@ -21,7 +21,7 @@ iteration executes:
 
 2. **[SKILL — `tao-skill-bank:tao-route-visual-changenet-samples`] Route weak samples.** Split the prior phase's `rca_gaps_parquet` into `routing_mining_parquet` and `routing_anomalygen_parquet` under the current `iterN` object. Downstream mining and AnomalyGen stages read those paths from disk. See `references/tao-route-visual-changenet-samples.md`.
 
-3. **[SKILL — `tao-skill-bank:paidf-anomalygen`] Run AMP + SDG.** Pass `dataset_dir` verbatim — no pool-staging, no parallel cache. Pre-create only `${RESULTS_DIR}/iter${N}/anomalygen/sdg/`. The four invariants that actually gate the run (cad_mask RGB preserved, `text` entries have prompts, clean+cad pairs by stem, `semantic_segmentation_labels.json` present) and the full parameter mapping live in `references/paidf-anomalygen.md`. Read it before invoking. Set `num_search_run=0` and `nn_threshold=0` to skip the SDG-quality phases (4–7) — the DEFT loop only needs the NG/OK pairs from Phase 3.
+3. **[SKILL — `tao-skill-bank:paidf-anomalygen`] Run AMP + SDG.** Pass `dataset_dir` verbatim — no pool-staging, no parallel cache. Pre-create only `${RESULTS_DIR}/iter${N}/anomalygen/sdg/`. Commit both `SDG_result.csv` and Phase 2's defect-to-count `allocation.json`; the latter is the canonical proof for AMP allocated. The four invariants that actually gate the run (cad_mask RGB preserved, `text` entries have prompts, clean+cad pairs by stem, `semantic_segmentation_labels.json` present) and the full parameter mapping live in `references/paidf-anomalygen.md`. Read it before invoking. Set `num_search_run=0` and `nn_threshold=0` to skip the SDG-quality phases (4–7) — the DEFT loop only needs the NG/OK pairs from Phase 3.
 
    If the committed `routing_anomalygen_parquet` has zero rows, do not launch
    the GPU generator. Set `anomalygen_skipped=true`, advance
@@ -31,7 +31,12 @@ iteration executes:
 
    **SDG training contribution (INLINE).** Convert returned AnomalyGen outputs into ChangeNet paired training rows. Pre-create `${RESULTS_DIR}/iter${N}/mining_filter/` and `${RESULTS_DIR}/iter${N}/dataset/images/` before running the row-prep script. Stage NG/OK image pairs under `results/iter${N}/dataset/images/synthetic_iter${N}_{ng,ok}/`, run `scripts/changenet_data_pair_prepare.py` with `--input-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/reconstructed_image`, `--golden-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/original_image`, `--images-dir`, `--subdir synthetic_iter${N}`, `--light SolderLight`, `--image-ext .jpg` (or the exact `dataset.classify.image_ext` from the training spec), and `--output-csv ${RESULTS_DIR}/iter${N}/mining_filter/sdg_rows_raw.csv`. Rewrite the script's bare `synthetic_iter${N}_ng/` paths to workspace-root-relative form (`results/run_<TS>/iter${N}/dataset/images/synthetic_iter${N}_ng`) before appending into `mining_filter/mining_pool.csv`, since the per-iter training spec sets `images_dir=/data/workspace`. SDG rows skip k-NN filtering; only real-image mining applies the cosine threshold.
 
-4. **[SKILL — `tao-skill-bank:tao-mine-aoi-images`] Mining pool — real-image contribution.** Mine real images from `augmentation/mining_pool/mining_pool.csv` against the current iteration's weak samples (`routing_mining_parquet` from `deft_state.json`) using SigLIP k-NN embeddings. **Retain only entries with cosine similarity ≥ `state.config.mining_filter.min_similarity`** (default `0.9` when unset). Lower-similarity candidates are rejected. Append the retained rows into `mining_filter/mining_pool.csv` (same file as the SDG contribution above). When converting mined filepaths into ChangeNet rows, follow the path-form rule in `references/tao-mine-aoi-images.md` → *Mined rows → ChangeNet CSV*. Output: updated `mining_filter/mining_pool.csv` and `mining_filter/knn_summary.csv` (`candidate_count`, `kept_count`, `rejected_count`, `similarity_threshold=<value>`), where `candidate_count` is the unique unfiltered TAO mined-row count and equals kept + rejected. See `references/tao-mine-aoi-images.md`.
+4. **[SKILL — `tao-skill-bank:tao-mine-aoi-images`] Mining pool — real-image contribution.** Mine real images from `augmentation/mining_pool/mining_pool.csv` against the current iteration's weak samples (`routing_mining_parquet` from `deft_state.json`) using SigLIP k-NN embeddings. **Retain only entries with cosine similarity ≥ `state.config.mining_filter.min_similarity`** (default `0.9` when unset), then run the mapped skill's history-aware post-processing and drop every filepath already selected by an earlier iteration. The default remains `top_k_per_target=5`; preserve an explicit user value and increase it only when history filtering repeatedly leaves too few novel candidates. Append only the final novel rows into `mining_filter/mining_pool.csv` (same file as the SDG contribution above). Never append `mined_raw.parquet` or `mined_candidates.parquet`. When converting mined filepaths into ChangeNet rows, follow the path-form rule in `references/tao-mine-aoi-images.md` → *Mined rows → ChangeNet CSV*. Output: updated `mining_filter/mining_pool.csv`, immutable cosine-only `mining_filter/knn_summary.csv`, per-iteration `mining_history_summary.json`, and run-level `mining_history.json`. The cosine summary proves raw candidate retention; the history summary separately proves prior-iteration rejection and the final novel count. See `references/tao-mine-aoi-images.md`.
+
+   If history filtering leaves zero novel real rows, surface its recommendation
+   to increase `topn` or expand the source pool. Continue only when AnomalyGen
+   contributed new synthetic rows to this iteration; otherwise hard-stop
+   instead of retraining the unchanged cumulative dataset.
 
    If the committed `routing_mining_parquet` has zero rows, do not run the
    embedding/mining containers. Set `data_mining_skipped=true`, advance
@@ -45,7 +50,12 @@ iteration executes:
 5. **[INLINE] Assemble training CSV** with monotonic growth:
    - Iter 1: `train/base/training_set.csv` + `mining_filter/mining_pool.csv`.
    - Iter N/resume: previous `train_combined_iter${N-1}.csv` + current `mining_filter/mining_pool.csv`. Never re-add `base_train` when using a previous combined CSV.
-   - Write a sibling `_provenance.csv` for every output row; `source ∈ {base_train, previous_iter_train, mining_pool}`.
+   - Write a sibling `_provenance.csv` with one aligned row per combined Train
+     row. For iter1, `source ∈ {base_train, mining_pool}`. For N>1,
+     `source ∈ {previous_iter_train, mining_pool}`; every row from the preceding
+     combined CSV must appear unchanged with `source=previous_iter_train`.
+     `audit_deft_run.py` enforces the row count, source vocabulary, and exact
+     multiset retention, so a non-monotonic merge is rolled back.
    - **`images_dir` for the iteration training spec** must be set to the workspace root (e.g. `/data/workspace/`), not `kpi/images/`. SDG rows already carry workspace-root-relative paths. Before concatenation, rewrite every iter1 base row's relative `input_path` and `golden_path` by prepending `kpi/images/` exactly once; do not merely change the spec. For iter N>1, the previous combined CSV is already in workspace coordinates and must not be prefixed again. If validation shows base files exist only after adding `kpi/images/`, fix the CSV and rerun validation; never bypass the FATAL.
    - **Normalize `label` case on every source before concatenation — base_train, previous_iter_train, SDG rows, and mined rows.** Preserve `PASS` uppercase and lowercase+strip everything else; write the normalized combined CSV before running `validate_training_csv.py`. See `references/visual-changenet.md` for the dataloader rule and the failure mode if you violate it.
 
@@ -79,6 +89,7 @@ iteration executes:
      --combined-csv "${RESULTS_DIR}/iter${ITER}/dataset/train_combined_iter${ITER}.csv" \
      --provenance-csv "${RESULTS_DIR}/iter${ITER}/dataset/train_combined_iter${ITER}_provenance.csv" \
      --merge-validation-report "${RESULTS_DIR}/iter${ITER}/dataset/merge_validation.json" \
+     --duration-sec "${STAGE_DURATION_SEC}" \
      --summary "validated combined training CSV"
    ```
 
@@ -135,7 +146,8 @@ Three stage types:
 
 - **SKILL** — read `references/<stage>.md` first, then invoke the matching `tao-skill-bank:*` skill via the Skill tool or its documented direct-container fallback. Stage→skill mapping and fallback contract are in `references/scripts-and-agents.md`.
 - **INLINE** — parent does the work directly (pre-flight, CSV assembly, leakage check).
-- **AGENT** — parent spawns a subagent. The only AGENT stage is `agents/reporter.md` for HTML rendering.
+- **HOOK** — `commit_stage.py` invokes `scripts/render_report.py` after each
+  valid commit. Report generation is deterministic and never delegated.
 
 For `tao-skill-bank:tao-train-visual-changenet`, pass a separate task name (`train`, `inference`, or `evaluate`); the `stage` value in `loop_log.jsonl` is still only `train` or `evaluate`.
 
@@ -149,19 +161,28 @@ After every stage finishes, before advancing:
 2. Invoke `commit_stage.py` once with the documented artifact flags. For an error use `--status error`; it sets the iteration failed. Never repair a rejected commit by editing JSON.
 3. Run `scripts/audit_deft_run.py --results-dir ${RESULTS_DIR}`. If it reports `INVALID`, halt and repair; do not advance on in-memory success.
 4. If the committed log status is `error` — halt, surface the disk evidence verbatim, **do not auto-retry**.
-5. If the committed log status is `ok` — print one status line in the standard format `[iter <N>/<max> · <stage>] <primary metric> · <duration> · next: <stage>` (e.g. `[iter 2/3 · evaluate] weighted escape cost 0.024 → 0.018 (target <=0.02) · 2m · next: loop_stop`). Use the contract's display name, direction, target, and unit. Then advance. Render `DEFT_Loop_Report.html` only at iteration end (`trigger="after-iteration"`) and at loop end (`trigger="loop-end"`); never inline.
+5. If the committed log status is `ok` — confirm that `commit_stage.py` did
+   not print `report hook failed`, then print one status line in the standard
+   format `[iter <N>/<max> · <stage>] <primary metric> · <duration> · next:
+   <stage>` (e.g. `[iter 2/3 · evaluate] weighted escape cost 0.024 → 0.018
+   (target <=0.02) · 2m · next: loop_stop`). Use the contract's display name,
+   direction, target, and unit. The post-commit hook has already refreshed
+   `DEFT_Loop_Report.html`; do not spawn a reporting agent.
 
 ## Reports
 
 - `results/iter${ITER}_summary.md` — ≤300 words; readable after context compaction.
 - `results/iter${ITER}/report.html` — RCA targets, branch outputs, filter decision, metric delta.
-- `results/DEFT_Loop_Report.html` — re-rendered after each completed iteration and at loop end by the `reporter` subagent (`agents/reporter.md`). The agent owns the entire render: it reads the template, the rendering protocol (`references/REPORT_RENDERING.md`), and disk state, then writes atomically. The parent's only responsibility is to spawn the agent — never render inline.
+- `results/DEFT_Loop_Report.html` — initialized by `init_deft_state.py` and
+  re-rendered after every committed stage by `commit_stage.py` through
+  `scripts/render_report.py`. The script reads the source template and disk
+  evidence, validates the full output, and writes atomically.
 
 ## Runtime Behavior
 
 Run without pausing. Between stages, run the audit and print only its one-line
-status/next action. Spawn the `reporter` only after a full iteration and at
-loop end. `commit_stage.py` appends exactly one event per stage. For background
+status/next action. `commit_stage.py` appends exactly one event per stage and
+refreshes the report through its post-commit hook. For background
 Docker work, redirect both streams, save its PID, poll one line or `tail -40`
 at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call.
 
@@ -177,7 +198,18 @@ at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call
    ```
 
    This rewrites every entry's `context_tokens` field with the real context size at stage end and adds a `tokens` object (`input`, `output`, `cache_read`, `cache_create`, `n_messages`, `models`). The next step's report includes the numbers.
-3. Spawn `reporter` with `trigger="loop-end"` to re-render `DEFT_Loop_Report.html` against the now-aligned log.
+3. Run the renderer once after token alignment so the final report includes
+   the backfilled usage fields:
+
+   ```bash
+   <this-skill-dir>/scripts/deft_python.sh \
+     <this-skill-dir>/scripts/render_report.py \
+     --results-dir "${RESULTS_DIR}" --require-terminal
+   ```
+
+   This is an explicit deterministic script call, not delegated work; the
+   preceding `loop_stop` commit already produced a valid report before token
+   alignment.
 4. Run `scripts/prepare_inference_spec.py` (see below).
 
 Before telling the user the loop is complete, run:

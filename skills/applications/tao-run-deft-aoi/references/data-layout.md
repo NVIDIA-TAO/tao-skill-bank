@@ -44,7 +44,7 @@ creates (paths under `<workspace>` unless absolute):
 
 ```text
 <workspace>/
-├── .env                                     # NGC_KEY (nvcr.io/* pulls for all pinned images), HF_TOKEN (HuggingFace pre-flight pulls)
+├── .env                                     # NGC_KEY (nvcr.io/* pulls for all manifest-resolved images), HF_TOKEN (HuggingFace pre-flight pulls)
 ├── specs/baseline_spec.yaml                 # ChangeNet train/eval spec
 ├── train/base/
 │   ├── training_set.csv                     # seed training rows; four mandatory ChangeNet columns
@@ -102,7 +102,7 @@ Relative to `<workspace>`:
 results/run_<YYYYMMDD_HHMMSS>/               # = ${RESULTS_DIR}
 ├── deft_state.json                          # current resume snapshot (schema: references/deft_state.json)
 ├── loop_log.jsonl                           # append-only stage log; single source of truth
-├── DEFT_Loop_Report.html                    # re-rendered after every stage by agents/reporter.md
+├── DEFT_Loop_Report.html                    # atomically refreshed by the commit_stage.py report hook
 ├── best_model.json                          # inference handoff metadata (see references/prepare-for-inference.md)
 ├── best_model_inference_spec.yaml           # ready-to-run TAO inference spec built from training config
 ├── iter${ITER}_summary.md                   # ≤300-word per-iteration summary
