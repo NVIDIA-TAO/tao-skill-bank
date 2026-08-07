@@ -410,3 +410,4 @@ fires twice across runs, lift it into `compat-workarounds.md` with a `detect` ru
 - [tao-rerun-detr-cppe5](references/tao-rerun-detr-cppe5.md)
 - [tao-rerun-segformer-foodseg103](references/tao-rerun-segformer-foodseg103.md)
 - [tao-rerun-smolvlm-vqav2](references/tao-rerun-smolvlm-vqav2.md)
+

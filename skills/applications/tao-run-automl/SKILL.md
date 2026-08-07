@@ -387,3 +387,4 @@ At completion:
 - Do not bypass a retention-preflight failure by disabling cleanup unless the
   user has explicitly accepted external ownership and manual lifecycle
   management for every trial artifact.
+

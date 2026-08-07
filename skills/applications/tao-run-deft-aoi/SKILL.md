@@ -259,3 +259,4 @@ directory to `/results/iterN`.
 Run the full Pre-Flight (`references/preflight.md`), print the Pre-Flight Summary, then STOP at the one user gate. After approval, run the baseline (with the pre-seed/skip-train logic) and the 7-step iteration Pipeline, all detailed in `references/pipeline-and-state.md`.
 
 Hard-stop and never auto-retry on: any stage `status=error`; train/validation leakage; a missing or zero-row mining pool; a failed CSV existence check; silent-drop; and AMP allocation mismatch. The loop stops when the KPI target is met, `max_iterations` is reached, or an unrecoverable gate fires. Each terminal path commits `loop_stop` through `commit_stage.py`, then follows the loop-end sequence in `references/pipeline-and-state.md`.
+
