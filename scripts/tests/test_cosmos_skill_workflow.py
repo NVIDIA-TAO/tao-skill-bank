@@ -675,7 +675,8 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert "--no-container-remap-root" in plan["preflight"]["container_runtime"]
     assert "--no-container-mount-home" in plan["preflight"]["container_runtime"]
     script = workflow.render_slurm(args, plan)
-    assert script.startswith("#!/usr/bin/env bash\n#SBATCH --partition=")
+    assert script.startswith("#!/usr/bin/env bash\n#SBATCH --job-name=")
+    assert f"#SBATCH --job-name={args.tao_job_id}" in script
     assert script.index("#SBATCH --account=") < script.index("set -Eeuo pipefail")
     assert "#SBATCH --no-requeue" in script and "--container-image=" in script
     assert "--no-container-remap-root" in script
