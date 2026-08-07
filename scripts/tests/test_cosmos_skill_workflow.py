@@ -736,7 +736,11 @@ def test_framework_spec_uses_only_current_strict_sft_schema_keys(tmp_path):
     args = args_for(tmp_path)
     plan = workflow.build_plan(args)
     assert "keys_to_exclude" not in plan["spec"]["optimizer"]
-    assert "dcp_async_mode_enabled" not in plan["spec"]["checkpoint"]
+    assert plan["spec"]["checkpoint"]["dcp_async_mode_enabled"] is False
+
+    args.async_checkpoint = True
+    plan = workflow.build_plan(args)
+    assert plan["spec"]["checkpoint"]["dcp_async_mode_enabled"] is True
 
 
 def test_rl_sft_batch_is_per_dp_worker_and_multinode_launchers_are_packaged(tmp_path):

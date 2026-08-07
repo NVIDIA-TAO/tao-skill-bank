@@ -565,7 +565,13 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
             "validation_freq_in_epoch": 1, "run_validation_on_start": False,
             "callbacks": {"compile_tokenizer": {"compile_after_iterations": 3, "enabled": False}, "grad_clip": {"clip_norm": args.gradient_clip, "force_finite": False}, "tao": {"enabled": True, "experiment_name": args.experiment_id, "logging_interval": 1, "validation_heartbeat_interval": 50}},
         },
-        "checkpoint": {"keys_to_skip_loading": [], "load_path": "???", "save_iter": steps, "save_freq_in_epoch": 1},
+        "checkpoint": {
+            "keys_to_skip_loading": [],
+            "load_path": "???",
+            "save_iter": steps,
+            "save_freq_in_epoch": 1,
+            "dcp_async_mode_enabled": bool(args.async_checkpoint),
+        },
         "dataloader_train": {"max_samples_per_batch": 1, "max_sequence_length": args.sequence_length},
     }
     if args.training_mode == "peft":
