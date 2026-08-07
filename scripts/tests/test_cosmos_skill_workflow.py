@@ -350,7 +350,9 @@ def test_cosmos_rl_peft_spec_has_equivalent_lora_and_cache(tmp_path):
     assert set(lora) == set(schema["fields"])
     assert not set(lora) & set(schema["forbidden_legacy_fields"])
     assert plan["cache_prewarm"]["required"]
-    assert plan["spec"]["train"]["train_policy"]["require_complete_dataset_cache"]
+    assert plan["spec"]["train"]["train_policy"]["enable_dataset_cache"]
+    assert "require_complete_dataset_cache" not in plan["spec"]["train"]["train_policy"]
+    assert plan["environment"]["COSMOS_CACHE"] == "/cache"
     assert "dataloader_prefetch_factor" not in plan["spec"]["train"]["train_policy"]
 
 
@@ -362,6 +364,10 @@ def test_cosmos_rl_maps_common_constant_scheduler_to_native_none(tmp_path):
 
     assert plan["training"]["scheduler"] == "constant"
     assert plan["spec"]["train"]["optm_decay_type"] == "none"
+
+    args.minimum_lr_factor = 0.0
+    plan = workflow.build_plan(args)
+    assert plan["spec"]["train"]["optm_min_lr_factor"] == 0.0
 
 
 def test_cosmos_rl_resolves_sft_hook_from_installed_native_package(tmp_path):
@@ -405,7 +411,7 @@ def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
     assert framework["spec"]["trainer"]["max_iter"] == 6
     assert rl["cache_prewarm"]["required"] is False
     assert rl["spec"]["train"]["train_policy"]["enable_dataset_cache"] is False
-    assert rl["spec"]["validation"]["enable_dataset_cache"] is False
+    assert "enable_dataset_cache" not in rl["spec"]["validation"]
     assert "require_complete_dataset_cache" not in rl["spec"]["train"]["train_policy"]
     assert "cache_dir" not in rl["spec"]["custom"]["vision"]
     assert rl["spec"]["train"]["optm_impl"] == "fused"
@@ -750,6 +756,21 @@ def test_rl_sft_batch_is_per_dp_worker_and_multinode_launchers_are_packaged(tmp_
     args.effective_global_batch = 8
     plan = workflow.build_plan(args)
     assert plan["spec"]["train"]["train_batch_per_replica"] == 1
+
+    args.rl_train_batch_per_replica = 8
+    args.rl_dataloader_num_workers = 1
+    args.rl_dataloader_prefetch_factor = 1
+    plan = workflow.build_plan(args)
+    assert plan["spec"]["train"]["train_batch_per_replica"] == 8
+    assert plan["spec"]["train"]["train_policy"]["mini_batch"] == 1
+    assert plan["spec"]["train"]["train_policy"]["dataloader_num_workers"] == 1
+    assert plan["spec"]["train"]["train_policy"]["dataloader_prefetch_factor"] == 1
+    assert "dataloader_num_workers" not in plan["spec"]["validation"]
+    assert "dataloader_prefetch_factor" not in plan["spec"]["validation"]
+
+    args.rl_validation_freq_steps = 54
+    plan = workflow.build_plan(args)
+    assert plan["spec"]["validation"]["freq"] == 54
 
     args.nodes = 2
     args.effective_global_batch = 16

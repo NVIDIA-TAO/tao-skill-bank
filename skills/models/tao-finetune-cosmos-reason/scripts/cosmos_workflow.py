@@ -598,16 +598,27 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     # fingerprinted override map; a distributed 128-rank cache build is not
     # part of that recipe and introduces an unnecessary rendezvous phase.
     use_dataset_cache = args.dataset_family == "video_conversation"
+    train_batch_per_replica = getattr(args, "rl_train_batch_per_replica", 0) or args.rl_mini_batch
+    if train_batch_per_replica % args.rl_mini_batch:
+        raise WorkflowError(
+            "rl_train_batch_per_replica must be divisible by rl_mini_batch"
+        )
+    if args.minimum_lr_factor is not None and not 0.0 <= args.minimum_lr_factor <= 1.0:
+        raise WorkflowError("minimum_lr_factor must be between zero and one")
     spec["train"].update({
         "resume": False, "epoch": contract["epochs"], "compile": False,
         # Cosmos-RL's SFT worker interprets this as the per-DP-worker batch,
         # despite the historical field name.  The global batch is therefore
         # this value times dp_shard_size (replicate size is fixed at one).
-        "train_batch_per_replica": args.rl_mini_batch, "output_dir": args.container_checkpoint_dir,
+        "train_batch_per_replica": train_batch_per_replica, "output_dir": args.container_checkpoint_dir,
         "optm_lr": args.learning_rate,
         "optm_impl": "fused" if args.dataset_family == "task_aware_video_reasoning" else "foreach",
         "optm_weight_decay": args.weight_decay,
-        "optm_min_lr_factor": 1.0 if args.scheduler == "constant" else 0.0,
+        "optm_min_lr_factor": (
+            args.minimum_lr_factor
+            if args.minimum_lr_factor is not None
+            else (1.0 if args.scheduler == "constant" else 0.0)
+        ),
         "epsilon": args.optimizer_epsilon,
         # Cosmos-RL names a constant schedule "none"; the common parity
         # contract and Framework continue to expose it as "constant".
@@ -616,27 +627,56 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "optm_grad_norm_clip": args.gradient_clip, "param_dtype": args.precision,
     })
     spec["train"]["ckpt"].update({"enable_checkpoint": True, "save_freq_in_epoch": 1, "save_mode": "async" if args.async_checkpoint else "sync", "max_keep": args.max_checkpoints})
+    dataloader_num_workers = getattr(args, "rl_dataloader_num_workers", 0)
+    dataloader_prefetch_factor = getattr(args, "rl_dataloader_prefetch_factor", 1)
+    validation_freq_steps = getattr(args, "rl_validation_freq_steps", 0)
+    if dataloader_num_workers < 0:
+        raise WorkflowError("rl_dataloader_num_workers must be nonnegative")
+    if dataloader_num_workers and dataloader_prefetch_factor <= 0:
+        raise WorkflowError(
+            "rl_dataloader_prefetch_factor must be positive when workers are enabled"
+        )
+    if validation_freq_steps < 0:
+        raise WorkflowError("rl_validation_freq_steps must be nonnegative")
     spec["train"]["train_policy"].update({
-        "type": "sft", "mini_batch": args.rl_mini_batch, "dataloader_num_workers": 0,
+        "type": "sft", "mini_batch": args.rl_mini_batch,
+        "dataloader_num_workers": dataloader_num_workers,
         "conversation_column_name": "conversations", "enable_dataset_cache": use_dataset_cache,
         "dataloader_shuffle": True, "dataloader_seed": args.seed,
     })
-    if use_dataset_cache:
-        spec["train"]["train_policy"].update({
-            "dataset_cache_dir": args.container_cache_dir,
-            "dataset_cache_fingerprint": cache_keys["train"],
-            "validation_dataset_cache_fingerprint": cache_keys["validation"],
-            "require_complete_dataset_cache": True,
-        })
+    if dataloader_num_workers:
+        spec["train"]["train_policy"]["dataloader_prefetch_factor"] = (
+            dataloader_prefetch_factor
+        )
     else:
-        for key in (
-            "dataset_cache_dir", "dataset_cache_fingerprint",
-            "validation_dataset_cache_fingerprint", "require_complete_dataset_cache",
-        ):
-            spec["train"]["train_policy"].pop(key, None)
-    spec["train"]["train_policy"].pop("dataloader_prefetch_factor", None)
-    spec["validation"].update({"enable": True, "freq_in_epoch": 1, "batch_size": args.validation_batch_size, "dataloader_num_workers": 0, "enable_dataset_cache": use_dataset_cache})
-    spec["validation"].pop("dataloader_prefetch_factor", None)
+        spec["train"]["train_policy"].pop("dataloader_prefetch_factor", None)
+    # Dataset cache storage is selected by the COSMOS_CACHE environment
+    # variable at launch. These historical TOML keys are not members of
+    # SFTDataConfig and must not cross the native configuration boundary.
+    for key in (
+        "dataset_cache_dir",
+        "dataset_cache_fingerprint",
+        "validation_dataset_cache_fingerprint",
+        "require_complete_dataset_cache",
+    ):
+        spec["train"]["train_policy"].pop(key, None)
+    spec["validation"].update(
+        {
+            "enable": True,
+            "freq": validation_freq_steps or 20,
+            "batch_size": args.validation_batch_size,
+        }
+    )
+    # Cosmos-RL uses the SFT data-loader settings for both training and
+    # validation.  Do not emit validation-only worker/cache keys: they are not
+    # part of ValidationConfig and would be silently ignored by Pydantic.
+    for key in (
+        "freq_in_epoch",
+        "dataloader_num_workers",
+        "dataloader_prefetch_factor",
+        "enable_dataset_cache",
+    ):
+        spec["validation"].pop(key, None)
     spec["policy"].update({
         "model_name_or_path": prepared_model, "model_max_length": args.sequence_length,
         "model_gradient_checkpointing": True,
@@ -711,6 +751,10 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
             if args.dataset_family == "task_aware_video_reasoning":
                 train_limit *= 2
             common.update({"TAO_VIDEO_TRAIN_LIMIT": str(train_limit), "TAO_VIDEO_VAL_LIMIT": str(args.smoke_validation_samples)})
+    else:
+        # Cosmos-RL's native DiskCache reads this environment variable; there
+        # is no dataset-cache-directory field in SFTDataConfig.
+        common["COSMOS_CACHE"] = args.container_cache_dir
     return common
 
 
@@ -1503,10 +1547,21 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--lora-bias", choices=("none", "all", "lora_only"), default="none"); parser.add_argument("--lora-use-rslora", action="store_true")
     parser.add_argument("--lora-modules-to-save", action="append", default=[]); parser.add_argument("--lora-precision", choices=("float32", "float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--epochs", type=int, default=1); parser.add_argument("--effective-global-batch", type=int, default=8)
-    parser.add_argument("--rl-mini-batch", type=int, default=1); parser.add_argument("--validation-batch-size", type=int, default=1)
+    parser.add_argument("--rl-mini-batch", type=int, default=1)
+    parser.add_argument(
+        "--rl-train-batch-per-replica",
+        type=int,
+        default=0,
+        help="Explicit Cosmos-RL train_batch_per_replica; 0 preserves the mini-batch-derived default.",
+    )
+    parser.add_argument("--rl-dataloader-num-workers", type=int, default=0)
+    parser.add_argument("--rl-dataloader-prefetch-factor", type=int, default=1)
+    parser.add_argument("--rl-validation-freq-steps", type=int, default=0)
+    parser.add_argument("--validation-batch-size", type=int, default=1)
     parser.add_argument("--optimizer", default="AdamW"); parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--optimizer-epsilon", type=float, default=1e-8)
     parser.add_argument("--scheduler", default="linear"); parser.add_argument("--warmup", type=int, default=0)
+    parser.add_argument("--minimum-lr-factor", type=float, default=None)
     parser.add_argument("--weight-decay", type=float, default=0.01); parser.add_argument("--gradient-clip", type=float, default=1.0)
     parser.add_argument("--precision", default="bfloat16"); parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--sequence-length", type=int, default=0); parser.add_argument("--frames", type=int, default=0)
