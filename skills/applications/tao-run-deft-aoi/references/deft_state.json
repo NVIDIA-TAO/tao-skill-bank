@@ -1,7 +1,8 @@
 {
-  "_comment": "Reference schema for ${RESULTS_DIR}/deft_state.json. Written with Python/jq (never echo) after every step. Together with results/loop_log.jsonl this is the single source of truth: re-read on startup and before every stage; never trust in-memory state across turns. Every recorded path must be absolute; /home/user/workspace is the resolved example form of ~/workspace.",
-  "version": 2,
+  "_comment": "Reference schema for ${RESULTS_DIR}/deft_state.json. Initialize it once and update it through commit_stage.py after every step. It is the single source of truth: re-read on startup and before every stage; never trust in-memory state across turns. Every recorded path must be absolute; /home/user/workspace is the resolved example form of ~/workspace.",
+  "version": 3,
   "started_at": "2026-05-04T06:46:53+00:00",
+  "status": "in_progress",
   "kpi_target": "Quality score >= 0.9",
   "metric_contract": {
     "name": "quality_score",
@@ -56,6 +57,18 @@
     }
   },
   "iterations": {},
+  "events": [
+    {
+      "seq": 1,
+      "ts": "2026-05-04T06:55:00+00:00",
+      "iter": "baseline",
+      "stage": "train",
+      "status": "ok",
+      "summary": "baseline training complete",
+      "duration_sec": 487,
+      "context_tokens": 0
+    }
+  ],
   "_completed_step_values": [
     "evaluate",
     "rca",

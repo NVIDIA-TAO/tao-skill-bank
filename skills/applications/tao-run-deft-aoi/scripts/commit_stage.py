@@ -1,16 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Atomically commit one DEFT stage to state and loop_log.
+"""Atomically commit one DEFT stage to ``deft_state.json``.
 
-Use this instead of inline Python, jq, or hand-authored JSON. For evaluate, this
-command validates and records the metric result before adding the ordered log
-event, then rolls both files back if the combined audit fails.
+Use this instead of inline Python, jq, or hand-authored JSON.  The state file
+contains both the resume snapshot and the ordered stage events, so a run has a
+single durable source of truth.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import pathlib
@@ -19,8 +20,6 @@ import sys
 import tempfile
 from typing import Any
 
-from audit_deft_run import _expected_next, audit
-from log_stage import append_stage
 from record_metric_result import commit as commit_metric_result
 from render_report import render as render_html_report
 
@@ -101,43 +100,36 @@ def _require_within(path: str, root: pathlib.Path, name: str) -> str:
     return str(resolved)
 
 
-def _load_log(path: pathlib.Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    entries: list[dict[str, Any]] = []
-    for line_number, raw in enumerate(path.read_text().splitlines(), 1):
-        if not raw.strip():
-            continue
-        try:
-            entry = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"loop_log line {line_number} is invalid JSON: {exc}"
-            ) from exc
-        if not isinstance(entry, dict):
-            raise ValueError(f"loop_log line {line_number} must be an object")
-        entries.append(entry)
-    return entries
-
-
-def _validate_transition(
-    entries: list[dict[str, Any]], iter_label: str, stage: str
-) -> None:
-    key = (iter_label, stage)
-    if any((entry.get("iter"), entry.get("stage")) == key for entry in entries):
-        raise ValueError(f"stage already committed: {iter_label}/{stage}")
-    if not entries:
-        if key not in {("baseline", "train"), ("baseline", "evaluate")}:
-            raise ValueError("first stage must be baseline/train or baseline/evaluate")
-        return
-    allowed = _expected_next(entries[-1])
-    if key not in allowed:
-        rendered = ", ".join(f"{label}/{name}" for label, name in sorted(allowed))
-        previous = entries[-1]
-        raise ValueError(
-            f"illegal transition {previous.get('iter')}/{previous.get('stage')} -> "
-            f"{iter_label}/{stage}; expected one of [{rendered or 'end-of-log'}]"
-        )
+def _append_event(
+    state: dict[str, Any], args: argparse.Namespace
+) -> dict[str, Any]:
+    events = state.setdefault("events", [])
+    if not isinstance(events, list):
+        raise ValueError("state.events must be an array")
+    sequence = max(
+        (
+            event.get("seq", 0)
+            for event in events
+            if isinstance(event, dict)
+            and isinstance(event.get("seq"), int)
+            and not isinstance(event.get("seq"), bool)
+        ),
+        default=0,
+    ) + 1
+    event = {
+        "seq": sequence,
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(
+            timespec="seconds"
+        ),
+        "iter": args.iter_label,
+        "stage": args.stage,
+        "status": args.status,
+        "summary": args.summary,
+        "duration_sec": args.duration_sec,
+        "context_tokens": 0,
+    }
+    events.append(event)
+    return event
 
 
 def _apply_success(
@@ -277,19 +269,12 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
 
     results_dir = args.results_dir.expanduser().resolve()
     state_path = results_dir / "deft_state.json"
-    log_path = results_dir / "loop_log.jsonl"
     if not state_path.is_file():
         raise ValueError(f"state file not found: {state_path}")
     original_state_text = state_path.read_text()
-    original_log = log_path.read_text() if log_path.exists() else None
     state = json.loads(original_state_text)
     if not isinstance(state, dict):
         raise ValueError("deft_state.json root must be an object")
-    if pathlib.Path(str(state.get("results_dir", ""))).resolve() != results_dir:
-        raise ValueError("state.results_dir does not match --results-dir")
-
-    entries = _load_log(log_path)
-    _validate_transition(entries, args.iter_label, args.stage)
     try:
         if args.stage == "evaluate" and args.status == "ok":
             commit_metric_result(
@@ -304,24 +289,43 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 )
             )
             state = json.loads(state_path.read_text())
+        state["version"] = 3
 
         iterations = state.get("iterations")
         if not isinstance(iterations, dict):
             raise ValueError("state.iterations must be an object")
-        if args.stage != "loop_stop":
-            existing = iterations.setdefault(
-                args.iter_label, {"status": "in_progress"}
+        existing = iterations.setdefault(args.iter_label, {"status": "in_progress"})
+        if not isinstance(existing, dict):
+            raise ValueError(
+                f"state.iterations.{args.iter_label} must be an object"
             )
-            if not isinstance(existing, dict):
-                raise ValueError(
-                    f"state.iterations.{args.iter_label} must be an object"
-                )
-            if args.status == "error":
-                existing["status"] = "failed"
-            else:
+        if args.status == "error":
+            existing["status"] = "failed"
+            state["status"] = "failed"
+            state["completed_at"] = datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(timespec="seconds")
+        else:
+            if args.stage != "loop_stop":
                 _apply_success(
                     existing, args.stage, args, results_dir, args.iter_label
                 )
+                state["status"] = "in_progress"
+                state.pop("completed_at", None)
+            else:
+                baseline = iterations.get("baseline")
+                if not isinstance(baseline, dict) or baseline.get("status") != "complete":
+                    raise ValueError(
+                        "loop_stop requires iterations.baseline.status=complete"
+                    )
+                if existing.get("status") != "complete":
+                    raise ValueError(
+                        f"loop_stop requires iterations.{args.iter_label}.status=complete"
+                    )
+                state["status"] = "complete"
+                state["completed_at"] = datetime.datetime.now(
+                    datetime.timezone.utc
+                ).isoformat(timespec="seconds")
 
         match = re.fullmatch(r"iter([1-9][0-9]*)", args.iter_label)
         if match:
@@ -329,33 +333,21 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 int(match.group(1)), int(state.get("current_iteration", 0))
             )
 
+        event = _append_event(state, args)
         _atomic_json(state_path, state)
-        append_stage(
-            log_path,
-            iter_label=args.iter_label,
-            stage=args.stage,
-            status=args.status,
-            summary=args.summary,
-            duration_sec=args.duration_sec,
-        )
-        report = audit(results_dir)
-        if report["status"] == "INVALID":
-            raise ValueError("post-commit audit failed: " + "; ".join(report["errors"]))
     except Exception:
         _atomic_text(state_path, original_state_text)
-        if original_log is None:
-            try:
-                log_path.unlink()
-            except FileNotFoundError:
-                pass
-        else:
-            _atomic_text(log_path, original_log)
         raise
+    report = {
+        "status": str(state.get("status", "in_progress")).upper(),
+        "terminal": state.get("status") in {"complete", "failed"},
+        "last_committed": event,
+    }
     # Report rendering is a deterministic post-commit hook.  A presentation
     # failure must be visible, but it must not roll back a valid GPU-stage
     # commit and leave callers unable to advance the state machine.
     try:
-        output = render_html_report(results_dir, audit_report=report)
+        output = render_html_report(results_dir)
         report["report_path"] = str(output)
     except Exception as exc:  # noqa: BLE001 - hook failures are non-transactional
         report["report_render_error"] = str(exc)

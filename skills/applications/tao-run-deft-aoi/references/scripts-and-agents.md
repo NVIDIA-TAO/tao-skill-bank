@@ -8,9 +8,8 @@ and preinstalled interpreters. It never invokes an installer, so it works
 across isolated Claude, Codex, and OpenCode shell calls.
 Resolve every path argument to an absolute host path before calling.
 
-Commit state and log changes only through `commit_stage.py`. Never write
-`deft_state.json` or `loop_log.jsonl` through inline Python, heredocs, an
-editor, echo, or jq.
+Commit state changes only through `commit_stage.py`. Never write
+`deft_state.json` through inline Python, heredocs, an editor, echo, or jq.
 
 ## Available Scripts
 
@@ -18,13 +17,11 @@ editor, echo, or jq.
 |---|---|---|
 | `scripts/deft_python.sh` | Select an already-provisioned host Python with all core DEFT imports and execute it. Checks `DEFT_PYTHON`, workspace-local venvs, and preinstalled candidates; never installs packages. With no arguments, prints the selected absolute path. | `[PYTHON_ARG ...]`; env: `DEFT_PYTHON`, `WORKSPACE`, or `WORKSPACE_DIR` |
 | `scripts/resolve_versions_key.py` | Resolve a dotted image key from the installed skill bank's `versions.yaml`; discovers the bank from `--skill-bank`, `TAO_SKILL_BANK_PATH`, or the script's ancestors. | `KEY [--skill-bank PATH]` |
-| `scripts/audit_deft_run.py` | Read-only cross-check of `deft_state.json`, `loop_log.jsonl`, recorded artifact paths, monotonic Train/provenance alignment, mining parquet schemas/counts/TAO PASS logs, iteration checkpoint ownership, stage commits, and terminal status. Prints the safe next action/reference. Run on startup/resume, before every stage, after every stage commit, and before completion claims. `--require-terminal` accepts a finalized failed run for reporting; `--require-complete` requires metric/max-iteration proof. | `--results-dir PATH [--json] [--require-terminal] [--require-complete]` |
 | `scripts/metric_contract.py` | Shared stdlib parser/comparator for primary metrics, direction-aware best selection, constraints, and bundled-evaluator normalization. Import from sibling scripts; no CLI. | — |
 | `scripts/record_metric_result.py` | Internal evaluate helper: validate standard evaluator JSON, enforce a configured artifact path, recompute `passed`, and write evaluate evidence. `commit_stage.py` calls it transactionally. | Internal; standalone CLI retained for compatibility |
-| `scripts/commit_stage.py` | The only supported normal stage writer. Validate the ordered transition and artifact proofs, update state, append the log event, audit, and roll back both files on failure; then invoke the non-transactional report hook. Train requires an iteration-owned checkpoint plus the exact spec; mining requires both embedding parquets, all three TAO logs, filtered parquet/count, and summary. | `--results-dir PATH --iter-label STR --stage STAGE --summary STR --duration-sec POSITIVE_INT [stage artifact flags] [--status ok|error]` |
-| `scripts/render_report.py` | Deterministically render the NVIDIA-styled, self-contained `DEFT_Loop_Report.html` from canonical state/log and recorded artifacts. Read the source template fresh, escape file-derived text, embed optional thumbnails, validate every placeholder/section, and replace atomically. Called automatically after initialization and every successful stage commit. | `--results-dir PATH [--require-terminal]` |
-| `scripts/log_stage.py` | Low-level log writer used by `commit_stage.py`. Do not call it directly during normal orchestration because it cannot update state transactionally. | Internal/legacy |
-| `scripts/align_token_usage.py` | Backfill per-stage LLM token usage into `results/loop_log.jsonl` by parsing the Claude Code transcript JSONL. Run after the loop (or any time). Adds a `tokens` field per entry and refreshes `context_tokens`. | `--log-path PATH [--cwd PATH \| --project-dir PATH \| --transcript PATH ...] [--dry-run]` |
+| `scripts/commit_stage.py` | The only supported normal stage writer. Validate the stage's required inputs/artifacts, atomically update the resume snapshot and append an event inside `deft_state.json`, then invoke the non-transactional report hook. Train requires an iteration-owned checkpoint plus the exact spec; mining records both embedding parquets, all three TAO logs, filtered parquet/count, and summary. | `--results-dir PATH --iter-label STR --stage STAGE --summary STR --duration-sec POSITIVE_INT [stage artifact flags] [--status ok|error]` |
+| `scripts/render_report.py` | Deterministically render the NVIDIA-styled, self-contained `DEFT_Loop_Report.html` from `deft_state.json` and recorded artifacts. Read the source template fresh, escape file-derived text, embed optional thumbnails, validate every placeholder/section, and replace atomically. Called automatically after initialization and every successful stage commit. | `--results-dir PATH [--require-terminal]` |
+| `scripts/align_token_usage.py` | Backfill per-stage LLM token usage into `deft_state.json.events` by parsing the Claude Code transcript JSONL. Run after the loop (or any time). Adds a `tokens` field per event and refreshes `context_tokens`. | `--state-path PATH [--cwd PATH \| --project-dir PATH \| --transcript PATH ...] [--dry-run]` |
 | `scripts/analyze_kpi.py` | Bundled threshold-sweep evaluator: emit standard `metric_result.json` plus diagnostic CSV/plots. Other customer metrics use the adapter contract in `references/metric-contract.md`. | `csv_path` (positional) `[--output-dir PATH]` `[--label-column NAME=label]` `[--score-column NAME=siamese_score]` `[--pass-label NAME=PASS]` `[--bins INT=40]` |
 | `scripts/validate_training_csv.py` | Validate an assembled ChangeNet training CSV before launching training. Checks required columns, every reconstructed `input_path` / `golden_path`, filename-shape mistakes, duplicates, and optional validation leakage; `--report-json` writes the required merge-validation proof. Stdlib only — no pandas required. | `--csv PATH --workspace-root PATH [--validation-csv PATH] [--report-json PATH] [--light NAME] [--image-ext EXT]` |
 | `scripts/init_deft_state.py` | Write a fresh `${RESULTS_DIR}/deft_state.json` from CLI args. Guarantees unique top-level keys. Atomic write; refuses to overwrite without `--force`. Use only on fresh runs; never on resume. | `--results-dir PATH --workspace PATH --kpi-target STR --max-iterations INT --num-gpus INT --gpu-model STR --num-epochs INT --num-sdg INT --project STR --step INT [--batch-size INT] [--top-k-per-target INT] [--knn-metric STR] [--min-similarity FLOAT] [--train-container STR] [--ag-container STR] [--force]` |
@@ -57,21 +54,21 @@ the required artifact flags.
 
 ### Aligning Per-Stage Token Usage (Post-Loop)
 
-`log_stage.py` cannot measure LLM token usage at write time. Run `align_token_usage.py` after the loop (or on demand) to backfill real per-stage numbers from the Claude Code transcript JSONL:
+`commit_stage.py` cannot measure LLM token usage at write time. Run `align_token_usage.py` after the loop (or on demand) to backfill real per-stage numbers from the Claude Code transcript JSONL:
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/align_token_usage.py \
-  --log-path /abs/path/results/loop_log.jsonl \
+  --state-path /abs/path/results/deft_state.json \
   --cwd /abs/path/to/project-root
 ```
 
-The script reads `~/.claude/projects/<slug>/*.jsonl` (slug derived from `--cwd`), attributes each assistant message's `usage` to the stage whose `(prev.ts, this.ts]` window contains it, and rewrites `loop_log.jsonl` atomically with a per-entry `tokens` field plus a refreshed `context_tokens`. The `tokens` field exposes `input`, `output`, `cache_read`, `cache_create` (and its `5m`/`1h` breakdown), `context_size_end`, and the list of `models` seen. Pass `--transcript PATH` (repeatable) or `--project-dir PATH` to override the auto-discovered location; `--dry-run` inspects output without rewriting the log.
+The script reads `~/.claude/projects/<slug>/*.jsonl` (slug derived from `--cwd`), attributes each assistant message's `usage` to the stage whose `(prev.ts, this.ts]` window contains it, and rewrites `deft_state.json` atomically with a per-event `tokens` field plus a refreshed `context_tokens`. The `tokens` field exposes `input`, `output`, `cache_read`, `cache_create` (and its `5m`/`1h` breakdown), `context_size_end`, and the list of `models` seen. Pass `--transcript PATH` (repeatable) or `--project-dir PATH` to override the auto-discovered location; `--dry-run` inspects output without rewriting state.
 
 ## Automatic report hook
 
 `init_deft_state.py` writes the first report immediately after canonical state
 is initialized. `commit_stage.py` then calls `render_report.py` after every
-valid state/log commit, including failed-stage and `loop_stop` commits. The
+valid state commit, including failed-stage and `loop_stop` commits. The
 hook is deliberately outside the state transaction: a presentation error is
 printed as `report hook failed` but never rolls back a valid GPU-stage result.
 

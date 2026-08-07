@@ -14,7 +14,7 @@ import unittest
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
 for module_name in (
-    "audit_deft_run",
+    "align_token_usage",
     "commit_stage",
     "init_deft_state",
     "metric_contract",
@@ -23,7 +23,7 @@ for module_name in (
     sys.modules.pop(module_name, None)
 sys.path.insert(0, str(SCRIPTS))
 
-import audit_deft_run  # noqa: E402
+import align_token_usage  # noqa: E402
 import commit_stage  # noqa: E402
 import init_deft_state  # noqa: E402
 import render_report  # noqa: E402
@@ -63,6 +63,218 @@ class ReportRenderingTests(unittest.TestCase):
             commit_stage._parser().parse_args(base)
         self.assertEqual(commit_stage.main([*base, "--duration-sec", "0"]), 2)
 
+    def test_loop_stop_is_recorded_only_in_deft_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = self._state(results)
+            # build85 copied a completed run into a different CI artifact directory.
+            # The state must stay portable instead of rejecting its original path.
+            state["results_dir"] = "/original/run/location"
+            state["status"] = "in_progress"
+            state["events"] = state["events"][:1]
+            (results / "deft_state.json").write_text(
+                json.dumps(state), encoding="utf-8"
+            )
+
+            rc = commit_stage.main(
+                [
+                    "--results-dir",
+                    str(results),
+                    "--iter-label",
+                    "iter1",
+                    "--stage",
+                    "loop_stop",
+                    "--summary",
+                    "iteration budget reached",
+                    "--duration-sec",
+                    "1",
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            committed = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(committed["status"], "complete")
+            self.assertEqual(committed["events"][-1]["stage"], "loop_stop")
+            self.assertEqual(committed["events"][-1]["seq"], 2)
+            self.assertFalse((results / "loop_log.jsonl").exists())
+
+    def test_loop_stop_requires_complete_baseline_and_final_iteration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = self._state(results)
+            state["status"] = "in_progress"
+            state["iterations"]["iter1"]["status"] = "in_progress"
+            state["events"] = []
+            state_path = results / "deft_state.json"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+
+            rc = commit_stage.main(
+                [
+                    "--results-dir",
+                    str(results),
+                    "--iter-label",
+                    "iter1",
+                    "--stage",
+                    "loop_stop",
+                    "--summary",
+                    "premature stop",
+                    "--duration-sec",
+                    "1",
+                ]
+            )
+
+            self.assertEqual(rc, 2)
+            committed = json.loads(state_path.read_text())
+            self.assertEqual(committed["status"], "in_progress")
+            self.assertEqual(committed["events"], [])
+
+    def test_token_alignment_updates_state_events_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            state_path = root / "deft_state.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "status": "complete",
+                        "events": [
+                            {
+                                "seq": 1,
+                                "ts": "2026-08-04T00:01:00+00:00",
+                                "iter": "baseline",
+                                "stage": "train",
+                                "context_tokens": 0,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            transcript = root / "session.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": "2026-08-04T00:00:30+00:00",
+                        "message": {
+                            "model": "test-model",
+                            "usage": {
+                                "input_tokens": 10,
+                                "output_tokens": 2,
+                                "cache_read_input_tokens": 3,
+                                "cache_creation_input_tokens": 4,
+                            },
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            state, events, messages = align_token_usage.align(
+                state_path, [transcript]
+            )
+            align_token_usage.write_atomic(state_path, state)
+
+            committed = json.loads(state_path.read_text())
+            self.assertEqual(len(events), 1)
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(committed["status"], "complete")
+            self.assertEqual(committed["events"][0]["context_tokens"], 17)
+            self.assertEqual(committed["events"][0]["tokens"]["output"], 2)
+
+    def test_stage_commit_does_not_reaudit_recorded_artifact_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = self._state(results)
+            state["status"] = "in_progress"
+            state["iterations"]["iter1"] = {
+                "status": "in_progress",
+                "stage_completed": "routing",
+            }
+            state["events"] = []
+            (results / "deft_state.json").write_text(
+                json.dumps(state), encoding="utf-8"
+            )
+
+            phase_root = results / "iter1"
+            artifacts = {}
+            for name in (
+                "mined.parquet",
+                "candidates.parquet",
+                "summary.csv",
+                "history-summary.json",
+                "target.parquet",
+                "source.parquet",
+                "target.log",
+                "source.log",
+                "knn.log",
+            ):
+                path = phase_root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("recorded\n", encoding="utf-8")
+                artifacts[name] = path
+            history = results / "mining_history.json"
+            history.write_text("{}\n", encoding="utf-8")
+
+            rc = commit_stage.main(
+                [
+                    "--results-dir", str(results),
+                    "--iter-label", "iter1",
+                    "--stage", "data_mining",
+                    "--summary", "mining completed with no retained rows",
+                    "--duration-sec", "1",
+                    "--mining-parquet", str(artifacts["mined.parquet"]),
+                    "--mining-candidates", str(artifacts["candidates.parquet"]),
+                    "--mining-summary", str(artifacts["summary.csv"]),
+                    "--mining-history", str(history),
+                    "--mining-history-summary", str(artifacts["history-summary.json"]),
+                    "--mining-target-embeddings", str(artifacts["target.parquet"]),
+                    "--mining-source-embeddings", str(artifacts["source.parquet"]),
+                    "--mining-target-log", str(artifacts["target.log"]),
+                    "--mining-source-log", str(artifacts["source.log"]),
+                    "--mining-knn-log", str(artifacts["knn.log"]),
+                    "--mining-count", "0",
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            committed = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(
+                committed["iterations"]["iter1"]["mining_mined_count"], 0
+            )
+            self.assertEqual(committed["events"][-1]["stage"], "data_mining")
+
+            combined = phase_root / "dataset" / "train_combined_iter1.csv"
+            combined.parent.mkdir(parents=True, exist_ok=True)
+            combined.write_text(
+                "input_path,golden_path,label,object_name,source\n"
+                "input,golden,PASS,part,base_train\n",
+                encoding="utf-8",
+            )
+            provenance = phase_root / "dataset" / "provenance.csv"
+            provenance.write_text("source\nbase_train\n", encoding="utf-8")
+            validation = phase_root / "dataset" / "merge_validation.json"
+            validation.write_text(
+                '{"rows_checked": 1, "missing_file_count": 0}\n',
+                encoding="utf-8",
+            )
+            rc = commit_stage.main(
+                [
+                    "--results-dir", str(results),
+                    "--iter-label", "iter1",
+                    "--stage", "data_merge",
+                    "--summary", "validated combined training CSV",
+                    "--duration-sec", "1",
+                    "--combined-csv", str(combined),
+                    "--provenance-csv", str(provenance),
+                    "--merge-validation-report", str(validation),
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            committed = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(committed["events"][-1]["stage"], "data_merge")
+
     def _state(self, results: pathlib.Path) -> dict:
         contract = {
             "name": "escape_cost",
@@ -80,8 +292,9 @@ class ReportRenderingTests(unittest.TestCase):
             "constraints": [],
         }
         return {
-            "version": 2,
+            "version": 3,
             "started_at": "2026-08-04T00:00:00+00:00",
+            "status": "complete",
             "kpi_target": "Weighted escape cost <= 0.02 cost/board",
             "metric_contract": contract,
             "results_dir": str(results),
@@ -121,6 +334,26 @@ class ReportRenderingTests(unittest.TestCase):
                     },
                 },
             },
+            "events": [
+                {
+                    "seq": 1,
+                    "ts": "2026-08-04T00:01:00Z",
+                    "iter": "iter1",
+                    "stage": "evaluate",
+                    "status": "ok",
+                    "summary": "done",
+                    "duration_sec": 120,
+                },
+                {
+                    "seq": 2,
+                    "ts": "2026-08-04T00:02:00Z",
+                    "iter": "iter1",
+                    "stage": "loop_stop",
+                    "status": "ok",
+                    "summary": "target met",
+                    "duration_sec": 1,
+                },
+            ],
             "_completed_step_values": [],
             "_status_values": [],
         }
@@ -157,33 +390,6 @@ class ReportRenderingTests(unittest.TestCase):
             state["iterations"]["iter1"]["mining_summary"] = str(mining_summary)
             state["iterations"]["iter1"]["anomalygen_sdg_csv"] = str(sdg_csv)
             (results / "deft_state.json").write_text(json.dumps(state), encoding="utf-8")
-            (results / "loop_log.jsonl").write_text(
-                json.dumps(
-                    {
-                        "seq": 1,
-                        "ts": "2026-08-04T00:01:00Z",
-                        "iter": "iter1",
-                        "stage": "evaluate",
-                        "status": "ok",
-                        "summary": "done",
-                        "duration_sec": 120,
-                    }
-                )
-                + "\n"
-                + json.dumps(
-                    {
-                        "seq": 2,
-                        "ts": "2026-08-04T00:02:00Z",
-                        "iter": "iter1",
-                        "stage": "loop_stop",
-                        "status": "ok",
-                        "summary": "target met",
-                        "duration_sec": 0,
-                    }
-                )
-                + "\n",
-                encoding="utf-8",
-            )
             output = render_report.render(results)
             text = output.read_text(encoding="utf-8")
             self.assertIn("DEFT Loop Final Report", text)
@@ -201,7 +407,7 @@ class ReportRenderingTests(unittest.TestCase):
             self.assertNotRegex(text, r"\{\{\s+[A-Z0-9_]+\s+\}\}")
             self.assertNotIn("</div><script>alert('x')</script>", text)
             self.assertIn("&lt;/div&gt;&lt;script&gt;alert", text)
-            self.assertIsNone(audit_deft_run._completion_report_error(results))
+            self.assertEqual(state["status"], "complete")
 
     def test_terminal_gap_has_no_informational_kpi_banner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -210,21 +416,6 @@ class ReportRenderingTests(unittest.TestCase):
             state["iterations"]["iter1"]["metric_result"]["value"] = 0.025
             (results / "deft_state.json").write_text(
                 json.dumps(state), encoding="utf-8"
-            )
-            (results / "loop_log.jsonl").write_text(
-                json.dumps(
-                    {
-                        "seq": 1,
-                        "ts": "2026-08-04T00:02:00Z",
-                        "iter": "iter1",
-                        "stage": "loop_stop",
-                        "status": "ok",
-                        "summary": "iteration budget reached",
-                        "duration_sec": 0,
-                    }
-                )
-                + "\n",
-                encoding="utf-8",
             )
 
             text = render_report.render(results).read_text(encoding="utf-8")
@@ -239,6 +430,8 @@ class ReportRenderingTests(unittest.TestCase):
             state = self._state(results)
             state["iterations"] = {}
             state["current_iteration"] = 0
+            state["status"] = "in_progress"
+            state["events"] = []
             (results / "deft_state.json").write_text(
                 json.dumps(state), encoding="utf-8"
             )

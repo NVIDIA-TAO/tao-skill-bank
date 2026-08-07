@@ -7,7 +7,7 @@ patterns — its `## Local Docker Invocation` section has the exact docker run c
 (including `--shm-size=8g`, backbone file mount, and how to override
 checkpoint/results_dir on the command line without editing the spec). This file only
 covers the DEFT-loop-specific overlay: mounts, spec paths, two-checkpoint compare,
-KPI sweep, and `deft_state.json` / `loop_log.jsonl` updates.
+KPI sweep and `deft_state.json` updates.
 
 DEFT AOI is intentionally plain-train for Visual ChangeNet. When invoking the
 underlying model skill for any train stage, pass `automl_policy: off` so this

@@ -32,7 +32,7 @@ Mitigation: Review and scan skill before deployment. <br>
 **Output Type(s):** [Shell commands, HTML reports, JSON state files] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
-**Other Properties Related to Output:** [Produces DEFT_Loop_Report.html, deft_state.json, and loop_log.jsonl as persistent artifacts] <br>
+**Other Properties Related to Output:** [Produces DEFT_Loop_Report.html and deft_state.json as persistent artifacts] <br>
 
 ## Evaluation Agents Used: <br>
 - Claude Code (`claude-code`) <br>

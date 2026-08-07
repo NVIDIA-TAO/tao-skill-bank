@@ -129,10 +129,11 @@ def build_state(args: argparse.Namespace) -> dict:
     ag_checkpoint_dir = _resolve_anomalygen_checkpoint_dir(ws, args.project)
 
     state = {
-        "version": 2,
+        "version": 3,
         "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(
             timespec="seconds"
         ),
+        "status": "in_progress",
         "kpi_target": args.kpi_target_text,
         "metric_contract": args.metric_contract,
         "results_dir": str(rd),
@@ -193,6 +194,7 @@ def build_state(args: argparse.Namespace) -> dict:
             },
         },
         "iterations": {},
+        "events": [],
         "_completed_step_values": list(_COMPLETED_STEP_VALUES),
         "_status_values": list(_STATUS_VALUES),
     }

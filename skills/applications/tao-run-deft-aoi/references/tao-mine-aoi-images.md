@@ -5,8 +5,8 @@ The underlying skill `tao-skill-bank:tao-mine-aoi-images` (`skills/data/tao-mine
 owns the full docker invocation (three calls into the pinned TAO data-services
 image), encoder consistency requirement,
 output schema, and common pitfalls. This file only covers the DEFT-loop-specific
-overlay: required inputs, three-step order, output layout, and `deft_state.json`
-/ `loop_log.jsonl` updates.
+overlay: required inputs, three-step order, output layout, and
+`deft_state.json` updates.
 
 ## DEFT-Loop Inputs
 

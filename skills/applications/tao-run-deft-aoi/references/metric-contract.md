@@ -97,7 +97,7 @@ from the approved contract.
 ## Evaluate commit
 
 After inference and evaluator completion, commit the result and ordered event
-as one audited transaction:
+as one atomic state update:
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
@@ -113,16 +113,16 @@ as one audited transaction:
   --summary "Evaluate: ${METRIC_NAME}=${METRIC_VALUE}"
 ```
 
-`commit_stage.py` invokes the bundled metric recorder internally, appends
-exactly one `evaluate` event, audits, and rolls state and log back together on
-failure. Evaluator-specific compatibility fields, if any, are secondary;
-new code reads `metric_result`.
+`commit_stage.py` invokes the bundled metric recorder internally and appends
+an `evaluate` event to `deft_state.json`; if validation fails it restores the
+original state. Evaluator-specific compatibility fields, if any, are
+secondary; new code reads `metric_result`.
 
 ## Completion and reporting
 
-The audit recomputes the primary comparison and all constraints. A result may
-be structurally valid while missing the target; the loop continues until the
-metric passes or `max_iterations` is reached. Reports use `display_name`,
+The metric recorder recomputes the primary comparison and all constraints. A
+result may be structurally valid while missing the target; the loop continues
+until the metric passes or `max_iterations` is reached. Reports use `display_name`,
 operator, value, target, and unit for the headline. Evaluator `diagnostics`
 may populate secondary charts; the primary contract controls the completion
 decision.
