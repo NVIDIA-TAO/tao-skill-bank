@@ -83,5 +83,7 @@ cache:
   completeness_manifest_required: true
 compatibility:
   a100_qwen3_vl_patch_embed: native_per_model_linear_equivalent
+  vllm_qwen3_vl_patch_embed: equal_or_newer_pytorch_linear_guard_verified
+  deepep_extension: python_binding_and_required_internode_symbols_verified
   worker_zero_prefetch: num_workers_zero_and_prefetch_omitted
   host_source_mount: forbidden

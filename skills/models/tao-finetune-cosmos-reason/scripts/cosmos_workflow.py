@@ -920,6 +920,8 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
     else:
         imports.extend([
             "import cosmos_rl", "import PyNvVideoCodec", "import ctypes", "ctypes.CDLL('libnvcuvid.so.1')",
+            "from cosmos_rl.utils.runtime_dependency_contract import verify_deepep, verify_vllm_conv3d",
+            "verify_deepep()", "verify_vllm_conv3d()",
             "from cosmos_rl.utils.pynv_video_reader import register_pynv_video_reader",
             f"d=PyNvVideoCodec.SimpleDecoder({representative_media!r}, gpu_id=0, use_device_memory=False); assert len(d)>0",
         ])
@@ -960,6 +962,7 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
             "host and scheduler tools", "credential presence without reading values", "repository clean state",
             "Pyxis/Enroot and SQSH readability", "container mounts/shared storage", "non-root Python imports",
             "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization", "video decoder/libnvcuvid",
+            "DeepEP Python/extension ABI", "vLLM Qwen3-VL Conv3D dispatch guard",
             "free result/checkpoint space",
         ],
     }

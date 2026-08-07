@@ -14,6 +14,13 @@ non-root imports. Resolve and record image ID/digest. SLURM then converts that
 exact digest to a newly named SQSH in the runtime-supplied cache directory and
 records its SHA256. A source change invalidates both image and SQSH.
 
+For Cosmos-RL, image verification must import both `deep_ep` and
+`deep_ep_cpp`, inspect the compiled extension for the internode mask-buffer
+symbols referenced by the Python bindings, and verify that vLLM uses the
+linear-equivalent Qwen3-VL Conv3D path for every PyTorch version at or above
+2.9. A successful `nvidia-smi` or `cosmos-rl --help` check does not cover these
+ABI and dispatch contracts.
+
 ## Model preparation
 
 The logical base model is always supplied. A local Qwen3-VL safetensors model
