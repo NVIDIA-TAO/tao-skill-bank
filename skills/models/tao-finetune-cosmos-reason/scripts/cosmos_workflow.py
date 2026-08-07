@@ -560,7 +560,7 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
             "activation_checkpointing": {"mode": "full", "save_ops_regex": ["fmha"], "preserve_rng_state": True, "determinism_check": "default"},
         },
         "optimizer": {"betas": [0.9, 0.999], "eps": args.optimizer_epsilon, "fused": True, "lr": args.learning_rate, "weight_decay": args.weight_decay, "keys_to_select": []},
-        "scheduler": {"cycle_lengths": [steps * epochs], "f_max": [1.0], "f_min": [0.0], "f_start": [1.0], "verbosity_interval": 0, "warm_up_steps": [args.warmup]},
+        "scheduler": {"cycle_lengths": [steps * epochs], "f_max": [1.0], "f_min": [1.0 if args.scheduler == "constant" else 0.0], "f_start": [1.0], "verbosity_interval": 0, "warm_up_steps": [args.warmup]},
         "trainer": {
             "distributed_parallelism": "fsdp", "grad_accum_iter": grad_accum, "logging_iter": 1,
             "max_iter": steps * epochs, "num_epochs": epochs, "steps_per_epoch": steps,
@@ -590,13 +590,21 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     train_manifest = train_annotations[0] if len(train_annotations) == 1 else "__TAO_TRAIN_MERGED_MANIFEST__"
     val_manifest = val_annotations[0] if len(val_annotations) == 1 else "__TAO_VALIDATION_MERGED_MANIFEST__"
     spec = load_yaml(REFERENCES / "spec_template_train.yaml")
+    # The known-good conversation recipe prewarms immutable processor outputs.
+    # The known-good task-aware recipe instead decodes directly with a
+    # fingerprinted override map; a distributed 128-rank cache build is not
+    # part of that recipe and introduces an unnecessary rendezvous phase.
+    use_dataset_cache = args.dataset_family == "video_conversation"
     spec["train"].update({
         "resume": False, "epoch": contract["epochs"], "compile": False,
         # Cosmos-RL's SFT worker interprets this as the per-DP-worker batch,
         # despite the historical field name.  The global batch is therefore
         # this value times dp_shard_size (replicate size is fixed at one).
         "train_batch_per_replica": args.rl_mini_batch, "output_dir": args.container_checkpoint_dir,
-        "optm_lr": args.learning_rate, "optm_impl": "foreach", "optm_weight_decay": args.weight_decay,
+        "optm_lr": args.learning_rate,
+        "optm_impl": "fused" if args.dataset_family == "task_aware_video_reasoning" else "foreach",
+        "optm_weight_decay": args.weight_decay,
+        "optm_min_lr_factor": 1.0 if args.scheduler == "constant" else 0.0,
         "epsilon": args.optimizer_epsilon,
         # Cosmos-RL names a constant schedule "none"; the common parity
         # contract and Framework continue to expose it as "constant".
@@ -607,15 +615,24 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     spec["train"]["ckpt"].update({"enable_checkpoint": True, "save_freq_in_epoch": 1, "save_mode": "async" if args.async_checkpoint else "sync", "max_keep": args.max_checkpoints})
     spec["train"]["train_policy"].update({
         "type": "sft", "mini_batch": args.rl_mini_batch, "dataloader_num_workers": 0,
-        "conversation_column_name": "conversations", "enable_dataset_cache": True,
+        "conversation_column_name": "conversations", "enable_dataset_cache": use_dataset_cache,
         "dataloader_shuffle": True, "dataloader_seed": args.seed,
-        "dataset_cache_dir": args.container_cache_dir,
-        "dataset_cache_fingerprint": cache_keys["train"],
-        "validation_dataset_cache_fingerprint": cache_keys["validation"],
-        "require_complete_dataset_cache": True,
     })
+    if use_dataset_cache:
+        spec["train"]["train_policy"].update({
+            "dataset_cache_dir": args.container_cache_dir,
+            "dataset_cache_fingerprint": cache_keys["train"],
+            "validation_dataset_cache_fingerprint": cache_keys["validation"],
+            "require_complete_dataset_cache": True,
+        })
+    else:
+        for key in (
+            "dataset_cache_dir", "dataset_cache_fingerprint",
+            "validation_dataset_cache_fingerprint", "require_complete_dataset_cache",
+        ):
+            spec["train"]["train_policy"].pop(key, None)
     spec["train"]["train_policy"].pop("dataloader_prefetch_factor", None)
-    spec["validation"].update({"enable": True, "freq_in_epoch": 1, "batch_size": args.validation_batch_size, "dataloader_num_workers": 0, "enable_dataset_cache": True})
+    spec["validation"].update({"enable": True, "freq_in_epoch": 1, "batch_size": args.validation_batch_size, "dataloader_num_workers": 0, "enable_dataset_cache": use_dataset_cache})
     spec["validation"].pop("dataloader_prefetch_factor", None)
     spec["policy"].update({
         "model_name_or_path": prepared_model, "model_max_length": args.sequence_length,
@@ -637,9 +654,11 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     spec["custom"].update({
         "train_dataset": {"annotation_path": train_manifest, "media_path": train_media[0], "media_root": train_media[0], "response_mode": "hybrid" if args.dataset_family == "task_aware_video_reasoning" else "answer"},
         "val_dataset": {"annotation_path": val_manifest, "media_path": val_media[0], "media_root": val_media[0], "response_mode": "answer"},
-        "vision": {"nframes": args.frames, "video_decoder": "pynvvideocodec", "cache_dir": args.container_cache_dir},
+        "vision": {"nframes": args.frames, "video_decoder": "pynvvideocodec"},
         "system_prompt": args.system_prompt,
     })
+    if use_dataset_cache:
+        spec["custom"]["vision"]["cache_dir"] = args.container_cache_dir
     if args.video_override_map:
         spec["custom"]["video_override_map"] = _containerize(args, args.video_override_map)
     return spec
@@ -1061,7 +1080,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         },
         "image": image, "sqsh": runtime_path("sqsh_path", args.sqsh_path, required=args.platform == "slurm"),
         "compute": {"platform": args.platform, "nodes": args.nodes, "gpus_per_node": args.gpus_per_node, "total_gpus": total_gpus, "cpus_per_task": args.cpus_per_task},
-        "cache_prewarm": {"required": backend == "cosmos-rl", "keys": cache_keys, "path": args.cache_dir, "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": True, "resumable": True, "selection_basis": {"media_reuse": train_data["profile"]["media_reuse_class"], "record_count": train_data["record_count"], "resolution_class": train_data["profile"]["resolution"]["class"]}},
+        "cache_prewarm": {"required": backend == "cosmos-rl" and args.dataset_family == "video_conversation", "keys": cache_keys, "path": args.cache_dir, "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": backend == "cosmos-rl" and args.dataset_family == "video_conversation", "resumable": True, "selection_basis": {"media_reuse": train_data["profile"]["media_reuse_class"], "record_count": train_data["record_count"], "resolution_class": train_data["profile"]["resolution"]["class"]}},
         "spec": spec, "environment": environment, "command": _command(args, backend),
         "config_container_path": args.container_spec_path,
         "smoke_gate": {"required": not args.skip_smoke and args.run_mode == "full", "train_samples": args.smoke_train_samples, "validation_samples": args.smoke_validation_samples, "criteria": ["child_exit_code=0", "terminal_status=SUCCESS", "finite_train_avg_loss", "finite_val_avg_loss", "checkpoint_event", "validation_accuracy_present"]},
