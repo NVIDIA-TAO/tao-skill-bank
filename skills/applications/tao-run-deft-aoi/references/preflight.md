@@ -109,6 +109,9 @@ Ask one consolidated question only for missing required inputs. Never ask about 
 - `training_epochs`: `num_epochs` from `specs/baseline_spec.yaml`. For a small seed set (~200 rows) use **10** — ChangeNet on the 150M-param C-RADIOv2-B backbone overfits a few-hundred-row set past ~10 epochs (val_loss climbs, FAR@recall=100% degrades). The bundled `references/baseline_spec.yaml` template ships `num_epochs: 10` for this reason. Raise toward 20 only once the combined CSV grows into the low thousands of rows across iterations.
 - `num_SDG`: 20 (per-iteration AnomalyGen output budget; raise explicitly when more synthetic coverage is needed)
 - `min_similarity` (mining cosine cutoff): 0.9 — read from `config.mining_filter.min_similarity` in `deft_state.json`; the literal `0.9` referenced in Pipeline step 4 is just the fallback default.
+- `top_k_per_target`: 5 — preserve an explicit user value. Raise it only when
+  the history summary shows that prior selections dominate the current narrow
+  neighborhood.
 - workspace root: user prompt, else `~/workspace`
 - pretrained backbone: first `*.pth`/`*.ckpt`/`*.safetensors` under `augmentation/backbone/`; if absent, stage it from `nvidia/C-RADIOv2-B` via the recipe in `references/visual-changenet.md` (HF_TOKEN required). Mandatory — a URL is not a valid value; hard-stop if it cannot be staged.
 - AnomalyGen checkpoint: pre-staged `augmentation/anomalygen/checkpoints/<project>/`; if absent, auto-download from `nvidia/Cosmos-AnomalyGen-PCB-2B` on HF (HF_TOKEN required)
@@ -130,6 +133,7 @@ Once all checks pass, print this summary and **STOP — wait for explicit user a
 | Stop condition                 | KPI met **or** max_iterations reached — reaching the KPI is not guaranteed; FAR may regress between iterations |
 | Training Epochs                | N per iteration                                                                |
 | Num SDG                        | N synthetic samples per iteration                                              |
+| Mining top-K                  | N neighbours per target (default 5)                                             |
 | Mining cutoff                  | cosine ≥ <min_similarity> (default 0.9)                                        |
 | Compute / GPUs                 | N GPU(s) · <exact model> (<memory>)                                             |
 | Resuming                       | yes — iter N complete / no                                                     |

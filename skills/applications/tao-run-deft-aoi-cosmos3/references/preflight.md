@@ -250,7 +250,8 @@ Record:
 - LoRA rank/alpha/target modules;
 - epochs, batch size, learning rate;
 - Proxy and Benchmark sample counts;
-- mining top-K and cosine floor;
+- mining top-K (default 5), cosine floor,
+  and run-level filepath history ledger;
 - estimated baseline and per-iteration runtime.
 
 Do not invent a runtime estimate when no comparable run exists; label it
@@ -289,7 +290,7 @@ record-then-launch ordering must be explicit.
 | KPI | <metric operator target> + unknown_predictions <= 0 | user/default |
 | Iterations | <N> | user |
 | Train shape | <nodes x GPUs; exact GPU model/memory; epochs; batch; LR; LoRA> | user/spec/platform |
-| Mining | <top-K; cosine floor> | user/default |
+| Mining | <top-K, default 5; cosine floor; history-aware filepath dedup> | user/default |
 | AnomalyGen | <project; num_SDG; asset status> | user/default |
 | Cosmos-RL image | <resolved URI> | versions.yaml |
 | Data-services image | <resolved URI> | versions.yaml |

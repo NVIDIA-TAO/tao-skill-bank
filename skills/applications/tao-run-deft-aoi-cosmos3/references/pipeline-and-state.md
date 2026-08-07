@@ -70,7 +70,13 @@ count against `max_iterations`.
    `references/paidf-anomalygen.md`.
 3. Invoke `tao-mine-aoi-images` on the recorded Mining pool. Persist raw mined
    paths and source/target embeddings under the current iteration.
-4. Run `filter_mined_by_cosine.py`; a zero-row result is a hard stop.
+4. Run `filter_mined_by_cosine.py` into `mined_candidates.parquet`; a zero-row
+   result is a hard stop. Then run the mapped skill's
+   `filter_mined_history.py` to remove filepaths selected by every prior
+   iteration and write the final `mined_filtered.parquet`, per-iteration
+   summary, and run-level ledger. A zero-row novel result is also a hard stop;
+   surface the recommendation to increase top-K above the default 5 or expand the
+   Mining pool.
 5. Run `emit_mined_sharegpt.py` to align every mined path to exactly one Mining
    source record. It inherits the source prompt, golden reference, and exact
    label.
@@ -82,7 +88,9 @@ count against `max_iterations`.
    exclude Proxy and Benchmark targets.
 7. Run `validate_sharegpt.py --require-files` and
    `validate_split_contract.py` against the assembled Train file, passing
-   `--synthetic` when AnomalyGen produced records this iteration.
+   `--synthetic` when AnomalyGen produced records this iteration and
+   `--previous-train train_iter_<N-1>.json` for N>1. The latter makes historical
+   records eligible while proving that the current Train retained all of them.
 8. Retrain, then Benchmark-evaluate/gate. Stop when the gate passes or
    `N = max_iterations`. Only when the loop continues, Proxy-evaluate and run
    RCCA to seed the next iteration's routing.

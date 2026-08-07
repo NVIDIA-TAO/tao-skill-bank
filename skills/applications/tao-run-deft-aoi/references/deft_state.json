@@ -47,7 +47,12 @@
       "sub_skill": "tao-mine-aoi-images",
       "top_k_per_target": 5,
       "metric": "cosine",
-      "min_similarity": 0.9
+      "min_similarity": 0.9,
+      "history_aware": {
+        "enabled": true,
+        "identity": "filepath",
+        "history_file": "/home/user/workspace/results/run_<TS>/mining_history.json"
+      }
     }
   },
   "iterations": {},
