@@ -184,7 +184,7 @@ The generated lookup Parquet uses `annotation_id` for the original LLaVA `id` an
 
 ## DEFT Mining Loop
 
-Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or generated-video branch runs in this skill. Before gap analysis, each iteration rewrites Cosmos Reason result `video_id` values from LLaVA annotation ids to resolved KPI video paths and stores the prepared predictions in the iteration's `gaps/` directory. It then runs gap analysis, builds one selected-modality target parquet, mines it against the combined text/video train source in one `tao-mine-nearest-neighbors` run, converts mined rows to LLaVA annotations, merges annotations, trains Cosmos Reason, evaluates the trained checkpoint, and computes that evaluation's BCQ accuracy metrics. At loop termination, generate the run-level accuracy report and include its baseline/iteration table in the agent's final response. See `references/mining-loop.md` for exact commands and completion criteria.
+Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or generated-video branch runs in this skill. Before gap analysis, each iteration rewrites Cosmos Reason result `video_id` values from LLaVA annotation ids to resolved KPI video paths and stores the prepared predictions in the iteration's `gaps/` directory. It then runs gap analysis, builds one selected-modality target parquet, mines it against the combined text/video train source in one `tao-mine-nearest-neighbors` run, converts mined rows to LLaVA annotations, merges annotations, trains Cosmos Reason, evaluates the trained checkpoint, computes that evaluation's BCQ accuracy metrics, and removes the resumable training checkpoints while preserving the exported safetensors. At loop termination, generate the run-level accuracy report and include its baseline/iteration table in the agent's final response. See `references/mining-loop.md` for exact commands and completion criteria.
 
 ## Completion Criteria
 
@@ -203,6 +203,7 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 | `prepare_cosmos_reason_train` | Mined and accumulated LLaVA annotations plus `train/specs/train.toml` exist. |
 | `train` | The Cosmos Reason training job reaches terminal success. |
 | `evaluate` | Evaluation preparation finds the latest completed training checkpoint, the evaluation job exits successfully, exactly one iteration `results.json` is found, and its `bcq_accuracy_metrics.json` exists. |
+| `cleanup_cosmos_reason_training` | `train/checkpoint_cleanup.json` exists, raw checkpoint directories are gone, and its listed safetensors exports remain. |
 | `loop_stop` | Stop reason is logged and `bcq_accuracy_report.md` plus `bcq_accuracy_summary.json` compare the baseline with every completed iteration. |
 
 ## Troubleshooting
