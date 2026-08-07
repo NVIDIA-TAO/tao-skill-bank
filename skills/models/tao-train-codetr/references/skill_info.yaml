@@ -1,6 +1,6 @@
 network_arch: codetr
 type: model
-container_image: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt  # versions-key: images.tao_toolkit.pyt
+container_image: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt  # unpinned: held at the build this skill is validated against; repin once 7.1.0-pyt is confirmed to carry codetr
 data_format: coco
 gpu_spec_key: train.num_gpus
 automl_enabled: false
