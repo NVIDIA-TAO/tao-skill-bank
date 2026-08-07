@@ -670,11 +670,13 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     args.timeout = "03:48:00"
     plan = workflow.build_plan(args); workflow.write_spec(args, plan)
     assert "--no-container-remap-root" in plan["preflight"]["container_runtime"]
+    assert "--no-container-mount-home" in plan["preflight"]["container_runtime"]
     script = workflow.render_slurm(args, plan)
     assert script.startswith("#!/usr/bin/env bash\n#SBATCH --partition=")
     assert script.index("#SBATCH --account=") < script.index("set -Eeuo pipefail")
     assert "#SBATCH --no-requeue" in script and "--container-image=" in script
     assert "--no-container-remap-root" in script
+    assert "--no-container-mount-home" in script
     assert "timeout --signal=TERM --kill-after=30s 13680s srun" in script
     assert 'exit "$child_rc"' in script
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0

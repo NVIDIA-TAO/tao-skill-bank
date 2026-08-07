@@ -920,7 +920,8 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
         ])
         container = " ".join([
             "srun", "--nodes=1", "--ntasks=1", f"--gpus={args.gpus_per_node}",
-            "--no-container-remap-root", f"--container-image={shlex.quote(args.sqsh_path)}",
+            "--no-container-remap-root", "--no-container-mount-home",
+            f"--container-image={shlex.quote(args.sqsh_path)}",
             "bash -lc", shlex.quote(container_check),
         ])
     else:
@@ -1224,7 +1225,8 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         "timeout", "--signal=TERM", "--kill-after=30s", f"{child_timeout_seconds}s",
         "srun", f"--nodes={args.nodes}", f"--ntasks={args.nodes}", "--ntasks-per-node=1",
         f"--gpus-per-node={args.gpus_per_node}", f"--cpus-per-task={args.cpus_per_task}",
-        "--no-container-remap-root", f"--container-image={shlex.quote(str(sqsh))}",
+        "--no-container-remap-root", "--no-container-mount-home",
+        f"--container-image={shlex.quote(str(sqsh))}",
         mount_args, "bash -lc", shlex.quote(wrapped),
     ]))
     lines = [
