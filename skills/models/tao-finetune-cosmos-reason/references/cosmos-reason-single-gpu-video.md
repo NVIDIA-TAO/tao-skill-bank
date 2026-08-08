@@ -72,3 +72,25 @@ resumable full training state. If the user explicitly selected step cadence,
 use the corresponding `step_N` paths instead. Verify both artifacts exist
 before cleanup or evaluation, and retain the concrete best validated cadence
 point instead of silently choosing the final one.
+
+## Detached train-to-evaluate gate
+
+For a long local Docker workflow that must launch evaluation only after a
+successful training container and a validated adapter checkpoint, use
+`scripts/gate_docker_train_evaluate.py`. Run it under a durable process
+supervisor (or `setsid`/`nohup`) and supply the training job and container,
+training results root, expected adapter metadata JSON, evaluation TOML, image,
+mounts, and state/output paths. The gate:
+
+- polls Docker rather than inferring live state from job records;
+- uses an advisory lock and atomic state files so the same command can safely
+  resume after interruption;
+- validates a unique epoch adapter directory, requested PEFT metadata, and the
+  safetensors header before opening the child evaluation record;
+- preserves record-before-launch ordering and terminal job-record states; and
+- accepts both metric-object and row-oriented Cosmos evaluation results.
+
+Container identity defaults are derived from the invoking account. Pass
+`--group-add GID` once per required host video/render group; never copy numeric
+UIDs or group IDs from another machine. See the script's `--help` output for
+the complete argument contract.

@@ -14,6 +14,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import pwd
 import struct
 import subprocess
 import sys
@@ -203,10 +204,10 @@ def launch_eval(
         args.shm_size,
         "--user",
         args.user,
-        "--group-add",
-        args.docker_group,
-        "--group-add",
-        args.video_group,
+    ]
+    for group_id in args.group_add:
+        command.extend(["--group-add", group_id])
+    command.extend([
         "--env",
         "HOME=/results/.tao-runtime/home",
         "--env",
@@ -241,7 +242,7 @@ def launch_eval(
         "cosmos-rl-evaluate",
         "--config",
         f"/specs/{args.eval_spec.name}",
-    ]
+    ])
     result = run(command)
     container_id = result.stdout.strip()
     mark(
@@ -325,10 +326,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poll-seconds", type=int, default=60)
     parser.add_argument("--gpu", default="0")
     parser.add_argument("--shm-size", default="16g")
-    parser.add_argument("--user", default="2524:2524")
-    parser.add_argument("--runtime-user", default="local-rarunachalam")
-    parser.add_argument("--docker-group", default="987")
-    parser.add_argument("--video-group", default="1002")
+    parser.add_argument(
+        "--user",
+        default=f"{os.getuid()}:{os.getgid()}",
+        help="container UID:GID (default: invoking process UID:GID)",
+    )
+    parser.add_argument(
+        "--runtime-user",
+        default=pwd.getpwuid(os.getuid()).pw_name,
+        help="USER/LOGNAME inside the container (default: invoking account)",
+    )
+    parser.add_argument(
+        "--group-add",
+        action="append",
+        default=[],
+        metavar="GID",
+        help="supplementary container group; repeat for video/render device groups",
+    )
     return parser.parse_args()
 
 

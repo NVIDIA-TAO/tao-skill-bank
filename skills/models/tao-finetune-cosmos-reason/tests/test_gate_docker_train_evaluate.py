@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import struct
 
@@ -74,3 +75,36 @@ def test_summarizes_row_oriented_evaluation_results(tmp_path: Path) -> None:
         "total_samples": 3,
         "results_file": str(results_file),
     }
+
+
+def test_cli_identity_defaults_follow_invoking_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    required = {
+        "--train-job": "train-1",
+        "--train-container": "train-1",
+        "--train-results": "/tmp/train",
+        "--checkpoint-epoch": "3",
+        "--expected-adapter-config": "/tmp/adapter.json",
+        "--eval-spec": "/tmp/evaluate.toml",
+        "--eval-results-root": "/tmp/eval-results",
+        "--eval-cache": "/tmp/cache",
+        "--dataset-root": "/tmp/data",
+        "--base-model": "/tmp/model",
+        "--image": "example/image:test",
+        "--job-helper": "/tmp/job.py",
+        "--redactor": "/tmp/redact.py",
+        "--state-file": "/tmp/state.json",
+        "--summary-file": "/tmp/summary.json",
+        "--log-file": "/tmp/gate.log",
+        "--pid-file": "/tmp/gate.pid",
+        "--lock-file": "/tmp/gate.lock",
+    }
+    argv = [str(SCRIPT)]
+    for key, value in required.items():
+        argv.extend([key, value])
+    monkeypatch.setattr(gate.sys, "argv", argv)
+
+    args = gate.parse_args()
+
+    assert args.user == f"{os.getuid()}:{os.getgid()}"
+    assert args.runtime_user
+    assert args.group_add == []
