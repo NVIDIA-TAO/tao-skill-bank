@@ -258,7 +258,25 @@ def find_results(results_dir: Path) -> dict[str, Any]:
     matches = sorted(results_dir.glob("evaluation/**/results.json"))
     if len(matches) != 1:
         raise ValueError(f"expected one evaluation results.json, found {len(matches)}: {matches}")
-    result = load_json(matches[0])
+    with matches[0].open(encoding="utf-8") as stream:
+        payload = json.load(stream)
+    if isinstance(payload, dict):
+        result = payload.copy()
+    elif isinstance(payload, list):
+        if not payload or not all(isinstance(item, dict) for item in payload):
+            raise ValueError(f"evaluation result list is empty or malformed: {matches[0]}")
+        if not all("response" in item and "gt" in item for item in payload):
+            raise ValueError(f"evaluation result rows lack response/gt fields: {matches[0]}")
+        correct = sum(
+            str(item["response"]).strip() == str(item["gt"]).strip() for item in payload
+        )
+        result = {
+            "accuracy": correct / len(payload),
+            "correct_samples": correct,
+            "total_samples": len(payload),
+        }
+    else:
+        raise ValueError(f"unsupported evaluation results shape in {matches[0]}")
     result["results_file"] = str(matches[0])
     return result
 

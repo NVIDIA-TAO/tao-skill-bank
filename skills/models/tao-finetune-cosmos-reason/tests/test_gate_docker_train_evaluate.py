@@ -52,3 +52,25 @@ def test_atomic_json_replaces_complete_document(tmp_path: Path) -> None:
         "job": "job-1",
     }
     assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_summarizes_row_oriented_evaluation_results(tmp_path: Path) -> None:
+    results_file = tmp_path / "evaluation" / "adapter" / "letter" / "general" / "results.json"
+    results_file.parent.mkdir(parents=True)
+    results_file.write_text(
+        json.dumps(
+            [
+                {"response": "A", "gt": "A"},
+                {"response": " B ", "gt": "B"},
+                {"response": "C", "gt": "D"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert gate.find_results(tmp_path) == {
+        "accuracy": pytest.approx(2 / 3),
+        "correct_samples": 2,
+        "total_samples": 3,
+        "results_file": str(results_file),
+    }
