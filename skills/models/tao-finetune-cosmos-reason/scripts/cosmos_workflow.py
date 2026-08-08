@@ -1013,7 +1013,7 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
             "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization",
             "system PyAV/FFmpeg NVDEC and libnvcuvid", "backward-safe Qwen3-VL PatchEmbed",
             "DeepEP Python/extension ABI", "vLLM Qwen3-VL Conv3D dispatch guard",
-            "free result/checkpoint space",
+            "256 GiB free result/checkpoint space",
         ],
     }
 

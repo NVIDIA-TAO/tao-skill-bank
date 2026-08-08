@@ -58,6 +58,16 @@ def parse_args() -> argparse.Namespace:
         help="Dataset/spec path to verify. May be repeated.",
     )
     parser.add_argument(
+        "--min-free-disk-gb",
+        action="append",
+        default=[],
+        metavar="LABEL=GIB",
+        help=(
+            "Require at least GIB GiB free on the filesystem containing a "
+            "previously supplied local --path LABEL=PATH. May be repeated."
+        ),
+    )
+    parser.add_argument(
         "--json-required-field",
         action="append",
         default=[],
@@ -347,6 +357,85 @@ def parse_effective_batch_limits(values: list[str]) -> dict[str, list[tuple[int,
             )
         limits.setdefault(label.strip(), []).append((batch_size, shard_count))
     return limits
+
+
+def parse_min_free_disk_gb(values: list[str]) -> dict[str, float]:
+    requirements: dict[str, float] = {}
+    for value in values:
+        if "=" not in value:
+            raise SystemExit("--min-free-disk-gb must use LABEL=GIB syntax")
+        label, raw_gib = value.split("=", 1)
+        label = label.strip()
+        try:
+            gib = float(raw_gib)
+        except ValueError as exc:
+            raise SystemExit("--min-free-disk-gb GIB must be numeric") from exc
+        if not label or gib <= 0:
+            raise SystemExit(
+                "--min-free-disk-gb must include a label and a positive GIB value"
+            )
+        requirements[label] = gib
+    return requirements
+
+
+def _existing_disk_probe_path(path: Path) -> Path:
+    candidate = path.expanduser().resolve(strict=False)
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    if not candidate.exists():
+        raise FileNotFoundError(path)
+    return candidate
+
+
+def check_free_disk_space(
+    paths: list[tuple[str, str]],
+    requirements: dict[str, float],
+    *,
+    skip_access: bool,
+) -> bool:
+    if not requirements:
+        return True
+    if skip_access:
+        print(
+            "Free-disk requirements present; skipped filesystem capacity checks. "
+            "Verify them on the target host before launch."
+        )
+        return True
+
+    path_by_label = dict(paths)
+    ok = True
+    for label, required_gib in requirements.items():
+        raw_path = path_by_label.get(label)
+        if raw_path is None:
+            print(f"Free-disk check failed: no --path found for label {label}")
+            ok = False
+            continue
+        path = normalize_local_path(raw_path)
+        if path is None:
+            print(
+                f"Free-disk check failed: {label}={raw_path} is not a local filesystem path"
+            )
+            ok = False
+            continue
+        try:
+            probe = _existing_disk_probe_path(Path(path))
+            free_gib = shutil.disk_usage(probe).free / 1024**3
+        except OSError as exc:
+            print(f"Free-disk check failed: {label}={path}: {exc}")
+            ok = False
+            continue
+        if free_gib < required_gib:
+            print(
+                "Free-disk check failed: "
+                f"{label}={path}, free={free_gib:.1f}GiB < required={required_gib:g}GiB"
+            )
+            ok = False
+        else:
+            print(
+                "Free-disk OK: "
+                f"{label}={path}, free={free_gib:.1f}GiB, required={required_gib:g}GiB"
+            )
+    return ok
 
 
 def env_missing(platform: dict[str, Any]) -> list[str]:
@@ -1627,6 +1716,7 @@ def main() -> int:
     required_json_fields = parse_required_fields(args.json_required_field)
     gpu_arch_allowlists = parse_gpu_arch_allowlists(args.gpu_arch_allowlist)
     effective_batch_limits = parse_effective_batch_limits(args.effective_batch_limit)
+    min_free_disk_gb = parse_min_free_disk_gb(args.min_free_disk_gb)
     name = platform["name"]
 
     if name == "slurm":
@@ -1686,6 +1776,11 @@ def main() -> int:
         effective_batch_limits,
         args.skip_platform_access,
     )
+    free_disk_ok = check_free_disk_space(
+        paths,
+        min_free_disk_gb,
+        skip_access=args.skip_platform_access,
+    )
     ok = (
         platform_ok
         and storage_ok
@@ -1693,6 +1788,7 @@ def main() -> int:
         and gpu_arch_ok
         and gpu_resources_ok
         and effective_batch_ok
+        and free_disk_ok
     )
 
     if ok:

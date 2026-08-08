@@ -57,6 +57,31 @@ def test_gpu_resources_reject_insufficient_cumulative_memory(capsys):
     assert "GPU resource check failed" in capsys.readouterr().out
 
 
+def test_free_disk_requirement_passes_for_existing_parent(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(
+        preflight.shutil,
+        "disk_usage",
+        lambda _path: preflight.shutil._ntuple_diskusage(500 * 1024**3, 100, 400 * 1024**3),
+    )
+    output = tmp_path / "not-created-yet" / "results"
+    assert preflight.check_free_disk_space(
+        [("results", str(output))], {"results": 256}, skip_access=False
+    )
+    assert "Free-disk OK" in capsys.readouterr().out
+
+
+def test_free_disk_requirement_rejects_insufficient_capacity(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(
+        preflight.shutil,
+        "disk_usage",
+        lambda _path: preflight.shutil._ntuple_diskusage(500 * 1024**3, 450, 50 * 1024**3),
+    )
+    assert not preflight.check_free_disk_space(
+        [("results", str(tmp_path))], {"results": 256}, skip_access=False
+    )
+    assert "free=50.0GiB < required=256GiB" in capsys.readouterr().out
+
+
 def test_slurm_preflight_checks_remote_scheduler_pyxis_and_enroot(monkeypatch, tmp_path):
     key = tmp_path / "id_ed25519"
     key.write_text("fixture")

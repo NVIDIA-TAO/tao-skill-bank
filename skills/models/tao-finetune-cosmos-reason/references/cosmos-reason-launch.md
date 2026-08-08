@@ -64,12 +64,23 @@ checks before any model/data download:
 ```bash
 scripts/check_tao_launch_preflight.py --platform local-docker \
   --container-image <resolved-cosmos-rl-image> \
+  --path results_dir=/abs/path/to/job-results \
+  --min-free-disk-gb results_dir=256 \
   --path train_annotation=/abs/path/train/annotations.json \
   --path train_media=/abs/path/train \
   --path val_annotation=/abs/path/eval/annotations.json \
   --path val_media=/abs/path/eval \
   --gpu-min-total-memory-gb 256
 ```
+
+The 256 GiB result-filesystem gate is mandatory for Cosmos-RL Nano training
+with synchronous epoch checkpoints. A dense four-way sharded checkpoint plus
+its optimizer state and Hugging Face safetensor export can consume roughly
+73 GiB; retention briefly needs the new checkpoint and retained predecessors
+at the same time. Check actual free bytes on the filesystem containing the
+host-mounted result directory, not Docker's logical/reclaimable size. If this
+gate fails, reclaim or relocate storage before launch; a PyTorch zip-writer
+`unexpected pos` error during `torch.save` is a common ENOSPC symptom.
 
 For `s3://` paths, if this helper reports that `aws` is missing, ask for
 approval and rerun the same command with `--install-missing-tools` so the helper
