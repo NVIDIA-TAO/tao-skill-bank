@@ -177,8 +177,9 @@ status bridge in the repository-derived image, not as an ad hoc source patch.
 - Cosmos-RL: single-node uses its normal CLI. Validated policy-only multi-node
   SFT starts the controller only on node zero and one policy replica on every
   node; its spec uses global GPU count as shard size and one replicate. Enable
-  CUDA video driver capability and the image's PyNvVideoCodec path rather than
-  falling back to CPU decoding.
+  CUDA video driver capability and the image's system PyAV/FFmpeg NVDEC path
+  rather than falling back to CPU decoding. Positive DataLoader worker counts
+  require the Cosmos-RL spawned-worker runtime fix.
 
 For both backends, preserve the real `srun`/torchrun/policy exit code through
 cleanup and any requeue footer. A zero exit from a later shell command must not

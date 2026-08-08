@@ -71,11 +71,12 @@ resource limits without credentials.
 Framework uses its native CUDA TorchCodec path. The release Cosmos-RL image uses
 qwen-vl-utils' torchvision path backed by source-built PyAV and the restricted
 system FFmpeg/NVDEC codecs; Decord and PyNvVideoCodec are intentionally absent.
-Worker count zero requires
-prefetch to be absent or null. Full Cosmos-RL video runs prewarm separate train
-and validation caches before model allocation. Cache keys combine dataset,
-model, and processor fingerprints; completeness manifests and every entry are
-validated before training.
+Positive DataLoader worker counts require the runtime's `spawn` context and
+spawn-picklable cache implementation; worker count zero requires prefetch to be
+absent or null. Full Cosmos-RL video runs prewarm separate train and validation
+caches before model allocation. Cache keys combine dataset, model, and
+processor fingerprints; completeness manifests and every entry are validated
+before training.
 
 Do not recover a full video run by falling back silently to CPU decoding or by
 reusing another run's cache. A decoder, cache, or media failure is a failed

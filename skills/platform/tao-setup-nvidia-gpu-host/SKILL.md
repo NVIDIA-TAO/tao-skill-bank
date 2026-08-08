@@ -179,9 +179,11 @@ entrypoint checks. Cosmos Framework must execute
 `cosmos_framework.callbacks.tao_status`, find native torchrun, and verify the
 A100 PatchEmbed compatibility marker when the host reports compute capability
 8.0. Cosmos-RL must resolve its requested action executable, import
-PyNvVideoCodec for video workflows, load `libnvcuvid.so.1`, and verify its
-checkpoint loader accepts the prepared `qwen3_vl` directory. A container that
-only passes `nvidia-smi` is not ready for Cosmos training.
+system PyAV for video workflows, resolve the restricted FFmpeg `h264_cuvid`
+decoder, load `libnvcuvid.so.1`, verify the backward-safe linear Qwen3-VL
+PatchEmbed marker, and verify its checkpoint loader accepts the prepared
+`qwen3_vl` directory. A container that only passes `nvidia-smi` is not ready
+for Cosmos training.
 
 ## Kubernetes Notes
 

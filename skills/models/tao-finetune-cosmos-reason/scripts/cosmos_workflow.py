@@ -964,6 +964,10 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
     else:
         imports.extend([
             "import cosmos_rl", "import av", "import os", "import ctypes", "ctypes.CDLL('libnvcuvid.so.1')",
+            "from nvidia_tao_core.microservices.handlers import huggingface_inference_microservice_server",
+            "from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionPatchEmbed",
+            "assert getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False)",
+            "assert av.codec.Codec('h264_cuvid', 'r') is not None",
             "from cosmos_rl.utils.runtime_dependency_contract import verify_deepep, verify_vllm_conv3d",
             "verify_deepep()", "verify_vllm_conv3d()",
             "import qwen_vl_utils.vision_process as vp",
@@ -1007,7 +1011,8 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
         "checks": [
             "host and scheduler tools", "credential presence without reading values", "repository clean state",
             "Pyxis/Enroot and SQSH readability", "container mounts/shared storage", "non-root Python imports",
-            "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization", "video decoder/libnvcuvid",
+            "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization",
+            "system PyAV/FFmpeg NVDEC and libnvcuvid", "backward-safe Qwen3-VL PatchEmbed",
             "DeepEP Python/extension ABI", "vLLM Qwen3-VL Conv3D dispatch guard",
             "free result/checkpoint space",
         ],

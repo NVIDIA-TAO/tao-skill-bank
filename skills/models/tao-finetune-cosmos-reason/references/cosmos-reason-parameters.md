@@ -144,10 +144,12 @@ do not lower it to tiny values such as 128 for video calibration.
 
 **Stale dataset cache after changing fps/total_pixels**: Change `train.train_policy.dataset.name` to a new unique identifier to force cache regeneration.
 
-**Forked CUDA video decoder returns zero frames**: On a single GB300, nonzero
-train or validation `dataloader_num_workers` can initialize video decoding in a
-forked process before CUDA is ready, producing `total_frames=0` and an invalid
-`nframes` error. Set both worker counts to `0` and remove their prefetch factors.
+**Forked CUDA video decoder fails or returns zero frames**: A positive train or
+validation `dataloader_num_workers` must use a clean `spawn` multiprocessing
+context. Forking after the policy process initializes CUDA/NCCL can make the
+FFmpeg NVDEC codec fail to open or produce `total_frames=0`. Use a Cosmos-RL
+revision with the spawned-worker fix and a spawn-picklable dataset cache. When
+the worker count is `0`, omit the multiprocessing context and prefetch factor.
 
 **Checkpoint save failure (scheduler is None)**: The cosmos-rl trainer crashes with `'NoneType' object has no attribute 'state_dict'` when saving a checkpoint before any training step has executed. This happens when the dataset is too small for the batch size (0 steps per epoch). See the batch size error above.
 
