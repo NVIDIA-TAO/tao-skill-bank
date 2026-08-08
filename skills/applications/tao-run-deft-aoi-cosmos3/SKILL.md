@@ -37,7 +37,9 @@ containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
 `eval.config`. Run bundled validation with the skill Python so dependencies
 match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
 tests.test_cosmos3_bare`. If that Python lacks `pyarrow` or `yaml`, install the
-small helper dependency there and rerun validation.
+small helper dependency there only in network-enabled mode and rerun
+validation. In air-gap mode, report the missing imports and stop without a
+package-manager command.
 
 ## Execution Contract
 
@@ -49,8 +51,10 @@ Treat a run as a disk-backed state machine.
    Kubernetes, Brev, virtualenv, or an external platform by default.
 3. Read and run the selected platform skill's Preflight before constructing
    launch commands. Stop on a missing system/native-CLI prerequisite. A small
-   missing Python helper may be installed with `python -m pip install ...`,
-   then Preflight must be rerun.
+   missing Python helper may be installed with `python -m pip install ...`
+   only in network-enabled mode, then Preflight must be rerun. In air-gap mode,
+   every package-manager invocation is prohibited; use an already-provisioned
+   interpreter or stop.
 4. Before any mutation or launch, invoke `tao-launch-workflow` and show its
    launch review plus this skill's Pre-Flight Summary. Wait for one explicit
    approval.

@@ -83,7 +83,8 @@ Treat this as a disk-backed state machine, not as a prose recipe.
 - At the start of Pre-Flight, resolve the workspace and consume only process
   environment values supplied by the user or harness, then resolve the network
   mode with `references/air-gap.md`. Its activation and no-network contract
-  override fetch, login, credential, and package-install instructions elsewhere.
+  override fetch, login, credential, and package-install instructions elsewhere;
+  this prohibits every `pip` or other package-manager invocation.
 
 ## When to Use This Skill
 

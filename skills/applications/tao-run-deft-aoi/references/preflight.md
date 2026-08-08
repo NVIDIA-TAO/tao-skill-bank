@@ -16,12 +16,32 @@ Resolve everything possible before asking the user. In order:
    same resolved directory as `config.images_dir`; all ChangeNet containers
    must mount that state value rather than reconstructing a path from `kpi/`.
 
-   **Host Python deps.** The DEFT loop needs `pandas`, `numpy`, `matplotlib` (KPI analysis), `pyarrow` (parquet I/O for routing and mining), `huggingface_hub` (backbone staging), and `boto3` (S3 ops). Verify with `python3 -c "import pandas, numpy, matplotlib, pyarrow, huggingface_hub, boto3"`. If any are missing, set up a venv:
+   **Resolve the mining source independently from its images.** A common staged
+   layout places the CSV at
+   `<workspace>/augmentation/mining_pool/mining_pool.csv` and the referenced
+   images under the shared `<workspace>/images` root. Treat these as discovery
+   hints, not proof: prefer an explicit user/harness path, inspect the CSV path
+   fields, verify the files on disk, and record the resolved paths in state.
+   Do not assume an `augmentation/mining_pool/images/` directory exists merely
+   because the CSV is under `augmentation/mining_pool/`.
+
+   **Host Python deps.** The DEFT loop needs `pandas`, `numpy`, `matplotlib` (KPI analysis), `pyarrow` (parquet I/O for routing and mining), `huggingface_hub` (backbone staging), and `boto3` (S3 ops). Verify through `scripts/deft_python.sh`; do not probe a different bare interpreter first:
    ```bash
-   python3 -m venv ~/.venvs/deft
-   ~/.venvs/deft/bin/pip install pandas numpy matplotlib pyarrow huggingface_hub boto3
+   <skill_root>/scripts/deft_python.sh -c \
+     "import pandas, numpy, matplotlib, pyarrow, huggingface_hub, boto3"
    ```
-   Invoke scripts via that interpreter — on Ubuntu 24.04+ / fresh Brev boxes a bare `pip3 install --user` hits PEP 668. Alternatively run analysis inside the TAO toolkit image. Do not silently skip — KPI plots and parquet I/O are part of every loop's output.
+   If imports are missing in **air-gap mode**, hard-stop and report the missing
+   modules. Do not invoke `pip`, `pip3`, `uv`, `conda`, `apt`, or any other
+   package manager; even an attempted install invalidates the air-gap run.
+
+   Only in **network-enabled mode**, set up a dedicated venv if needed:
+   ```bash
+   python3 -m venv <workspace>/.venv
+   <workspace>/.venv/bin/pip install pandas numpy matplotlib pyarrow huggingface_hub boto3
+   ```
+   `deft_python.sh` selects that interpreter once it exists. Alternatively run
+   analysis inside the TAO toolkit image. Do not silently skip — KPI plots and
+   parquet I/O are part of every loop's output.
 2. Read the relevant `references/*.md` files for command syntax and output contracts. See `## Stage Reference Modules` in `references/scripts-and-agents.md` for the stage→skill mapping.
 3. Source `<workspace>/.env` if it exists (`set -a; source <workspace>/.env; set +a`). Then verify the credentials the workflow actually consumes:
 

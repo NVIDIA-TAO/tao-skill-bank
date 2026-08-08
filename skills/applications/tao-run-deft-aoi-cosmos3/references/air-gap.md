@@ -1,5 +1,10 @@
 # Air-Gapped Cosmos3 DEFT AOI
 
+Enable air-gap mode when `AIR_GAPPED=1` is present, the user explicitly asks
+for offline/air-gapped execution, or the harness reports restricted
+networking. Resolve this before dependency checks; never probe the network to
+infer the mode.
+
 Air-gap mode is valid only when every selected platform input is already
 visible from the compute frame:
 
@@ -16,8 +21,13 @@ visible from the compute frame:
 In air-gap mode:
 
 - do not run image pulls, package installs, Hugging Face downloads, S3 staging,
-  or credential login — this includes the AnomalyGen post-gate bootstrap, whose
-  checkpoint/dataset/base-cache fetchers must all be pre-staged instead;
+  or credential login. This explicitly prohibits `pip`, `pip3`, `uv`, `conda`,
+  `apt`, and package-manager commands from an existing virtual environment,
+  even as a probe or retry. This also includes the AnomalyGen post-gate
+  bootstrap, whose checkpoint/dataset/base-cache fetchers must all be
+  pre-staged instead;
+- use `scripts/deft_python.sh` to select an already-provisioned interpreter; if
+  no candidate provides `pyarrow` and `yaml`, report those imports and stop;
 - keep `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` set for AnomalyGen runs;
 - leave both `HF_TOKEN` and its legacy alias `HUGGING_FACE_HUB_TOKEN` unset
   when local assets are sufficient; clearing only one still leaves a usable

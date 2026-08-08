@@ -1,9 +1,13 @@
 # Cosmos3 DEFT AOI Pre-Flight
 
-Run these checks in order. They are read-only until the single approval gate,
-except that a missing small Python helper may be installed as allowed by the
-bank policy. Do not create `${RESULTS_DIR}`, write specs, pull images, or submit
-jobs before approval.
+Run these checks in order. Resolve network mode through `references/air-gap.md`
+before checking Python dependencies. They are read-only until the single
+approval gate, except that a missing small Python helper may be installed in
+network-enabled mode as allowed by the bank policy. In air-gap mode, use only
+an interpreter selected by `scripts/deft_python.sh`; if none is complete,
+report the missing imports and stop without invoking a package manager. Do not
+create `${RESULTS_DIR}`, write specs, pull images, or submit jobs before
+approval.
 
 ## 1. Select and preflight a platform
 
