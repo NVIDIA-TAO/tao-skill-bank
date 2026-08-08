@@ -73,6 +73,23 @@ def _atomic_text(path: pathlib.Path, text: str) -> None:
         raise
 
 
+def _migrate_execution_policy(state: dict[str, Any]) -> None:
+    if isinstance(state.get("execution_policy"), dict):
+        return
+    offline = os.environ.get("AIR_GAPPED") == "1"
+    state["execution_policy"] = {
+        "network_mode": "airgap" if offline else "network-enabled",
+        "activation_source": "legacy-state:AIR_GAPPED" if offline else "legacy-state:default",
+        "allow_package_install": not offline,
+        "allow_remote_fetch": not offline,
+        "allow_container_pull": not offline,
+        "allow_registry_login": not offline,
+        "python_launcher": "scripts/deft_python.sh",
+        "python_executable": str(pathlib.Path(sys.executable).resolve()),
+        "hf_offline": offline,
+    }
+
+
 def _required_file(value: pathlib.Path | None, flag: str) -> str:
     if value is None:
         raise ValueError(f"{flag} is required")
@@ -82,6 +99,19 @@ def _required_file(value: pathlib.Path | None, flag: str) -> str:
     if not path.is_file() or path.stat().st_size == 0:
         raise ValueError(f"{flag} must be an existing non-empty file: {value}")
     return str(path.resolve())
+
+
+def _parquet_row_count(path: str, flag: str) -> int:
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise ValueError(
+            f"{flag} validation requires pyarrow in the selected DEFT Python"
+        ) from exc
+    try:
+        return int(pq.ParquetFile(path).metadata.num_rows)
+    except Exception as exc:  # noqa: BLE001 - normalize parquet parser failures
+        raise ValueError(f"{flag} must be a readable parquet file: {path} ({exc})") from exc
 
 
 def _required_json_file(value: pathlib.Path | None, flag: str) -> str:
@@ -193,6 +223,7 @@ def _apply_success(
     phase: dict[str, Any],
     args: argparse.Namespace,
     results_dir: pathlib.Path,
+    iterations: dict[str, Any],
 ) -> None:
     stage = args.stage
     phase_root = results_dir / args.iter_label
@@ -252,6 +283,32 @@ def _apply_success(
             # Documented branch skip: the driving Proxy RCCA found no false
             # accepts, so there is no under-detection gap for synthetic
             # defects to close.
+            match = re.fullmatch(r"iter([1-9][0-9]*)", args.iter_label)
+            driving_label = (
+                "baseline"
+                if match and int(match.group(1)) == 1
+                else f"iter{int(match.group(1)) - 1}" if match else args.iter_label
+            )
+            driving_phase = iterations.get(driving_label, {})
+            false_accepts = (
+                driving_phase.get("false_accepts_json")
+                if isinstance(driving_phase, dict)
+                else None
+            )
+            if not isinstance(false_accepts, str):
+                raise ValueError(
+                    "anomalygen --skip requires proxy_rcca false_accepts_json evidence"
+                )
+            try:
+                false_accept_rows = json.loads(pathlib.Path(false_accepts).read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"cannot validate false_accepts_json: {false_accepts} ({exc})"
+                ) from exc
+            if not isinstance(false_accept_rows, list) or false_accept_rows:
+                raise ValueError(
+                    "anomalygen --skip requires false_accepts_json to be an empty JSON array"
+                )
             phase["anomalygen_skipped"] = True
         else:
             phase["anomalygen_sdg_csv"] = _within(
@@ -310,6 +367,14 @@ def _apply_success(
         )
         if args.mining_count is None or args.mining_count <= 0:
             raise ValueError("--mining-count must be > 0")
+        actual_count = _parquet_row_count(
+            phase["mining_mined_parquet"], "--mining-parquet"
+        )
+        if args.mining_count != actual_count:
+            raise ValueError(
+                f"--mining-count={args.mining_count} does not match "
+                f"mined parquet rows={actual_count}"
+            )
         phase["mining_mined_count"] = args.mining_count
     elif stage == "assemble_data":
         phase["mined_sharegpt_json"] = _within(
@@ -372,7 +437,8 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("deft_state.json root must be an object")
 
     try:
-        state["version"] = 4
+        _migrate_execution_policy(state)
+        state["version"] = 5
         iterations = state.get("iterations")
         if not isinstance(iterations, dict):
             raise ValueError("state.iterations must be an object")
@@ -412,9 +478,9 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 state = json.loads(state_path.read_text())
                 iterations = state["iterations"]
                 phase = iterations[args.iter_label]
-                _apply_success(phase, args, results_dir)
+                _apply_success(phase, args, results_dir, iterations)
             else:
-                _apply_success(phase, args, results_dir)
+                _apply_success(phase, args, results_dir, iterations)
             state["status"] = "in_progress"
             state.pop("completed_at", None)
         else:
@@ -427,6 +493,39 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 raise ValueError(
                     f"loop_stop requires iterations.{args.iter_label}.status=complete"
                 )
+            result = phase.get("metric_result")
+            passed = isinstance(result, dict) and result.get("passed") is True
+            if not phase.get("benchmark_metrics_summary") or not isinstance(
+                result, dict
+            ):
+                raise ValueError(
+                    "loop_stop requires final benchmark_metrics evidence"
+                )
+            if args.stop_reason == "metric_met":
+                if not passed:
+                    raise ValueError(
+                        "--stop-reason metric_met requires final metric_result.passed=true"
+                    )
+                args.summary = "Stopped because the final Benchmark metric contract was met."
+            elif args.stop_reason == "max_iterations":
+                match = re.fullmatch(r"iter([1-9][0-9]*)", args.iter_label)
+                if not match or int(match.group(1)) < int(state["max_iterations"]):
+                    raise ValueError(
+                        "--stop-reason max_iterations requires iterN at or beyond max_iterations"
+                    )
+                if passed:
+                    raise ValueError(
+                        "--stop-reason max_iterations conflicts with metric_result.passed=true"
+                    )
+                args.summary = "Stopped because the configured iteration limit was reached."
+            else:
+                raise ValueError("loop_stop requires --stop-reason")
+            final_report = _within(
+                _required_file(args.final_report, "--final-report"),
+                results_dir,
+                "--final-report",
+            )
+            state["final_artifacts"] = {"report": final_report}
             state["status"] = "complete"
             state["completed_at"] = datetime.datetime.now(
                 datetime.timezone.utc
@@ -503,6 +602,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--combined-training", type=pathlib.Path)
     parser.add_argument("--assemble-summary", type=pathlib.Path)
     parser.add_argument("--validation-report", type=pathlib.Path)
+    parser.add_argument(
+        "--stop-reason", choices=("metric_met", "max_iterations")
+    )
+    parser.add_argument("--final-report", type=pathlib.Path)
     return parser
 
 

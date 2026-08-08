@@ -38,13 +38,14 @@ Treat this as a disk-backed state machine, not as a prose recipe.
    constraints. The approved `metric_contract` is the source of truth for
    evaluation, checkpoint selection, completion, and reporting.
 2. After the user approves the Summary, initialize `deft_state.json` once with
-   `scripts/init_deft_state.py`, passing Preflight's exact GPU model/memory as
-   `--gpu-model`. Never hand-author or reinitialize it on resume.
-3. Run every bundled or inline host-Python command through
-   `scripts/deft_python.sh`; it selects an already-provisioned interpreter on
-   every shell invocation, so tool calls do not depend on a prior `export`.
-   On startup, after context compaction, before every stage, and before any
-   completion claim, re-read `${RESULTS_DIR}/deft_state.json`. Use its
+   `scripts/init_deft_state.py`, passing Preflight's exact GPU model/memory,
+   resolved `--network-mode`, activation source, and selected absolute Python.
+   The resulting `execution_policy` is immutable run state. Never hand-author
+   or reinitialize it on resume.
+3. Run host Python through `scripts/deft_python.sh`. On startup, after context
+   compaction, before every stage, and before any
+   completion claim, run `scripts/deft_context.py --state ... --stage ...`.
+   Use its durable `next_stage` plus the state file's
    `status`, `current_iteration`, `iterations.*.status`, `stage_completed`,
    and latest `events` entry to resume. Do not infer progress from assistant
    prose or from an artifact that is not recorded in state.
@@ -52,16 +53,20 @@ Treat this as a disk-backed state machine, not as a prose recipe.
    replace a missing/unread stage reference or a failed skill call with guessed
    shell commands, inline Python, a different output tree, or data fabricated
    from the KPI set.
-5. Commit every stage with `scripts/commit_stage.py`; it verifies the stage's
+5. After initialization, run install/fetch/login/container commands through
+   `scripts/deft_exec.py --state ... -- <command>`. Air-gap mode rejects egress
+   and installs, injects offline flags, and enforces no-pull. Selected
+   platforms must enforce the equivalent policy.
+6. Commit every stage with `scripts/commit_stage.py`; it verifies the stage's
    required inputs and atomically updates both the resume snapshot and ordered
    `events` array inside `deft_state.json`. Never edit the state file with
-   inline Python, jq, heredocs, or an editor. If a commit is rejected, fix the
-   named input or artifact and retry the commit; do not fabricate state.
-   For evaluate, pass the metric result,
+   inline Python, jq, heredocs, or an editor. Fix rejected evidence; never
+   fabricate state. For evaluate, pass the metric result,
    checkpoint, inference CSV, and threshold directly to `commit_stage.py`.
    Pass positive measured `--duration-sec` from backend elapsed time or a host
    timer; missing/zero durations are rejected.
-6. Claim the loop complete only after a successful `loop_stop` commit and a
+7. Claim the loop complete only after `scripts/finalize_run.py` creates the
+   handoff artifacts, successfully commits `loop_stop`, and a
    fresh read of `deft_state.json` shows `status == "complete"`,
    `iterations.baseline.status == "complete"`, and the final iteration's
    `status == "complete"`. A checkpoint, inference CSV, report, or assistant
@@ -80,11 +85,10 @@ Treat this as a disk-backed state machine, not as a prose recipe.
   orchestrator. Continue the documented stage in the parent immediately after
   it returns. Never sleep or poll waiting for a Skill-tool process. For actual
   background Docker work, save the PID and poll at intervals no longer than 30s.
-- At the start of Pre-Flight, resolve the workspace and consume only process
-  environment values supplied by the user or harness, then resolve the network
-  mode with `references/air-gap.md`. Its activation and no-network contract
-  override fetch, login, credential, and package-install instructions elsewhere;
-  this prohibits every `pip` or other package-manager invocation.
+- At the start of Pre-Flight, resolve network mode before dependencies. Read
+  exactly one branch: `references/air-gap.md` for air-gap mode or
+  `references/network-bootstrap.md` for network-enabled mode. Never load the
+  network bootstrap in an air-gapped run.
 
 ## When to Use This Skill
 
@@ -167,13 +171,10 @@ export in the shell that launches the agent.
 > (shift+tab) before approving.
 >
 > **Blocker recovery.** Before the user gate, select a complete installed host
-> interpreter through `deft_python.sh`; if none exists, hard-stop without a
-> package-manager command **in air-gap mode**. In network-enabled mode,
-> provision a dedicated venv with the packages `deft_python.sh` probes for and
-> continue Pre-Flight. Concretely:
-> `python3 -m venv <workspace>/.venv && <workspace>/.venv/bin/pip install pandas numpy matplotlib pyarrow pillow pyyaml`
-> (the exact probe set is `pandas,numpy,matplotlib,pyarrow,PIL,yaml`); `deft_python.sh`
-> auto-selects `<workspace>/.venv/bin/python` once it exists.
+> interpreter through `deft_python.sh`. If none exists, follow only the
+> already-selected network-mode reference. Air-gap mode hard-stops without a
+> package-manager command; network-enabled bootstrap is isolated in
+> `references/network-bootstrap.md`.
 > Apply the network-mode branches in `references/air-gap.md`; record permitted
 > fetches and directory creation as
 > post-approval work, or validate staged assets in air-gap mode. After
@@ -198,7 +199,9 @@ Execute the loop in this order (full detail in `references/pipeline-and-state.md
 1. **Pre-Flight.** Run every check in `references/preflight.md`. Resolve workspace, specs, CSVs, checkpoints, container images. Hard stop only on missing input you can't resolve yourself (see `## Agent Behavior` → Blocker recovery).
 2. **Baseline.** If `deft_state.json` already has `iterations.baseline.stage_completed == "train"` and a `best_ckpt_path` pointing at an existing file (the upstream `automl-deft-pipeline` pre-seeds these from its Phase 1 AutoML winner — see its Phase 1 → Phase 2 handoff), **skip the train sub-step** and resume at `inference -> evaluate` against the pre-seeded checkpoint. Otherwise run `train -> inference -> evaluate` by invoking the `tao-skill-bank:tao-train-visual-changenet` skill. Evaluate with the approved contract and evaluator in `references/metric-contract.md`. Either way, then `rca` by invoking `tao-skill-bank:tao-analyze-gaps-visual-changenet`. Read `references/visual-changenet.md`, `references/metric-contract.md`, and `references/tao-analyze-gaps-visual-changenet.md` first for DEFT-loop-specific args.
 3. **Iterate.** For each iteration up to `max_iterations`, execute Pipeline steps 1-7. Between steps re-read `deft_state.json` and continue from its `stage_completed` value; do not print the full state.
-4. **Stop** when the KPI target is met, `max_iterations` is reached, or a hard-stop gate fires (silent-drop, AMP allocation mismatch, train/val leakage). Never auto-retry hard stops.
+4. **Stop** when the KPI target is met or `max_iterations` is reached by running
+   `scripts/finalize_run.py` with the matching reason. Hard-stop failures are
+   committed as errors and are never relabeled as successful `loop_stop`.
 5. **Render automatically.** `scripts/init_deft_state.py` writes the initial
    `results/DEFT_Loop_Report.html`; every successful `commit_stage.py` call
    then refreshes it through the deterministic `scripts/render_report.py`
@@ -215,6 +218,7 @@ All pipeline stages run inline in the parent context. Prefer invoking the underl
 Run bundled scripts through `<skill_root>/scripts/deft_python.sh`; do not rely
 on harness-specific helpers or a shell export surviving the next tool call.
 Resolve every path argument to an absolute host path first. Use
+`deft_context.py` before each stage, `deft_exec.py` for external execution, and
 `commit_stage.py` for all state writes. See
 `references/scripts-and-agents.md` for script invocations, the automatic
 report hook, stage mapping, direct-container fallback, and path invariants.

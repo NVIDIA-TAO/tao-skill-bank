@@ -33,6 +33,7 @@ sys.path.insert(0, str(DATA_MINING_SCRIPTS))
 # ambiguous imports before loading the Cosmos3-local state machine modules.
 for module_name in (
     "commit_stage",
+    "finalize_run",
     "init_deft_state",
     "metric_contract",
     "record_metric_result",
@@ -48,6 +49,7 @@ import emit_mined_sharegpt  # noqa: E402
 import emit_sdg_sharegpt  # noqa: E402
 import filter_mined_by_cosine  # noqa: E402
 import filter_mined_history  # noqa: E402
+import finalize_run  # noqa: E402
 import init_deft_state  # noqa: E402
 import patch_eval_image_cap  # noqa: E402
 import render_report  # noqa: E402
@@ -645,6 +647,10 @@ class StateMachineTests(unittest.TestCase):
                     str(workspace),
                     "--platform",
                     "docker",
+                    "--network-mode",
+                    "airgap",
+                    "--network-mode-source",
+                    "test-harness",
                     "--gpu-model",
                     "NVIDIA H100 80GB HBM3",
                     "--max-iterations",
@@ -657,6 +663,13 @@ class StateMachineTests(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
             state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(state["version"], 5)
+            self.assertEqual(
+                state["execution_policy"]["network_mode"], "airgap"
+            )
+            self.assertFalse(
+                state["execution_policy"]["allow_package_install"]
+            )
             self.assertNotIn("train", state["config"]["annotations"])
             self.assertTrue(state["config"]["evaluation"]["proxy"]["drives_rcca"])
             self.assertFalse(
@@ -735,18 +748,12 @@ class StateMachineTests(unittest.TestCase):
             self.assertEqual(state["status"], "in_progress")
             self.assertEqual(state["events"][-1]["stage"], "benchmark_metrics")
             self.assertEqual(
-                commit_stage.main(
+                finalize_run.main(
                     [
-                        "--results-dir",
-                        str(results),
-                        "--iter-label",
-                        "baseline",
-                        "--stage",
-                        "loop_stop",
-                        "--duration-sec",
-                        "1",
-                        "--summary",
-                        "Benchmark KPI met",
+                        "--results-dir", str(results),
+                        "--iter-label", "baseline",
+                        "--stop-reason", "metric_met",
+                        "--duration-sec", "1",
                     ]
                 ),
                 0,
@@ -1054,7 +1061,7 @@ class StateMachineTests(unittest.TestCase):
             self.assertEqual(len(state["events"]), 1)
             self.assertEqual(state["events"][0]["status"], "error")
 
-    def test_anomalygen_skip_allowed_without_false_accepts(self) -> None:
+    def test_anomalygen_skip_requires_empty_driving_false_accepts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             workspace = root / "workspace"
@@ -1690,7 +1697,14 @@ class StateMachineTests(unittest.TestCase):
                 state["iterations"]["iter2"]["stage_completed"],
                 "benchmark_metrics",
             )
-            commit("iter2", "loop_stop")
+            commit(
+                "iter2",
+                "loop_stop",
+                "--stop-reason",
+                "max_iterations",
+                "--final-report",
+                str(results / "DEFT_Loop_Report.html"),
+            )
             state = json.loads((results / "deft_state.json").read_text())
             self.assertEqual(state["status"], "complete")
             self.assertEqual(state["current_iteration"], 2)

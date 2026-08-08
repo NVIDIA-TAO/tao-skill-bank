@@ -276,7 +276,7 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 ],
             }
             state = {
-                "version": 4,
+                "version": 5,
                 "workflow": "tao-run-deft-aoi-cosmos3",
                 "started_at": "2026-08-04T00:00:00+00:00",
                 "status": "complete",

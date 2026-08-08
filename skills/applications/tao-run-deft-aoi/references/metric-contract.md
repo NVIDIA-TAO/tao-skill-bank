@@ -43,6 +43,12 @@ secondary constraint, then `<`/`<=` select the lowest primary result or
 the direction-aware primary best as a clearly non-passing result. Never infer
 direction from the metric's name.
 
+`FAR < 10% at Recall=100%` is canonicalized as primary `far_pct < 10` with
+unit `%`, bundled evaluator `far_at_recall`, and secondary constraint
+`recall_pct >= 100%`. The evaluator result must place the achieved recall in
+`constraints.recall_pct`; a diagnostic-only recall cannot satisfy the gate.
+Never compare a fractional FAR value to a percentage target.
+
 ## Evaluator types
 
 - `builtin`: an evaluator shipped with this skill. Use only an ID accepted by
@@ -89,7 +95,8 @@ Every evaluator writes one JSON object:
 }
 ```
 
-Required fields are `name`, finite numeric `value`, `unit`, and a value for
+Required fields are `name`, finite numeric `value`, an exact unit match with
+the contract, and a value for
 every configured constraint. `threshold` and `diagnostics` are optional.
 `passed` is not trusted from the evaluator; the bundled recorder recomputes it
 from the approved contract.

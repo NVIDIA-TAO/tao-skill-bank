@@ -20,6 +20,10 @@ visible from the compute frame:
 
 In air-gap mode:
 
+- initialize state with `--network-mode airgap` and its activation source;
+  after initialization run local external commands through
+  `scripts/deft_exec.py`, which injects offline variables and enforces
+  `--pull=never` for direct Docker/Podman runs;
 - do not run image pulls, package installs, Hugging Face downloads, S3 staging,
   or credential login. This explicitly prohibits `pip`, `pip3`, `uv`, `conda`,
   `apt`, and package-manager commands from an existing virtual environment,
@@ -38,3 +42,4 @@ In air-gap mode:
 
 The same user gate, job-record ordering, four verbs, state contract, frozen
 Benchmark hash, and bare annotation contract still apply.
+Never read `references/network-bootstrap.md` in this mode.

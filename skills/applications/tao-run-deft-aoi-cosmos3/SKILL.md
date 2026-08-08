@@ -36,10 +36,9 @@ containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
 `skills/{applications,models,data,platform,core}/...` tree listed in
 `eval.config`. Run bundled validation with the skill Python so dependencies
 match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
-tests.test_cosmos3_bare`. If that Python lacks `pyarrow` or `yaml`, install the
-small helper dependency there only in network-enabled mode and rerun
-validation. In air-gap mode, report the missing imports and stop without a
-package-manager command.
+tests.test_cosmos3_bare`. Resolve network mode first. Missing air-gap imports
+are a hard stop; network-enabled setup lives only in
+`references/network-bootstrap.md`.
 
 ## Execution Contract
 
@@ -49,37 +48,41 @@ Treat a run as a disk-backed state machine.
    value (`user`, `spec`, or `default`) in the Pre-Flight Summary.
 2. Ask which installed platform to use. Do not select Docker, SLURM,
    Kubernetes, Brev, virtualenv, or an external platform by default.
-3. Read and run the selected platform skill's Preflight before constructing
-   launch commands. Stop on a missing system/native-CLI prerequisite. A small
-   missing Python helper may be installed with `python -m pip install ...`
-   only in network-enabled mode, then Preflight must be rerun. In air-gap mode,
-   every package-manager invocation is prohibited; use an already-provisioned
-   interpreter or stop.
+3. Resolve network mode, then read exactly one of `references/air-gap.md` or
+   `references/network-bootstrap.md`. Run the selected platform skill's
+   Preflight and stop on a missing system/native-CLI prerequisite.
 4. Before any mutation or launch, invoke `tao-launch-workflow` and show its
    launch review plus this skill's Pre-Flight Summary. Wait for one explicit
    approval.
 5. After approval, initialize `${RESULTS_DIR}/deft_state.json` exactly once
    with `scripts/init_deft_state.py`. Pass the exact GPU model reported by the
    selected platform's Preflight through `--gpu-model` (include accelerator
-   memory when available). Never reinitialize a resumed run or edit
+   memory when available), plus the resolved network mode/source and selected
+   absolute Python. Never reinitialize a resumed run or edit
    `deft_state.json` by hand.
 6. Before every stage, after context compaction, and before a completion claim,
-   re-read `${RESULTS_DIR}/deft_state.json`. Use its `status`,
+   run `scripts/deft_context.py --state ... --stage ...`. Use its durable
+   `next_stage` and the state file's `status`,
    `current_iteration`, `iterations.*.status`, `stage_completed`, and latest
    `events` entry to resume. Do not infer progress from assistant prose or
    from an artifact that is not recorded in state.
-7. Submit each GPU stage through the chosen platform's four verbs:
+7. Run every command that can install, fetch, log in, or launch a local
+   container through `scripts/deft_exec.py --state ... -- <command>`. In an
+   air-gap it rejects egress/package operations and enforces no-pull. Remote
+   platforms must apply the equivalent immutable no-pull/offline policy.
+8. Submit each GPU stage through the chosen platform's four verbs:
    `submit` / `status` / `logs` / `cancel`. The `submit` verb must open the
    job-record before native launch; the returned id is the only launch handle.
    Poll the backend, not the job-record, and map state to
    `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`.
-8. Commit every completed or failed DEFT stage with
+9. Commit every completed or failed DEFT stage with
    `scripts/commit_stage.py`. It verifies the stage inputs and atomically
    updates both the resume snapshot and ordered `events` array in state. Every
    commit requires a positive, measured `--duration-sec`: use backend elapsed
    wall time for submitted jobs and a host wall-clock timer for inline stages.
    Missing or zero durations are rejected.
-9. Claim completion only after a successful `loop_stop` commit and a fresh
+10. Claim completion only after `scripts/finalize_run.py` verifies final
+   Benchmark evidence, successfully commits `loop_stop`, and a fresh
    read of `deft_state.json` shows `status == "complete"`,
    `iterations.baseline.status == "complete"`, and the final iteration's
    `status == "complete"`.
@@ -304,8 +307,9 @@ For each `iterN` when the frozen Benchmark gate is unmet:
 `init_deft_state.py` writes the first `DEFT_Loop_Report.html`; every successful
 `commit_stage.py` call then refreshes it through the deterministic
 `scripts/render_report.py` post-commit hook. Stop when the Benchmark contract
-passes, `max_iterations` is reached, or a hard stop occurs. Commit `loop_stop`,
-then run `render_report.py --require-terminal` after optional token alignment.
+passes, `max_iterations` is reached, or a hard stop occurs. For an ordinary
+stop, run `scripts/finalize_run.py` with the explicit reason, then run
+`render_report.py --require-terminal` after optional token alignment.
 The Cosmos-only report addition is a bounded prompt showcase sourced from
 recorded annotations; keep every other visual convention aligned with
 ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or hand-author

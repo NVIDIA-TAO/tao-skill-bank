@@ -57,6 +57,23 @@ def _atomic_text(path: pathlib.Path, text: str) -> None:
         raise
 
 
+def _migrate_execution_policy(state: dict[str, Any]) -> None:
+    if isinstance(state.get("execution_policy"), dict):
+        return
+    offline = os.environ.get("AIR_GAPPED") == "1"
+    state["execution_policy"] = {
+        "network_mode": "airgap" if offline else "network-enabled",
+        "activation_source": "legacy-state:AIR_GAPPED" if offline else "legacy-state:default",
+        "allow_package_install": not offline,
+        "allow_remote_fetch": not offline,
+        "allow_container_pull": not offline,
+        "allow_registry_login": not offline,
+        "python_launcher": "scripts/deft_python.sh",
+        "python_executable": str(pathlib.Path(sys.executable).resolve()),
+        "hf_offline": offline,
+    }
+
+
 def _required_file(path: pathlib.Path | None, name: str) -> str:
     if path is None:
         raise ValueError(f"{name} is required")
@@ -66,6 +83,32 @@ def _required_file(path: pathlib.Path | None, name: str) -> str:
     if not expanded.is_file() or expanded.stat().st_size == 0:
         raise ValueError(f"{name} must be an existing non-empty file: {path}")
     return str(expanded.resolve())
+
+
+def _parquet_row_count(path: str, name: str) -> int:
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise ValueError(
+            f"{name} validation requires pyarrow in the selected DEFT Python"
+        ) from exc
+    try:
+        return int(pq.ParquetFile(path).metadata.num_rows)
+    except Exception as exc:  # noqa: BLE001 - normalize parquet parser failures
+        raise ValueError(f"{name} must be a readable parquet file: {path} ({exc})") from exc
+
+
+def _required_log(path: pathlib.Path | None, name: str) -> str:
+    resolved = _required_file(path, name)
+    try:
+        text = pathlib.Path(resolved).read_text(errors="replace").strip().lower()
+    except OSError as exc:
+        raise ValueError(f"{name} cannot be read: {resolved} ({exc})") from exc
+    placeholder_tokens = {"placeholder", "recorded", "todo", "n/a", "none", "ok"}
+    normalized = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    if not normalized or normalized in placeholder_tokens:
+        raise ValueError(f"{name} must contain real command output, not a placeholder")
+    return resolved
 
 
 def _required_allocation(
@@ -175,6 +218,13 @@ def _apply_success(
         )
     elif stage == "anomalygen":
         if args.skip:
+            routed = phase.get("routing_anomalygen_parquet")
+            if not isinstance(routed, str) or _parquet_row_count(
+                routed, "routing_anomalygen_parquet"
+            ) != 0:
+                raise ValueError(
+                    "anomalygen --skip requires routing_anomalygen_parquet with zero rows"
+                )
             phase["anomalygen_skipped"] = True
         else:
             phase["anomalygen_sdg_csv"] = _required_file(
@@ -187,6 +237,13 @@ def _apply_success(
             phase["anomalygen_amp_allocated"] = allocated
     elif stage == "data_mining":
         if args.skip:
+            routed = phase.get("routing_mining_parquet")
+            if not isinstance(routed, str) or _parquet_row_count(
+                routed, "routing_mining_parquet"
+            ) != 0:
+                raise ValueError(
+                    "data_mining --skip requires routing_mining_parquet with zero rows"
+                )
             phase["data_mining_skipped"] = True
         else:
             phase_root = results_dir / iter_label
@@ -212,19 +269,18 @@ def _apply_success(
                     args.mining_source_embeddings,
                     "--mining-source-embeddings",
                 ),
-                "mining_target_log": (
-                    args.mining_target_log,
-                    "--mining-target-log",
-                ),
-                "mining_source_log": (
-                    args.mining_source_log,
-                    "--mining-source-log",
-                ),
-                "mining_knn_log": (args.mining_knn_log, "--mining-knn-log"),
             }
             for field, (path, flag) in mining_artifacts.items():
                 phase[field] = _require_within(
                     _required_file(path, flag), phase_root, flag
+                )
+            for field, path, flag in (
+                ("mining_target_log", args.mining_target_log, "--mining-target-log"),
+                ("mining_source_log", args.mining_source_log, "--mining-source-log"),
+                ("mining_knn_log", args.mining_knn_log, "--mining-knn-log"),
+            ):
+                phase[field] = _require_within(
+                    _required_log(path, flag), phase_root, flag
                 )
             phase["mining_history"] = _require_within(
                 _required_file(args.mining_history, "--mining-history"),
@@ -233,6 +289,14 @@ def _apply_success(
             )
             if args.mining_count is None or args.mining_count < 0:
                 raise ValueError("--mining-count is required and must be >= 0")
+            actual_count = _parquet_row_count(
+                phase["mining_mined_parquet"], "--mining-parquet"
+            )
+            if args.mining_count != actual_count:
+                raise ValueError(
+                    f"--mining-count={args.mining_count} does not match "
+                    f"mined parquet rows={actual_count}"
+                )
             phase["mining_mined_count"] = args.mining_count
     elif stage == "data_merge":
         phase["combined_training_csv"] = _required_file(
@@ -289,7 +353,8 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 )
             )
             state = json.loads(state_path.read_text())
-        state["version"] = 3
+        _migrate_execution_policy(state)
+        state["version"] = 4
 
         iterations = state.get("iterations")
         if not isinstance(iterations, dict):
@@ -322,6 +387,42 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                     raise ValueError(
                         f"loop_stop requires iterations.{args.iter_label}.status=complete"
                     )
+                result = existing.get("metric_result")
+                passed = isinstance(result, dict) and result.get("passed") is True
+                if args.stop_reason == "metric_met":
+                    if not passed:
+                        raise ValueError(
+                            "--stop-reason metric_met requires final metric_result.passed=true"
+                        )
+                    args.summary = "Stopped because the final metric contract was met."
+                elif args.stop_reason == "max_iterations":
+                    match = re.fullmatch(r"iter([1-9][0-9]*)", args.iter_label)
+                    if not match or int(match.group(1)) < int(state["max_iterations"]):
+                        raise ValueError(
+                            "--stop-reason max_iterations requires iterN at or "
+                            "beyond max_iterations"
+                        )
+                    if passed:
+                        raise ValueError(
+                            "--stop-reason max_iterations conflicts with metric_result.passed=true"
+                        )
+                    args.summary = "Stopped because the configured iteration limit was reached."
+                else:
+                    raise ValueError("loop_stop requires --stop-reason")
+                best_model = _require_within(
+                    _required_file(args.best_model, "--best-model"),
+                    results_dir,
+                    "--best-model",
+                )
+                inference_spec = _require_within(
+                    _required_file(args.inference_spec, "--inference-spec"),
+                    results_dir,
+                    "--inference-spec",
+                )
+                state["final_artifacts"] = {
+                    "best_model_json": best_model,
+                    "inference_spec": inference_spec,
+                }
                 state["status"] = "complete"
                 state["completed_at"] = datetime.datetime.now(
                     datetime.timezone.utc
@@ -410,6 +511,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--combined-csv", type=pathlib.Path)
     parser.add_argument("--provenance-csv", type=pathlib.Path)
     parser.add_argument("--merge-validation-report", type=pathlib.Path)
+    parser.add_argument(
+        "--stop-reason", choices=("metric_met", "max_iterations")
+    )
+    parser.add_argument("--best-model", type=pathlib.Path)
+    parser.add_argument("--inference-spec", type=pathlib.Path)
     return parser
 
 

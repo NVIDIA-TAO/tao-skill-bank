@@ -31,7 +31,7 @@ iteration executes:
 
    **SDG training contribution (INLINE).** Convert returned AnomalyGen outputs into ChangeNet paired training rows. Pre-create `${RESULTS_DIR}/iter${N}/mining_filter/` and `${RESULTS_DIR}/iter${N}/dataset/images/` before running the row-prep script. Stage NG/OK image pairs under `results/iter${N}/dataset/images/synthetic_iter${N}_{ng,ok}/`, run `scripts/changenet_data_pair_prepare.py` with `--input-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/reconstructed_image`, `--golden-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/original_image`, `--images-dir`, `--subdir synthetic_iter${N}`, `--light SolderLight`, `--image-ext .jpg` (or the exact `dataset.classify.image_ext` from the training spec), and `--output-csv ${RESULTS_DIR}/iter${N}/mining_filter/sdg_rows_raw.csv`. Rewrite the script's bare `synthetic_iter${N}_ng/` paths to workspace-root-relative form (`results/run_<TS>/iter${N}/dataset/images/synthetic_iter${N}_ng`) before appending into `mining_filter/mining_pool.csv`, since the per-iter training spec sets `images_dir=/data/workspace`. SDG rows skip k-NN filtering; only real-image mining applies the cosine threshold.
 
-4. **[SKILL — `tao-skill-bank:tao-mine-aoi-images`] Mining pool — real-image contribution.** Mine real images from `augmentation/mining_pool/mining_pool.csv` against the current iteration's weak samples (`routing_mining_parquet` from `deft_state.json`) using SigLIP k-NN embeddings. **Retain only entries with cosine similarity ≥ `state.config.mining_filter.min_similarity`** (default `0.9` when unset), then run the mapped skill's history-aware post-processing and drop every filepath already selected by an earlier iteration. The default remains `top_k_per_target=5`; preserve an explicit user value and increase it only when history filtering repeatedly leaves too few novel candidates. Append only the final novel rows into `mining_filter/mining_pool.csv` (same file as the SDG contribution above). Never append `mined_raw.parquet` or `mined_candidates.parquet`. When converting mined filepaths into ChangeNet rows, follow the path-form rule in `references/tao-mine-aoi-images.md` → *Mined rows → ChangeNet CSV*. Output: updated `mining_filter/mining_pool.csv`, immutable cosine-only `mining_filter/knn_summary.csv`, per-iteration `mining_history_summary.json`, and run-level `mining_history.json`. The cosine summary proves raw candidate retention; the history summary separately proves prior-iteration rejection and the final novel count. See `references/tao-mine-aoi-images.md`.
+4. **[SKILL — `tao-skill-bank:tao-mine-aoi-images`] Mining pool — real-image contribution.** First run `scripts/resolve_mining_pool.py` with `state.config.mining_pool_csv`, `state.config.mining_images_root`, and `state.config.resolved_mining_pool_csv`; use only the resolved output. It fails on every missing or ambiguous file, so never guess an `augmentation/mining_pool/images` directory. Mine the resolved rows against the current iteration's weak samples (`routing_mining_parquet` from state) using SigLIP k-NN embeddings. **Retain only entries with cosine similarity ≥ `state.config.mining_filter.min_similarity`**, then apply history-aware filtering. Append only final novel rows into `mining_filter/mining_pool.csv`; never append raw/candidate parquets. `commit_stage.py` verifies the reported count against the mined parquet and rejects placeholder logs. See `references/tao-mine-aoi-images.md`.
 
    If history filtering leaves zero novel real rows, surface its recommendation
    to increase `topn` or expand the source pool. Continue only when AnomalyGen
@@ -103,7 +103,8 @@ iteration executes:
 `results/deft_state.json` is the only persistent loop record. Initialize it
 once with `init_deft_state.py`, then mutate it only through `commit_stage.py`;
 never hand-edit, reinitialize, or write it with inline Python/jq/heredocs. It
-contains the resume snapshot plus an `events` array with one object per commit:
+contains the immutable execution policy, resume snapshot, resolved mining
+paths, optional terminal artifacts, and an `events` array with one object per commit:
 
 ```json
 {
@@ -186,8 +187,11 @@ at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call
 
 **Loop-end sequence** (run in order, each step depends on the previous):
 
-1. Commit the final event via `commit_stage.py --stage loop_stop`.
-2. Backfill real per-stage token usage into `deft_state.json` from the Claude Code transcript:
+1. Run `deft_context.py --stage finalize`, then call `finalize_run.py` with
+   `--stop-reason metric_met` or `max_iterations`. It first writes
+   `best_model.json` and `best_model_inference_spec.yaml`, then commits
+   `loop_stop`; terminal state cannot exist without those artifacts.
+2. Optionally backfill real per-stage token usage into `deft_state.json` from the Claude Code transcript:
 
    ```bash
    <this-skill-dir>/scripts/deft_python.sh <this-skill-dir>/scripts/align_token_usage.py \
@@ -208,7 +212,6 @@ at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call
    This is an explicit deterministic script call, not delegated work; the
    preceding `loop_stop` commit already produced a valid report before token
    alignment.
-4. Run `scripts/prepare_inference_spec.py` (see below).
 
 Before telling the user the loop is complete, re-read `deft_state.json` and
 require `status == "complete"`, a complete baseline, and a complete final
@@ -221,9 +224,11 @@ if one was requested, and end the session.
 
 - Primary metric and all configured constraints pass → run the loop-end sequence.
 - `max_iterations` reached → run the loop-end sequence with the best-iteration report. Do not add a post-loop RCA event; the terminal evaluate transitions directly to `loop_stop`.
-- Unrecoverable gate failure → halt and report the exact missing artifact. Do not run a reduced loop or fabricate CSVs. Steps 1–3 of the loop-end sequence still apply. Run prepare-for-inference only when an earlier valid checkpoint exists; otherwise skip it explicitly.
+- Unrecoverable gate failure → commit the failing stage with `--status error`, halt, and report the exact missing artifact. Do not run `loop_stop`, a reduced loop, or fabricate CSVs.
 
-**Prepare-for-inference (final step).** Run `scripts/prepare_inference_spec.py` to emit the inference handoff:
+**Prepare-for-inference.** `scripts/finalize_run.py` invokes
+`scripts/prepare_inference_spec.py` before the terminal commit. For inspection
+or recovery before terminal state, the lower-level command is:
 
 ```bash
 <this-skill-dir>/scripts/deft_python.sh <this-skill-dir>/scripts/prepare_inference_spec.py --results-dir ${RESULTS_DIR}

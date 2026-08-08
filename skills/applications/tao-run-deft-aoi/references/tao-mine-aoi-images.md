@@ -33,6 +33,15 @@ exists. Inspect the CSV fields and verify the resolved files; do not infer an
 directory. If the selected source CSV is absent, empty, or its declared paths
 cannot be resolved, stop in Pre-Flight; never scan the workspace image tree to
 invent source rows.
+
+Before converting CSV to parquet, run `scripts/resolve_mining_pool.py` with
+the three paths persisted in state. The resolver checks direct paths, paths
+relative to the independent images root, golden-directory plus basename, and
+the ChangeNet object/light filename form. It writes one canonical `filepath`
+and hard-stops on zero or multiple matches. Downstream stages consume only
+`config.resolved_mining_pool_csv`; never discover paths by scanning snapshots
+or assuming the CSV's parent owns an `images/` directory.
+
 For selected PASS rows in OK-only source pools, stage the source OK image as the
 golden pair when no separate golden tree exists; for selected non-PASS rows,
 missing golden files remain a hard stop.

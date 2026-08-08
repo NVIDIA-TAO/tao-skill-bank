@@ -105,14 +105,15 @@ and newly generated, validated records.
 `init_deft_state.py`, then mutate it only through `commit_stage.py`; never
 hand-edit or reinitialize it. It contains:
 
-- immutable run identity, results directory, metric contract, and maximum
-  iterations;
+- immutable run identity, results directory, metric contract, execution
+  policy, selected Python, and maximum iterations;
 - platform, model, image, spec, annotation, media-root, compute, and mining
   configuration;
 - the frozen Benchmark SHA-256;
 - one `iterations.<label>` object whose `stage_completed` matches the latest
   successful event for that label;
 - absolute artifact paths under `${RESULTS_DIR}/<label>`;
+- terminal `final_artifacts` only after validated finalization;
 - an `events` array with a strict, monotonically increasing `seq`, UTC
   timestamp, iteration, stage, `ok|error`, non-empty summary, measured
   duration, and context-token placeholder.
@@ -151,18 +152,20 @@ from its latest event and `stage_completed` value.
 
 ## Stop and completion
 
-For an ordinary stop, commit `loop_stop` after a completed
-`benchmark_metrics` only when:
+For an ordinary stop, run `scripts/deft_context.py --stage finalize`, then
+`scripts/finalize_run.py` after a completed `benchmark_metrics`. Pass exactly
+one stop reason:
 
-- at least one completed Benchmark result passes the metric contract; or
-- a completed `iterN` has `N >= max_iterations`.
+- `--stop-reason metric_met` when the final Benchmark result passes; or
+- `--stop-reason max_iterations` when a non-passing completed `iterN` has
+  `N >= max_iterations`.
 
 For a hard stop, commit the failed stage with `--status error` and halt. The
 state becomes `failed`; a failed terminal run is not KPI completion.
 
-The `commit_stage.py` post-commit hook refreshes the report after every stage,
-including `loop_stop`. After optional token alignment, run
-`render_report.py --require-terminal` once so the final artifact contains the
+`finalize_run.py` renders the report before committing `loop_stop`; the commit
+validates and records that report and refreshes it again. After optional token
+alignment, run `render_report.py --require-terminal` once so the final artifact contains the
 aligned evidence. The final completion claim requires
 a fresh state read showing `status == "complete"`, a complete baseline, and a
 complete final iteration. A hard-stop claim instead requires

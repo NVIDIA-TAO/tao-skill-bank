@@ -1,6 +1,6 @@
 {
   "_comment": "Reference schema for ${RESULTS_DIR}/deft_state.json. Initialize it once and update it through commit_stage.py after every step. It is the single source of truth: re-read on startup and before every stage; never trust in-memory state across turns. Every recorded path must be absolute; /home/user/workspace is the resolved example form of ~/workspace.",
-  "version": 3,
+  "version": 4,
   "started_at": "2026-05-04T06:46:53+00:00",
   "status": "in_progress",
   "kpi_target": "Quality score >= 0.9",
@@ -20,6 +20,17 @@
   "results_dir": "/home/user/workspace/results/run_<TS>",
   "max_iterations": 2,
   "current_iteration": 0,
+  "execution_policy": {
+    "network_mode": "airgap",
+    "activation_source": "harness restriction",
+    "allow_package_install": false,
+    "allow_remote_fetch": false,
+    "allow_container_pull": false,
+    "allow_registry_login": false,
+    "python_launcher": "scripts/deft_python.sh",
+    "python_executable": "/usr/bin/python3",
+    "hf_offline": true
+  },
   "config": {
     "specs_file": "/home/user/workspace/specs/baseline_spec.yaml",
     "training_csv": "/home/user/workspace/train/base/training_set.csv",
@@ -27,6 +38,8 @@
     "kpi_test_csv": "/home/user/workspace/kpi/testing_set.csv",
     "images_dir": "/home/user/workspace/images",
     "mining_pool_csv": "/home/user/workspace/augmentation/mining_pool/mining_pool.csv",
+    "mining_images_root": "/home/user/workspace/images",
+    "resolved_mining_pool_csv": "/home/user/workspace/results/run_<TS>/inputs/mining_pool.resolved.csv",
     "backbone_weight_dir": "/home/user/workspace/augmentation/backbone",
     "train_container": "<resolved from versions.yaml::images.tao_toolkit.pyt at init time>",
     "num_gpus": 4,

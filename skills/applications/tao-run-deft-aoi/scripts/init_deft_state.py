@@ -141,8 +141,19 @@ def build_state(args: argparse.Namespace) -> dict:
     rd = args.results_dir.resolve()
     ag_checkpoint_dir = _resolve_anomalygen_checkpoint_dir(ws, args.project)
 
+    images_dir = _resolve_workspace_images_dir(ws)
+    network_mode = getattr(args, "network_mode", None) or (
+        "airgap" if os.environ.get("AIR_GAPPED") == "1" else "network-enabled"
+    )
+    network_source = getattr(args, "network_mode_source", None) or (
+        "environment:AIR_GAPPED" if os.environ.get("AIR_GAPPED") == "1" else "default"
+    )
+    python_executable = pathlib.Path(
+        getattr(args, "python_executable", None) or sys.executable
+    ).expanduser().resolve()
+    offline = network_mode == "airgap"
     state = {
-        "version": 3,
+        "version": 4,
         "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(
             timespec="seconds"
         ),
@@ -152,14 +163,38 @@ def build_state(args: argparse.Namespace) -> dict:
         "results_dir": str(rd),
         "max_iterations": args.max_iterations,
         "current_iteration": 0,
+        "execution_policy": {
+            "network_mode": network_mode,
+            "activation_source": network_source,
+            "allow_package_install": not offline,
+            "allow_remote_fetch": not offline,
+            "allow_container_pull": not offline,
+            "allow_registry_login": not offline,
+            "python_launcher": "scripts/deft_python.sh",
+            "python_executable": str(python_executable),
+            "hf_offline": offline,
+        },
         "config": {
             "specs_file": str(ws / "specs" / "baseline_spec.yaml"),
             "training_csv": str(ws / "train" / "base" / "training_set.csv"),
             "validation_csv": str(ws / "train" / "base" / "validation_set.csv"),
             "kpi_test_csv": str(ws / "kpi" / "testing_set.csv"),
-            "images_dir": str(_resolve_workspace_images_dir(ws)),
+            "images_dir": str(images_dir),
             "mining_pool_csv": str(
                 ws / "augmentation" / "mining_pool" / "mining_pool.csv"
+            ),
+            "mining_images_root": str(
+                (getattr(args, "mining_images_root", None) or images_dir)
+                .expanduser()
+                .resolve()
+            ),
+            "resolved_mining_pool_csv": str(
+                (
+                    getattr(args, "resolved_mining_pool_csv", None)
+                    or rd / "inputs" / "mining_pool.resolved.csv"
+                )
+                .expanduser()
+                .resolve()
             ),
             "backbone_weight_dir": str(ws / "augmentation" / "backbone"),
             "train_container": args.train_container,
@@ -239,6 +274,22 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--results-dir", required=True, type=pathlib.Path)
     parser.add_argument("--workspace", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--network-mode",
+        choices=("airgap", "network-enabled"),
+        help="Immutable execution mode; defaults from AIR_GAPPED=1, otherwise network-enabled.",
+    )
+    parser.add_argument(
+        "--network-mode-source",
+        help="Human-readable source of the mode decision, such as ci-prompt or operator.",
+    )
+    parser.add_argument(
+        "--python-executable",
+        type=pathlib.Path,
+        help="Dependency-complete Python selected during preflight; defaults to this interpreter.",
+    )
+    parser.add_argument("--mining-images-root", type=pathlib.Path)
+    parser.add_argument("--resolved-mining-pool-csv", type=pathlib.Path)
     parser.add_argument(
         "--kpi-target",
         help=(
@@ -457,6 +508,23 @@ def _build_metric_contract(args: argparse.Namespace) -> tuple[dict, str]:
             "parameters": {"recall_target_pct": 100.0},
         }
         evaluator = contract["evaluator"]
+    if contract.get("name") == "far_pct":
+        contract["unit"] = "%"
+        parameters = contract.setdefault("evaluator", {}).setdefault(
+            "parameters", {}
+        )
+        recall_target = float(parameters.get("recall_target_pct", 100.0))
+        parameters["recall_target_pct"] = recall_target
+        if not contract["constraints"]:
+            contract["constraints"] = [
+                {
+                    "name": "recall_pct",
+                    "display_name": "Recall",
+                    "operator": ">=",
+                    "target": recall_target,
+                    "unit": "%",
+                }
+            ]
     if evaluator.get("type") == "unconfigured":
         raise ValueError(
             "custom metrics require --metric-evaluator with an absolute command "
@@ -477,6 +545,28 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"init_deft_state: {exc}", file=sys.stderr)
         return 2
+    if args.network_mode is not None and args.network_mode_source is None:
+        args.network_mode_source = "cli:--network-mode"
+    if args.network_mode is None and args.network_mode_source is not None:
+        print(
+            "init_deft_state: --network-mode-source requires --network-mode",
+            file=sys.stderr,
+        )
+        return 2
+    if os.environ.get("AIR_GAPPED") == "1" and args.network_mode == "network-enabled":
+        print(
+            "init_deft_state: AIR_GAPPED=1 cannot be overridden by --network-mode network-enabled",
+            file=sys.stderr,
+        )
+        return 2
+    if args.python_executable is not None:
+        executable = args.python_executable.expanduser()
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            print(
+                f"init_deft_state: --python-executable must be executable: {executable}",
+                file=sys.stderr,
+            )
+            return 2
     positive_ints = {
         "max_iterations": args.max_iterations,
         "num_gpus": args.num_gpus,

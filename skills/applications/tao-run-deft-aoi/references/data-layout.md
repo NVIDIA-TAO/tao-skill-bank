@@ -18,7 +18,7 @@ template (`references/baseline_spec.yaml`), and offer to scaffold the tree.
 | `train/base/validation_set.csv` | Held-out rows, same schema. Must not overlap training (the loop hard-stops on leakage). |
 | `kpi/testing_set.csv` | KPI test rows, same schema. This is what FAR / recall is measured on. |
 | `images/` | The canonical image root referenced by every CSV above (real inspection captures + their golden references). |
-| `.env` | `NGC_KEY` + `HF_TOKEN`. Copy `.env.example`. |
+| Process environment | `NGC_KEY` + `HF_TOKEN` for approved network-enabled actions only. Never stage or read credential files. |
 
 **Auto-fetched on first use (do not pre-stage unless air-gapped):** the
 ChangeNet backbone (`nvidia/C-RADIOv2-B`), the Cosmos/AnomalyGen base
@@ -44,7 +44,6 @@ creates (paths under `<workspace>` unless absolute):
 
 ```text
 <workspace>/
-├── .env                                     # NGC_KEY (nvcr.io/* pulls for all manifest-resolved images), HF_TOKEN (HuggingFace pre-flight pulls)
 ├── images/                                  # canonical real-image root shared by train, validation, KPI, and mining CSVs
 │   └── golden/images/                       # golden/reference component crops
 ├── specs/baseline_spec.yaml                 # ChangeNet train/eval spec

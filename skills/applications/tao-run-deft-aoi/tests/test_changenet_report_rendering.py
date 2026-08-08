@@ -16,6 +16,7 @@ SCRIPTS = SKILL_ROOT / "scripts"
 for module_name in (
     "align_token_usage",
     "commit_stage",
+    "finalize_run",
     "init_deft_state",
     "metric_contract",
     "render_report",
@@ -26,10 +27,127 @@ sys.path.insert(0, str(SCRIPTS))
 import align_token_usage  # noqa: E402
 import commit_stage  # noqa: E402
 import init_deft_state  # noqa: E402
+import metric_contract  # noqa: E402
 import render_report  # noqa: E402
+import deft_exec  # noqa: E402
+import finalize_run  # noqa: E402
+import resolve_mining_pool  # noqa: E402
 
 
 class ReportRenderingTests(unittest.TestCase):
+    def test_finalize_run_creates_handoff_before_terminal_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = self._state(results)
+            state["status"] = "in_progress"
+            checkpoint = results / "iter1/train/model.pth"
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.write_bytes(b"checkpoint")
+            backbone = results / "backbone/model.safetensors"
+            backbone.parent.mkdir(parents=True)
+            backbone.write_bytes(b"backbone")
+            training_spec = SKILL_ROOT / "references/baseline_spec.yaml"
+            state["config"].update(
+                {
+                    "specs_file": str(training_spec),
+                    "backbone_weight_dir": str(backbone.parent),
+                    "images_dir": str(results / "images"),
+                }
+            )
+            state["iterations"]["iter1"]["best_ckpt_path"] = str(checkpoint)
+            state["iterations"]["iter1"]["training_spec"] = str(training_spec)
+            (results / "deft_state.json").write_text(json.dumps(state))
+
+            self.assertEqual(
+                finalize_run.main(
+                    [
+                        "--results-dir", str(results),
+                        "--iter-label", "iter1",
+                        "--stop-reason", "metric_met",
+                        "--duration-sec", "1",
+                    ]
+                ),
+                0,
+            )
+            committed = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(committed["status"], "complete")
+            self.assertTrue((results / "best_model.json").is_file())
+            self.assertTrue((results / "best_model_inference_spec.yaml").is_file())
+            self.assertEqual(
+                committed["final_artifacts"]["best_model_json"],
+                str((results / "best_model.json").resolve()),
+            )
+
+    def test_airgap_guard_blocks_install_and_forces_no_pull(self) -> None:
+        policy = {"network_mode": "airgap"}
+        with self.assertRaisesRegex(ValueError, "package installation"):
+            deft_exec._reject_airgap(["python3", "-m", "pip", "install", "x"], policy)
+        self.assertEqual(
+            deft_exec._with_no_pull(["docker", "run", "image:tag", "true"], policy),
+            ["docker", "run", "--pull=never", "image:tag", "true"],
+        )
+        guarded = deft_exec._with_offline_container_env(
+            ["docker", "run", "--pull=never", "image:tag", "true"], policy
+        )
+        self.assertIn("--env=HF_HUB_OFFLINE=1", guarded)
+        with self.assertRaisesRegex(ValueError, "cannot override HF_HUB_OFFLINE"):
+            deft_exec._reject_airgap(
+                ["sudo", "docker", "run", "--env", "HF_HUB_OFFLINE=0", "image:tag"],
+                policy,
+            )
+
+    def test_far_at_recall_contract_is_percentage_safe(self) -> None:
+        args = init_deft_state._build_parser().parse_args(
+            [
+                "--results-dir", "/tmp/results",
+                "--workspace", "/tmp/workspace",
+                "--kpi-target", "FAR < 10% at Recall=100%",
+                "--max-iterations", "1",
+                "--num-gpus", "1",
+                "--gpu-model", "test GPU",
+                "--num-epochs", "1",
+                "--num-sdg", "1",
+                "--project", "nvpcb",
+                "--step", "1",
+            ]
+        )
+        contract, _ = init_deft_state._build_metric_contract(args)
+        self.assertEqual(contract["name"], "far_pct")
+        self.assertEqual(contract["target"], 10.0)
+        self.assertEqual(contract["unit"], "%")
+        self.assertEqual(contract["constraints"][0]["name"], "recall_pct")
+        self.assertEqual(contract["constraints"][0]["target"], 100.0)
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            metric_contract.result_from_iteration(
+                {"metric_result": {"name": "far_pct", "value": 5, "unit": "", "constraints": {}}},
+                contract,
+            )
+
+    def test_mining_pool_resolves_directory_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            images = root / "images"
+            source = images / "board/scan/PerComponent/R1@1_SolderLight.jpg"
+            golden = images / "golden/images/boardBOT/R1@1_SolderLight.jpg"
+            source.parent.mkdir(parents=True)
+            golden.parent.mkdir(parents=True)
+            source.write_bytes(b"source")
+            golden.write_bytes(b"golden")
+            pool = root / "augmentation/mining_pool/mining_pool.csv"
+            pool.parent.mkdir(parents=True)
+            pool.write_text(
+                "input_path,golden_path,label,object_name\n"
+                "board/scan/PerComponent,golden/images/boardBOT/,PASS,R1@1\n",
+                encoding="utf-8",
+            )
+            output = root / "resolved.csv"
+            summary = resolve_mining_pool.resolve(pool, images, output)
+            self.assertEqual(summary["rows"], 1)
+            self.assertIn(
+                "board/scan/PerComponent/R1@1_SolderLight.jpg",
+                output.read_text(),
+            )
+
     def test_allocation_proof_is_summed_and_rejects_invalid_counts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             allocation = pathlib.Path(temporary) / "allocation.json"
@@ -75,6 +193,10 @@ class ReportRenderingTests(unittest.TestCase):
             (results / "deft_state.json").write_text(
                 json.dumps(state), encoding="utf-8"
             )
+            best_model = results / "best_model.json"
+            best_model.write_text("{}\n", encoding="utf-8")
+            inference_spec = results / "best_model_inference_spec.yaml"
+            inference_spec.write_text("model: {}\n", encoding="utf-8")
 
             rc = commit_stage.main(
                 [
@@ -88,6 +210,12 @@ class ReportRenderingTests(unittest.TestCase):
                     "iteration budget reached",
                     "--duration-sec",
                     "1",
+                    "--stop-reason",
+                    "metric_met",
+                    "--best-model",
+                    str(best_model),
+                    "--inference-spec",
+                    str(inference_spec),
                 ]
             )
 
@@ -182,7 +310,10 @@ class ReportRenderingTests(unittest.TestCase):
             self.assertEqual(committed["events"][0]["context_tokens"], 17)
             self.assertEqual(committed["events"][0]["tokens"]["output"], 2)
 
-    def test_stage_commit_does_not_reaudit_recorded_artifact_contents(self) -> None:
+    def test_stage_commit_validates_mined_count_and_real_logs(self) -> None:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
         with tempfile.TemporaryDirectory() as temporary:
             results = pathlib.Path(temporary)
             state = self._state(results)
@@ -199,19 +330,19 @@ class ReportRenderingTests(unittest.TestCase):
             phase_root = results / "iter1"
             artifacts = {}
             for name in (
-                "mined.parquet",
-                "candidates.parquet",
                 "summary.csv",
                 "history-summary.json",
-                "target.parquet",
-                "source.parquet",
                 "target.log",
                 "source.log",
                 "knn.log",
             ):
                 path = phase_root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("recorded\n", encoding="utf-8")
+                path.write_text("command completed with 0 rows\n", encoding="utf-8")
+                artifacts[name] = path
+            for name in ("mined.parquet", "candidates.parquet", "target.parquet", "source.parquet"):
+                path = phase_root / name
+                pq.write_table(pa.table({"filepath": pa.array([], type=pa.string())}), path)
                 artifacts[name] = path
             history = results / "mining_history.json"
             history.write_text("{}\n", encoding="utf-8")
@@ -292,7 +423,7 @@ class ReportRenderingTests(unittest.TestCase):
             "constraints": [],
         }
         return {
-            "version": 3,
+            "version": 4,
             "started_at": "2026-08-04T00:00:00+00:00",
             "status": "complete",
             "kpi_target": "Weighted escape cost <= 0.02 cost/board",
@@ -318,6 +449,7 @@ class ReportRenderingTests(unittest.TestCase):
                         "value": 0.031,
                         "unit": "cost/board",
                         "constraints": {},
+                        "passed": False,
                     },
                 },
                 "iter1": {
@@ -331,6 +463,7 @@ class ReportRenderingTests(unittest.TestCase):
                         "value": 0.018,
                         "unit": "cost/board",
                         "constraints": {},
+                        "passed": True,
                     },
                 },
             },
