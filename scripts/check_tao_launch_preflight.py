@@ -141,6 +141,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--target-gpu-index",
+        action="append",
+        default=[],
+        metavar="INDEX",
+        help=(
+            "Restrict local/remote Docker GPU validation and the smoke container "
+            "to an explicitly allocated GPU index. May be repeated."
+        ),
+    )
+    parser.add_argument(
         "--effective-batch-limit",
         action="append",
         default=[],
@@ -658,6 +668,42 @@ def check_gpu_resources(
     return True
 
 
+def parse_target_gpu_indices(values: list[str]) -> list[str]:
+    indices: list[str] = []
+    for value in values:
+        index = value.strip()
+        if not index.isdigit():
+            raise SystemExit("--target-gpu-index must be a nonnegative integer")
+        if index not in indices:
+            indices.append(index)
+    return indices
+
+
+def filter_target_gpus(
+    gpus: list[dict[str, Any]], target_indices: list[str]
+) -> tuple[bool, list[dict[str, Any]]]:
+    if not target_indices:
+        return True, gpus
+    by_index = {str(gpu.get("index")): gpu for gpu in gpus}
+    missing = [index for index in target_indices if index not in by_index]
+    if missing:
+        print(
+            "Target GPU selection failed: missing index(es)=" + ",".join(missing)
+        )
+        return False, []
+    selected = [by_index[index] for index in target_indices]
+    print("Target GPU selection OK: indices=" + ",".join(target_indices))
+    return True, selected
+
+
+def docker_gpu_request(target_indices: list[str]) -> str:
+    if not target_indices:
+        return "all"
+    # Docker parses --gpus with encoding/csv. Preserve literal quotes around a
+    # comma-separated device selector even when subprocess bypasses a shell.
+    return '"device=' + ",".join(target_indices) + '"'
+
+
 def command_detail(result: subprocess.CompletedProcess[str]) -> str:
     detail = (result.stderr or result.stdout).strip().splitlines()
     return detail[-1] if detail else "exit " + str(result.returncode)
@@ -1124,7 +1170,9 @@ def query_host_gpus() -> tuple[bool, list[dict[str, Any]]]:
     return True, gpus
 
 
-def query_docker_gpus(image: str, pull_smoke_image: bool) -> tuple[bool, list[dict[str, Any]]]:
+def query_docker_gpus(
+    image: str, pull_smoke_image: bool, target_gpu_indices: list[str]
+) -> tuple[bool, list[dict[str, Any]]]:
     if not pull_smoke_image and not docker_image_exists(image):
         print(
             "Remote Docker GPU query image is not present on the Docker host: "
@@ -1138,7 +1186,7 @@ def query_docker_gpus(image: str, pull_smoke_image: bool) -> tuple[bool, list[di
         "--rm",
         "--runtime=nvidia",
         "--gpus",
-        "all",
+        docker_gpu_request(target_gpu_indices),
         image,
         "nvidia-smi",
         "--query-gpu=index,name,driver_version,memory.total,compute_cap",
@@ -1153,7 +1201,7 @@ def query_docker_gpus(image: str, pull_smoke_image: bool) -> tuple[bool, list[di
             "--rm",
             "--runtime=nvidia",
             "--gpus",
-            "all",
+            docker_gpu_request(target_gpu_indices),
             image,
             "nvidia-smi",
             "--query-gpu=index,name,driver_version,memory.total",
@@ -1275,6 +1323,7 @@ def check_docker_gpu_smoke(
     container_image: str | None,
     gpu_smoke_image: str,
     pull_smoke_image: bool,
+    target_gpu_indices: list[str],
 ) -> bool:
     image = container_image or gpu_smoke_image
     if not image:
@@ -1294,7 +1343,7 @@ def check_docker_gpu_smoke(
         "--rm",
         "--runtime=nvidia",
         "--gpus",
-        "all",
+        docker_gpu_request(target_gpu_indices),
         image,
         "nvidia-smi",
         "-L",
@@ -1588,6 +1637,7 @@ def check_local_docker(
     min_gpu_memory_gb: float | None,
     low_vram_threshold_gb: float,
     require_remote_docker: bool,
+    target_gpu_indices: list[str],
 ) -> bool:
     ok = True
     docker_host = os.environ.get("DOCKER_HOST")
@@ -1624,9 +1674,13 @@ def check_local_docker(
 
             if remote_docker:
                 print(f"Remote Docker daemon requested: DOCKER_HOST={os.environ.get('DOCKER_HOST')}")
-                gpu_ok, gpus = query_docker_gpus(gpu_smoke_image, pull_smoke_image)
+                gpu_ok, gpus = query_docker_gpus(
+                    gpu_smoke_image, pull_smoke_image, target_gpu_indices
+                )
             else:
                 gpu_ok, gpus = query_host_gpus()
+                selection_ok, gpus = filter_target_gpus(gpus, target_gpu_indices)
+                gpu_ok = gpu_ok and selection_ok
             ok = gpu_ok and ok
             if gpu_ok:
                 ok = (
@@ -1650,6 +1704,7 @@ def check_local_docker(
                     container_image,
                     gpu_smoke_image,
                     pull_smoke_image,
+                    target_gpu_indices,
                 )
                 and ok
             )
@@ -1717,6 +1772,7 @@ def main() -> int:
     gpu_arch_allowlists = parse_gpu_arch_allowlists(args.gpu_arch_allowlist)
     effective_batch_limits = parse_effective_batch_limits(args.effective_batch_limit)
     min_free_disk_gb = parse_min_free_disk_gb(args.min_free_disk_gb)
+    target_gpu_indices = parse_target_gpu_indices(args.target_gpu_index)
     name = platform["name"]
 
     if name == "slurm":
@@ -1740,6 +1796,7 @@ def main() -> int:
             args.min_gpu_memory_gb,
             args.low_vram_threshold_gb,
             name == "remote-docker" or bool(args.docker_host or os.environ.get("DOCKER_HOST")),
+            target_gpu_indices,
         )
     elif name == "brev":
         platform_ok = check_brev(platform, args.skip_platform_access)

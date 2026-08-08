@@ -57,6 +57,30 @@ def test_gpu_resources_reject_insufficient_cumulative_memory(capsys):
     assert "GPU resource check failed" in capsys.readouterr().out
 
 
+def test_target_gpu_selection_excludes_unallocated_display_gpu(capsys):
+    gpus = [
+        {"index": "0", "name": "A100"},
+        {"index": "1", "name": "A100"},
+        {"index": "3", "name": "Display"},
+        {"index": "4", "name": "A100"},
+    ]
+    ok, selected = preflight.filter_target_gpus(gpus, ["0", "1", "4"])
+    assert ok
+    assert [gpu["index"] for gpu in selected] == ["0", "1", "4"]
+    assert "indices=0,1,4" in capsys.readouterr().out
+
+
+def test_target_gpu_selection_rejects_missing_index(capsys):
+    ok, selected = preflight.filter_target_gpus([{"index": "0"}], ["0", "2"])
+    assert not ok and selected == []
+    assert "missing index(es)=2" in capsys.readouterr().out
+
+
+def test_multi_device_docker_gpu_request_preserves_csv_quotes():
+    assert preflight.docker_gpu_request(["0", "1", "2", "4"]) == '"device=0,1,2,4"'
+    assert preflight.docker_gpu_request([]) == "all"
+
+
 def test_free_disk_requirement_passes_for_existing_parent(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         preflight.shutil,
