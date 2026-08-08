@@ -12,9 +12,9 @@ kpi:
   iou_threshold: 0.5
   filter: false
   num_recall_points: 101       # reference default
-  conf_threshold: 0.001        # must be > 0: an undetected GT box is entered with p=0.0, and
+  conf_threshold: 0.3          # must be > 0. An undetected GT box is carried as (t=1, p=0.0) and
                                # the check is `p >= conf_threshold`, so 0.0 scores every missed
-                               # box as a true positive. Small enough to keep the full curve.
+                               # box as a true positive: TP becomes the GT count and FN is always 0.
   ignore_sqwidth: 0            # reference default: do not drop small boxes
   is_internal: false
 results_dir: null

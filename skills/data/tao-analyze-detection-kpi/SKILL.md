@@ -50,7 +50,7 @@ for each, so filling the template needs none of them changed:
 | Field | Default | Meaning |
 |---|---:|---|
 | `kpi.iou_threshold` | `0.5` | IoU at or above which a prediction counts as a true positive. |
-| `kpi.conf_threshold` | `0.5` | Predictions below this are dropped. **Must be greater than 0**; the template uses `0.001`. An undetected ground-truth box is entered with confidence `0.0` and the check is `p >= conf_threshold`, so `0.0` scores every missed box as a true positive — `TP` becomes the ground-truth count, `FN` is always 0, `Re` is always 1.0, and AP inflates. A small positive value keeps effectively the whole PR curve without that. |
+| `kpi.conf_threshold` | `0.5` | Predictions below this are dropped. **Must be greater than 0**; the template uses `0.3`. An undetected ground-truth box is entered with confidence `0.0` and the check is `p >= conf_threshold`, so `0.0` scores every missed box as a true positive — `TP` becomes the ground-truth count, `FN` is always 0, `Re` is always 1.0, and AP inflates. A small positive value keeps effectively the whole PR curve without that. |
 | `kpi.num_recall_points` | `11` | Recall points for the interpolated PR curve. **Use `101`** — the reference default, and the COCO-standard sampling. |
 | `kpi.ignore_sqwidth` | `0` | Boxes narrower than this are ignored. **Keep `0`** unless you deliberately want small objects excluded — a non-zero value silently drops them from both GT and predictions. |
 | `kpi.filter` | `false` | Enable source filtering. |
