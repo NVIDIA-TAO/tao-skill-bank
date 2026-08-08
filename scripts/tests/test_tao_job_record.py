@@ -55,6 +55,19 @@ def read_record(state_dir, job_id):
     return json.loads((state_dir / "jobs" / f"{job_id}.json").read_text())
 
 
+def test_atomic_write_cleans_temporary_file_after_io_failure(tmp_path, monkeypatch):
+    path = tmp_path / "record.json"
+
+    def fail_dump(*_args, **_kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(jr.json, "dump", fail_dump)
+    with pytest.raises(OSError, match="No space left on device"):
+        jr._atomic_write(path, {"id": "example"})
+
+    assert not list(tmp_path.glob(".record.json.*.tmp"))
+
+
 # --------------------------------------------------------------------------- #
 # open
 # --------------------------------------------------------------------------- #

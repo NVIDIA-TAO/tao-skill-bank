@@ -127,12 +127,17 @@ def _redact_record(obj, key=None):
 def _atomic_write(path: Path, record: dict) -> None:
     record = _redact_record(record)
     tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(record, f, indent=2)
-        f.write("\n")
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w") as f:
+            json.dump(record, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        # An ENOSPC/fsync failure must leave the previous record intact without
+        # accumulating misleading zero-byte job-record fragments.
+        tmp.unlink(missing_ok=True)
     # fsync the directory so the rename itself survives a power loss
     dfd = os.open(path.parent, os.O_RDONLY)
     try:
