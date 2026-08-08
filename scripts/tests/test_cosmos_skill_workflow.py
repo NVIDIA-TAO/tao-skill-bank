@@ -354,6 +354,8 @@ def test_cosmos_rl_peft_spec_has_equivalent_lora_and_cache(tmp_path):
     assert "require_complete_dataset_cache" not in plan["spec"]["train"]["train_policy"]
     assert plan["environment"]["COSMOS_CACHE"] == "/cache"
     assert "dataloader_prefetch_factor" not in plan["spec"]["train"]["train_policy"]
+    assert plan["spec"]["validation"]["dataloader_num_workers"] == 0
+    assert "dataloader_prefetch_factor" not in plan["spec"]["validation"]
 
 
 def test_cosmos_rl_maps_common_constant_scheduler_to_native_none(tmp_path):
@@ -765,8 +767,9 @@ def test_rl_sft_batch_is_per_dp_worker_and_multinode_launchers_are_packaged(tmp_
     assert plan["spec"]["train"]["train_policy"]["mini_batch"] == 1
     assert plan["spec"]["train"]["train_policy"]["dataloader_num_workers"] == 1
     assert plan["spec"]["train"]["train_policy"]["dataloader_prefetch_factor"] == 1
-    assert "dataloader_num_workers" not in plan["spec"]["validation"]
-    assert "dataloader_prefetch_factor" not in plan["spec"]["validation"]
+    assert plan["spec"]["validation"]["dataloader_num_workers"] == 1
+    assert plan["spec"]["validation"]["dataloader_prefetch_factor"] == 1
+    assert plan["spec"]["validation"]["freq_in_epoch"] == 1
 
     args.rl_validation_freq_steps = 54
     plan = workflow.build_plan(args)

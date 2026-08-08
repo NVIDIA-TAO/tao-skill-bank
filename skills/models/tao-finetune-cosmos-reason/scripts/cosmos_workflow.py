@@ -664,19 +664,18 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         {
             "enable": True,
             "freq": validation_freq_steps or 20,
+            "freq_in_epoch": 1,
             "batch_size": args.validation_batch_size,
+            "dataloader_num_workers": dataloader_num_workers,
         }
     )
-    # Cosmos-RL uses the SFT data-loader settings for both training and
-    # validation.  Do not emit validation-only worker/cache keys: they are not
-    # part of ValidationConfig and would be silently ignored by Pydantic.
-    for key in (
-        "freq_in_epoch",
-        "dataloader_num_workers",
-        "dataloader_prefetch_factor",
-        "enable_dataset_cache",
-    ):
-        spec["validation"].pop(key, None)
+    if dataloader_num_workers:
+        spec["validation"]["dataloader_prefetch_factor"] = (
+            dataloader_prefetch_factor
+        )
+    else:
+        spec["validation"].pop("dataloader_prefetch_factor", None)
+    spec["validation"].pop("enable_dataset_cache", None)
     spec["policy"].update({
         "model_name_or_path": prepared_model, "model_max_length": args.sequence_length,
         "model_gradient_checkpointing": True,
