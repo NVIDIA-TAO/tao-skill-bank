@@ -1,0 +1,20 @@
+data:
+  input_format: KITTI          # KITTI or COCO — uppercase
+  kpi_sources:
+  - image_dir: null            # no trailing slash: Sequence Name is the 2nd-to-last component
+    ground_truth_ann_path: null  # KITTI; a trailing conf_score column is truncated, not an error
+    inference_ann_path: null     # KITTI with conf_score
+  mapping: null                # canonical -> LIST of aliases; see assets/example_mapping.yaml
+visualize:
+  platform: local              # local | wandb — local avoids a wandb dependency
+  tag: null
+kpi:
+  iou_threshold: 0.5
+  filter: false
+  num_recall_points: 101       # reference default
+  conf_threshold: 0.001        # must be > 0: an undetected GT box is entered with p=0.0, and
+                               # the check is `p >= conf_threshold`, so 0.0 scores every missed
+                               # box as a true positive. Small enough to keep the full curve.
+  ignore_sqwidth: 0            # reference default: do not drop small boxes
+  is_internal: false
+results_dir: null
