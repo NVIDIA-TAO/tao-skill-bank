@@ -67,7 +67,7 @@ scripts/check_tao_launch_preflight.py --platform local-docker \
   --target-gpu-index 0 --target-gpu-index 1 \
   --target-gpu-index 2 --target-gpu-index 3 \
   --path results_dir=/abs/path/to/job-results \
-  --min-free-disk-gb results_dir=256 \
+  --min-free-disk-gb results_dir=384 \
   --path train_annotation=/abs/path/train/annotations.json \
   --path train_media=/abs/path/train \
   --path val_annotation=/abs/path/eval/annotations.json \
@@ -79,10 +79,10 @@ Set `--target-gpu-index` to the exact indices passed to Docker's `--gpus`
 allocation. This prevents an unallocated display or heterogeneous accelerator
 from contaminating memory, architecture, and runtime-smoke checks.
 
-The 256 GiB result-filesystem gate is mandatory for Cosmos-RL Nano training
+The 384 GiB result-filesystem gate is mandatory for Cosmos-RL Nano training
 with synchronous epoch checkpoints. A dense four-way sharded checkpoint plus
 its optimizer state and Hugging Face safetensor export can consume roughly
-73 GiB; retention briefly needs the new checkpoint and retained predecessors
+115 GiB; retention briefly needs the new checkpoint and retained predecessors
 at the same time. Check actual free bytes on the filesystem containing the
 host-mounted result directory, not Docker's logical/reclaimable size. If this
 gate fails, reclaim or relocate storage before launch; a PyTorch zip-writer

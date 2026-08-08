@@ -48,4 +48,4 @@ def test_cosmos_rl_preflight_rejects_dependency_abi_and_dispatch_regressions() -
     assert "vLLM Qwen3-VL Conv3D dispatch guard" in contract["checks"]
     assert "system PyAV/FFmpeg NVDEC and libnvcuvid" in contract["checks"]
     assert "backward-safe Qwen3-VL PatchEmbed" in contract["checks"]
-    assert "256 GiB free result/checkpoint space" in contract["checks"]
+    assert "384 GiB free result/checkpoint space" in contract["checks"]
