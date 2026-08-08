@@ -8,18 +8,6 @@
 
 set -eu
 
-env_file=${DEFT_ENV_FILE:-}
-if [ -z "$env_file" ] && [ -n "${WORKSPACE:-}" ]; then
-  env_file="$WORKSPACE/.env"
-elif [ -z "$env_file" ] && [ -n "${WORKSPACE_DIR:-}" ]; then
-  env_file="$WORKSPACE_DIR/.env"
-fi
-if [ -n "$env_file" ] && [ -f "$env_file" ]; then
-  set -a
-  . "$env_file"
-  set +a
-fi
-
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_parent=$(CDPATH= cd -- "$script_dir/../../../../.." && pwd)
 

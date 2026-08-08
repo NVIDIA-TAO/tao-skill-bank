@@ -218,7 +218,7 @@
     </section>
 
     <section class="card">
-      <div class="header"><div><div class="chart-title">Pipeline Execution</div><div class="chart-subtitle">Ordered events from loop_log.jsonl; durations are never inferred.</div></div></div>
+      <div class="header"><div><div class="chart-title">Pipeline Execution</div><div class="chart-subtitle">Ordered events from deft_state.json; durations are never inferred.</div></div></div>
       <div class="table-wrap"><table class="data-table"><thead><tr><th>Seq</th><th>Phase</th><th>Stage</th><th>Status</th><th>Duration</th><th>Summary</th></tr></thead><tbody>{{ STAGE_ROWS_HTML }}</tbody></table></div>
     </section>
 
@@ -228,11 +228,11 @@
     </section>
 
     <section class="card">
-      <div class="header"><div><div class="chart-title">Hard Stops / Warnings</div><div class="chart-subtitle">Canonical audit findings and committed error events.</div></div></div>
+      <div class="header"><div><div class="chart-title">Hard Stops / Warnings</div><div class="chart-subtitle">Committed error events from canonical state.</div></div></div>
       {{ WARNING_ROWS_HTML }}
     </section>
   </div>
-  <div class="footer">Generated deterministically from deft_state.json, loop_log.jsonl, and recorded artifacts · NVIDIA TAO DEFT AOI</div>
+  <div class="footer">Generated deterministically from deft_state.json and recorded artifacts · NVIDIA TAO DEFT AOI</div>
 </main>
 </body>
 </html>

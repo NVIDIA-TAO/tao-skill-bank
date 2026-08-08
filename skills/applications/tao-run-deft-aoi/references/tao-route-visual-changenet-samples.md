@@ -6,7 +6,7 @@ per-augmentation-module subsets. The underlying skill
 owns the full routing contract: label eligibility for each module, the Python
 recipe (two `.isin(...)` masks), per-label routing breakdown, and report format.
 This file only covers the DEFT-loop-specific overlay: required inputs, output
-layout, and `deft_state.json` / `loop_log.jsonl` updates.
+layout, and `deft_state.json` updates.
 
 ## DEFT-Loop Inputs
 
