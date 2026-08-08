@@ -1,6 +1,6 @@
 network_arch: tao-mine-od-images
 type: data
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.1-rc-200-x86  # unpinned: held at the build this skill is validated against; repin once 7.1.0-data-services is confirmed to carry the action
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.7.31-rc-14-multiarch  # unpinned: earliest published image carrying `tmm unique_neighbor_matching`; repin to versions.yaml once the action ships in a release image
 gpu_spec_key: null
 required_credentials: []
 actions:
