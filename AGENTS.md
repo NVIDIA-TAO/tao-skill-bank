@@ -15,8 +15,8 @@ helper scripts (`scripts/tao_job_record.py`, `scripts/redact_secrets.py`, and
 the `tao-data-io` skill) — no TAO SDK install.
 
 User-facing DEFT shorthand resolves to canonical application skills:
-`tao-deft-aoi` → `tao-run-deft-aoi` and `tao-deft-pas` →
-`tao-run-deft-pas`. State the canonical name when routing; the shorthand does
+`tao-deft-aoi` → `tao-run-deft-aoi` and `tao-deft-iaa` →
+`tao-run-deft-iaa`. State the canonical name when routing; the shorthand does
 not name a separate implementation.
 
 ## Discovery flow
@@ -24,7 +24,7 @@ not name a separate implementation.
 0. **Read the task skill.** `skills/models/<arch>/SKILL.md` (network specifics),
    `skills/data/<name>/SKILL.md` (transforms), or `skills/applications/<name>/SKILL.md`
    (workflows that compose model + data + platform — `tao-run-automl`,
-   `tao-run-deft-aoi`, `tao-run-deft-pas`, etc.). Get the model facts, data
+   `tao-run-deft-aoi`, `tao-run-deft-iaa`, etc.). Get the model facts, data
    format, action parameters, supported-platform contract, and known error
    patterns. Resolve documented shorthand names to the canonical frontmatter
    name before continuing.
