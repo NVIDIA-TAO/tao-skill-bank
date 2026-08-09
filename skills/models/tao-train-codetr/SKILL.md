@@ -297,6 +297,15 @@ Values are **lists**. Semantics, from `model/category_mapping.py`:
 
 Then it runs `apply_category_mapping_groupnms` — per-output-category soft-NMS **after** the merge. This is why folding here beats renaming labels afterwards: one object detected as both `truck` and `car` becomes two boxes of the *same* class the instant those fold together, and only a post-fold NMS removes the duplicate. A downstream rename ships the duplicates onward.
 
+**That dedup needs `model.soft_nms_enabled: True`, which is not the default.** The schema ships it `False`, and with it off the fold renames classes without merging anything — the same result a downstream rename would give, duplicates included. Folding `{vehicle: ["car", "bus", "truck"]}` over 8 traffic images at `conf_threshold: 0.05`:
+
+| `model.soft_nms_enabled` | boxes emitted |
+|---|---|
+| `False` (schema default) | 277 — exactly `146 car + 102 truck + 29 bus`, nothing merged |
+| `True` | 151 — 126 duplicates removed |
+
+Set it whenever `category_mapping` groups classes that the detector confuses with each other, which for COCO vehicles it reliably does. `soft_nms_iou_threshold` (default `0.8`) controls how aggressively the merge happens.
+
 `inference.color_map` keys and the class names in the emitted labels both follow the *output* categories once this is set.
 
 An empty label file is meaningful and is still written: in KITTI it means "this image has no objects".
