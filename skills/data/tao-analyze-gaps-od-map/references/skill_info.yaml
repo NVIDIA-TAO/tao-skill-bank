@@ -1,6 +1,6 @@
 network_arch: tao-analyze-gaps-od-map
 type: data
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.1-rc-200-x86  # unpinned: no published data-services image carries `gap_analysis object_detection` yet; repin once it ships
+container_image: nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
 gpu_spec_key: null
 required_credentials: []
 actions:
