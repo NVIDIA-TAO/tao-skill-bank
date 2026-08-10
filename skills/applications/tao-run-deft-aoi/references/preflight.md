@@ -4,31 +4,89 @@
 
 Resolve everything possible before asking the user. In order:
 
+Resolve `network_mode` first, without probing the network. Read exactly one
+branch: `references/air-gap.md` for `airgap`, or
+`references/network-bootstrap.md` for `network-enabled`. Record the mode and
+activation source; never load or execute the network bootstrap in air-gap mode.
+
 1. Locate workspace root, specs, CSVs, checkpoints, augmentation assets. Derive a timestamped run directory: `RESULTS_DIR=<workspace>/results/run_$(date +%Y%m%d_%H%M%S)`. If resuming an existing run, set `RESULTS_DIR` to the existing run directory instead (detect by checking for `results/run_*/deft_state.json`). All references to `results/` throughout this skill mean `${RESULTS_DIR}/`.
 
-   **Host Python deps.** The DEFT loop needs `pandas`, `numpy`, `matplotlib` (KPI analysis), `pyarrow` (parquet I/O for routing and mining), `huggingface_hub` (backbone staging), and `boto3` (S3 ops). Verify with `python3 -c "import pandas, numpy, matplotlib, pyarrow, huggingface_hub, boto3"`. If any are missing, set up a venv:
+   **Resolve the real-image root before any Docker launch.** Prefer the
+   canonical `<workspace>/images`; accept `<workspace>/kpi/images` only as a
+   legacy fallback. Resolve symlinks, export the absolute result as
+   `IMAGES_DIR`, and hard-stop if neither directory exists. Run
+   `scripts/validate_training_csv.py` against each base CSV with
+   `--workspace-root "$IMAGES_DIR"` so at least the CSV-declared input and
+   golden paths are proven to resolve on disk. `init_deft_state.py` records the
+   same resolved directory as `config.images_dir`; all ChangeNet containers
+   must mount that state value rather than reconstructing a path from `kpi/`.
+
+   **Resolve the mining source independently from its images.** A common staged
+   layout places the CSV at
+   `<workspace>/augmentation/mining_pool/mining_pool.csv` and the referenced
+   images under the shared `<workspace>/images` root. Treat these as discovery
+   hints, not proof: prefer an explicit user/harness path, inspect the CSV path
+   fields, verify the files on disk, and record the resolved paths in state.
+   Do not assume an `augmentation/mining_pool/images/` directory exists merely
+   because the CSV is under `augmentation/mining_pool/`.
+
+   **Host Python deps.** The DEFT loop needs `pandas`, `numpy`, `matplotlib` (KPI analysis), `pyarrow` (parquet I/O for routing and mining), `huggingface_hub` (backbone staging), and `boto3` (S3 ops). Verify through `scripts/deft_python.sh`; do not probe a different bare interpreter first:
    ```bash
-   python3 -m venv ~/.venvs/deft
-   ~/.venvs/deft/bin/pip install pandas numpy matplotlib pyarrow huggingface_hub boto3
+   <skill_root>/scripts/deft_python.sh -c \
+     "import pandas, numpy, matplotlib, pyarrow, huggingface_hub, boto3"
    ```
-   Invoke scripts via that interpreter — on Ubuntu 24.04+ / fresh Brev boxes a bare `pip3 install --user` hits PEP 668. Alternatively run analysis inside the TAO toolkit image. Do not silently skip — KPI plots and parquet I/O are part of every loop's output.
+   If imports are missing in **air-gap mode**, hard-stop and report the missing
+   modules. Do not invoke `pip`, `pip3`, `uv`, `conda`, `apt`, or any other
+   package manager; even an attempted install invalidates the air-gap run.
+
+   In network-enabled mode only, follow `references/network-bootstrap.md`.
+   Alternatively run analysis inside the TAO toolkit image. Do not silently
+   skip — KPI plots and parquet I/O are part of every loop's output.
 2. Read the relevant `references/*.md` files for command syntax and output contracts. See `## Stage Reference Modules` in `references/scripts-and-agents.md` for the stage→skill mapping.
-3. Source `<workspace>/.env` if it exists (`set -a; source <workspace>/.env; set +a`). Then verify the credentials the workflow actually consumes:
+3. Never read or source `.env`. In network-enabled mode, verify only the
+   presence of credentials already supplied in the process environment. In
+   air-gap mode record credentials as `N/A (offline)`:
 
    | Variable | Required for | Image prefix it gates |
    |---|---|---|
-   | `NGC_KEY` | All nvcr.io image pulls — TAO toolkit (train/infer/deploy/data services) and the paidf-anomalygen SDG container | the registry orgs of the pinned image URIs in step 5 |
+   | `NGC_KEY` | All nvcr.io image pulls — TAO toolkit (train/infer/deploy/data services) and the paidf-anomalygen SDG container | the registry orgs of the manifest-resolved image URIs in step 5 |
    | `HF_TOKEN` | Pre-Flight HuggingFace model downloads (ChangeNet backbone, Cosmos diffusion, T5, C-RADIO-V3, DINOv2, SAM2, Qwen-VL, SigLIP) — cached under `augmentation/anomalygen/base_checkpoints/`. Also gates the PCB reference dataset auto-fetch. | huggingface.co |
 
-   Both variables must be non-empty. The single `NGC_KEY` must have read access to every registry org referenced by the pinned image URIs in step 5 (TAO Toolkit and paidf-anomalygen images). If either is missing, show the user `.env.example` (next to this skill), ask them to copy it to `<workspace>/.env` and fill in values, and do not proceed until set.
-4. `docker login nvcr.io` once with `NGC_KEY` (username `$oauthtoken`, password = the key). nvcr.io stores one credential per host. Do not fall back to host-side TAO wrappers.
-5. **Export the pinned container image env vars.** The rest of this skill — including the Pre-Flight Summary's `docker image inspect` line, every stage launch, and the `references/*.md` files — references three env vars. They are **not** defined elsewhere; the pinned URIs below are stamped from the release manifest. `export` them so all downstream commands see them:
+   For planned network actions both variables must be non-empty in the process
+   environment. The single `NGC_KEY` must have read access to every registry
+   org referenced by the resolved image URIs. If either is missing, ask the
+   user or harness to inject it without revealing the value; never create,
+   read, or source a credential file.
+4. Network-enabled mode may perform the approved registry login after the user
+   gate. Air-gap mode must not log in or pull; local image inspection is the
+   only permitted registry-related check. Do not expose credential values.
+5. **Resolve and export the version-managed container image env vars.** The rest of this skill — including the Pre-Flight Summary's `docker image inspect` line, every stage launch, and the `references/*.md` files — references three env vars. Resolve every value from the installed skill bank's `versions.yaml`; never copy a tag into this document or preserve a tag from an earlier run:
 
    ```bash
-   export TAO_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
-   export TAO_DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
-   export AG_IMAGE=nvcr.io/nvidia/paidf-anomalygen:1.0.1  # versions-key: images.metropolis_sdg.paidf_anomalygen
+   TAO_PYT_IMAGE=$(
+     <skill_root>/scripts/deft_python.sh \
+       "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+       images.tao_toolkit.pyt --skill-bank "$TAO_SKILL_BANK_PATH"
+   )
+   TAO_DS_IMAGE=$(
+     <skill_root>/scripts/deft_python.sh \
+       "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+       images.tao_toolkit.data_services --skill-bank "$TAO_SKILL_BANK_PATH"
+   )
+   AG_IMAGE=$(
+     <skill_root>/scripts/deft_python.sh \
+       "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+       images.metropolis_sdg.paidf_anomalygen --skill-bank "$TAO_SKILL_BANK_PATH"
+   )
+   : "${TAO_PYT_IMAGE:?versions key images.tao_toolkit.pyt did not resolve}"
+   : "${TAO_DS_IMAGE:?versions key images.tao_toolkit.data_services did not resolve}"
+   : "${AG_IMAGE:?versions key images.metropolis_sdg.paidf_anomalygen did not resolve}"
+   export TAO_PYT_IMAGE TAO_DS_IMAGE AG_IMAGE
    ```
+
+   Hard-stop on any resolver error. `versions.yaml` is authoritative even when
+   a reference, cached transcript, or previously installed plugin mentions a
+   different tag.
 
    | Env var | versions-key | Used by |
    |---|---|---|
@@ -49,12 +107,39 @@ Resolve everything possible before asking the user. In order:
    echo "Host arch: $HOST_ARCH  |  AG image platforms: $AG_ARCHS"
    ```
 
+   Run that remote manifest check only in network-enabled mode. In air-gap
+   mode use `docker image inspect --format '{{.Architecture}}' "$AG_IMAGE"`
+   and fail if the local image is absent. Do not query a registry manifest.
+
    Map `x86_64` → `amd64` and `aarch64` → `arm64` before comparing. Hard stop with a clear message if the host architecture is not in the image's platform list — there is no emulation path for GPU workloads.
 
-   **GPU-arch runnability probe.** Matching CPU arch isn't sufficient — the image's CUDA build must also support the host GPU's compute capability (e.g. DGX Spark `sm_121` vs a `cu128` build passes the manifest check but fails at the first CUDA call). Probe it directly: `docker run --rm --gpus all "$TAO_PYT_IMAGE" python3 -c "import torch; torch.zeros(1).cuda()"` — a non-zero exit or `no kernel image is available` means the build can't target this GPU; hard stop.
+   **GPU-arch runnability probe.** Matching CPU arch isn't sufficient — the image's CUDA build must also support the host GPU's compute capability. In air-gap mode launch with `docker run --pull=never`; after state initialization all Docker commands go through `deft_exec.py`. A non-zero exit or `no kernel image is available` is a hard stop.
 
 7. Apply the path rule: pre-create iter dirs under `${RESULTS_DIR}/iter${ITER}/` and mount `<workspace>` into containers at the same absolute path. Workflows enforce their own container-level invariants (entrypoints, env vars); the loop just supplies the workspace mount and the resolved image URI.
-8. Verify GPU count. Probe the three AnomalyGen override slots under `augmentation/anomalygen/` (`checkpoints/<project>/`, `base_checkpoints/`, `datasets/<project>/`) and report their status in the Summary. **Empty slots are not missing — auto-fetch from HuggingFace is the default and requires no user action.** NVIDIA publishes the PCB fine-tuned checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on HuggingFace; paidf-anomalygen downloads them automatically on first use. Users who want to provide their own fine-tuned checkpoint or custom dataset can pre-stage the directory to override. Do not ask the user about missing AnomalyGen assets — treat empty slots as `will auto-fetch from HF (default)` and proceed. If `base_checkpoints/` is pre-staged, export its host path as `COSMOS_MODELS_DIR` for downstream mounts. Stage the ChangeNet pretrained backbone by running `scripts/stage_backbone.py --workspace <workspace>`, then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path` to the staged file and bind-mount it per `references/visual-changenet.md` → *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script exits non-zero; there is no URL fallback. See `references/paidf-anomalygen.md` for invocation and mount layout.
+8. Verify GPU count and record the exact GPU model plus memory reported by the
+   selected platform (for local Docker:
+   `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader`). Preserve
+   that string for `init_deft_state.py --gpu-model`; never substitute a local
+   GPU when the selected backend is remote. Probe the three AnomalyGen override
+   slots under `augmentation/anomalygen/` (`checkpoints/<project>/`,
+   `base_checkpoints/`, `datasets/<project>/`) and report their status in the
+   Summary. In network-enabled mode, empty slots may be a post-approval fetch
+   plan. In air-gap mode every required slot must already be non-empty and a
+   missing asset is a hard stop. NVIDIA publishes the PCB fine-tuned
+   checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset
+   (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on HuggingFace;
+   paidf-anomalygen downloads them automatically on first use. Users who want
+   to provide their own fine-tuned checkpoint or custom dataset can pre-stage
+   the directory to override. Do not ask the user about missing AnomalyGen
+   assets — treat empty slots as `will auto-fetch from HF (default)` and
+   proceed. If `base_checkpoints/` is pre-staged, export its host path as
+   `COSMOS_MODELS_DIR` for downstream mounts. Stage the ChangeNet pretrained
+   backbone by running `scripts/stage_backbone.py --workspace <workspace>`,
+   then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path`
+   to the staged file and bind-mount it per `references/visual-changenet.md` →
+   *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script
+   exits non-zero; there is no URL fallback. See
+   `references/paidf-anomalygen.md` for invocation and mount layout.
 9. **GPU memory sanity check.** ChangeNet classify with C-RADIOv2-B (ViT-B) at the spec defaults (`batch_size: 64`, `image_width/height: 224`, `cls_weight: [1.0, 10.0]`, learnable difference modules) OOMs on a single 48GB-class GPU. Inspect `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` and warn if the assembled spec's `dataset.classify.batch_size` is too large for the available memory: as a rule of thumb, **≤ 16 on 48GB GPUs, ≤ 8 on 24GB GPUs**. Surface the recommendation in the Pre-Flight Summary's `GPUs` row — let the user accept or override before launch rather than failing 30 seconds into training.
 10. Run train/validation leakage check before resuming any prior run.
 
@@ -67,11 +152,16 @@ Ask one consolidated question only for missing required inputs. Never ask about 
 - `training_epochs`: `num_epochs` from `specs/baseline_spec.yaml`. For a small seed set (~200 rows) use **10** — ChangeNet on the 150M-param C-RADIOv2-B backbone overfits a few-hundred-row set past ~10 epochs (val_loss climbs, FAR@recall=100% degrades). The bundled `references/baseline_spec.yaml` template ships `num_epochs: 10` for this reason. Raise toward 20 only once the combined CSV grows into the low thousands of rows across iterations.
 - `num_SDG`: 20 (per-iteration AnomalyGen output budget; raise explicitly when more synthetic coverage is needed)
 - `min_similarity` (mining cosine cutoff): 0.9 — read from `config.mining_filter.min_similarity` in `deft_state.json`; the literal `0.9` referenced in Pipeline step 4 is just the fallback default.
+- `top_k_per_target`: 5 — preserve an explicit user value. Raise it only when
+  the history summary shows that prior selections dominate the current narrow
+  neighborhood.
 - workspace root: user prompt, else `~/workspace`
-- pretrained backbone: first `*.pth`/`*.ckpt`/`*.safetensors` under `augmentation/backbone/`; if absent, stage it from `nvidia/C-RADIOv2-B` via the recipe in `references/visual-changenet.md` (HF_TOKEN required). Mandatory — a URL is not a valid value; hard-stop if it cannot be staged.
-- AnomalyGen checkpoint: pre-staged `augmentation/anomalygen/checkpoints/<project>/`; if absent, auto-download from `nvidia/Cosmos-AnomalyGen-PCB-2B` on HF (HF_TOKEN required)
-- AnomalyGen dataset: pre-staged `augmentation/anomalygen/datasets/<project>/`; if absent, auto-fetch from `nvidia/Cosmos-AnomalyGen-PCB-Dataset` on HF (HF_TOKEN required)
-- Cosmos base models: pre-staged `augmentation/anomalygen/base_checkpoints/`; if absent, container downloads on first run (~22 GB for 2B-only, ~140 GB with 14B + T5-11b)
+- pretrained backbone: first staged weight under `augmentation/backbone/`;
+  network-enabled mode may plan the documented post-approval fetch, while
+  air-gap mode hard-stops when absent.
+- AnomalyGen checkpoint, dataset, and Cosmos base models: prefer the staged
+  `augmentation/anomalygen/` paths. Missing assets are fetch plans only in
+  network-enabled mode; in air-gap mode they are hard stops.
 
 ## Pre-Flight Summary
 
@@ -84,12 +174,15 @@ Once all checks pass, print this summary and **STOP — wait for explicit user a
 | Field                          | Value                                                                          |
 | ------------------------------ | ------------------------------------------------------------------------------ |
 | KPI Target                     | FAR < X% at Recall=100%                                                        |
+| Network mode / source          | airgap or network-enabled / <activation source>                               |
+| Selected Python                | <absolute dependency-complete executable>                                     |
 | Max DEFT Iterations            | N                                                                              |
 | Stop condition                 | KPI met **or** max_iterations reached — reaching the KPI is not guaranteed; FAR may regress between iterations |
 | Training Epochs                | N per iteration                                                                |
 | Num SDG                        | N synthetic samples per iteration                                              |
+| Mining top-K                  | N neighbours per target (default 5)                                             |
 | Mining cutoff                  | cosine ≥ <min_similarity> (default 0.9)                                        |
-| GPUs                           | N                                                                              |
+| Compute / GPUs                 | N GPU(s) · <exact model> (<memory>)                                             |
 | Resuming                       | yes — iter N complete / no                                                     |
 | Est. runtime                   | ~max_iterations × 33 min on RTX 6000 Ada — estimate only (+~Yh downloads if MISSING) |
 
@@ -100,10 +193,11 @@ Once all checks pass, print this summary and **STOP — wait for explicit user a
 | Validation CSV                 | <path> (N rows)                                                                |
 | KPI test CSV                   | <path> (N rows, X defect types)                                                |
 | Images dir                     | <path>                                                                         |
+| Mining CSV / image root        | <independent absolute paths; resolver status>                                  |
 
 ### Augmentation
-For all AnomalyGen assets, **auto-fetch from HuggingFace is the default** — no pre-staging required.
-Users may override any asset by pre-staging the directory before launch.
+Show `WILL_FETCH` only in network-enabled mode. In air-gap mode every row must
+be a staged local path and no download fallback may appear.
 
 | Field              | Value                                                                                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
@@ -118,7 +212,7 @@ Fill the `Image` column with the actual URI resolved in Pre-Flight step 5
 (i.e. the value of the env var), not the literal `${VAR}` placeholder.
 Print one row per env var so the audit trail shows exactly which tag will run.
 
-| Env var          | Image (pinned in Pre-Flight step 5)                                            | Status     |
+| Env var          | Image (resolved in Pre-Flight step 5)                                          | Status     |
 | ---------------- | ------------------------------------------------------------------------------ | ---------- |
 | `TAO_PYT_IMAGE`  | `<$TAO_PYT_IMAGE>` (key: `images.tao_toolkit.pyt`)                             | OK/MISSING |
 | `AG_IMAGE`       | `<$AG_IMAGE>` (key: `images.metropolis_sdg.paidf_anomalygen`)                 | OK/MISSING |
@@ -133,7 +227,7 @@ cat <workspace>/augmentation/anomalygen/checkpoints/<project>/checkpoints/latest
 cat <workspace>/augmentation/anomalygen/datasets/<project>/defect_spec.jsonl | python3 -c "import sys,json; [print(json.loads(l)['defect_type']) for l in sys.stdin]"
 nvidia-smi --list-gpus | wc -l
 # ${TAO_PYT_IMAGE}, ${AG_IMAGE}, ${TAO_DS_IMAGE} are exported by Pre-Flight step 5
-# (pinned URIs stamped from the release manifest). Loop per-image so the
+# (URIs resolved from the installed versions.yaml). Loop per-image so the
 # output maps 1:1 to the Docker Images table rows above (you can't fill a
 # per-row Status column from a single aggregate "grep -c sha256" count).
 for var in TAO_PYT_IMAGE AG_IMAGE TAO_DS_IMAGE; do

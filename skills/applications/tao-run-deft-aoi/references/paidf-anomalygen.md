@@ -155,7 +155,7 @@ CKPT=$(find -L "$WS/augmentation/anomalygen/checkpoints/<project>" -path '*/ag_c
 : "${CKPT:?no AnomalyGen checkpoint directory with ag_config.yaml found under checkpoints/<project>}"
 COSMOS=$WS/augmentation/anomalygen/base_checkpoints
 RUN_DIR=$WS/results/run_<TS>/iter${N}/anomalygen
-: "${AG_IMAGE:=nvcr.io/nvidia/paidf-anomalygen:1.0.1}"  # versions-key: images.metropolis_sdg.paidf_anomalygen — reuses Pre-Flight export if set
+: "${AG_IMAGE:?AG_IMAGE unset — resolve images.metropolis_sdg.paidf_anomalygen from versions.yaml in Pre-Flight step 5}"
 mkdir -p $COSMOS $DS $(dirname $CKPT) $RUN_DIR/amp $RUN_DIR/sdg
 for p in "$COSMOS" "$DS" "$(dirname "$CKPT")"; do
   chmod 777 "$p" 2>/dev/null || echo "warning: could not chmod $p; continuing if it is readable"
@@ -216,7 +216,7 @@ are idempotent — re-running a completed step exits quickly.
 ```bash
 # (a) Cosmos base checkpoints (~22 GB for 2B-only, ~140 GB with 14B + T5-11b).
 # WRITABLE mount (no :ro) so download_checkpoints.sh can populate the cache.
-docker run --rm \
+docker run --pull=never --rm \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -228,7 +228,7 @@ docker run --rm \
 # skill's PCB-dataset fetcher (`uc1` = the skill's identifier for the PCB
 # use-case; unrelated to the host-side <project> directory label).
 if [ ! -f "$DS/defect_spec.jsonl" ]; then
-  docker run --rm \
+  docker run --pull=never --rm \
     --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
     -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
     -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -243,7 +243,7 @@ from the per-UC HF repo (see *Fine-tuned checkpoint sources* above) via:
 ```bash
 # (c) AnomalyGen fine-tuned checkpoint (PCB UC; ~5 GB).
 if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ]; then
-  docker run --rm \
+  docker run --pull=never --rm \
     --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
     -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
     -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -264,7 +264,7 @@ calls — same image, READ-ONLY mount on the cosmos cache.
 STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' $CKPT/checkpoints/latest_checkpoint.txt)
 
 # Phase 2: AMP routing → testcase.jsonl  (~10s, no GPU)
-docker run --rm --gpus all --ipc=host --shm-size=16g \
+docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -276,7 +276,7 @@ docker run --rm --gpus all --ipc=host --shm-size=16g \
     --amp-output-dir $RUN_DIR/amp --output-jsonl $RUN_DIR/testcase.jsonl"
 
 # Phase 3: SDG diffusion → reconstructed_image/ + original_image/  (1-3 min on Blackwell)
-docker run --rm --gpus all --ipc=host --shm-size=16g \
+docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -295,6 +295,7 @@ Required mounts (per-iteration): `<workspace>:<workspace>` (same path) +
 
 ```
 <output_dir>/
+├── allocation.json                         # Phase 2 defect -> AMP count proof
 ├── SDG_result.csv                          # one row per generated sample (image, mask, params, PSNR)
 ├── reconstructed_image/<T>+<A>_<idx>.png   # synthetic NG — ChangeNet input_path
 ├── original_image/<T>+<A>_<idx>.png        # paired OK — ChangeNet golden_path
@@ -303,11 +304,14 @@ Required mounts (per-iteration): `<workspace>:<workspace>` (same path) +
 ```
 
 After verifying `SDG_result.csv`, `reconstructed_image/`, and
-`original_image/`, commit:
+`original_image/`, keep Phase 2's `allocation.json` beside those outputs and
+commit:
 
 ```python
 phase = state["iterations"][f"iter{N}"]
 phase["anomalygen_sdg_csv"] = "<abs_path>/SDG_result.csv"
+phase["anomalygen_allocation_json"] = "<abs_path>/allocation.json"
+phase["anomalygen_amp_allocated"] = <sum of allocation.json counts>
 phase["stage_completed"] = "anomalygen"
 ```
 
@@ -321,9 +325,13 @@ This snippet documents the schema only; never execute it as inline Python.
     --iter-label iter${N} \
     --stage anomalygen \
     --anomalygen-sdg <absolute path to SDG_result.csv> \
+    --anomalygen-allocation <absolute path to allocation.json> \
+    --duration-sec "${STAGE_DURATION_SEC}" \
     --summary "SDG: requested=N, AMP-allocated=M, generated=K by type"
 ```
 
-When `M < N` (AMP yield gap), include both requested and allocated counts
+`commit_stage.py` derives `M` by summing the committed defect-to-count
+`allocation.json` and audits that disk proof on resume. When `M < N` (AMP
+yield gap), include both requested and allocated counts
 — that's the signal a reviewer needs to spot allocation-vs-generation
 bottlenecks.

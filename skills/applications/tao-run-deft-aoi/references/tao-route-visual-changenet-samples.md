@@ -6,7 +6,7 @@ per-augmentation-module subsets. The underlying skill
 owns the full routing contract: label eligibility for each module, the Python
 recipe (two `.isin(...)` masks), per-label routing breakdown, and report format.
 This file only covers the DEFT-loop-specific overlay: required inputs, output
-layout, and `deft_state.json` / `loop_log.jsonl` updates.
+layout, and `deft_state.json` updates.
 
 ## DEFT-Loop Inputs
 
@@ -52,5 +52,6 @@ The snippet documents the schema only; use `commit_stage.py` for the write.
     --stage routing \
     --routing-mining <absolute path to mining_gaps.parquet> \
     --routing-anomalygen <absolute path to anomalygen_gaps.parquet> \
+    --duration-sec "${STAGE_DURATION_SEC}" \
     --summary "Routing: mining=N_mn rows, anomalygen=N_ag rows; N_drop labels dropped"
 ```
