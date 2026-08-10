@@ -77,7 +77,10 @@ GPU_COUNT=1
 python3 skills/data/tao-mine-od-images/scripts/verify_unique_neighbor_matching_spec.py \
   --spec "$SPEC"
 
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
+# `tmm unique_neighbor_matching` is NOT in the release image versions.yaml resolves to.
+# Verify before pulling ~30 GB:
+#   docker run --rm "$DS_IMAGE" tmm nosuch 2>&1 | tail -2   # prints the available subtasks
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.7.31-rc-14-multiarch  # unpinned: earliest published image carrying the action
 
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -121,7 +124,10 @@ nvidia-smi -L
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
+# `tmm unique_neighbor_matching` is NOT in the release image versions.yaml resolves to.
+# Verify before pulling ~30 GB:
+#   docker run --rm "$DS_IMAGE" tmm nosuch 2>&1 | tail -2   # prints the available subtasks
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.7.31-rc-14-multiarch  # unpinned: earliest published image carrying the action
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 
@@ -140,7 +146,7 @@ python3 skills/data/tao-mine-od-images/scripts/verify_unique_neighbor_matching_s
 |---|---|
 | Mined source filepaths | `output_dir/final_unique_files.parquet` |
 | Coverage and allocation stats | `output_dir/summary.json` |
-| Per-iteration intermediates | `output_dir/<subset>_iter_<N>.parquet` |
+| Per-iteration intermediates | `output_dir/<subset>_iteration_<N>_topn_<K>.parquet` |
 | Per-class viz grids | `output_dir/*.png` (only if `visualize: true`) |
 
 `final_unique_files.parquet` contains one filepath column. `summary.json` includes `retrieved_unique_count`, `coverage_pct`, and (when detection files are provided) per-class breakdowns for the target and selected source sets.
