@@ -645,7 +645,9 @@ def main() -> None:
             "value": recall_100_threshold.far * 100.0,
             "unit": "%",
             "threshold": recall_100_threshold.threshold,
-            "constraints": {},
+            "constraints": {
+                "recall_pct": recall_100_threshold.recall * 100.0,
+            },
             "diagnostics": {
                 "recall_pct": recall_100_threshold.recall * 100.0,
                 "precision": recall_100_threshold.precision,

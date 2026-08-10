@@ -44,7 +44,7 @@ The workspace TOML files are concrete or staged job specs, not application
 reference templates. They must exist before `init_deft_state.py` runs — it
 refuses to write state without them, because state is initialized exactly once
 and may never be hand-edited, so a state pointing at absent specs would leave
-the run INVALID from its first audit with no legal way forward. Build them from
+the run unable to proceed. Build them from
 the current templates owned by `tao-finetune-cosmos-reason`:
 
 - Give Proxy and Benchmark their own evaluate spec, each already pointed at its
@@ -114,7 +114,6 @@ held to the same isolation. Golden reference images may be shared.
 ```text
 results/run_<id>/
 ├── deft_state.json
-├── loop_log.jsonl
 ├── DEFT_Loop_Report.html
 ├── baseline/
 │   ├── evaluate_proxy/

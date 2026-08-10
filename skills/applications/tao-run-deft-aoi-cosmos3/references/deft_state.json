@@ -1,7 +1,8 @@
 {
-  "version": 3,
+  "version": 5,
   "workflow": "tao-run-deft-aoi-cosmos3",
   "started_at": "2026-07-28T00:00:00+00:00",
+  "status": "in_progress",
   "kpi_target": "NG recall >= 1",
   "metric_contract": {
     "name": "recall_ng",
@@ -27,6 +28,17 @@
   "results_dir": "/abs/results",
   "max_iterations": 3,
   "current_iteration": 0,
+  "execution_policy": {
+    "network_mode": "airgap",
+    "activation_source": "harness restriction",
+    "allow_package_install": false,
+    "allow_remote_fetch": false,
+    "allow_container_pull": false,
+    "allow_registry_login": false,
+    "python_launcher": "scripts/deft_python.sh",
+    "python_executable": "/usr/bin/python3",
+    "hf_offline": true
+  },
   "config": {
     "workspace": "/abs/workspace",
     "platform": "selected-platform",
@@ -66,6 +78,7 @@
       "annotation_source": "generated_from_mining_and_anomalygen",
       "num_gpus": 1,
       "num_nodes": 1,
+      "gpu_model": "NVIDIA H100 80GB HBM3",
       "num_epochs": 10,
       "batch_size": 4,
       "learning_rate": 0.0001,
@@ -86,7 +99,12 @@
     "mining": {
       "top_k_per_target": 5,
       "metric": "cosine",
-      "min_similarity": 0.9
+      "min_similarity": 0.9,
+      "history_aware": {
+        "enabled": true,
+        "identity": "filepath",
+        "history_file": "/abs/results/mining_history.json"
+      }
     },
     "anomalygen": {
       "sub_skill": "paidf-anomalygen",
@@ -104,6 +122,7 @@
     }
   },
   "iterations": {},
+  "events": [],
   "_completed_step_values": [
     "train",
     "evaluate_benchmark",
