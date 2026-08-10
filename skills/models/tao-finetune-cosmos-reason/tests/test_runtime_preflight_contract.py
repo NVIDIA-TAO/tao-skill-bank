@@ -44,6 +44,7 @@ def test_cosmos_rl_preflight_rejects_dependency_abi_and_dispatch_regressions() -
     assert "verify_vllm_conv3d" in runtime
     assert "h264_cuvid" in runtime
     assert "_tao_linear_patch_embed" in runtime
+    assert "_tao_channels_last_3d" in runtime
     assert "DeepEP Python/extension ABI" in contract["checks"]
     assert "vLLM Qwen3-VL Conv3D dispatch guard" in contract["checks"]
     assert "system PyAV/FFmpeg NVDEC and libnvcuvid" in contract["checks"]

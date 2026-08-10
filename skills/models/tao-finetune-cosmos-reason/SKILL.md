@@ -72,17 +72,19 @@ Run `scripts/cosmos_workflow.py resolve` first.
 
 | Request | Automatic selection |
 |---|---|
-| Cosmos3-Nano plain train | Cosmos Framework |
+| Cosmos3-Nano plain train | Cosmos-RL (compatibility default) |
 | Cosmos3-Nano AutoML/HPO | Cosmos-RL |
 | Nano Framework-DCP export | Cosmos Framework |
 | Nano evaluate/inference/microservice with no explicit backend | Cosmos-RL |
 | Nano quantize | Cosmos-RL |
 | Cosmos3-Edge train/export/evaluate/inference/microservice | Cosmos Framework |
 
-An explicit supported backend wins. Comparative runs reject `auto`, so both
-sides of an experiment are deliberately forced. Framework-trained checkpoints
-use the native exact-key exporter, then the repository-backed TAO evaluation
-adapter. That does not make Framework a Cosmos-RL version.
+An explicit supported backend wins, so users can select Cosmos Framework for
+Nano training without changing model ownership. Comparative runs reject
+`auto`, so both sides of an experiment are deliberately forced.
+Framework-trained checkpoints use the native exact-key exporter, then the
+repository-backed TAO evaluation adapter. That does not make Framework a
+Cosmos-RL version.
 
 ## Framework checkpoint pre-action
 

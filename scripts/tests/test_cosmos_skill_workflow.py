@@ -129,7 +129,7 @@ def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", dataset_famil
 
 
 def test_model_backend_resolution_and_comparative_explicitness():
-    assert workflow.select_backend(model="Cosmos3-Nano", action="train", workload="training")[0] == "cosmos-framework"
+    assert workflow.select_backend(model="Cosmos3-Nano", action="train", workload="training")[0] == "cosmos-rl"
     assert workflow.select_backend(model="Cosmos3-Nano", action="evaluate", workload="training")[0] == "cosmos-rl"
     assert workflow.select_backend(model="Cosmos3-Nano", action="export", workload="training")[0] == "cosmos-framework"
     assert workflow.select_backend(model="Cosmos3-Edge", action="evaluate", workload="training")[0] == "cosmos-framework"
@@ -825,10 +825,14 @@ def test_image_provenance_source_equivalence_and_dirty_rejected():
 
 def test_clean_build_plan_requires_new_sqsh_and_provenance(tmp_path):
     plan = workflow.build_plan(args_for(tmp_path))
+    assert plan["image"]["dockerfile"] == "Dockerfile.cosmos_framework"
     assert plan["image"]["must_rebuild_after_source_change"] is True
     assert plan["image"]["sqsh"]["reuse_allowed"] is False
     assert plan["image"]["provenance_path"] == "/opt/tao/image-provenance.json"
     assert plan["image"]["required_commits"]["cosmos-framework"] == "f" * 40
+
+    rl_plan = workflow.build_plan(args_for(tmp_path / "rl", backend="cosmos-rl"))
+    assert rl_plan["image"]["dockerfile"] == "Dockerfile.cosmos_rl"
 
 
 def test_container_mount_translation_preserves_original_paths(tmp_path):

@@ -10,9 +10,7 @@ aliases:
 - cosmos-rl
 - cosmos-framework
 automl_enabled: true
-container_image:
-  policy: repository_derived
-  runtime_input: image_tag
+container_image: nvcr.io/nvstaging/tao/cosmos_rl:2026.8.9-rc-222-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
 backend_contracts:
   cosmos-framework: references/cosmos-framework-backend.yaml
   cosmos-rl: references/cosmos-rl-backend.yaml
@@ -20,7 +18,7 @@ backend_resolver: scripts/cosmos_workflow.py
 backend_selection:
   policy: explicit backend wins; otherwise select by model, action, and workflow and report the rationale
   defaults:
-    train: cosmos-framework
+    train: cosmos-rl
     export: cosmos-framework
     evaluate: cosmos-rl
     inference: cosmos-rl
@@ -34,10 +32,10 @@ backend_selection:
   - match: Cosmos3-Nano AutoML or HPO train
     backend: cosmos-rl
   - match: Cosmos3-Nano plain SFT train
-    backend: cosmos-framework
+    backend: cosmos-rl
   - match: Cosmos3-Nano evaluate, inference, inference_microservice, or quantize
     backend: cosmos-rl
-  ambiguity_behavior: never silently assume cosmos-rl; emit backend and backend_selection_reason in the launch review
+  ambiguity_behavior: preserve the Cosmos-RL compatibility default and emit backend and backend_selection_reason in the launch review
 required_credentials: []
 conditional_credentials:
   HF_TOKEN: required only when fetching a gated Hugging Face checkpoint; not required for a complete local checkpoint

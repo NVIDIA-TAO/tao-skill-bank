@@ -134,11 +134,9 @@ def select_implementation_backend(
         if workload in {"automl", "hpo"} and "cosmos-rl" in contracts:
             selected = "cosmos-rl"
             reason = "AutoML/HPO requires the Cosmos-RL train schema"
-        if "edge" in requested_model.casefold() and action != "train":
-            raise ValueError(
-                f"{requested_model} {action} has no native packaged backend; "
-                "use an explicitly selected compatibility adapter after training"
-            )
+        if "edge" in requested_model.casefold() and "cosmos-framework" in contracts:
+            selected = "cosmos-framework"
+            reason = "Cosmos3-Edge uses the Framework-native model and checkpoint action route"
     if selected not in contracts:
         choices = ", ".join(sorted(contracts))
         raise ValueError(f"Backend {selected!r} is not declared; available backends: {choices}")

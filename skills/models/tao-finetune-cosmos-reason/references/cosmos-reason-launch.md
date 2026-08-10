@@ -4,7 +4,8 @@ Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `
 
 This is the Cosmos-RL backend supplement. First resolve the shared frontend
 with `scripts/cosmos_workflow.py`; do not use this reference to select a
-backend. Plain Nano/Edge SFT may resolve to Cosmos Framework.
+backend. Plain Nano SFT defaults to Cosmos-RL; Cosmos3-Edge and an explicit
+Framework request resolve to Cosmos Framework.
 
 ## Launch Intake Reminder
 
@@ -24,8 +25,9 @@ For root mode, explain the automatic mapping: `train_root` maps to
 Before train or AutoML runner generation, resolve the Cosmos-RL backend
 contract and its pinned action image, show the exact image to the user, and ask
 whether to use it or override with `image=<override>`. Do not read the shared
-top-level fallback as the plain-SFT default. This skill does not package a
-`skills/models/tao-finetune-cosmos-reason/config.json` file.
+top-level image instead of the selected backend contract; the two pins match
+only to preserve compatibility with legacy skill consumers. This skill does
+not package a `skills/models/tao-finetune-cosmos-reason/config.json` file.
 
 The same metadata declares model-level GPU host minimums. They override the
 TAO-wide platform defaults for Cosmos-RL. On a self-managed Docker host, run:

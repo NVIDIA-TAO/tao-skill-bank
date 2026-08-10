@@ -188,7 +188,7 @@ def select_backend(*, model: str, action: str, backend: str = "auto", workload: 
             return "cosmos-framework", "Framework DCP export is owned by Cosmos Framework"
         if action != "train" or workload in {"automl", "hpo"}:
             return "cosmos-rl", "the requested action/schema is native to Cosmos-RL"
-        return "cosmos-framework", "plain Cosmos3-Nano SFT defaults to the native Cosmos Framework trainer"
+        return "cosmos-rl", "plain Cosmos3-Nano SFT preserves the Cosmos-RL compatibility default"
     contract = load_yaml(BACKEND_FILES[selected])
     action_contract = contract.get("actions", {}).get(action, {})
     if not action_contract.get("supported"):
@@ -806,7 +806,7 @@ def _source_commits(args: argparse.Namespace, backend: str) -> dict[str, str]:
 
 
 def _image_plan(args: argparse.Namespace, backend: str, commits: Mapping[str, str]) -> dict[str, Any]:
-    dockerfile = "Dockerfile" if backend == "cosmos-framework" else "Dockerfile.cosmos_rl"
+    dockerfile = "Dockerfile.cosmos_framework" if backend == "cosmos-framework" else "Dockerfile.cosmos_rl"
     integration = path_identity(args.tao_integration_repo)
     native_name = "cosmos-framework" if backend == "cosmos-framework" else "cosmos-rl-github"
     native_repo = path_identity(args.cosmos_framework_repo if backend == "cosmos-framework" else args.cosmos_rl_repo)
@@ -968,7 +968,7 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
             "import cosmos_rl", "import av", "import os", "import ctypes", "ctypes.CDLL('libnvcuvid.so.1')",
             "from nvidia_tao_core.microservices.handlers import huggingface_inference_microservice_server",
             "from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionPatchEmbed",
-            "assert getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False)",
+            "assert (getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False) or getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_channels_last_3d', False))",
             "assert av.codec.Codec('h264_cuvid', 'r') is not None",
             "from cosmos_rl.utils.runtime_dependency_contract import verify_deepep, verify_vllm_conv3d",
             "verify_deepep()", "verify_vllm_conv3d()",
