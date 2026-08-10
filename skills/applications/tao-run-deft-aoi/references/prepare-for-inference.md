@@ -11,8 +11,9 @@ downstream inference skills can consume the trained checkpoint without reading
 | `best_model.json` | Checkpoint plus customer metric contract/result and deployment metadata. |
 | `best_model_inference_spec.yaml` | Ready-to-run TAO inference spec. The executable artifact. |
 
-Both are written by `scripts/prepare_inference_spec.py`. Never hand-edit either
-file — keeping them in sync is the script's job.
+Both are written by `scripts/prepare_inference_spec.py`. At ordinary loop end,
+use `scripts/finalize_run.py`; it writes these first and refuses the terminal
+commit if either is absent. Never hand-edit either file.
 
 ### `best_model.json`
 
@@ -35,7 +36,7 @@ file — keeping them in sync is the script's job.
   },
   "iteration":      "iter1",
   "backbone":       "/abs/path/to/c_radio_v2_b.ckpt",
-  "images_dir":     "/abs/path/to/kpi/images",
+  "images_dir":     "/abs/path/to/workspace/images",
   "training_spec":  "/abs/path/to/baseline_spec.yaml"
 }
 ```
@@ -84,7 +85,7 @@ cp ${RESULTS_DIR}/best_model_inference_spec.yaml /tmp/my_inference.yaml
 TAO_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
 
 # 4. Run inference. Mount paths from best_model.json into the container.
-docker run --rm --gpus all --shm-size=8g \
+docker run --pull=never --rm --gpus all --shm-size=8g \
     --user "$(id -u):$(id -g)" \
     -v <your_csv_dir>:/data/infer \
     -v $(jq -r .images_dir ${RESULTS_DIR}/best_model.json):/data/images \
@@ -142,7 +143,8 @@ config verbatim, but if you build an inference spec by hand, watch out:
 
 Re-run `prepare_inference_spec.py` whenever:
 
-- The loop finishes (handled automatically as the final step).
+- The loop is about to finish (`finalize_run.py` handles this before
+  `loop_stop`).
 - A new iteration completes and you want to evaluate against the latest best.
   The script applies the metric contract's comparison direction, so calling it
   mid-loop gives the current customer-metric winner, not necessarily the final

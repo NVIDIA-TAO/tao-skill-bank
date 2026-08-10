@@ -1,9 +1,14 @@
 # Cosmos3 DEFT AOI Pre-Flight
 
-Run these checks in order. They are read-only until the single approval gate,
-except that a missing small Python helper may be installed as allowed by the
-bank policy. Do not create `${RESULTS_DIR}`, write specs, pull images, or submit
-jobs before approval.
+Run these checks in order. Resolve network mode through `references/air-gap.md`
+before checking Python dependencies. They are read-only until the single
+approval gate. Read exactly one branch after resolving the mode:
+`references/air-gap.md` or `references/network-bootstrap.md`. In air-gap mode,
+use only an interpreter selected by `scripts/deft_python.sh`; if none is
+complete, report the missing imports and stop without invoking a package
+manager. Do not
+create `${RESULTS_DIR}`, write specs, pull images, or submit jobs before
+approval.
 
 ## 1. Select and preflight a platform
 
@@ -82,16 +87,22 @@ approval.
 Resolve, do not guess:
 
 ```bash
+: "${TAO_SKILL_BANK_PATH:?set TAO_SKILL_BANK_PATH to the installed TAO skill-bank root containing versions.yaml and scripts/resolve_versions_key.py}"
+test -f "$TAO_SKILL_BANK_PATH/versions.yaml" || { echo "missing $TAO_SKILL_BANK_PATH/versions.yaml" >&2; exit 2; }
+test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" >&2; exit 2; }
 COSMOS_RL_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.tao_toolkit.cosmos_rl
 )
 TAO_DS_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.tao_toolkit.data_services
 )
 AG_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.metropolis_sdg.paidf_anomalygen
 )
 ```
@@ -236,12 +247,16 @@ present an unset `NGC_KEY` as a problem when the pull succeeds anyway.
 
 Record:
 
-- GPUs per node and node count;
+- GPUs per node, node count, and the exact GPU model plus memory reported by
+  the selected platform. Preserve that exact string for
+  `init_deft_state.py --gpu-model`; never report the local host's accelerator
+  for a remote Docker, Kubernetes, SLURM, Brev, or external-platform run;
 - `policy.parallelism.dp_shard_size` and `dp_replicate_size`;
 - LoRA rank/alpha/target modules;
 - epochs, batch size, learning rate;
 - Proxy and Benchmark sample counts;
-- mining top-K and cosine floor;
+- mining top-K (default 5), cosine floor,
+  and run-level filepath history ledger;
 - estimated baseline and per-iteration runtime.
 
 Do not invent a runtime estimate when no comparable run exists; label it
@@ -268,6 +283,8 @@ record-then-launch ordering must be explicit.
 | Field | Effective value | Source |
 |---|---|---|
 | Platform | <selected platform> | user |
+| Network mode / source | <airgap or network-enabled; activation source> | environment/user/harness/default |
+| Selected Python | <absolute dependency-complete executable> | preflight |
 | Workspace / media root | <absolute compute-frame paths> | user/default |
 | Base model | <Cosmos3 <variant> Reasoner (canonical ID); Nano by default> | default/user |
 | Prepared PTM | <that reasoner -> Qwen3-VL PTM path; reuse/prepare> | workflow/model skill |
@@ -279,8 +296,8 @@ record-then-launch ordering must be explicit.
 | Next Train | `train_iter_<N>.json`, created after Proxy RCA and Mining selection | workflow |
 | KPI | <metric operator target> + unknown_predictions <= 0 | user/default |
 | Iterations | <N> | user |
-| Train shape | <nodes x GPUs; epochs; batch; LR; LoRA> | user/spec/default |
-| Mining | <top-K; cosine floor> | user/default |
+| Train shape | <nodes x GPUs; exact GPU model/memory; epochs; batch; LR; LoRA> | user/spec/platform |
+| Mining | <top-K, default 5; cosine floor; history-aware filepath dedup> | user/default |
 | AnomalyGen | <project; num_SDG; asset status> | user/default |
 | Cosmos-RL image | <resolved URI> | versions.yaml |
 | Data-services image | <resolved URI> | versions.yaml |
@@ -302,12 +319,12 @@ lines below the table instead:
 
 - the variant-matched VLM base for the prepared PTM (Edge and Super never
   inherit Nano's default; see step 7);
-- which AnomalyGen assets are staged versus `WILL_AUTO_FETCH`, and their
-  commercial-training approval.
+- which AnomalyGen assets are staged; `WILL_AUTO_FETCH` is legal only in
+  network-enabled mode, plus their commercial-training approval.
 
 Then stop. Remind the user that approval permits checkpoint preparation,
-post-gate spec/state creation, any flagged AnomalyGen asset bootstrap, and GPU
+post-gate spec/state creation, any network-enabled AnomalyGen bootstrap, and GPU
 submissions. After approval, prepare and
 validate the Qwen3-VL checkpoint, write the staged specs with concrete nested
-values, initialize state once, audit it, then begin baseline frozen Benchmark
-evaluation.
+values, initialize state once, re-read it, then begin baseline frozen
+Benchmark evaluation.

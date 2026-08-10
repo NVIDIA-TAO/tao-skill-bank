@@ -111,14 +111,19 @@ combined training JSON.
   --train "$RESULTS_DIR/$LABEL/assemble/train_iter_${ITERATION}.json"
 ```
 
+For N>1, also pass
+`--previous-train "$RESULTS_DIR/iter$((ITERATION - 1))/assemble/train_iter_$((ITERATION - 1)).json"`.
+Omit `--previous-train` only for `iter1`, and omit `--synthetic` when the
+current iteration skipped AnomalyGen.
+
 `--validation-report` is the `validate_sharegpt.py --summary` output; keep the
 `validate_split_contract.py --summary` beside it as a sibling artifact. Their
 shapes differ — only the first has a top-level `mode` and an integer `records`,
-which is what the audit checks.
+which is what the committed validation stage records.
 
 The iteration cannot train until this report records
 `mode=bare_okng`, a positive record count, exact labels, unique targets, and
 existing files. The split validator must also prove that every generated Train
-target comes from Mining — or from `--synthetic` when AnomalyGen ran — and that
-neither those nor the synthetic targets overlap Proxy or Benchmark. Omit
-`--synthetic` when the AnomalyGen stage was skipped.
+target comes from Mining, the immediate `--previous-train` seed, or the current
+iteration's `--synthetic` output. It verifies that the new Train retains every
+preceding record and that none of these targets overlap Proxy or Benchmark.

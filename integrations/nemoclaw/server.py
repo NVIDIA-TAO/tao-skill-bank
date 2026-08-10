@@ -19,8 +19,11 @@ Security boundary (this server IS the boundary):
     unset for the host-local bridge topology (the VSS pattern).
 
 Run (plain HTTP; the sandbox reaches it via host.openshell.internal):
-  uv run --with mcp --with uvicorn python server.py \
+  uv run --with 'mcp<2' --with uvicorn python server.py \
     --workspace-root /home/tao-dev/tao-workspace --host 0.0.0.0 --port 9901
+
+mcp must stay below 2.x: this module imports mcp.server.fastmcp, which mcp 2.0
+removed.
 """
 
 import argparse

@@ -5,7 +5,7 @@ The underlying skill `tao-skill-bank:tao-analyze-gaps-visual-changenet` (`skills
 owns the full gap analysis contract: threshold sweep, weakness ranking, per-lighting
 expansion, visual spot-check, and report format. This file only covers the
 DEFT-loop-specific overlay: required inputs, output directory layout, and
-`deft_state.json` / `loop_log.jsonl` updates.
+`deft_state.json` updates.
 
 ## DEFT-Loop Inputs
 
@@ -56,5 +56,6 @@ the path and threshold with the command below.
     --rca-gaps <absolute path to kpi_gaps.parquet> \
     --rca-threshold <float> \
     --rca-target-defect <label> ... \
+    --duration-sec "${STAGE_DURATION_SEC}" \
     --summary "RCA (VCN): threshold=X recall=Y; gaps=K rows across N labels"
 ```

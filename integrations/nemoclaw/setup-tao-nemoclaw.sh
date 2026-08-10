@@ -63,6 +63,25 @@ GW=$(docker inspect "$CID" -f '{{range .NetworkSettings.Networks}}{{.Gateway}}{{
 [ -n "$GW" ] || die "could not resolve bridge gateway for '$SB'"
 log "sandbox=$SB container=$CID bridge-gateway=$GW workspace=$WORKSPACE"
 
+# ── 0b. Host firewall preflight ───────────────────────────────────────────────
+# The sandbox reaches this server over the docker bridge, so its packets land on
+# the host's INPUT chain. A default-deny host firewall — common on corporate /
+# IT-managed Linux, while ufw ships *inactive* on stock Ubuntu and DGX Spark,
+# which is why this never reproduces there — silently DROPs them. The symptom
+# surfaces 150 lines later in step 7 as "HTTP 000", which reads as a bad bind
+# even though the bind is correct. Warn here, with the exact rule.
+#
+# Deliberately does NOT run sudo: mutating a host firewall is a change the
+# operator should make knowingly.
+FW_HINT="sudo ufw allow from ${GW%.*}.0/16 to $GW port $PORT proto tcp"
+if command -v ufw >/dev/null 2>&1 && sudo -n ufw status 2>/dev/null | grep -qi '^Status: active'; then
+  if ! sudo -n ufw status 2>/dev/null | grep -q "$GW $PORT/tcp"; then
+    log "WARN: ufw is active and no rule permits the sandbox bridge to reach $GW:$PORT."
+    log "      The sandbox cannot reach the MCP server until you run:"
+    log "        $FW_HINT"
+  fi
+fi
+
 # ── 1. Materialize the skill bank + resolve the tao_exec shell image ──────────
 # Do this before the server starts so TAO_SHELL_IMAGE (the pyt image tao_exec
 # runs its CPU shell in) can be read from the bank's versions.yaml. Clone the
@@ -111,7 +130,9 @@ else
   # Tokenless is safe because the bind is the docker bridge IP, not the LAN.
   # The server inherits TAO_SHELL_IMAGE (resolved above) for tao_exec.
   ( unset TAO_MCP_TOKEN
-    setsid nohup uv run --with mcp --with uvicorn python "$SERVER" \
+    # Pin mcp<2: the server imports mcp.server.fastmcp, which mcp 2.x removed.
+    # Unpinned, `uv run --with mcp` resolves 2.x and the server dies on import.
+    setsid nohup uv run --with 'mcp<2' --with uvicorn python "$SERVER" \
       --workspace-root "$WORKSPACE" --host "$GW" --port "$PORT" \
       > "$WORKSPACE/tao-mcp-server.log" 2>&1 & )
   sleep 8
@@ -210,6 +231,15 @@ CODE=$(nemoclaw "$SB" exec -- curl -sS --max-time 8 -o /dev/null \
 case "$CODE" in
   400|406|200) log "✓ bridge OK (HTTP $CODE — server answered)";;
   403) die "bridge blocked by policy (HTTP 403) — check policy-list";;
+  000) # No response at all (dropped, not refused). Step 2 already confirmed the
+       # server process is up on $GW, so the usual cause is the host firewall
+       # dropping bridge traffic on INPUT — not a bad bind.
+       log "server unreachable (HTTP 000 — no response, i.e. dropped, not refused)."
+       log "Most likely the host firewall is dropping sandbox->host traffic. Fix:"
+       log "    $FW_HINT"
+       log "Confirm the server itself is healthy (expect HTTP 400 or 406):"
+       log "    curl -sS --noproxy '*' -o /dev/null -w '%{http_code}\\n' http://$GW:$PORT/mcp"
+       die "bridge unreachable — see the hint above";;
   *)   die "server unreachable (HTTP $CODE) — check the server bind matches gateway $GW";;
 esac
 

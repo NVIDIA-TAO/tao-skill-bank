@@ -16,6 +16,9 @@ job-record.
 
 Never use Benchmark errors as targets. The candidate/source side contains only
 the recorded Mining pool; Proxy errors are query targets, not source samples.
+The DEFT default top-K is 5. Preserve a user-supplied value; increase it only
+when the history summary shows that the current neighborhood contains too few
+novel candidates.
 
 ## Container user
 
@@ -39,14 +42,15 @@ If a future image genuinely rejects the mapping, repair ownership through a
 container rather than assuming sudo:
 
 ```bash
-docker run --rm -v "$WORKSPACE:/ws" busybox:latest \
+docker run --pull=never --rm -v "$WORKSPACE:/ws" busybox:latest \
   chown -R "$(id -u):$(id -g)" /ws/<relative/path/to/mining>
 ```
 
 ## Cosine floor
 
 The native nearest-neighbor output is not sufficient proof of the configured
-floor. Preserve raw outputs, then run:
+floor. Preserve raw outputs, then write cosine-qualified rows to the distinct
+pre-history candidate parquet:
 
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/filter_mined_by_cosine.py" \
@@ -54,7 +58,7 @@ floor. Preserve raw outputs, then run:
   --source-embeddings "$MINING_DIR/source_embeddings.parquet" \
   --target-embeddings "$MINING_DIR/target_embeddings.parquet" \
   --min-similarity "$MIN_SIMILARITY" \
-  --output "$MINING_DIR/mined_filtered.parquet" \
+  --output "$MINING_DIR/mined_candidates.parquet" \
   --summary "$MINING_DIR/cosine_filter_summary.json"
 ```
 
@@ -62,9 +66,45 @@ The output must differ from the raw parquet. A missing embedding, dimension
 mismatch, zero-norm vector, non-finite value, missing path, or zero kept rows
 is a hard stop.
 
+## History-aware selection
+
+After the cosine floor, drop filepaths selected by prior iterations:
+
+```bash
+"$PYTHON" "$BANK_ROOT/skills/data/tao-mine-aoi-images/scripts/filter_mined_history.py" \
+  --candidate-parquet "$MINING_DIR/mined_candidates.parquet" \
+  --output-parquet "$MINING_DIR/mined_filtered.parquet" \
+  --history-file "$RESULTS_DIR/mining_history.json" \
+  --summary "$MINING_DIR/mining_history_summary.json" \
+  --iteration "$ITERATION" \
+  --topn "$TOPN"
+```
+
+`mined_filtered.parquet` is now the final novel-only handoff. Preserve
+`mined_candidates.parquet`, `mining_history_summary.json`, and the run-level
+ledger. Cosmos3 requires at least one mined row, so an all-duplicate result is a
+hard stop with the summary's recommendation to increase `topn` or expand the
+Mining pool; do not replay an earlier sample into the monotonic Train lineage.
+
 ## Handoff
 
-Commit `data_mining` with the filtered parquet, summary, both embedding
+Commit `data_mining` with the final filtered parquet, pre-history candidate
+parquet, cosine summary, history ledger + per-iteration summary, both embedding
 parquets, and exact positive row count. The next stage uses
 `emit_mined_sharegpt.py` to recover the Mining source prompt, golden image, and
 bare label.
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+  --results-dir "$RESULTS_DIR" --iter-label "iter$ITERATION" \
+  --stage data_mining \
+  --mining-parquet "$MINING_DIR/mined_filtered.parquet" \
+  --mining-candidates "$MINING_DIR/mined_candidates.parquet" \
+  --mining-summary "$MINING_DIR/cosine_filter_summary.json" \
+  --mining-history "$RESULTS_DIR/mining_history.json" \
+  --mining-history-summary "$MINING_DIR/mining_history_summary.json" \
+  --mining-target-embeddings "$MINING_DIR/target_embeddings.parquet" \
+  --mining-source-embeddings "$MINING_DIR/source_embeddings.parquet" \
+  --mining-count <positive-int> \
+  --summary "history-aware mining selected novel real pairs"
+```

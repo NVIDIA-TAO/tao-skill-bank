@@ -46,7 +46,7 @@ the observed leftovers. They make the PTM directory unremovable by its owner,
 so repair it before the run needs to move or delete it. No sudo required:
 
 ```bash
-docker run --rm -v "$(dirname "$PREPARED_MODEL_HOST_PATH"):/out" busybox:latest \
+docker run --pull=never --rm -v "$(dirname "$PREPARED_MODEL_HOST_PATH"):/out" busybox:latest \
   chown -R "$(id -u):$(id -g)" "/out/$(basename "$PREPARED_MODEL_HOST_PATH")"
 ```
 

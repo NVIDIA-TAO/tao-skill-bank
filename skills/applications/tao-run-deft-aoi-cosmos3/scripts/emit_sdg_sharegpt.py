@@ -29,7 +29,7 @@ from validate_sharegpt import load_records, prompt_and_label
 
 # AnomalyGen names every output "<texture>+<anomaly>_<index>.<ext>". The paired
 # clean board reuses the stem verbatim under original_image/.
-# paidf-anomalygen:1.0.0 calls the generated-defect column "output_filename".
+# Older paidf-anomalygen releases call the generated-defect column "output_filename".
 RECONSTRUCTED_COLUMNS = (
     "reconstructed_image",
     "reconstructed",

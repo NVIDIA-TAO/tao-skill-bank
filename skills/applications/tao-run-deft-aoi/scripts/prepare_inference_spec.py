@@ -69,7 +69,7 @@ def _pick_best(
     if not candidates:
         raise RuntimeError(
             "no completed iteration in deft_state.json has the configured metric — "
-            "run audit_deft_run.py before preparing the handoff"
+            "finish an evaluate commit before preparing the handoff"
         )
     label, info, result = pick_best(candidates, contract)
     return label, info, result, contract
