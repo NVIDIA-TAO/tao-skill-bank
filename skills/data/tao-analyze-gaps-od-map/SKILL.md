@@ -67,7 +67,13 @@ SPEC=/absolute/path/to/object_detection.yaml
 RUN_ROOT=/absolute/path/that/contains/annotations/images/and/results
 GPU_COUNT=1
 
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
+# NO PUBLISHED IMAGE CARRIES `gap_analysis object_detection` YET. Verified against
+# nvidia/tao-toolkit:7.1.0-data-services, nvstaging ds:7.0.1-rc-200-x86 and
+# ds:2026.7.31-rc-14-multiarch — all three offer only {vcn_aoi, vlm_bcq, default_specs}.
+# Probe before pulling ~30 GB:
+#   docker run --rm "$DS_IMAGE" gap_analysis nosuch 2>&1 | tail -2
+# and confirm object_detection is in the printed choice list.
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.1-rc-200-x86  # unpinned: repin once the action is published
 
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -89,7 +95,13 @@ docker info > /dev/null
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
+# NO PUBLISHED IMAGE CARRIES `gap_analysis object_detection` YET. Verified against
+# nvidia/tao-toolkit:7.1.0-data-services, nvstaging ds:7.0.1-rc-200-x86 and
+# ds:2026.7.31-rc-14-multiarch — all three offer only {vcn_aoi, vlm_bcq, default_specs}.
+# Probe before pulling ~30 GB:
+#   docker run --rm "$DS_IMAGE" gap_analysis nosuch 2>&1 | tail -2
+# and confirm object_detection is in the printed choice list.
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.1-rc-200-x86  # unpinned: repin once the action is published
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 
