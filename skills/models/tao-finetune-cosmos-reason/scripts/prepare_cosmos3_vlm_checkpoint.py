@@ -106,7 +106,10 @@ python -m cosmos_framework.scripts.convert_model_to_vlm_safetensors \
   --vlm-model-name "$architecture_value"
 '''
     result = [
+        # Run as the invoking user so the host-side validation pass can read
+        # the prepared files; the framework image keeps its venv world-readable.
         "docker", "run", "--rm", "--ipc=host", "--entrypoint", "bash",
+        "--user", f"{os.getuid()}:{os.getgid()}",
         "-e", f"BASE_MODEL={source}", "-e", f"BASE_MODEL_KIND={'uri' if is_uri(args.base_model_path_or_uri) else 'local'}",
         "-e", f"BASE_MODEL_REVISION={args.base_model_revision}",
         "-e", f"ARCHITECTURE_MODEL={donor}", "-e", f"ARCHITECTURE_MODEL_KIND={'uri' if is_uri(args.vlm_architecture_model_path_or_uri) else 'local'}",
