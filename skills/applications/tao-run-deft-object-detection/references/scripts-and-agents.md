@@ -9,7 +9,6 @@ Run every bundled script through `scripts/deft_python.sh`. Resolve every path ar
 | Script | Purpose | Arguments |
 |---|---|---|
 | `deft_python.sh` | Select an already-provisioned host Python with the required imports and execute it. Never installs packages. | `[PYTHON_ARG ...]`; env `DEFT_PYTHON`, `WORKSPACE` |
-| `resolve_versions_key.py` | Resolve a dotted image key from the bank's `versions.yaml`. | `KEY [--skill-bank PATH]` |
 | `init_deft_state.py` | Write a fresh `deft_state.json`. Atomic; refuses to overwrite without `--force`. Fresh runs only. | `--results-dir --workspace --max-iterations ...` |
 | `commit_stage.py` | The only supported state writer. Validates the ordered transition, updates state, appends one log event, audits, rolls back on failure. | `--results-dir --iter-label --stage --summary [artifact flags] [--status ok\|error]` |
 | `audit_deft_run.py` | Read-only cross-check of state, log, and artifacts. Prints the safe next action and `read_before_action`. | `--results-dir [--require-terminal] [--require-complete]` |

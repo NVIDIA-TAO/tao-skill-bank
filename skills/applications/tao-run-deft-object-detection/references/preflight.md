@@ -43,18 +43,26 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
    If `NGC_KEY` is unset, tell the user which variable to export and relaunch. Defer the `HF_TOKEN` verdict until check 9 has resolved the encoder; a run using a local snapshot needs no HuggingFace access at all.
 
-4. **Resolve and export the pinned images.** Hard-stop if either export is empty — bash silently substitutes `""` and the next `docker image inspect` then reports a misleading failure.
+4. **Export the pinned images.** Export both verbatim; every later stage reads them from the environment, and an unset one makes `docker image inspect` report a misleading failure rather than an obvious one.
 
    ```bash
-   VR=<skill_root>/scripts/resolve_versions_key.py
-   export TAO_PYT_IMAGE=$(<skill_root>/scripts/deft_python.sh "$VR" images.tao_toolkit.pyt)
-   export TAO_DS_IMAGE=$(<skill_root>/scripts/deft_python.sh "$VR" images.tao_toolkit.data_services)
+   export TAO_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
+   export TAO_DS_IMAGE=nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
    ```
 
    | Env var | versions-key | Used by |
    |---|---|---|
    | `TAO_PYT_IMAGE` | `images.tao_toolkit.pyt` | `train`, `inference` |
-   | `TAO_DS_IMAGE` | `images.tao_toolkit.data_services` | `gap_analysis`, `embed`, `mine`, `kpi_analyze` |
+   | `TAO_DS_IMAGE` | `images.tao_toolkit.data_services_od` | `gap_analysis`, `embed`, `mine`, `kpi_analyze` |
+
+   The data-services key is `data_services_od`, not `data_services`: the release
+   data-services image carries neither `gap_analysis object_detection` nor
+   `tmm unique_neighbor_matching`, so two of this loop's four data-services stages cannot
+   run on it at all. Substituting the release image does not degrade the loop — it stops it.
+
+   Both URIs are literals stamped from `versions.yaml` by `scripts/stamp_versions.py` and
+   checked by CI, so they cannot drift. The skill resolves nothing at runtime, which is what
+   lets it work when installed standalone as a plugin, with no skill-bank checkout on disk.
 
 5. **Image presence.** `docker image inspect "$TAO_PYT_IMAGE" "$TAO_DS_IMAGE"`. Record anything missing as `WILL_PULL_AFTER_APPROVAL`; do not pull before the gate.
 
