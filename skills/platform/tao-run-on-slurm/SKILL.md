@@ -239,9 +239,10 @@ recovery — pass `docker://…` to `srun` and let Pyxis handle it — puts the 
 back inside the GPU allocation, which is the cost the conversion existed to
 avoid, and it does so precisely when something is already wrong. Treat a failed
 or truncated conversion as fatal: fix it on the CPU partition and resubmit.
-(The SDK exposes this as `SLURM_STRICT_SQSH`, whose default is the permissive
-fallback — so if a run is unexpectedly slow to start, check whether it quietly
-pulled from the registry.)
+
+Diagnostic: if a job is unexpectedly slow to produce output, check what
+`--container-image=` actually received. A registry URI there — rather than a
+`.sqsh` path — means the pull happened on the GPUs.
 
 ## Monitoring and cancellation
 
