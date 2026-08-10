@@ -62,8 +62,15 @@ When embeddings feed a mining step, every parquet compared against another must 
 
 Run from the `tao-skills-external` repo root.
 
+**Write the spec beside the output parquet.** The run does not retain it, so the
+embeddings otherwise carry no record of the encoder that produced them. That
+matters here more than elsewhere: every parquet compared against another in a
+mining step must come from the same `model` and `model_path`, and mismatched
+encoders are the usual cause of mining output that looks unrelated to its targets.
+
 ```bash
-SPEC=/absolute/path/to/image_embeddings.yaml
+OUT_DIR=/absolute/path/for/this/run              # where output_parquet is written
+SPEC="$OUT_DIR/image_embeddings.yaml"            # spec lives beside its output
 RUN_ROOT=/absolute/path/that/contains/parquets/images/and/results
 GPU_COUNT=1
 
