@@ -73,7 +73,7 @@ RUN_ROOT=/absolute/path/that/contains/images/annotations/and/results
 python3 skills/data/tao-analyze-detection-kpi/scripts/verify_kpi_analyze_spec.py \
   --spec "$SPEC"
 
-DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
 
 docker run --rm --gpus all --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -132,7 +132,7 @@ docker info > /dev/null
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 
