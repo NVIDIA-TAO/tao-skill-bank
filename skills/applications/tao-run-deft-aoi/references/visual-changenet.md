@@ -7,7 +7,7 @@ patterns — its `## Local Docker Invocation` section has the exact docker run c
 (including `--shm-size=8g`, backbone file mount, and how to override
 checkpoint/results_dir on the command line without editing the spec). This file only
 covers the DEFT-loop-specific overlay: mounts, spec paths, two-checkpoint compare,
-KPI sweep, and `deft_state.json` / `loop_log.jsonl` updates.
+KPI sweep and `deft_state.json` updates.
 
 DEFT AOI is intentionally plain-train for Visual ChangeNet. When invoking the
 underlying model skill for any train stage, pass `automl_policy: off` so this
@@ -16,10 +16,14 @@ unchanged for other workflows.
 
 ## DEFT-Loop Mount Layout
 
+Read `IMAGES_DIR` from `deft_state.json::config.images_dir`; for a new
+workspace it is `<workspace>/images` (legacy `<workspace>/kpi/images` is only a
+Pre-Flight fallback).
+
 ```
 -v <workspace>:/data/workspace                                  # combined iter CSVs + staged images
 -v ${RESULTS_DIR}:/results                                      # canonical run root; never /results/iterN
--v <workspace>/kpi/images:/data/datasets/NV_PCB_Siamese/images   # real validation/KPI images
+-v ${IMAGES_DIR}:/data/datasets/NV_PCB_Siamese/images            # canonical real-image root from state
 -v <workspace>/train/base:/data/datasets/NV_PCB_Siamese/csv      # training_set.csv, validation_set.csv
 -v <workspace>/kpi:/data/datasets/NV_PCB_Siamese/kpi             # testing_set.csv
 -v <workspace>/augmentation/backbone/c_radio_v2_b.safetensors:/data/pretrained_models/C-RADIOv2_B.safetensors  # C-RADIO backbone file
@@ -67,10 +71,10 @@ Before every train launch, validate these coupled spec invariants:
 - `train.checkpoint_interval <= train.num_epochs`. A user override such as
   `epoch 1` must also lower `checkpoint_interval`; otherwise TAO aborts before
   the first epoch.
-- Derive inference/evaluate specs from the exact training spec and change only
-  task paths/checkpoint/results overrides. Do not reconstruct the model/loss
-  block: a loss/difference-module mismatch can load the checkpoint and then
-  fail at criterion construction.
+- Derive inference/evaluate specs from the exact training spec. Preserve the
+  model/loss block, but set `dataset.classify.augmentation_config.augment=false`,
+  then change only task paths/checkpoint/results overrides. A loss/difference-
+  module mismatch can load the checkpoint and then fail at criterion construction.
 - Use the underlying skill's documented `visual_changenet <task> -e <spec>`
   entrypoint. Do not switch to direct package-module/Hydra commands after an
   error; their config-path semantics differ.
@@ -102,14 +106,14 @@ current train invocation.
 
 ## Per-Iter Spec `images_dir` — Asymmetric
 
-When deriving `iter${N}_spec.yaml` from `baseline_spec.yaml`, **only `train_dataset.images_dir` moves to the workspace root**; the other dataset blocks keep the kpi-images mount:
+When deriving `iter${N}_spec.yaml` from `baseline_spec.yaml`, **only `train_dataset.images_dir` moves to the workspace root**; the other dataset blocks keep the canonical real-images mount:
 
 | Dataset block | images_dir (container path) | Why |
 |---|---|---|
-| `train_dataset` | `/data/workspace` | iter combined CSV mixes base rows (`kpi/images/...`) and SDG rows (`results/run_<TS>/iter${N}/dataset/images/...`) — both are workspace-root-relative after assembly |
-| `validation_dataset` | `/data/datasets/NV_PCB_Siamese/images` | validation_set.csv carries paths relative to kpi/images/ (the kpi mount root); unchanged from baseline |
+| `train_dataset` | `/data/workspace` | iter combined CSV mixes base rows (`images/...`) and SDG rows (`results/run_<TS>/iter${N}/dataset/images/...`) — both are workspace-root-relative after assembly |
+| `validation_dataset` | `/data/datasets/NV_PCB_Siamese/images` | validation_set.csv carries paths relative to the canonical real-image root; unchanged from baseline |
 | `test_dataset` | `/data/datasets/NV_PCB_Siamese/images` | same — usually points at validation_set.csv |
-| `infer_dataset` | `/data/datasets/NV_PCB_Siamese/images` | testing_set.csv carries paths relative to kpi/images/ |
+| `infer_dataset` | `/data/datasets/NV_PCB_Siamese/images` | testing_set.csv carries paths relative to the canonical real-image root |
 
 A bulk `sed 's|/data/datasets/NV_PCB_Siamese/images|/data/workspace|g'` on the spec catches all four and breaks the latter three. Edit `train_dataset.images_dir` surgically.
 
