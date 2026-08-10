@@ -129,6 +129,7 @@
           "automl_enabled": false,
           "default": 1,
           "description": "Sliding window stride. Use 1 for dense windows.",
+          "minimum": 1,
           "title": "stride",
           "type": "int"
         }

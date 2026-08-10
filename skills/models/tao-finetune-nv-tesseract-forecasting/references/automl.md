@@ -74,6 +74,7 @@ result = runner.run(
         "model.seq_len":          512,
         "model.use_cross_channel": False,
         "train.epochs":           10,
+        "train.num_epochs":       10,
         "train.output_dir":       "automl_workspace/finetune/trials",
     },
     workspace_path="automl_workspace/finetune",
@@ -146,6 +147,8 @@ def main():
     target_cols = [c.strip() for c in ds["target_cols"].split(",")] if ds.get("target_cols") else None
 
     horizon = inf["forecast_horizon"]
+    if horizon <= 0 or horizon >= len(df):
+        raise ValueError(f"inference.forecast_horizon must be in [1, {len(df) - 1}], got {horizon}")
     df_input  = df.iloc[:-horizon]
     df_actual = df.iloc[-horizon:]
 
@@ -267,6 +270,8 @@ def main():
     target_cols = [c.strip() for c in ds["target_cols"].split(",")] if ds.get("target_cols") else None
 
     horizon = inf["forecast_horizon"]
+    if horizon <= 0 or horizon >= len(df):
+        raise ValueError(f"inference.forecast_horizon must be in [1, {len(df) - 1}], got {horizon}")
     df_input  = df.iloc[:-horizon]
     df_actual = df.iloc[-horizon:]
 

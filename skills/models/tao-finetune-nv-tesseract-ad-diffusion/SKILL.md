@@ -5,7 +5,7 @@ description: >-
   for multivariate time series. Use when the user asks to "fine-tune NV-Tesseract",
   "run AD diffusion inference", "detect anomalies with diffusion", "time series
   anomaly detection", "finetune ad-diffusion", "use perform_anomaly_analysis_with_diffusion",
-  "automl ad-diffusion", "hyperparameter search ad-diffusion", "hyperparamter optimization"
+  "automl ad-diffusion", "hyperparameter search ad-diffusion", "hyperparameter optimization"
   or mentions "curriculum_medium.yaml", "final_model.pth",
   "nv-tesseract-ad-diffusion", "ad_diffusion", or "TSDiffuser_Generic".
 license: Apache-2.0

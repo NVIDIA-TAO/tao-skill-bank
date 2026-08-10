@@ -92,6 +92,7 @@ result = runner.run(
     spec_overrides={
         "dataset.csv":        "/path/to/normal_data.csv",
         "train.epochs":       20,
+        "train.num_epochs":   20,
         "train.output_dir":   "automl_workspace/finetune/trials",
     },
     # window_length must be divisible by split (default 10). The schema allows
