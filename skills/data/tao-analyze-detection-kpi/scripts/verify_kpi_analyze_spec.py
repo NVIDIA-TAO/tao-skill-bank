@@ -122,6 +122,12 @@ def main() -> int:
               f"num_recall_points={kpi.get('num_recall_points')} "
               f"ignore_sqwidth={kpi.get('ignore_sqwidth')}")
         print(f"Expected output: {config['results_dir']}/kpi_calc.csv")
+        out_dir = Path(str(config["results_dir"])).expanduser().resolve()
+        if spec.parent != out_dir:
+            print(f"WARNING: the spec is outside results_dir ({spec.parent} vs {out_dir}). "
+                  "The run does not copy it, so the finished artifacts will carry no record of "
+                  f"the settings that produced them. Author it at {out_dir / spec.name} instead.",
+                  file=sys.stderr)
         return 0
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {exc}", file=sys.stderr)

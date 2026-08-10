@@ -66,8 +66,13 @@ The default template is `assets/default_kpi_analyze.yaml`.
 
 Run from the `tao-skills-external` repo root.
 
+**Write the spec into the results directory.** The run does not retain it, so a
+completed run otherwise cannot tell you which settings produced `kpi_calc.csv`.
+Keeping them together makes the result reproducible from the run alone.
+
 ```bash
-SPEC=/absolute/path/to/kpi_analyze.yaml
+RESULTS_DIR=/absolute/path/for/this/run          # results_dir in the spec
+SPEC="$RESULTS_DIR/kpi_analyze.yaml"        # spec lives beside its outputs
 RUN_ROOT=/absolute/path/that/contains/images/annotations/and/results
 
 python3 skills/data/tao-analyze-detection-kpi/scripts/verify_kpi_analyze_spec.py \
