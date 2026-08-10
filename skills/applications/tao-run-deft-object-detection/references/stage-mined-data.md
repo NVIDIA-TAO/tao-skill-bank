@@ -42,7 +42,7 @@ This is a hard-stop gate. Do not train on a source that fails validation.
 ## Step 3 — Extend the exclude set
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/merge_exclude_parquet.py \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_exclude_for_mine.py \
   --parquet-a "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
   --parquet-b "${RESULTS_DIR}/iter$((N-1))/mined_cumulative.parquet" \
   --output "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet"
@@ -57,7 +57,7 @@ The output feeds the *next* iteration's miner as `exclude_path`, so the loop nev
 `desired_unique_count` is computed once and held constant across iterations, matching the reference pipeline:
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/compute_mining_budget.py \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_budget_for_mine.py \
   --weak-parquet "${RESULTS_DIR}/iter1/gaps/weak_images.parquet" \
   --multiplier "<multiplier>" \
   --max-count "<source pool row count>" \

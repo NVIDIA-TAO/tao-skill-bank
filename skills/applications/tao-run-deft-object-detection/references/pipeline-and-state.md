@@ -72,7 +72,7 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
      --odvg "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_odvg.jsonl" \
      --key-field file_name
 
-   <skill_root>/scripts/deft_python.sh <skill_root>/scripts/merge_exclude_parquet.py \
+   <skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_exclude_for_mine.py \
      --parquet-a "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
      --parquet-b "<previous mined_cumulative.parquet; omit on iter 1>" \
      --output "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet"
@@ -84,7 +84,7 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
    First append the new ODVG source to the train spec:
 
    ```bash
-   <skill_root>/scripts/deft_python.sh <skill_root>/scripts/update_train_spec.py \
+   <skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_spec_for_train.py \
      --previous-spec "<prev phase train spec>" \
      --output-spec "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
      --num-epochs "<epochs>" --learning-rate "<lr>" \

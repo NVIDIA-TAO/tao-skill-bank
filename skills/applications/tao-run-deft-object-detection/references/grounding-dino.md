@@ -184,10 +184,10 @@ Build the spec first. Every flag below is load-bearing — the script refuses to
 that cannot train, because each of these failed silently or expensively at least once:
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/make_pool_val_split.py \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_val_split_for_train.py \
   --coco "<pool>/coco.json" --out "${RESULTS_DIR}/val_coco.json"
 
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/update_train_spec.py \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_spec_for_train.py \
   --previous-spec        "<template or assets/train_grounding_dino.yaml>" \
   --output-spec          "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
   --tmm-image-dir        "${RESULTS_DIR}/iter${N}/staged/images" \
@@ -234,7 +234,7 @@ training had already finished correctly in 14m20s:
 ### Every iteration fine-tunes the base checkpoint, not the previous one
 
 `train.pretrained_model_path` stays pointed at the **original base checkpoint** on every
-iteration. It is inherited from the spec template and `update_train_spec.py` never touches it.
+iteration. It is inherited from the spec template and `prepare_spec_for_train.py` never touches it.
 That is deliberate, and it is the single most surprising property of this loop:
 
 - What grows across iterations is the **dataset** (`dataset.train_data_sources` gains one

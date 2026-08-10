@@ -49,7 +49,7 @@ Both forms take identical arguments. Substitute `$CODETR` wherever this document
 ```yaml
 inference:
   checkpoint: <co-detr checkpoint>
-  category_mapping:            # emitted by scripts/build_fold_mapping.py
+  category_mapping:            # emitted by scripts/prepare_class_mappings_for_prep.py
     bicycle:   ["bicycle", "motorcycle"]
     car:       ["car", "bus", "truck"]
     person:    ["person"]
@@ -89,7 +89,7 @@ Obtaining a checkpoint is outside this skill — see `tao-train-codetr`'s SKILL.
 TAO does the folding; this step only writes the files that tell it how.
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/build_fold_mapping.py \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_class_mappings_for_prep.py \
   --classes "$CLASSES_YAML" \
   --emit-codetr-category-mapping "${PREP_DIR}/codetr_category_mapping.yaml" \
   --emit-kitti-mapping           "${PREP_DIR}/kitti_mapping.yaml" \
@@ -230,7 +230,7 @@ Confirm the ODVG records key on `file_name` with the image **basename** — that
 First build the input list. Do not hand-write it:
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/build_pool_input_parquet.py \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_input_for_image_embeddings.py \
   --images-dir "$POOL_IMAGES" \
   --out        "${PREP_DIR}/pool_input.parquet"
 ```

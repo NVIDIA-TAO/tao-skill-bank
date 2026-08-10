@@ -180,7 +180,7 @@ Resolve everything you can before asking the user. Parameter precedence is stric
     fi
     ```
 
-13. **Spec sanity.** `train.checkpoint_interval` must be `<= train.num_epochs`. `update_train_spec.py` lowers it automatically when an explicit epoch override would violate this, but flag the adjustment in the Summary so it is not a surprise.
+13. **Spec sanity.** `train.checkpoint_interval` must be `<= train.num_epochs`. `prepare_spec_for_train.py` lowers it automatically when an explicit epoch override would violate this, but flag the adjustment in the Summary so it is not a surprise.
 
 **Required input — `max_iterations`.** No default. Ask if not supplied and do not proceed past Pre-Flight without it.
 

@@ -138,7 +138,7 @@ def main() -> int:
                              "with --val-json-file. `grounding_dino train` cannot run without "
                              "a validation source; see references/grounding-dino.md.")
     parser.add_argument("--val-json-file", default=None,
-                        help="Validation COCO from make_pool_val_split.py. Must carry 0-based "
+                        help="Validation COCO from prepare_val_split_for_train.py. Must carry 0-based "
                              "category ids: GDINO's val loader uses category_id verbatim as a "
                              "dense label index, so a conventional 1-based COCO overflows on "
                              "the last class.")
@@ -197,7 +197,7 @@ def main() -> int:
                 raise ValueError(
                     "no validation source. `grounding_dino train` subscripts "
                     "val_data_sources unconditionally and cannot run without one. Pass "
-                    "--val-image-dir/--val-json-file — make_pool_val_split.py builds a "
+                    "--val-image-dir/--val-json-file — prepare_val_split_for_train.py builds a "
                     "0-based COCO from the prepared pool."
                 )
 

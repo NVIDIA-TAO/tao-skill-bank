@@ -63,7 +63,7 @@ Write per-iteration under `${RESULTS_DIR}/iter${N}/mining/unique_neighbor_matchi
 source_path:            <config.source_pool_embeddings>
 target_path:            <iterations.iter${N}.embeddings_parquet>
 output_dir:             <absolute path to ${RESULTS_DIR}/iter${N}/mining>
-desired_unique_count:   <from compute_mining_budget.py>
+desired_unique_count:   <from prepare_budget_for_mine.py>
 allocation_policy:      class_stratified     # or global — see below
 distance_metric:        euclidean
 candidate_expansion_factor: 5
