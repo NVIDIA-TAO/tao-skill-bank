@@ -187,6 +187,11 @@ def result_from_iteration(
         )
         if "unit" not in result or not isinstance(result["unit"], str):
             raise ValueError("metric_result.unit must be present and be a string")
+        if result["unit"] != contract["unit"]:
+            raise ValueError(
+                f"metric_result.unit={result['unit']!r} does not match "
+                f"contract unit {contract['unit']!r}"
+            )
         if not isinstance(result.get("constraints", {}), dict):
             raise ValueError("metric_result.constraints must be an object")
         return result

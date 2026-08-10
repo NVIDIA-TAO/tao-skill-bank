@@ -10,7 +10,7 @@ file opens offline.
 
 | Stage trigger | New data available |
 |---|---|
-| Loop start (config loaded) | `{{ RUN_SUMMARY_ROWS_HTML }}`, baseline `{{ GROWTH_ROWS_HTML }}`, `{{ PROBLEM_STATEMENT_HTML }}`, and `{{ APPROACH_HTML }}`. The summary records the approved KPI, Visual ChangeNet identity, GPU count/model, routing, and available outcome evidence. |
+| Loop start (config loaded) | `{{ RUN_SUMMARY_ROWS_HTML }}`, baseline `{{ GROWTH_ROWS_HTML }}`, `{{ PROBLEM_STATEMENT_HTML }}`, and `{{ APPROACH_HTML }}`. The summary records the approved KPI, Visual ChangeNet identity, GPU count/model, routing, mining top-K/cosine floor/history-aware filepath dedup policy, and available outcome evidence. |
 | Baseline evaluate done | baseline primary `metric_result`, optional threshold, and evaluator diagnostics; `{{ KPI_DATASET_HTML }}` populated from the evaluation manifest scanned during baseline. |
 | Baseline RCA done | RCA insight, score distribution, evaluator diagnostics, and defect type rows; also refines `{{ KPI_DATASET_HTML }}`'s per-defect-type breakdown using `${results_dir}/baseline/rca_results/defect_type_rows.csv`. |
 | Iter N evaluate done | iter N primary metric, constraints, optional threshold, diagnostics, checkpoint |
@@ -26,8 +26,8 @@ experiment summary followed by **Training Set Growth** with the exact columns
 Generated` is the row count of the committed `SDG_result.csv`; the two final
 growth columns come from the cumulative combined training CSV, so `New Unique
 Images (After Dedup)` always equals `Δ`. Runtime totals are sums of positive measured
-`duration_sec` values from `loop_log.jsonl`; identify partial historical logs
-as missing data rather than treating zero as elapsed time.
+`duration_sec` values from `deft_state.json.events`; identify missing historical
+durations as unavailable data rather than treating zero as elapsed time.
 
 Stub values for data not yet available:
 - future iter metric/rows → render `—`
@@ -202,7 +202,7 @@ Schemas:
 |---|---|---|
 | `{{ PROBLEM_STATEMENT_HTML }}` | Task + model, configured primary metric predicate, evaluator and constraints, plus failure modes targeted by mining/synthetic/fine-tuning. Keep evaluator diagnostics separate from the primary goal. Bake values directly into the block. | `deft_state.json` → `metric_contract`, `kpi_target`, `max_iterations` |
 | `{{ KPI_DATASET_HTML }}` | Totals (component crops + PASS/NO_PASS split), component categories, per-defect-type breakdown within NO_PASS, lighting variants, notable imbalances. Render as a one-paragraph summary + `.data-table` with one row per component category. | KPI eval manifest under `${results_dir}/baseline/eval/` + `${results_dir}/baseline/rca_results/defect_type_rows.csv`. If RCA has not yet run, omit the per-defect-type column and keep the totals paragraph only. |
-| `{{ APPROACH_HTML }}` | The five-stage iterative recipe (evaluate → RCA → route → augment via k-NN + AnomalyGen → fine-tune); cosine similarity floor; the run's headline lever (which augmentation source dominates). Render as a paragraph + `.insight` box. | `deft_state.json` → `mining_filter.cosine_threshold`, `max_iterations`; latest iter's `mining_pool.csv` (sdg vs mined ratio drives the headline lever). |
+| `{{ APPROACH_HTML }}` | The five-stage iterative recipe (evaluate → RCA → route → augment via k-NN + AnomalyGen → fine-tune); top-K, cosine floor, and cross-iteration filepath dedup; the run's headline lever (which augmentation source dominates). Render as a paragraph + `.insight` box. | `deft_state.json` → `config.mining_filter`, `max_iterations`; latest iter's `mining_pool.csv` plus `mining_history_summary.json` (sdg vs novel-mined ratio and already-mined rejects drive the headline lever). |
 
 Keep these blocks **populated from the first render onward** — the user sees
 them when they open the live HTML even before the first iteration completes.

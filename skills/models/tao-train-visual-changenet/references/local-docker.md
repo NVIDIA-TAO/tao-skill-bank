@@ -12,7 +12,7 @@ docker run --rm --gpus all --shm-size=8g \
     -e NGC_API_KEY="${NGC_API_KEY}" \
     -v <workspace>:/data/workspace \
     -v <workspace>/results:/results \
-    -v <workspace>/kpi/images:/data/datasets/NV_PCB_Siamese/images \
+    -v <images_dir>:/data/datasets/NV_PCB_Siamese/images \
     -v <workspace>/train/base:/data/datasets/NV_PCB_Siamese/csv \
     -v <workspace>/kpi:/data/datasets/NV_PCB_Siamese/kpi \
     -v <workspace>/augmentation/backbone/c_radio_v2_b.safetensors:/data/pretrained_models/C-RADIOv2_B.safetensors \
@@ -20,6 +20,11 @@ docker run --rm --gpus all --shm-size=8g \
     visual_changenet <train|evaluate|inference|export|quantize> -e /data/workspace/specs/<spec>.yaml \
     [key=value overrides...]
 ```
+
+`<images_dir>` is the host directory against which the CSV `input_path` and
+`golden_path` values resolve. DEFT workspaces record it in
+`deft_state.json::config.images_dir`; their canonical layout uses
+`<workspace>/images`.
 
 **`--shm-size=8g` is required** — without it, dataloader workers crash with `Unexpected bus error encountered in worker` due to insufficient shared memory.
 

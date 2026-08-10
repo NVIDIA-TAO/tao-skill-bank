@@ -211,15 +211,24 @@ def validate(
                 f"{len(missing)} row(s) reference a missing {col} on disk "
                 f"(workspace_root={workspace_root}, siamese={siamese_mode}); first: {sample}"
             )
-            if any(
-                not pathlib.Path((row.get(col) or "").strip()).is_absolute()
-                and (workspace_root / "kpi" / "images" / (row.get(col) or "").strip()).exists()
-                for row in rows
-                if (row.get(col) or "").strip()
-            ):
+            image_prefix = next(
+                (
+                    prefix
+                    for prefix in (pathlib.Path("images"), pathlib.Path("kpi/images"))
+                    if any(
+                        not pathlib.Path((row.get(col) or "").strip()).is_absolute()
+                        and (workspace_root / prefix / (row.get(col) or "").strip()).exists()
+                        for row in rows
+                        if (row.get(col) or "").strip()
+                    )
+                ),
+                None,
+            )
+            if image_prefix is not None:
                 errors.append(
                     f"{col} appears to use base-CSV coordinates; prepend "
-                    "'kpi/images/' exactly once before assembling an iteration CSV"
+                    f"'{image_prefix.as_posix()}/' exactly once before assembling "
+                    "an iteration CSV"
                 )
 
     if "label" in columns:

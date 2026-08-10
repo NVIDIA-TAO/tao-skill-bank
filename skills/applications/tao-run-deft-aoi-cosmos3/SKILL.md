@@ -36,8 +36,9 @@ containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
 `skills/{applications,models,data,platform,core}/...` tree listed in
 `eval.config`. Run bundled validation with the skill Python so dependencies
 match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
-tests.test_cosmos3_bare`. If that Python lacks `pyarrow` or `yaml`, install the
-small helper dependency there and rerun validation.
+tests.test_cosmos3_bare`. Resolve network mode first. Missing air-gap imports
+are a hard stop; network-enabled setup lives only in
+`references/network-bootstrap.md`.
 
 ## Execution Contract
 
@@ -47,47 +48,44 @@ Treat a run as a disk-backed state machine.
    value (`user`, `spec`, or `default`) in the Pre-Flight Summary.
 2. Ask which installed platform to use. Do not select Docker, SLURM,
    Kubernetes, Brev, virtualenv, or an external platform by default.
-3. Read and run the selected platform skill's Preflight before constructing
-   launch commands. Stop on a missing system/native-CLI prerequisite. A small
-   missing Python helper may be installed with `python -m pip install ...`,
-   then Preflight must be rerun.
+3. Resolve network mode, then read exactly one of `references/air-gap.md` or
+   `references/network-bootstrap.md`. Run the selected platform skill's
+   Preflight and stop on a missing system/native-CLI prerequisite.
 4. Before any mutation or launch, invoke `tao-launch-workflow` and show its
    launch review plus this skill's Pre-Flight Summary. Wait for one explicit
    approval.
 5. After approval, initialize `${RESULTS_DIR}/deft_state.json` exactly once
    with `scripts/init_deft_state.py`. Pass the exact GPU model reported by the
    selected platform's Preflight through `--gpu-model` (include accelerator
-   memory when available). Never reinitialize a resumed run or edit
-   `deft_state.json` / `loop_log.jsonl` by hand.
+   memory when available), plus the resolved network mode/source and selected
+   absolute Python. Never reinitialize a resumed run or edit
+   `deft_state.json` by hand.
 6. Before every stage, after context compaction, and before a completion claim,
-   run:
-
-   ```bash
-   <skill_root>/scripts/deft_python.sh \
-     <skill_root>/scripts/audit_deft_run.py --results-dir "${RESULTS_DIR}"
-   ```
-
-   Stop and repair the listed disk inconsistency when it prints
-   `DEFT_RUN_STATUS=INVALID`. Read only the reported `read_before_action`
-   reference before continuing.
-7. Submit each GPU stage through the chosen platform's four verbs:
+   run `scripts/deft_context.py --state ... --stage ...`. Use its durable
+   `next_stage` and the state file's `status`,
+   `current_iteration`, `iterations.*.status`, `stage_completed`, and latest
+   `events` entry to resume. Do not infer progress from assistant prose or
+   from an artifact that is not recorded in state.
+7. Run every command that can install, fetch, log in, or launch a local
+   container through `scripts/deft_exec.py --state ... -- <command>`. In an
+   air-gap it rejects egress/package operations and enforces no-pull. Remote
+   platforms must apply the equivalent immutable no-pull/offline policy.
+8. Submit each GPU stage through the chosen platform's four verbs:
    `submit` / `status` / `logs` / `cancel`. The `submit` verb must open the
    job-record before native launch; the returned id is the only launch handle.
    Poll the backend, not the job-record, and map state to
    `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`.
-8. Commit every completed or failed DEFT stage with
-   `scripts/commit_stage.py`. It updates state and log atomically, then runs the
-   audit and rolls back on inconsistency. Every commit requires a positive,
-   measured `--duration-sec`: use backend elapsed wall time for submitted jobs
-   and a host wall-clock timer for inline stages. Missing or zero durations are
-   rejected.
-9. Claim completion only after this exits zero:
-
-   ```bash
-   <skill_root>/scripts/deft_python.sh \
-     <skill_root>/scripts/audit_deft_run.py \
-     --results-dir "${RESULTS_DIR}" --require-complete
-   ```
+9. Commit every completed or failed DEFT stage with
+   `scripts/commit_stage.py`. It verifies the stage inputs and atomically
+   updates both the resume snapshot and ordered `events` array in state. Every
+   commit requires a positive, measured `--duration-sec`: use backend elapsed
+   wall time for submitted jobs and a host wall-clock timer for inline stages.
+   Missing or zero durations are rejected.
+10. Claim completion only after `scripts/finalize_run.py` verifies final
+   Benchmark evidence, successfully commits `loop_stop`, and a fresh
+   read of `deft_state.json` shows `status == "complete"`,
+   `iterations.baseline.status == "complete"`, and the final iteration's
+   `status == "complete"`.
 
 Never place secrets in a spec, command, transcript, job-record, or chat. Check
 credential presence only, for example
@@ -178,9 +176,11 @@ generated iteration training file. There is no input Train annotation.
 Run `scripts/validate_split_contract.py` to prove that Proxy, Benchmark, and
 Mining targets are disjoint and that the frozen Benchmark annotation hash has
 not changed. When a generated Train file is supplied, the same validator
-requires its targets to come from Mining — or, with `--synthetic`, from the
-iteration's AnomalyGen output — and to remain disjoint from Proxy and
-Benchmark. Synthetic targets are held to the same evaluation isolation.
+requires its targets to come from Mining, the immediate `--previous-train`
+seed, or the current iteration's `--synthetic` AnomalyGen output, and to remain
+disjoint from Proxy and Benchmark. For iteration N>1, `--previous-train` is
+required and the validator proves that every preceding Train record was
+retained.
 
 ## KPI Isolation
 
@@ -284,8 +284,11 @@ For each `iterN` when the frozen Benchmark gate is unmet:
    record with `scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
    the driving Proxy RCCA recorded zero false accepts, and even then generating
    is often still worthwhile — see `references/paidf-anomalygen.md`.
-3. `data_mining` — invoke `tao-mine-aoi-images`, then apply the configured
-   cosine floor with `scripts/filter_mined_by_cosine.py`.
+3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
+   floor with `scripts/filter_mined_by_cosine.py`, then run the mapped skill's
+   history-aware post-processing so a filepath selected by a prior iteration
+   cannot enter Train again. The default top-K remains 5; preserve an explicit
+   user value and increase it only when the history summary shows low novelty.
 4. `assemble_data` — align mined target paths to Mining source prompts,
    golden references, and exact labels with `scripts/emit_mined_sharegpt.py`;
    create `train_iter_1.json` from the mined and synthetic records only after
@@ -304,12 +307,13 @@ For each `iterN` when the frozen Benchmark gate is unmet:
 `init_deft_state.py` writes the first `DEFT_Loop_Report.html`; every successful
 `commit_stage.py` call then refreshes it through the deterministic
 `scripts/render_report.py` post-commit hook. Stop when the Benchmark contract
-passes, `max_iterations` is reached, or a hard stop occurs. Commit `loop_stop`,
-run `render_report.py --require-terminal` after optional token alignment, then
-run the completion audit. The Cosmos-only report addition is a bounded prompt
-showcase sourced from recorded annotations; keep every other visual convention
-aligned with ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or
-hand-author report rendering.
+passes, `max_iterations` is reached, or a hard stop occurs. For an ordinary
+stop, run `scripts/finalize_run.py` with the explicit reason, then run
+`render_report.py --require-terminal` after optional token alignment.
+The Cosmos-only report addition is a bounded prompt showcase sourced from
+recorded annotations; keep every other visual convention aligned with
+ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or hand-author
+report rendering.
 
 ## Stage References
 
@@ -321,7 +325,7 @@ hand-author report rendering.
 | Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
 | AnomalyGen | `paidf-anomalygen`, `mode=inference_only` | `references/paidf-anomalygen.md` |
 | Assemble / validate | bundled bare ShareGPT scripts | `references/aoi-annotation.md` |
-| State/log/report | bundled commit/audit scripts + deterministic report hook | `references/scripts-and-agents.md` |
+| State/report | bundled state commit + deterministic report hook | `references/scripts-and-agents.md` |
 
 ## Hard Stops
 
@@ -329,7 +333,8 @@ Commit an error stage and do not auto-retry for: invalid disk state; a rich or
 non-exact training label; a JSONL or non-array annotation input; an
 an unconverted Cosmos Reason 3 checkpoint still in native Omni format at a
 Cosmos-RL boundary;
-missing/ambiguous mined-to-source alignment; target overlap among
+missing/ambiguous mined-to-source alignment; missing/tampered mining history,
+cross-iteration mined filepath duplication; target overlap among
 Proxy/Benchmark/Mining; a generated Train target outside Mining and AnomalyGen
 output, or overlapping Proxy/Benchmark; a changed Benchmark hash; any Benchmark
 error used for routing; missing/empty mining output; a failed or empty

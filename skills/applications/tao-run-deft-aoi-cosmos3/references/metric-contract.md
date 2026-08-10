@@ -33,6 +33,7 @@ Supported primary metrics in this migration are `recall_ng`,
 `precision_ng`, `f1_ng`, and `accuracy`, all compared with `>=`. Values and
 targets are fractions in `[0, 1]`.
 
-`benchmark_metrics/metric_result.json` must match the configured name, unit,
-value, and constraints. `record_metric_result.py` adds its absolute path as
-evidence; the audit re-reads that file and rejects drift.
+`benchmark_metrics/metric_result.json` must match the configured name and unit
+exactly, and must provide the value and constraints. `record_metric_result.py`
+adds its absolute path as
+evidence; `commit_stage.py` validates it before recording the stage.

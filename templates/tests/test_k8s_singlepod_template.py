@@ -103,3 +103,25 @@ def test_no_cross_node_rendezvous_singlenode():
     # single-pod must not carry the multi-node rendezvous env / Service (that is M7)
     text = render()
     assert "MASTER_ADDR" not in text and "Indexed" not in text and "subdomain" not in text
+
+
+def test_container_command_uses_posix_sh():
+    """The container command must run under a shell every image actually has.
+
+    The template hardcoded `/bin/bash -lc`, so any image without bash could not
+    start — busybox and distroless ship only /bin/sh. That is precisely the
+    small image a cheap lifecycle smoke or eval reaches for, so the bug bit the
+    case the template most needs to support. Verified live: a busybox Job from
+    the rendered template reaches Completed only with /bin/sh.
+
+    Pinned here because the same defect shipped in both k8s templates, so it is
+    a repeat pattern rather than a one-off.
+    """
+    job = load()
+    cmd = job["spec"]["template"]["spec"]["containers"][0]["command"]
+    assert cmd[0] == "/bin/sh", (
+        f"container command interpreter is {cmd[0]!r}; use /bin/sh so images "
+        f"without bash (busybox, distroless) can start")
+    assert "-lc" not in cmd, (
+        "drop -l: busybox sh treats login mode inconsistently, and container "
+        "images set PATH via ENV rather than profile scripts")

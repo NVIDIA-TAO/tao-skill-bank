@@ -7,14 +7,14 @@ paths before invoking a script.
 
 | Script | Purpose |
 |---|---|
-| `init_deft_state.py` | Initialize version-3 Cosmos3 state once; freeze Benchmark hash and bare mode. |
-| `audit_deft_run.py` | Read-only state/log/artifact audit and resume oracle, including AMP-allocation sum proof. |
-| `commit_stage.py` | Atomically commit one stage and roll back on failed audit; AnomalyGen records both generated CSV and allocation JSON. |
-| `log_stage.py` | Ordered JSONL writer used by `commit_stage.py`; do not call for normal stage commits. |
+| `init_deft_state.py` | Initialize version-5 Cosmos3 state once; freeze Benchmark hash, bare mode, media root, and immutable execution policy. |
+| `deft_context.py` | Re-read state and print the deterministic next stage plus network/Python policy; reject a requested-stage mismatch. |
+| `deft_exec.py` | Enforce state-backed offline/no-install/no-pull policy for external commands. |
+| `commit_stage.py` | Validate one stage's inputs and atomically update state. AnomalyGen skip requires an empty recorded false-accept array; terminal commits require reason/report evidence. |
 | `metric_contract.py` | Validate/compare the Benchmark KPI contract. |
 | `record_metric_result.py` | Bind `benchmark_metrics/metric_result.json` to an iteration. |
 | `validate_sharegpt.py` | Enforce two-image, exact bare OK/NG ShareGPT records. |
-| `validate_split_contract.py` | Enforce Proxy/Benchmark/Mining isolation, generated-Train lineage, and Benchmark hash. |
+| `validate_split_contract.py` | Enforce split isolation, monotonic generated-Train lineage, and Benchmark hash. |
 | `check_annotations.py` | Per-role field-contract check over all three workspace annotation files. `ROLE_CONTRACT` is the authoritative field list. |
 | `patch_eval_image_cap.py` | Raises the pinned image's 1-image-per-prompt evaluation cap to what bare_okng needs, and returns the read-only mount. Retires itself once the image is fixed. |
 | `analyze_gaps.py` | Proxy RCCA artifacts or Benchmark aggregate metric evidence. |
@@ -23,7 +23,8 @@ paths before invoking a script.
 | `emit_mined_sharegpt.py` | Align filtered paths to Mining prompts, golden images, and labels. |
 | `assemble_training_json.py` | Monotonic bare training-data merge with dedupe/leakage checks. |
 | `align_token_usage.py` | Backfill stage token accounting after a run when a transcript is available. |
-| `render_report.py` | Deterministically render the self-contained NVIDIA-styled HTML report from canonical state/log and recorded artifacts, including escaped annotation prompt examples; validate required sections/placeholders and replace atomically. |
+| `render_report.py` | Deterministically render the self-contained NVIDIA-styled HTML report from state and recorded artifacts, including escaped annotation prompt examples; validate required sections/placeholders and replace atomically. |
+| `finalize_run.py` | Render final evidence, validate the explicit stop reason, commit `loop_stop`, and record the report path. |
 
 `init_deft_state.py` requires `--gpu-model` with the exact model string from
 the selected platform's Preflight. `commit_stage.py` requires a positive
@@ -33,6 +34,11 @@ host duration for inline stages; round a measured sub-second stage up to `1`.
 An omitted, zero, or negative duration is rejected rather than recorded as an
 unknown value.
 
+Before every stage, call `deft_context.py --state <deft_state.json> --stage
+<stage>`. Wrap local external/container commands with `deft_exec.py --state
+<deft_state.json> -- <command>`; the selected remote platform must enforce the
+same policy when it constructs a job.
+
 Train, Proxy evaluate, and Benchmark evaluate reuse the current
 `tao-finetune-cosmos-reason` action commands. Mining reuses
 `tao-mine-aoi-images`. The application owns only the DEFT-specific state,
@@ -41,7 +47,7 @@ isolation, OK/NG analysis, filtering, and assembly scripts.
 ## Automatic report hook
 
 `init_deft_state.py` invokes `render_report.py` after writing canonical state.
-`commit_stage.py` invokes it again after every valid state/log commit,
+`commit_stage.py` invokes it again after every valid state commit,
 including error and `loop_stop` commits. The hook is outside the state
 transaction: it reports `report hook failed` without rolling back a valid
 stage result.

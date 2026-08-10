@@ -158,9 +158,8 @@ To skip, commit a documented branch skip instead of launching the generator:
 ```
 
 The driving RCCA is `baseline` for `iter1` and `iter${N-1}` for later
-iterations. The audit re-proves the skip against that phase's
-`false_accepts_json` on disk and rejects it when the file records any entry, so
-the skip cannot be self-certified. This is the only legal way to omit the
+iterations. Read that phase's recorded `false_accepts_json` and use `--skip`
+only when it contains no entries. This is the only legal way to omit the
 stage: a failed generator with false accepts outstanding is a hard stop.
 
 Note the asymmetry: zero false accepts *permits* the skip, it never forces it.
@@ -201,14 +200,13 @@ be automatic.
 ```
 
 `commit_stage.py` derives `M` by summing the committed defect-to-count
-`allocation.json` and the audit rechecks it from disk. When `M < N`, report
+`allocation.json`. When `M < N`, report
 both requested and allocated counts — that gap is the
 signal a reviewer needs to spot an allocation bottleneck rather than a
 generation one.
 
-All three artifacts must land under the stage's bound results directory. `--skip`
-and the two artifact flags are mutually exclusive; the audit rejects a phase
-that records both.
+All three artifacts must land under the stage's bound results directory.
+`--skip` and the artifact flags are mutually exclusive; do not record both.
 
 ## Commercial-training eligibility
 

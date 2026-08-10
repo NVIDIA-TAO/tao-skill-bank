@@ -102,23 +102,6 @@ def _read_optional_json(value: Any) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _read_log(path: pathlib.Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    entries: list[dict[str, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid loop_log.jsonl line {line_number}: {exc}") from exc
-        if not isinstance(entry, dict):
-            raise ValueError(f"loop_log.jsonl line {line_number} must be an object")
-        entries.append(entry)
-    return entries
-
-
 def _csv_row_count(path_value: Any) -> int | None:
     if not isinstance(path_value, str) or not path_value:
         return None
@@ -668,8 +651,8 @@ def _recommendations(
 ) -> str:
     if failed:
         items = [
-            ("Review the hard stop", "Use the canonical audit output and committed error event; do not infer recovery from this report."),
-            ("Start from valid disk evidence", "Resume only when the state audit names a legal next action, or initialize a fresh run."),
+            ("Review the hard stop", "Use the latest error event in deft_state.json; do not infer recovery from this report."),
+            ("Resume from recorded state", "Repair the failed stage, then retry it and commit the new result to deft_state.json."),
         ]
     elif not terminal:
         items = [
@@ -679,7 +662,7 @@ def _recommendations(
     elif passed:
         items = [
             ("Promote the best checkpoint", "Validate the recorded checkpoint in the deployment environment."),
-            ("Archive the evidence", "Keep this self-contained report with the canonical state and loop log."),
+            ("Archive the evidence", "Keep this self-contained report with deft_state.json and the recorded artifacts."),
         ]
     else:
         detail = ", ".join(failures) if failures else "the remaining KPI gap"
@@ -718,8 +701,6 @@ def _atomic_write(path: pathlib.Path, text: str) -> None:
 
 def render(
     results_dir: pathlib.Path,
-    *,
-    audit_report: dict[str, Any] | None = None,
 ) -> pathlib.Path:
     results_dir = results_dir.expanduser().resolve()
     state_path = results_dir / "deft_state.json"
@@ -729,21 +710,23 @@ def render(
     if not isinstance(state, dict):
         raise ValueError("deft_state.json root must be an object")
     contract = contract_from_state(state)
-    entries = _read_log(results_dir / "loop_log.jsonl")
-    terminal = (
-        bool(audit_report.get("terminal"))
-        if audit_report is not None
-        else bool(entries and entries[-1].get("stage") == "loop_stop")
-    )
-    run_status = (
-        str(audit_report.get("status", "IN_PROGRESS"))
-        if audit_report is not None
-        else (
-            "FAILED"
+    raw_entries = state.get("events", [])
+    if not isinstance(raw_entries, list):
+        raise ValueError("state.events must be an array")
+    entries = [entry for entry in raw_entries if isinstance(entry, dict)]
+    stored_status = str(state.get("status", "")).lower()
+    if stored_status not in {"in_progress", "complete", "failed"}:
+        stored_status = (
+            "failed"
             if any(entry.get("status") == "error" for entry in entries)
-            else ("COMPLETE" if terminal else "IN_PROGRESS")
+            else (
+                "complete"
+                if entries and entries[-1].get("stage") == "loop_stop"
+                else "in_progress"
+            )
         )
-    )
+    terminal = stored_status in {"complete", "failed"}
+    run_status = stored_status.upper()
     candidates = _metric_candidates(state, contract)
     best_label: str | None = None
     best_phase: dict[str, Any] = {}
@@ -780,7 +763,7 @@ def render(
         banner = (
             '<div class="kpi-banner"><div class="icon">!</div><div class="content">'
             '<div class="title">Run ended at a hard stop</div>'
-            '<div class="body">Review the committed error event and canonical audit output before starting a fresh run.</div></div></div>'
+            '<div class="body">Review the latest error event in deft_state.json before retrying the failed stage.</div></div></div>'
         )
     elif not terminal:
         final_status = "IN PROGRESS"
@@ -892,7 +875,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--require-terminal",
         action="store_true",
-        help="Refuse to render unless the canonical loop log ends in loop_stop.",
+        help="Refuse to render unless deft_state.json records a terminal status.",
     )
     return parser
 
@@ -900,14 +883,16 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        from audit_deft_run import audit
-
-        report = audit(args.results_dir.expanduser().resolve())
-        if report["status"] == "INVALID":
-            raise ValueError("audit failed: " + "; ".join(report["errors"]))
-        if args.require_terminal and not report["terminal"]:
-            raise ValueError("--require-terminal requested but loop_stop is not committed")
-        output = render(args.results_dir, audit_report=report)
+        state = _read_json(
+            args.results_dir.expanduser().resolve() / "deft_state.json"
+        )
+        if not isinstance(state, dict):
+            raise ValueError("deft_state.json root must be an object")
+        if args.require_terminal and state.get("status") not in {"complete", "failed"}:
+            raise ValueError(
+                "--require-terminal requested but deft_state.json is not terminal"
+            )
+        output = render(args.results_dir)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"render_report: {exc}", file=sys.stderr)
         return 2

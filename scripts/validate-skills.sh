@@ -9,7 +9,8 @@
 #   1a. Reverse of 1: every non-core skill dir with a SKILL.md is listed in marketplace.json,
 #       so a skill added on disk without a marketplace entry cannot silently never ship.
 #   1c. Every skills/<layer>/<dir> contains a SKILL.md (catches assets stranded by a rename).
-#   3c. Every models/ skill has a `docker run` somewhere, or an explicit
+#   3c. Every models/ skill has a `docker run` somewhere, a self-contained venv/uv
+#       Quick Start (uv run / uv sync / python -m venv), or an explicit
 #       requires_external:true frontmatter marker (README "Docker-native first").
 #   1d. All three plugin manifests carry the same version, and README's "bundles all N skills"
 #       matches the tao-skills array length.
@@ -280,7 +281,7 @@ PY
 
 # ─── 3c. docker-native rule for models/ and data/ ───────────────────────────
 echo
-echo "=== 3c. models/ skills are docker-native ==="
+echo "=== 3c. models/ skills are docker-native or venv-native ==="
 python3 - <<'PY'
 import os, re, sys
 errs = 0
@@ -303,23 +304,30 @@ for layer in ('models',):
         for dirpath, _, files in os.walk(skill_dir):
             for f in files:
                 try:
-                    if 'docker run' in open(os.path.join(dirpath, f), encoding='utf-8', errors='ignore').read():
-                        found = True
-                        break
+                    text = open(os.path.join(dirpath, f), encoding='utf-8', errors='ignore').read()
                 except OSError:
                     continue
+                # "runnable from SKILL.md alone" is satisfied by a docker-native run
+                # path OR a self-contained local venv/uv Quick Start (the 7.1.0
+                # VirtualEnv platform option, e.g. NV-Tesseract / AutoML venv skills).
+                if ('docker run' in text
+                        or 'uv run' in text or 'uv sync' in text or 'uv pip install' in text
+                        or 'python -m venv' in text or 'uv venv' in text or 'virtualenv' in text):
+                    found = True
+                    break
             if found:
                 break
         if not found:
-            print(f"ERROR: {skill_dir} — no `docker run` anywhere in the skill. README's "
-                  f"'Docker-native first' rule requires model/data skills to be runnable from "
-                  f"SKILL.md alone. Add a docker Quick Start, or set `requires_external: true` "
-                  f"in frontmatter metadata if the upstream workflow is not a TAO container.",
+            print(f"ERROR: {skill_dir} — no runnable path found: neither a `docker run` nor a "
+                  f"venv/uv Quick Start (e.g. `uv run`, `uv sync`, `python -m venv`). README's "
+                  f"'Docker-native first' rule requires model skills to be runnable from SKILL.md "
+                  f"alone — add a docker Quick Start OR a local venv/uv Quick Start, or set "
+                  f"`requires_external: true` if the upstream workflow is not a TAO container.",
                   file=sys.stderr)
             errs += 1
 sys.exit(errs)
 PY
-[ $? -eq 0 ] && ok "all models/ skills are docker-native or explicitly external" || errors=$((errors + $?))
+[ $? -eq 0 ] && ok "all models/ skills are docker-native, venv-native, or explicitly external" || errors=$((errors + $?))
 
 # ─── 3b. SKILL.md size + no nested SKILL.md (signing parity) ────────────────
 echo

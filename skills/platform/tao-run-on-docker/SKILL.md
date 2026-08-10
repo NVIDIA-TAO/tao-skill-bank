@@ -176,7 +176,7 @@ docker run \
 
 Notes:
 
-- `--gpus '"device=0,1"'` — specific GPUs (double-quote-escaped). Without nvidia-container-toolkit: `could not select device driver "" with capabilities: [[gpu]]`.
+- `--gpus '"device=0,1"'` — **select GPUs by id, not by count, on any shared host** (double-quote-escaped). A count-based request resolves to the *first* N devices, so `--gpus 1` can only ever land on GPU 0: if GPU 0 is busy, every job OOMs there while the other GPUs sit idle, and there is no way to steer it — `-e NVIDIA_VISIBLE_DEVICES` is overwritten by `--gpus`. Read current occupancy (`nvidia-smi --query-gpu=index,memory.used --format=csv`) and pass the free ids. Ids may also be GPU UUIDs. Without nvidia-container-toolkit: `could not select device driver "" with capabilities: [[gpu]]`.
 - `--rm` — clean up the container at exit; omit when you want `docker logs` after exit.
 - `--shm-size=8g` — torchrun + PyTorch DataLoaders exhaust the default 64 MB `/dev/shm` otherwise; size it for multi-GPU training and raise (e.g. `16g`) if you still hit `Bus error`.
 - `--user "$(id -u):$(id -g)"` — required by default whenever a bind mount is writable. It prevents root-owned checkpoint trees that the submitting host user cannot clean up.
@@ -375,9 +375,9 @@ du -xhd1 <results_root> 2>/dev/null | sort -h
 find <results_root> -maxdepth 3 -printf '%u:%g %m %s %p\n' 2>/dev/null | head
 ```
 
-For a bind mount, clean only confirmed terminal job directories using the SDK
-retention path or a reviewed ownership repair; never assume `docker system
-prune` touches them. For Docker's own root, relocate `data-root` as described
+For a bind mount, clean only job directories whose record is in a terminal state
+(`tao_job_record.py get "$JOB_ID"`), via a reviewed ownership repair; never assume
+`docker system prune` touches them. For Docker's own root, relocate `data-root` as described
 above. `docker system prune -a --volumes` is destructive and may remove unused
 images and volumes belonging to other workflows, so run it only after explicit
 user approval and a reviewed `docker system df` inventory.
