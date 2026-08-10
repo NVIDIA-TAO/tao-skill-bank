@@ -68,7 +68,7 @@ resource limits without credentials.
 
 ## Decoder and cache recovery
 
-Framework uses its native CUDA TorchCodec path. The release Cosmos-RL image uses
+Framework uses its native CUDA TorchCodec path. The pinned Cosmos-RL image uses
 qwen-vl-utils' torchvision path backed by source-built PyAV and the restricted
 system FFmpeg/NVDEC codecs; Decord and PyNvVideoCodec are intentionally absent.
 Positive DataLoader worker counts require the runtime's `spawn` context and

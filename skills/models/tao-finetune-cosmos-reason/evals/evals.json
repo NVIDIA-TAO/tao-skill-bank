@@ -44,9 +44,9 @@
     "question": "Plan plain dense SFT for nvidia/Cosmos3-Nano on an arbitrary customer video-conversation dataset without an explicit backend, then explain what changes if the request is evaluate instead. Do not execute anything.",
     "expected_skill": "tao-finetune-cosmos-reason",
     "expected_script": "scripts/cosmos_workflow.py",
-    "ground_truth": "Use the shared frontend. Plain Nano SFT defaults to native Cosmos Framework and reports why; evaluate defaults to Cosmos-RL because Framework has no native evaluate action. Do not silently assume Cosmos-RL for training.",
+    "ground_truth": "Use the shared frontend. Plain Nano SFT preserves the Cosmos-RL compatibility default and reports why; evaluate also defaults to Cosmos-RL. An explicit Cosmos Framework request still selects its separate repository-derived image, TOML, topology, and checkpoint contract.",
     "expected_behavior": [
-      "Selects cosmos-framework for plain Nano SFT",
+      "Selects cosmos-rl for plain Nano SFT",
       "Selects cosmos-rl for evaluate",
       "Reports the backend-selection rationale",
       "Keeps the backend-specific image, TOML, entrypoint, topology, and checkpoint contracts separate"

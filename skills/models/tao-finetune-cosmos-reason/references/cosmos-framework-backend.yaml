@@ -14,7 +14,7 @@ build:
     purpose: native trainer, callbacks, exporter, model and dataset support
     required_build_args: [SOURCE_COMMIT, SOURCE_TREE, SOURCE_DIRTY, BUILD_TIMESTAMP]
   - owner: cosmos-rl
-    dockerfile: Dockerfile
+    dockerfile: Dockerfile.cosmos_framework
     purpose: TAO evaluate/inference adapter and DAFT/TAO packages
     required_build_args:
     - COSMOS_FRAMEWORK_BASE_IMAGE
