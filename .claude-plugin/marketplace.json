@@ -81,7 +81,8 @@
         "./skills/data/tao-generate-image-grounding",
         "./skills/data/tao-generate-referring-expressions",
         "./skills/data/tao-mine-od-images",
-        "./skills/data/tao-analyze-detection-kpi"
+        "./skills/data/tao-analyze-detection-kpi",
+        "./skills/data/tao-generate-image-embeddings"
       ]
     },
     {
@@ -91,8 +92,7 @@
       "strict": true,
       "skills": [
         "./skills/data/tao-convert-dataset-format",
-        "./skills/data/tao-validate-dataset-format",
-        "./skills/data/tao-generate-image-embeddings"
+        "./skills/data/tao-validate-dataset-format"
       ]
     }
   ]
