@@ -702,6 +702,10 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "vision": {"nframes": args.frames, "video_decoder": "torchvision"},
         "system_prompt": args.system_prompt,
     })
+    if args.dataset_family == "video_conversation":
+        # The packaged WTS hook consumes the decoder at custom.video_decoder;
+        # vision.video_decoder is retained for preprocessing provenance.
+        spec["custom"]["video_decoder"] = "torchvision"
     if use_dataset_cache:
         spec["custom"]["vision"]["cache_dir"] = args.container_cache_dir
     if args.video_override_map:
@@ -757,6 +761,8 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
         # Cosmos-RL's native DiskCache reads this environment variable; there
         # is no dataset-cache-directory field in SFTDataConfig.
         common["COSMOS_CACHE"] = args.container_cache_dir
+        if args.dataset_family == "video_conversation":
+            common["FORCE_QWENVL_VIDEO_READER"] = "torchvision"
     return common
 
 
