@@ -118,6 +118,12 @@ jobs are submitted with plain `kubectl apply`.
    data (author the mount paths, no fetch — the air-gap answer, and what the
    packaged template does); **C** = ephemeral: an initContainer fetches from S3
    into a shared `emptyDir` and a final step uploads results to S3 before TTL.
+
+   **Tier C holds the GPU while it downloads.** A pod reserves `nvidia.com/gpu`
+   for its whole lifetime, initContainers included, so a large tier-C fetch —
+   or a first-time multi-GB image pull — is billed and reaper-eligible idle GPU
+   time, exactly like pulling inside a SLURM allocation. Prefer tier A when the
+   data is already on a PVC; choose tier C knowingly, for small inputs.
 3. **Credentials → a per-job Secret (never inline in the manifest** — it lands on
    disk and is readable via `kubectl get job -o yaml`). Create it from an env-file
    on **stdin** so no value hits a command line:

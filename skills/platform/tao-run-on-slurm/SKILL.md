@@ -172,8 +172,10 @@ direct-spec modes, backend details, and the results-dir default.
 
 1. Stage compact JSON files for specs, environment, and cloud metadata under
    `<job_dir>/specs`, `<job_dir>/env`, and `<job_dir>/meta`.
-2. Optionally convert the Docker image to a cached SQSH image with
-   `srun -n1 -p <conversion_partition> enroot import`.
+2. Convert the Docker image to a cached SQSH image **before** the GPU job, with
+   `srun -n1 -p <conversion_partition> enroot import`. This is a one-time cost
+   per image, not an optional optimization — see *Acquire the image off the GPU
+   allocation* below.
 3. Write an sbatch script under `<job_dir>/sbatch/job_<job_id>.sbatch`.
 4. Submit `sbatch --export=ALL <script>`.
 5. Run the container with `srun --container-image=<image> --container-mounts=/lustre`.
@@ -182,6 +184,50 @@ Accepted image formats: `/path/to/image.sqsh`, `registry#image:tag`,
 `docker://registry#image:tag`, and ordinary `registry/image:tag` (converted to
 Pyxis form when needed). SQSH conversion is cached by image name; for `:latest`
 images the cached SQSH is reused unless `force_reconvert_latest` is enabled.
+
+### Acquire the image off the GPU allocation
+
+**The GPU is yours from the moment the allocation starts, not from when compute
+begins.** Anything the job does before training — pulling a registry image,
+converting it, fetching a dataset — runs on GPUs that are idle, billed, and
+visible to the cluster's GPU-idle reaper. A first-time TAO pull plus enroot
+conversion is minutes of that, which is long enough to be killed and long enough
+to be expensive.
+
+So the image must already be a local `.sqsh` when the GPU job starts. Passing a
+`docker://` or `registry#image:tag` URI straight to `srun --container-image=`
+makes Pyxis pull *and* convert inside the allocation — the exact trap. Convert
+once on a **CPU partition**, then point every later job at the resulting file:
+
+```bash
+# One-time per image, on CPU — costs no GPU time.
+ssh $LOGIN "test -e <sqsh>" || \
+  ssh $LOGIN "srun -n1 -p <cpu_partition> -t <minutes> \
+    enroot import -o <sqsh> docker://<registry>#<image>:<tag>"
+
+# Every GPU job then references the file, never the registry.
+srun --container-image=<sqsh> ...
+```
+
+The same rule governs data: stage it to Lustre before submit (tier A) rather
+than fetching inside the allocation.
+
+**Cluster-specific values — CS-OCI-ORD.** The general rule above is portable;
+these numbers are not, and are recorded because each cost real allocations:
+
+- Conversion partition `cpu_long`, **not** the default `cpu` — `cpu` has a
+  ~30-minute wall-time cap, shorter than a TAO conversion, so the conversion job
+  is killed partway and leaves a truncated file.
+- `SLURM_ENROOT_TEMP_PATH=/tmp/enroot-tao` — Lustre rejects the
+  `enroot-aufs2ovlfs` xattr whiteouts with `Operation not permitted`. Note
+  `/lustre/fsw/...` user dirs may be symlinks onto another Lustre filesystem, so
+  pointing the temp path at "a different Lustre path" is a no-op; it must be
+  node-local.
+- Conversion timeout ≥ 120 minutes.
+
+Partial conversions are self-detecting: the SQSH is validated by `hsqs` magic,
+so a truncated file is rejected rather than silently used. Conversion runs once
+and is then cached by image name.
 
 ## Monitoring and cancellation
 

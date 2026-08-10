@@ -134,6 +134,12 @@ brev exec <instance> 'printf %s "$NGC_KEY" | docker login nvcr.io -u "$oauthtoke
 # login = not authenticated; failure after = the key's org lacks entitlement.
 brev exec <instance> "docker manifest inspect $IMG >/dev/null && echo AUTH_OK || echo AUTH_FAIL"
 
+# Pull BEFORE the GPU run. `docker run` would pull implicitly, but the instance
+# bills from boot, so a multi-GB first-time TAO pull is billed GPU-idle time.
+# Pulling as its own step also separates a pull failure (auth/entitlement) from
+# a training failure in the logs.
+brev exec <instance> "docker image inspect $IMG >/dev/null 2>&1 || docker pull $IMG"
+
 # Run a TAO job (the docker `submit` verb, over brev exec)
 brev exec <instance> "docker run -d --name $JOB_ID --gpus all -v ~/data:/data -e NGC_KEY $IMG visual_changenet train -e /data/spec.yaml"
 ```
