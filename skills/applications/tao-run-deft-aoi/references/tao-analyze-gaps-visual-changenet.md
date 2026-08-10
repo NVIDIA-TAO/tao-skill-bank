@@ -5,7 +5,7 @@ The underlying skill `tao-skill-bank:tao-analyze-gaps-visual-changenet` (`skills
 owns the full gap analysis contract: threshold sweep, weakness ranking, per-lighting
 expansion, visual spot-check, and report format. This file only covers the
 DEFT-loop-specific overlay: required inputs, output directory layout, and
-`deft_state.json` / `loop_log.jsonl` updates.
+`deft_state.json` updates.
 
 ## DEFT-Loop Inputs
 

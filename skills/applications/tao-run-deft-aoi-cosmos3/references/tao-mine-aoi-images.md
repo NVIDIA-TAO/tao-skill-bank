@@ -42,7 +42,7 @@ If a future image genuinely rejects the mapping, repair ownership through a
 container rather than assuming sudo:
 
 ```bash
-docker run --rm -v "$WORKSPACE:/ws" busybox:latest \
+docker run --pull=never --rm -v "$WORKSPACE:/ws" busybox:latest \
   chown -R "$(id -u):$(id -g)" /ws/<relative/path/to/mining>
 ```
 

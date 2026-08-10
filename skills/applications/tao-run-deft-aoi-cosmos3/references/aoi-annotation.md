@@ -119,7 +119,7 @@ current iteration skipped AnomalyGen.
 `--validation-report` is the `validate_sharegpt.py --summary` output; keep the
 `validate_split_contract.py --summary` beside it as a sibling artifact. Their
 shapes differ — only the first has a top-level `mode` and an integer `records`,
-which is what the audit checks.
+which is what the committed validation stage records.
 
 The iteration cannot train until this report records
 `mode=bare_okng`, a positive record count, exact labels, unique targets, and

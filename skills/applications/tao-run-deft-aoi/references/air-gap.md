@@ -25,8 +25,10 @@ bootstrap without changing the global mode.
 
 In global air-gap mode:
 
-- Prefix isolated commands that inspect the mode with `AIR_GAPPED=1`; do not
-  rely on a previous shell export surviving the next tool call.
+- Initialize state with `--network-mode airgap` and its activation source.
+  After initialization, run external commands through `scripts/deft_exec.py`;
+  it re-reads `execution_policy`, injects offline variables, and adds
+  `--pull=never` to direct Docker/Podman runs.
 - Do not run package managers, registry login or pull, downloads, APIs, or
   network probes.
 - Convert every fetch/pull instruction into a local presence check. A missing
@@ -47,6 +49,7 @@ In global air-gap mode:
 
 The normal Pre-Flight approval gate still applies. Air-gap mode changes asset
 resolution and network behavior, not user authorization or stage ordering.
+Never read `references/network-bootstrap.md` in this mode.
 
 ## Pre-Flight Evidence
 
@@ -54,7 +57,7 @@ Include these rows in the Summary:
 
 | Field | Required evidence |
 |---|---|
-| Network mode | `air-gap` or `network-enabled` |
+| Network mode | `airgap` or `network-enabled` |
 | Activation source | `AIR_GAPPED`, user request, harness restriction, or default |
 | Container images | Local image inspection result or post-approval pull plan |
 | Models and datasets | Staged local path or post-approval fetch plan |
