@@ -130,7 +130,9 @@ else
   # Tokenless is safe because the bind is the docker bridge IP, not the LAN.
   # The server inherits TAO_SHELL_IMAGE (resolved above) for tao_exec.
   ( unset TAO_MCP_TOKEN
-    setsid nohup uv run --with mcp --with uvicorn python "$SERVER" \
+    # Pin mcp<2: the server imports mcp.server.fastmcp, which mcp 2.x removed.
+    # Unpinned, `uv run --with mcp` resolves 2.x and the server dies on import.
+    setsid nohup uv run --with 'mcp<2' --with uvicorn python "$SERVER" \
       --workspace-root "$WORKSPACE" --host "$GW" --port "$PORT" \
       > "$WORKSPACE/tao-mcp-server.log" 2>&1 & )
   sleep 8
