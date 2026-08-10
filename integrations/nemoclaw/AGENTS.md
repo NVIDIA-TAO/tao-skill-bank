@@ -108,6 +108,46 @@ The TAO skill bank is also in the workspace at `tao-skills-external/`, so every
 skill's helper scripts, references, and `versions.yaml` are visible to containers
 at `/data/tao-skills-external/...`.
 
+### The workspace root is the skill's `<workspace>`
+
+`/workspace` in `tao_exec` **is** the `<workspace>` every skill reference means.
+`train/`, `kpi/`, `results/` and `augmentation/` sit directly under it. Resolve a
+path once with `tao_ls` and reuse it; never retry the same guessed relative path.
+
+Workflow state is **not** at `<workspace>/results/<name>.json`. Timestamped
+workflows write under a per-run directory — DEFT AOI's state file is
+`results/run_<TS>/deft_state.json`, and `RESULTS_DIR` means that directory, not
+`results/`. Find it, don't guess it:
+
+```
+tao_exec: ls -d /workspace/results/run_*/ | tail -1
+```
+
+### Long operations: background them, then poll
+
+A single `tao_exec` that blocks for minutes will hit the MCP request timeout and
+return an error even though the work is still running on the host — you then have
+no handle on it. For a large download or any multi-minute step, background it and
+poll a log instead:
+
+```
+tao_exec: nohup <cmd> > /workspace/results/<stage>.log 2>&1 & echo started
+tao_exec: tail -5 /workspace/results/<stage>.log     # poll at <=30s intervals
+```
+
+### `tao_run` command form
+
+TAO subtasks require the spec flag explicitly; omitting it fails with
+`ValueError: The subtask <name> requires the following argument:
+-e/--experiment_spec_file`. Pass the full argument list, spec included:
+
+```
+command: ["visual_changenet", "train", "-e", "/results/<stage>_train.yaml"]
+```
+
+Write the spec with `tao_write` first and reference it by its `/results/...` or
+`/data/...` container path — never a host path, never a bare spec name.
+
 ## Running helper scripts and moving files — use `tao_exec`, not a GPU job
 
 `tao_exec` is your shell for all of this; never burn a GPU `tao_run` on a file
