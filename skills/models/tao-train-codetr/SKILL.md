@@ -152,6 +152,8 @@ Loading reports `66 missing, 0 unexpected` — the missing keys are the training
 
 ### The classmap file
 
+**A ready-made COCO-80 classmap ships with this skill at `references/coco80_classmap.txt`** — use it directly for any COCO-trained checkpoint. It is extracted from the container's own `METAINFO['classes']` in `nvidia_tao_pytorch/cv/deformable_detr/model/post_process.py`, which is the source of truth; do not retype a COCO list from memory, since the VOC-style names (`aeroplane`, `motorbike`) and the 91-id-with-gaps ordering both look plausible and both mis-map every class silently.
+
 `dataset.infer_data_sources.classmap` is a plain-text file, one class name per line, in `category_id` order starting at 1 (the first foreground class). Its length must equal the number of foreground classes the model predicts — 80 for a COCO-trained checkpoint with `dataset.contiguous_labels: True`. These names are what `inference.color_map` and `inference.category_mapping` refer to.
 
 ## Deriving the spec from a checkpoint
