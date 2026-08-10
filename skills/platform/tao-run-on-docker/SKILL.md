@@ -176,7 +176,7 @@ docker run \
 
 Notes:
 
-- `--gpus '"device=0,1"'` — specific GPUs (double-quote-escaped). Without nvidia-container-toolkit: `could not select device driver "" with capabilities: [[gpu]]`.
+- `--gpus '"device=0,1"'` — **select GPUs by id, not by count, on any shared host** (double-quote-escaped). A count-based request resolves to the *first* N devices, so `--gpus 1` can only ever land on GPU 0: if GPU 0 is busy, every job OOMs there while the other GPUs sit idle, and there is no way to steer it — `-e NVIDIA_VISIBLE_DEVICES` is overwritten by `--gpus`. Read current occupancy (`nvidia-smi --query-gpu=index,memory.used --format=csv`) and pass the free ids. Ids may also be GPU UUIDs. Without nvidia-container-toolkit: `could not select device driver "" with capabilities: [[gpu]]`.
 - `--rm` — clean up the container at exit; omit when you want `docker logs` after exit.
 - `--shm-size=8g` — torchrun + PyTorch DataLoaders exhaust the default 64 MB `/dev/shm` otherwise; size it for multi-GPU training and raise (e.g. `16g`) if you still hit `Bus error`.
 - `--user "$(id -u):$(id -g)"` — required by default whenever a bind mount is writable. It prevents root-owned checkpoint trees that the submitting host user cannot clean up.
