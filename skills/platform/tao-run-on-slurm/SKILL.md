@@ -101,7 +101,12 @@ A submit that skipped the gate or the open has no id — so it cannot launch.
 ### status
 
 ```bash
-st=$(ssh $LOGIN "sacct -j $SLURM_ID -X -n -o State" | tr -d ' ')   # squeue while pending
+# sacct ANNOTATES states ("CANCELLED by 12345") and truncates them to the
+# default column width, so a cancelled job reads back as "CANCELLED+" and
+# matches nothing in the table below — reporting UNKNOWN instead of CANCELED.
+# Widen the column, take the first word, drop the truncation marker.
+st=$(ssh $LOGIN "sacct -j $SLURM_ID -X -n -o State%30" | awk '{print $1}' | tr -d '+')
+# (use squeue while the job is still PENDING; sacct lags briefly after submit)
 ```
 
 | SLURM state | vocab |
@@ -228,6 +233,15 @@ these numbers are not, and are recorded because each cost real allocations:
 Partial conversions are self-detecting: the SQSH is validated by `hsqs` magic,
 so a truncated file is rejected rather than silently used. Conversion runs once
 and is then cached by image name.
+
+**A failed conversion must not fall back to the registry image.** The tempting
+recovery — pass `docker://…` to `srun` and let Pyxis handle it — puts the pull
+back inside the GPU allocation, which is the cost the conversion existed to
+avoid, and it does so precisely when something is already wrong. Treat a failed
+or truncated conversion as fatal: fix it on the CPU partition and resubmit.
+(The SDK exposes this as `SLURM_STRICT_SQSH`, whose default is the permissive
+fallback — so if a run is unexpectedly slow to start, check whether it quietly
+pulled from the registry.)
 
 ## Monitoring and cancellation
 
