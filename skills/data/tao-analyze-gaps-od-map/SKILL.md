@@ -56,7 +56,20 @@ Common optional fields:
 | `default_precision_threshold` | `0.0` | Fallback precision threshold. Set to `0.0` to disable precision-based weak selection. |
 | `default_ap50_threshold` | `0.5` | Fallback for classes absent from `weak_thresholds`. **Set `0.0`** so unlisted classes never mark an image weak — the reference filter had no fallback, and leaving TAO DS's `0.5` in place silently gates every class you did not list. |
 
-The default template is `assets/default_object_detection.yaml`.
+Do not hand-write the spec. Copy the template and fill in the `null`s — every
+tuning value it already carries is the one this stage wants — then validate:
+
+```bash
+cp skills/data/tao-analyze-gaps-od-map/assets/default_object_detection.yaml "$SPEC"
+# fill ground_truth_ann_path, inference_ann_path, images_dir, results_dir, kpi, input_format
+python3 skills/data/tao-analyze-gaps-od-map/scripts/verify_object_detection_spec.py --spec "$SPEC"
+```
+
+`verify` rejects the spellings that fail — uppercase `input_format`, relative or
+missing paths, a `weak_thresholds` entry that is a bare number rather than a
+mapping — and reports every gated class plus the `default_*` fallbacks, so the
+selection criteria behind a weak set are recoverable from the run's output. It
+warns when a fallback is above zero, since that gates classes you did not list.
 
 ## Quick Start
 
