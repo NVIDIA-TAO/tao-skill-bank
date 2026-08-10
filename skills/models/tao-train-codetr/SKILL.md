@@ -111,15 +111,19 @@ Two fields control where training starts:
 | `model.pretrained_backbone_path` | a backbone-only checkpoint initialising `model.backbone` |
 | `train.pretrained_model_path` | a full Co-DETR (or compatible DETR-family) checkpoint to fine-tune from |
 
-Backbones come from NGC:
+**Prefer `train.pretrained_model_path` with the COCO detector below.** It carries a trained
+backbone *and* trained detection heads, so it is the better starting point for fine-tuning on a
+new class set, and it is the checkpoint this skill is verified against.
 
-```bash
-ngc registry model download-version \
-    nvidia/tao/pretrained_dinov2_classification_imagenet:vit_large_patch14_dinov2 \
-    --dest /path/to/weights
-```
+A backbone-only checkpoint must match the architecture exactly. `vit_large_codetr` is **ViT-L/16**
+— readable from the checkpoint as `backbone.patch_embed.proj.weight (1024, 3, 16, 16)`, a 16x16
+patch embedding. A ViT-L/**14** checkpoint such as
+`nvidia/tao/pretrained_dinov2_classification_imagenet:vit_large_patch14_dinov2` has a
+`(1024, 3, 14, 14)` embedding and cannot load into it; verify the patch size of any candidate
+against the target backbone before using it. For the Swin, FAN, ResNet and EfficientViT
+backbones, use their own matching checkpoints.
 
-That yields `model.pth`, for the `vit_large_codetr` backbone; use the matching Swin, FAN, ResNet, or EfficientViT checkpoint for the others. Left `null`, the backbone initialises randomly and needs substantially longer training.
+Left `null`, the backbone initialises randomly and needs substantially longer training.
 
 **Inference needs a full detector checkpoint, not a backbone** — `inference.checkpoint` wants trained detection heads, which a backbone does not have. Training emits `model_epoch_<N>.pth` into `train.results_dir`.
 
