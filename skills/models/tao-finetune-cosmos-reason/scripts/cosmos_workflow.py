@@ -968,7 +968,7 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
             "import cosmos_rl", "import av", "import os", "import ctypes", "ctypes.CDLL('libnvcuvid.so.1')",
             "from nvidia_tao_core.microservices.handlers import huggingface_inference_microservice_server",
             "from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionPatchEmbed",
-            "assert getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False)",
+            "assert (getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False) or getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_channels_last_3d', False))",
             "assert av.codec.Codec('h264_cuvid', 'r') is not None",
             "from cosmos_rl.utils.runtime_dependency_contract import verify_deepep, verify_vllm_conv3d",
             "verify_deepep()", "verify_vllm_conv3d()",
