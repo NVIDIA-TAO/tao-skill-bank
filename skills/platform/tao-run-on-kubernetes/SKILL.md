@@ -217,6 +217,12 @@ passes real GPUs through, so one GPU box suffices for a GPU-real smoke.
 Install commands, driver choice, the container/host-networking caveat, and the
 fake-device-plugin middle option: `references/local-cluster.md`.
 
+## Container shell
+
+The single-pod template invokes the container command via `/bin/sh -c` (POSIX
+sh, present in busybox/distroless as well as TAO images). If your image relies
+on bash-only syntax, override the interpreter in the rendered manifest.
+
 ## GPU Operator dependency
 
 The `submit` verb refuses to launch GPU jobs on a cluster with no `nvidia.com/gpu` allocatable. For self-managed clusters, first run the `tao-setup-nvidia-gpu-host` install action on every GPU worker node or bake the same package set into the node image:
