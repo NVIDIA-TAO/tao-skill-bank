@@ -100,21 +100,36 @@ docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
 
 ## Generate A Spec
 
-If the user provides parquet paths and an encoder instead of a ready spec:
+If the user provides parquet paths and an encoder instead of a ready spec, copy
+the template and fill in the `null`s. Every tuning value it already carries is
+the one this stage wants — change one only deliberately.
 
 ```bash
-python3 skills/data/tao-generate-image-embeddings/scripts/prepare_image_embeddings_spec.py \
-  --input-parquet /absolute/path/filepaths.parquet \
-  --output-parquet /absolute/path/results/embeddings.parquet \
-  --output-spec /absolute/path/specs/image_embeddings.yaml \
-  --model SigLIP \
-  --model-path google/siglip-base-patch16-224 \
-  --batch-size 64
+cp skills/data/tao-generate-image-embeddings/assets/default_image_embeddings.yaml "$SPEC"
 ```
 
-For a TAO checkpoint, also pass `--model-config-path /absolute/path/train_spec.yaml`.
+Fill `input_parquet`, `output_parquet` and — if not using the default encoder —
+`model` and `model_path`, all as absolute paths, then validate:
 
-The generated YAML uses absolute paths. Keep the spec, input parquet, image files, and output directory under `RUN_ROOT` so the same paths resolve inside the container.
+```bash
+python3 skills/data/tao-generate-image-embeddings/scripts/verify_image_embeddings_spec.py --spec "$SPEC"
+```
+
+```yaml
+input_parquet: /absolute/path/filepaths.parquet
+output_parquet: /absolute/path/results/embeddings.parquet
+model: SigLIP
+model_path: google/siglip-base-patch16-224
+model_config_path: ""          # required only when model_path is a TAO .pth/.ckpt
+batch_size: 64
+```
+
+The template is the only place a default value lives, so nothing can disagree
+with it. `verify` reports the encoder, since embeddings are only comparable to
+others produced by the same `model` and `model_path`.
+
+Keep the spec, input parquet, image files, and output directory under `RUN_ROOT`
+so the same paths resolve inside the container.
 
 ## Preflight
 
