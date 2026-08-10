@@ -1,5 +1,5 @@
 ## Description: <br>
-Runs the embed-then-mine workflow for object detection iterations using unique neighbor matching — embeds a gap parquet of weak OD images, embeds a source pool, and mines bijectively-assigned source images via `tmm unique_neighbors` for downstream OD training augmentation. <br>
+Runs the embed-then-mine workflow for object detection iterations using unique neighbor matching — consumes precomputed embeddings for a gap parquet of weak OD images and a source pool, and mines bijectively-assigned source images via `tmm unique_neighbor_matching` for downstream OD training augmentation. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -20,13 +20,9 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 Risk: Source pool smaller than target set leaves some targets unassigned with no fallback. <br>
-Mitigation: Check `mining_summary.txt` for unassigned target count and expand the source pool or switch to `nearest_neighbors` if needed. <br>
+Mitigation: Check `summary.json` for `retrieved_unique_count` and `coverage_pct` and expand the source pool or switch to `nearest_neighbors` if needed. <br>
 
 ## Reference(s): <br>
-- [Setup](references/setup.md) <br>
-- [Reference Invocation](references/reference-invocation.md) <br>
-- [Outputs and Reporting](references/outputs-and-reporting.md) <br>
-- [Troubleshooting](references/troubleshooting.md) <br>
 
 ## Skill Output: <br>
 **Output Type(s):** [Shell commands, Files, Analysis] <br>
