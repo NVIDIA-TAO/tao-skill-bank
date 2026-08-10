@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Durably gate a Docker Cosmos evaluation on a completed training job.
 
 The process is restart-safe: it owns an advisory lock, persists its state with

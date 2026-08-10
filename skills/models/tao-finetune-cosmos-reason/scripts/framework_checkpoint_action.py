@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Plan, verify, and run the Framework checkpoint pre-action export.
 
 Cosmos Framework training writes a PyTorch Distributed Checkpoint (DCP), while

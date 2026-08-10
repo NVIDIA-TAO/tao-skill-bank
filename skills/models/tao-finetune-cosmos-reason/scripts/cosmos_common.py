@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Pure validation and provenance primitives for Cosmos TAO workflows.
 
 This module deliberately has no machine- or user-specific defaults.  Every
