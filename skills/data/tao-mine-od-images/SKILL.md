@@ -77,10 +77,7 @@ GPU_COUNT=1
 python3 skills/data/tao-mine-od-images/scripts/verify_unique_neighbor_matching_spec.py \
   --spec "$SPEC"
 
-# `tmm unique_neighbor_matching` is NOT in the release image versions.yaml resolves to.
-# Verify before pulling ~30 GB:
-#   docker run --rm "$DS_IMAGE" tmm nosuch 2>&1 | tail -2   # prints the available subtasks
-DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.7.31-rc-14-multiarch  # unpinned: earliest published image carrying the action
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
 
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -124,10 +121,7 @@ nvidia-smi -L
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-# `tmm unique_neighbor_matching` is NOT in the release image versions.yaml resolves to.
-# Verify before pulling ~30 GB:
-#   docker run --rm "$DS_IMAGE" tmm nosuch 2>&1 | tail -2   # prints the available subtasks
-DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.7.31-rc-14-multiarch  # unpinned: earliest published image carrying the action
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 

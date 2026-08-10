@@ -1,6 +1,6 @@
 network_arch: tao-mine-od-images
 type: data
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.7.31-rc-14-multiarch  # unpinned: earliest published image carrying `tmm unique_neighbor_matching`; repin to versions.yaml once the action ships in a release image
+container_image: nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
 gpu_spec_key: null
 required_credentials: []
 actions:

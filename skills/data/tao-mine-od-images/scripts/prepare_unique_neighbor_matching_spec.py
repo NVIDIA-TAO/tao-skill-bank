@@ -11,10 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
+import yaml
 
 VALID_METRICS = {"euclidean", "cosine", "manhattan"}
 VALID_POLICIES = {"global", "class_stratified"}
@@ -22,8 +19,6 @@ VALID_FORMATS = {"coco", "kitti"}
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
-    if yaml is None:
-        raise RuntimeError("PyYAML is required: install with `python3 -m pip install pyyaml`.")
     with path.open("r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
     if not isinstance(data, dict):
@@ -32,8 +27,6 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def write_yaml(path: Path, data: dict[str, Any]) -> None:
-    if yaml is None:
-        raise RuntimeError("PyYAML is required: install with `python3 -m pip install pyyaml`.")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         yaml.safe_dump(data, fh, sort_keys=False)
