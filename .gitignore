@@ -16,3 +16,4 @@ __pycache__/
 # Local session state
 tao_session_state.db*
 tao_session.db*
+*.local.env
