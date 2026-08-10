@@ -75,8 +75,15 @@ warns when a fallback is above zero, since that gates classes you did not list.
 
 Run from the `tao-skills-external` repo root.
 
+**Write the spec into the results directory.** The run emits four artifacts and
+does not retain the spec, so a completed gap analysis otherwise cannot tell you
+which thresholds produced its weak set — and that weak set sizes the mining
+budget downstream. Keeping them together makes the selection criteria recoverable
+from the run alone.
+
 ```bash
-SPEC=/absolute/path/to/object_detection.yaml
+RESULTS_DIR=/absolute/path/for/this/run          # results_dir in the spec
+SPEC="$RESULTS_DIR/object_detection.yaml"        # spec lives beside its outputs
 RUN_ROOT=/absolute/path/that/contains/annotations/images/and/results
 GPU_COUNT=1
 

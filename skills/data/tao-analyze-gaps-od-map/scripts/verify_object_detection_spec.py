@@ -138,6 +138,7 @@ def main() -> int:
         spec = Path(parse_args().spec).expanduser().resolve()
         config = load_yaml(spec)
         warnings = validate_config(config)
+        out = Path(str(config['results_dir'])).expanduser()
 
         thresholds = config.get("weak_thresholds") or {}
         print(f"OK: gap-analysis spec is valid: {spec}")
@@ -149,6 +150,14 @@ def main() -> int:
         print("fallbacks: " + ", ".join(f"{k.replace('default_', '').replace('_threshold', '')}"
                                         f"={config.get(k, 0.0)}" for k in DEFAULT_KEYS))
         print(f"Expected output: {config['results_dir']}/weak_images.parquet")
+        # The run writes four artifacts and not the spec, so a spec kept elsewhere
+        # leaves the finished results with no record of what selected them.
+        if spec.parent != out.resolve():
+            warnings.append(
+                f"the spec is outside results_dir ({spec.parent} vs {out}). The run does not "
+                "copy it, so the finished artifacts will carry no record of the thresholds "
+                f"that produced them. Author it at {out / spec.name} instead."
+            )
         for w in warnings:
             print(f"WARNING: {w}", file=sys.stderr)
         return 0
