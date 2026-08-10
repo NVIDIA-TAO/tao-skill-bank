@@ -218,6 +218,7 @@ Execute the loop in this order (full detail in `references/pipeline-and-state.md
    error, run `scripts/render_report.py --results-dir "${RESULTS_DIR}"`
    directly after repairing the named presentation input; never hand-author
    report HTML.
+6. **Loop-end sequence.** `references/pipeline-and-state.md` → Loop-end sequence; ends with Mission Control.
 
 All pipeline stages run inline in the parent context. Prefer invoking the underlying `tao-skill-bank:*` skills directly via the Skill tool, layering DEFT-loop conventions on top via the matching `references/*.md` file. If the mapped Skill tool is unavailable but Docker, the skill source tree, and the stage reference modules are present, use the documented direct-container fallback in `references/scripts-and-agents.md`; before the first fallback stage, write `execution_path=direct-container` to the transcript, and for each fallback stage record the mapped underlying skill name plus the exact direct command used. Preserve the same `deft_state.json`, `loop_log.jsonl`, artifact, audit, and script-backed report contracts. HTML rendering is not delegated.
 

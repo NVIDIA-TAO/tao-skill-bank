@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+starlette
+pandas
+numpy
+pyarrow
+scikit-learn
+pyyaml
+pillow
+openai>=2.44,<3
+umap-learn

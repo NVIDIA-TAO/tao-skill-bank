@@ -1,8 +1,10 @@
 # Prepare-for-Inference
 
-Final step of the DEFT loop. Produces two artifacts under `${RESULTS_DIR}/` so
-downstream inference skills can consume the trained checkpoint without reading
-`deft_state.json` or the training spec.
+Part of the DEFT loop-end sequence, not the end of it — see
+`references/pipeline-and-state.md` → Loop-end sequence for the steps that follow
+and the completion audit that closes the run. Produces two artifacts under
+`${RESULTS_DIR}/` so downstream inference skills can consume the trained
+checkpoint without reading `deft_state.json` or the training spec.
 
 ## Artifacts
 
@@ -142,7 +144,7 @@ config verbatim, but if you build an inference spec by hand, watch out:
 
 Re-run `prepare_inference_spec.py` whenever:
 
-- The loop finishes (handled automatically as the final step).
+- The loop finishes (handled automatically by the loop-end sequence).
 - A new iteration completes and you want to evaluate against the latest best.
   The script applies the metric contract's comparison direction, so calling it
   mid-loop gives the current customer-metric winner, not necessarily the final

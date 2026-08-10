@@ -59,3 +59,4 @@ Include these rows in the Summary:
 | Container images | Local image inspection result or post-approval pull plan |
 | Models and datasets | Staged local path or post-approval fetch plan |
 | Credentials | `N/A (offline)` or presence-only status for required networked actions |
+| Mission Control | `scripts/mission_control/.venv` present with deps, and a staged `SIGLIP_MODEL_PATH` snapshot — otherwise the loop-end build is skipped and reported |

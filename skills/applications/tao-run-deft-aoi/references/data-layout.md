@@ -106,6 +106,7 @@ results/run_<YYYYMMDD_HHMMSS>/               # = ${RESULTS_DIR}
 ├── best_model.json                          # inference handoff metadata (see references/prepare-for-inference.md)
 ├── best_model_inference_spec.yaml           # ready-to-run TAO inference spec built from training config
 ├── iter${ITER}_summary.md                   # ≤300-word per-iteration summary
+├── mission_control/                         # interactive run map, built at loop end (see references/mission-control.md)
 ├── baseline/
 │   ├── train/                               # TAO train output: model_epoch_<EEE>_step_<SSS>.pth × N, status.json, experiment.yaml, train.log
 │   ├── inference/{best_val,latest}/         # per-checkpoint inference.csv + KPI plots from scripts/analyze_kpi.py

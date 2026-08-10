@@ -1,0 +1,14 @@
+# RCA agent VLM backend — any OpenAI-compatible chat-completions endpoint.
+# Swap models by editing base_url/model/api_key_env; nothing else changes.
+provider: openai_compatible
+base_url: https://integrate.api.nvidia.com/v1
+model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+api_key_env: BUILD_KEY          # build.nvidia.com / integrate.api.nvidia.com API key (nvapi-...)
+max_tool_rounds: 12
+temperature: 0.6
+top_p: 0.95
+max_tokens: 4096
+extra_body:
+  chat_template_kwargs:
+    enable_thinking: true
+  reasoning_budget: 4096

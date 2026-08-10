@@ -348,7 +348,7 @@ for root, dirs, files in os.walk('.', followlinks=False):
     # Nested SKILL.md
     for sub_root, sub_dirs, sub_files in os.walk(skill_dir, followlinks=False):
         if sub_root == skill_dir: continue
-        sub_dirs[:] = [d for d in sub_dirs if d not in ('.git',)]
+        sub_dirs[:] = [d for d in sub_dirs if d not in ('.git', '.venv', '.venv-tao')]
         if 'SKILL.md' in sub_files:
             nested = os.path.join(sub_root, 'SKILL.md')
             print(f"ERROR: {skill_md} — contains nested SKILL.md at {nested}. Fold into references/<name>.md.", file=sys.stderr)

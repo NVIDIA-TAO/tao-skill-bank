@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DEFT Mission Control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="nv">DEFT</span> Mission Control</div>
+  <select id="run-picker" title="switch run"></select>
+  <button id="reload-btn" title="re-read run from disk (live runs)">⟳</button>
+  <div id="run-banner">loading…</div>
+  <div id="kpi-banner"></div>
+</header>
+
+<main>
+  <aside id="left">
+    <section class="panel">
+      <h3>Embedding space</h3>
+      <div id="space-label" title="follows the selected iteration"></div>
+      <div id="space-note" class="dim-toggle" style="margin-top:4px"></div>
+    </section>
+    <section class="panel">
+      <h3>Color by</h3>
+      <select id="color-by">
+        <option value="status_at_iter" selected>KPI status @ iteration</option>
+        <option value="label">label (PASS / NP)</option>
+        <option value="provenance">provenance</option>
+        <option value="defect_type">defect type</option>
+        <option value="split">split</option>
+        <option value="first_used_iter">entered training @</option>
+      </select>
+      <label class="dim-toggle"><input type="checkbox" id="dim-unused" checked> dim images not in training yet</label>
+      <label class="dim-toggle"><input type="checkbox" id="show-edges"> show mining edges (this iteration)</label>
+      <label class="dim-toggle"><input type="checkbox" id="show-stacks"> badge overlapping points (×N)</label>
+    </section>
+    <section class="panel" id="facets"></section>
+    <section class="panel">
+      <h3>Search</h3>
+      <input id="search" type="text" placeholder="filename, folder, dump, defect…" autocomplete="off">
+      <div id="search-results" hidden></div>
+      <div id="match-count"></div>
+    </section>
+  </aside>
+
+  <div class="splitter" id="split-left" title="drag to resize"></div>
+  <section id="center">
+    <div id="map-wrap">
+      <canvas id="map"></canvas>
+      <section class="panel" id="legend"></section>
+      <div id="tooltip" hidden></div>
+    </div>
+    <div id="timeline">
+      <div id="iters"></div>
+      <div id="far-chart"><canvas id="farcv" height="96"></canvas></div>
+    </div>
+  </section>
+
+  <div class="splitter" id="split-right" title="drag to resize"></div>
+  <aside id="right">
+    <div id="tabs">
+      <button class="tab active" data-tab="analytics">Analytics</button>
+      <button class="tab" data-tab="agent">RCA Agent</button>
+    </div>
+    <div id="tab-analytics">
+      <section class="panel" id="details"><h3>Sample</h3><div id="detail-body"><em>hover / click a point</em></div></section>
+      <section class="panel" id="iter-info"><h3>Iteration</h3><div id="iter-detail"></div>
+        <div id="whatif">
+          <h3>What-if threshold</h3>
+          <input type="range" id="thr-slider" min="0" max="1" step="0.001">
+          <div id="thr-readout"></div>
+          <button id="thr-reset" hidden>reset to operating point</button>
+        </div>
+      </section>
+      <section class="panel" id="margins"><h3>NP margin to threshold (KPI defect types)</h3><div id="margin-table"></div></section>
+    </div>
+    <div id="tab-agent" hidden>
+      <section class="panel" id="agent-panel">
+        <h3>RCA Agent <span id="agent-model"></span></h3>
+        <div id="chat-log"></div>
+        <div id="chat-suggest">
+          <button class="sugg">Diagnose the worst false positive</button>
+          <button class="sugg">Why did iter1 regress?</button>
+          <button class="sugg">Final data-generation recommendation</button>
+        </div>
+        <form id="chat-form">
+          <input id="chat-input" type="text" placeholder="ask about this run… (click a point to reference it)" autocomplete="off">
+          <button type="submit">➤</button>
+        </form>
+        <div id="chat-actions">
+          <button id="chat-reset">reset</button>
+          <button id="chat-export">export chat</button>
+          <button id="clear-highlight">clear highlights</button>
+        </div>
+      </section>
+    </div>
+  </aside>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

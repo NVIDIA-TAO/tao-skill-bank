@@ -201,6 +201,8 @@ at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call
    preceding `loop_stop` commit already produced a valid report before token
    alignment.
 4. Run `scripts/prepare_inference_spec.py` (see below).
+5. Build Mission Control and print its serve command (see below). Optional
+   and never fatal.
 
 Before telling the user the loop is complete, run:
 
@@ -222,9 +224,9 @@ after completion has been proven.
 
 - Primary metric and all configured constraints pass → run the loop-end sequence.
 - `max_iterations` reached → run the loop-end sequence with the best-iteration report. Do not add a post-loop RCA event; the terminal evaluate transitions directly to `loop_stop`.
-- Unrecoverable gate failure → halt and report the exact missing artifact. Do not run a reduced loop or fabricate CSVs. Steps 1–3 of the loop-end sequence still apply. Run prepare-for-inference only when an earlier valid checkpoint exists; otherwise skip it explicitly.
+- Unrecoverable gate failure → halt and report the exact missing artifact. Do not run a reduced loop or fabricate CSVs. Steps 1–3 of the loop-end sequence still apply. Run prepare-for-inference only when an earlier valid checkpoint exists; otherwise skip it explicitly. Skip Mission Control (step 5) — a failed run has nothing worth mapping.
 
-**Prepare-for-inference (final step).** Run `scripts/prepare_inference_spec.py` to emit the inference handoff:
+**Prepare-for-inference (loop-end step 4).** Run `scripts/prepare_inference_spec.py` to emit the inference handoff:
 
 ```bash
 <this-skill-dir>/scripts/deft_python.sh <this-skill-dir>/scripts/prepare_inference_spec.py --results-dir ${RESULTS_DIR}
@@ -236,5 +238,33 @@ This writes two artifacts under `${RESULTS_DIR}/`:
 - `best_model_inference_spec.yaml` — runnable TAO inference spec built from the training config so model architecture, lighting layout, image size, and difference module match the checkpoint exactly
 
 Downstream inference skills consume these — they should never read `deft_state.json` or the training spec directly. Full contract, consumer workflow, and silent-failure modes are documented in `references/prepare-for-inference.md`.
+
+**Mission Control (loop-end step 5).** Build the interactive run map, then hand the user the serve command:
+
+```bash
+MC=<this-skill-dir>/scripts/mission_control
+"$MC/bootstrap_venv.sh" "$(<this-skill-dir>/scripts/deft_python.sh)"
+"$MC/.venv/bin/python" "$MC/prepare.py" --run ${RESULTS_DIR}
+```
+
+Mission Control keeps its own venv because it needs `fastapi`, `uvicorn`,
+`scikit-learn` and `pillow`, which the loop's interpreter does not carry. Venvs
+are not committed, so a fresh clone or plugin install will not have it —
+`bootstrap_venv.sh` creates it on first use (one time, ~1 min). It tries
+`python -m venv`, then the system `virtualenv` binary, then `venv --without-pip`
+with pip seeded from the base interpreter, and hard-fails only if all three
+fail — reporting what `python -m venv` actually said. It never installs into
+the host environment, and re-running it is a no-op once the venv works.
+Do not check for `python3-venv` as a prerequisite or skip Mission Control
+because of it — the script handles that transparently. `deft_python.sh` still
+picks the base interpreter.
+
+This SigLIP-embeds the run's crops into `${RESULTS_DIR}/mission_control/` in one `data_services` container pass (needs a GPU; skipped if already cached). Then **print** the serve command rather than running it — `server.py` blocks until interrupted, so launching it here would hang the loop:
+
+```bash
+"$MC/.venv/bin/python" "$MC/server.py" --run ${RESULTS_DIR} --port 8090
+```
+
+Optional and never fatal, but always announce the outcome — the serve command on success, the exact error on failure, or the reason when skipped. None of the three changes the loop's completion status. Full flow, requirements, and the optional RCA chat panel are documented in `references/mission-control.md`.
 
 If a partial `${RESULTS_DIR}/` is missing iteration artifacts or fails the leakage check, restart from the last valid checkpoint instead of resuming. Starting a fresh run always creates a new timestamped `results/run_<YYYYMMDD_HHMMSS>/` — prior runs are preserved under their own directories.
