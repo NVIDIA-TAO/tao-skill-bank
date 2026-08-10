@@ -96,22 +96,42 @@ Do not pass `--user $(id -u):$(id -g)` to the TAO data-services container; some 
 
 ## Generate A Spec
 
-If the user provides source/target paths and an output directory instead of a ready spec, generate one from the default template:
+If the user provides source/target paths and an output directory instead of a
+ready spec, copy the template and fill in the `null`s. Every tuning value it
+already carries is the one this stage wants — change one only deliberately.
 
 ```bash
-python3 skills/data/tao-mine-od-images/scripts/prepare_unique_neighbor_matching_spec.py \
-  --source-path /absolute/path/source_embeddings.parquet \
-  --target-path /absolute/path/target_embeddings.parquet \
-  --output-dir /absolute/path/results/mining_output \
-  --desired-unique-count 500 \
-  --output-spec /absolute/path/specs/unique_neighbor_matching.yaml \
-  --allocation-policy global \
-  --distance-metric euclidean
+cp skills/data/tao-mine-od-images/assets/default_unique_neighbor_matching.yaml "$SPEC"
 ```
 
-For class-stratified mode, also pass `--allocation-policy class_stratified`, `--source-detection-file`, `--target-detection-file`, `--detection-format`, and `--rare-class-list`.
+Fill `source_path`, `target_path`, `output_dir` and `desired_unique_count`, all
+as absolute paths, then validate:
 
-The generated YAML uses absolute paths. Keep the spec, input parquets, and output directory under `RUN_ROOT` so the same paths resolve inside the container.
+```bash
+python3 skills/data/tao-mine-od-images/scripts/verify_unique_neighbor_matching_spec.py --spec "$SPEC"
+```
+
+```yaml
+source_path: /absolute/path/source_embeddings.parquet
+target_path: /absolute/path/target_embeddings.parquet
+output_dir: /absolute/path/results/mining_output
+desired_unique_count: 500
+allocation_policy: global          # or class_stratified — see below
+distance_metric: euclidean
+```
+
+For class-stratified mode set `allocation_policy: class_stratified` and supply
+`rare_class_list`, `source_detection_file`, `target_detection_file` and
+`detection_format`. `verify` rejects the policy without them: absent those
+fields the miner falls back to a global match, which mines the wrong images
+rather than failing.
+
+The template is the only place a default value lives, so nothing can disagree
+with it. `verify` reports the budget, policy and metric, since the mined parquet
+is a list of filepaths and records nothing about why those files were chosen.
+
+Keep the spec, input parquets, and output directory under `RUN_ROOT` so the same
+paths resolve inside the container.
 
 ## Preflight
 
