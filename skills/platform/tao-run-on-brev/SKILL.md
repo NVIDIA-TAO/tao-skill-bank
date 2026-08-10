@@ -47,13 +47,19 @@ It does **not** cover container execution on the instance — that is this skill
 
 **Preflight for this skill:** the `brev` CLI is on `PATH` and logged in (headless:
 `brev login --token "$BREV_API_TOKEN"` before any other call), and you can reach a
-target instance — poll `brev exec <instance> -- true` until it succeeds before <!-- lint-ok: brev-exec-form -->
+target instance — poll with a **two-word** command until it succeeds before
 issuing real work (a fresh instance reports `RUNNING` before sshd is up):
 
 ```bash
-for i in $(seq 1 60); do brev exec <instance> -- true >/dev/null 2>&1 && break; sleep 5; done  # lint-ok: brev-exec-form
-brev exec <instance> -- true >/dev/null 2>&1 || { echo "instance not exec-ready"; exit 1; }  # lint-ok: brev-exec-form
+for i in $(seq 1 60); do [ "$(brev exec <instance> "echo ok" 2>/dev/null)" = ok ] && break; sleep 5; done
+[ "$(brev exec <instance> "echo ok" 2>/dev/null)" = ok ] || { echo "instance not exec-ready"; exit 1; }
 ```
+
+The probe must be **two words, quoted as one argument**. A single-token probe
+(`brev exec <instance> -- true`) passes even when every real command is broken,
+because `brev exec [instance...] <command>` treats only the LAST positional as
+the command — so a lone `true` lands in the right slot by accident while
+`docker run ...` does not. See *`brev exec` argument form* below.
 
 Allow **≥ 600 s** for the first `brev exec` on a new instance (SSH bring-up +
 first container pull); a 60–120 s wrapper timeout truncates startup and looks
@@ -75,24 +81,66 @@ instance to stop billing. `$BANK` = `${TAO_SKILL_BANK_PATH}`.
 
 - **submit** — reach an instance (provision/reuse via the official Brev skill or
   MCP; reuse an existing instance by its `instance_id`; wait for readiness, above).
-  Then run the docker `submit` verb *inside* it: `open` the record (`--platform
-  brev`, `--backend-ref "<instance>/<container>"`), `brev exec <instance> --
-  docker run -d --name "$JOB_ID" ...`, mark RUNNING.
-- **status / logs** — `brev exec <instance> -- docker inspect/logs "$JOB_ID"`, <!-- lint-ok: brev-exec-form -->
-  mapped to the vocab exactly as the docker verbs do.
-- **cancel / teardown** — `brev exec <instance> -- docker rm -f "$JOB_ID"`, then <!-- lint-ok: brev-exec-form -->
-  for an ephemeral instance **`brev delete <instance>`** (stops billing), then mark
-  the record. Never leave an ephemeral instance running.
+  Lint the assembled command, open the record to mint `$JOB_ID` **before** launch,
+  then run the docker `submit` verb *inside* the instance and mark RUNNING:
+
+  ```bash
+  redact_secrets.py lint <<<"$REMOTE_CMD"     # no inline secrets; creds as -e VAR
+  JOB_ID=$("$BANK/scripts/tao_job_record.py" open \
+    --platform brev --image "$IMG" \
+    --network-arch "$ARCH" --action "$ACTION" \
+    --storage-tier "$TIER" --results-root "$RESULTS_ROOT")
+  brev exec <instance> "docker run -d --name $JOB_ID ..."
+  "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING \
+    --backend-ref "<instance>/$JOB_ID"       # instance is part of the ref: the
+                                             # container is unreachable without it
+  ```
+- **status / logs** — `brev exec <instance> "docker inspect $JOB_ID"` /
+  `brev exec <instance> "docker logs $JOB_ID"`, mapped to the vocab exactly as
+  the docker verbs do. Recover `<instance>` from the record's `backend-ref`.
+- **cancel / teardown** — remove the container, then for an ephemeral instance
+  delete it (stops billing), then mark the record. Never leave an ephemeral
+  instance running:
+
+  ```bash
+  brev exec <instance> "docker rm -f $JOB_ID"
+  brev delete <instance>                      # ephemeral instances only
+  "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state CANCELED --source agent
+  ```
+
+### `brev exec` argument form
+
+The remote command is **one argument**. The CLI signature is
+`brev exec [instance...] <command>`: every positional except the last is an
+instance name, and `--` only ends flag parsing — it does not group the words
+after it. So `brev exec <inst> -- docker inspect "$JOB_ID"` is read as
+instances `<inst> docker inspect` plus command `"$JOB_ID"`, and fails with
+`could not look up instance "docker"` / `ssh: illegal option -- -` (exit 255) —
+an error that reads like an instance or SSH fault but is a syntax fault. Quote
+every remote command as a single string, exactly as `brev exec --help` shows.
 
 NGC auth once per instance — **never put `NGC_KEY` on argv** (it lands in the
 remote process table); pipe it to `--password-stdin`:
 
 ```bash
-# NGC auth (one-time per instance) — value never on argv
-brev exec <instance> -- bash -lc 'printf %s "$NGC_KEY" | docker login nvcr.io -u "$oauthtoken" --password-stdin'  # lint-ok: brev-exec-form
+IMG=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
+
+# NGC auth (one-time per instance) — value never on argv.
+# Single-quoted locally so $NGC_KEY expands in the instance's shell; export it
+# there first (or pipe it in from the local shell, if the instance has no copy).
+brev exec <instance> 'printf %s "$NGC_KEY" | docker login nvcr.io -u "$oauthtoken" --password-stdin'
+
+# Verify auth without reading ~/.docker/config.json. Failure before a successful
+# login = not authenticated; failure after = the key's org lacks entitlement.
+brev exec <instance> "docker manifest inspect $IMG >/dev/null && echo AUTH_OK || echo AUTH_FAIL"
+
+# Pull BEFORE the GPU run. `docker run` would pull implicitly, but the instance
+# bills from boot, so a multi-GB first-time TAO pull is billed GPU-idle time.
+# Pulling as its own step also separates a pull failure (auth/entitlement) from
+# a training failure in the logs.
+brev exec <instance> "docker image inspect $IMG >/dev/null 2>&1 || docker pull $IMG"
 
 # Run a TAO job (the docker `submit` verb, over brev exec)
-IMG=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
 brev exec <instance> "docker run -d --name $JOB_ID --gpus all -v ~/data:/data -e NGC_KEY $IMG visual_changenet train -e /data/spec.yaml"
 ```
 
