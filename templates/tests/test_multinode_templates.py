@@ -192,3 +192,25 @@ def test_k8s_skill_doc_and_template_env_agree():
     assert not missing, (
         f"documented in tao-run-on-kubernetes/SKILL.md but never set by "
         f"templates/k8s/indexed-job.yaml.tmpl: {sorted(missing)}")
+
+
+def test_k8s_container_command_uses_posix_sh():
+    """Same shell pin as the single-pod template, for the Indexed Job wrapper.
+
+    This one carries the rendezvous preamble (NODE_RANK from
+    JOB_COMPLETION_INDEX), so the interpreter has to keep per-pod rank
+    assignment working, not merely start the container. Verified live on a
+    2-node busybox Job: both ranks reached Completed and reported distinct
+    ranks against the same MASTER_ADDR.
+    """
+    _, job = k8s_docs()
+    cmd = job["spec"]["template"]["spec"]["containers"][0]["command"]
+    assert cmd[0] == "/bin/sh", (
+        f"container command interpreter is {cmd[0]!r}; use /bin/sh so images "
+        f"without bash (busybox, distroless) can start")
+    assert "-lc" not in cmd, "drop -l; see the single-pod template test"
+    # The wrapper must still be POSIX — no bashisms sneaking back in.
+    body = cmd[-1]
+    for bashism in ("[[", "]]", "function ", "<<<"):
+        assert bashism not in body, (
+            f"wrapper uses bash-only syntax {bashism!r} but runs under /bin/sh")
