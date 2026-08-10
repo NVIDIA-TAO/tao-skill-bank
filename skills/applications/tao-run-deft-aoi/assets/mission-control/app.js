@@ -287,11 +287,19 @@ const ACRONYMS = new Set(["KPI", "SDG", "NP"]);
 // CSV sentinel, lowercase provenance and split from the loop, the KPI set's own
 // Title_Case defect names. Render them one way. Filtering, colouring and
 // counting all key off this same string, so display and data cannot drift.
+// Memoized: facetValue runs per point per facet (~100k calls on a 20k-point
+// run, twice over during a rebuild), but the value set is a few dozen strings.
+const _dispCache = new Map();
 function dispFacet(v) {
   if (v === NONE) return v;
-  return String(v).replace(/_/g, " ").replace(/\S+/g, w =>
-    ACRONYMS.has(w.toUpperCase()) ? w.toUpperCase()
-      : w[0].toUpperCase() + w.slice(1).toLowerCase());
+  let hit = _dispCache.get(v);
+  if (hit === undefined) {
+    hit = String(v).replace(/_/g, " ").replace(/\S+/g, w =>
+      ACRONYMS.has(w.toUpperCase()) ? w.toUpperCase()
+        : w[0].toUpperCase() + w.slice(1).toLowerCase());
+    _dispCache.set(v, hit);
+  }
+  return hit;
 }
 
 // facet-side view of a point's value; KPI points get their own bucket in
