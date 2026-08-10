@@ -21,6 +21,7 @@ Live execution smokes belong in the nightly platform pipeline instead.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -191,12 +192,24 @@ DIRECT_EXEC_RE = re.compile(
 
 
 def test_directly_invoked_scripts_are_executable():
-    """Any script a platform skill execs directly must be mode 755 in git.
+    """Any script a platform skill execs directly must be executable.
 
-    This shipped broken: tao_job_record.py and redact_secrets.py were added as
+    This shipped broken: tao_job_record.py and redact_secrets.py were committed
     100644 while every other script in scripts/ was 100755, so the first line of
-    `submit` failed with "permission denied" on all five platforms. The git mode
-    is what matters — a local chmod does not travel, so assert on the index.
+    `submit` failed with "permission denied" on all five platforms.
+
+    Checked two ways, because neither alone is reliable everywhere:
+
+    * The **filesystem** bit is authoritative for "would this actually run here",
+      and a checkout materializes the committed mode, so it catches the bug in
+      CI. This is the assertion that always runs.
+    * The **git index** mode additionally catches a local `chmod +x` that was
+      never committed — real, but only checkable where git works. CI containers
+      often run as a different uid than the checkout owner, so git refuses with
+      dubious-ownership, and a source export may have no `.git` at all. When git
+      cannot answer we skip that half rather than failing: an earlier version
+      asserted on it unconditionally and reported "absent from git" for a file
+      that was present and correct.
     """
     referenced = set()
     for skill_md in PLATFORM_DIR.rglob("*.md"):
@@ -205,15 +218,24 @@ def test_directly_invoked_scripts_are_executable():
         referenced.update(DIRECT_EXEC_RE.findall(skill_md.read_text(encoding="utf-8")))
     assert referenced, "no directly-invoked bank scripts found — has the invocation style changed?"
 
-    modes = subprocess.run(
-        ["git", "ls-files", "-s", *sorted(referenced)],
-        cwd=REPO, capture_output=True, text=True,
-    ).stdout
-    recorded = {line.split("\t")[-1]: line.split()[0] for line in modes.splitlines() if line}
+    missing = sorted(r for r in referenced if not (REPO / r).is_file())
+    assert not missing, f"platform skills reference scripts that do not exist: {missing}"
 
-    not_executable = sorted(p for p, m in recorded.items() if m != "100755")
-    missing = sorted(referenced - set(recorded))
-    assert not missing, f"platform skills reference scripts absent from git: {missing}"
+    not_executable = sorted(r for r in referenced if not os.access(REPO / r, os.X_OK))
     assert not not_executable, (
-        f"referenced directly by a platform skill but not executable in git "
+        f"referenced directly by a platform skill but not executable "
         f"(chmod +x and commit the mode): {not_executable}")
+
+    # Second, weaker check — only where git can actually answer.
+    proc = subprocess.run(
+        ["git", "ls-files", "-s", "--", *sorted(referenced)],
+        cwd=REPO, capture_output=True, text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return  # no usable git index here; the filesystem assertions above stand
+    recorded = {line.split("\t")[-1]: line.split()[0]
+                for line in proc.stdout.splitlines() if "\t" in line}
+    stale_mode = sorted(p for p, m in recorded.items() if m != "100755")
+    assert not stale_mode, (
+        f"executable on disk but not in the git index, so the bit will not "
+        f"travel — run `git update-index --chmod=+x <path>`: {stale_mode}")
