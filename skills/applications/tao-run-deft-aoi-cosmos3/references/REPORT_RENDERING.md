@@ -49,7 +49,7 @@ Required sections:
    unknowns, KPI pass/fail. Label every figure with its source split; only
    Benchmark figures carry the KPI verdict.
 6. **Pipeline Execution** — ordered committed stage events and positive,
-   measured durations from `loop_log.jsonl`. Summary totals exclude the
+   measured durations from `deft_state.json.events`. Summary totals exclude the
    administrative `loop_stop` event and label partial historical logs instead
    of interpreting zero as elapsed time.
 7. **Augmentation Volume** — per iteration and per producer. Mining: raw
@@ -64,8 +64,7 @@ Required sections:
    Proxy/Benchmark results, RCCA, mining, AnomalyGen `SDG_result.csv`,
    `allocation.json`, and generated ShareGPT, assembled JSON, and
    validation-report links/paths.
-9. **Hard Stops / Warnings** — canonical audit warnings and error event, if
-   present.
+9. **Hard Stops / Warnings** — committed error events, if present.
 
 Cosmos3 bare mode is a discrete OK/NG classifier.
 
