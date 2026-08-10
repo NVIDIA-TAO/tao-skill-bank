@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """far_eval_sweep.py — per-epoch checkpoint sweep, runs INSIDE the TAO container.
 
 For a completed training job:

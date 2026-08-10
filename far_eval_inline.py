@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """FAR@100%recall — exact port of DEFT analyze_kpi.py semantics.
 
 Rule (matches scripts/analyze_kpi.py):

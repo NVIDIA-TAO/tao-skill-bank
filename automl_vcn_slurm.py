@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """
 AutoML runner for visual-changenet on SLURM.
 Bayesian-family: bayesian, bohb, dehb (three parallel experiments).
@@ -208,4 +211,3 @@ if __name__ == "__main__":
     for name, cfg in algos.items():
         print(f"\nLaunching AutoML [{name}] — {cfg['settings'].get('num_recommendations')} recs, metric=val_loss minimize")
         launch_one(name, cfg)
-
