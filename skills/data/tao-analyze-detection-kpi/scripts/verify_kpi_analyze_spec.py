@@ -30,10 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
+import yaml
 
 VALID_FORMATS = {"KITTI", "COCO"}
 VALID_PLATFORMS = {"local", "wandb"}
@@ -41,8 +38,6 @@ SOURCE_KEYS = ("image_dir", "ground_truth_ann_path", "inference_ann_path")
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
-    if yaml is None:
-        raise RuntimeError("PyYAML is required: install with `python3 -m pip install pyyaml`.")
     with path.open("r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
     if not isinstance(data, dict):
