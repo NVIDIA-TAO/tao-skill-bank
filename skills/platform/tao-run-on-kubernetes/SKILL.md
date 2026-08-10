@@ -200,48 +200,22 @@ Same four verbs, plus:
 
 ## Local cluster (development, CI, and evals)
 
-A throwaway local cluster is enough to exercise everything except GPU
-execution: manifest admission, the four verbs, job-record wiring, and log
-plumbing. Useful for developing against this skill without burning cluster
-quota, and it is what an agent-driven eval should provision for itself.
+A throwaway minikube/kind cluster exercises admission, the four verbs,
+job-record wiring, and log plumbing without cluster quota — and is what an
+agent-driven eval should provision for itself. `kubectl` and `minikube` are
+single static binaries needing no root, so a non-root CI container can install
+them itself.
 
-```bash
-# minikube — works without Docker (vfkit driver on Apple Silicon; use
-# --driver=docker on Linux/Intel where a daemon is available).
-minikube start --driver=vfkit --cpus=2 --memory=3g
-kubectl get nodes                      # STATUS Ready before submitting
+Two prerequisites keep a rendered Job `Pending`, and the first masks the second:
+the PVC the template mounts must exist (`persistentvolumeclaim "<name>" not
+found` fires before any GPU complaint), then a Job requesting `nvidia.com/gpu`
+on a GPU-less cluster reports `Insufficient nvidia.com/gpu` and waits forever.
+Render `NUM_GPUS=0` for a lifecycle-only run and say GPU scheduling was not
+verified; on a Linux GPU host, `minikube start --driver=docker --gpus all`
+passes real GPUs through, so one GPU box suffices for a GPU-real smoke.
 
-# teardown — the cluster is disposable, delete it when done
-minikube delete
-```
-
-`kind` is an alternative (`kind create cluster` / `kind delete cluster`) but
-requires a working Docker daemon; minikube's vfkit/qemu drivers do not.
-
-**Two things will keep a rendered TAO Job `Pending` on a local cluster.** Both
-are prerequisites, not bugs, and both were confirmed against minikube:
-
-1. **The PVC must exist.** The templates mount `@@PVC_CLAIM@@`; without it the
-   scheduler reports `persistentvolumeclaim "<name>" not found` — and this
-   surfaces *before* any GPU complaint, so it masks the next issue. minikube's
-   default StorageClass binds a plain PVC immediately:
-   ```bash
-   kubectl create -f - <<'EOF'
-   apiVersion: v1
-   kind: PersistentVolumeClaim
-   metadata: {name: edgeai-datasets}
-   spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
-   EOF
-   ```
-2. **GPU capacity must be advertised.** With the PVC satisfied, a Job requesting
-   `nvidia.com/gpu` reports `0/1 nodes are available: 1 Insufficient
-   nvidia.com/gpu` and waits forever. A local cluster has no GPU operator, so
-   either render with `NUM_GPUS=0` for a lifecycle-only check, or install a fake
-   device plugin to test *scheduling* without hardware. Real GPU execution needs
-   a real GPU cluster.
-
-So a local cluster validates **admission and lifecycle**, never GPU execution —
-size any smoke test or eval accordingly.
+Install commands, driver choice, the container/host-networking caveat, and the
+fake-device-plugin middle option: `references/local-cluster.md`.
 
 ## GPU Operator dependency
 
