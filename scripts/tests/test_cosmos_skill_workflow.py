@@ -412,6 +412,63 @@ def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
     assert "require_complete_dataset_cache" not in rl["spec"]["train"]["train_policy"]
     assert "cache_dir" not in rl["spec"]["custom"]["vision"]
     assert rl["spec"]["train"]["optm_impl"] == "fused"
+    for plan in (framework, rl):
+        artifact = plan["decoder_artifact"]
+        assert artifact["required"] is True
+        assert artifact["enabled"] is False
+        assert artifact["policy"]["force_all_validation_media"] is True
+        assert artifact["policy"]["gpu_random_access_validation_required"] is True
+        assert artifact["preparation_arguments"].count("--force-annotation") == 3
+
+
+def test_task_aware_decoder_artifact_is_validated_before_training(tmp_path):
+    args = args_for(
+        tmp_path, backend="cosmos-rl",
+        dataset_family="task_aware_video_reasoning",
+    )
+    args.video_override_map = str(tmp_path / "override-map.json")
+    args.video_override_manifest = str(tmp_path / "override-manifest.json")
+    args.video_override_fingerprint = "a" * 64
+    args.video_override_force_video = [
+        str(tmp_path / "train" / "media" / "train-bcq-0.mp4")
+    ]
+
+    plan = workflow.build_plan(args)
+
+    artifact = plan["decoder_artifact"]
+    assert artifact["enabled"] is True
+    assert artifact["preparation_arguments"].count("--annotation-media-root") == 6
+    assert artifact["preparation_arguments"].count("--force-annotation") == 3
+    assert artifact["preparation_arguments"].count("--force-video") == 1
+    assert "cosmos_rl.utils.video_override_artifacts" in artifact["preparation_command"]
+    assert "cosmos_rl.utils.validate_video_override_artifacts" in artifact["validation_command"]
+    assert "cosmos_rl.utils.validate_video_override_artifacts" in plan["command"]
+    assert "--skip-file-hashes &&\n" in plan["command"]
+    assert "--skip-file-hashes" in plan["command"]
+    assert "cosmos_rl.utils.validate_video_override_artifacts" in plan["preflight"]["container_runtime"]
+    assert "--skip-file-hashes" not in plan["preflight"]["container_runtime"]
+
+
+def test_decoder_artifact_requires_map_manifest_and_fingerprint(tmp_path):
+    args = args_for(tmp_path)
+    args.video_override_map = str(tmp_path / "override-map.json")
+
+    with pytest.raises(common.WorkflowError, match="must be supplied together"):
+        workflow.build_plan(args)
+
+
+def test_task_aware_slurm_render_blocks_missing_decoder_artifact(tmp_path):
+    args = args_for(
+        tmp_path, dataset_family="task_aware_video_reasoning"
+    )
+    args.platform = "slurm"
+    args.partition = "compute"
+    args.account = "project"
+    args.container_mount = [f"{tmp_path}:{tmp_path}"]
+    plan = workflow.build_plan(args)
+
+    with pytest.raises(common.WorkflowError, match="requires a complete fingerprinted"):
+        workflow.render_slurm(args, plan)
 
 
 def test_task_aware_constant_schedule_keeps_lr_factor_at_one(tmp_path):

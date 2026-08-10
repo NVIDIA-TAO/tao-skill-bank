@@ -234,6 +234,16 @@ def _annotation_args(args: argparse.Namespace, split: str) -> tuple[list[str], l
     return annotations, media
 
 
+def _paired_annotation_roots(
+    annotations: Sequence[str], media_roots: Sequence[str]
+) -> list[tuple[str, str]]:
+    if len(media_roots) == 1:
+        return [(annotation, media_roots[0]) for annotation in annotations]
+    if len(media_roots) != len(annotations):
+        raise WorkflowError("supply one shared media root or one media root per annotation")
+    return list(zip(annotations, media_roots, strict=True))
+
+
 def _needs_remote_inspection(args: argparse.Namespace) -> bool:
     if args.platform != "slurm":
         return False
@@ -245,6 +255,8 @@ def _needs_remote_inspection(args: argparse.Namespace) -> bool:
         args.cache_dir,
         args.sqsh_cache_dir,
         args.sqsh_path,
+        args.video_override_map,
+        args.video_override_manifest,
         *args.train_annotation,
         *args.train_media_root,
         *args.validation_annotation,
@@ -910,7 +922,14 @@ def _model_preparation(args: argparse.Namespace, model: Mapping[str, Any]) -> tu
     }
 
 
-def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapping[str, Any], prepared_model: str, representative_media: str) -> dict[str, Any]:
+def _preflight_contract(
+    args: argparse.Namespace,
+    backend: str,
+    plan_image: Mapping[str, Any],
+    prepared_model: str,
+    representative_media: str,
+    decoder_artifact: Mapping[str, Any],
+) -> dict[str, Any]:
     python = "/workspace/.venv/bin/python" if backend == "cosmos-framework" else "/opt/venv/cosmos_rl/bin/python"
     imports = ["import torch", "assert torch.cuda.is_available()", f"assert torch.cuda.device_count() == {args.gpus_per_node}"]
     if backend == "cosmos-framework":
@@ -934,7 +953,16 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
         "import tempfile; f=tempfile.NamedTemporaryFile(delete=False); f.close(); torch.distributed.init_process_group('nccl', init_method='file://'+f.name, rank=0, world_size=1); torch.distributed.destroy_process_group()",
         "print({'gpu': p.name, 'capability': (p.major,p.minor), 'memory':p.total_memory, 'torch':torch.__version__, 'cuda':torch.version.cuda})",
     ])
-    container_check = f"{python} -c {shlex.quote('; '.join(imports))}"
+    container_checks = [f"{python} -c {shlex.quote('; '.join(imports))}"]
+    if decoder_artifact["enabled"]:
+        validator = [
+            python,
+            "-m",
+            "cosmos_rl.utils.validate_video_override_artifacts",
+            *decoder_artifact["validation_arguments"],
+        ]
+        container_checks.append(shlex.join(validator))
+    container_check = " && ".join(container_checks)
     path_values = [prepared_model, args.results_dir, args.checkpoint_dir, args.cache_dir, *args.train_annotation, *args.train_media_root, *args.validation_annotation, *args.validation_media_root]
     path_checks = " && ".join(f"test -r {shlex.quote(value)}" for value in path_values)
     host = "command -v docker >/dev/null && docker version >/dev/null"
@@ -963,8 +991,135 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
             "host and scheduler tools", "credential presence without reading values", "repository clean state",
             "Pyxis/Enroot and SQSH readability", "container mounts/shared storage", "non-root Python imports",
             "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization", "video decoder/libnvcuvid",
-            "free result/checkpoint space",
+            "fingerprinted decoder-artifact coverage", "free result/checkpoint space",
         ],
+    }
+
+
+def _decoder_artifact_plan(
+    args: argparse.Namespace,
+    *,
+    backend: str,
+    model: Mapping[str, Any],
+    model_profile: Mapping[str, Any],
+    train_data: Mapping[str, Any],
+    val_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    if args.video_override_max_macroblocks < 1 or args.video_override_workers < 1:
+        raise WorkflowError(
+            "video_override_max_macroblocks and video_override_workers must be positive"
+        )
+    supplied = (
+        bool(args.video_override_map),
+        bool(args.video_override_manifest),
+        bool(args.video_override_fingerprint),
+    )
+    if any(supplied) and not all(supplied):
+        raise WorkflowError(
+            "video_override_map, video_override_manifest, and "
+            "video_override_fingerprint must be supplied together"
+        )
+    if args.video_override_fingerprint and not re.fullmatch(
+        r"[0-9a-f]{64}", args.video_override_fingerprint
+    ):
+        raise WorkflowError("video_override_fingerprint must be a lowercase SHA256 digest")
+
+    dataset_fingerprint = stable_hash({
+        "train": train_data["dataset_fingerprint"],
+        "validation": val_data["dataset_fingerprint"],
+    })
+    processor_fingerprint = stable_hash({
+        "revision": args.processor_revision,
+        "profile": model_profile,
+    })
+    artifact_root = (
+        Path(args.cache_dir).expanduser()
+        / "video-overrides"
+        / f"{dataset_fingerprint[:16]}-{args.tao_integration_commit[:12]}"
+    )
+    map_path = args.video_override_map or str(artifact_root / "video_override_map.json")
+    manifest_path = args.video_override_manifest or str(artifact_root / "manifest.json")
+    output_dir = str(artifact_root / "videos")
+
+    preparation_arguments: list[str] = []
+    for annotation, media_root in [
+        *_paired_annotation_roots(args.train_annotation, args.train_media_root),
+        *_paired_annotation_roots(args.validation_annotation, args.validation_media_root),
+    ]:
+        preparation_arguments.extend([
+            "--annotation-media-root", _containerize(args, annotation),
+            _containerize(args, media_root),
+        ])
+    for annotation in args.validation_annotation:
+        preparation_arguments.extend([
+            "--force-annotation", _containerize(args, annotation)
+        ])
+    for video in args.video_override_force_video:
+        preparation_arguments.extend(["--force-video", _containerize(args, video)])
+    preparation_arguments.extend([
+        "--output-dir", _containerize(args, output_dir),
+        "--override-map", _containerize(args, map_path),
+        "--manifest", _containerize(args, manifest_path),
+        "--dataset-fingerprint", dataset_fingerprint,
+        "--model-fingerprint", model["fingerprint"],
+        "--processor-fingerprint", processor_fingerprint,
+        "--max-macroblocks", str(args.video_override_max_macroblocks),
+        "--workers", str(args.video_override_workers),
+    ])
+
+    validation_arguments = [
+        "--override-map", _containerize(args, map_path),
+        "--manifest", _containerize(args, manifest_path),
+        "--artifact-fingerprint", args.video_override_fingerprint or "<ARTIFACT_FINGERPRINT>",
+        "--dataset-fingerprint", dataset_fingerprint,
+        "--model-fingerprint", model["fingerprint"],
+        "--processor-fingerprint", processor_fingerprint,
+        "--integration-commit", args.tao_integration_commit,
+    ]
+    for annotation in args.validation_annotation:
+        validation_arguments.extend([
+            "--require-covered-annotation", _containerize(args, annotation)
+        ])
+
+    python = (
+        "/workspace/.venv/bin/python"
+        if backend == "cosmos-framework"
+        else "/opt/venv/cosmos_rl/bin/python"
+    )
+
+    return {
+        "required": args.dataset_family == "task_aware_video_reasoning",
+        "enabled": all(supplied),
+        "path": args.video_override_map or None,
+        "manifest": args.video_override_manifest or None,
+        "sha256": args.video_override_fingerprint or None,
+        "input_fingerprints": {
+            "dataset": dataset_fingerprint,
+            "model": model["fingerprint"],
+            "processor": processor_fingerprint,
+        },
+        "policy": {
+            "macroblock_scan": True,
+            "force_all_validation_media": True,
+            "forced_runtime_sources": list(args.video_override_force_video),
+            "gpu_random_access_validation_required": True,
+        },
+        "preparation_module": "cosmos_rl.utils.video_override_artifacts",
+        "preparation_arguments": preparation_arguments,
+        "preparation_command": shlex.join([
+            python,
+            "-m",
+            "cosmos_rl.utils.video_override_artifacts",
+            *preparation_arguments,
+        ]),
+        "validation_module": "cosmos_rl.utils.validate_video_override_artifacts",
+        "validation_arguments": validation_arguments,
+        "validation_command": shlex.join([
+            python,
+            "-m",
+            "cosmos_rl.utils.validate_video_override_artifacts",
+            *validation_arguments,
+        ]),
     }
 
 
@@ -1026,15 +1181,14 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     })
     commits = _source_commits(args, backend)
     image = _image_plan(args, backend, commits)
-    if bool(args.video_override_map) != bool(args.video_override_fingerprint):
-        raise WorkflowError("video_override_map and video_override_fingerprint must be supplied together")
-    if args.video_override_fingerprint and not re.fullmatch(r"[0-9a-f]{64}", args.video_override_fingerprint):
-        raise WorkflowError("video_override_fingerprint must be a lowercase SHA256 digest")
-    decoder_artifact = {
-        "path": args.video_override_map or None,
-        "sha256": args.video_override_fingerprint or None,
-        "enabled": bool(args.video_override_map),
-    }
+    decoder_artifact = _decoder_artifact_plan(
+        args,
+        backend=backend,
+        model=model,
+        model_profile=model_profile,
+        train_data=train_data,
+        val_data=val_data,
+    )
     processor_fingerprint = stable_hash({
         "revision": args.processor_revision,
         "profile": model_profile,
@@ -1057,6 +1211,17 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     val_media_container = [_containerize(args, value) for value in val_media]
     spec = _framework_spec(args, train_data["record_count"], val_data["record_count"], contract) if backend == "cosmos-framework" else _rl_spec(args, contract, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, cache_keys)
     environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container)
+    command = _command(args, backend)
+    if decoder_artifact["enabled"]:
+        python = "/workspace/.venv/bin/python" if backend == "cosmos-framework" else "/opt/venv/cosmos_rl/bin/python"
+        runtime_validation = [
+            python,
+            "-m",
+            decoder_artifact["validation_module"],
+            *decoder_artifact["validation_arguments"],
+            "--skip-file-hashes",
+        ]
+        command = f"{shlex.join(runtime_validation)} &&\n{command}"
     remote_paths = remote_inspection.get("runtime_paths", {}) if remote_inspection else {}
 
     def runtime_path(label: str, value: str, *, required: bool = True) -> dict[str, Any]:
@@ -1087,13 +1252,15 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "image": image, "sqsh": runtime_path("sqsh_path", args.sqsh_path, required=args.platform == "slurm"),
         "compute": {"platform": args.platform, "nodes": args.nodes, "gpus_per_node": args.gpus_per_node, "total_gpus": total_gpus, "cpus_per_task": args.cpus_per_task},
         "cache_prewarm": {"required": backend == "cosmos-rl" and args.dataset_family == "video_conversation", "keys": cache_keys, "path": args.cache_dir, "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": backend == "cosmos-rl" and args.dataset_family == "video_conversation", "resumable": True, "selection_basis": {"media_reuse": train_data["profile"]["media_reuse_class"], "record_count": train_data["record_count"], "resolution_class": train_data["profile"]["resolution"]["class"]}},
-        "spec": spec, "environment": environment, "command": _command(args, backend),
+        "spec": spec, "environment": environment, "command": command,
         "config_container_path": args.container_spec_path,
         "smoke_gate": {"required": not args.skip_smoke and args.run_mode == "full", "train_samples": args.smoke_train_samples, "validation_samples": args.smoke_validation_samples, "criteria": ["child_exit_code=0", "terminal_status=SUCCESS", "finite_train_avg_loss", "finite_val_avg_loss", "checkpoint_event", "validation_accuracy_present"]},
         "metric_contract": {"train": {"key": "train/avg_loss", "weight": "valid_labels", "requires": ["train/loss_numerator", "train/valid_label_count"]}, "validation": {"key": "val/avg_loss", "weight": "valid_labels", "requires": ["val/loss_numerator", "val/valid_label_count"]}, "accuracy": {"route": "shared repository evaluator", "aggregation": val_data["metric_coverage"]["aggregate"], "coverage": val_data["metric_coverage"]}},
     }
     representative_media = _containerize(args, train_data["media_manifest"][0]["path"])
-    plan["preflight"] = _preflight_contract(args, backend, image, prepared_model, representative_media)
+    plan["preflight"] = _preflight_contract(
+        args, backend, image, prepared_model, representative_media, decoder_artifact
+    )
     return plan
 
 
@@ -1231,6 +1398,10 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         raise WorkflowError("SLURM partition, account, and SQSH path are required")
     if args.use_requeue:
         raise WorkflowError("requeue is disabled by default and is not validated for Cosmos training")
+    if plan["decoder_artifact"]["required"] and not plan["decoder_artifact"]["enabled"]:
+        raise WorkflowError(
+            "task-aware Cosmos training requires a complete fingerprinted decoder artifact"
+        )
     try:
         timeout_hours, timeout_minutes, timeout_seconds = (
             int(value) for value in args.timeout.split(":")
@@ -1341,11 +1512,21 @@ def parity_report(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str
         "validation_dataset": dataset_parity(left["datasets"]["validation"], right["datasets"]["validation"]),
         "optimization": optimization_parity(left["training"], right["training"]),
     }
-    decoder_equal = left.get("decoder_artifact") == right.get("decoder_artifact")
+    decoder_keys = (
+        "required", "enabled", "path", "manifest", "sha256",
+        "input_fingerprints", "policy",
+    )
+    left_decoder = {
+        key: left.get("decoder_artifact", {}).get(key) for key in decoder_keys
+    }
+    right_decoder = {
+        key: right.get("decoder_artifact", {}).get(key) for key in decoder_keys
+    }
+    decoder_equal = left_decoder == right_decoder
     checks["decoder_artifact"] = {
         "status": "equivalent" if decoder_equal else "invalid_mismatch",
-        "left": left.get("decoder_artifact"),
-        "right": right.get("decoder_artifact"),
+        "left": left_decoder,
+        "right": right_decoder,
     }
     evaluator_left = left.get("metric_contract", {}).get("accuracy", {})
     evaluator_right = right.get("metric_contract", {}).get("accuracy", {})
@@ -1414,6 +1595,12 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
     env = os.environ if env is None else env
     errors: list[str] = []
     warnings: list[str] = []
+    decoder_artifact = plan["decoder_artifact"]
+    if decoder_artifact["required"] and not decoder_artifact["enabled"]:
+        errors.append(
+            "task-aware Cosmos training requires video_override_map, "
+            "video_override_manifest, and video_override_fingerprint"
+        )
 
     def check_repository(name: str, identity: Mapping[str, Any], commit: str, tree: str) -> None:
         if not identity.get("exists") or identity.get("kind") != "directory":
@@ -1513,7 +1700,11 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--video-max-pixels", type=int, default=0); parser.add_argument("--video-frame-width", type=int, default=0)
     parser.add_argument("--video-frame-height", type=int, default=0)
     parser.add_argument("--video-override-map", default="")
+    parser.add_argument("--video-override-manifest", default="")
     parser.add_argument("--video-override-fingerprint", default="")
+    parser.add_argument("--video-override-force-video", action="append", default=[])
+    parser.add_argument("--video-override-max-macroblocks", type=int, default=8192)
+    parser.add_argument("--video-override-workers", type=int, default=16)
     parser.add_argument("--system-prompt", default=""); parser.add_argument("--attention-implementation", default="auto")
     parser.add_argument("--processor-revision", default="packaged"); parser.add_argument("--run-mode", choices=("smoke", "full"), default="full")
     parser.add_argument("--skip-smoke", action="store_true"); parser.add_argument("--smoke-train-samples", type=int, default=16)

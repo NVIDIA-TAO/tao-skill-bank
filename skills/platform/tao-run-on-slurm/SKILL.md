@@ -384,11 +384,20 @@ scheduler-idle constraint.
 
 On an infrastructure failure (`NODE_FAIL`, `BOOT_FAIL`, NCCL transport timeouts,
 CUDA driver init failures, GPU/IB link-down, OOM-killer node reaping, Xid
-errors), classify infra-vs-program from the logs and re-submit the staged sbatch
-script (M6). Plain training failures surface immediately so a broken spec does
-not consume the retry budget. `#SBATCH --requeue` is enabled by default via
+errors), classify infra-vs-program from the logs and create a new retry record
+with `--retry-of` before re-submitting the staged workload (M6). Plain training
+failures surface immediately so a broken spec does not consume the retry
+budget. `#SBATCH --requeue` is enabled by default via
 `SLURM_USE_REQUEUE=true`, so SLURM itself re-queues the job on `NODE_FAIL` or
-pre-emption before any agent-level resubmit.
+pre-emption before any agent-level resubmit; workload contracts such as Cosmos
+may require `--no-requeue`.
+
+An empty `sbatch --parsable` response or SSH disconnect is an ambiguous
+submission, not permission to submit again. Reconcile `squeue` and `sacct` by
+the exact unique job name across configured login hosts, adopt exactly one
+match, and stop on duplicates. Only resubmit under a new retry record after a
+bounded reconciliation window finds no job. Validate inherited node exclusions
+against `scontrol show nodes` before submitting.
 
 See `references/slurm-container-execution.md` for the full multi-node
 env-var/sbatch directive detail and table, cluster requirements, the

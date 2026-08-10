@@ -63,14 +63,27 @@ resource limits without credentials.
 
 Framework uses its native CUDA TorchCodec path. Cosmos-RL uses repository-owned
 PyNvVideoCodec with correct pitch/stride handling. Worker count zero requires
-prefetch to be absent or null. Full Cosmos-RL video runs prewarm separate train
-and validation caches before model allocation. Cache keys combine dataset,
-model, and processor fingerprints; completeness manifests and every entry are
-validated before training.
+prefetch to be absent or null. Conversation-style Cosmos-RL runs prewarm
+separate train and validation caches before model allocation. Cache keys
+combine dataset, model, and processor fingerprints; completeness manifests and
+every entry are validated before training.
+
+Task-aware data uses direct GPU decoding rather than a distributed processor
+cache. Build a fresh schema-v2 override artifact with the packaged
+`cosmos_rl.utils.video_override_artifacts` module. Use
+`--annotation-media-root` for every annotation/root pair, force all validation
+annotations with `--force-annotation`, and reserve `--force-video` for train
+streams proven incompatible during GPU random-access validation. The packaged
+`cosmos_rl.utils.validate_video_override_artifacts` module must prove the
+artifact fingerprint, current dataset/model/processor fingerprints, source and
+output checksums, and complete coverage of every validation annotation. Run a
+multi-rank GPU random-access validation before the smoke job. An artifact that
+contains only macroblock-limit or diagnosed train overrides while omitting
+validation coverage is incomplete and must block launch.
 
 Do not recover a full video run by falling back silently to CPU decoding or by
-reusing another run's cache. A decoder, cache, or media failure is a failed
-smoke gate.
+reusing another run's cache or override map. A decoder, cache, or media failure
+is a failed smoke gate.
 
 ## Failure classes
 

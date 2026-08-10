@@ -136,9 +136,23 @@ Execute these stages in order and persist their outputs.
    login host over SSH. It runs from stdin, preserves remote `realpath` values,
    and creates no remote script or source overlay. Do not require local Lustre,
    `sbatch`, or `srun` on an SSH-based launch host.
-7. For Cosmos-RL full video runs, prewarm train and validation caches using
-   separate deterministic dataset+model+processor keys. Require complete
-   manifests and resumable entries. Never reuse an unproven cache.
+7. Prepare the decoder input selected by the structural dataset contract.
+   Conversation-style Cosmos-RL runs prewarm separate deterministic train and
+   validation caches keyed by dataset+model+processor fingerprints. Task-aware
+   runs decode directly on GPU and instead require a fingerprinted override
+   artifact from the packaged
+   `cosmos_rl.utils.video_override_artifacts` builder. Pair every annotation
+   with its actual media root, scan the full input set for the NVDEC macroblock
+   limit, force every validation annotation with `--force-annotation`, and add
+   only independently diagnosed train streams with `--force-video`. Validate
+   the artifact with the packaged
+   `cosmos_rl.utils.validate_video_override_artifacts` command, including full
+   validation-media coverage and GPU random-access decoding, before smoke.
+   The JSON plan emits exact `decoder_artifact.preparation_command` and
+   `decoder_artifact.validation_command` values for the selected clean image;
+   re-plan with their map, manifest, and artifact fingerprint outputs before
+   materializing or rendering training. Never reuse another run's cache or
+   override artifact.
 8. Generate backend-native TOML, environment, topology, preflight commands,
    parity data, and machine-readable job metadata. Full specs must contain no
    sample limit. `plan` and `preflight` are read-only. After launch review,
@@ -245,3 +259,6 @@ owning repository, add a test, commit it, rebuild both image and SQSH from a
 clean checkout, rerun smoke, and rerun every affected full job. Never edit a
 running container, patch an existing image, reuse an old SQSH after a source
 change, or rely on a temporary launch script as the implementation.
+
+Use `references/cosmos-reproducibility-gates.md` as the source-owner and test
+map before proposing a workaround in a fresh session.

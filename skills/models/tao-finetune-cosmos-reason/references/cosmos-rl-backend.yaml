@@ -77,10 +77,18 @@ actions:
   inference_microservice: {supported: true, implementation: tao_integration}
   quantize: {supported: true, implementation: tao_integration}
 cache:
-  prewarm_required_for_full_video_runs: true
+  prewarm_required_for_video_conversation_runs: true
+  task_aware_policy: direct_gpu_decode_with_fingerprinted_override_artifact
   deterministic_key: dataset_plus_model_plus_processor
   train_validation_keys_separate: true
   completeness_manifest_required: true
+decoder_artifact:
+  schema_version: 2
+  builder: cosmos_rl.utils.video_override_artifacts
+  validator: cosmos_rl.utils.validate_video_override_artifacts
+  force_all_validation_annotations: true
+  diagnosed_train_sources_are_explicit: true
+  gpu_random_access_validation_required: true
 compatibility:
   a100_qwen3_vl_patch_embed: native_per_model_linear_equivalent
   worker_zero_prefetch: num_workers_zero_and_prefetch_omitted

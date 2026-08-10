@@ -151,15 +151,23 @@ Stage the entrypoint/spec files to Lustre, render the `sbatch` script with Pyxis
 On an infrastructure-looking failure — `NODE_FAIL`, `BOOT_FAIL`, NCCL transport
 timeouts, CUDA driver init failures, GPU/IB link-down, OOM-killer node reaping,
 Xid errors, and similar retriable patterns — classify infra-vs-program from the
-job logs (M6) and re-submit the already-staged `sbatch` script; the user-facing
-`tao_job_record` id stays stable across resubmits while the underlying SLURM job
-id rotates.
+job logs (M6). A real resubmit gets a new job record with `--retry-of`; do not
+reuse the previous record or its results directory. A scheduler-level requeue,
+when the workload allows it, remains the same backend job and record.
+
+If `sbatch --parsable` returns no id or the SSH connection is lost, do not
+assume submission failed. Reconcile `squeue` and `sacct` by the exact unique job
+name on every configured login host. Adopt exactly one match, stop and clean up
+multiple matches, and resubmit only when no match appears after a bounded
+accounting-propagation window. Validate every carried node exclusion against
+`scontrol show nodes`; nonexistent exclusions can make the retry itself fail.
 
 Plain training failures (`FAILED` with no matching pattern) surface immediately
 so a broken spec does not consume the retry budget. `#SBATCH --requeue` is
 enabled by default via `SLURM_USE_REQUEUE=true`, so SLURM itself re-queues the
 job on `NODE_FAIL` or pre-emption before any agent-level resubmit; set
-`SLURM_USE_REQUEUE=false` to opt out.
+`SLURM_USE_REQUEUE=false` to opt out. A workload-specific contract can require
+it off; the Cosmos training planner emits `#SBATCH --no-requeue`.
 
 ## Failure Modes
 
