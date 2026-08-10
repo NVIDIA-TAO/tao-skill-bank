@@ -34,10 +34,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
+import yaml
 
 # stage -> how its spec is obtained
 DS_MODULES = {

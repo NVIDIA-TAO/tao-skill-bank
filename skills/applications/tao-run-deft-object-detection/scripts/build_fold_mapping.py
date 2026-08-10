@@ -52,10 +52,7 @@ import json
 import sys
 from pathlib import Path
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
+import yaml
 
 
 def load_classes(path: Path) -> dict[str, list[str]]:
@@ -64,8 +61,6 @@ def load_classes(path: Path) -> dict[str, list[str]]:
     Order is preserved deliberately: Co-DETR assigns output category IDs
     ``0..K-1`` in exactly this iteration order.
     """
-    if yaml is None:
-        raise RuntimeError("PyYAML is required: install with `python3 -m pip install pyyaml`.")
     with path.open("r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
 

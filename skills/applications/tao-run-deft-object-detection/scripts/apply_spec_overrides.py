@@ -48,10 +48,7 @@ import json
 import sys
 from pathlib import Path
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
+import yaml
 
 MANDATORY = "???"
 
@@ -165,8 +162,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     try:
         args = parse_args()
-        if yaml is None:
-            raise RuntimeError("PyYAML is required; run through scripts/deft_python.sh.")
 
         spec_path = Path(args.spec).expanduser().resolve()
         if not spec_path.is_file():

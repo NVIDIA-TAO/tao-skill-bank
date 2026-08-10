@@ -28,10 +28,7 @@ import json
 import sys
 from pathlib import Path
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
+import yaml
 
 
 def load_mapping(path: Path) -> list[dict]:
@@ -61,8 +58,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     try:
         args = parse_args()
-        if yaml is None:
-            raise RuntimeError("PyYAML is required; run through scripts/deft_python.sh.")
 
         targets: list[str] = []
         for raw in args.target_classes:

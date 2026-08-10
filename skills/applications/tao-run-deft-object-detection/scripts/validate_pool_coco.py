@@ -42,10 +42,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
+import yaml
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png")
 KITTI_NUMERIC_FIELDS = 14
@@ -70,8 +67,6 @@ def split_kitti_line(line: str) -> str | None:
 
 
 def load_targets(path: Path) -> list[str]:
-    if yaml is None:
-        raise RuntimeError("PyYAML is required: install with `python3 -m pip install pyyaml`.")
     with path.open("r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh) or {}
     classes = data.get("classes", data) if isinstance(data, dict) else data

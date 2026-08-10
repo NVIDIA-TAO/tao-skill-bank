@@ -32,10 +32,7 @@ import argparse
 import sys
 from pathlib import Path
 
-try:
-    import pandas as pd
-except ImportError:  # pragma: no cover
-    pd = None
+import pandas as pd
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png")
 
@@ -73,11 +70,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     try:
         args = parse_args()
-        if pd is None:
-            raise RuntimeError(
-                "pandas is required. Run this through scripts/deft_python.sh, which selects an "
-                "interpreter that has it."
-            )
 
         images_dir = Path(args.images_dir).expanduser().resolve()
         if not images_dir.is_dir():
