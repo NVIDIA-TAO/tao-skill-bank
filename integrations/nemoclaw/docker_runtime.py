@@ -19,7 +19,7 @@ import pwd
 import re
 import shutil
 import stat
-from typing import Sequence
+from typing import Mapping, Sequence
 
 
 CONTAINER_HOME = "/results/.tao-runtime/home"
@@ -446,6 +446,66 @@ def prepare_runtime_home(
         os.close(home_fd)
 
 
+# Kept in sync with server.py's _SHELL_PASSTHROUGH_ENV: the CPU shell and GPU
+# jobs must see the same credential names, or a workload that stages its own
+# models succeeds under tao_exec and fails under tao_run for no visible reason.
+_CREDENTIAL_PASSTHROUGH_ENV = (
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "NGC_API_KEY",
+    "NGC_CLI_API_KEY",
+    "NGC_KEY",
+)
+
+
+_RESERVED_MOUNT_TARGETS = ("/data", "/results")
+# Names whose values must never reach a command line. Credentials are forwarded
+# by name instead (_CREDENTIAL_PASSTHROUGH_ENV), so the value stays in the
+# bridge's environment and out of `ps` and the container's own argv.
+_SECRET_NAME_SEGMENTS = frozenset(
+    {"KEY", "KEYS", "TOKEN", "TOKENS", "SECRET", "SECRETS",
+     "PASSWORD", "PASSWD", "CREDENTIAL", "CREDENTIALS", "APIKEY"}
+)
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def validate_container_path(path: str, what: str) -> str:
+    """Absolute, normalized, traversal-free container-side path."""
+    if not path or not path.startswith("/"):
+        raise ValueError(f"{what} must be an absolute container path: {path!r}")
+    if "\x00" in path or "\n" in path:
+        raise ValueError(f"{what} contains an illegal character")
+    normalized = PurePosixPath(path).as_posix()
+    if ".." in PurePosixPath(normalized).parts:
+        raise ValueError(f"{what} must not contain '..': {path!r}")
+    if normalized == "/":
+        raise ValueError(f"{what} must not be the container root")
+    return normalized
+
+
+def validate_container_env(env: Mapping[str, str] | None) -> dict[str, str]:
+    """Non-secret KEY=VALUE pairs safe to place on the docker command line."""
+    validated: dict[str, str] = {}
+    for name, value in (env or {}).items():
+        if not _ENV_NAME_RE.fullmatch(str(name)):
+            raise ValueError(f"invalid environment variable name: {name!r}")
+        # Match underscore-delimited segments, not substrings: TOKENIZERS_PARALLELISM
+        # is a standard HuggingFace variable and a substring test rejects it (as it
+        # does MONKEY_PATCH and TURKEY). Names the bridge forwards by name are always
+        # refused here — passing those by value is what this guards against.
+        segments = set(str(name).upper().split("_"))
+        if segments & _SECRET_NAME_SEGMENTS or str(name) in _CREDENTIAL_PASSTHROUGH_ENV:
+            raise ValueError(
+                f"{name} looks like a credential; pass secrets by name through the "
+                "bridge environment instead of as a job argument"
+            )
+        text = str(value)
+        if "\x00" in text or "\n" in text:
+            raise ValueError(f"value for {name} contains an illegal character")
+        validated[str(name)] = text
+    return validated
+
+
 def build_docker_run_args(
     *,
     image: str,
@@ -459,6 +519,9 @@ def build_docker_run_args(
     shm_size: str,
     identity: HostIdentity,
     job_token: str,
+    workdir: str = "",
+    extra_env: Mapping[str, str] | None = None,
+    extra_mounts: Sequence[Mapping[str, object]] | None = None,
 ) -> list[str]:
     """Build arguments passed after the ``docker`` executable.
 
@@ -519,14 +582,50 @@ def build_docker_run_args(
     args.extend(("--shm-size", shm_size))
     for name, value in environment.items():
         args.extend(("-e", f"{name}={value}"))
+    # Registry/model credentials, forwarded BY NAME so the value never reaches
+    # the command line (docker reads it from the bridge's own environment).
+    # GPU jobs need these for the same reason the CPU shell does: some workloads
+    # bootstrap their own model cache on first run — paidf-anomalygen's
+    # `download_checkpoints.sh` fetches gated Cosmos weights from inside the
+    # container. Without this the documented auto-download path is unreachable
+    # through the bridge and fails as an opaque 401 / RepositoryNotFoundError.
+    for name in _CREDENTIAL_PASSTHROUGH_ENV:
+        if os.environ.get(name):
+            args.extend(("-e", name))
+    # Caller-supplied non-secret environment. Values land on the docker command
+    # line and are therefore visible in `ps`, so credentials must keep going
+    # through the by-name allowlist above; validate_container_env rejects any
+    # name that looks like a secret.
+    for name, value in validate_container_env(extra_env).items():
+        args.extend(("-e", f"{name}={value}"))
+
+    if workdir:
+        args.extend(("--workdir", validate_container_path(workdir, "workdir")))
+
     args.extend(
         (
             "--mount",
             _volume_mount(workspace_volume, "/data", data_subpath),
             "--mount",
             _volume_mount(workspace_volume, "/results", results_subpath),
-            image,
-            *command,
         )
     )
+    # Extra mounts exist for images with a baked-in path contract — the
+    # paidf-anomalygen container reads its Cosmos base checkpoints from
+    # /workspace/paidf-anomalygen/checkpoints and cannot be told otherwise, so
+    # without this the stage is unrunnable through the bridge at any price.
+    # Sources still come from the one fixed-root workspace volume through
+    # traversal-safe subpaths; only the container-side destination is free.
+    for spec in extra_mounts or ():
+        target = validate_container_path(str(spec.get("target", "")), "mount target")
+        if any(target == r or target.startswith(r + "/") for r in _RESERVED_MOUNT_TARGETS):
+            raise ValueError(
+                f"mount target {target} is managed by the bridge; choose another path"
+            )
+        mount = _volume_mount(workspace_volume, target, str(spec.get("subdir", "")))
+        if spec.get("ro"):
+            mount += ",readonly"
+        args.extend(("--mount", mount))
+
+    args.extend((image, *command))
     return args

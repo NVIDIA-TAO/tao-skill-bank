@@ -45,6 +45,7 @@ from starlette.responses import JSONResponse
 if __package__:
     from .docker_runtime import (
         build_docker_run_args,
+        _CREDENTIAL_PASSTHROUGH_ENV,
         current_host_identity,
         ensure_workspace_directory,
         JOB_NAME_PREFIX,
@@ -55,6 +56,8 @@ if __package__:
         RESULTS_INODE_LABEL,
         RESULTS_PATH_LABEL,
         RESULTS_TOKEN_LABEL,
+        validate_container_env,
+        validate_container_path,
         validate_managed_results_source,
         validate_volume_subpath,
         WORKSPACE_VOLUME_LABEL,
@@ -63,6 +66,7 @@ if __package__:
 else:  # ``python server.py`` execution path
     from docker_runtime import (
         build_docker_run_args,
+        _CREDENTIAL_PASSTHROUGH_ENV,
         current_host_identity,
         ensure_workspace_directory,
         JOB_NAME_PREFIX,
@@ -73,6 +77,8 @@ else:  # ``python server.py`` execution path
         RESULTS_INODE_LABEL,
         RESULTS_PATH_LABEL,
         RESULTS_TOKEN_LABEL,
+        validate_container_env,
+        validate_container_path,
         validate_managed_results_source,
         validate_volume_subpath,
         WORKSPACE_VOLUME_LABEL,
@@ -89,12 +95,10 @@ SHELL_CONTAINER_HOME = "/workspace/.tao-shell/home"
 # Secrets forwarded into the shell by NAME only (docker reads the value from the
 # bridge's own environment), so staging tools can reach gated HF / NGC artifacts
 # without the value ever appearing on the docker command line.
-_SHELL_PASSTHROUGH_ENV = (
-    "HF_TOKEN",
-    "HUGGING_FACE_HUB_TOKEN",
-    "NGC_API_KEY",
-    "NGC_CLI_API_KEY",
-)
+# One source of truth, shared with the GPU path in docker_runtime. Two copies
+# synced by a comment is precisely how tao_exec and tao_run came to forward
+# different credentials in the first place.
+_SHELL_PASSTHROUGH_ENV = _CREDENTIAL_PASSTHROUGH_ENV
 
 # The sandbox reaches this server as host.openshell.internal (the OpenShell
 # bridge). The MCP SDK's DNS-rebinding guard validates the Host header, so that
@@ -565,6 +569,9 @@ def tao_run(
     results_subdir: str = "results",
     gpus: int = 1,
     shm_size: str = "8g",
+    workdir: str = "",
+    env: dict[str, str] | None = None,
+    mounts: list[dict] | None = None,
 ) -> dict:
     """Launch a TAO training container on the host GPU. Returns a job_id.
 
@@ -581,6 +588,23 @@ def tao_run(
     shm_size: /dev/shm size (e.g. "8g", "16g"). TAO PyTorch DataLoaders need a
       large shared-memory segment; the docker default (64m) causes "Bus error"
       / "DataLoader worker exited". Raise for many workers or multi-GPU.
+    workdir: absolute container working directory. Some images require a
+      specific CWD — paidf-anomalygen's `-m scripts.…` entry points only
+      resolve from /workspace/paidf-anomalygen.
+    env: extra NON-SECRET environment for the job, e.g.
+      {"PYTHONPATH": "/workspace/paidf-anomalygen", "HF_HUB_OFFLINE": "1"}.
+      Values appear on the docker command line, so any name containing KEY,
+      TOKEN, SECRET, PASSWORD or CREDENTIAL is rejected: registry and model
+      credentials are already forwarded by name from the bridge environment
+      and must not be passed here.
+    mounts: extra read-only or read-write mounts for images with a baked-in
+      path contract, as
+      [{"subdir": "<workspace-relative>", "target": "<abs container path>",
+        "ro": true}]. Sources resolve under the workspace root through the same
+      traversal-safe volume subpaths as /data and /results; /data and /results
+      themselves are reserved. Example — Cosmos base checkpoints for
+      AnomalyGen: {"subdir": "augmentation/anomalygen/base_checkpoints",
+      "target": "/workspace/paidf-anomalygen/checkpoints", "ro": true}.
 
     The container runs as the MCP server's host UID:GID. HOME and common cache
     directories are prepared below /results/.tao-runtime so bind-mounted output
@@ -592,6 +616,25 @@ def tao_run(
         raise ValueError("command must be a list of strings")
     if not (1 <= gpus <= 8):
         raise ValueError("gpus must be between 1 and 8")
+    validated_env = validate_container_env(env)
+    validated_mounts = []
+    for spec in mounts or ():
+        if not isinstance(spec, dict):
+            raise ValueError("each mount must be an object with subdir and target")
+        subdir = str(spec.get("subdir", ""))
+        # Resolve and create the source as the bridge user with no-follow walks,
+        # exactly as /data and /results are handled — a caller-supplied path must
+        # never reach Docker as a raw host pathname.
+        source = ensure_workspace_directory(_resolve_under_root(subdir), WORKSPACE_ROOT)
+        validated_mounts.append(
+            {
+                "subdir": _workspace_relative(str(source)),
+                "target": validate_container_path(str(spec.get("target", "")), "mount target"),
+                "ro": bool(spec.get("ro", False)),
+            }
+        )
+    if workdir:
+        validate_container_path(workdir, "workdir")
     if not re.fullmatch(r"\d+[bkmg]?", shm_size, re.IGNORECASE):
         raise ValueError("shm_size must look like '8g', '16g', '512m'")
 
@@ -640,6 +683,9 @@ def tao_run(
                 shm_size=shm_size,
                 identity=identity,
                 job_token=token,
+                workdir=workdir,
+                extra_env=validated_env,
+                extra_mounts=validated_mounts,
             )
         )
     except subprocess.TimeoutExpired as exc:
