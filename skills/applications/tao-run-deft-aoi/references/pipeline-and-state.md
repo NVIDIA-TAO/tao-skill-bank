@@ -14,10 +14,10 @@ iteration executes:
 
 1. **[INLINE] Resolve prior RCA input from disk.** For iter1 read
    `state["iterations"]["baseline"]["rca_gaps_parquet"]`; for iterN (N>1)
-   read `state["iterations"][f"iter{N-1}"]["rca_gaps_parquet"]`. The audit
-   must confirm the matching prior RCA log event and the file must exist.
-   `commit_stage.py` sets `state["current_iteration"] = N` when it commits the
-   first `iterN/routing` event; never edit this field directly.
+   read `state["iterations"][f"iter{N-1}"]["rca_gaps_parquet"]`. The path
+   recorded in state must exist. `commit_stage.py` sets
+   `state["current_iteration"] = N` when it commits the first `iterN/routing`
+   event; never edit this field directly.
 
 2. **[SKILL — `tao-skill-bank:tao-route-visual-changenet-samples`] Route weak samples.** Split the prior phase's `rca_gaps_parquet` into `routing_mining_parquet` and `routing_anomalygen_parquet` under the current `iterN` object. Downstream mining and AnomalyGen stages read those paths from disk. See `references/tao-route-visual-changenet-samples.md`.
 
@@ -25,13 +25,13 @@ iteration executes:
 
    If the committed `routing_anomalygen_parquet` has zero rows, do not launch
    the GPU generator. Set `anomalygen_skipped=true`, advance
-   `stage_completed` to `anomalygen`, and append an `anomalygen/status=ok`
+   `stage_completed` to `anomalygen`, and commit an `anomalygen/status=ok`
    event whose summary says that routing produced zero rows. This is a
    documented branch skip, not a fabricated artifact.
 
    **SDG training contribution (INLINE).** Convert returned AnomalyGen outputs into ChangeNet paired training rows. Pre-create `${RESULTS_DIR}/iter${N}/mining_filter/` and `${RESULTS_DIR}/iter${N}/dataset/images/` before running the row-prep script. Stage NG/OK image pairs under `results/iter${N}/dataset/images/synthetic_iter${N}_{ng,ok}/`, run `scripts/changenet_data_pair_prepare.py` with `--input-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/reconstructed_image`, `--golden-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/original_image`, `--images-dir`, `--subdir synthetic_iter${N}`, `--light SolderLight`, `--image-ext .jpg` (or the exact `dataset.classify.image_ext` from the training spec), and `--output-csv ${RESULTS_DIR}/iter${N}/mining_filter/sdg_rows_raw.csv`. Rewrite the script's bare `synthetic_iter${N}_ng/` paths to workspace-root-relative form (`results/run_<TS>/iter${N}/dataset/images/synthetic_iter${N}_ng`) before appending into `mining_filter/mining_pool.csv`, since the per-iter training spec sets `images_dir=/data/workspace`. SDG rows skip k-NN filtering; only real-image mining applies the cosine threshold.
 
-4. **[SKILL — `tao-skill-bank:tao-mine-aoi-images`] Mining pool — real-image contribution.** Mine real images from `augmentation/mining_pool/mining_pool.csv` against the current iteration's weak samples (`routing_mining_parquet` from `deft_state.json`) using SigLIP k-NN embeddings. **Retain only entries with cosine similarity ≥ `state.config.mining_filter.min_similarity`** (default `0.9` when unset), then run the mapped skill's history-aware post-processing and drop every filepath already selected by an earlier iteration. The default remains `top_k_per_target=5`; preserve an explicit user value and increase it only when history filtering repeatedly leaves too few novel candidates. Append only the final novel rows into `mining_filter/mining_pool.csv` (same file as the SDG contribution above). Never append `mined_raw.parquet` or `mined_candidates.parquet`. When converting mined filepaths into ChangeNet rows, follow the path-form rule in `references/tao-mine-aoi-images.md` → *Mined rows → ChangeNet CSV*. Output: updated `mining_filter/mining_pool.csv`, immutable cosine-only `mining_filter/knn_summary.csv`, per-iteration `mining_history_summary.json`, and run-level `mining_history.json`. The cosine summary proves raw candidate retention; the history summary separately proves prior-iteration rejection and the final novel count. See `references/tao-mine-aoi-images.md`.
+4. **[SKILL — `tao-skill-bank:tao-mine-aoi-images`] Mining pool — real-image contribution.** First run `scripts/resolve_mining_pool.py` with `state.config.mining_pool_csv`, `state.config.mining_images_root`, and `state.config.resolved_mining_pool_csv`; use only the resolved output. It fails on every missing or ambiguous file, so never guess an `augmentation/mining_pool/images` directory. Mine the resolved rows against the current iteration's weak samples (`routing_mining_parquet` from state) using SigLIP k-NN embeddings. **Retain only entries with cosine similarity ≥ `state.config.mining_filter.min_similarity`**, then apply history-aware filtering. Append only final novel rows into `mining_filter/mining_pool.csv`; never append raw/candidate parquets. `commit_stage.py` verifies the reported count against the mined parquet and rejects placeholder logs. See `references/tao-mine-aoi-images.md`.
 
    If history filtering leaves zero novel real rows, surface its recommendation
    to increase `topn` or expand the source pool. Continue only when AnomalyGen
@@ -40,7 +40,7 @@ iteration executes:
 
    If the committed `routing_mining_parquet` has zero rows, do not run the
    embedding/mining containers. Set `data_mining_skipped=true`, advance
-   `stage_completed` to `data_mining`, and append a
+   `stage_completed` to `data_mining`, and commit a
    `data_mining/status=ok` event that records the zero-row routing result.
    This is the only legal mining skip: an invalid source CSV or failed mining
    command with routed rows remaining is a hard stop.
@@ -54,9 +54,9 @@ iteration executes:
      row. For iter1, `source ∈ {base_train, mining_pool}`. For N>1,
      `source ∈ {previous_iter_train, mining_pool}`; every row from the preceding
      combined CSV must appear unchanged with `source=previous_iter_train`.
-     `audit_deft_run.py` enforces the row count, source vocabulary, and exact
-     multiset retention, so a non-monotonic merge is rolled back.
-   - **`images_dir` for the iteration training spec** must be set to the workspace root (e.g. `/data/workspace/`), not `kpi/images/`. SDG rows already carry workspace-root-relative paths. Before concatenation, rewrite every iter1 base row's relative `input_path` and `golden_path` by prepending `kpi/images/` exactly once; do not merely change the spec. For iter N>1, the previous combined CSV is already in workspace coordinates and must not be prefixed again. If validation shows base files exist only after adding `kpi/images/`, fix the CSV and rerun validation; never bypass the FATAL.
+     Check the row count, source vocabulary, and exact multiset retention
+     before committing so every iteration grows monotonically.
+   - **`images_dir` for the iteration training spec** must be set to the workspace root (e.g. `/data/workspace/`), not the real-image directory. SDG rows already carry workspace-root-relative paths. Resolve `state.config.images_dir` relative to the workspace (`images/` for the canonical layout; `kpi/images/` only for a legacy layout), then prepend that relative prefix exactly once to every iter1 base row's relative `input_path` and `golden_path`; do not merely change the spec. For iter N>1, the previous combined CSV is already in workspace coordinates and must not be prefixed again. If validation shows base files exist only after adding the resolved image-root prefix, fix the CSV and rerun validation; never bypass the FATAL.
    - **Normalize `label` case on every source before concatenation — base_train, previous_iter_train, SDG rows, and mined rows.** Preserve `PASS` uppercase and lowercase+strip everything else; write the normalized combined CSV before running `validate_training_csv.py`. See `references/visual-changenet.md` for the dataloader rule and the failure mode if you violate it.
 
 6. **[INLINE] Pre-train CSV validation** — run **both** checks below; hard stop on either failure. Both must pass before launching the training container; an invalid CSV burns a full GPU run before the container surfaces the root cause.
@@ -96,14 +96,15 @@ iteration executes:
    Do not launch training while the last committed stage is still
    `data_mining`; this commit is the proof that all path/leakage checks passed.
 
-7. **[SKILL — `tao-skill-bank:tao-train-visual-changenet`] Fine-tune + evaluate.** Invoke the skill for separate `train`, `inference`, and `evaluate` tasks, committing `train` through `scripts/commit_stage.py` **before** evaluate — the audit enforces `data_merge → train → evaluate`. Do not fold train into the evaluate commit. Iter N's committed checkpoint must be a newly emitted file under `${RESULTS_DIR}/iter${N}/train/`; reusing or copying the baseline/previous checkpoint is not an iteration train. For the train task, pass `automl_policy: off` as a **workflow argument** (to the Skill tool call or SDK runner), **not** as a spec field — see `## Train AutoML Policy` in SKILL.md. For direct `docker run visual_changenet train -e <spec>`, plain training is already the default. A nonzero train exit or a TAO status `FAILURE`, or a zero-step `PASS` that emits no new iteration checkpoint, is a hard stop; never evaluate a checkpoint written before that failure. Run the configured evaluator for every candidate checkpoint, select by its operator, then pass the winner and evaluator JSON to `commit_stage.py`; it records the metric and `evaluate` event transactionally. See `references/visual-changenet.md` and `references/metric-contract.md`.
+7. **[SKILL — `tao-skill-bank:tao-train-visual-changenet`] Fine-tune + evaluate.** Invoke the skill for separate `train`, `inference`, and `evaluate` tasks, committing `train` through `scripts/commit_stage.py` **before** evaluate; preserve the documented `data_merge → train → evaluate` order. Do not fold train into the evaluate commit. Iter N's committed checkpoint must be a newly emitted file under `${RESULTS_DIR}/iter${N}/train/`; reusing or copying the baseline/previous checkpoint is not an iteration train. For the train task, pass `automl_policy: off` as a **workflow argument** (to the Skill tool call or SDK runner), **not** as a spec field — see `## Train AutoML Policy` in SKILL.md. For direct `docker run visual_changenet train -e <spec>`, plain training is already the default. A nonzero train exit or a TAO status `FAILURE`, or a zero-step `PASS` that emits no new iteration checkpoint, is a hard stop; never evaluate a checkpoint written before that failure. Run the configured evaluator for every candidate checkpoint, select by its operator, then pass the winner and evaluator JSON to `commit_stage.py`; it records the metric and `evaluate` event transactionally. See `references/visual-changenet.md` and `references/metric-contract.md`.
 
-## State & Logging
+## State
 
-Two artifacts persist loop state:
-
-- `results/deft_state.json` — current resume snapshot. Initialize once with `init_deft_state.py`, then mutate only through `commit_stage.py`; never hand-edit, reinitialize, or write it with inline Python/jq/heredocs.
-- `results/loop_log.jsonl` — append-only event stream, one JSON line per stage:
+`results/deft_state.json` is the only persistent loop record. Initialize it
+once with `init_deft_state.py`, then mutate it only through `commit_stage.py`;
+never hand-edit, reinitialize, or write it with inline Python/jq/heredocs. It
+contains the immutable execution policy, resume snapshot, resolved mining
+paths, optional terminal artifacts, and an `events` array with one object per commit:
 
 ```json
 {
@@ -119,27 +120,25 @@ Two artifacts persist loop state:
 }
 ```
 
-`context_tokens` is a placeholder written as 0 by `scripts/log_stage.py` (the bash caller cannot measure LLM context size in-flight). The loop-end sequence runs `scripts/align_token_usage.py` to read the Claude Code transcript at `~/.claude/projects/<slug>/<session-id>.jsonl`, attribute each assistant message to the stage whose timestamp window it falls in, and rewrite the file with real `context_tokens` plus a per-stage `tokens` object.
+`context_tokens` starts at 0 because the stage caller cannot measure LLM
+context size in-flight. The loop-end sequence runs `align_token_usage.py` to
+attribute transcript usage to the state events and atomically refresh the same
+file.
 
-**Disk is the source of truth.** Before every stage run the audit and use its
-`last_committed`, `next_action`, and `read_before_action` output. Do not print
-the full state or log into context. `commit_stage.py` re-reads both files and
-computes the next sequence from disk.
+**Disk is the source of truth.** Before every stage, re-read
+`deft_state.json`. Use the latest event plus `iterations.<label>.status` and
+`stage_completed` to decide where to resume. Do not print the full state into
+context. `commit_stage.py` re-reads it and computes the next event sequence
+from disk. A failed stage may be retried after its cause is fixed; the retry is
+recorded as a new event and the current snapshot is updated.
 
-Run `scripts/audit_deft_run.py --results-dir ${RESULTS_DIR}` immediately after
-that re-read. Its `read_before_action` output is the stage overlay to load. An
-`INVALID` result is a hard stop: repair the state/log mismatch before any GPU
-work. This is also the only supported resume decision after compaction.
-
-Use `scripts/commit_stage.py` for every entry. It owns state mutation, sequence
-calculation, append, audit, and rollback; `log_stage.py` is an internal helper.
-
-**On startup / resume:** Print the last 5 entries of `loop_log.jsonl` so the user can see recent progress, then proceed using the disk-loaded state.
+**On startup / resume:** Show the last five `events` entries so the user can
+see recent progress, then proceed from the disk-loaded snapshot.
 
 ## Stage Execution
 
 Every stage runs in the parent's context. The disk contracts
-(`deft_state.json` + `loop_log.jsonl` + `results/iter${ITER}/`) are the
+(`deft_state.json` + `results/iter${ITER}/`) are the
 canonical interface between stages — never assume in-memory state survives.
 
 Three stage types:
@@ -149,7 +148,7 @@ Three stage types:
 - **HOOK** — `commit_stage.py` invokes `scripts/render_report.py` after each
   valid commit. Report generation is deterministic and never delegated.
 
-For `tao-skill-bank:tao-train-visual-changenet`, pass a separate task name (`train`, `inference`, or `evaluate`); the `stage` value in `loop_log.jsonl` is still only `train` or `evaluate`.
+For `tao-skill-bank:tao-train-visual-changenet`, pass a separate task name (`train`, `inference`, or `evaluate`); the state event's `stage` value is still only `train` or `evaluate`.
 
 If the matching `references/*.md` file is missing, stop. Do not replace it with generic shell commands. Artifacts must stay under the stage-specific output directory defined by the reference file.
 
@@ -159,9 +158,9 @@ After every stage finishes, before advancing:
 
 1. Verify the documented required artifacts exist.
 2. Invoke `commit_stage.py` once with the documented artifact flags. For an error use `--status error`; it sets the iteration failed. Never repair a rejected commit by editing JSON.
-3. Run `scripts/audit_deft_run.py --results-dir ${RESULTS_DIR}`. If it reports `INVALID`, halt and repair; do not advance on in-memory success.
-4. If the committed log status is `error` — halt, surface the disk evidence verbatim, **do not auto-retry**.
-5. If the committed log status is `ok` — confirm that `commit_stage.py` did
+3. Re-read `deft_state.json` and confirm the latest event matches the stage.
+4. If the committed event status is `error` — halt and surface the recorded error. Retry only after repairing its cause.
+5. If the committed event status is `ok` — confirm that `commit_stage.py` did
    not print `report hook failed`, then print one status line in the standard
    format `[iter <N>/<max> · <stage>] <primary metric> · <duration> · next:
    <stage>` (e.g. `[iter 2/3 · evaluate] weighted escape cost 0.024 → 0.018
@@ -180,20 +179,23 @@ After every stage finishes, before advancing:
 
 ## Runtime Behavior
 
-Run without pausing. Between stages, run the audit and print only its one-line
-status/next action. `commit_stage.py` appends exactly one event per stage and
+Run without pausing. Between stages, re-read state and print only a one-line
+status/next action. `commit_stage.py` appends one event per commit and
 refreshes the report through its post-commit hook. For background
 Docker work, redirect both streams, save its PID, poll one line or `tail -40`
 at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call.
 
 **Loop-end sequence** (run in order, each step depends on the previous):
 
-1. Append the final event via `commit_stage.py --stage loop_stop`.
-2. Backfill real per-stage token usage into `loop_log.jsonl` from the Claude Code transcript:
+1. Run `deft_context.py --stage finalize`, then call `finalize_run.py` with
+   `--stop-reason metric_met` or `max_iterations`. It first writes
+   `best_model.json` and `best_model_inference_spec.yaml`, then commits
+   `loop_stop`; terminal state cannot exist without those artifacts.
+2. Optionally backfill real per-stage token usage into `deft_state.json` from the Claude Code transcript:
 
    ```bash
    <this-skill-dir>/scripts/deft_python.sh <this-skill-dir>/scripts/align_token_usage.py \
-       --log-path ${RESULTS_DIR}/loop_log.jsonl \
+       --state-path ${RESULTS_DIR}/deft_state.json \
        --project-dir ~/.claude/projects/$(pwd | sed 's|/|-|g')
    ```
 
@@ -210,31 +212,23 @@ at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call
    This is an explicit deterministic script call, not delegated work; the
    preceding `loop_stop` commit already produced a valid report before token
    alignment.
-4. Run `scripts/prepare_inference_spec.py` (see below).
 
-Before telling the user the loop is complete, run:
-
-```bash
-<this-skill-dir>/scripts/deft_python.sh <this-skill-dir>/scripts/audit_deft_run.py \
-  --results-dir ${RESULTS_DIR} --require-complete
-```
-
-If it exits non-zero, the run is not complete even if a report or inference
-CSV exists. For a hard-stop path, use `--require-terminal` instead and report
-the run as `FAILED`; never relabel a failed run as a completed loop.
-
-When `--require-complete` exits zero, reap any saved run-owned PIDs, return the
-user/harness completion token if one was requested, and end the session
-immediately. Do not run another diagnostic, poll, render, or artifact scan
-after completion has been proven.
+Before telling the user the loop is complete, re-read `deft_state.json` and
+require `status == "complete"`, a complete baseline, and a complete final
+iteration. For a hard-stop path, require `status == "failed"` and report the
+run as `FAILED`; never relabel it as a completed loop. Once the state check
+passes, reap any saved run-owned PIDs, return the user/harness completion token
+if one was requested, and end the session.
 
 **Stop conditions:**
 
 - Primary metric and all configured constraints pass → run the loop-end sequence.
 - `max_iterations` reached → run the loop-end sequence with the best-iteration report. Do not add a post-loop RCA event; the terminal evaluate transitions directly to `loop_stop`.
-- Unrecoverable gate failure → halt and report the exact missing artifact. Do not run a reduced loop or fabricate CSVs. Steps 1–3 of the loop-end sequence still apply. Run prepare-for-inference only when an earlier valid checkpoint exists; otherwise skip it explicitly.
+- Unrecoverable gate failure → commit the failing stage with `--status error`, halt, and report the exact missing artifact. Do not run `loop_stop`, a reduced loop, or fabricate CSVs.
 
-**Prepare-for-inference (final step).** Run `scripts/prepare_inference_spec.py` to emit the inference handoff:
+**Prepare-for-inference.** `scripts/finalize_run.py` invokes
+`scripts/prepare_inference_spec.py` before the terminal commit. For inspection
+or recovery before terminal state, the lower-level command is:
 
 ```bash
 <this-skill-dir>/scripts/deft_python.sh <this-skill-dir>/scripts/prepare_inference_spec.py --results-dir ${RESULTS_DIR}

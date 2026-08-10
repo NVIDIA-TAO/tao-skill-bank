@@ -216,7 +216,7 @@ are idempotent — re-running a completed step exits quickly.
 ```bash
 # (a) Cosmos base checkpoints (~22 GB for 2B-only, ~140 GB with 14B + T5-11b).
 # WRITABLE mount (no :ro) so download_checkpoints.sh can populate the cache.
-docker run --rm \
+docker run --pull=never --rm \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -228,7 +228,7 @@ docker run --rm \
 # skill's PCB-dataset fetcher (`uc1` = the skill's identifier for the PCB
 # use-case; unrelated to the host-side <project> directory label).
 if [ ! -f "$DS/defect_spec.jsonl" ]; then
-  docker run --rm \
+  docker run --pull=never --rm \
     --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
     -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
     -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -243,7 +243,7 @@ from the per-UC HF repo (see *Fine-tuned checkpoint sources* above) via:
 ```bash
 # (c) AnomalyGen fine-tuned checkpoint (PCB UC; ~5 GB).
 if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ]; then
-  docker run --rm \
+  docker run --pull=never --rm \
     --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
     -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
     -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -264,7 +264,7 @@ calls — same image, READ-ONLY mount on the cosmos cache.
 STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' $CKPT/checkpoints/latest_checkpoint.txt)
 
 # Phase 2: AMP routing → testcase.jsonl  (~10s, no GPU)
-docker run --rm --gpus all --ipc=host --shm-size=16g \
+docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -276,7 +276,7 @@ docker run --rm --gpus all --ipc=host --shm-size=16g \
     --amp-output-dir $RUN_DIR/amp --output-jsonl $RUN_DIR/testcase.jsonl"
 
 # Phase 3: SDG diffusion → reconstructed_image/ + original_image/  (1-3 min on Blackwell)
-docker run --rm --gpus all --ipc=host --shm-size=16g \
+docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \

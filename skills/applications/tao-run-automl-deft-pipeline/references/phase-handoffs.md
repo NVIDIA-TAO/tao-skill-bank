@@ -7,7 +7,7 @@ Phase 1 hands over **two artifacts**: the winning *spec* and the winning *checkp
 In the mental model, Phase 1 → Phase 2 is a *spec file* AND the *winning checkpoint* (Phase 1 already trained a model at those HPs — retraining the same HPs in DEFT's baseline step is wasted compute). The bridge:
   1. Deep-merges Phase 1's winning HPs onto `<workspace>/specs/baseline_spec.yaml` → writes `specs/baseline_spec_automl.yaml` (DEFT reads this).
   2. Copies the Phase 1 winning checkpoint into `${RESULTS_DIR}/baseline/train/` with the filename DEFT expects.
-  3. Pre-populates `${RESULTS_DIR}/deft_state.json` and `${RESULTS_DIR}/loop_log.jsonl` so DEFT sees baseline train as already completed and resumes at baseline inference → evaluate → RCA → iter 1.
+  3. Pre-populates `${RESULTS_DIR}/deft_state.json` so DEFT sees baseline train as already completed and resumes at baseline inference → evaluate → RCA → iter 1.
 
 DEFT itself stays plain-train (`automl_policy: off` inside the DEFT loop is preserved).
 
@@ -26,7 +26,7 @@ cp <workspace>/specs/baseline_spec_automl.yaml <workspace>/specs/baseline_spec.y
 **Step 3 — Initialise `deft_state.json` with baseline already done.** Use `tao-run-deft-aoi/scripts/init_deft_state.py` to write the initial state, then patch in the `iterations.baseline` entry:
 
 ```python
-import json, pathlib
+import datetime, json, pathlib
 
 best_rec = json.loads(pathlib.Path(f"{WORKSPACE}/best_rec.json").read_text())
 state_path = pathlib.Path(f"{RESULTS_DIR}/deft_state.json")
@@ -37,10 +37,19 @@ state["iterations"]["baseline"] = {
     "train_metric": best_rec["best"]["score"],        # metric identity in best_rec["metric_name"]/["direction"]
     "source": "automl_phase1",                        # provenance flag — not a DEFT-generated checkpoint
 }
+events = state.setdefault("events", [])
+events.append({
+    "seq": max((event.get("seq", 0) for event in events), default=0) + 1,
+    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    "iter": "baseline",
+    "stage": "train",
+    "status": "ok",
+    "summary": "baseline train skipped — reused Phase 1 AutoML winning checkpoint",
+    "duration_sec": 0,  # pre-seeded handoff; not a DEFT-executed stage
+    "context_tokens": 0,
+})
 state_path.write_text(json.dumps(state, indent=2))
 ```
-
-Append a matching `baseline.train` entry to `loop_log.jsonl` via `scripts/log_stage.py` with `--status ok --summary "baseline train skipped — reused Phase 1 AutoML winning checkpoint"`.
 
 **Step 4 — Invoke DEFT.** When the DEFT loop reads its state on startup it will see `iterations.baseline.stage_completed == "train"` and skip directly to baseline inference → evaluate → RCA → iter 1. `automl_policy: off` inside the loop is preserved.
 

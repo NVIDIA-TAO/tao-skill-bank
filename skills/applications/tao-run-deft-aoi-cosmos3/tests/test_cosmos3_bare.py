@@ -32,10 +32,9 @@ sys.path.insert(0, str(DATA_MINING_SCRIPTS))
 # Pytest may collect that suite first in one interpreter; clear only those
 # ambiguous imports before loading the Cosmos3-local state machine modules.
 for module_name in (
-    "audit_deft_run",
     "commit_stage",
+    "finalize_run",
     "init_deft_state",
-    "log_stage",
     "metric_contract",
     "record_metric_result",
     "render_report",
@@ -44,15 +43,16 @@ for module_name in (
 
 import analyze_gaps  # noqa: E402
 import assemble_training_json  # noqa: E402
-import audit_deft_run  # noqa: E402
 import check_annotations  # noqa: E402
 import commit_stage  # noqa: E402
 import emit_mined_sharegpt  # noqa: E402
 import emit_sdg_sharegpt  # noqa: E402
 import filter_mined_by_cosine  # noqa: E402
 import filter_mined_history  # noqa: E402
+import finalize_run  # noqa: E402
 import init_deft_state  # noqa: E402
 import patch_eval_image_cap  # noqa: E402
+import render_report  # noqa: E402
 import validate_sharegpt  # noqa: E402
 import validate_split_contract  # noqa: E402
 
@@ -534,16 +534,6 @@ class IsolationAndMetricTests(unittest.TestCase):
                     expected_benchmark_sha256=expected,
                 )
 
-            audit_roles = audit_deft_run._training_lineage_roles(
-                "iter2",
-                {"anomalygen_sharegpt_json": str(current_synthetic)},
-                {"iter1": {"combined_training_json": str(mixed_train)}},
-                role_paths,
-                monotonic_train,
-            )
-            self.assertEqual(audit_roles["previous_train"], mixed_train)
-            self.assertEqual(audit_roles["synthetic"], current_synthetic)
-
             # A synthetic board that also sits in an evaluation split is leakage.
             leaking_synthetic = write_json(
                 root / "synthetic_leak.json",
@@ -657,6 +647,10 @@ class StateMachineTests(unittest.TestCase):
                     str(workspace),
                     "--platform",
                     "docker",
+                    "--network-mode",
+                    "airgap",
+                    "--network-mode-source",
+                    "test-harness",
                     "--gpu-model",
                     "NVIDIA H100 80GB HBM3",
                     "--max-iterations",
@@ -669,6 +663,13 @@ class StateMachineTests(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
             state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(state["version"], 5)
+            self.assertEqual(
+                state["execution_policy"]["network_mode"], "airgap"
+            )
+            self.assertFalse(
+                state["execution_policy"]["allow_package_install"]
+            )
             self.assertNotIn("train", state["config"]["annotations"])
             self.assertTrue(state["config"]["evaluation"]["proxy"]["drives_rcca"])
             self.assertFalse(
@@ -743,36 +744,33 @@ class StateMachineTests(unittest.TestCase):
                 ),
                 0,
             )
-            self.assertEqual(audit_deft_run.audit(results)["status"], "IN_PROGRESS")
+            state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(state["status"], "in_progress")
+            self.assertEqual(state["events"][-1]["stage"], "benchmark_metrics")
             self.assertEqual(
-                commit_stage.main(
+                finalize_run.main(
                     [
-                        "--results-dir",
-                        str(results),
-                        "--iter-label",
-                        "baseline",
-                        "--stage",
-                        "loop_stop",
-                        "--duration-sec",
-                        "1",
-                        "--summary",
-                        "Benchmark KPI met",
+                        "--results-dir", str(results),
+                        "--iter-label", "baseline",
+                        "--stop-reason", "metric_met",
+                        "--duration-sec", "1",
                     ]
                 ),
                 0,
             )
-            report = audit_deft_run.audit(results)
-            self.assertEqual(report["status"], "COMPLETE")
-            self.assertEqual(report["best_iteration"], "baseline")
+            state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(state["status"], "complete")
+            self.assertEqual(state["events"][-1]["stage"], "loop_stop")
+            self.assertEqual(
+                [event["seq"] for event in state["events"]], [1, 2, 3]
+            )
+            self.assertFalse((results / "loop_log.jsonl").exists())
             html_report = results / "DEFT_Loop_Report.html"
             self.assertTrue(html_report.is_file())
             self.assertIn("KPI MET", html_report.read_text())
-            self.assertIsNone(
-                audit_deft_run._completion_report_error(results)
-            )
             self.assertEqual(
-                audit_deft_run.main(
-                    ["--results-dir", str(results), "--require-complete"]
+                render_report.main(
+                    ["--results-dir", str(results), "--require-terminal"]
                 ),
                 0,
             )
@@ -782,7 +780,7 @@ class StateMachineTests(unittest.TestCase):
             self.assertEqual(phase["stage_completed"], "benchmark_metrics")
             self.assertNotIn("proxy_results_json", phase)
 
-    def test_passed_gate_rejects_further_proxy_work(self) -> None:
+    def test_passed_gate_is_visible_in_state_without_audit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             workspace = root / "workspace"
@@ -875,25 +873,15 @@ class StateMachineTests(unittest.TestCase):
                 0,
             )
 
-            # The gate passed, so the loop must stop. Spending a Proxy
-            # evaluation anyway is a disk-state inconsistency and is rolled back.
-            proxy_results = write_json(
-                results / "baseline/evaluate_proxy/results.json",
-                [{"gt": "NG", "response": "OK"}],
-            )
-            self.assertNotEqual(
-                commit(
-                    "evaluate_proxy",
-                    "--proxy-results",
-                    str(proxy_results),
-                ),
-                0,
-            )
+            # The gate result is canonical state evidence; the orchestrator
+            # reads it and proceeds directly to loop_stop without Proxy work.
             state = json.loads((results / "deft_state.json").read_text())
             phase = state["iterations"]["baseline"]
             self.assertEqual(phase["stage_completed"], "benchmark_metrics")
             self.assertEqual(phase["status"], "complete")
-            self.assertEqual(audit_deft_run.audit(results)["status"], "IN_PROGRESS")
+            self.assertTrue(phase["metric_result"]["passed"])
+            self.assertEqual(state["status"], "in_progress")
+            self.assertEqual(state["events"][-1]["stage"], "benchmark_metrics")
 
     def test_missing_specs_fail_before_state_exists(self) -> None:
         """State is written once and never hand-edited, so fail before writing."""
@@ -1066,17 +1054,14 @@ class StateMachineTests(unittest.TestCase):
                 ),
                 0,
             )
-            report = audit_deft_run.audit(results)
-            self.assertEqual(report["status"], "FAILED")
-            phase = json.loads(
-                (results / "deft_state.json").read_text()
-            )["iterations"]["baseline"]
+            state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(state["status"], "failed")
+            phase = state["iterations"]["baseline"]
             self.assertEqual(phase["status"], "failed")
-            log = (results / "loop_log.jsonl").read_text().strip().splitlines()
-            self.assertEqual(len(log), 1)
-            self.assertEqual(json.loads(log[0])["status"], "error")
+            self.assertEqual(len(state["events"]), 1)
+            self.assertEqual(state["events"][0]["status"], "error")
 
-    def test_anomalygen_skip_allowed_without_false_accepts(self) -> None:
+    def test_anomalygen_skip_requires_empty_driving_false_accepts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             workspace = root / "workspace"
@@ -1222,7 +1207,9 @@ class StateMachineTests(unittest.TestCase):
             )["iterations"]["iter1"]
             self.assertTrue(phase["anomalygen_skipped"])
             self.assertNotIn("anomalygen_sdg_csv", phase)
-            self.assertEqual(audit_deft_run.audit(results)["status"], "IN_PROGRESS")
+            state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(state["status"], "in_progress")
+            self.assertEqual(state["events"][-1]["stage"], "anomalygen")
 
     def test_unmet_baseline_runs_iteration_to_max(self) -> None:
         import pyarrow as pa
@@ -1389,27 +1376,6 @@ class StateMachineTests(unittest.TestCase):
                 str(targets),
             )
 
-            # baseline RCCA recorded one false accept, so the model IS
-            # under-detecting: skipping synthetic generation is not justified.
-            self.assertNotEqual(
-                commit_stage.main(
-                    [
-                        "--results-dir",
-                        str(results),
-                        "--iter-label",
-                        "iter1",
-                        "--stage",
-                        "anomalygen",
-                        "--skip",
-                        "--duration-sec",
-                        "1",
-                        "--summary",
-                        "attempted unjustified skip",
-                    ]
-                ),
-                0,
-            )
-
             sdg_csv = write_sdg_output(
                 results / "iter1/anomalygen/sdg", ["PCB+bridge_00000"]
             )
@@ -1511,7 +1477,7 @@ class StateMachineTests(unittest.TestCase):
                 [record("mining.png", "golden.png", "OK")],
             )
             # The train file must carry BOTH producers' targets. A mined-only
-            # train file never exercises the audit's synthetic lineage path,
+            # train file never exercises the synthetic lineage path,
             # which is how a missing "synthetic" role at that call site went
             # unnoticed while the standalone validator passed.
             synthetic_target = str(
@@ -1725,12 +1691,24 @@ class StateMachineTests(unittest.TestCase):
             train("iter2")
             # max_iterations=2, so iter2 stops at the gate and skips Proxy.
             evaluate_arc("iter2", correct=False, continuing=False)
-            report = audit_deft_run.audit(results)
-            self.assertIn("loop_stop", report["next_action"])
-            commit("iter2", "loop_stop")
-            report = audit_deft_run.audit(results)
-            self.assertEqual(report["status"], "COMPLETE")
-            self.assertEqual(report["current_iteration"], 2)
+            state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(state["current_iteration"], 2)
+            self.assertEqual(
+                state["iterations"]["iter2"]["stage_completed"],
+                "benchmark_metrics",
+            )
+            commit(
+                "iter2",
+                "loop_stop",
+                "--stop-reason",
+                "max_iterations",
+                "--final-report",
+                str(results / "DEFT_Loop_Report.html"),
+            )
+            state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(state["status"], "complete")
+            self.assertEqual(state["current_iteration"], 2)
+            self.assertEqual(state["events"][-1]["stage"], "loop_stop")
 
 
 if __name__ == "__main__":
