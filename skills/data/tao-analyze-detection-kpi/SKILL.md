@@ -73,7 +73,7 @@ RUN_ROOT=/absolute/path/that/contains/images/annotations/and/results
 python3 skills/data/tao-analyze-detection-kpi/scripts/verify_kpi_analyze_spec.py \
   --spec "$SPEC"
 
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
+DS_IMAGE="$(scripts/resolve_versions_key.py --skill-bank "$PWD" images.tao_toolkit.data_services)"
 
 docker run --rm --gpus all --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -132,7 +132,7 @@ docker info > /dev/null
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
+DS_IMAGE="$(scripts/resolve_versions_key.py --skill-bank "$PWD" images.tao_toolkit.data_services)"
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 
