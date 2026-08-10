@@ -6,7 +6,7 @@ dataset:
   target_cols: ""
   val_ratio: 0.1
   test_ratio: 0.0
-  stride: null
+  stride: 1
 model:
   seq_len: 512
   forecast_horizon: 72
@@ -18,6 +18,9 @@ model:
   unfreeze_embedder: false
 train:
   epochs: 5
+  num_epochs: 5
+  checkpoint_interval: 5
+  checkpoint_interval_unit: epoch
   batch_size: 8
   lr: 1.0e-4
   weight_decay: 0.0

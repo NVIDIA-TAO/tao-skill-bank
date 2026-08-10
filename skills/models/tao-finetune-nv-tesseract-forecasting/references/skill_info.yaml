@@ -4,6 +4,9 @@ automl_enabled: true
 container_image: null
 actions:
   train:
+    command: python examples/finetune_example.py --run-config {config_path}
+    config_format: yaml
+    mode: config
     inputs:
       dataset.csv:
         type: file
@@ -23,6 +26,9 @@ actions:
     metric_file: metrics.json
 
   inference_hpo:
+    command: python inference_hpo_trial.py --run-config {config_path}
+    config_format: yaml
+    mode: config
     inputs:
       dataset.csv:
         type: file

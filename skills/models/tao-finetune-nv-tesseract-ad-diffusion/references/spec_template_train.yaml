@@ -13,6 +13,9 @@ train:
   pretrained_model: ""
   config: ""
   epochs: 10
+  num_epochs: 10
+  checkpoint_interval: 10
+  checkpoint_interval_unit: epoch
   batch_size: 16
   lr: 1.0e-5
   weight_decay: 1.0e-6

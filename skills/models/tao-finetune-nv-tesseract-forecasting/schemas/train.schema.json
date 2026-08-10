@@ -24,6 +24,9 @@
     "model.unfreeze_encoder",
     "model.unfreeze_embedder",
     "train.epochs",
+    "train.num_epochs",
+    "train.checkpoint_interval",
+    "train.checkpoint_interval_unit",
     "train.seed",
     "train.output_dir"
   ],
@@ -36,7 +39,7 @@
       "target_cols": "",
       "val_ratio": 0.1,
       "test_ratio": 0.0,
-      "stride": null
+      "stride": 1
     },
     "model": {
       "seq_len": 512,
@@ -50,6 +53,9 @@
     },
     "train": {
       "epochs": 5,
+      "num_epochs": 5,
+      "checkpoint_interval": 5,
+      "checkpoint_interval_unit": "epoch",
       "batch_size": 8,
       "lr": 1e-4,
       "weight_decay": 0.0,
@@ -121,8 +127,8 @@
         },
         "stride": {
           "automl_enabled": false,
-          "default": null,
-          "description": "Sliding window stride. Null = forecast_horizon.",
+          "default": 1,
+          "description": "Sliding window stride. Use 1 for dense windows.",
           "title": "stride",
           "type": "int"
         }
@@ -210,6 +216,9 @@
       ],
       "automl_disabled_parameters": [
         "train.epochs",
+        "train.num_epochs",
+        "train.checkpoint_interval",
+        "train.checkpoint_interval_unit",
         "train.seed",
         "train.output_dir"
       ],
@@ -226,6 +235,34 @@
           "minimum": 1,
           "title": "epochs",
           "type": "int"
+        },
+        "num_epochs": {
+          "automl_enabled": false,
+          "default": 5,
+          "description": "Compatibility epoch count consumed by AutoMLRunner checkpoint retention. Keep equal to train.epochs for NV-Tesseract scripts.",
+          "maximum": 200,
+          "minimum": 1,
+          "title": "AutoML runner epoch count",
+          "type": "int"
+        },
+        "checkpoint_interval": {
+          "automl_enabled": false,
+          "default": 5,
+          "description": "Compatibility checkpoint interval consumed by AutoMLRunner checkpoint retention.",
+          "minimum": 1,
+          "title": "checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "automl_enabled": false,
+          "default": "epoch",
+          "description": "Compatibility checkpoint interval unit consumed by AutoMLRunner checkpoint retention.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "checkpoint interval unit",
+          "type": "categorical"
         },
         "batch_size": {
           "automl_enabled": true,

@@ -18,6 +18,9 @@
     "dataset.split",
     "train.pretrained_model",
     "train.config",
+    "train.num_epochs",
+    "train.checkpoint_interval",
+    "train.checkpoint_interval_unit",
     "train.output_dir",
     "train.seed"
   ],
@@ -38,6 +41,9 @@
       "pretrained_model": "",
       "config": "",
       "epochs": 10,
+      "num_epochs": 10,
+      "checkpoint_interval": 10,
+      "checkpoint_interval_unit": "epoch",
       "batch_size": 16,
       "lr": 1e-5,
       "weight_decay": 1e-6,
@@ -159,6 +165,9 @@
       "automl_disabled_parameters": [
         "train.pretrained_model",
         "train.config",
+        "train.num_epochs",
+        "train.checkpoint_interval",
+        "train.checkpoint_interval_unit",
         "train.output_dir",
         "train.seed"
       ],
@@ -189,6 +198,34 @@
           "minimum": 1,
           "title": "epochs",
           "type": "int"
+        },
+        "num_epochs": {
+          "automl_enabled": false,
+          "default": 10,
+          "description": "Compatibility epoch count consumed by AutoMLRunner checkpoint retention. Keep equal to train.epochs for NV-Tesseract scripts.",
+          "maximum": 200,
+          "minimum": 1,
+          "title": "AutoML runner epoch count",
+          "type": "int"
+        },
+        "checkpoint_interval": {
+          "automl_enabled": false,
+          "default": 10,
+          "description": "Compatibility checkpoint interval consumed by AutoMLRunner checkpoint retention.",
+          "minimum": 1,
+          "title": "checkpoint interval",
+          "type": "int"
+        },
+        "checkpoint_interval_unit": {
+          "automl_enabled": false,
+          "default": "epoch",
+          "description": "Compatibility checkpoint interval unit consumed by AutoMLRunner checkpoint retention.",
+          "enum": [
+            "epoch",
+            "step"
+          ],
+          "title": "checkpoint interval unit",
+          "type": "categorical"
         },
         "batch_size": {
           "automl_enabled": true,
