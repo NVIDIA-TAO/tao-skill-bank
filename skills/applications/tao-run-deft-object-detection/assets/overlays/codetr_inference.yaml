@@ -13,3 +13,11 @@ inference.conf_threshold: 0.3  # TAO: 0.5. Applied at write time, so it is the
 inference.input_width: 640     # TAO: null, which defers sizing to the
 inference.input_height: 640    # augmentation path: roughly 4x slower and a
                                # different set of boxes, neither of them reported.
+
+model.soft_nms_enabled: true   # TAO: false. `inference.category_mapping` folds classes and
+                               # then runs per-output-category soft-NMS, but only when this is
+                               # on. With it off the fold renames without merging, so one
+                               # object detected as both car and truck yields two boxes of the
+                               # same class in the pool: 277 boxes off vs 151 on, over 8 images
+                               # at conf 0.05. Those duplicates become training data.
+model.soft_nms_iou_threshold: 0.8
