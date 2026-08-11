@@ -94,6 +94,13 @@ def main() -> int:
             )
         if duplicates:
             failures.append(f"{duplicates} duplicate ODVG record(s) — re-ran staging in append mode?")
+        if malformed:
+            # Counted but not fatal, this let one good record carry a file of
+            # unparsable ones into training as though staging had succeeded.
+            failures.append(
+                f"{malformed} malformed ODVG record(s): unparsable JSON, or no file_name. "
+                f"Their images stage without labels."
+            )
 
         if failures:
             for failure in failures:

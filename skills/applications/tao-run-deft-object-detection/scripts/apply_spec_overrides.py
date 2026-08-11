@@ -273,6 +273,15 @@ def main() -> int:
 
         out = Path(args.out).expanduser().resolve() if args.out else spec_path
         out.parent.mkdir(parents=True, exist_ok=True)
+
+        # Validate before the file lands. Writing first and checking after left an
+        # invalid spec on disk on a non-zero exit, which a resume reads as usable.
+        left = remaining_mandatory(tree)
+        if left and args.require_no_mandatory:
+            print(f"  {len(left)} field(s) still ???: {', '.join(left[:8])}", file=sys.stderr)
+            print(f"  nothing was written; {out} is unchanged", file=sys.stderr)
+            return 1
+
         with out.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(tree, fh, sort_keys=False, default_flow_style=False)
         if args.report_json:
@@ -289,12 +298,9 @@ def main() -> int:
             print(line)
         print(f"spec -> {out}")
 
-        left = remaining_mandatory(tree)
         if left:
             print(f"  {len(left)} field(s) still ???: {', '.join(left[:8])}",
                   file=sys.stderr)
-            if args.require_no_mandatory:
-                return 1
         return 0
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {exc}", file=sys.stderr)

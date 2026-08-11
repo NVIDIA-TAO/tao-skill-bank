@@ -45,10 +45,11 @@ This is a hard-stop gate. Do not train on a source that fails validation.
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_exclude_for_mining.py \
   --parquet-a "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
   --parquet-b "${RESULTS_DIR}/iter$((N-1))/mined_cumulative.parquet" \
+  --iteration "${N}" \
   --output "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet"
 ```
 
-**Omit `--parquet-b` entirely on iteration 1** — there is no previous cumulative. The script also tolerates a `--parquet-b` path that does not exist, logging a note and falling back to `--parquet-a` alone.
+**Omit `--parquet-b` entirely on iteration 1** — there is no previous cumulative. Always pass `--iteration ${N}`: a `--parquet-b` that does not exist is tolerated only at iteration 1 and is an error after it. Dropping the previous cumulative silently un-excludes everything earlier iterations mined, so the next mine re-selects images the model has already trained on and nothing in the output reveals it.
 
 The output feeds the *next* iteration's miner as `exclude_path`, so the loop never re-mines an image it already added.
 

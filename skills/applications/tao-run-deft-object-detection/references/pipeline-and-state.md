@@ -75,6 +75,7 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
    <skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_exclude_for_mining.py \
      --parquet-a "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
      --parquet-b "<previous mined_cumulative.parquet; omit on iter 1>" \
+     --iteration "${N}" \
      --output "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet"
    ```
 

@@ -15,7 +15,7 @@ compatibility: Requires docker + nvidia-container-toolkit and one or more CUDA G
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
-allowed-tools: Read Task Bash Write
+allowed-tools: Read Skill Task Bash Write
 tags:
 - application
 - workflow

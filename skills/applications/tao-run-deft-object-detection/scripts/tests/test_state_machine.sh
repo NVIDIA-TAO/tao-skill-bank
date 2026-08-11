@@ -2040,6 +2040,53 @@ run "$PY" "$VPL"
 assert_rc 1 "[G19] neither directory given is an error, not a silent pass"
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G20 — the class list must agree everywhere it is written
+#
+# Grounding DINO labels a detection by the position of the caption it matched, so
+# a short or reordered list relabels every prediction and the run still exits 0.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G20 class contract"
+
+VCC="$SKILL_DIR/scripts/verify_class_contract.py"
+G20=$(new_workspace g20)
+make_file "$G20/mapping.yaml" '- bicycle: [bicycle]
+- car: [car]
+- person: [person]
+- road_sign: [road_sign]'
+make_file "$G20/labelmap.json" '{"0": "bicycle", "1": "car", "2": "person"}'
+make_file "$G20/state.json" '{"config": {"target_classes": ["bicycle", "car", "person"]}}'
+make_file "$G20/classes.yaml" 'bicycle: [bicycle]
+car: [car]
+person: [person]'
+
+run "$PY" "$VCC" --captions '["bicycle","car","person"]' --kpi-mapping "$G20/mapping.yaml"
+assert_rc 1 "[G20] a scored class missing from captions is rejected"
+case "$RUN_OUT" in
+  *road_sign*) ok "[G20] the rejection names the unpredictable class" ;;
+  *) notok "[G20] the rejection names the unpredictable class" "output: $RUN_OUT" ;;
+esac
+
+run "$PY" "$VCC" --captions '["car","bicycle","person"]' --labelmap "$G20/labelmap.json"
+assert_rc 1 "[G20] captions ordered differently from the labelmap are rejected"
+
+run "$PY" "$VCC" --captions '["bicycle","car","person"]' \
+  --state "$G20/state.json" --classes "$G20/classes.yaml" --labelmap "$G20/labelmap.json"
+assert_rc 0 "[G20] agreeing sources pass"
+
+make_file "$G20/classes_wrong.yaml" 'bicycle: [bicycle]
+car: [car]
+truck: [truck]'
+run "$PY" "$VCC" --captions '["bicycle","car","person"]' \
+  --state "$G20/state.json" --classes "$G20/classes_wrong.yaml"
+assert_rc 1 "[G20] a pool folded to different classes than the run trains is rejected"
+
+run "$PY" "$VCC" --captions '["bicycle","car","bicycle"]' --labelmap "$G20/labelmap.json"
+assert_rc 1 "[G20] duplicate captions are rejected"
+
+run "$PY" "$VCC" --captions '["bicycle","car","person"]'
+assert_rc 1 "[G20] a single source is not a comparison"
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then

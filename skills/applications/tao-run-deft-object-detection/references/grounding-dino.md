@@ -158,6 +158,21 @@ trained against; the reference uses alphabetical, which is also what the ODVG la
 by the prep stage produces. Do not sort it by class frequency or by the order the user happened
 to list their classes in.
 
+Nothing about this is enforced by TAO, so check it before every inference:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/verify_class_contract.py \
+  --inference-spec "$GDINO_INFER_SPEC" \
+  --kpi-mapping "$KPI_CLASS_MAPPING" \
+  --state "${RESULTS_DIR}/deft_state.json" \
+  --labelmap "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json"
+```
+
+It compares the caption list against the KPI classes, the staged ODVG labelmap
+order, `max_labels`, and the run's target classes, and exits non-zero naming both
+sides of any disagreement. At baseline there is no staged labelmap yet — drop
+`--labelmap` and pass `--classes` instead.
+
 `inference.color_map` in the reference spec is cosmetic — it only tints `images_annotated/`.
 
 ## Baseline inference (`iter_0`)
