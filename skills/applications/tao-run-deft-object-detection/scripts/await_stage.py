@@ -4,24 +4,19 @@
 
 """Block until a long stage finishes, by watching what it produces.
 
-**Never wait on a process name.** ``pgrep -f "grounding_dino train"`` matches the
-waiting shell's own command line — the pattern is *in* it — so the wait can never
-end. That cost 10h11m of wall clock on the first end-to-end run: training had
-finished in 14m20s and written a valid checkpoint, but nothing noticed, because
-the watcher was waiting on itself.
-
-Artifacts cannot self-match. This polls for whichever of these is given:
+Polls for whichever condition is given:
 
 * ``--artifact`` — a path the stage writes on success. A checkpoint symlink counts
   only once it resolves, so a dangling link is not mistaken for completion.
 * ``--status-json`` with ``--status-contains`` — TAO writes one JSON object per
   line to ``status.json``; the stage is done when a line's ``message`` matches.
-  This catches a clean finish even when the artifact path is not yet known.
+  Use this when the artifact path is not known up front.
 
 Exits 0 when a condition is met, 2 on timeout, so a caller can distinguish
-"finished" from "still running" and decide whether to keep waiting or investigate.
+"finished" from "still running".
 
-Stdlib only.
+Wait on artifacts, never on a process name: a ``pgrep -f`` pattern matches the
+waiting shell's own command line, so the wait never ends.
 """
 
 from __future__ import annotations
