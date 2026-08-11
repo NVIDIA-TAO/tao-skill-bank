@@ -49,7 +49,7 @@ Both forms take identical arguments. Substitute `$CODETR` wherever this document
 ```yaml
 inference:
   checkpoint: <co-detr checkpoint>
-  category_mapping:            # emitted by scripts/prepare_class_mappings_for_pseudolabeling.py
+  category_mapping:            # emitted by scripts/prepare_class_mappings_for_mining_data_prep.py
     bicycle:   ["bicycle", "motorcycle"]
     car:       ["car", "bus", "truck"]
     person:    ["person"]
@@ -89,7 +89,7 @@ Obtaining a checkpoint is outside this skill — see `tao-train-codetr`'s SKILL.
 TAO does the folding; this step only writes the files that tell it how.
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_class_mappings_for_pseudolabeling.py \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_class_mappings_for_mining_data_prep.py \
   --classes "$CLASSES_YAML" \
   --emit-codetr-category-mapping "${PREP_DIR}/codetr_category_mapping.yaml" \
   --emit-kitti-mapping           "${PREP_DIR}/kitti_mapping.yaml" \
