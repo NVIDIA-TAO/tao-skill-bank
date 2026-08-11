@@ -70,8 +70,11 @@ after launch, `tao_list` recovers its `job_id`.
 
 Data and results live on the **host**, not in this sandbox's filesystem — never
 look under `/sandbox` for datasets. `tao_run` mounts the workspace into the
-container: `<data_subdir>` at `/data` and a unique child of
-`<results_subdir>` at `/results`. `tao_run` returns that job's exact
+container three ways: `<data_subdir>` at `/data`, a unique child of
+`<results_subdir>` at `/results`, and the **whole workspace at `/workspace`**,
+the same path `tao_exec` uses. Read staged assets through `/workspace` so an
+absolute path means the same thing in both tools; write outputs to `/results`,
+which stays the job's isolated tree. `tao_run` returns that job's exact
 `results_subdir`; use the returned path for later inspection and reporting.
 Write spec paths as `/data/...` and `/results/...`, and persist outputs and state
 under `/results`. Use `tao_ls` to discover data, `tao_read` to inspect it (for

@@ -625,7 +625,14 @@ def tao_run(
         # Resolve and create the source as the bridge user with no-follow walks,
         # exactly as /data and /results are handled — a caller-supplied path must
         # never reach Docker as a raw host pathname.
-        source = ensure_workspace_directory(_resolve_under_root(subdir), WORKSPACE_ROOT)
+        resolved = _resolve_under_root(subdir)
+        # A read-only mount names something that must already exist. Creating it
+        # would hand the job an empty directory and turn a staging mistake into a
+        # failure inside the container, which is how the AnomalyGen checkpoint
+        # view failed its own pre-validation.
+        if spec.get("ro") and not os.path.isdir(resolved):
+            raise ValueError(f"read-only mount source does not exist: {subdir!r}")
+        source = ensure_workspace_directory(resolved, WORKSPACE_ROOT)
         validated_mounts.append(
             {
                 "subdir": _workspace_relative(str(source)),

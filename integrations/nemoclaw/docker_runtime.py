@@ -458,7 +458,7 @@ _CREDENTIAL_PASSTHROUGH_ENV = (
 )
 
 
-_RESERVED_MOUNT_TARGETS = ("/data", "/results")
+_RESERVED_MOUNT_TARGETS = ("/data", "/results", "/workspace")
 # Names whose values must never reach a command line. Credentials are forwarded
 # by name instead (_CREDENTIAL_PASSTHROUGH_ENV), so the value stays in the
 # bridge's environment and out of `ps` and the container's own argv.
@@ -608,6 +608,13 @@ def build_docker_run_args(
             _volume_mount(workspace_volume, "/data", data_subpath),
             "--mount",
             _volume_mount(workspace_volume, "/results", results_subpath),
+            # The whole workspace, at the same path tao_exec uses. Without it the
+            # two tools disagree on what an absolute path means: assets staged by
+            # tao_exec under /workspace/... dangle inside a tao_run container,
+            # where the workspace is only visible as /data. Writes still belong in
+            # /results, which stays the job's isolated tree.
+            "--mount",
+            _volume_mount(workspace_volume, "/workspace", "."),
         )
     )
     # Extra mounts exist for images with a baked-in path contract — the

@@ -125,6 +125,9 @@ class DockerRunArgsTests(unittest.TestCase):
                 "volume-subpath=data",
                 "type=volume,src=tao-nemoclaw-workspace-test,dst=/results,"
                 f"volume-subpath=results/{JOBS_DIRNAME}/{'a' * 32}",
+                # The whole workspace, at the same path tao_exec uses, so an
+                # absolute path means the same thing to both tools.
+                "type=volume,src=tao-nemoclaw-workspace-test,dst=/workspace",
             ],
         )
         self.assertFalse(any("/host/workspace" in arg for arg in args))
