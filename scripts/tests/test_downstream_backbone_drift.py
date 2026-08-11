@@ -3,11 +3,10 @@
 
 """Drift guard for DINOv3 backbone options in downstream skill schemas (bug 6465432).
 
-DINOv3 backbones are registered as selectable backbones for the segformer and
-visual_changenet dense tasks (tao-pytorch/tao-core config backbone ``type``
-valid_options). The committed skill schemas for those two models are generated
-from the tao-core configs; this guards against them falling behind the source
-again (as all 11 did in the 7.1.0 report).
+DINOv3 backbones are selectable for SegFormer and Visual ChangeNet. The shared
+variants must remain in both generated schema sets; ViT-7B is currently a
+Visual ChangeNet option only. This guards the committed skill schemas against
+falling behind the tao-core config source again.
 """
 import json
 from pathlib import Path
@@ -20,8 +19,7 @@ SCHEMA_GLOBS = [
     "skills/models/tao-train-visual-changenet/schemas/*.schema.json",
 ]
 
-# The DINOv3 backbones registered for dense downstream tasks in tao-pytorch.
-# 7B is intentionally excluded - not a registered downstream backbone.
+# DINOv3 backbones shared by both dense downstream tasks.
 DINOV3_DOWNSTREAM_BACKBONES = [
     "vit_small_dinov3",
     "vit_small_plus_dinov3",
@@ -30,6 +28,7 @@ DINOV3_DOWNSTREAM_BACKBONES = [
     "vit_huge_plus_dinov3",
 ]
 
+VISUAL_CHANGENET_DINOV3_BACKBONES = DINOV3_DOWNSTREAM_BACKBONES + ["vit_7b_dinov3"]
 
 def _schema_files():
     """Return the committed segformer/visual_changenet skill schema paths."""
@@ -64,5 +63,8 @@ def test_downstream_schemas_exist():
 def test_dinov3_backbones_present(schema_path):
     enum = _find_backbone_enum(json.loads(schema_path.read_text()))
     assert enum is not None, f"{schema_path}: no backbone type enum found"
-    missing = [b for b in DINOV3_DOWNSTREAM_BACKBONES if b not in enum]
+    expected = DINOV3_DOWNSTREAM_BACKBONES
+    if "tao-train-visual-changenet" in schema_path.parts:
+        expected = VISUAL_CHANGENET_DINOV3_BACKBONES
+    missing = [backbone for backbone in expected if backbone not in enum]
     assert not missing, f"{schema_path.name} backbone enum missing DINOv3 options: {missing}"

@@ -60,8 +60,9 @@ clearly and keep all child model actions in the resolved container image.
   sufficiency and future compression-search roadmap;
   `automl-runner-configuration.md` for runner/API/WandB details;
   `automl-advanced-monitoring.md` for hooks, resume, and pitfalls; and
-  `automl-examples.md` for conversation examples. `detailed-guide.md` is only
-  the map.
+  `automl-examples.md` for conversation examples; and
+  `automl-common-pitfalls.md` for recurring safety checks. `detailed-guide.md`
+  is only the map.
 - `skills/models/<network>/SKILL.md`: model-specific dataset requirements, metrics,
   HPO notes, checkpoint handoff, and known failures.
 - `skills/models/<network>/references/skill_info.yaml`: action contract,
@@ -383,18 +384,5 @@ At completion:
 
 ## Common Pitfalls
 
-- Do not expect `~/tao-core` at runtime. Schemas and templates must be packaged
-  inside the model skill.
-- Do not infer dataset URIs from previous runs.
-- Do not precompute SDK-managed output paths; non-URI output values are routed
-  by the SDK.
-- For SLURM, stage large datasets on Lustre rather than burning GPU allocation
-  time on large S3 downloads.
-- For gated HuggingFace models, verify `HF_TOKEN` is set without reading it.
-- If all recommendations fail, stop and summarize the shared root cause instead
-  of launching more trials.
-- Do not disable `automl_delete_intermediate_ckpt` by default. Keeping every
-  trial can consume one full distributed checkpoint set per recommendation.
-- Do not bypass a retention-preflight failure by disabling cleanup unless the
-  user has explicitly accepted external ownership and manual lifecycle
-  management for every trial artifact.
+See `references/automl-common-pitfalls.md` before launching or recovering an
+AutoML run.
