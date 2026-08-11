@@ -19,17 +19,18 @@ For no-input local DINO AutoML smoke runs, use `DINO_AUTOML_PROFILE` from
 **Training Requirements**. Do not inspect previous AutoML runs to infer dataset
 URIs, `num_classes`, recommendation count, or interval settings.
 
-**Recommended AutoML metric:** for quick operational checks, use explicit
-`metric="mAP50"` with `direction="maximize"` and pass a custom
-`metric_extractor` that reads `Validation mAP50`. For COCO or paper-style
-benchmark comparisons, use `metric="val_mAP"` with `direction="maximize"` so
-the reported number matches the standard mAP column rather than AP50. Do not
+**Recommended AutoML metric:** for training-log-only quick operational checks,
+use `metric="val_mAP50"` with `direction="maximize"` and pass a custom metric
+extractor that reads `Validation mAP50`. For training-log-only COCO or
+paper-style comparisons, use `metric="val_mAP"`. When recommendations are
+scored by the standalone evaluate action, use `test_mAP50` or `test_mAP`
+respectively. Do not
 rely on `metric="kpi"` for generated DINO runners unless you have verified the
 local resolver maps it to the intended detection metric; loose fallback parsing
 can otherwise optimize `val_loss`.
 
 Use a `metric_extractor` that reads the last `Validation mAP50` value from the
-logs, then run AutoML with `automl_settings={"metric": "mAP50",
+logs, then run training-log-only AutoML with `automl_settings={"metric": "val_mAP50",
 "direction": "maximize", ...}`.
 
 When a benchmark run remains below target but the per-epoch `val_mAP` curve is

@@ -38,7 +38,8 @@ Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows st
 
 - **Dataset type:** segmentation
 - **Formats:** coco_panoptic, coco
-- **Monitoring metric:** mIoU
+- **AutoML training metric:** `mIoU`, with `direction=maximize`
+- **Standalone evaluation metric:** `test_mIoU`, with `direction=maximize`
 
 ### Per-Action Dataset Requirements
 

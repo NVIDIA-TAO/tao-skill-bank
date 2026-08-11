@@ -40,6 +40,10 @@ Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows st
 - **Dataset type:** image_classification
 - **Formats:** classification_pyt
 - **Monitoring metric:** val_acc_1
+- **AutoML train scope:** exclude `distill.teacher.*` parameters from ordinary
+  `train` searches. Those fields belong to the separate `distill` action and
+  do not change `classification_pyt train` behavior even though they appear in
+  the combined generated schema.
 
 ### Per-Action Dataset Requirements
 
