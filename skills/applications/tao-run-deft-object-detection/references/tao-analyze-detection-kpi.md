@@ -63,6 +63,34 @@ kpi:
   is_internal: false
 ```
 
+### The leaf skill's defaults are not this loop's
+
+`tao-analyze-detection-kpi` ships `assets/default_kpi_analyze.yaml` with different
+values, so **invoking that skill without applying this overlay silently scores a
+different metric**:
+
+| field | this loop | leaf skill default |
+|---|---:|---:|
+| `kpi.conf_threshold` | 0.0 | 0.3 |
+| `kpi.num_recall_points` | 11 | 101 |
+| `kpi.ignore_sqwidth` | 40 | 0 |
+
+The loop's values reproduce the reference pipeline this workflow is measured
+against; the leaf skill's are TAO's own defaults, sensible for standalone scoring.
+Neither is wrong in isolation — but a run that mixes them produces numbers
+comparable to nothing.
+
+The leaf skill also documents `conf_threshold` as needing to be `> 0`, because an
+undetected ground-truth box was carried as `(t=1, p=0.0)` and `p >= conf_threshold`
+counted it as a true positive at zero. **That defect is fixed in the data-services
+image this loop pins**, which is why 0.0 is safe here and why it is the right value:
+it keeps the full precision-recall curve so a threshold can be swept afterwards from
+a single inference pass. On an older image, 0.0 would report `TP` = ground-truth
+count and `FN` = 0.
+
+So: delegate the invocation, but always apply
+`assets/overlays/kpi_analyze.yaml` over the resulting spec.
+
 ## Scoring at more than one confidence threshold
 
 Inference runs at `0.0`, so the labels carry every detection and this stage can score them
