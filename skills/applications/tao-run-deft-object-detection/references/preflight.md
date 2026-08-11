@@ -45,12 +45,23 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
    `fetch_gdino_checkpoint.py` shells out to the `ngc` CLI, which is not always on `PATH` — check for it and add its directory before deciding a checkpoint cannot be fetched.
 
-4. **Export the pinned images.** Export both verbatim; every later stage reads them from the environment, and an unset one makes `docker image inspect` report a misleading failure rather than an obvious one.
+4. **Resolve and export the version-managed container image env vars.** The rest of this skill — the Pre-Flight Summary's `docker image inspect` line, every stage launch, and every `references/*.md` — reads two env vars. Resolve both from the installed skill bank's `versions.yaml`; never copy a tag into this document or carry one over from an earlier run.
 
    ```bash
-   export TAO_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
-   export TAO_DS_IMAGE=nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
+   TAO_PYT_IMAGE=$(
+     <skill_root>/scripts/deft_python.sh \
+       <skill_bank>/scripts/resolve_versions_key.py images.tao_toolkit.pyt
+   )
+   TAO_DS_IMAGE=$(
+     <skill_root>/scripts/deft_python.sh \
+       <skill_bank>/scripts/resolve_versions_key.py images.tao_toolkit.data_services_od
+   )
+   : "${TAO_PYT_IMAGE:?versions key images.tao_toolkit.pyt did not resolve}"
+   : "${TAO_DS_IMAGE:?versions key images.tao_toolkit.data_services_od did not resolve}"
+   export TAO_PYT_IMAGE TAO_DS_IMAGE
    ```
+
+   `resolve_versions_key.py` reads the `versions.yaml` of the bank it is part of, so this works from a git clone and from a plugin install alike. Set `TAO_SKILL_BANK_PATH` only to point at a *different* bank than the one the script lives in. The `:?` guards matter: an unset image variable makes `docker image inspect` fail in a way that reads as a missing image rather than a missing resolution.
 
    | Env var | versions-key | Used by |
    |---|---|---|
@@ -62,9 +73,8 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    `tmm unique_neighbor_matching`, so two of this loop's four data-services stages cannot
    run on it at all. Substituting the release image does not degrade the loop — it stops it.
 
-   Both URIs are literals stamped from `versions.yaml` by `scripts/stamp_versions.py` and
-   checked by CI, so they cannot drift. The skill resolves nothing at runtime, which is what
-   lets it work when installed standalone as a plugin, with no skill-bank checkout on disk.
+   `versions.yaml` is the single place either URI is written, and step 4 resolves both from
+   it, so a bump lands in one file and no document can drift from it.
 
 5. **Image presence.** `docker image inspect "$TAO_PYT_IMAGE" "$TAO_DS_IMAGE"`. Record anything missing as `WILL_PULL_AFTER_APPROVAL`; do not pull before the gate.
 
