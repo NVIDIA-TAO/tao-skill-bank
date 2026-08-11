@@ -300,7 +300,10 @@ MODEL_CONTEXT_WINDOW="${MODEL_CONTEXT_WINDOW:-1000000}"
 MODEL_MAX_TOKENS="${MODEL_MAX_TOKENS:-128000}"
 MODEL_REASONING="${MODEL_REASONING:-true}"
 # Level used when reasoning is enabled: off|minimal|low|medium|high|xhigh.
-MODEL_THINKING="${MODEL_THINKING:-high}"
+MODEL_THINKING="${MODEL_THINKING:-medium}"
+# Turn cap for an orchestration turn and for each heartbeat turn. The stock 600s
+# truncates stages that legitimately run longer.
+AGENT_TIMEOUT_SECONDS="${AGENT_TIMEOUT_SECONDS:-3600}"
 case "$MODEL_REASONING" in true) MODEL_REASONING_PY=True ;; *) MODEL_REASONING_PY=False ;; esac
 nemoclaw "$SB" exec --stdin -- python3 <<PY
 import json, os
@@ -312,7 +315,7 @@ d.setdefault("tools", {})["profile"] = "coding"   # exec + fs + subagents (sandb
 
 # Expose the tao_* MCP tools directly instead of behind Tool Search's generic
 # tool_call wrapper. With the wrapper on, a whole class of calls fails
-# validation with args: must be object when the model serialises arguments as
+# validation with 'args: must be object' when the model serialises arguments as
 # a Python-repr dict rather than JSON — observed 49 times in a single DEFT run,
 # each one a silent retry the operator experiences as the agent stalling. The
 # tao surface is 12 tools; it does not need progressive disclosure.
@@ -344,6 +347,30 @@ for prov in d.get("models", {}).get("providers", {}).values():
 # avoid. Off is honest; the fix belongs upstream in the router.
 d.setdefault("agents", {}).setdefault("defaults", {}) \
  .setdefault("memorySearch", {})["enabled"] = False
+
+# 4c. Make the sandbox able to carry a long orchestration unattended.
+#
+# An orchestration workflow (DEFT AOI, AutoML, any multi-stage loop) runs for
+# hours across a dozen stages. Two defaults stop it dead, and both fail silently:
+#
+#   * agents.defaults.timeoutSeconds defaults to 600. A single stage can exceed
+#     that on its own — AnomalyGen SDG measured 520s — so an orchestration turn is
+#     cut off mid-stage. Nothing reports it: the turn just ends.
+#   * heartbeats fire on an interval to keep an always-on agent working, but each
+#     heartbeat turn is bounded by the same timeout. Observed result:
+#     {"reason":"interval","status":"ok-empty","durationMs":619326,"silent":true}
+#     — the agent was woken, worked for exactly the cap, was truncated, and the
+#     event was recorded as OK. The operator sees nothing and concludes the agent
+#     is idle, then prompts it by hand every few minutes.
+#
+# skipWhenBusy stops a heartbeat landing on an agent that is mid-stage, which
+# otherwise aborts the in-flight turn.
+_orch = d.setdefault("agents", {}).setdefault("defaults", {})
+_orch["timeoutSeconds"] = ${AGENT_TIMEOUT_SECONDS}
+_hb = _orch.setdefault("heartbeat", {})
+_hb["skipWhenBusy"] = True
+_hb["timeoutSeconds"] = ${AGENT_TIMEOUT_SECONDS}
+_hb["includeSystemPromptSection"] = True
 
 # Turn thinking on by default. models…models[].reasoning above only declares
 # that the model CAN think; thinkingDefault decides whether it does, and it
