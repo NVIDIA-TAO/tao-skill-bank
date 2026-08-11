@@ -9,6 +9,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -19,6 +20,8 @@ for module_name in (
     "finalize_run",
     "init_deft_state",
     "metric_contract",
+    "prepare_inference_spec",
+    "stage_backbone",
     "render_report",
 ):
     sys.modules.pop(module_name, None)
@@ -31,6 +34,8 @@ import metric_contract  # noqa: E402
 import render_report  # noqa: E402
 import deft_exec  # noqa: E402
 import finalize_run  # noqa: E402
+import prepare_inference_spec  # noqa: E402
+import stage_backbone  # noqa: E402
 import resolve_mining_pool  # noqa: E402
 
 
@@ -43,9 +48,12 @@ class ReportRenderingTests(unittest.TestCase):
             checkpoint = results / "iter1/train/model.pth"
             checkpoint.parent.mkdir(parents=True)
             checkpoint.write_bytes(b"checkpoint")
-            backbone = results / "backbone/model.safetensors"
+            # The existing AOI host filename intentionally differs from the
+            # container-side filename in baseline_spec.yaml.
+            backbone = results / "backbone/c_radio_v2_b.safetensors"
             backbone.parent.mkdir(parents=True)
             backbone.write_bytes(b"backbone")
+            (backbone.parent / "vit_large_dinov3.safetensors").write_bytes(b"decoy")
             training_spec = SKILL_ROOT / "references/baseline_spec.yaml"
             state["config"].update(
                 {
@@ -77,6 +85,17 @@ class ReportRenderingTests(unittest.TestCase):
                 committed["final_artifacts"]["best_model_json"],
                 str((results / "best_model.json").resolve()),
             )
+            handoff = json.loads((results / "best_model.json").read_text())
+            self.assertEqual(handoff["backbone"], str(backbone.resolve()))
+            self.assertEqual(
+                handoff["backbone_container_path"],
+                "/data/pretrained_models/C-RADIOv2_B.pth",
+            )
+            self.assertEqual(
+                handoff["backbone_type"],
+                "c_radio_v2_vit_base_patch16_224",
+            )
+            self.assertFalse(handoff["backbone_frozen"])
 
     def test_airgap_guard_blocks_install_and_forces_no_pull(self) -> None:
         policy = {"network_mode": "airgap"}
@@ -405,6 +424,237 @@ class ReportRenderingTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             committed = json.loads((results / "deft_state.json").read_text())
             self.assertEqual(committed["events"][-1]["stage"], "data_merge")
+
+    def test_backbone_profiles_preserve_default_and_cover_dinov3(self) -> None:
+        expected_dinov3 = {
+            "vit_small_dinov3",
+            "vit_small_plus_dinov3",
+            "vit_base_dinov3",
+            "vit_large_dinov3",
+            "vit_huge_plus_dinov3",
+            "vit_7b_dinov3",
+        }
+        self.assertTrue(
+            expected_dinov3.issubset(stage_backbone.BACKBONE_PROFILES)
+        )
+
+        args = SimpleNamespace(
+            backbone_type=stage_backbone.DEFAULT_BACKBONE_TYPE,
+            repo_id=None,
+            filename=None,
+            stage_name=None,
+        )
+        self.assertEqual(
+            stage_backbone.resolve_source(args),
+            (
+                stage_backbone.DEFAULT_REPO_ID,
+                stage_backbone.DEFAULT_FILENAME,
+                stage_backbone.DEFAULT_STAGE_NAME,
+            ),
+        )
+
+        args.backbone_type = "vit_large_dinov3"
+        self.assertEqual(
+            stage_backbone.resolve_source(args),
+            (
+                "timm/vit_large_patch16_dinov3.lvd1689m",
+                "model.safetensors",
+                "vit_large_dinov3.safetensors",
+            ),
+        )
+
+    def test_custom_source_overrides_bypass_workspace_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = pathlib.Path(temporary)
+            specs = workspace / "specs"
+            specs.mkdir()
+            (specs / "baseline_spec.yaml").write_text(
+                "model:\n"
+                "  backbone:\n"
+                "    type: customer_backbone\n"
+            )
+            destination = workspace / "custom.safetensors"
+            args = SimpleNamespace(
+                backbone_type=None,
+                workspace=str(workspace),
+                dest=str(destination),
+                repo_id="customer/backbone",
+                filename="weights.safetensors",
+                stage_name=None,
+            )
+
+            self.assertEqual(
+                stage_backbone.resolve_source(args),
+                (
+                    "customer/backbone",
+                    "weights.safetensors",
+                    stage_backbone.DEFAULT_STAGE_NAME,
+                ),
+            )
+            self.assertEqual(
+                stage_backbone.resolve_dest(args),
+                str(destination.resolve()),
+            )
+
+    def test_backbone_profile_is_inferred_from_frozen_baseline_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = pathlib.Path(temporary)
+            specs = workspace / "specs"
+            specs.mkdir()
+            baseline = specs / "baseline_spec.yaml"
+            baseline.write_text(
+                "model:\n"
+                "  backbone:\n"
+                "    type: vit_large_dinov3\n"
+                "    freeze_backbone: true\n"
+            )
+            args = SimpleNamespace(
+                backbone_type=None,
+                workspace=str(workspace),
+                repo_id=None,
+                filename=None,
+                stage_name=None,
+            )
+
+            self.assertEqual(
+                stage_backbone.resolve_source(args),
+                (
+                    "timm/vit_large_patch16_dinov3.lvd1689m",
+                    "model.safetensors",
+                    "vit_large_dinov3.safetensors",
+                ),
+            )
+
+            baseline.write_text(baseline.read_text().replace("true", "false"))
+            with self.assertRaisesRegex(SystemExit, "freeze_backbone"):
+                stage_backbone.resolve_source(args)
+
+            args.backbone_type = "vit_large_dinov3"
+            with self.assertRaisesRegex(SystemExit, "freeze_backbone"):
+                stage_backbone.resolve_source(args)
+
+    def test_backbone_mount_references_use_resolved_container_path(self) -> None:
+        visual_reference = (
+            SKILL_ROOT / "references" / "visual-changenet.md"
+        ).read_text()
+        inference_reference = (
+            SKILL_ROOT / "references" / "prepare-for-inference.md"
+        ).read_text()
+
+        self.assertIn(
+            '-v "${STAGED}:${BACKBONE_CONTAINER_PATH}:ro"',
+            visual_reference,
+        )
+        self.assertIn(
+            "BACKBONE_CONTAINER_PATH=$(jq -er",
+            inference_reference,
+        )
+        self.assertIn(
+            '-v "${BACKBONE}:${BACKBONE_CONTAINER_PATH}:ro"',
+            inference_reference,
+        )
+        self.assertNotIn(
+            ".backbone ${RESULTS_DIR}/best_model.json):"
+            "/data/pretrained_models/C-RADIOv2_B.pth",
+            inference_reference,
+        )
+
+    def test_configured_converted_dinov3_checkpoint_takes_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = pathlib.Path(temporary)
+            specs = workspace / "specs"
+            backbone_dir = workspace / "augmentation" / "backbone"
+            specs.mkdir()
+            backbone_dir.mkdir(parents=True)
+            converted = backbone_dir / "customer-converted.safetensors"
+            converted.write_bytes(b"converted")
+            (specs / "baseline_spec.yaml").write_text(
+                "model:\n"
+                "  backbone:\n"
+                "    type: vit_large_dinov3\n"
+                "    pretrained_backbone_path: "
+                "/data/pretrained_models/customer-converted.safetensors\n"
+                "    freeze_backbone: true\n"
+            )
+            args = SimpleNamespace(
+                backbone_type=None,
+                workspace=str(workspace),
+                dest=None,
+                repo_id=None,
+                filename=None,
+                stage_name=None,
+            )
+
+            self.assertEqual(
+                stage_backbone.resolve_dest(args), str(converted.resolve())
+            )
+
+            converted.unlink()
+            with self.assertRaisesRegex(SystemExit, "configured DINOv3"):
+                stage_backbone.resolve_dest(args)
+
+    def test_handoff_resolves_exact_configured_backbone(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            backbone_dir = pathlib.Path(temporary)
+            expected = backbone_dir / "vit_large_dinov3.safetensors"
+            expected.write_bytes(b"converted")
+            (backbone_dir / "unrelated.pth").write_bytes(b"decoy")
+            train_spec = {
+                "model": {
+                    "backbone": {
+                        "type": "vit_large_dinov3",
+                        "pretrained_backbone_path": (
+                            "/data/pretrained_models/vit_large_dinov3.safetensors"
+                        ),
+                        "freeze_backbone": True,
+                    }
+                }
+            }
+            state = {"config": {"backbone_weight_dir": str(backbone_dir)}}
+
+            resolved = prepare_inference_spec._resolve_backbone(train_spec, state)
+            self.assertEqual(resolved[0], str(expected.resolve()))
+            self.assertEqual(
+                resolved[1],
+                "/data/pretrained_models/vit_large_dinov3.safetensors",
+            )
+            self.assertEqual(resolved[2:], ("vit_large_dinov3", True))
+
+            expected.unlink()
+            with self.assertRaisesRegex(FileNotFoundError, "exact pretrained"):
+                prepare_inference_spec._resolve_backbone(train_spec, state)
+
+    def test_handoff_rejects_missing_backbone_path(self) -> None:
+        train_spec = {
+            "model": {
+                "backbone": {
+                    "type": "vit_large_dinov3",
+                    "pretrained_backbone_path": None,
+                    "freeze_backbone": True,
+                }
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "has no .*pretrained"):
+            prepare_inference_spec._resolve_backbone(train_spec, {"config": {}})
+
+    def test_handoff_rejects_unrelated_sole_backbone(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            backbone_dir = pathlib.Path(temporary)
+            (backbone_dir / "vit_large_dinov3.safetensors").write_bytes(b"wrong")
+            train_spec = {
+                "model": {
+                    "backbone": {
+                        "type": "c_radio_v2_vit_base_patch16_224",
+                        "pretrained_backbone_path": (
+                            "/data/pretrained_models/C-RADIOv2_B.pth"
+                        ),
+                        "freeze_backbone": False,
+                    }
+                }
+            }
+            state = {"config": {"backbone_weight_dir": str(backbone_dir)}}
+            with self.assertRaisesRegex(FileNotFoundError, "exact pretrained"):
+                prepare_inference_spec._resolve_backbone(train_spec, state)
 
     def _state(self, results: pathlib.Path) -> dict:
         contract = {

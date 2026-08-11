@@ -139,6 +139,67 @@ def _build_inference_spec(
     return spec
 
 
+def _resolve_backbone(
+    train_spec: dict[str, Any],
+    state: dict[str, Any],
+) -> tuple[str, str, str, bool]:
+    """Resolve the host backbone while preserving the legacy AOI mount."""
+    backbone_config = train_spec.get("model", {}).get("backbone", {})
+    container_path = backbone_config.get("pretrained_backbone_path")
+    backbone_type = str(backbone_config.get("type", ""))
+    backbone_frozen = bool(backbone_config.get("freeze_backbone", False))
+    if not isinstance(container_path, str) or not container_path.strip():
+        raise ValueError(
+            "training spec has no model.backbone.pretrained_backbone_path"
+        )
+
+    configured = pathlib.Path(container_path)
+    if configured.suffix not in {".ckpt", ".pth", ".safetensors"}:
+        raise ValueError(f"unsupported pretrained backbone file: {container_path}")
+
+    if configured.is_file():
+        host_path = configured
+    else:
+        backbone_dir = pathlib.Path(state["config"]["backbone_weight_dir"])
+        host_path = backbone_dir / configured.name
+
+        # Existing AOI mounts may rename the single staged C-RADIO file between
+        # host and container. Require the normalized alias; never substitute an
+        # unrelated sole checkpoint. DINO profiles must resolve exactly.
+        if not host_path.is_file() and "dinov3" not in backbone_type:
+            candidates = [
+                path
+                for suffix in (".ckpt", ".pth", ".safetensors")
+                for path in sorted(backbone_dir.glob(f"*{suffix}"))
+                if path.is_file() and path.stat().st_size > 0
+            ]
+            configured_stem = "".join(
+                char for char in configured.stem.casefold() if char.isalnum()
+            )
+            aliases = [
+                path
+                for path in candidates
+                if "".join(
+                    char for char in path.stem.casefold() if char.isalnum()
+                ) == configured_stem
+            ]
+            if len(aliases) == 1:
+                host_path = aliases[0]
+
+    if not host_path.is_file() or host_path.stat().st_size <= 0:
+        raise FileNotFoundError(
+            "the exact pretrained backbone referenced by the training spec is "
+            f"not staged: {host_path}"
+        )
+
+    return (
+        str(host_path.resolve()),
+        container_path,
+        backbone_type,
+        backbone_frozen,
+    )
+
+
 def prepare(results_dir: pathlib.Path) -> dict[str, pathlib.Path]:
     """Write best_model.json and best_model_inference_spec.yaml.
 
@@ -157,13 +218,9 @@ def prepare(results_dir: pathlib.Path) -> dict[str, pathlib.Path]:
         raise FileNotFoundError(f"training spec not found: {train_spec_path}")
     train_spec = yaml.safe_load(train_spec_path.read_text())
 
-    backbone_dir = pathlib.Path(state["config"]["backbone_weight_dir"])
-    backbone_files = (
-        sorted(backbone_dir.glob("*.ckpt"))
-        + sorted(backbone_dir.glob("*.pth"))
-        + sorted(backbone_dir.glob("*.safetensors"))
+    backbone, backbone_container_path, backbone_type, backbone_frozen = (
+        _resolve_backbone(train_spec, state)
     )
-    backbone = str(backbone_files[0]) if backbone_files else str(backbone_dir)
 
     threshold = best.get("threshold")
     handoff = {
@@ -173,6 +230,9 @@ def prepare(results_dir: pathlib.Path) -> dict[str, pathlib.Path]:
         "metric_result": metric_result,
         "iteration": iter_label,
         "backbone": backbone,
+        "backbone_container_path": backbone_container_path,
+        "backbone_type": backbone_type,
+        "backbone_frozen": backbone_frozen,
         "images_dir": state["config"]["images_dir"],
         "training_spec": str(train_spec_path),
     }
@@ -183,6 +243,9 @@ def prepare(results_dir: pathlib.Path) -> dict[str, pathlib.Path]:
         train_spec=train_spec,
         threshold=threshold,
     )
+    inference_spec["model"]["backbone"][
+        "pretrained_backbone_path"
+    ] = backbone_container_path
 
     json_path = results_dir / "best_model.json"
     yaml_path = results_dir / "best_model_inference_spec.yaml"
