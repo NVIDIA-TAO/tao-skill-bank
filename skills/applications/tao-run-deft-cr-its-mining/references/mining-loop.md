@@ -10,7 +10,7 @@ Read each underlying skill before invoking its stage. The workflow layers iterat
 
 | Stage | Registered skill | Owns |
 | --- | --- | --- |
-| Cosmos Reason train/evaluate | `tao-finetune-cosmos-reason` | Action command, image, credentials, model runtime, and submitted job. |
+| Cosmos Reason train/evaluate | `tao-finetune-cosmos-reason` | Action command, credentials, and model runtime. This workflow supplies the DEFT Cosmos Reason image override. |
 | Cosmos Embed inference | `tao-finetune-cosmos-embed` | Inference command, image, credentials, mounts, and submitted job. |
 | VLM BCQ gap analysis | `tao-analyze-gaps-vlm-bcq` | Gap spec generation, data-services action, image, and outputs. |
 | Nearest-neighbor mining | `tao-mine-nearest-neighbors` | Default template, spec validation, data-services action, image, and outputs. |
@@ -57,7 +57,9 @@ Use the reported stage; do not infer resume position from directory names or rer
 
 ## Cosmos Reason Platform Runtime
 
-Run every Cosmos Reason train/evaluate action through `tao-finetune-cosmos-reason` and the selected platform skill. For local or remote single-node Docker, select `tao-run-on-docker`; do not construct a competing unmanaged Docker launch. Require its submitted container command to include `--ipc=host --ulimit memlock=-1 --ulimit stack=67108864`. Kubernetes or Slurm must provide equivalent shared-memory and memlock resources. Keep the platform job id and use the platform's status and log operations until the job reaches a terminal state.
+Resolve `images.tao_toolkit.deft_cosmos_reason` from the installed skill bank's `versions.yaml` and keep the resulting literal image URI as `DEFT_COSMOS_REASON_IMAGE`. Use the action command, config contract, credentials, and model runtime from `tao-finetune-cosmos-reason`, but pass `DEFT_COSMOS_REASON_IMAGE` as its explicit runtime image override for every train and evaluate job. Set the model planner's `image_tag` (`--image-tag`) when that planner is used, and replace the action bundle's container image before platform submission. Do not use the model skill's default image in this workflow.
+
+Run every Cosmos Reason train/evaluate action through `tao-finetune-cosmos-reason` and the selected platform skill. Confirm the submitted job records `DEFT_COSMOS_REASON_IMAGE` before launch. For local or remote single-node Docker, select `tao-run-on-docker`; do not construct a competing unmanaged Docker launch. Require its submitted container command to include `--ipc=host --ulimit memlock=-1 --ulimit stack=67108864`. Kubernetes or Slurm must provide equivalent shared-memory and memlock resources. Keep the platform job id and use the platform's status and log operations until the job reaches a terminal state.
 
 ## Baseline Evaluation
 

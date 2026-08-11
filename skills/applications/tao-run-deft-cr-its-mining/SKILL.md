@@ -26,7 +26,7 @@ tags:
 
 Resolve `DEFT_SKILL_ROOT` to the absolute directory containing this installed `SKILL.md`. The agent or plugin runtime resolves this path; it is not a user input. Run bundled helpers with `run_script("scripts/<name>.py", ...)` when the runtime provides it. Otherwise invoke them directly with `python3 "$DEFT_SKILL_ROOT/scripts/<name>.py"`. Never require a `tao-skills-external` checkout or change the user's working directory to a repository root.
 
-This workflow invokes `tao-finetune-cosmos-reason`, `tao-finetune-cosmos-embed`, `tao-analyze-gaps-vlm-bcq`, `tao-mine-nearest-neighbors`, and the selected platform skill by registered skill name. Those skills own their commands, images, credentials, and bundled assets. This workflow owns only the helpers under its own `scripts/` and `assets/` directories.
+This workflow invokes `tao-finetune-cosmos-reason`, `tao-finetune-cosmos-embed`, `tao-analyze-gaps-vlm-bcq`, `tao-mine-nearest-neighbors`, and the selected platform skill by registered skill name. Those skills own their commands, credentials, and bundled assets. This workflow overrides only the Cosmos Reason runtime image: resolve `images.tao_toolkit.deft_cosmos_reason` from `versions.yaml` and pass that image as the planner `image_tag` and submitted action image for every Cosmos Reason train and evaluate launch instead of the image declared by `tao-finetune-cosmos-reason`. This workflow owns only the helpers under its own `scripts/` and `assets/` directories.
 
 ## User Inputs (DEFT Workspace and Workflow Configuration Yaml)
 
