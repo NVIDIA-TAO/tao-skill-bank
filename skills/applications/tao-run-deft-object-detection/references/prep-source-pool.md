@@ -27,6 +27,22 @@ The user supplies the classes they want to train on. That same list has to be co
 
 Resolve the target class list once in Pre-Flight and derive all four from it. A class present in the KPI ground truth but absent from `classes.yaml` can never be pseudo-labeled, so mining will never find examples for it — the loop will look like it is working while being structurally unable to improve that class.
 
+## Step 0 — Refuse a pool with duplicate basenames
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/verify_pseudo_labels.py \
+  --pool-images-dir "$POOL_IMAGES"
+```
+
+Every stage after this keys on the basename: `codetr inference` writes one flat
+`<basename>.txt`, `annotations convert` reads that directory, and ODVG records carry
+a basename. Two pool images with the same name therefore share one set of labels —
+the second image's pseudo-labels are overwritten before anything can observe it, and
+no later stage can recover them. `stage_mined_odvg.py` refuses such a pool too, but
+by then the GPU time is already spent.
+
+A directory walk, so run it before the labelling pass rather than after.
+
 ## Step 1 — Pseudo-label the pool with Co-DETR, folding as you go
 
 Invoke `tao-skill-bank:tao-train-codetr` (read its `SKILL.md` first).

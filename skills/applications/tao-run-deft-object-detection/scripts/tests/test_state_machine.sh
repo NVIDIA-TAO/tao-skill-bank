@@ -2007,6 +2007,39 @@ commit "$G18_RUN" iter1 gap_analysis \
 assert_rc 0 "[G18] the stage commits once every artifact is readable"
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G19 — a pool with duplicate basenames is refused before it is labelled
+#
+# Pseudo-labels are written one flat file per basename, so two images of the same
+# name keep one set of labels between them. Nothing downstream can recover the
+# lost one, which makes the pool the only place this is repairable.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G19 duplicate pool basenames"
+
+VPL="$SKILL_DIR/scripts/verify_pseudo_labels.py"
+G19=$(new_workspace g19)
+make_file "$G19/pool/a/frame_001.jpg" "A"
+make_file "$G19/pool/a/frame_002.jpg" "A2"
+make_file "$G19/pool/b/frame_001.jpg" "B"
+
+run "$PY" "$VPL" --pool-images-dir "$G19/pool"
+assert_rc 1 "[G19] a pool with duplicate basenames is refused"
+case "$RUN_OUT" in
+  *"duplicate basename"*) ok "[G19] the refusal names the duplicate" ;;
+  *) notok "[G19] the refusal names the duplicate" "output: $RUN_OUT" ;;
+esac
+case "$RUN_OUT" in
+  *frame_001.jpg*) ok "[G19] the refusal names the offending file" ;;
+  *) notok "[G19] the refusal names the offending file" "output: $RUN_OUT" ;;
+esac
+
+rm -f "$G19/pool/b/frame_001.jpg"
+run "$PY" "$VPL" --pool-images-dir "$G19/pool"
+assert_rc 0 "[G19] the same pool passes once the duplicate is gone"
+
+run "$PY" "$VPL"
+assert_rc 1 "[G19] neither directory given is an error, not a silent pass"
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then
