@@ -12,6 +12,23 @@ Prep turns a directory of raw unlabeled images into the two artifacts every iter
 
 **Prep is idempotent.** Skip any step whose output already exists. A user arriving with a pool that is already labeled and embedded pays nothing; a user with raw images pays for the whole chain once. Never re-label or re-embed a pool that already has current artifacts.
 
+**A pre-supplied pool still needs its report.** `class_stratified` mining requires
+`pool_report.json`, and `init_deft_state.py` refuses without one on a pool it is not
+about to build. A pool prepared before that file existed, or by anything other than
+this skill, will not have it — generate one from the pool's own COCO rather than
+re-labelling:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/validate_pool_coco.py \
+  --coco "<pool>/coco.json" --classes "<classes.yaml>" \
+  --record target_classes="<comma-separated target classes>" \
+  --record source="<where this pool came from>" \
+  --report-json "<pool>/pool_report.json"
+```
+
+Seconds, not GPU hours: it reads the COCO, so it both produces the report and
+verifies the pool actually holds the classes this run targets.
+
 **Cost warning.** Labeling and embedding are proportional to *pool size*, not to what mining eventually selects. A large pool means a substantial one-time job that must finish before the baseline starts. Surface the pool image count and this expectation in the Pre-Flight Summary so it is not discovered mid-run.
 
 ## Target classes are a run-wide contract

@@ -138,6 +138,10 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    corpus is absent at `mine`, six stages and a training run later.
 
    Pass `--pool-report` with the prep run's `pool_report.json`. It records which classes the
+
+   A pool prepared elsewhere may not carry `pool_report.json`. Do not re-label to get
+   one — generate it from the pool's COCO with `validate_pool_coco.py --record`
+   (`references/prep-source-pool.md`).
    pool actually holds annotations for, and init cross-checks that against the target classes.
    A pool prepared for a different class set does not make mining fail — it makes mining
    return neighbours of something else, and the affected class simply never improves.
