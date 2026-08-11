@@ -298,6 +298,25 @@ def _ensure_workspace_volume() -> str:
     return volume_name
 
 
+
+# Tool output lands in the agent's context permanently, so an unbounded dump is
+# not just noise — it is context spent forever on a command that printed a build
+# log. Keep the head and tail, which is where the useful signal is, and say what
+# was dropped so the agent can go get it if it genuinely needs it.
+_MAX_OUTPUT_CHARS = 4000
+
+
+def _clamp(text: str, limit: int = _MAX_OUTPUT_CHARS) -> str:
+    if text is None or len(text) <= limit:
+        return text
+    head, tail = text[: limit // 2], text[-limit // 2 :]
+    dropped = len(text) - limit
+    return (
+        f"{head}\n\n... [{dropped} characters omitted; redirect to a file and "
+        f"inspect it if you need the full output] ...\n\n{tail}"
+    )
+
+
 @mcp.tool()
 def tao_ls(subdir: str = "") -> dict:
     """List the host workspace so the agent can find datasets and results.
@@ -535,8 +554,8 @@ def tao_exec(
             "the command (nohup ... > log 2>&1 &)"
         ) from exc
     return {
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
+        "stdout": _clamp(proc.stdout),
+        "stderr": _clamp(proc.stderr),
         "exit_code": proc.returncode,
     }
 
@@ -588,27 +607,14 @@ def tao_run(
     shm_size: /dev/shm size (e.g. "8g", "16g"). TAO PyTorch DataLoaders need a
       large shared-memory segment; the docker default (64m) causes "Bus error"
       / "DataLoader worker exited". Raise for many workers or multi-GPU.
-    workdir: absolute container working directory. Some images require a
-      specific CWD — paidf-anomalygen's `-m scripts.…` entry points only
-      resolve from /workspace/paidf-anomalygen.
-    env: extra NON-SECRET environment for the job, e.g.
-      {"PYTHONPATH": "/workspace/paidf-anomalygen", "HF_HUB_OFFLINE": "1"}.
-      Values appear on the docker command line, so any name containing KEY,
-      TOKEN, SECRET, PASSWORD or CREDENTIAL is rejected: registry and model
-      credentials are already forwarded by name from the bridge environment
-      and must not be passed here.
-    mounts: extra read-only or read-write mounts for images with a baked-in
-      path contract, as
+    workdir: absolute container working directory, for images whose entry
+      points only resolve from a fixed CWD.
+    env: extra NON-SECRET environment, e.g. {"PYTHONPATH": "/opt/pkg"}. Values
+      reach the command line, so credential-shaped names are rejected; registry
+      and model credentials are already forwarded by name.
+    mounts: extra mounts for images with a baked-in path contract, as
       [{"subdir": "<workspace-relative>", "target": "<abs container path>",
-        "ro": true}]. Sources resolve under the workspace root through the same
-      traversal-safe volume subpaths as /data and /results; /data and /results
-      themselves are reserved. Example — Cosmos base checkpoints for
-      AnomalyGen: {"subdir": "augmentation/anomalygen/base_checkpoints",
-      "target": "/workspace/paidf-anomalygen/checkpoints", "ro": true}.
-
-    The container runs as the MCP server's host UID:GID. HOME and common cache
-    directories are prepared below /results/.tao-runtime so bind-mounted output
-    remains writable and removable by the same host user.
+      "ro": true}]. /data, /results and /workspace are reserved.
     """
     if not image.startswith(NGC_IMAGE_PREFIX):
         raise ValueError(f"image must start with {NGC_IMAGE_PREFIX}")
