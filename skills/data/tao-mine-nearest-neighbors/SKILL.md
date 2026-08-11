@@ -68,7 +68,7 @@ GPU_COUNT=1
 python3 skills/data/tao-mine-nearest-neighbors/scripts/verify_nearest_neighbors_spec.py \
   --spec "$SPEC"
 
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
+DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services_nightly)"
 
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -113,7 +113,7 @@ nvidia-smi -L
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
+DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services_nightly)"
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 
