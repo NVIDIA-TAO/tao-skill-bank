@@ -86,12 +86,22 @@ Skipping size-mismatched key ... patch_embed.proj.weight: ckpt [1024,3,16,16] vs
 COCO-80 detector this workflow uses, so the schema defaults — every one of which is
 wrong for it — never apply:
 
-| field | this checkpoint | TAO schema default |
-|---|---|---|
-| `model.backbone` | `vit_large_codetr` | `swin_large_patch4_window7_224` |
-| `model.num_queries` | 1500 | 900 |
-| `model.num_feature_levels` | 5 | 4 |
-| `dataset.num_classes` | 80 | 91 |
+| field | this checkpoint | TAO schema default | wrong value fails |
+|---|---|---|---|
+| `model.backbone` | `vit_large_codetr` | `swin_large_patch4_window7_224` | silently |
+| `model.num_queries` | 1500 | 900 | silently |
+| `model.num_feature_levels` | 5 | 4 | silently |
+| `dataset.num_classes` | 80 | 91 | silently |
+| `model.return_interm_indices` | `[0, 1, 2, 3, 4]` | `[1, 2, 3, 4]` | loudly |
+| `dataset.augmentation.fixed_random_crop` | 1024 | `null` | loudly |
+
+The last two are consequences of the first four rather than independent choices.
+`return_interm_indices` must hold exactly `num_feature_levels` entries — TAO raises
+`num_feature_levels: 5 does not match the size of return_interm_indices` — and its
+values index the stride map `{0: 4, 1: 8, 2: 16, 3: 32, 4: 64}`, so five levels
+means strides 4 through 64. `fixed_random_crop` becomes the transformer's
+`lsj_resolution`, and `vit_large_codetr` refuses a null one outright. Both fail at
+startup, so they cost seconds rather than a whole pass.
 
 For a **different** checkpoint, derive the values rather than guessing — and because
 they are workflow defaults, changing them needs `--allow-workflow-default-override`:

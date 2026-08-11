@@ -41,3 +41,13 @@ model.backbone: vit_large_codetr   # TAO: swin_large_patch4_window7_224
 model.num_queries: 1500            # TAO: 900
 model.num_feature_levels: 5        # TAO: 4
 dataset.num_classes: 80            # TAO: 91. COCO-80, not COCO-91.
+
+# These two are not free choices: with the settings above, TAO raises without them.
+model.return_interm_indices: [0, 1, 2, 3, 4]
+    # TAO: [1, 2, 3, 4]. Must hold exactly num_feature_levels entries or build fails
+    # with `num_feature_levels: 5 does not match the size of return_interm_indices`.
+    # Indices map to strides {0:4, 1:8, 2:16, 3:32, 4:64}, so this is strides 4..64.
+dataset.augmentation.fixed_random_crop: 1024
+    # TAO: null. Passed as the transformer's lsj_resolution. `vit_large_codetr`
+    # rejects a null outright: "requires dataset.augmentation.fixed_random_crop to
+    # be set". Unlike the fields above this one fails loudly, at startup.
