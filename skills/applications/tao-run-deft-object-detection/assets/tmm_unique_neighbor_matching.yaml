@@ -5,7 +5,7 @@
 source_path: ???                # the pool embeddings parquet — the search corpus
 target_path: ???                # the weak-image embeddings parquet — the queries
 output_dir: ???                 # a DIRECTORY, not a file
-desired_unique_count: ???       # from prepare_budget_for_mine.py
+desired_unique_count: ???       # from prepare_budget_for_mining.py
 
 # `global` splits one budget across all targets. `class_stratified` apportions it
 # by target-class ratio with largest-remainder and a non-rare fallback pool; the

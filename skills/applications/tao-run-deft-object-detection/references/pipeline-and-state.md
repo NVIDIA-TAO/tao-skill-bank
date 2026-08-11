@@ -72,7 +72,7 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
      --odvg "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_odvg.jsonl" \
      --key-field file_name
 
-   <skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_exclude_for_mine.py \
+   <skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_exclude_for_mining.py \
      --parquet-a "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
      --parquet-b "<previous mined_cumulative.parquet; omit on iter 1>" \
      --output "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet"
