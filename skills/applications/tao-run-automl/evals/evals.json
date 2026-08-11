@@ -1,7 +1,7 @@
 [
   {
     "id": "tao-run-automl-basic",
-    "question": "A user request: \"Run AutoML / hyperparameter optimization (HPO) for NVIDIA TAO networks using AutoMLRunner.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools \u2014 describe the plan only.",
+    "question": "A user asks to run AutoML / hyperparameter optimization (HPO) for an NVIDIA TAO network. Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run commands, scripts, web searches, or other tools; describe the plan only.",
     "expected_skill": "tao-run-automl",
     "expected_script": null,
     "ground_truth": "Identify tao-run-automl as the applicable skill and summarize its documented workflow from SKILL.md without executing anything.",
@@ -12,15 +12,18 @@
     ]
   },
   {
-    "id": "tao-run-automl-container-default",
-    "question": "Plan TAO AutoML for a model whose model skill resolves image model-train:latest. The user chose local Docker but did not mention venv execution. Explain where recommendation training runs and what a host AutoML Python environment is for. Do not execute anything.",
+    "id": "tao-run-automl-sdk-free-bayesian-train",
+    "question": "Plan a sequential Bayesian AutoML training run for a supported TAO model with max_concurrent=1. Explain the execution seam and resume behavior, but do not launch jobs or install packages.",
     "expected_skill": "tao-run-automl",
-    "expected_script": null,
-    "ground_truth": "All child model actions run in model-train:latest. A host Python environment may run AutoML/SDK control-plane code only and does not become the training runtime. Venv model-action execution requires an explicit user request.",
+    "expected_script": "scripts/automl_step.py",
+    "ground_truth": "Route training plus sequential Bayesian search to the skill-owned step engine, use a native platform skill for submit/status/logs/cancel, persist and resume automl_experiment.json, and report a canonical metric record.",
     "expected_behavior": [
-      "Uses the model skill's resolved container image for recommendation and evaluation jobs",
-      "Treats a host AutoML or SDK venv as control-plane-only",
-      "Does not infer venv training from local Docker or an installed Python stack"
+      "Uses the same skill-owned path that supports every action and algorithm",
+      "Uses automl_step.py for init, recommend, bind-job, report, status, and finalize",
+      "Assigns submit, status, logs, and cancel exclusively to the selected native platform skill",
+      "Explains durable idempotent resume and infrastructure retry without consuming recommendation budget",
+      "Does not require an NVIDIA optimizer or execution package",
+      "Does not launch jobs or install packages"
     ]
   }
 ]

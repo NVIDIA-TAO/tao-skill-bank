@@ -1,349 +1,105 @@
-# TAO AutoML Intent And Algorithms
+# AutoML Intent And Algorithms
 
-User intent parsing, train-vs-AutoML policy, algorithm selection, and the algorithm decision tree.
+## Default behavior
 
-Load this file only when the compact `SKILL.md` points here for the current task. If this reference conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or platform/model skills, the compact/current source wins.
+A normal “run AutoML” request is a fresh experiment. Resolve the model skill,
+selected action, platform, complete base spec, data, metric/direction, and image
+from packaged metadata. Default to Bayesian search with a small recommendation
+budget unless the model skill or user chooses another algorithm. Ask only for
+choices that materially change cost or outcome.
 
-## Contents
+Do not launch from a historical workspace, silently resume, switch algorithms,
+or invent an action schema. Resume only on explicit continue/recover/resume
+intent.
 
-- network_arch is NOT a runner.run() arg anymore; resolve the user's model
-- request to a packaged skill_dir, then read network_arch from that skill's
-- metadata.
-- Step 2: Select Algorithm
-- Classical Algorithms
-- LLM/Agentic Algorithms (NEW)
-- Quick Reference: Algorithm Decision Tree
+## Required automatic evaluation
 
-## Step 1: Parse User Intent
+After platform, image, credential, model, and data preflight, run the model's
+evaluate action once on the chosen validation data as the automatic baseline eval job.
+The launch review must give its job id, result path, and metric value.
+If the evaluate action or validation data is unavailable, stop unless the user
+explicitly accepts a proxy-only run.
 
-Default to a quick-start run unless the user explicitly asks to customize AutoML or agrees to a customization offer. Do not present algorithm, budget, or search-space choices as required inputs for a normal "run AutoML" request.
+After optimization, evaluate the frozen best checkpoint/artifact on the same
+dataset and objective. Compare baseline, recommendation, and final metrics.
 
-Any workflow/application that reaches an AutoML-capable model action must
-consult the selected model's `automl_enabled` metadata. If it is `true`, use
-this AutoML workflow for train-like optimization unless the run/workflow setting
-has `automl_policy: off` or the user explicitly asks for a plain single action
-run. Treat `automl_policy: on` as the default enabled state for train and
-distill. For single-shot compression actions such as prune and quantize, use
-AutoML when the user asks to optimize/tune the action or when the workflow
-profile explicitly sets `automl_policy: on`.
+## Inputs and defaults
 
-Extract these fields for a default run:
-
-| Field | Required | Example | How to get it |
-|---|---|---|---|
-| `requested_model` | Yes | `"cosmos-rl"` or `"tao-finetune-cosmos-reason"` | User states the model, model family, or network alias. |
-| `model_skill` | Yes | `"tao-finetune-cosmos-reason"` | Resolve `requested_model` to a packaged directory under `skills/models/` by using model metadata. Do not assume `network_arch` is the directory name. |
-| `network_arch` | Yes | `"cosmos-rl"` | Read from `<skill_dir>/references/skill_info.yaml` after resolving `model_skill`. |
-| `action` | Yes | `"train"`, `"distill"`, `"prune"`, `"quantize"` | Default to `train` only for train-stage requests. For compression requests, use the named action. |
-| `platform` | Yes | `"brev"`, `"slurm"`, `"local-docker"`, `"kubernetes"` | After the user confirms they want AutoML, discover the execution platforms from the installed platform skills (tao-run-on-docker / -slurm / -kubernetes / -brev, plus any external one); on a runtime that surfaces only the core router skills, read `skills/platform/tao-run-on-*/SKILL.md` frontmatter. Ask them to choose from those platforms. |
-| action dataset/checkpoint inputs | Yes | `"s3://bucket/data/subset"`, `"/lustre/fsw/tao_datasets/<model>/train"`, `prune.checkpoint=/...`, or `quantize.model_path=/...` | User provides a root URI/path, exact spec-key paths, parent job IDs, or the model skill declares a default profile for this exact network/action/use case. |
-| `eval_dataset_uri` or direct eval spec paths | Model-dependent | `"s3://bucket/data/eval"`, `"/lustre/fsw/tao_datasets/<model>/eval"`, or `custom.val_dataset.media_path=/...` | Ask only if the model skill's Per-Action Dataset Requirements require an eval/validation source and no default profile supplies it. |
-| `image` | Yes | `"nvcr.io/..."` | Resolve the default with `scripts/resolve_tao_image.py --model <requested_model> --action <action>`, show it to the user, and require confirmation or `image=<override>` before creating the AutoML runner. |
-| `metric` | No | `"<metric_name>"` | Use the model skill recommendation or ask if unclear. Do not choose model-specific metrics from this AutoML skill. |
-| `direction` | No | `"minimize"` or `"maximize"` | **Only needed if your metric name doesn't contain `"loss"` AND you want to minimize, or contains `"loss"` AND you want to maximize.** Otherwise the implicit "contains 'loss' → minimize, else maximize" rule applies. |
-| `skill_dir` | Yes | `"<bank-root>/skills/models/tao-train-dino"` | Absolute path to the resolved model skill directory in the skill bank. Passed explicitly to `AutoMLRunner(skill_dir=...)` — no env-var fallback. |
-| `long_running_enabled` | Yes | `true` | Ask during launch intake. If enabled, keep the agent attached and emit status until completion. Default: enabled. |
-| `status_interval_minutes` | Yes | `5` | Ask during launch intake. Default: 5 minutes. |
-| required credentials | Platform/model-dependent | `SLURM_USER`, `SLURM_HOSTNAME`, `SSH_KEY_PATH` or `SSH_AUTH_SOCK`, `HF_TOKEN` | First read the chosen platform skill's `## Credentials` section and `references/skill_info.yaml` (required_credentials / credential_groups), satisfy required credential groups, then add selected-model credentials. Do not ask for unrelated platform credentials. |
-| compute shape | Model-dependent | `num_gpus=4`, `num_nodes=1` | Ask only for model-required hardware fields that are not provided by the platform/default profile. |
-| `llm_endpoint` / `base_url` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"https://inference-api.nvidia.com"` | Resolve from user input or `AUTOML_LLM_ENDPOINT`; pass explicitly in `automl_settings`. |
-| `llm_model` / `model` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"gcp/google/gemini-3.1-pro-preview"` | Resolve from user input or `AUTOML_LLM_MODEL`; pass explicitly in `automl_settings`. |
-| `llm_api_key` / `api_key` | **Yes** (for `llm`/`hybrid`/`autoresearch`) | `"nvapi-..."` or `"sk-..."` | Resolve from `AUTOML_LLM_API_KEY` or `NVIDIA_API_KEY`. Do not print or log the value; if unavailable, stop for credential setup instead of falling back silently. |
-
-Use these quick-start AutoML defaults without asking:
-
-| Field | Default |
+| Input | Default/rule |
 |---|---|
-| `algorithm` | `bayesian`, unless the user/model default profile explicitly selects another algorithm |
-| `automl_max_recommendations` | model/workflow default if declared, otherwise `10` |
-| `automl_hyperparameters` | `None` so AutoML uses dataclass-schema params with `automl_enabled=true` |
-| `custom_param_ranges` | `None` so ranges/options/defaults come from the generated dataclass schema |
-| `long_running_enabled` | `true` |
-| `status_interval_minutes` | `5` |
+| `model_skill`, `network_arch` | Resolve aliases to one packaged model skill |
+| `action` | `train`, unless the request names another schema-backed action |
+| `algorithm` | `bayesian` |
+| `metric`, `direction` | Model task metric and explicit direction |
+| `max_recommendations` | Small interactive budget, commonly 5–10 |
+| `max_concurrent` | 1 for Bayesian; platform-safe parallelism for batch/multi-fidelity methods |
+| `skill_dir` | Absolute packaged model-skill directory |
+| `workspace` | New experiment directory unless resuming explicitly |
+| `image` | Selected action's resolved model image |
 
-If any required field is missing, ask the user. Do NOT guess dataset paths, skill bank paths, credentials, or hardware that the model skill marks as required.
+Run dataset conversion or staging once before optimization and reuse its
+artifact across all trials. Every recommendation must remain valid for known
+sample-count, batch-size, GPU-shard, and model constraints.
 
-When asking for missing AutoML launch inputs, use a first-time-user friendly
-prompt. Do not say only "train dataset root" / "eval dataset root", and do not
-say "attached monitoring every 5 minutes" without explaining it. Include:
+## Algorithm choice
 
-- platform choices;
-- root-mode dataset examples for the selected platform;
-- direct spec-parameter mode as an equal option;
-- model-required spec keys from the model skill's Per-Action Dataset
-  Requirements table;
-- resolved train container image and the option to override it with
-  `image=<override>`;
-- monitoring meaning and cadence choices.
-
-Before generating an AutoML script, verify platform access and dataset
-visibility using the shared launch preflight. For SLURM, that means
-passwordless SSH to at least one login host and remote `test -e` checks for
-each required annotation/media path. If preflight fails, stop with remediation
-steps instead of creating a runner that will immediately fail.
-
-If the selected model skill's Per-Action Dataset Requirements or Typical Spec
-Overrides show train/evaluate/inference inputs that come from a prior
-`dataset_convert` action, run that conversion before calling
-`AutoMLRunner.run`. Use the `dataset_convert` action's own `container_image`
-when it overrides the model default, persist the conversion output under the
-current run's results root, verify every required converted artifact named by
-the model skill exists, and pass those current-run converted paths in
-`spec_overrides`. Do not reuse stale conversion paths from another AutoML
-algorithm/run folder.
-
-Also verify container image confirmation using the shared launch preflight.
-AutoML launches real action jobs for each recommendation, so the confirmed
-action image must be passed into `AutoMLRunner.run(..., image=chosen_image, ...)`
-or into the SDK adapter's `create_job(..., image=chosen_image, ...)`. Do not
-rely on an implicit default after the user has chosen a platform and dataset.
-
-Also run any model-specific annotation content checks documented by the model
-skill. Missing required annotation fields are a preflight failure, not an
-AutoML recommendation failure.
-
-Before submitting any recommendation job, generate the initial recommendation
-batch in a review-only step and show the exact configs to the user together
-with metric, direction, expected runtime, and effective-batch checks. Do not
-replace concrete configs with only search bounds.
-
-After all platform, image, credential, data, and model preflight checks pass,
-submit the model's evaluate action once against the selected validation/eval
-data before submitting AutoML recommendations. This is the automatic baseline
-eval job for the run. Show its job id, result path, and metric value in the
-launch review, then ask for confirmation before spending training budget on
-recommendations. If the eval job cannot run because the model has no packaged
-evaluate action, validation data is missing, or the eval job fails, stop and
-surface the blocker. Proceed without this baseline only when the user
-explicitly accepts a proxy-metric run with no impact baseline.
-
-**Customization gate:** After the required quick-start fields are resolved, you may briefly offer customization. If the user declines or does not ask for it, proceed with the defaults above. If the user chooses customization, then present the additional options below.
-
-Customization-only fields:
-
-| Field | Example | Notes |
+| Algorithm | Choose when | Main knobs |
 |---|---|---|
-| `algorithm` | `bayesian`, `asha`, `hyperband`, `bohb`, `llm`, `hybrid`, `autoresearch` | Present the algorithm guide only in customization mode or when the user names an algorithm. |
-| `max_recommendations` | `5`, `10`, `20` | Explain that each recommendation is a real training job. |
-| `long_running_enabled` | `false` | Only use false when the user explicitly does not want the agent to keep monitoring. |
-| `status_interval_minutes` | `5`, `10`, `15` | Already asked during launch intake; customize only if the user wants a different cadence. |
-| `automl_hyperparameters` | `["train.optm_lr", "train.epoch"]` | List choices from the generated schema JSON, not from hand-written guesses. |
-| `custom_param_ranges` | `{"train.optm_lr": {"valid_min": 1e-6, "valid_max": 1e-4}}` | Validate against schema type/range/options before using. |
-| `llm_endpoint`, `llm_model`, `llm_api_key` | `https://inference-api.nvidia.com`, `gcp/google/gemini-3.1-pro-preview`, `nvapi-...` | Required only when the selected algorithm is `llm`, `hybrid`, or `autoresearch`. Resolve credentials from env/secret files; do not echo keys. |
+| `bayesian` | Sequential, expensive trials and modest dimensions | recommendation count |
+| `bfbo` | Several expensive trials should launch together | recommendation count, concurrency |
+| `hyperband` | Short rungs are representative and checkpointing is cheap | max epochs, reduction |
+| `bohb` | Hyperband fidelity plus learned density proposals | Hyperband knobs, KDE warm-up |
+| `asha` | Parallel workers should refill asynchronously | max trials, concurrency, top configs |
+| `pbt` | Long runs benefit from exploit/perturb schedules | population, generations, interval |
+| `dehb` | Mixed/discrete spaces benefit from differential evolution | Hyperband and mutation/crossover knobs |
+| `hyperband_es` | Intermediate curves can safely stop weak jobs | Hyperband and curve thresholds |
+| `llm` | Domain reasoning should propose individual configs | endpoint, model, recommendation count |
+| `hybrid` | A language model should plan classical search phases | endpoint, model, experiment budget |
+| `autoresearch` | Reflective search should use failures and evaluation feedback | endpoint, model, research program |
 
-**MANDATORY: Read the generated dataclass schema before configuring AutoML.**
+Do not use multi-fidelity methods for one-shot actions unless their schema
+exposes a meaningful resource axis. Prefer Bayesian/BFBO/LLM-family methods for
+evaluate, inference, prune, or quantize configuration search. Distill can use
+training-style budgets when it is epoch based.
 
-For the selected model/action, read:
+## LLM requirements
 
-- `${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/skills/models/<model_skill>/schemas/<action>.schema.json`
-- `${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/skills/models/<model_skill>/schemas/manifest.json`
+For `llm`, `hybrid`, or `autoresearch`, resolve endpoint and model from explicit
+input or `AUTOML_LLM_ENDPOINT`/`AUTOML_LLM_MODEL`. Providers read credentials
+from `AUTOML_LLM_API_KEY` or `NVIDIA_API_KEY`; never print or persist them. A
+run is genuinely language-guided only if recommendation metadata records
+`fallback: false`. Treat fallback as a degraded/blocked LLM validation even
+though it preserves a deterministic optimizer path.
 
-AutoML is enabled by the model skill, but it can run only when
-`schemas/<action>.schema.json` is packaged with the plugin and valid for the
-selected model/action. Do not fall back to hand-written model
-notes, old runner scripts, or a local `~/tao-core` checkout for AutoML
-parameter metadata. If the action schema is missing, stop and report that AutoML
-is enabled for that model but not runnable for that action until the schema is
-generated and shipped in the skill bank.
+Evolvable text must be explicitly named and string-valued in the action schema.
+Without that opt-in, categorical text remains bounded to declared options.
 
-Use the schema JSON as the source of truth for `automl_default_parameters`,
-`automl_disabled_parameters`, per-parameter defaults, ranges, enums,
-`option_weights`, `math_cond`, `depends_on`, `parent_param`, and `popular`.
+## Compression and non-training actions
 
-When `automl_hyperparameters=None`, the runner automatically discovers all
-params marked `automl_enabled=True` in the network's generated schema. Each
-network has its own set; never hardcode them in this workflow skill.
+- `distill`: optimize task metric, student/teacher-compatible knobs, and epoch
+  budget; preserve both input checkpoints.
+- `prune`: jointly optimize sparsity and retained task quality; evaluate each
+  artifact when the action output does not contain the task metric.
+- `quantize`: optimize calibration/runtime knobs with quality and latency/size
+  objectives; use multi-fidelity only for a representative calibration budget.
+- `evaluate`/`inference`: optimize prompts, decoding, preprocessing, and runtime
+  config using declared action artifacts, not checkpoint assumptions.
 
-Quick-start runner shape:
+GEPA is preferred for decomposable prompt objectives with per-example feedback.
+Use validation-only candidate selection and touch the test split only once with
+the frozen winner.
 
-```python
-# network_arch is NOT a runner.run() arg anymore. It is read from the model
-# metadata at skill_dir, which was passed to AutoMLRunner(...) at construction.
-result = runner.run(
-    train_dataset_uri=TRAIN_DATASET_URI,
-    automl_settings={
-        "algorithm": "bayesian",
-        "metric": metric,
-        "automl_max_recommendations": 10,
-    },
-    automl_hyperparameters=None,  # use schema params marked automl_enabled=true
-    custom_param_ranges=None,     # use schema ranges/options/defaults
-    spec_overrides={...},         # from model skill + dataset requirements
-    workspace_path=f"./automl/{TIMESTAMP}",
-)
-```
+## Launch review
 
-Customization runner additions:
+Before submitting trials, show model/action, platform, image, GPU/node shape,
+workspace, visible data paths/counts, objective definitions, algorithm and full
+budget, exact initial configs, search bounds/defaults, baseline record, runtime
+estimate, and final evaluation plan. Ask for confirmation when the run is long
+or side effecting.
 
-```python
-result = runner.run(
-    ...,
-    automl_hyperparameters=selected_param_names,
-    custom_param_ranges={
-        "<param_name>": {"valid_min": min_value, "valid_max": max_value},
-        "<categorical_param>": {
-            "valid_options": ["option_a", "option_b"],
-            "option_weights": [0.7, 0.3],
-        },
-    },
-)
-```
+## Naming and isolation
 
-**MANDATORY LLM configuration for LLM-based algorithms (`llm`, `hybrid`, `autoresearch`):**
-
-When the user requests or customizes into an LLM-powered algorithm, resolve ALL THREE of the following before generating the script. Do not ask for these on default `bayesian` quick-start runs.
-
-1. **`llm_endpoint`** — user input -> `AUTOML_LLM_ENDPOINT` -> `https://inference-api.nvidia.com`
-2. **`llm_model`** — user input -> `AUTOML_LLM_MODEL` -> `gcp/google/gemini-3.1-pro-preview`
-3. **`llm_api_key`** — `AUTOML_LLM_API_KEY` -> `NVIDIA_API_KEY` -> declared local secret file when allowed. Do not print the value.
-
-If the runner does not receive valid LLM settings, the LLM brain may silently fall back to random sampling — wasting GPU budget on random configs instead of intelligent ones. There is no error message; the only clue is "LLM call failed... Falling back to random" in the logs.
-
-**MANDATORY: Read the model skill before generating the script.**
-
-AutoML runs the selected TAO action. Before generating any AutoML script, read `<bank-root>/skills/models/<model_skill>/SKILL.md` (where `<bank-root>` is wherever the agent loaded this SKILL.md from). The model skill contains all model-specific knowledge:
-
-- **Training Requirements** — dataset type, formats, monitoring metric, required dataset URIs to prompt for, required user prompts (data format, num_classes, etc.), and mandatory `spec_overrides`. Prompt the user for every required field. Apply mandatory spec_overrides exactly.
-- **Per-Action Dataset Requirements** — table mapping each action to its spec keys, data source, expected files, and whether the field is a list. Use this table to construct the correct data source `spec_overrides` for the requested action. If the model's Typical Spec Overrides mark data sources as "mandatory", construct them from this table and the user's dataset URIs.
-- **Typical Spec Overrides** — per-action override suggestions (train, evaluate, export, inference, etc.) extracted from SDK notebooks. Use these as the starting point for `spec_overrides` and suggest them to the user. When overrides are marked "mandatory data sources", they MUST be included — the runner cannot auto-resolve them. Merge with any other mandatory overrides from Training Requirements.
-- **AutoML / HPO Notes** — metric, direction, model-specific constraints, and any guidance that narrows or overrides the generated schema. Hyperparameter names/ranges/defaults come first from `schemas/<action>.schema.json`.
-- **Error Patterns** — common training failure modes that apply to AutoML recs too.
-
-Do NOT hardcode model-specific knowledge in the AutoML script without reading the model skill first. Each network has different requirements.
-
-**MANDATORY: No model-specific constants in this AutoML skill.**
-
-The AutoML skill must not define model-specific hyperparameter names, ranges, defaults, metric names, dataset layouts, archive names, class-count rules, spec override keys, container images, checkpoint quirks, or custom metric regexes. Hyperparameter metadata belongs in `<bank-root>/skills/models/<model_skill>/schemas/<action>.schema.json`; model-specific runtime guidance belongs in the model skill's **Training Requirements**, **Typical Spec Overrides**, **AutoML / HPO Notes**, and **Error Patterns** sections. This skill may describe how to read and apply those sources, but not the concrete per-model values.
-
-**MANDATORY: Timestamped workspace folders.**
-
-ALWAYS generate `workspace_path` with a timestamp suffix. Running the same script twice without a timestamp overwrites the previous experiment. Pattern:
-
-```python
-from datetime import datetime
-TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-workspace_path = f"./experiment_name/{TIMESTAMP}"
-```
-
-Do NOT use a flat path like `workspace_path="./my_experiment"`. The user should never have to manually delete old workspace folders.
-
-**MANDATORY: Fresh runner per new AutoML request, after preflight passes.**
-
-Every new user request to run AutoML MUST create a new runner script and launch a new AutoML job, even if an older runner script for the same network/algorithm already exists. This freshness rule starts only after platform and dataset preflight passes. Existing runner files and logs may be read only as references for dataset URIs, credentials patterns, and proven fixes; do not reuse them as the execution target for a new request.
-
-Use a unique timestamp in the new runner filename, log filename, PID filename, SDK `state_file`, and `workspace_path`. Derive path components from the requested `network_arch` and `algorithm`; do not hardcode any model or algorithm name unless it is the actual requested value.
-
-```python
-import re
-
-def slug(value):
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_").lower()
-
-TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_NAME = f"{slug(network_arch)}_{slug(algorithm)}"
-runner_path = f"automl_runs/run_{RUN_NAME}_{TIMESTAMP}.py"
-log_path = f"automl_runs/{RUN_NAME}_{TIMESTAMP}.log"
-pid_path = f"automl_runs/{RUN_NAME}_{TIMESTAMP}.pid"
-state_file = f"tao_session_state_{RUN_NAME}_{TIMESTAMP}.json"
-workspace_path = f"./automl_runs/{RUN_NAME}/{TIMESTAMP}"
-```
-
-Only resume an existing runner/workspace when the user explicitly asks to resume, continue, recover, or inspect an existing experiment. If the user says "run automl" or asks for a new AutoML run, treat it as a fresh job.
-
-**Best-practice on metric choice**:
-
-- Training loss is cheap, but can overfit on small fine-tuning datasets. Prefer the model skill's recommended validation or task metric when available.
-- If the model skill recommends a validation proxy, also apply the model skill's required validation-related `spec_overrides` so the metric is actually emitted.
-- A real task metric via `eval_fn` is often the most honest but adds per-rec cost. Use it when the model skill says log-based metrics are insufficient or the user explicitly wants downstream evaluation.
-- For AutoML runs with a runnable evaluate action and validation/eval data, run
-  the automatic baseline eval job after preflight and before recommendations,
-  then include that baseline metric in the final comparison.
-
-**Checkpoint / resume behavior**:
-
-- Resume-based algorithms (`hyperband`, `asha`, `bohb`, `dehb`, `pbt`, `hyperband_es`) must resume from the checkpoint for the stopped rung/generation epoch or step, not a generic `*_latest.*` file.
-- The runner records the intended `resume_from_epoch` / `resume_from_step` on promoted recommendations and resolves the model-specific checkpoint path through the SDK checkpoint resolver. Do not patch runner scripts to guess names like `model_latest.pth`.
-- If the intended checkpoint is epoch 1, prefer artifacts such as `epoch_1`, `epoch_001`, `model_epoch_001.pth`, `model_epoch_000_step_*.pth` when the trainer writes zero-indexed epoch files, or a checkpoint directory like `checkpoints/epoch_1`.
-- Use a `latest` checkpoint only when the requested action explicitly has no epoch/step target. If no epoch/step-specific resume artifact exists, report the model as blocked and fix the model/skill checkpoint metadata rather than silently resuming from latest.
-
----
-
-## Step 2: Select Algorithm
-
-### Classical Algorithms
-
-These require no external services — they use statistical/mathematical methods to pick hyperparameters.
-
-| Algorithm | Use when | Typical budget | How it works |
-|---|---|---|---|
-| `bayesian` | **Default choice.** Small budgets, few parameters. | 5–20 recs | Builds a Gaussian Process model of metric vs. hyperparameters. Sequential — waits for each result before proposing the next, so it learns fast but can't parallelize. |
-| `bfbo` | Alternative to bayesian with different acquisition function. | 5–20 recs | UCB-based Bayesian optimization with local penalization. Good when bayesian gets stuck. |
-| `hyperband` | Large search spaces, many parameters. | 20–50+ recs | Trains many configs cheaply for a few epochs, keeps the best, trains longer. Requires `automl_max_epochs` and `automl_reduction_factor`. |
-| `hyperband_es` | Hyperband + early stopping. | 20–50+ recs | Like hyperband but adds early-stop thresholds to halt clearly bad runs sooner. |
-| `asha` | Async variant of hyperband, supports parallel execution. | 10–30 recs | Same successive-halving idea as hyperband, but trials run concurrently. Best when you have many GPUs. Uses `automl_max_concurrent`. |
-| `bohb` | Best of both — Bayesian intelligence + Hyperband efficiency. | 15–40 recs | Combines KDE-based model (like Bayesian) with Hyperband's multi-fidelity scheduling. Good all-rounder for medium budgets. |
-| `dehb` | Evolutionary + multi-fidelity. | 15–40 recs | Differential evolution mutations + hyperband scheduling. Good for complex search spaces with many interacting parameters. |
-| `pbt` | Dynamic schedules — mutates hyperparameters during training. | population_size × generations | Population-Based Training. Starts N configs in parallel, periodically copies weights from winners and perturbs their hyperparameters. Best for long runs where hyperparameters should change over time (e.g. learning rate schedules). Final handoff selects the best member at the largest observed training budget; earlier lower-budget metrics are promotion evidence, not the final checkpoint choice. |
-
-### LLM/Agentic Algorithms (NEW)
-
-These use a large language model to reason about hyperparameter choices. They require an LLM endpoint (NVIDIA NIM, OpenAI, vLLM, Ollama, etc.) and the `openai` Python package.
-
-| Algorithm | Use when | Typical budget | How it works |
-|---|---|---|---|
-| `llm` | Domain knowledge matters more than statistical rigor. | 5–20 recs | An LLM proposes hyperparameter configs based on the search space schema, experiment history, and its training knowledge. Falls back to random sampling on LLM failure. Sequential like bayesian. |
-| `hybrid` | You want the LLM to orchestrate multi-phase optimization. | 10–50 recs | An LLM strategist plans optimization phases over model-skill parameters. Each phase uses a classical sub-algorithm. Stops when the strategist detects diminishing returns. |
-| `autoresearch` | Fully autonomous agent loop. | 10–50 recs | The most powerful mode. Combines: (1) RAP knowledge retrieval about the network, (2) LLM-proposed spec modifications, (3) training-free pre-screening of candidates, (4) multi-stage verification (pre-launch + post-result), (5) keep/discard reasoning. Automatically stops on budget exhaustion or consecutive failures. |
-
-**Default to `bayesian` unless** the user specifically asks for something else, has a large GPU budget, or needs early-stopping on cheap intermediate metrics (ASHA / hyperband).
-
-**Use `llm` / `hybrid` / `autoresearch` when** the user wants LLM-guided search, has an API key for NVIDIA NIM or OpenAI, and wants richer reasoning about why certain hyperparameters are chosen.
-
-**Compression action policy (`distill`, `prune`, `quantize`):**
-
-- `distill` is train-like when it runs for epochs and emits checkpoints. Use
-  `bayesian` by default; use `hyperband`, `asha`, `bohb`, `dehb`,
-  `hyperband_es`, or `pbt` only when the action schema contains epoch/checkpoint
-  budget fields and the model skill says short-rung metrics are meaningful.
-- `prune` is often a single-shot compression transform followed by optional
-  retrain/evaluate. Default to `bayesian`, `bfbo`, `llm`, `hybrid`, or
-  `autoresearch` over prune ratios, thresholds, skip/layer choices, and retrain
-  knobs exposed by the action schema. Use `eval_fn` to run evaluate/retrain when
-  the prune action itself does not emit the final task metric.
-- `quantize` is usually a single-shot calibration/export transform. Default to
-  `bayesian`, `bfbo`, `llm`, `hybrid`, or `autoresearch` over calibration batch
-  count, backend/layer/skip choices, precision policies, and calibration data
-  knobs exposed by the schema. Treat latency/size/accuracy as a multi-objective
-  metric policy in `eval_fn` until a dedicated Pareto optimizer is added.
-
-**Caveat on ASHA with expensive checkpoints:** ASHA's whole point is running many configs cheaply for early rungs, then promoting survivors. If the model skill warns that checkpoints, validation, or startup cost dominate short trials, prefer the model skill's recommended algorithm instead of assuming ASHA will be cheaper.
-
----
-
-## Quick Reference: Algorithm Decision Tree
-
-```
-Is your budget tiny (≤10 recs)?
-  YES → bayesian
-  NO  ↓
-
-Do you have an LLM API key and want AI-guided search?
-  YES → Do you want full autonomy? → autoresearch
-        Just LLM proposals?        → llm
-        LLM orchestrating phases?  → hybrid
-  NO  ↓
-
-Do you need parallel execution?
-  YES → asha (or bohb for smarter sampling)
-  NO  ↓
-
-Is your search space large (10+ parameters)?
-  YES → hyperband or dehb
-  NO  ↓
-
-Do hyperparameters need to change during training (schedules)?
-  YES → pbt
-  NO  → bayesian (safe default)
-```
-
----
+Use one experiment id/state file per run and one job record per recommendation
+attempt. Retry ids link to their failed infrastructure attempt. Promotions and
+PBT children preserve config id plus parent/resume lineage. Never share a state
+file between concurrent experiments.

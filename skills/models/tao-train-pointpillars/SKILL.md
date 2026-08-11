@@ -145,7 +145,12 @@ The raw PointPillars data root must be an extracted folder containing matching `
 
 For local Docker, `DATA_INFO` must be visible inside every train/evaluate/export/prune/retrain container. Use the dataset_convert job from the same results root, or mount/copy the converted `results_dir/data_info` folder into the current run and set `dataset.data_info_path` to that mounted container path. If the host scratch root is mounted at `/results` and the conversion artifacts live under host `scratch/results/<job_id>/results_dir/data_info`, the direct-job container path is `/results/results/<job_id>/results_dir/data_info`. Do not reuse a `/results/<job_id>/...` path from another run root unless that folder is mounted into the current job.
 
-For AutoML train workflows, perform this as a launch preflight before calling `AutoMLRunner.run`: create or materialize the `dataset_convert` output under the current run's `RESULTS_ROOT`, set `dataset.data_info_path` to that current-run container path, and verify `dbinfos_train.pkl`, `infos_train.pkl`, and `infos_val.pkl` are present from the train container's point of view. If a runner is cloned or adapted from a prior AutoML algorithm, update the conversion artifact in the new run root; a stale `CONVERT_JOB_ID` from another results mount is not valid.
+For AutoML train workflows, perform this before initializing the experiment:
+create or materialize the `dataset_convert` output under the current run's
+`RESULTS_ROOT`, set `dataset.data_info_path` to that current-run container path,
+and verify `dbinfos_train.pkl`, `infos_train.pkl`, and `infos_val.pkl` from the
+train container's point of view. A stale `CONVERT_JOB_ID` from another results
+mount is not valid.
 ## Eval Dataset
 
 Optional. Validation data (val.tar.gz) is separate from training. Used for mAP evaluation.
@@ -206,7 +211,7 @@ Minimum 1 GPU(s), recommended 4 GPU(s). 16GB+ (V100 or A100) VRAM per GPU. Point
 
 ## Spec Param / Parent Model Inference
 
-Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners should read this section and apply the mappings with SDK helpers before `create_job()`. This mirrors the old microservices `infer_params.py` flow.
+Model-specific inference mappings belong in this MD file, not in `config.json`. Generated runners must read the parent job record's fixed `results_dir`, select the exact artifact using the filename rules below, write the resulting path into the nested spec field, and submit through the selected platform skill. This is the skill-owned replacement for the old microservices `infer_params.py` flow.
 
 Inference mappings from TAO Core `pointpillars.config.json`:
 
@@ -236,7 +241,7 @@ Inference mappings from TAO Core `pointpillars.config.json`:
 | train | `results_dir` | `output_dir` | current job results directory |
 | train | `train.resume_training_checkpoint_path` | `resume_model` | model file inferred from the current job results folder |
 
-For `parent_model` or `parent_model_folder`, pass the upstream train/export/AutoML child job id as `parent_job_id`. The SDK lists the parent result folder, filters checkpoint artifacts, and returns the selected model file or folder. Do not add these mappings back to `config.json` and do not patch generated runner scripts to guess checkpoint paths.
+For `parent_model` or `parent_model_folder`, retain the upstream train/export/AutoML child job id as `parent_job_id`. Read that job's immutable record to get `results_dir`, apply the model-specific artifact rules to select the exact file or folder, and write the concrete path into the nested spec. Do not add these mappings back to `config.json` or make an unvalidated path guess.
 
 ## Deployment
 

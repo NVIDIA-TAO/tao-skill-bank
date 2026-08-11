@@ -112,10 +112,10 @@ def test_open_sanitizes_weird_arch_names(state_dir, capsys):
 
 
 def test_open_with_parent_and_retry_links(state_dir, capsys):
-    job_id = open_job(capsys, parent_job="automl-exp-7", retry_of="dino-train-000000")
+    job_id = open_job(capsys, parent_job="dino-train-parent", retry_of="dino-train-000000")
     rec = read_record(state_dir, job_id)
     jsonschema.validate(rec, SCHEMA)
-    assert rec["parent_job"] == "automl-exp-7"
+    assert rec["parent_job"] == "dino-train-parent"
     assert rec["retry_of"] == "dino-train-000000"
 
 

@@ -54,7 +54,7 @@
       "description": "The agent's failure classification (see tao-launch-workflow's failure-analysis criteria). ERR_INFRA is retriable; ERR_PROGRAM never."
     },
     "retry_of": { "type": ["string", "null"], "description": "Job id this run retries (infra auto-retry chain)." },
-    "parent_job": { "type": ["string", "null"], "description": "Experiment/loop thread for AutoML/DEFT children. Workflow-level state stays in best_rec.json / deft_state.json." },
+    "parent_job": { "type": ["string", "null"], "description": "Actual upstream job id for derived, resumed, or evaluation jobs. Workflow-level experiment state stays in best_rec.json / deft_state.json." },
     "redacted": { "const": true, "description": "Every write passes scripts/redact_secrets.py. A record with a raw credential is a bug." }
   }
 }

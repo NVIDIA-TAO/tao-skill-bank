@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Schema tests for the four TAO artifacts.
+"""Schema tests for the six TAO artifacts.
 
 The spec-bundle cases mirror real skill_info.yaml shapes: the config-mode
 bundle is DINO train (nested spec, array-indexed input pointers); the args-mode
@@ -37,6 +37,16 @@ def record_schema():
 @pytest.fixture(scope="module")
 def best_rec_schema():
     return load("best_rec.schema.json")
+
+
+@pytest.fixture(scope="module")
+def automl_experiment_schema():
+    return load("automl_experiment.schema.json")
+
+
+@pytest.fixture(scope="module")
+def metric_record_schema():
+    return load("metric_record.schema.json")
 
 
 def ok(instance, schema):
@@ -246,7 +256,7 @@ def test_job_record_valid_terminal_with_retry_chain(record_schema):
     r["terminal_write_by"] = "poller"
     r["err_class"] = "ERR_INFRA"
     r["retry_of"] = None
-    r["parent_job"] = "automl-exp-7"
+    r["parent_job"] = "dino-train-parent"
     ok(r, record_schema)
 
 
@@ -346,3 +356,116 @@ def test_best_rec_rejects_missing_observed_budget(best_rec_schema):
     r = copy.deepcopy(BEST_REC)
     del r["best"]["observed_budget"]
     bad(r, best_rec_schema)
+
+
+# --------------------------------------------------------------------------- #
+# SDK-free AutoML experiment + canonical metric record
+# --------------------------------------------------------------------------- #
+
+AUTOML_EXPERIMENT = {
+    "schema_version": 1,
+    "id": "automl-dino-7",
+    "status": "ACTIVE",
+    "algorithm": "bayesian",
+    "algorithm_version": "skill-v1",
+    "seed": 17,
+    "network_arch": "dino",
+    "action": "train",
+    "metric_name": "val_loss",
+    "direction": "minimize",
+    "max_recommendations": 3,
+    "max_concurrent": 1,
+    "candidate_count": 1024,
+    "search_schema_source": "/bank/skills/models/tao-train-dino/schemas/train.schema.json",
+    "search_schema_sha256": "a" * 64,
+    "base_spec_sha256": "b" * 64,
+    "base_spec": {"train": {"num_epochs": 12, "optim": {"lr": 0.0002}}},
+    "search_parameters": [
+        {
+            "name": "train.optim.lr",
+            "kind": "float",
+            "default": 0.0002,
+            "minimum": 0.00001,
+            "maximum": 0.01,
+            "scale": "log",
+        }
+    ],
+    "recommendations": [],
+    "best_rec_id": None,
+    "created_at": "2026-07-21T12:00:00+00:00",
+    "updated_at": "2026-07-21T12:00:00+00:00",
+}
+
+
+METRIC_RECORD = {
+    "schema_version": 1,
+    "experiment_id": "automl-dino-7",
+    "rec_id": "rec-0000",
+    "job_id": "dino-train-a1",
+    "status": "COMPLETE",
+    "primary_metric": "val_loss",
+    "direction": "minimize",
+    "metrics": {"val_loss": 0.123},
+    "artifacts": {"checkpoint_uri": "/results/a1/model.pth"},
+    "failure": None,
+    "measured_at": "2026-07-21T13:00:00+00:00",
+}
+
+
+def test_automl_experiment_valid(automl_experiment_schema):
+    ok(AUTOML_EXPERIMENT, automl_experiment_schema)
+
+
+def test_automl_experiment_accepts_declarative_parameter_constraints(
+    automl_experiment_schema,
+):
+    state = copy.deepcopy(AUTOML_EXPERIMENT)
+    state["search_parameters"][0].update(
+        {
+            "math_cond": "> depends_on",
+            "depends_on": "train.optim.minimum_lr",
+            "parent_param": "TRUE",
+        }
+    )
+    ok(state, automl_experiment_schema)
+
+
+def test_automl_experiment_rejects_dotted_specs_and_accepts_other_execution_shapes(
+    automl_experiment_schema,
+):
+    state = copy.deepcopy(AUTOML_EXPERIMENT)
+    state["base_spec"] = {"train.optim.lr": 0.1}
+    bad(state, automl_experiment_schema)
+    state = copy.deepcopy(AUTOML_EXPERIMENT)
+    state["max_concurrent"] = 2
+    ok(state, automl_experiment_schema)
+    state = copy.deepcopy(AUTOML_EXPERIMENT)
+    state["action"] = "evaluate"
+    ok(state, automl_experiment_schema)
+
+
+def test_metric_record_valid(metric_record_schema):
+    ok(METRIC_RECORD, metric_record_schema)
+
+
+def test_complete_metric_record_requires_checkpoint(metric_record_schema):
+    record = copy.deepcopy(METRIC_RECORD)
+    del record["artifacts"]["checkpoint_uri"]
+    bad(record, metric_record_schema)
+
+
+def test_metric_record_error_requires_failure(metric_record_schema):
+    record = copy.deepcopy(METRIC_RECORD)
+    record["status"] = "ERROR"
+    bad(record, metric_record_schema)
+    record["failure"] = {"class": "ERR_INFRA", "message": "NODE_FAIL"}
+    ok(record, metric_record_schema)
+
+
+def test_metric_record_rejects_bare_metric_identity(metric_record_schema):
+    record = copy.deepcopy(METRIC_RECORD)
+    del record["primary_metric"]
+    bad(record, metric_record_schema)
+    record = copy.deepcopy(METRIC_RECORD)
+    record["direction"] = "up"
+    bad(record, metric_record_schema)

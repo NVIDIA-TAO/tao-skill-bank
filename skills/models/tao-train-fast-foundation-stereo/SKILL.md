@@ -155,7 +155,12 @@ For `shape mismatch`, `gwc_feature_normalize` schema errors, `max_disparity` dri
 
 ## Spec Param / Parent Model Inference
 
-Model-specific inference mappings (per-action spec field → inference function) for train / evaluate / inference / export / gen_trt_engine, plus `parent_job_id` / `parent_model` resolution and raw-bp2 explicit-checkpoint handling, are in `references/parent-model-inference.md`. Generated runners should read that section and apply the mappings with SDK helpers before `create_job()`.
+Model-specific inference mappings (per-action spec field → artifact rule) for
+train / evaluate / inference / export / gen_trt_engine, plus `parent_job_id` /
+`parent_model` resolution and raw-bp2 explicit-checkpoint handling, are in
+`references/parent-model-inference.md`. Generated runners must resolve the
+parent job's recorded `results_dir`, select the exact artifact described there,
+write the nested spec field, and submit through the selected platform skill.
 
 ## Deployment
 

@@ -1,6 +1,6 @@
 ---
 name: tao-artifacts
-description: The contract home for TAO's SDK-free execution pipeline — authoritative JSON Schemas for the four typed artifacts (spec-bundle, job-record, results_dir layout, best_rec) plus the fixed job-status vocabulary and the nested-not-dotted spec rule. Use when authoring or validating a spec-bundle before submit, writing or reading a .tao/jobs job-record, resolving where results land, or consuming AutoML's best_rec.json. Trigger phrases include "validate the spec bundle", "job record schema", "status vocabulary", "results_dir layout", "best_rec schema".
+description: The contract home for TAO's SDK-free execution pipeline — authoritative schemas for spec bundles, job records, result layout, AutoML experiment/metric state, and best recommendations, plus the fixed job-status vocabulary and nested-not-dotted spec rule. Use when validating launch or AutoML artifacts, reading .tao/jobs records, resolving results, or consuming best_rec.json.
 license: Apache-2.0
 compatibility: Python 3.10+ with jsonschema for validation. No nvidia-tao-sdk.
 metadata:
@@ -13,7 +13,7 @@ tags:
 
 # tao-artifacts
 
-Four typed artifacts flow through every TAO job. Their schemas live **here and
+Six typed artifacts flow through TAO jobs and AutoML loops. Their schemas live **here and
 nowhere else** — producers (model/data skills) and consumers (platform skills)
 both validate against this skill's `references/`.
 
@@ -22,6 +22,8 @@ both validate against this skill's `references/`.
 | **spec-bundle** | `references/spec_bundle.schema.json` | model/data skill → platform skill (at the submit seam) |
 | **job-record** | `references/job_record.schema.json` | `scripts/tao_job_record.py` (the ONLY writer) → any re-attaching agent/poller |
 | **results_dir layout** | `references/results_dir.contract.md` | platform skill at submit → whoever collects outputs |
+| **AutoML experiment** | `references/automl_experiment.schema.json` | `tao-run-automl/scripts/automl_step.py` → re-attaching agent/poller |
+| **metric record** | `references/metric_record.schema.json` | model/evaluation result adapter → AutoML `report` step |
 | **best_rec** | `references/best_rec.schema.json` | tao-run-automl adapter → DEFT warm-start |
 
 ## Quick Start — validate an artifact

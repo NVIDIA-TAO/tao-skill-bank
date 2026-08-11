@@ -97,7 +97,11 @@ If a readiness check reports a missing CLI, container image, backbone, or creden
 
 ### Do I need to install anything else?
 
-No. Model and data skills run with just `docker run`; platform skills add job tracking, S3 I/O, and multi-node over their native CLI with no `nvidia-tao-sdk` — see [Execution: no SDK required](#execution-no-sdk-required). The one exception is AutoML search (`tao-run-automl`), whose Preflight lazily installs the `nvidia-tao-automl` wheel; its pin lives in [`versions.yaml`](versions.yaml) (`wheels.tao_automl_*`).
+No. Model and data skills run with just `docker run`; platform skills add job
+tracking, S3 I/O, and multi-node over their native CLI. AutoML is also
+skill-owned: ordinary Python helpers implement its optimizers and artifact
+schemas, while platform skills execute each trial. See
+[Execution: no SDK required](#execution-no-sdk-required).
 
 ### Updating
 
@@ -184,12 +188,10 @@ the vendored virtualenv runner):
 - **Retries** — infra-vs-program failure classification lives in
   `tao-launch-workflow` (prose the agent applies, not a brittle regex table).
 
-These need only the platform CLI plus the bank's helper scripts — no wheel to
-install. The **one** exception is AutoML hyperparameter search
-(`tao-run-automl`), which uses the `nvidia-tao-automl` wheel (and its transitive
-`nvidia-tao-sdk` dependency) to pick each next config; its Preflight installs
-the right extra on first use. The pins live in [`versions.yaml`](versions.yaml)
-(`wheels.tao_automl_*`).
+These need only the platform CLI plus the bank's helper scripts — no NVIDIA
+wheel to install. `tao-run-automl` uses the same native platform verbs for all
+algorithms and actions, persists optimizer state in validated JSON artifacts,
+and consumes explicit metric records from each job.
 
 ## Contributing a new skill
 
@@ -226,7 +228,7 @@ tao-skills-external/
 │   └── plugin.json                   # Codex plugin manifest
 ├── .agents/
 │   └── plugins/marketplace.json      # Codex marketplace entry
-├── versions.yaml                     # single source of truth: container images + AutoML wheel versions
+├── versions.yaml                     # single source of truth: container images
 ├── README.md
 ├── docs/
 │   ├── skill-requirements.md         # must-follow rules: naming + signing gates (read first)
@@ -260,7 +262,9 @@ PRs must pass all three before merge.
 
 - **Docker-native first.** Every model/data skill should be runnable with just `docker run` + the contents of `SKILL.md`. Platform skills add tracking/staging/multi-node via the four-verb contract — no SDK.
 - **Generic docker conventions live once** in `skills/platform/tao-run-on-docker`. Other skills defer to it for `--gpus`, NGC auth, mount patterns, data-root relocation, etc.
-- **No SDK in the bank.** `tao_sdk`-specific imports and `sdk.create_job`/`build_entrypoint` calls are allowed only under `skills/applications/tao-run-automl` (it keeps the `nvidia-tao-automl` wheel + its transitive SDK). `scripts/validate-skills.sh` enforces this.
+- **No SDK path.** Model, platform, and AutoML skills must not import SDK
+  execution or optimizer packages. `scripts/validate-skills.sh` enforces this
+  repository-wide.
 - **Minimum-viable skill is `SKILL.md` only.** Add `references/skill_info.yaml` only when multi-action structured metadata earns its keep.
 - **One canonical location per skill.** Model, data, platform, and application skills live only in their layer directories; `skills/core/` is for Codex helper/router skills, not mirrored copies.
 - **Prefer portability over cleverness.** A skill that works across three coding agents is more valuable than a skill that works perfectly in one.
