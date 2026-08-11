@@ -7,27 +7,29 @@
 Completes the pair: ``emit_default_spec.py`` produces the canonical spec with
 ``???`` on mandatory fields, this fills them, and no spec is ever hand-edited.
 
-    --overlay assets/overlays/kpi_analyze.yaml --set results_dir=/abs/out
+    --apply-workflow-defaults assets/overlays/kpi_analyze.yaml --set results_dir=/abs/out
 
-Two kinds of override, deliberately separated:
+Every value in the final spec comes from one of three places, and the flags exist
+to keep them apart:
 
-``--overlay FILE``
-    The stage's documented, run-independent settings, held in version control as
-    a flat dotted-key mapping. Repeatable; applied in order, before ``--set``.
+1. **TAO's own default**, for any field nobody mentions. Left alone.
+2. **A workflow default** — a setting this workflow requires that differs from
+   TAO's default, the same on every run. These live in version control as a flat
+   dotted-key YAML under ``assets/overlays/``, one file per stage, and are applied
+   with ``--apply-workflow-defaults FILE`` (repeatable, applied in order, first).
+3. **A run-specific value** — paths, checkpoints, GPU counts. ``--set KEY=VALUE``,
+   applied last.
 
-``--set KEY=VALUE``
-    Only what varies per run — paths, checkpoints, GPU counts.
+The split exists because 1 and 2 are indistinguishable in the finished spec. TAO's
+analytics default for ``kpi.ignore_sqwidth`` is 0 where this workflow needs 40; a
+run that never names it scores a different set of boxes and nothing reports a
+difference. Holding workflow defaults in a file applies them on every run and makes
+changing one show up as a diff.
 
-A field nobody mentions keeps whatever ``default_specs`` or the Hydra schema
-emitted, which is not always the value the stage needs — TAO's analytics default
-for ``kpi.ignore_sqwidth`` is 0 against the reference pipeline's 40, and the only
-symptom is that a different set of boxes gets scored. Keeping those values in a
-file applies them on every run and surfaces a change as a diff.
-
-A ``--set`` naming a key the overlay already set is an error, since a stage
-overriding its own documented setting is the case worth catching.
-``--allow-overlay-override`` permits it where a run genuinely must differ, and
-says so on stderr.
+A ``--set`` naming a key a workflow-defaults file already set is an error: a run
+quietly overriding a documented workflow setting is exactly the case worth catching.
+``--allow-workflow-default-override`` permits it where a run genuinely must differ,
+and says so on stderr.
 
 Keys are dotted paths into nested mappings. Values are parsed as YAML scalars, so
 ``8`` is an int, ``true`` a bool, ``null`` None, ``[a, b]`` a list, and anything
@@ -141,14 +143,17 @@ def parse_args() -> argparse.Namespace:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--spec", required=True, help="Spec to modify.")
     parser.add_argument("--out", default=None, help="Where to write. Defaults to --spec.")
-    parser.add_argument("--overlay", action="append", default=[], metavar="FILE",
-                        help="The stage's documented settings as a flat dotted-key YAML. "
-                             "Repeatable; applied in order, before --set.")
+    parser.add_argument("--apply-workflow-defaults", "--overlay",
+                        dest="overlay", action="append", default=[], metavar="FILE",
+                        help="Settings this workflow requires that differ from TAO's "
+                             "defaults, as a flat dotted-key YAML. Repeatable; applied in "
+                             "order, before --set. (--overlay is the former name.)")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help="Run-specific dotted key and YAML-parsed value. Repeatable.")
-    parser.add_argument("--allow-overlay-override", action="store_true",
-                        help="Permit a --set to change a key an overlay already set. "
-                             "Without it that collision is an error.")
+    parser.add_argument("--allow-workflow-default-override", "--allow-overlay-override",
+                        dest="allow_overlay_override", action="store_true",
+                        help="Permit a --set to change a key a workflow-defaults file "
+                             "already set. Without it that collision is an error.")
     parser.add_argument("--allow-new", action="store_true",
                         help="Permit creating keys absent from the spec.")
     parser.add_argument("--require-no-mandatory", action="store_true",
@@ -183,14 +188,15 @@ def main() -> int:
         for overlay_arg in args.overlay:
             overlay_path = Path(overlay_arg).expanduser().resolve()
             if not overlay_path.is_file():
-                raise FileNotFoundError(f"--overlay does not exist: {overlay_path}")
+                raise FileNotFoundError(
+                    f"--apply-workflow-defaults does not exist: {overlay_path}")
             for dotted, value in load_overlay(overlay_path).items():
                 try:
                     previous = set_path(tree, dotted.strip(), value,
                                         args.allow_new, materialised)
                 except KeyError as exc:
                     raise KeyError(
-                        f"{exc.args[0]} — from overlay {overlay_path.name}; no changes "
+                        f"{exc.args[0]} — from workflow defaults {overlay_path.name}; no changes "
                         "were written, the spec is unmodified"
                     ) from exc
                 from_overlay[dotted.strip()] = overlay_path.name
@@ -204,13 +210,15 @@ def main() -> int:
             dotted = dotted.strip()
             if dotted in from_overlay and not args.allow_overlay_override:
                 raise ValueError(
-                    f"--set {dotted} collides with overlay {from_overlay[dotted]}, which "
-                    "already set it. An overlay holds the stage's documented settings, so "
+                    f"--set {dotted} collides with workflow defaults "
+                    f"{from_overlay[dotted]}, which already set it. That file holds "
+                    "settings this workflow requires on every run, so "
                     "a --set that changes one is the drift this guards against. Pass "
-                    "--allow-overlay-override if this run genuinely must differ."
+                    "--allow-workflow-default-override if this run genuinely must differ."
                 )
             if dotted in from_overlay:
-                print(f"NOTE: --set {dotted} overrides overlay {from_overlay[dotted]}",
+                print(f"NOTE: --set {dotted} overrides workflow default "
+                      f"{from_overlay[dotted]}",
                       file=sys.stderr)
             try:
                 previous = set_path(tree, dotted, parse_value(raw),

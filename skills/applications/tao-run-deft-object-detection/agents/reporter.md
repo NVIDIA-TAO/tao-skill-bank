@@ -31,7 +31,7 @@ For `trigger="loop-end"`, add `--require-terminal`. It passes only once `loop_st
 ### Step 1 — Load disk state
 
 1. `${results_dir}/deft_state.json` — config, `max_iterations`, per-iteration artifact paths.
-2. Every line of `${results_dir}/loop_log.jsonl` — stage events, statuses, durations, and the `tokens` object when `align_token_usage.py` has run.
+2. Every line of `${results_dir}/loop_log.jsonl` — stage events, statuses, and durations. Ignore `context_tokens`: it is always 0 and is not a measurement.
 3. Every `${results_dir}/iter*_summary.md` that exists.
 4. Each phase's `kpi/kpi_calc.csv` (baseline and every iteration) for the mAP trend.
 5. Each iteration's `mining/summary.json` and `tmm/staging_report.json` for the data-growth table.

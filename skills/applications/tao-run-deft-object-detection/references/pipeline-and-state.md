@@ -121,7 +121,7 @@ Two artifacts persist loop state:
   "status":         "ok|error",
   "summary":        "<one-line outcome>",
   "duration_sec":   <int>,
-  "context_tokens": <0 at write time; backfilled at loop end>,
+  "context_tokens": <always 0; reserved, nothing populates it>,
   "tokens":         <object added at loop end>
 }
 ```
@@ -170,15 +170,7 @@ Run without pausing. Between stages, run the audit and print only its one-line n
 **Loop-end sequence** (in order):
 
 1. Append the final event via `commit_stage.py --stage loop_stop`.
-2. Backfill per-stage token usage:
-
-   ```bash
-   <skill_root>/scripts/deft_python.sh <skill_root>/scripts/align_token_usage.py \
-     --log-path ${RESULTS_DIR}/loop_log.jsonl \
-     --project-dir ~/.claude/projects/$(pwd | sed 's|/|-|g')
-   ```
-
-3. Spawn `reporter` with `trigger="loop-end"`.
+2. Spawn `reporter` with `trigger="loop-end"`.
 
 Before telling the user the loop is complete:
 

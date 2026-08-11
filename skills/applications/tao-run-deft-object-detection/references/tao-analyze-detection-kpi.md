@@ -36,7 +36,7 @@ cannot keep a TAO default just because nobody typed it:
 
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
   --spec "${RESULTS_DIR}/<phase>/kpi_spec.yaml" \
-  --overlay <skill_root>/assets/overlays/kpi_analyze.yaml \
+  --apply-workflow-defaults <skill_root>/assets/overlays/kpi_analyze.yaml \
   --set results_dir="${RESULTS_DIR}/<phase>/kpi" \
   --set visualize.tag=<phase> \
   --set data.kpi_sources="[{image_dir: <KPI images>, ground_truth_ann_path: <KPI labels>, inference_ann_path: ${RESULTS_DIR}/<phase>/inference/labels}]" \
@@ -74,14 +74,14 @@ against the same labels:
 for t in 0.0 0.3 0.5; do
   <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
     --spec "${RESULTS_DIR}/<phase>/kpi_spec.yaml" \
-    --overlay <skill_root>/assets/overlays/kpi_analyze.yaml \
-    --set kpi.conf_threshold="$t" --allow-overlay-override \
+    --apply-workflow-defaults <skill_root>/assets/overlays/kpi_analyze.yaml \
+    --set kpi.conf_threshold="$t" --allow-workflow-default-override \
     --set results_dir="${RESULTS_DIR}/<phase>/kpi_conf${t}" \
     --out "${RESULTS_DIR}/<phase>/kpi_spec_conf${t}.yaml"
 done
 ```
 
-`--allow-overlay-override` is required because the overlay pins the default, and
+`--allow-workflow-default-override` is required because the overlay pins the default, and
 it prints which key was overridden. Each sweep point needs its own `results_dir`;
 `kpi_calc.csv` is written unconditionally and a shared directory silently keeps
 only the last one.

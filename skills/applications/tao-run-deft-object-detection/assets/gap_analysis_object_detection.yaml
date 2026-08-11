@@ -29,12 +29,10 @@ weak_thresholds:
   bicycle: {ap50: 0.7}
   person: {ap50: 0.7}
 
-# THE SETTING THAT SILENTLY CHANGES WHICH IMAGES ARE SELECTED.
-# The reference filter had no fallback: a class absent from the thresholds could
-# never mark an image weak. TAO DS falls back to default_ap50_threshold, which
-# DEFAULTS TO 0.5 — so every class you did not list starts marking images weak,
-# inflating the gap set and the mining budget derived from it. TAO DS guards the
-# gate with `a_thresh > 0`, so 0.0 disables it for unlisted classes.
+# Gates every class NOT listed in weak_thresholds above. TAO defaults this to 0.5,
+# which marks images weak on classes the run never targeted and inflates both the
+# gap set and the mining budget derived from it. TAO guards the gate with
+# `a_thresh > 0`, so 0.0 turns it off.
 default_ap50_threshold: 0.0
 default_recall_threshold: 0.0
 default_precision_threshold: 0.0

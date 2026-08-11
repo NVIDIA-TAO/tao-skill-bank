@@ -118,6 +118,7 @@ RESERVED_RECORD_FIELDS = {
     "map_value": "--map-value",
     "weak_image_count": "--weak-image-count",
     "zero_weak_images": "--zero-weak-images",
+    "pool_remaining": "--pool-remaining",
 }
 STATE_BOOKKEEPING_FIELDS = {"stage_completed", "status", "failed_stage"}
 
@@ -492,6 +493,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--zero-weak-images", action="store_true",
                         help="[gap_analysis only] record the zero-weak-image early stop "
                              "explicitly, when the row count itself is not to hand.")
+    parser.add_argument("--pool-remaining", type=int, default=None,
+                        help="[loop_stop only] source-pool images not already in the "
+                             "cumulative exclude set, counted before the mine that could not "
+                             "run. 0 records the pool-exhaustion early stop, which is a "
+                             "legitimate terminal state: the loop cannot mine what it has "
+                             "already mined. Without this the audit reports the run "
+                             "INCOMPLETE, because it cannot tell a spent pool from an "
+                             "abandoned run.")
     return parser
 
 
@@ -705,6 +714,23 @@ def main() -> int:
                         f"--zero-weak-images contradicts --weak-image-count "
                         f"{args.weak_image_count}; pass one or the other"
                     )
+            # Pool exhaustion is measured before the mine that could not run, so it
+            # is recorded on the stop itself rather than on a stage that never
+            # committed. Restricted to loop_stop for the same reason the weak-image
+            # count is restricted to gap_analysis: a completion claim must come from
+            # the one place that measured it.
+            if args.pool_remaining is not None:
+                if stage != "loop_stop":
+                    raise ValueError(
+                        f"--pool-remaining belongs to loop_stop, not {stage!r}; it records "
+                        f"why the loop stopped, not the outcome of a stage"
+                    )
+                if args.pool_remaining < 0:
+                    raise ValueError(
+                        f"--pool-remaining must be >= 0, got {args.pool_remaining}"
+                    )
+                extras["pool_remaining"] = args.pool_remaining
+
             if args.weak_image_count is not None:
                 if args.weak_image_count < 0:
                     raise ValueError(
@@ -805,7 +831,7 @@ def main() -> int:
                 "status": args.status,
                 "summary": args.summary.strip(),
                 "duration_sec": args.duration_sec,
-                "context_tokens": 0,  # backfilled by align_token_usage.py at loop end
+                "context_tokens": 0,  # reserved; no reliable per-stage source exists
             }
 
             _write_journal(results_dir, snapshot, phase, stage)

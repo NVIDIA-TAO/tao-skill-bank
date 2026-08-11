@@ -12,7 +12,6 @@ Run every bundled script through `scripts/deft_python.sh`. Resolve every path ar
 | `init_deft_state.py` | Write a fresh `deft_state.json`. Atomic; refuses to overwrite without `--force`. Fresh runs only. | `--results-dir --workspace --max-iterations ...` |
 | `commit_stage.py` | The only supported state writer. Validates the ordered transition, updates state, appends one log event, audits, rolls back on failure. | `--results-dir --iter-label --stage --summary [artifact flags] [--status ok\|error]` |
 | `audit_deft_run.py` | Read-only cross-check of state, log, and artifacts. Prints the safe next action and `read_before_action`. | `--results-dir [--require-terminal] [--require-complete]` |
-| `align_token_usage.py` | Backfill per-stage token usage into `loop_log.jsonl` at loop end. | `--log-path [--cwd \| --project-dir]` |
 
 ## Pipeline glue scripts
 
@@ -22,7 +21,7 @@ These replace internal container images from the reference pipeline whose script
 |---|---|---|
 | `fetch_gdino_checkpoint.py` | Pre-Flight | Resolve the Grounding DINO zero-shot checkpoint, downloading `nvidia/tao/grounding_dino:...trainable_v1.1` from NGC when the user supplied none. Idempotent; prints the path on stdout. Verified bit-identical to the hand-staged copy it replaces. |
 | `emit_default_spec.py` | any stage | Emit a stage's starting spec from TAO: `default_specs` for annotations/analytics, the Hydra schema dump for grounding_dino/codetr, a shipped asset for gap_analysis/tmm/embedding (TAO emits none). Reports mandatory fields grouped by block. |
-| `apply_spec_overrides.py` | any stage | Apply the stage's `--overlay` (its documented settings, from `assets/overlays/`) then `--set` (only what varies per run), by dotted key and YAML-typed. A `--set` colliding with an overlay key is an error unless `--allow-overlay-override`. Refuses unknown keys unless `--allow-new`; `--require-no-mandatory` blocks launching a container against a spec that still has `???`; `--report-json` records every key and its source. |
+| `apply_spec_overrides.py` | any stage | Apply the stage's `--apply-workflow-defaults` (settings this workflow requires that differ from TAO's defaults, from `assets/overlays/`) then `--set` (only what varies per run), by dotted key and YAML-typed. A `--set` colliding with a workflow-default key is an error unless `--allow-workflow-default-override`. Refuses unknown keys unless `--allow-new`; `--require-no-mandatory` blocks launching a container against a spec that still has `???`; `--report-json` records every key and its source. |
 
 ### Stage overlays
 
@@ -55,6 +54,7 @@ must be derived from the run's classes, never pinned.
 | `prepare_val_split_for_train.py` | `prep` | Carve a validation COCO from 10% of the prepared pool, rewriting category ids to **0-based**. `grounding_dino train` cannot run without a validation source, and its loader uses `category_id` verbatim as a dense label index, so a conventional 1-based COCO overflows on the last class. |
 | `await_stage.py` | any long stage | Block until a stage finishes by watching its artifacts or `status.json`. **Never wait on a process name** — see below. |
 | `prepare_class_mappings_for_mining_data_prep.py` | `prep` | Translate one `classes.yaml` into the two mappings TAO folds with: the `category_mapping` block for the Co-DETR inference spec (the real fold, applied at detection time with per-category soft-NMS) and the identity `kitti.mapping` for `annotations convert`. Emits nothing else — TAO does the folding. |
+| `verify_pseudo_labels.py` | `prep` | Fail immediately when Co-DETR wrote label files carrying no boxes. `codetr inference` exits 0 and prints PASS when the spec's architecture does not match the checkpoint, emptying every file; this is the gate that names that cause. Directory walk only, so it runs before the conversion it protects. |
 | `validate_pool_coco.py` | `prep` | Verify the converted pool: every target class carries annotations, case-only class mismatches are named, unmapped source classes are reported with counts, and image/annotation counts reconcile. Both TAO consumers drop unmatched names silently, so this is where a broken fold surfaces. |
 | `prepare_budget_for_mining.py` | before `mine` | `desired_unique_count` = weak-image count × multiplier, with optional floor/ceiling. Point `--weak-parquet` at **iteration 1's** parquet on every iteration to hold the budget constant. Writes only the number to stdout. |
 | `stage_mined_odvg.py` | `stage` | Copy mined images, look up ODVG records by basename, renumber `image_id`, remap labels, write `tmm_odvg.jsonl` + `labelmap.json`. **Truncates** the JSONL, so re-running is idempotent. |

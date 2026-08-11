@@ -225,7 +225,7 @@ def _check_event_schema(
             )
         if not isinstance(event.get("ts"), str) or not event.get("ts"):
             errors.append(f"loop_log {label}: ts must be an ISO-8601 UTC string")
-        # context_tokens is a placeholder backfilled by align_token_usage.py.
+        # context_tokens is a reserved placeholder; it is always 0.
         # Absent is survivable; present-but-wrong means someone edited the log.
         if "context_tokens" not in event:
             warnings.append(f"loop_log {label}: context_tokens is missing")
@@ -257,6 +257,22 @@ def _contradictory_zero_weak(info: Any) -> bool:
         return False
     count = info.get("weak_image_count")
     return info.get("zero_weak_images") is True and _is_int(count) and count > 0
+
+
+def _pool_exhausted(iterations: dict[str, Any]) -> str | None:
+    """The phase whose loop_stop recorded a spent source pool, if any.
+
+    Pool exhaustion is the second documented terminal state. The miner cannot
+    return images already in the exclude set, and it raises rather than returning
+    an empty result, so a run that has mined its whole pool must stop. That is a
+    correct outcome, not an abandoned run, and only a recorded count distinguishes
+    the two — ``--pool-remaining 0`` on the loop_stop commit.
+    """
+    for phase in sorted(iterations, key=_phase_sort_key):
+        info = iterations.get(phase)
+        if isinstance(info, dict) and info.get("pool_remaining") == 0:
+            return phase
+    return None
 
 
 def _max_iterations(state: dict[str, Any]) -> tuple[Any, str]:
@@ -707,15 +723,24 @@ def audit(results_dir: Path) -> dict[str, Any]:
             ),
             None,
         )
+        exhausted = _pool_exhausted(iterations)
         if early is not None:
             complete = True
             completion_reason = (
                 f"documented early stop: {early}/gap_analysis recorded zero weak images"
             )
+        elif exhausted is not None:
+            complete = True
+            completion_reason = (
+                f"documented early stop: the source pool was exhausted at {exhausted} "
+                f"(pool_remaining=0), so no further iteration could mine"
+            )
         else:
             completion_reason = (
                 f"only {iterations_completed} of {max_iterations} iterations finished "
-                f"{ITER_ORDER[-1]}, and no gap_analysis stopped the loop with zero weak images"
+                f"{ITER_ORDER[-1]}, and the loop was stopped by neither documented early "
+                f"stop (zero weak images, or an exhausted source pool recorded with "
+                f"--pool-remaining 0)"
             )
     if status == "INVALID":
         complete = False
@@ -782,6 +807,10 @@ def _print_text(report: dict[str, Any]) -> None:
     print(f"read_before_action={report['read_before_action']}")
     print(f"terminal={str(report['terminal']).lower()}")
     print(f"complete={str(report['complete']).lower()}")
+    # Printed on success as well as failure: "complete" reached by finishing every
+    # iteration and "complete" reached by a documented early stop are different
+    # runs, and the reason is the only thing that tells them apart.
+    print(f"completion_reason={report['completion_reason']}")
     sys.stdout.flush()  # keep the key=value block ahead of stderr when piped
     for warning in report["warnings"]:
         print(f"warning: {warning}", file=sys.stderr)
@@ -815,7 +844,8 @@ def main() -> int:
         action="store_true",
         help=(
             "Also require genuine completion: a committed loop_stop plus either "
-            "max_iterations full iterations or a documented zero-weak-image early stop."
+            "max_iterations full iterations, or a documented early stop: zero weak\n"
+            "images, or an exhausted source pool."
         ),
     )
     args = parser.parse_args()

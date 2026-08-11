@@ -1725,6 +1725,109 @@ case "$RUN_OUT" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G16 — an exhausted source pool is a documented early stop, not an abandoned run
+#
+# The miner cannot return images already in the exclude set and raises rather
+# than returning an empty result, so a run that has mined its whole pool has to
+# stop. Only a recorded count separates that from a run someone walked away
+# from, which is why --pool-remaining lives on loop_stop and is a number.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G16 pool exhaustion as a terminal state"
+
+G16_WS=$(new_workspace g16); make_pool "$G16_WS"
+G16_RUN="$G16_WS/results/run_g16"
+init_run "$G16_WS" "$G16_RUN" 2
+assert_rc 0 "[G16] init with max_iterations=2"
+
+make_phase_artifacts "$G16_RUN" baseline
+commit "$G16_RUN" baseline inference \
+  --inference-labels-dir "$G16_RUN/baseline/inference/labels" \
+  --summary "inference" --duration-sec 120
+commit "$G16_RUN" baseline kpi_analyze \
+  --kpi-csv "$G16_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.76 \
+  --summary "kpi: mAP=0.76" --duration-sec 60
+assert_rc 0 "[G16] baseline committed"
+
+# Iteration 1 mines the entire pool and completes every stage.
+make_iter_artifacts "$G16_RUN" iter1
+commit "$G16_RUN" iter1 gap_analysis \
+  --weak-images "$G16_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G16_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 10847 --summary "10847 weak" --duration-sec 91
+commit "$G16_RUN" iter1 embed \
+  --embeddings-parquet "$G16_RUN/iter1/embeddings/weak_images_embeddings.parquet" \
+  --summary "embedded weak images" --duration-sec 210
+commit "$G16_RUN" iter1 mine \
+  --mining-output "$G16_RUN/iter1/mining/final_unique_files.parquet" \
+  --mining-summary "$G16_RUN/iter1/mining/summary.json" \
+  --summary "mined 5000 = the whole pool" --duration-sec 60
+commit "$G16_RUN" iter1 stage \
+  --odvg "$G16_RUN/iter1/tmm/annotations/tmm_odvg.jsonl" \
+  --label-map "$G16_RUN/iter1/tmm/annotations/labelmap.json" \
+  --staged-images-dir "$G16_RUN/iter1/tmm/images" \
+  --exclude-parquet "$G16_RUN/iter1/mined_cumulative.parquet" \
+  --summary "staged 5000" --duration-sec 2
+commit "$G16_RUN" iter1 train \
+  --checkpoint "$G16_RUN/iter1/train/gdino_model_latest.pth" \
+  --training-spec "$G16_RUN/iter1/train_grounding_dino.yaml" \
+  --summary "trained iter1" --duration-sec 658
+commit "$G16_RUN" iter1 inference \
+  --inference-labels-dir "$G16_RUN/iter1/inference/labels" \
+  --summary "inference" --duration-sec 881
+commit "$G16_RUN" iter1 kpi_analyze \
+  --kpi-csv "$G16_RUN/iter1/kpi/kpi_calc.csv" --map-value 0.7363 \
+  --summary "kpi: mAP=0.7363" --duration-sec 1673
+assert_rc 0 "[G16] iteration 1 completed every stage"
+
+# Iteration 2 finds weak images but the pool has nothing left to give.
+make_iter_artifacts "$G16_RUN" iter2
+commit "$G16_RUN" iter2 gap_analysis \
+  --weak-images "$G16_RUN/iter2/gaps/weak_images.parquet" \
+  --gap-report "$G16_RUN/iter2/gaps/gap_report.json" \
+  --weak-image-count 11174 --summary "11174 weak" --duration-sec 120
+commit "$G16_RUN" iter2 embed \
+  --embeddings-parquet "$G16_RUN/iter2/embeddings/weak_images_embeddings.parquet" \
+  --summary "embedded weak images" --duration-sec 210
+assert_rc 0 "[G16] iteration 2 reached embed"
+
+# Without the count, the stop is indistinguishable from abandonment.
+G16_RUN_B="$G16_WS/results/run_g16_nocount"
+cp -r "$G16_RUN" "$G16_RUN_B" 2>/dev/null || true
+commit "$G16_RUN_B" iter2 loop_stop \
+  --summary "stopping: pool exhausted" --duration-sec 1
+run "$PY" "$AUDIT" --results-dir "$G16_RUN_B" --require-complete
+assert_rc 1 "[G16] a bare loop_stop before the last iteration is still INCOMPLETE"
+
+# --pool-remaining is loop_stop's to record, not a stage's.
+commit "$G16_RUN" iter2 mine --pool-remaining 0 \
+  --mining-output "$G16_RUN/iter2/mining/final_unique_files.parquet" \
+  --mining-summary "$G16_RUN/iter2/mining/summary.json" \
+  --summary "pool exhausted" --duration-sec 1
+assert_rc 1 "[G16] --pool-remaining is rejected on a stage that is not loop_stop"
+case "$RUN_OUT" in
+  *"belongs to loop_stop"*) ok "[G16] the rejection names loop_stop" ;;
+  *) notok "[G16] the rejection names loop_stop" "output: $RUN_OUT" ;;
+esac
+
+commit "$G16_RUN" iter2 loop_stop --pool-remaining -1 \
+  --summary "negative" --duration-sec 1
+assert_rc 1 "[G16] a negative --pool-remaining is rejected"
+
+commit "$G16_RUN" iter2 loop_stop --pool-remaining 0 \
+  --summary "early stop: source pool exhausted, 0 of 5000 remain outside the exclude set" \
+  --duration-sec 1
+assert_rc 0 "[G16] loop_stop records the exhausted pool"
+
+audit_kv "$G16_RUN"
+assert_eq true "$AUDIT_COMPLETE" "[G16] complete=true on an exhausted pool"
+run "$PY" "$AUDIT" --results-dir "$G16_RUN" --require-complete
+assert_rc 0 "[G16] --require-complete passes"
+case "$RUN_OUT" in
+  *"source pool was exhausted"*) ok "[G16] the reason names pool exhaustion" ;;
+  *) notok "[G16] the reason names pool exhaustion" "output: $RUN_OUT" ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then

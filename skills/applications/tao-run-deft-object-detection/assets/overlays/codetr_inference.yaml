@@ -21,3 +21,23 @@ model.soft_nms_enabled: true   # TAO: false. `inference.category_mapping` folds 
                                # same class in the pool: 277 boxes off vs 151 on, over 8 images
                                # at conf 0.05. Those duplicates become training data.
 model.soft_nms_iou_threshold: 0.8
+
+# --- Architecture. Must match the checkpoint; a mismatch fails silently. -------
+# These describe the ViT-Large COCO-80 detector this workflow pseudo-labels with
+# (zongzhuofan/co-detr-vit-large-coco). They are pinned here rather than left to
+# the schema because every one of TAO's defaults is wrong for that checkpoint, and
+# the resulting run still prints `Execution status: PASS` and exits 0 — it writes
+# one label file per image with zero boxes, because the weights could not load into
+# the layers and the detector is effectively randomly initialised. The only signal
+# is a `Skipping size-mismatched key` line buried in the load log.
+#
+# A different checkpoint needs different values here, so overriding these with
+# --set requires --allow-workflow-default-override. Derive them from the checkpoint
+# rather than guessing: `patch_embed.proj.weight` of shape [D, 3, P, P] gives the
+# embed dim D and patch size P (1024/16 here, hence vit_large_codetr, which is
+# ViT-L/16 — the patch-14 DINOv2 backbone cannot load into it), and the
+# `query_embed` first dimension gives num_queries.
+model.backbone: vit_large_codetr   # TAO: swin_large_patch4_window7_224
+model.num_queries: 1500            # TAO: 900
+model.num_feature_levels: 5        # TAO: 4
+dataset.num_classes: 80            # TAO: 91. COCO-80, not COCO-91.

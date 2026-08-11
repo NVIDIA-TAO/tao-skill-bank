@@ -66,23 +66,99 @@ From `category_mapping.py`: unmapped originals are dropped, a name claimed by tw
 
 Then it runs `apply_category_mapping_groupnms` — per-output-category soft-NMS *after* the merge. That is the reason to fold here rather than by rewriting labels afterwards: one object detected as both `truck` and `car` becomes two boxes of the *same* class the moment those fold together, and only a post-fold NMS removes the duplicate. Renaming labels later cannot; it ships the duplicates into training.
 
+### The spec's architecture must match the checkpoint, and a mismatch is silent
+
+**This is the most damaging way this step goes wrong.** `codetr inference` loads what
+it can, discards what does not fit, and reports success either way: it prints
+`Execution status: PASS`, exits 0, and writes one label file per pool image
+containing nothing. The layers the checkpoint could not populate stay randomly
+initialised, so no detection clears `conf_threshold`. Nothing downstream notices —
+`annotations convert` succeeds on an empty COCO, and the first hard failure lands
+several stages later with no visible connection to this one.
+
+The only signal at load time is a line like this, among thousands:
+
+```
+Skipping size-mismatched key ... patch_embed.proj.weight: ckpt [1024,3,16,16] vs model [192,3,4,4]
+```
+
+`assets/overlays/codetr_inference.yaml` pins the four fields for the ViT-Large
+COCO-80 detector this workflow uses, so the schema defaults — every one of which is
+wrong for it — never apply:
+
+| field | this checkpoint | TAO schema default |
+|---|---|---|
+| `model.backbone` | `vit_large_codetr` | `swin_large_patch4_window7_224` |
+| `model.num_queries` | 1500 | 900 |
+| `model.num_feature_levels` | 5 | 4 |
+| `dataset.num_classes` | 80 | 91 |
+
+For a **different** checkpoint, derive the values rather than guessing — and because
+they are workflow defaults, changing them needs `--allow-workflow-default-override`:
+
+* `patch_embed.proj.weight` of shape `[D, 3, P, P]` gives embed dim `D` and patch
+  size `P`. `1024/16` here means ViT-L/16, which is `vit_large_codetr`. The patch-14
+  DINOv2 backbone (`pretrained_dinov2_classification_imagenet:vit_large_patch14_dinov2`)
+  cannot load into it.
+* `query_embed`'s first dimension gives `num_queries`.
+* The classification head's output width gives `num_classes` — COCO-80, not COCO-91.
+
+A correctly paired load reports missing keys but **no** unexpected ones; the missing
+keys are the training-only collaborative heads.
+
+### Launching
+
+`dataset.infer_data_sources` is `null` in the schema, so it cannot be populated from
+the Hydra command line — `dataset.infer_data_sources.image_dir=...` fails with
+`AssertionError: Unexpected type for root: NoneType` before the run starts. Set the
+whole mapping into the spec first, together with the workflow defaults and the
+`category_mapping` block emitted by step 2:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
+  --spec "$CODETR_SPEC" \
+  --apply-workflow-defaults <skill_root>/assets/overlays/codetr_inference.yaml \
+  --allow-new \
+  --set dataset.infer_data_sources.image_dir="$POOL_IMAGES" \
+  --set dataset.infer_data_sources.classmap="$CODETR_CLASSMAP" \
+  --report-json "${PREP_DIR}/codetr_spec_report.json"
+```
+
+Merge `${PREP_DIR}/codetr_category_mapping.yaml` (step 2) into the same spec under
+`inference.category_mapping` before launching — the spec, not the command line,
+carries it for the same reason.
+
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
   -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   $CODETR inference -e "$CODETR_SPEC" \
     inference.checkpoint="$CODETR_CHECKPOINT" \
-    dataset.infer_data_sources.image_dir="$POOL_IMAGES" \
-    dataset.infer_data_sources.classmap="$CODETR_CLASSMAP" \
     results_dir="${PREP_DIR}" \
     inference.num_gpus="$NUM_GPUS"
 ```
+
+Add `-v` for every path outside `$WORKSPACE` — the checkpoint and the classmap
+commonly live elsewhere, and a container cannot read what is not mounted.
 
 `dataset.infer_data_sources.classmap` is the detector's **own** vocabulary — one class name per line in `category_id` order starting at 1, COCO-80 for a COCO-trained checkpoint. It is not the target list; `category_mapping` names are matched against it. `results_dir` auto-appends the action, so labels land in `${PREP_DIR}/inference/labels/` already carrying target class names.
 
 `conf_threshold` is the main quality control on the pseudo-labels and is applied at write time.
 
 Obtaining a checkpoint is outside this skill — see `tao-train-codetr`'s SKILL.md.
+
+### Gate the output before converting it
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/verify_pseudo_labels.py \
+  --labels-dir "${PREP_DIR}/inference/labels" \
+  --expect-images "$POOL_IMAGE_COUNT" \
+  --report-json "${PREP_DIR}/pseudo_label_report.json"
+```
+
+Non-zero exit stops prep here. This costs a directory walk and is the difference
+between catching an architecture mismatch now and discovering it after the
+conversion, embedding and mining stages have all succeeded on an empty pool.
 
 ## Step 2 — Emit the two mappings
 
@@ -141,7 +217,7 @@ Emit `annotations default_specs`, then apply `assets/overlays/kitti_to_coco.yaml
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
   --spec "${PREP_DIR}/kitti_to_coco.yaml" \
-  --overlay <skill_root>/assets/overlays/kitti_to_coco.yaml \
+  --apply-workflow-defaults <skill_root>/assets/overlays/kitti_to_coco.yaml \
   --set kitti.image_dir=<pool images> \
   --set kitti.label_dir="${PREP_DIR}/inference/labels" \
   --set kitti.mapping="${PREP_DIR}/kitti_mapping.yaml" \
@@ -210,7 +286,7 @@ Pass `--allow-empty-classes` only when a class is listed defensively and its abs
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
   --spec "${PREP_DIR}/coco_to_odvg.yaml" \
-  --overlay <skill_root>/assets/overlays/coco_to_odvg.yaml \
+  --apply-workflow-defaults <skill_root>/assets/overlays/coco_to_odvg.yaml \
   --set coco.ann_file=<the COCO json written by step 3> \
   --set results_dir=<workspace>/source_pool/odvg \
   --require-no-mandatory
@@ -267,6 +343,8 @@ Hard-stop before the baseline when any of these hold:
   console script *and* `python3 -m nvidia_tao_pytorch.cv.codetr.entrypoint.codetr` (step 1).
   A failing `codetr --help` on its own is not this gate: it fails in every image checked so
   far while the module works, so gating on it alone hard-stops every run.
+- `verify_pseudo_labels.py` exits non-zero (step 1). Co-DETR wrote label files but almost
+  no boxes — check the checkpoint/spec architecture pairing before anything else.
 - `validate_pool_coco.py` exits non-zero (step 4). It covers the three failures that are
   otherwise silent: a target class with no annotations, a COCO with no annotations at all,
   and a case-only class mismatch.

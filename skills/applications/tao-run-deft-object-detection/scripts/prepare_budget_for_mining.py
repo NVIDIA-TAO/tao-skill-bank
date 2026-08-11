@@ -13,6 +13,15 @@ instead of decaying as the model improves.
 Pass ``--weak-parquet`` pointing at iteration 1's weak-images parquet on every
 iteration to reproduce that behavior; pass the current iteration's parquet
 instead to let the budget track the shrinking gap set.
+
+``--pool-size`` and ``--remaining-iterations`` turn the budget into a feasibility
+check. The pool is finite and iterations exclude what earlier ones already mined,
+so a run needs roughly ``budget x remaining_iterations`` unmined images left to
+finish. When it does not have them, the shortfall is knowable here — before the
+train, inference and KPI stages of this iteration run — rather than at the next
+iteration's ``mine``, an hour or more later. The miner raises on an exhausted pool
+rather than returning an empty result, so the run stops either way; the only
+question is how much GPU time is spent first.
 """
 
 from __future__ import annotations
@@ -35,6 +44,17 @@ def main() -> int:
                         help="Floor for the resulting budget.")
     parser.add_argument("--max-count", type=int, default=None,
                         help="Optional ceiling, e.g. the source-pool size.")
+    parser.add_argument("--pool-size", type=int, default=None,
+                        help="Source-pool image count. With --remaining-iterations, checks "
+                             "the run can actually supply the iterations still configured.")
+    parser.add_argument("--already-mined", type=int, default=0,
+                        help="Rows in the cumulative exclude parquet: pool images earlier "
+                             "iterations already took and this one cannot.")
+    parser.add_argument("--remaining-iterations", type=int, default=None,
+                        help="Iterations still to run, including this one.")
+    parser.add_argument("--fail-on-shortfall", action="store_true",
+                        help="Exit 2 instead of warning when the pool cannot supply the "
+                             "remaining iterations.")
     parser.add_argument("--report-json", default=None)
     args = parser.parse_args()
 
@@ -60,12 +80,30 @@ def main() -> int:
             clamped_reason = f"clamped to --max-count {args.max_count}"
             budget = args.max_count
 
+        # Feasibility. Reported whenever the pool size is known, because "the run
+        # cannot reach the iteration count it was configured for" is a fact about
+        # the run, not an error in this stage.
+        shortfall = None
+        if args.pool_size is not None and args.remaining_iterations is not None:
+            available = max(0, args.pool_size - args.already_mined)
+            required = budget * args.remaining_iterations
+            shortfall = {
+                "pool_size": args.pool_size,
+                "already_mined": args.already_mined,
+                "available": available,
+                "required": required,
+                "remaining_iterations": args.remaining_iterations,
+                "feasible_iterations": available // budget if budget else 0,
+                "sufficient": available >= required,
+            }
+
         report = {
             "weak_parquet": str(weak_parquet),
             "weak_count": weak_count,
             "multiplier": args.multiplier,
             "desired_unique_count": budget,
             "clamped": clamped_reason,
+            "pool_feasibility": shortfall,
         }
         if args.report_json:
             report_path = Path(args.report_json).expanduser().resolve()
@@ -76,6 +114,25 @@ def main() -> int:
         detail = f" ({clamped_reason})" if clamped_reason else ""
         print(f"weak_count={weak_count} x multiplier={args.multiplier} -> {budget}{detail}",
               file=sys.stderr)
+
+        if shortfall and not shortfall["sufficient"]:
+            feasible = shortfall["feasible_iterations"]
+            print(
+                f"POOL SHORTFALL: {shortfall['available']} unmined pool images remain "
+                f"({args.pool_size} pool - {args.already_mined} already mined), but "
+                f"{shortfall['remaining_iterations']} more iterations at a budget of {budget} "
+                f"need {shortfall['required']}.\n"
+                f"  This pool can supply {feasible} more full iteration(s). The run will stop "
+                f"early when the pool is spent;\n"
+                f"  the miner raises on an exhausted pool rather than returning nothing. "
+                f"Either lower max_iterations to\n"
+                f"  {feasible}, enlarge the pool, or accept the early stop and record it with "
+                f"`commit_stage.py --stage loop_stop --pool-remaining 0`.",
+                file=sys.stderr,
+            )
+            if args.fail_on_shortfall:
+                return 2
+
         # stdout carries only the number, so callers can capture it directly.
         print(budget)
         return 0

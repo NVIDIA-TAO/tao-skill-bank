@@ -128,7 +128,7 @@ and applied on every run:
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
   --spec "${RESULTS_DIR}/<phase>/infer_grounding_dino.yaml" \
-  --overlay <skill_root>/assets/overlays/grounding_dino_inference.yaml \
+  --apply-workflow-defaults <skill_root>/assets/overlays/grounding_dino_inference.yaml \
   --set inference.checkpoint=<checkpoint> \
   --set inference.num_gpus="$NUM_GPUS" \
   --set results_dir="${RESULTS_DIR}/<phase>" \
