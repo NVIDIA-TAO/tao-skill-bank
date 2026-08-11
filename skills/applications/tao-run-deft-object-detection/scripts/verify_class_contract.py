@@ -47,7 +47,16 @@ def _load(path: str):
 
 
 def _mapping_classes(data) -> list[str]:
-    """Target class names from a KPI mapping: list-of-single-key-dicts or a mapping."""
+    """Target class names from a KPI mapping or a classes.yaml.
+
+    Accepts the same shapes the rest of the skill does: a list of single-key
+    mappings, a bare mapping, or a mapping under a ``classes:`` root key. Without
+    the last of those, a documented classes.yaml yields the single class name
+    ``classes`` and every comparison against it is a false mismatch --
+    prepare_class_mappings_for_mining_data_prep.py unwraps it, so this must too.
+    """
+    if isinstance(data, dict) and set(data) == {"classes"}:
+        data = data["classes"]
     if isinstance(data, list):
         return [k for entry in data if isinstance(entry, dict) for k in entry]
     if isinstance(data, dict):

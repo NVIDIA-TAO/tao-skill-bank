@@ -2146,6 +2146,26 @@ assert_rc 1 "[G20] duplicate captions are rejected"
 run "$PY" "$VCC" --captions '["bicycle","car","person"]'
 assert_rc 1 "[G20] a single source is not a comparison"
 
+# classes.yaml is documented with a `classes:` root key and is also accepted bare;
+# prepare_class_mappings_for_mining_data_prep.py unwraps both, so this must too.
+# Without that, a documented classes.yaml yields the single class name "classes"
+# and every comparison against it is a false mismatch.
+make_file "$G20/classes_wrapped.yaml" 'classes:
+  bicycle: [bicycle]
+  car: [car]
+  person: [person]'
+run "$PY" "$VCC" --captions '["bicycle","car","person"]' \
+  --state "$G20/state.json" --classes "$G20/classes_wrapped.yaml"
+assert_rc 0 "[G20] a classes.yaml with a classes: root key is understood"
+
+make_file "$G20/classes_wrapped_wrong.yaml" 'classes:
+  bicycle: [bicycle]
+  car: [car]
+  truck: [truck]'
+run "$PY" "$VCC" --captions '["bicycle","car","person"]' \
+  --state "$G20/state.json" --classes "$G20/classes_wrapped_wrong.yaml"
+assert_rc 1 "[G20] and a wrapped file that disagrees is still rejected"
+
 # ═══════════════════════════════════════════════════════════════════════════
 # G21 — inputs outside the workspace need their own mounts, derived not guessed
 #
