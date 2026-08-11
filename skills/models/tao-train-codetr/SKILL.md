@@ -351,3 +351,7 @@ Accuracy-first with large backbones and high query counts (900–1500). Expect s
 ## Deployment
 
 `export` and TensorRT deploy are not available for Co-DETR in this build. For a deployable detector, train Co-DETR as a teacher and distil into a student that supports export — `tao-train-rtdetr` and `tao-train-dino` both expose `export` and `gen_trt_engine`.
+
+## References
+
+- `references/checkpoint-spec-pairing.md` — deriving `backbone`, `num_queries`, `num_feature_levels` and `num_classes` from a checkpoint's tensors. A mismatch fails silently: PASS, exit 0, empty labels.
