@@ -49,6 +49,12 @@ For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and Tens
 - **Formats:** custom image/caption folders or WebDataset shards
 - **Monitoring metric:** val/t2i_mAP
 
+The train action emits `val/t2i_mAP`, which is the AutoML selection objective.
+The standalone evaluate action reports the corresponding held-out metric as
+`test/t2i_mAP`; use that name for checkpoint evaluation and compare its value
+with the selected training validation metric rather than expecting a `val/`
+key from the evaluate action.
+
 ### Supported Models
 
 - **OpenCLIP / NV-CLIP:** `ViT-L-14-SigLIP-CLIPA-224` (default), `ViT-L-14-SigLIP-CLIPA-336`, `ViT-H-14-SigLIP-CLIPA-224`, `ViT-H-14-SigLIP-CLIPA-336`, `ViT-H-14-SigLIP-CLIPA-574`

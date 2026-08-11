@@ -82,6 +82,11 @@ clearly and keep all child model actions in the resolved container image.
 python -c "import tao_automl; from tao_automl.runner import AutoMLRunner; print('OK')"
 ```
 
+Then verify the selected platform's SDK constructs — importing `tao_automl` does
+not prove the platform backend is installed (e.g. `DockerSDK()` raises
+`CredentialError` without the `docker` package). See
+`automl-preflight-concepts.md`.
+
 If missing, show the exact install command from `versions.yaml` and ask before
 installing:
 
@@ -171,22 +176,28 @@ spec/template, and the selected platform's normal job submission path. If the
 model skill recommends a smaller shape for evaluation than training, use that
 shape and call it out in the launch review.
 
-Share the eval metric number with the user in the launch review before asking
-for confirmation to launch recommendations. If the model has no packaged
-evaluate action, the eval dataset is missing, or the eval job fails, stop and
-report the blocker instead of silently falling back to a training-loss-only
-AutoML run. Continue without this baseline only when the user explicitly accepts
-that the run will optimize a proxy metric and will not have an impact baseline.
+Evaluation requires a usable checkpoint. For scratch training without a
+compatible starting checkpoint, run one minimal default training job outside
+the recommendation budget, resolve its epoch/step checkpoint, and evaluate it.
+Use that task metric for the baseline, `eval_fn`, selection, and
+`final_eval_fn`. Never evaluate an empty checkpoint or directory placeholder.
 
-The AutoML runner owns final evaluation of the selected best checkpoint/model.
-When a runnable evaluate action and validation/eval data exist, pass a
-`final_eval_fn(best_rec, train_job_id)` callback to `AutoMLRunner.run`. The
-callback must evaluate the selected best checkpoint/model with the same metric,
-dataset, and direction used for the baseline, store a structured record under
-the workspace, and return the measured metric or a dict containing
-`metric_value` and metadata such as `record_path` and `job_id`. Do not run final
-evaluation as an agent-side step after `runner.run`; the returned result should
-contain `result["final_evaluation"]` with a concrete status and reason.
+Share the eval metric number with the user in the launch review before asking
+for confirmation. If a starting checkpoint exists but the baseline cannot be
+produced — no packaged evaluate action, missing eval dataset, failed eval job —
+stop and report the blocker instead of silently falling back to a
+training-loss-only run.
+
+**Training from scratch is the exception.** With no pretrained / parent / resume
+checkpoint the baseline has nothing to evaluate, so it is inapplicable rather
+than failed: record it unavailable with that reason and proceed.
+
+The runner owns final evaluation of the selected best checkpoint. When a
+runnable evaluate action and eval data exist, pass `final_eval_fn(best_rec,
+train_job_id)` to `AutoMLRunner.run` rather than evaluating agent-side after
+`runner.run`; the result then carries `result["final_evaluation"]` with a
+concrete status and reason. See `automl-preflight-concepts.md` for the callback
+contract and the from-scratch rules.
 
 ## Dependency And Data Preflight
 
@@ -300,13 +311,13 @@ model_skill = "<resolved-model-skill-directory>"
 skill_dir = skill_bank / "skills" / "models" / model_skill
 
 runner = AutoMLRunner(
+    sdk=sdk,
     skill_dir=str(skill_dir),
-    platform_sdk=sdk,
-    workspace_dir="<automl_workspace>",
+    action=action,                      # train, distill, prune, quantize, ...
 )
 
 result = runner.run(
-    automl_algorithm=algorithm,
+    workspace_path="<automl_workspace>",   # timestamp it to avoid collisions
     automl_settings=automl_settings,
     spec_overrides=spec_overrides,
     automl_hyperparameters=automl_hyperparameters,

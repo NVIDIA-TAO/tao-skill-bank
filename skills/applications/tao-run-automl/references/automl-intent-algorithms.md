@@ -117,6 +117,13 @@ evaluate action, validation data is missing, or the eval job fails, stop and
 surface the blocker. Proceed without this baseline only when the user
 explicitly accepts a proxy-metric run with no impact baseline.
 
+If the workflow starts from scratch and has no compatible checkpoint to
+evaluate, run a minimal default-configuration training job outside the AutoML
+recommendation budget, resolve its exact epoch/step checkpoint, and evaluate
+that checkpoint for the baseline. Then use the same evaluator task metric via
+`eval_fn` for every recommendation and `final_eval_fn` for the winner. An empty
+checkpoint value or container directory is not a valid baseline model.
+
 **Customization gate:** After the required quick-start fields are resolved, you may briefly offer customization. If the user declines or does not ask for it, proceed with the defaults above. If the user chooses customization, then present the additional options below.
 
 Customization-only fields:

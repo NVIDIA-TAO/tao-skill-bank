@@ -57,8 +57,9 @@ The agent MUST read this section before generating any training or AutoML script
 - **Dataset type:** object_detection
 - **Formats:** coco, coco_raw
 - **Accepted dataset intents:** training, evaluation, testing, calibration
-- **Monitoring metric:** mAP50 for quick operational checks; `val_mAP` for
-  COCO/paper-style benchmark comparisons.
+- **AutoML metric contract:** for the default evaluation-backed workflow, use `test_mAP50` with maximize direction. Use `test_mAP` only when the user explicitly requests COCO/paper-style mAP.
+- **Training monitoring metrics:** `val_mAP50` (logged as `Validation mAP50`) for quick operational checks; `val_mAP` for COCO/paper-style benchmark comparisons.
+- **Evaluate action metrics:** `test_mAP50` for AP50 and `test_mAP` for COCO mAP. AutoML workflows that score recommendations with the standalone evaluate action must use the corresponding `test_*` KPI.
 
 **Required datasets — MUST resolve both:**
 
@@ -144,9 +145,10 @@ When increasing `train.num_gpus`, also set `train.gpu_ids` to the same visible
 device range, or distributed startup can be inconsistent.
 
 AutoML runs training — all **Training Requirements** above apply. For no-input
-local smoke runs, use `DINO_AUTOML_PROFILE`. Recommended metric is `mAP50`
-(`val_mAP` for benchmark comparisons) with `direction="maximize"` and a custom
-`metric_extractor`.
+local smoke runs, use `DINO_AUTOML_PROFILE`. For training-log-only scoring, use
+`val_mAP50` (extracted from `Validation mAP50`) or `val_mAP`. When each
+recommendation is scored through the standalone evaluate action, use
+`test_mAP50` or `test_mAP` with `direction="maximize"`.
 
 See `references/dino-tuning-multigpu.md` for the full multi-GPU spec-consistency
 rule (8-GPU example, NCCL timeout note) and the full AutoML/HPO notes (metric
