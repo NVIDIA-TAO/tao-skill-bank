@@ -1,4 +1,4 @@
-# Class mapping for scripts/prepare_class_mappings_for_prep.py
+# Class mapping for scripts/prepare_class_mappings_for_pseudolabeling.py
 #
 # ITS mapping, based on the reference implementation
 # (video-tools/curate/codino_pl/its_mapping_codino.py) with one deliberate
