@@ -38,6 +38,7 @@ Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows st
 ### Train
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 docker run --gpus all --rm \
   -e HF_TOKEN \
   -v /path/to/spec.yaml:/spec.yaml \
@@ -50,6 +51,7 @@ docker run --gpus all --rm \
 ### Evaluate
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 docker run --gpus all --rm \
   -e HF_TOKEN \
   -v /path/to/eval_spec.yaml:/spec.yaml \

@@ -14,6 +14,7 @@ in a runtime-created subtree breaks creation.
 no host `chmod` needed. Two companions are mandatory for *this* image:
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 WORK=/abs/path/to/run        # holds home/, checkpoints/, results/, ag_inference/, ag_configs/
 mkdir -p "$WORK"/{home,checkpoints,results,ag_inference,ag_configs}
 docker run -d --name agrun --gpus all \
@@ -22,7 +23,7 @@ docker run -d --name agrun --gpus all \
   -e HOME=/work/home -e HF_HOME=/work/home/hf \                 `# ② redirect all caches to a writable mount`\
   -e XDG_CACHE_HOME=/work/home/.cache -e TRITON_CACHE_DIR=/work/home/.triton \
   -e TORCHINDUCTOR_CACHE_DIR=/work/home/.inductor -e MPLCONFIGDIR=/work/home/.mpl \
-  -e HF_TOKEN="$HF_TOKEN" \
+  -e HF_TOKEN \
   -v "$WORK/home:/work/home" \
   -v "$WORK/checkpoints:/workspace/paidf-anomalygen/checkpoints" \
   -v "$WORK/results:/workspace/paidf-anomalygen/results" \

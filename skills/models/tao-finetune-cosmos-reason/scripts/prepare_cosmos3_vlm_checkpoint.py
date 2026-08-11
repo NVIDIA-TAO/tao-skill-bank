@@ -317,8 +317,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--secrets-env",
-        default="~/.tao/secrets.env",
-        help="Optional env file passed to docker; values are never printed.",
+        default="",
+        help=(
+            "Optional env file handed to docker --env-file; its entire contents enter the "
+            "conversion container, so use one only if it holds nothing but the HuggingFace "
+            "token. HF_TOKEN / HUGGING_FACE_HUB_TOKEN are forwarded from the session by name "
+            "regardless. Values are never printed."
+        ),
     )
     parser.add_argument(
         "--validate-with-image",

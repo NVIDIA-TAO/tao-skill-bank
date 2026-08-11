@@ -144,9 +144,12 @@ After platform selection, read the chosen platform skill's `## Credentials`
 section and `references/skill_info.yaml` (required_credentials /
 credential_groups).
 
-Never ask for or read credential values. Check only whether the required
-environment variable is set; if it is unset, tell the user which variable to
-export in the shell that launches the agent.
+Never ask for or print credential values. Check only whether the variable is
+set (`[ -n "$VAR" ] && echo SET || echo UNSET`); if unset, name it so the user
+can export it or put it in a user-approved env file (`~/.tao/secrets.env`,
+`~/.config/tao/.env`, or one they point at), loaded with
+`set -a; source /path/to/.env; set +a`. The run never creates or writes that
+file.
 
 ## Agent Behavior
 

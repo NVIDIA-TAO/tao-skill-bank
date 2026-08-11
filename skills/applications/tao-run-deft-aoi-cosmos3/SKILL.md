@@ -89,8 +89,12 @@ Treat a run as a disk-backed state machine.
 
 Never place secrets in a spec, command, transcript, job-record, or chat. Check
 credential presence only, for example
-`[ -n "$HF_TOKEN" ] && echo SET || echo UNSET`. Read no credential file and
-load no `.env`.
+`[ -n "$HF_TOKEN" ] && echo SET || echo UNSET`. Credentials come from the
+user's exported shell environment or from a user-approved env file —
+`~/.tao/secrets.env`, `~/.config/tao/.env`, or a path the user points at, never
+one merely found in the workspace — loaded with
+`set -a; source /path/to/.env; set +a`. Never print the file's contents or any
+credential value.
 
 ## Cosmos3 Model Contract
 

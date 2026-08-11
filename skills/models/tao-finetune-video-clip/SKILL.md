@@ -173,8 +173,8 @@ video_clip export -e /path/to/export.yaml
   InternVideo2 weights already on disk, no token is required.
 
 Treat tokens as secrets. Export them into the environment or pass them through an
-`--env-file`, rather than inlining values into generated spec YAML, command lines, or
-anything written under `results_dir`.
+`--env-file` of bare `KEY=value` lines, rather than inlining values into generated
+spec YAML, command lines, or anything written under `results_dir`.
 
 ## Data format (vadr1_chunks)
 

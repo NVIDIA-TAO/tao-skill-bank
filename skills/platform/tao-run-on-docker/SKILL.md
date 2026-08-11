@@ -33,6 +33,7 @@ Sources: official Docker CLI reference (<https://docs.docker.com/reference/cli/d
 3. **NGC API key** for `nvcr.io/*` pulls. Get from <https://ngc.nvidia.com/>.
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 SB="${TAO_SKILL_BANK_PATH:-${TAO_SKILL_BANK_ROOT:-$PWD}}"
 SETUP_SCRIPT="${SB}/skills/platform/tao-setup-nvidia-gpu-host/scripts/setup-nvidia-gpu-host.sh"
 
@@ -56,6 +57,7 @@ install command. Do not apply one model's override to unrelated workflows.
 ## NGC authentication
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 echo "$NGC_KEY" | docker login nvcr.io -u '$oauthtoken' --password-stdin
 ```
 
@@ -88,6 +90,7 @@ below, with the raw state carried in the transition `message`. `$BANK` =
 4. **Launch detached**, naming the container after the id so the other verbs find
    it (keep `--rm` OFF so an exited container stays inspectable):
    ```bash
+   set -a; source /path/to/.env; set +a   # omit if already exported
    CID=$(docker run -d --name "$JOB_ID" --label "tao-job=$JOB_ID" \
      --gpus "$GPUS" --ipc=host \
      -v "$STAGE:/workspace" \
@@ -143,6 +146,7 @@ or fetch in-container (tier C). Fallback for `sudo docker`-only hosts:
 ## `docker run` — canonical flags
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 HOST_RESULTS=/host/results
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"

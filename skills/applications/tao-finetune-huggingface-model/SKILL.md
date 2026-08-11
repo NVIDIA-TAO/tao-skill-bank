@@ -21,7 +21,7 @@ tags:
   - nvidia-tao
   - computer-vision
   - training
-compatibility: Requires docker + nvidia-container-toolkit, NVIDIA GPU (driver ≥ 545, ≥ 24 GB VRAM for ≤3B models), ~40 GB free disk. Optional credentials (read from the session environment, exported before launching) — HF_TOKEN is read only when the model/dataset is gated or `push_to_hub` is on; WANDB_API_KEY and WANDB_PROJECT only when WandB logging is enabled.
+compatibility: Requires docker + nvidia-container-toolkit, NVIDIA GPU (driver ≥ 545, ≥ 24 GB VRAM for ≤3B models), ~40 GB free disk. Optional credentials (read from the session environment) — HF_TOKEN is read only when the model/dataset is gated or `push_to_hub` is on; WANDB_API_KEY and WANDB_PROJECT only when WandB logging is enabled.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -89,7 +89,7 @@ in `references/research-priorities.md`.
 **Required:**
 - `model_id` — HuggingFace model ID, e.g. `google/vit-base-patch16-224`
 
-**Conditional credentials (read from the session environment, exported before launching when present):**
+**Conditional credentials (read from the session environment — exported before launching or sourced from a user-approved env file):**
 - `HF_TOKEN` — only when the model/dataset is **gated** (read) or `push_to_hub` is on (write); public + public + `push_to_hub: false` needs none. Value never read — presence-only via `[ -n "$HF_TOKEN" ]`.
 - `WANDB_API_KEY`, `WANDB_PROJECT` — only when WandB is enabled; `WANDB_MODE=disabled` opts out.
 
@@ -243,9 +243,8 @@ hardware-dependent compat rules.
    then re-run with `--install --yes`.
 2. Free-disk soft-warn — override via `MIN_DISK_GB` (default 100 GB); recommend
    ≥ 100 GB for NGC base (~20 GB) + HF cache + checkpoints + data.
-3. Conditional credential presence (from the session environment, values never
-   read) — `HF_TOKEN` only when gated or `push_to_hub` is on; `WANDB_*` only when
-   WandB is on.
+3. Conditional credential presence (values never read) — `HF_TOKEN` only when
+   gated or `push_to_hub` is on; `WANDB_*` only when WandB is on.
 
 **Do not proceed to Step 4 on a hard-fail** — Step 4's `docker build` pulls a
 20+ GB NGC base, and a missing `nvidia-container-toolkit` only surfaces later as

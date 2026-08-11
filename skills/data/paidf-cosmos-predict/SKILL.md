@@ -30,8 +30,8 @@ Use this skill when a DEFT workflow already has media samples and needs syntheti
 - Docker with NVIDIA GPU support and `nvidia-container-toolkit`.
 - Access to the PAIDF augmentation image declared by `images.metropolis_sdg.paidf_augmentation` in `versions.yaml`.
 - A running VLM captioning service with an OpenAI-compatible API base URL. The base URL must be provided by the user or upstream workflow at runtime; reuse that exact base URL for every `--vlm-captioning-endpoint` argument. Do not include `/models` in `VLM_CAPTIONING_ENDPOINT`.
-- `HF_TOKEN` set in the agent environment when Cosmos model downloads require HuggingFace access.
-- `VLM_API_KEY` set in the agent environment when the VLM captioning endpoint requires authentication.
+- `HF_TOKEN` in the run environment when Cosmos model downloads require HuggingFace access — exported, or in a user-approved env file (bare `KEY=value` lines) that the run block sources.
+- `VLM_API_KEY` in the run environment the same way when the VLM captioning endpoint requires authentication.
 - Input media paths that are absolute paths on the host under the required media directory. Pass the host media directory with `--media-dir`; the skill mounts it into the PAIDF container at the exact same path.
 
 ## Inputs
@@ -45,7 +45,7 @@ Use this skill when a DEFT workflow already has media samples and needs syntheti
 | PAIDF GPU count | Yes | Number of GPUs for PAIDF augmentation. Pass it to `prepare_paidf_config.py` with `--paidf-num-gpus N` and to Docker with `--gpus "$PAIDF_NUM_GPUS"`. |
 | Media directory | Yes | Host directory containing the input media referenced by `media_path`. Pass it as `--media-dir /path/to/media_dir` to `prepare_paidf_config.py` and mount it into Docker 1:1. |
 | VLM captioning prompt | Yes | Prompt text file for VLM captioning. Pass it to `prepare_paidf_config.py` with `--caption-prompt-file`; the script inlines the prompt into `config.yaml`. |
-| `HF_TOKEN` | Yes for Cosmos model downloads | The agent checks that `HF_TOKEN` is already set in its environment and forwards it to Docker with `-e HF_TOKEN`. |
+| `HF_TOKEN` | Yes for Cosmos model downloads | The agent checks that `HF_TOKEN` is already set in the run environment, whether exported or sourced from a user-approved env file, and forwards it to Docker with `-e HF_TOKEN`. |
 | `VLM_API_KEY` | Yes when the VLM captioning endpoint requires authentication | The agent warns when `VLM_API_KEY` is not set, then forwards it to Docker with `-e VLM_API_KEY` when present. If the endpoint does not require authentication, PAIDF can run without it. |
 
 Input JSONL row shape:
@@ -132,13 +132,15 @@ Prepared helper files:
 Run PAIDF:
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
+
 [ -n "${HF_TOKEN:-}" ] || {
-  echo "MISSING: HF_TOKEN is not set in the agent environment."
+  echo "MISSING: HF_TOKEN is not set. Export it, or point the loader above at a user-approved env file."
   exit 1
 }
 
 if [ -z "${VLM_API_KEY:-}" ]; then
-  echo "WARNING: VLM_API_KEY is not set in the agent environment. Continue only if the VLM captioning endpoint does not require authentication."
+  echo "WARNING: VLM_API_KEY is not set. Continue only if the VLM captioning endpoint does not require authentication."
 fi
 
 PAIDF_IMAGE="$(scripts/resolve_versions_key.py images.metropolis_sdg.paidf_augmentation)"
@@ -234,8 +236,8 @@ Each `failed_videos.jsonl` row has exactly:
 | --- | --- | --- |
 | VLM captioning base URL preflight fails | The captioning service is not running, the base URL is wrong, `/v1` is missing, the OpenAI-compatible `/models` probe is unavailable, or the service is not reachable from the agent host | Report the base URL, the derived `/models` probe URL, and error detail. The agent does not have enough context to start or repair the service; ask the user whether to provide a different base URL, start the service externally, or stop the run. |
 | PAIDF fails after launch | The PAIDF container exited non-zero | Report the exit status, the relevant Docker output, and the count of generated videos under `<output_dir>/generated/videos/` versus expected unique media count from `path_map.jsonl`. Then ask the user how to proceed before retrying, deleting outputs, changing settings, or continuing with partial results. |
-| Cosmos checkpoint download fails | `HF_TOKEN` is unset, expired, or lacks access to the gated Cosmos repo | Report the authentication/download error. Suggest that the user accept the model license if needed and set `HF_TOKEN` in the agent environment before retrying. Do not ask the user to paste the token into chat and do not attempt to create the secret for them. |
-| VLM captioning returns authentication errors | `VLM_API_KEY` is unset, expired, or not authorized for the provided VLM captioning endpoint | Report the authentication error from `paidf_docker.log`. Ask the user to set `VLM_API_KEY` in the agent environment before retrying. After the user says to proceed, double-check that `VLM_API_KEY` is set before launching PAIDF again. Do not ask the user to paste the key into chat and do not attempt to create the secret for them. |
+| Cosmos checkpoint download fails | `HF_TOKEN` is unset, expired, or lacks access to the gated Cosmos repo | Report the authentication/download error. Suggest that the user accept the model license if needed and make `HF_TOKEN` available before retrying, by exporting it or adding it to a user-approved env file the run sources. Do not ask the user to paste the token into chat; never create the token value yourself and never print it. |
+| VLM captioning returns authentication errors | `VLM_API_KEY` is unset, expired, or not authorized for the provided VLM captioning endpoint | Report the authentication error from `paidf_docker.log`. Ask the user to export `VLM_API_KEY` or add it to a user-approved env file the run sources before retrying. After the user says to proceed, double-check that `VLM_API_KEY` is set before launching PAIDF again. Do not ask the user to paste the key into chat; never create the key value yourself and never print it. |
 | User has not provided PAIDF GPU count | The skill cannot infer the correct PAIDF GPU count from hardware alone because the desired allocation depends on the run plan and shared resources | Ask the user for `PAIDF_NUM_GPUS` before prepare/run. Do not guess. |
 | PAIDF appears to use the wrong GPU count | `PAIDF_NUM_GPUS` was set incorrectly for the run | Report the value used for `--paidf-num-gpus` and Docker `--gpus`. Ask the user for the corrected GPU count; if they provide it, rerun `prepare_paidf_config.py` and then the Docker command with the same corrected value. |
 | `prepare_paidf_config.py` fails with `file is not writable` | A previous Docker run or manual setup left root-owned or read-only files under `output_dir` | Report the exact path and permission error. If the script printed a `chown`/`chmod` command, ask the user before running it because it changes file ownership/permissions. |

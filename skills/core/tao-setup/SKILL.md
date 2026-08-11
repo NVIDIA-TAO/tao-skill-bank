@@ -30,11 +30,13 @@ run this skill first.
 ## Quick Start
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
+
 # 1. Host preflight — most TAO skills dispatch docker containers on a GPU host.
 docker info > /dev/null && echo "OK: docker" || echo "MISSING: docker"
 nvidia-smi > /dev/null && echo "OK: GPU" || echo "MISSING: NVIDIA GPU/driver"
 
-# 2. Credential presence check — names only, never read values.
+# 2. Credential presence check — names only, never print values.
 for v in NGC_KEY HF_TOKEN WANDB_API_KEY ACCESS_KEY SECRET_KEY S3_BUCKET_NAME S3_ENDPOINT_URL BREV_API_TOKEN; do
   [ -n "${!v:-}" ] && echo "SET:   $v" || echo "unset: $v"
 done
@@ -54,10 +56,10 @@ those model-specific minimums to the host setup skill instead.
 
 ## Credentials
 
-Credentials come from the session environment — export them in your shell
-before launching the agent. This skill (and the bank) never reads credential
-values and never creates or loads a credentials file; verify presence only
-with `[ -n "$VAR" ]`.
+Load a user-approved env file with `set -a; source /path/to/.env; set +a` in the
+same bash call as the command that consumes the variable. This skill never
+creates a credentials file for you; the one credential write here is step 3's
+`docker login`, which stores an nvcr.io token in `~/.docker/config.json`.
 
 - `NGC_KEY` — nvcr.io image pulls (most skills)
 - `HF_TOKEN` — gated HuggingFace weights (several model skills)
@@ -104,8 +106,9 @@ with `[ -n "$VAR" ]`.
   file mutations outside the working directory need user confirmation first.
   Installing a missing Python package prerequisite is the one exception:
   install it by default and report what was installed.
-- **Never ask for credentials in chat** and never read credential values or
-  files; name the missing variable and let the user export it.
+- **Never ask for credentials in chat** and never print credential values or
+  the contents of a credentials file; name the missing variable so the user can
+  export it or add it to an env file you then source.
 - **Container images are pinned per skill.** Each skill carries the exact
   image URI it was validated against; do not swap tags silently. Offer
   overrides only when the skill documents an override path.

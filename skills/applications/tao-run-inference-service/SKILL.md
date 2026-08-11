@@ -49,8 +49,9 @@ tags:
 ## Secrets rule (applies to every generated code block in this skill)
 
 **Never ask the user to type a secret value into a prompt.** For every secret value:
-1. Tell the user which environment variable to set (e.g. `export HF_TOKEN=...`).
-2. Generate code that reads it with `os.environ["VAR_NAME"]` — never hard-code, interpolate, or prompt for the value.
+1. Tell the user which environment variable to set — `export HF_TOKEN=...` in their shell, or a `KEY=value` line in a user-approved env file loaded with `set -a; source /path/to/.env; set +a`.
+2. Never print, `cat`, or `Read` such a file — verify presence only: `[ -n "$HF_TOKEN" ] && echo SET || echo UNSET`.
+3. Generate code that reads it with `os.environ["VAR_NAME"]` — never hard-code, interpolate, or prompt for the value.
 
 **Secret env vars** (full list in `references/service.yaml` → `secrets_handling`):
 `HF_TOKEN`, `WANDB_API_KEY`, `CLEARML_API_ACCESS_KEY`, `CLEARML_API_SECRET_KEY`, `TAO_API_KEY`, `TAO_USER_KEY`.

@@ -2,7 +2,7 @@
 name: tao-data-io
 description: The data-mover for TAO jobs — decides the storage tier (A pre-positioned mount with zero fetch / B volume-from-S3 / C ephemeral in-compute fetch), stages inputs (bulk + annotation-selective + archive extract + HF/NGC PTM), maps credentials to env, routes outputs 3-way with upload-excludes, and runs the compute-frame verify gate. A support skill other platform skills (docker, kubernetes, slurm, brev, virtualenv) call to get data to and from the compute container without the TAO SDK. Trigger phrases include "stage inputs", "mount the dataset", "upload TAO results", "download only referenced files", "resolve results_dir", "verify the container can read the data".
 license: Apache-2.0
-compatibility: Requires aws CLI or s5cmd on the staging host, plus Python 3.10+ with boto3 and pandas/pyarrow for annotation-selective download. No nvidia-tao-sdk, no fsspec/s3fs. Credentials are read from the process environment only.
+compatibility: Requires aws CLI or s5cmd on the staging host, plus Python 3.10+ with boto3 and pandas/pyarrow for annotation-selective download. No nvidia-tao-sdk, no fsspec/s3fs. Credentials are read from the process environment, whether exported in the user's shell or sourced from a user-approved env file.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -30,19 +30,20 @@ attempt an S3/HF/NGC fetch; anything missing (datasets, checkpoints, and the
 container images themselves) must be pre-positioned by the operator, and the
 preflight's readability check is the only data step that runs.
 
-## Credentials (env vars only; never written to disk)
+## Credentials (env vars; values never written to disk by this skill)
 
 S3 credentials use the **officially documented AWS env vars**, read from the
 session environment: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and (for
-S3-compatible stores) `AWS_ENDPOINT_URL`, `AWS_DEFAULT_REGION`. The `aws` CLI
-and `boto3` pick them up natively — **never** run `aws configure` and
-**never** write `~/.aws/credentials`:
+S3-compatible stores) `AWS_ENDPOINT_URL`, `AWS_DEFAULT_REGION`. The `aws`
+CLI and `boto3` pick the variables up natively — **never** run `aws configure`
+and **never** write `~/.aws/credentials`:
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 aws s3 ls "s3://$S3_BUCKET_NAME/..."   # reads AWS_* from the environment
 ```
 
-If a session exports only the legacy TAO names (`ACCESS_KEY`, `SECRET_KEY`,
+If a session provides only the legacy TAO names (`ACCESS_KEY`, `SECRET_KEY`,
 `S3_ENDPOINT_URL`, `CLOUD_REGION`), map them once, scoped to the command:
 `AWS_ACCESS_KEY_ID="$ACCESS_KEY" AWS_SECRET_ACCESS_KEY="$SECRET_KEY" aws s3 ...`
 
@@ -94,8 +95,7 @@ Download only the files an annotation references (e.g. the `video` column),
 preserving relative paths, into a local staging dir:
 
 ```bash
-# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (and AWS_ENDPOINT_URL for
-# S3-compatible stores) must be exported in the session environment.
+set -a; source /path/to/.env; set +a   # omit if already exported
 python references/selective_download.py \
   --annotation /path/to/annotation.parquet \
   --key video \
@@ -104,7 +104,7 @@ python references/selective_download.py \
 ```
 
 `--key` is repeatable or comma-separated; `--format` overrides extension
-inference (`parquet`/`jsonl`/`json`/`csv`). Credentials come from the env only.
+inference (`parquet`/`jsonl`/`json`/`csv`).
 
 ## Helpers
 

@@ -18,7 +18,7 @@ template (`references/baseline_spec.yaml`), and offer to scaffold the tree.
 | `train/base/validation_set.csv` | Held-out rows, same schema. Must not overlap training (the loop hard-stops on leakage). |
 | `kpi/testing_set.csv` | KPI test rows, same schema. This is what FAR / recall is measured on. |
 | `images/` | The canonical image root referenced by every CSV above (real inspection captures + their golden references). |
-| Process environment | `NGC_KEY` + `HF_TOKEN` for approved network-enabled actions only. Never stage or read credential files. |
+| Process environment | `NGC_KEY` + `HF_TOKEN` for approved network-enabled actions only. Exported in the shell before launch, or sourced from a user-approved env file (`set -a; source /path/to/.env; set +a`) — the loop never creates that file, writes a value into it, or prints one. |
 
 **Auto-fetched on first use (do not pre-stage unless air-gapped):** the
 ChangeNet backbone (`nvidia/C-RADIOv2-B`), the Cosmos/AnomalyGen base

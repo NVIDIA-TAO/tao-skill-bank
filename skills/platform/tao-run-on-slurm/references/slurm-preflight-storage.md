@@ -27,7 +27,9 @@ Load this file only when the compact `SKILL.md` points here for the current task
 # 1. SSH to the login node works without a password prompt
 SLURM_HOST="${SLURM_HOSTNAME%%,*}"
 [ -n "$SLURM_USER" ] && [ -n "$SLURM_HOST" ] || {
-  echo "MISSING: export SLURM_USER and SLURM_HOSTNAME (comma-separated for failover) in your shell before launching."
+  echo "MISSING: SLURM_USER and SLURM_HOSTNAME (comma-separated for failover)."
+  echo "Export them in your shell before launching, or source a user-approved env file:"
+  echo "  set -a; source /path/to/.env; set +a"
   exit 1
 }
 ssh -o BatchMode=yes -o ConnectTimeout=10 "${SLURM_USER}@${SLURM_HOST}" "true" 2>/dev/null || {
