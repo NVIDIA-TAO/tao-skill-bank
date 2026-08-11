@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "tao-skills",
-      "description": "Full TAO skill bank — every model, data, platform, and application skill in one bundle. Install this for the standard agentic-fine-tuning experience.",
+      "description": "Full TAO skill bank \u2014 every model, data, platform, and application skill in one bundle. Install this for the standard agentic-fine-tuning experience.",
       "source": "./",
       "strict": true,
       "skills": [
@@ -79,7 +79,8 @@
         "./skills/data/tao-validate-dataset-format",
         "./skills/data/tao-analyze-gaps-vlm-bcq",
         "./skills/data/tao-generate-image-grounding",
-        "./skills/data/tao-generate-referring-expressions"
+        "./skills/data/tao-generate-referring-expressions",
+        "./skills/data/tao-mine-od-images"
       ]
     },
     {
