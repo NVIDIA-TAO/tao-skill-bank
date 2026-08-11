@@ -43,9 +43,12 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    Alternatively run analysis inside the TAO toolkit image. Do not silently
    skip — KPI plots and parquet I/O are part of every loop's output.
 2. Read the relevant `references/*.md` files for command syntax and output contracts. See `## Stage Reference Modules` in `references/scripts-and-agents.md` for the stage→skill mapping.
-3. Never read or source `.env`. In network-enabled mode, verify only the
-   presence of credentials already supplied in the process environment. In
-   air-gap mode record credentials as `N/A (offline)`:
+3. In network-enabled mode, credentials reach the session from the user's shell
+   or from a user-approved env file — `~/.tao/secrets.env`,
+   `~/.config/tao/.env`, or one the user points at — loaded with
+   `set -a; source /path/to/.env; set +a`, which prints nothing. Verify presence
+   only and never print a credential value. In air-gap mode record
+   credentials as `N/A (offline)`:
 
    | Variable | Required for | Image prefix it gates |
    |---|---|---|
@@ -55,8 +58,10 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    For planned network actions both variables must be non-empty in the process
    environment. The single `NGC_KEY` must have read access to every registry
    org referenced by the resolved image URIs. If either is missing, ask the
-   user or harness to inject it without revealing the value; never create,
-   read, or source a credential file.
+   user or harness to inject it without revealing the value, or point the run
+   at a user-approved env file to source — some runtimes (notably Codex) do not
+   reliably inherit shell exports. The run never creates that file, writes a
+   credential value into it, or prints its contents.
 4. Network-enabled mode may perform the approved registry login after the user
    gate. Air-gap mode must not log in or pull; local image inspection is the
    only permitted registry-related check. Do not expose credential values.

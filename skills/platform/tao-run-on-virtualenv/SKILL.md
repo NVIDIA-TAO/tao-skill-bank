@@ -75,6 +75,7 @@ in the job record's `results_dir`, which IS the runner's `--job-dir`.
 3. **Launch detached** (the runner writes a durable wrapper that gates start,
    records identity, and cleans up the process group on exit):
    ```bash
+   set -a; source /path/to/.env; set +a   # omit if already exported
    python3 "$RUNNER" submit --job-dir "$RESULTS_DIR" --venv "$VENV" \
      --script train.py --job-id "$JOB_ID" --config-path "$SPEC" \
      --arg train --arg=--config={config_path} --arg=--out={results_dir} \

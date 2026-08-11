@@ -118,7 +118,10 @@ docker build -t run-<short>:latest .
 
 ## 2. Prepare data
 
+Steps 3-8 below assume the same load line as this block.
+
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 docker run --rm --gpus all --shm-size=16g --entrypoint /bin/bash \
   --user $(id -u):$(id -g) \
   -e HF_TOKEN \

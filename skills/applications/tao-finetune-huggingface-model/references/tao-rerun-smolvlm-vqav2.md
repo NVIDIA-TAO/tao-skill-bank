@@ -12,7 +12,7 @@ on 2026-04-23.
 ## Run
 
 ```bash
-source .env
+set -a; source .env; set +a
 docker build -t run-smolvlm-256m-vqav2:latest .
 
 # prepare

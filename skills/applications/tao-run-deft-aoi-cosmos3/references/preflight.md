@@ -33,7 +33,7 @@ Require:
   precision / F1 gate);
 - GPU and node count.
 
-Read no credential file. Check only required environment-variable presence.
+Check only required environment-variable presence.
 
 ## 3. Validate bare annotations
 
@@ -211,8 +211,7 @@ checks and show:
 Nano may use the model helper's packaged Qwen3-VL 8B default. Edge and Super
 must have their own validated mapping; never inherit Nano's default. The
 preparation helper may clone, pull, and write files, so run it only after the
-single approval gate and before the baseline frozen Benchmark evaluation. Use
-`--secrets-env ""` so credentials come only from the session environment.
+single approval gate and before the baseline frozen Benchmark evaluation.
 
 ## 8. Credentials
 
@@ -222,7 +221,13 @@ and AnomalyGen images this workflow uses are public on `nvcr.io`, so `NGC_KEY`
 matters only for a registry that actually rejects an anonymous pull. Report
 `UNSET` as the normal case, not as a finding.
 
+A required variable is either already exported in the session or comes from a
+user-approved env file (see AGENTS.md). Load such a file in the same command as
+its consumer, never read it back: these checks report presence only.
+
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
+
 # HF_TOKEN and HUGGING_FACE_HUB_TOKEN are two names for the same HuggingFace
 # access token, not two credentials. huggingface_hub honors both (HF_TOKEN
 # wins), and prepare_cosmos3_vlm_checkpoint.py forwards whichever is set. Treat
@@ -239,9 +244,11 @@ fi
 
 An unset token is never a blocker on its own. Escalate only from an observed
 failure — a refused pull, or a gated HuggingFace download — and then name the
-single variable to export. Never ask the user to paste a value, never report a
-missing HuggingFace token when only the legacy name is exported, and never
-present an unset `NGC_KEY` as a problem when the pull succeeds anyway.
+single variable the user must supply, exported in their shell or added to a
+user-approved env file the run sources. Never ask the user to paste a value,
+never report a missing HuggingFace token when only the legacy name is exported,
+and never present an unset `NGC_KEY` as a problem when the pull succeeds
+anyway.
 
 ## 9. Compute and runtime
 

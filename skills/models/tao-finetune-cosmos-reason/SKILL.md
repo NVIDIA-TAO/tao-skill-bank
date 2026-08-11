@@ -72,6 +72,7 @@ Python. This satisfies the Execution Environment hard gate above: the container
 stricter environment-specific command.
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 COSMOS_RL_IMAGE_DEFAULT=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-rl  # versions-key: images.tao_toolkit.cosmos_rl
 COSMOS_RL_IMAGE="${COSMOS_RL_IMAGE:-$COSMOS_RL_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
@@ -136,12 +137,17 @@ Cosmos-RL specs at that converted directory.
 The model skill packages a helper:
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 python skills/models/tao-finetune-cosmos-reason/scripts/prepare_cosmos3_vlm_checkpoint.py \
   --checkpoint-path /abs/path/Cosmos3-Nano \
   --output-path /abs/path/Cosmos3-Nano-VLM \
-  --secrets-env ~/.tao/secrets.env \
   --validate-with-image <cosmos-rl-image>
 ```
+
+The helper forwards `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` from the session by
+name, so `--secrets-env` is unset by default. A path given there is handed to
+docker `--env-file` (bare `KEY=value` lines only) and its whole contents enter
+the conversion container, so it must hold nothing but the HuggingFace token.
 
 After conversion, use the converted directory consistently as the PTM:
 

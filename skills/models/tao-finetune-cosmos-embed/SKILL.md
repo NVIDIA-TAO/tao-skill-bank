@@ -71,6 +71,7 @@ workspace/
 Use these Docker options for all actions unless the local Docker/platform skill gives a stricter environment-specific command:
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 COSMOS_EMBED_IMAGE_DEFAULT=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed  # versions-key: images.tao_toolkit.cosmos_embed
 COSMOS_EMBED_IMAGE="${COSMOS_EMBED_IMAGE:-$COSMOS_EMBED_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
