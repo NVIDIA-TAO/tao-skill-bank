@@ -44,8 +44,11 @@ Creating a key that is not already present requires ``--allow-new``. Without it 
 typo'd path is an error rather than a silently added field the loader ignores,
 which is the failure mode this script exists to prevent.
 
-``--require-no-mandatory`` exits non-zero if any ``???`` remains, so a stage can
-refuse to launch a container against an incomplete spec.
+``--require-no-mandatory`` exits non-zero if any ``???`` remains. Prefer
+``--require-no-mandatory-under BLOCK`` for a stage that uses one block of a
+multi-action spec: ``default_specs`` marks fields mandatory for every action it
+supports, so the whole-spec check can never pass for, say, a KITTI→COCO conversion
+that never reads the ``odvg`` block.
 """
 
 from __future__ import annotations
@@ -168,7 +171,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-new", action="store_true",
                         help="Permit creating keys absent from the spec.")
     parser.add_argument("--require-no-mandatory", action="store_true",
-                        help="Exit non-zero if any ??? remains after the overrides.")
+                        help="Exit non-zero if any ??? remains anywhere in the spec.")
+    parser.add_argument("--require-no-mandatory-under", action="append", default=[],
+                        metavar="PREFIX",
+                        help="Exit non-zero only if a ??? remains under this dotted prefix. "
+                             "Repeatable. A schema dump carries mandatory fields for every "
+                             "action it supports, so the whole-spec check cannot pass for a "
+                             "stage that uses one block — scope it to the blocks the stage "
+                             "actually reads.")
     parser.add_argument("--report-json", default=None,
                         help="Record every key applied and its source, so a run can be "
                              "audited without re-deriving what the overlay contained.")
@@ -277,8 +287,17 @@ def main() -> int:
         # Validate before the file lands. Writing first and checking after left an
         # invalid spec on disk on a non-zero exit, which a resume reads as usable.
         left = remaining_mandatory(tree)
-        if left and args.require_no_mandatory:
-            print(f"  {len(left)} field(s) still ???: {', '.join(left[:8])}", file=sys.stderr)
+        scoped = [
+            key for key in left
+            if any(key == prefix or key.startswith(f"{prefix}.")
+                   for prefix in args.require_no_mandatory_under)
+        ]
+        blocking = left if args.require_no_mandatory else scoped
+        if blocking:
+            where = ("" if args.require_no_mandatory
+                     else f" under {', '.join(args.require_no_mandatory_under)}")
+            print(f"  {len(blocking)} field(s) still ???{where}: "
+                  f"{', '.join(blocking[:8])}", file=sys.stderr)
             print(f"  nothing was written; {out} is unchanged", file=sys.stderr)
             return 1
 

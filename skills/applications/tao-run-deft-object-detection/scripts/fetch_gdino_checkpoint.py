@@ -139,6 +139,12 @@ def main() -> int:
                       f"({existing.stat().st_size / 1e9:.2f} GB); no download needed",
                       file=sys.stderr)
                 print(existing)
+            elif shutil.which("ngc") is None:
+                print(f"CANNOT DOWNLOAD: {args.version} is not present at {dest} and the "
+                      f"`ngc` CLI is not on PATH. Add it, or have the user supply "
+                      f"--zero-shot-checkpoint. Reporting this before the gate is the point "
+                      f"of --plan.", file=sys.stderr)
+                return 1
             else:
                 print(f"WILL DOWNLOAD after approval: {args.version} (~1.93 GB) -> {dest}",
                       file=sys.stderr)

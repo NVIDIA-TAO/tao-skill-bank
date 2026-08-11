@@ -126,7 +126,7 @@ and applied on every run:
   --set dataset.infer_data_sources.image_dir="[<config.kpi_images_dir>]" \
   --set dataset.infer_data_sources.captions='["bicycle", "car", "person", "road_sign"]' \
   --set dataset.max_labels=4 \
-  --require-no-mandatory
+  --require-no-mandatory-under inference
 ```
 
 The overlay pins `inference.conf_threshold: 0.0` (keep the full PR curve — gap analysis and

@@ -232,7 +232,7 @@ Emit `annotations default_specs`, then apply `assets/overlays/kitti_to_coco.yaml
   --set kitti.label_dir="${PREP_DIR}/inference/labels" \
   --set kitti.mapping="${PREP_DIR}/kitti_mapping.yaml" \
   --set results_dir=<workspace>/source_pool \
-  --require-no-mandatory
+  --require-no-mandatory-under kitti
 ```
 
 `label_dir` is Co-DETR's output, already folded; `mapping` is the identity over
@@ -307,7 +307,7 @@ Pass `--allow-empty-classes` only when a class is listed defensively and its abs
   --apply-workflow-defaults <skill_root>/assets/overlays/coco_to_odvg.yaml \
   --set coco.ann_file=<the COCO json written by step 3> \
   --set results_dir=<workspace>/source_pool/odvg \
-  --require-no-mandatory
+  --require-no-mandatory-under coco
 ```
 
 ```bash
