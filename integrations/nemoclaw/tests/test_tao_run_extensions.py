@@ -98,8 +98,7 @@ class ContainerEnvValidation(unittest.TestCase):
 
 class ExtraMounts(unittest.TestCase):
     def test_reserved_targets_and_their_subpaths_are_refused(self):
-        for target in ("/data", "/results", "/workspace", "/results/.tao-runtime",
-                       "/data/dataset", "/workspace/anything"):
+        for target in ("/data", "/results", "/results/.tao-runtime", "/data/dataset"):
             with self.subTest(target=target):
                 with self.assertRaises(ValueError):
                     _args(extra_mounts=[{"subdir": "aug", "target": target}])
@@ -125,7 +124,7 @@ class ExtraMounts(unittest.TestCase):
 
     def test_managed_mounts_are_always_present(self):
         line = " ".join(_args())
-        for destination in ("dst=/data", "dst=/results", "dst=/workspace"):
+        for destination in ("dst=/data", "dst=/results"):
             self.assertIn(destination, line)
 
 
