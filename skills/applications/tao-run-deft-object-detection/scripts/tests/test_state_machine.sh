@@ -220,6 +220,11 @@ assert_unchanged() {  # assert_unchanged RESULTS_DIR LABEL
 
 make_file() { mkdir -p "$(dirname -- "$1")" && printf '%s\n' "${2:-fixture}" >"$1"; }
 
+# Artifacts are checked for structure, not just existence, so fixtures carry the
+# minimum that makes them readable: parquet needs its magic bytes, a KPI csv needs
+# a data row under the header.
+make_parquet() { mkdir -p "$(dirname -- "$1")" && printf 'PAR1fixture-rowsPAR1' >"$1"; }
+
 new_workspace() {  # new_workspace NAME -> prints the workspace root
   local ws="$WORK/$1"
   make_file "$ws/ckpt/gdino_zero_shot.pth" "not a real checkpoint"
@@ -240,7 +245,7 @@ print(json.dumps(c[sys.argv[2]], sort_keys=True))' "$1" "$2"
 
 make_pool() {  # make_pool WORKSPACE  (what the prep stage would emit)
   make_file "$1/source_pool/odvg/pool_odvg.jsonl" '{"filename": "a.png"}'
-  make_file "$1/source_pool/source_embeddings.parquet" "parquet"
+  make_parquet "$1/source_pool/source_embeddings.parquet"
 }
 
 init_run() {  # init_run WORKSPACE RESULTS_DIR MAX_ITERATIONS [extra args...]
@@ -274,21 +279,22 @@ make_phase_artifacts() {  # make_phase_artifacts RESULTS_DIR PHASE
   make_file "$results/$phase/inference/labels/000001.txt" \
     "car 0.0 0 0.0 10 10 100 100 0 0 0 0 0 0 0 0.91"
   make_file "$results/$phase/kpi/kpi_calc.csv" "Sequence Name,class,AP50"
+  printf 'kpi,car,0.42\n' >>"$results/$phase/kpi/kpi_calc.csv"
   make_file "$results/$phase/kpi/kpi_analyze.log" "mAP: 0.42"
 }
 
 make_iter_artifacts() {  # make_iter_artifacts RESULTS_DIR ITER_LABEL
   local results=$1 phase=$2
-  make_file "$results/$phase/gaps/weak_images.parquet" "parquet"
+  make_parquet "$results/$phase/gaps/weak_images.parquet"
   make_file "$results/$phase/gaps/gap_report.json" '{"weak_images": 120}'
-  make_file "$results/$phase/embeddings/weak_images_embeddings.parquet" "parquet"
-  make_file "$results/$phase/mining/final_unique_files.parquet" "parquet"
+  make_parquet "$results/$phase/embeddings/weak_images_embeddings.parquet"
+  make_parquet "$results/$phase/mining/final_unique_files.parquet"
   make_file "$results/$phase/mining/summary.json" '{"retrieved": 360}'
   mkdir -p "$results/$phase/tmm/images"
   make_file "$results/$phase/tmm/images/000001.png" "png"
   make_file "$results/$phase/tmm/annotations/tmm_odvg.jsonl" '{"filename": "000001.png"}'
   make_file "$results/$phase/tmm/annotations/labelmap.json" '{"0": "car"}'
-  make_file "$results/$phase/mined_cumulative.parquet" "parquet"
+  make_parquet "$results/$phase/mined_cumulative.parquet"
   make_file "$results/$phase/train/gdino_model_latest.pth" "checkpoint"
   make_file "$results/$phase/train_grounding_dino.yaml" "train: {num_epochs: 10}"
   make_phase_artifacts "$results" "$phase"
@@ -1908,6 +1914,97 @@ run "$PY" "$INIT" \
   --source-pool-annotations "$G17_WS2/source_pool/odvg" \
   --source-pool-embeddings "$G17_WS2/source_pool/source_embeddings.parquet"
 assert_rc 1 "[G17] with no prep inputs the missing detection file is still an error"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G18 — an artifact that exists but holds nothing is not a completed stage
+#
+# A crashed container leaves a zero-byte csv, an empty label directory, or a
+# truncated parquet. Committing those as success moves the failure several stages
+# downstream, where it reads as a different bug.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G18 artifact validity, not just existence"
+
+G18_WS=$(new_workspace g18); make_pool "$G18_WS"
+G18_RUN="$G18_WS/results/run_g18"
+init_run "$G18_WS" "$G18_RUN" 1
+assert_rc 0 "[G18] init"
+make_phase_artifacts "$G18_RUN" baseline
+
+# An inference directory with no labels in it.
+rm -rf "$G18_RUN/baseline/inference/labels"; mkdir -p "$G18_RUN/baseline/inference/labels"
+commit "$G18_RUN" baseline inference \
+  --inference-labels-dir "$G18_RUN/baseline/inference/labels" \
+  --summary "empty labels dir" --duration-sec 1
+assert_rc 1 "[G18] an empty inference directory is rejected"
+case "$RUN_OUT" in
+  *"directory is empty"*) ok "[G18] the rejection says the directory is empty" ;;
+  *) notok "[G18] the rejection says the directory is empty" "output: $RUN_OUT" ;;
+esac
+
+make_file "$G18_RUN/baseline/inference/labels/000001.txt" "car 0 0 0 1 1 2 2 0 0 0 0 0 0 0 0.9"
+commit "$G18_RUN" baseline inference \
+  --inference-labels-dir "$G18_RUN/baseline/inference/labels" \
+  --summary "one label" --duration-sec 1
+assert_rc 0 "[G18] the same directory commits once it holds a label"
+
+# A KPI csv with a header and no rows: kpi_analyze wrote nothing.
+: >"$G18_RUN/baseline/kpi/kpi_calc.csv"
+printf 'Sequence Name,class,AP50\n' >"$G18_RUN/baseline/kpi/kpi_calc.csv"
+commit "$G18_RUN" baseline kpi_analyze \
+  --kpi-csv "$G18_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.4 \
+  --summary "header only" --duration-sec 1
+assert_rc 1 "[G18] a header-only KPI csv is rejected"
+case "$RUN_OUT" in
+  *"no data rows"*) ok "[G18] the rejection says there are no data rows" ;;
+  *) notok "[G18] the rejection says there are no data rows" "output: $RUN_OUT" ;;
+esac
+
+# A zero-byte file passes an existence check and nothing else.
+printf 'kpi,car,0.42\n' >>"$G18_RUN/baseline/kpi/kpi_calc.csv"
+commit "$G18_RUN" baseline kpi_analyze \
+  --kpi-csv "$G18_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.4 \
+  --summary "with a row" --duration-sec 1
+assert_rc 0 "[G18] the same csv commits once it has a data row"
+
+make_iter_artifacts "$G18_RUN" iter1
+: >"$G18_RUN/iter1/gaps/weak_images.parquet"
+commit "$G18_RUN" iter1 gap_analysis \
+  --weak-images "$G18_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G18_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 120 --summary "empty parquet" --duration-sec 1
+assert_rc 1 "[G18] a zero-byte parquet is rejected"
+case "$RUN_OUT" in
+  *"file is empty"*) ok "[G18] the rejection says the file is empty" ;;
+  *) notok "[G18] the rejection says the file is empty" "output: $RUN_OUT" ;;
+esac
+
+# Non-empty but not a parquet: a truncated or wrong-format write.
+printf 'this is not a parquet file\n' >"$G18_RUN/iter1/gaps/weak_images.parquet"
+commit "$G18_RUN" iter1 gap_analysis \
+  --weak-images "$G18_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G18_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 120 --summary "not parquet" --duration-sec 1
+assert_rc 1 "[G18] a file without the parquet magic is rejected"
+
+# Malformed JSON that a later stage would fail to parse.
+make_parquet "$G18_RUN/iter1/gaps/weak_images.parquet"
+printf '{"weak_images": 120' >"$G18_RUN/iter1/gaps/gap_report.json"
+commit "$G18_RUN" iter1 gap_analysis \
+  --weak-images "$G18_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G18_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 120 --summary "truncated json" --duration-sec 1
+assert_rc 1 "[G18] truncated JSON is rejected"
+case "$RUN_OUT" in
+  *unreadable*) ok "[G18] the rejection says the file is unreadable" ;;
+  *) notok "[G18] the rejection says the file is unreadable" "output: $RUN_OUT" ;;
+esac
+
+make_file "$G18_RUN/iter1/gaps/gap_report.json" '{"weak_images": 120}'
+commit "$G18_RUN" iter1 gap_analysis \
+  --weak-images "$G18_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G18_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 120 --summary "valid" --duration-sec 1
+assert_rc 0 "[G18] the stage commits once every artifact is readable"
 
 # ═══════════════════════════════════════════════════════════════════════════
 

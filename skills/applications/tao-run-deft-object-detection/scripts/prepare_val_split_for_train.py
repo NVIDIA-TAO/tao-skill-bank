@@ -54,8 +54,10 @@ def build_val_split(coco: dict, fraction: float, seed: int) -> tuple[dict, dict]
     # so shift the whole space to 0-based. Preserve declaration order: those
     # indices must line up with the caption/label order used at inference.
     categories = coco.get("categories", [])
-    offset = min((c["id"] for c in categories), default=0)
-    remap = {c["id"]: c["id"] - offset for c in categories}
+    # Dense 0..N-1 in declaration order. Subtracting the minimum id only works when
+    # the ids are already contiguous: {1,3,7} would become {0,2,6}, and 6 indexes
+    # past a size-3 class dimension.
+    remap = {c["id"]: index for index, c in enumerate(categories)}
 
     val = {
         "images": picked,
@@ -72,7 +74,7 @@ def build_val_split(coco: dict, fraction: float, seed: int) -> tuple[dict, dict]
         "val_annotations": len(val["annotations"]),
         "fraction": fraction,
         "seed": seed,
-        "category_id_offset_applied": offset,
+        "category_ids_remapped": {c["id"]: remap[c["id"]] for c in categories},
         "categories": {c["name"]: c["id"] for c in val["categories"]},
     }
     return val, report
@@ -121,7 +123,7 @@ def main() -> int:
         print(f"val split -> {out}")
         print(f"  {report['val_images']}/{report['source_images']} images, "
               f"{report['val_annotations']} annotations (seed {report['seed']})")
-        print(f"  category ids shifted by -{report['category_id_offset_applied']} "
+        print(f"  category ids densified {report['category_ids_remapped']} "
               f"-> {report['categories']}")
         return 0
     except Exception as exc:  # noqa: BLE001

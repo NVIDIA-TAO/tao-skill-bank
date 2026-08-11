@@ -57,6 +57,10 @@ def load_annotations(annotations_base_dir: Path) -> tuple[dict[str, dict], dict 
             print(f"WARNING: could not read {labelmap_file}: {exc}", file=sys.stderr)
 
     by_file_name: dict[str, dict] = {}
+    # Records are keyed by basename, so two source directories holding the same
+    # file name resolve to whichever was read last. Those names are unusable:
+    # staging would attach one image's boxes to a different image.
+    ambiguous: set[str] = set()
     categories: set[str] = set()
     jsonl_files = sorted(annotations_base_dir.rglob("*.jsonl"))
     for jsonl_file in jsonl_files:
@@ -73,6 +77,8 @@ def load_annotations(annotations_base_dir: Path) -> tuple[dict[str, dict], dict 
                     file_name = record.get("file_name")
                     if not file_name:
                         continue
+                    if file_name in by_file_name and by_file_name[file_name] != record:
+                        ambiguous.add(file_name)
                     by_file_name[file_name] = record
                     for instance in record.get("detection", {}).get("instances", []):
                         if "category" in instance:
@@ -80,6 +86,11 @@ def load_annotations(annotations_base_dir: Path) -> tuple[dict[str, dict], dict 
         except OSError as exc:
             print(f"WARNING: could not read {jsonl_file}: {exc}", file=sys.stderr)
 
+    for name in sorted(ambiguous):
+        by_file_name.pop(name, None)
+    if ambiguous:
+        print(f"WARNING: {len(ambiguous)} basename(s) carry conflicting annotations and were "
+              f"dropped: {sorted(ambiguous)[:5]}", file=sys.stderr)
     print(f"Indexed {len(by_file_name)} annotations from {len(jsonl_files)} JSONL file(s)")
     return by_file_name, labelmap, categories
 
@@ -112,6 +123,26 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
     image_column = resolve_image_column(df)
     df = df.drop_duplicates(subset=[image_column])
     print(f"Staging {len(df)} unique mined image(s) from {mined_parquet}")
+
+    # Destination names are basenames, so two distinct sources sharing one would
+    # overwrite each other and the survivor would be annotated with the other's
+    # boxes. Refuse rather than silently stage corrupt training data; renaming is
+    # not an option because the annotation index is keyed by basename.
+    basenames: dict[str, str] = {}
+    collisions: list[tuple[str, str]] = []
+    for raw_path in df[image_column]:
+        src = str(raw_path)
+        name = Path(src).name
+        if name in basenames and basenames[name] != src:
+            collisions.append((basenames[name], src))
+        basenames.setdefault(name, src)
+    if collisions:
+        detail = "; ".join(f"{Path(a).name}: {a} vs {b}" for a, b in collisions[:5])
+        raise ValueError(
+            f"{len(collisions)} mined image(s) share a basename with a different source "
+            f"path. Staging flattens to the basename, so one would overwrite the other and "
+            f"inherit its annotations. {detail}"
+        )
 
     odvg_path = annotations_dir / "tmm_odvg.jsonl"
     copied_images = 0

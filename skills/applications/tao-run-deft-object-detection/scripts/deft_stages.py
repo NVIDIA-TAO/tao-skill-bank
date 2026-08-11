@@ -174,11 +174,39 @@ def phase_entry(state: dict[str, Any], phase: str) -> dict[str, Any]:
 
 
 def check_artifact(path: str, kind: str) -> str | None:
-    """Return an error string when the artifact is missing or the wrong kind."""
+    """Return an error string when the artifact is missing, wrong-kind, or empty."""
     p = Path(path)
     if kind == "dir":
         if not p.is_dir():
             return f"not a directory: {path}"
-    elif not p.is_file():
+        if not any(p.iterdir()):
+            return f"directory is empty: {path}"
+        return None
+    if not p.is_file():
         return f"not a file: {path}"
+    if p.stat().st_size == 0:
+        return f"file is empty: {path}"
+
+    # Structural check by extension. A stage that died mid-write leaves a file that
+    # exists and is non-zero but cannot be read by whatever consumes it next.
+    suffix = p.suffix.lower()
+    try:
+        if suffix == ".json":
+            with p.open("r", encoding="utf-8") as fh:
+                json.load(fh)
+        elif suffix == ".jsonl":
+            with p.open("r", encoding="utf-8") as fh:
+                if not any(json.loads(line) or True for line in fh if line.strip()):
+                    return f"no records in {path}"
+        elif suffix == ".csv":
+            with p.open("r", encoding="utf-8") as fh:
+                rows = [line for line in fh if line.strip()]
+            if len(rows) < 2:
+                return f"no data rows (header only) in {path}"
+        elif suffix == ".parquet":
+            with p.open("rb") as fh:
+                if fh.read(4) != b"PAR1":
+                    return f"not a parquet file: {path}"
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        return f"unreadable ({type(exc).__name__}): {path}"
     return None
