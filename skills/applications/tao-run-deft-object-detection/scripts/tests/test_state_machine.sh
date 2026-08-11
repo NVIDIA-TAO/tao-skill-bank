@@ -1597,16 +1597,23 @@ esac
 # ═══════════════════════════════════════════════════════════════════════════
 CURRENT_SECTION="G14 default AP50 thresholds"
 
-# 1. Neither flag given: fall back to the reference classes and their gates.
+# 1. Neither flag given: derive the classes from the KPI mapping, which names what
+#    the run is scored on. Falling back to the reference ITS set would run a
+#    bicycle/car/person loop against an unrelated dataset. new_workspace's mapping
+#    declares `car` alone.
 G14_WS=$(new_workspace g14a); make_pool "$G14_WS"
 G14_RUN="$G14_WS/results"
 OMIT_AP50=1 init_run "$G14_WS" "$G14_RUN" 2
 assert_rc 0 "[G14] init succeeds with no --ap50-thresholds-json"
-assert_eq '{"bicycle": 0.7, "car": 0.99, "person": 0.7}' \
+assert_eq '{"car": 0.99}' \
   "$(state_json "$G14_RUN" ap50_thresholds)" \
-  "[G14] defaults to the reference ITS gates"
-assert_eq '["bicycle", "car", "person"]' "$(state_json "$G14_RUN" target_classes)" \
-  "[G14] target classes follow from the defaulted thresholds"
+  "[G14] gates only the classes the KPI mapping names"
+assert_eq '["car"]' "$(state_json "$G14_RUN" target_classes)" \
+  "[G14] target classes are derived from the KPI mapping, not the reference set"
+case "$RUN_OUT" in
+  *"derived"*) ok "[G14] the derivation is reported" ;;
+  *) notok "[G14] the derivation is reported" "output: $RUN_OUT" ;;
+esac
 case "$RUN_OUT" in
   *"not given; defaulted to"*) ok "[G14] the summary says the value was defaulted" ;;
   *) notok "[G14] the summary says the value was defaulted" "output: $RUN_OUT" ;;
@@ -1868,6 +1875,7 @@ mkdir -p "$G17_WS/kpi/sequence_a/images"
 make_file "$G17_WS/kpi/labels/a.txt" "car 0 0 0 1 1 2 2 0 0 0 0 0 0 0"
 make_file "$G17_WS/classes/classes_its.yaml" 'car: ["car"]'
 make_file "$G17_WS/kpi/target.json" '{"images": [], "annotations": [], "categories": []}'
+make_file "$G17_WS/pool_report.json" '{"annotations_by_class": {"car": 120}}'
 G17_RUN="$G17_WS/results/run_g17"
 
 run "$PY" "$INIT" \
@@ -1879,6 +1887,7 @@ run "$PY" "$INIT" \
   --ground-truth-labels-dir "$G17_WS/kpi/labels" \
   --class-mapping "$G17_WS/classes/classes_its.yaml" \
   --allocation-policy class_stratified --rare-class-list car \
+  --pool-report "$G17_WS/pool_report.json" \
   --target-detection-file "$G17_WS/kpi/target.json" \
   --source-detection-file "$G17_WS/source_pool/coco.json" \
   --source-pool-annotations "$G17_WS/source_pool/odvg" \
@@ -1900,6 +1909,7 @@ make_file "$G17_WS2/encoder/siglip/config.json" '{}'
 make_file "$G17_WS2/kpi/labels/a.txt" "car 0 0 0 1 1 2 2 0 0 0 0 0 0 0"
 make_file "$G17_WS2/classes/classes_its.yaml" 'car: ["car"]'
 make_file "$G17_WS2/kpi/target.json" '{"images": [], "annotations": [], "categories": []}'
+make_file "$G17_WS2/pool_report.json" '{"annotations_by_class": {"car": 120}}'
 run "$PY" "$INIT" \
   --results-dir "$G17_WS2/results/run_g17b" --workspace "$G17_WS2" --max-iterations 1 \
   --num-epochs 1 --learning-rate 0.0001 \
@@ -1909,11 +1919,36 @@ run "$PY" "$INIT" \
   --ground-truth-labels-dir "$G17_WS2/kpi/labels" \
   --class-mapping "$G17_WS2/classes/classes_its.yaml" \
   --allocation-policy class_stratified --rare-class-list car \
+  --pool-report "$G17_WS2/pool_report.json" \
   --target-detection-file "$G17_WS2/kpi/target.json" \
   --source-detection-file "$G17_WS2/source_pool/coco.json" \
   --source-pool-annotations "$G17_WS2/source_pool/odvg" \
   --source-pool-embeddings "$G17_WS2/source_pool/source_embeddings.parquet"
 assert_rc 1 "[G17] with no prep inputs the missing detection file is still an error"
+
+# class_stratified without a pool report: the pool is never proved to hold the
+# requested classes, so mining returns neighbours of something else.
+run "$PY" "$INIT" \
+  --results-dir "$G17_WS/results/run_g17c" --workspace "$G17_WS" --max-iterations 1 \
+  --num-epochs 1 --learning-rate 0.0001 \
+  --zero-shot-checkpoint "$G17_WS/ckpt/gdino_zero_shot.pth" \
+  --embedding-model-path "$G17_WS/encoder/siglip" \
+  --kpi-images-dir "$G17_WS/kpi/sequence_a/images" \
+  --ground-truth-labels-dir "$G17_WS/kpi/labels" \
+  --class-mapping "$G17_WS/classes/classes_its.yaml" \
+  --allocation-policy class_stratified --rare-class-list car \
+  --target-detection-file "$G17_WS/kpi/target.json" \
+  --source-detection-file "$G17_WS/source_pool/coco.json" \
+  --source-pool-annotations "$G17_WS/source_pool/odvg" \
+  --source-pool-embeddings "$G17_WS/source_pool/source_embeddings.parquet" \
+  --pool-images "$G17_WS/pool_images" \
+  --codetr-checkpoint "$G17_WS/ckpt/codetr.pth" \
+  --codetr-classmap "$G17_WS/ckpt/coco80.txt"
+assert_rc 1 "[G17] class_stratified without --pool-report is rejected"
+case "$RUN_OUT" in
+  *pool-report*) ok "[G17] the rejection names --pool-report" ;;
+  *) notok "[G17] the rejection names --pool-report" "output: $RUN_OUT" ;;
+esac
 
 # ═══════════════════════════════════════════════════════════════════════════
 # G18 — an artifact that exists but holds nothing is not a completed stage

@@ -224,10 +224,36 @@ def main() -> int:
 
         # ── AP50 thresholds ──────────────────────────────────────────────────
         requested_classes = _split_classes(args.target_classes)
+        # The KPI mapping names the classes this run will be scored on, so it — not
+        # the reference ITS set — is what an omitted --target-classes should follow.
+        # Defaulting to the reference silently runs a bicycle/car/person loop against
+        # an unrelated dataset, and every stage reports success while doing it.
+        mapping_classes: list[str] = []
+        mapping_path = Path(args.class_mapping).expanduser().resolve()
+        if mapping_path.is_file():
+            try:
+                import yaml  # provisioned by deft_python.sh
+                loaded = yaml.safe_load(mapping_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    mapping_classes = [k for e in loaded if isinstance(e, dict) for k in e]
+                elif isinstance(loaded, dict):
+                    mapping_classes = list(loaded)
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"--class-mapping could not be read for class derivation: {exc}")
+
+        if not requested_classes and mapping_classes:
+            warnings.append(
+                f"--target-classes not given; derived {mapping_classes} from --class-mapping")
+        elif not requested_classes and not mapping_classes:
+            errors.append(
+                "--target-classes not given and --class-mapping yielded no classes to derive "
+                "from. Pass --target-classes explicitly rather than inheriting the reference "
+                "ITS set, which would train and score a different dataset's classes.")
+
         if args.ap50_thresholds_json is None:
             # Gate the classes the caller actually asked for, not the reference's, so
             # the "every target class is gated" check below can never fail on a default.
-            basis = requested_classes or sorted(REFERENCE_AP50_THRESHOLDS)
+            basis = requested_classes or mapping_classes or sorted(REFERENCE_AP50_THRESHOLDS)
             thresholds = {c: REFERENCE_AP50_THRESHOLDS.get(c, FALLBACK_AP50_THRESHOLD)
                           for c in basis}
             assumed = sorted(c for c in basis if c not in REFERENCE_AP50_THRESHOLDS)
@@ -411,6 +437,15 @@ def main() -> int:
         if args.allocation_policy == "class_stratified":
             if not rare_classes:
                 errors.append("--allocation-policy class_stratified requires --rare-class-list")
+            if not args.pool_report:
+                # pool_report.json is the only artifact that cross-checks the prepared
+                # pool against the requested classes. Without it a pool prepared for a
+                # different class set initializes cleanly and returns plausible
+                # neighbours of the wrong thing.
+                errors.append(
+                    "--allocation-policy class_stratified requires --pool-report "
+                    "(validate_pool_coco.py writes it; --pool-dir picks it up "
+                    "automatically when it sits beside the pool)")
             for flag, raw in detection_files.items():
                 if not raw:
                     errors.append(f"--allocation-policy class_stratified requires {flag}")
