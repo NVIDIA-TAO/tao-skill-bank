@@ -2165,6 +2165,38 @@ assert_eq '[]' "$(state_json "$G21B/results/run_g21b" extra_container_mounts)" \
   "[G21] a fully self-contained run records no extra mounts"
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G22 — a reused pool must prove it was built for this run
+#
+# Prep is idempotent by existence, and existence cannot show a pool was folded to
+# the same classes. A stale pool is otherwise reused in silence.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G22 pool provenance"
+
+G22=$(new_workspace g22); make_pool "$G22"
+make_file "$G22/pool_report_stale.json" \
+  '{"annotations_by_class": {"car": 120, "person": 40}, "prep_inputs": {"target_classes": "bicycle,truck"}}'
+make_file "$G22/pool_report_ok.json" \
+  '{"annotations_by_class": {"car": 120, "person": 40}, "prep_inputs": {"target_classes": "car,person"}}'
+make_file "$G22/pool_report_bare.json" '{"annotations_by_class": {"car": 120, "person": 40}}'
+
+init_run "$G22" "$G22/results/run_stale" 1 --pool-report "$G22/pool_report_stale.json"
+assert_rc 1 "[G22] a pool folded to other classes is refused"
+case "$RUN_OUT" in
+  *"prepared for"*) ok "[G22] the refusal names both class sets" ;;
+  *) notok "[G22] the refusal names both class sets" "output: $RUN_OUT" ;;
+esac
+
+init_run "$G22" "$G22/results/run_ok" 1 --pool-report "$G22/pool_report_ok.json"
+assert_rc 0 "[G22] a pool prepared for this class set is accepted"
+
+init_run "$G22" "$G22/results/run_bare" 1 --pool-report "$G22/pool_report_bare.json"
+assert_rc 0 "[G22] a pool without provenance still initializes"
+case "$RUN_OUT" in
+  *"no prep_inputs"*) ok "[G22] but the missing provenance is reported" ;;
+  *) notok "[G22] but the missing provenance is reported" "output: $RUN_OUT" ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then

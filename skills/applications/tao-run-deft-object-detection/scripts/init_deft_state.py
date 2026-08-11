@@ -340,17 +340,19 @@ def main() -> int:
         # that classes the pool holds few of still get their share of the budget; a
         # class the pool is full of will be found by global allocation anyway.
         pool_counts: dict[str, int] = {}
+        pool_provenance: dict = {}
         if args.pool_report:
             report_path = _abs(args.pool_report)
             if not report_path.is_file():
                 errors.append(f"--pool-report: not a file: {report_path}")
             else:
                 try:
+                    report_data = json.loads(report_path.read_text(encoding="utf-8"))
                     pool_counts = {
                         str(c): int(n) for c, n in
-                        json.loads(report_path.read_text(encoding="utf-8"))
-                        .get("annotations_by_class", {}).items()
+                        report_data.get("annotations_by_class", {}).items()
                     }
+                    pool_provenance = report_data.get("prep_inputs") or {}
                 except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
                     errors.append(f"--pool-report: unreadable: {exc}")
                 else:
@@ -362,6 +364,29 @@ def main() -> int:
                             f"{sorted(c for c, n in pool_counts.items() if n)}). Mining cannot "
                             "surface examples that are not in the pool, so those classes can "
                             "never improve — re-prep the pool for this class set")
+                    # Prep is documented as idempotent: skip any step whose output
+                    # exists. Existence cannot show a pool was built from the same
+                    # checkpoint, fold, encoder or container as this run wants, and a
+                    # stale pool is reused in silence. What the pool recorded about
+                    # itself is the only evidence available.
+                    if not pool_provenance:
+                        warnings.append(
+                            "--pool-report carries no prep_inputs, so nothing records which "
+                            "checkpoint, fold or container built this pool. Re-run "
+                            "validate_pool_coco.py with --record to make reuse checkable.")
+                    else:
+                        print("pool provenance:", file=sys.stderr)
+                        for key, value in sorted(pool_provenance.items()):
+                            print(f"  {key}: {value}", file=sys.stderr)
+                        declared = pool_provenance.get("target_classes")
+                        if declared:
+                            declared_set = {c.strip() for c in str(declared).split(",") if c.strip()}
+                            if declared_set != set(target_classes):
+                                errors.append(
+                                    f"the pool was prepared for {sorted(declared_set)} but this "
+                                    f"run targets {sorted(target_classes)}. Its pseudo-labels "
+                                    f"were folded to a different class set; re-prep rather than "
+                                    f"reuse it")
 
         if args.allocation_policy == "class_stratified" and not rare_classes and pool_counts:
             backed = {c: pool_counts[c] for c in target_classes if pool_counts.get(c)}

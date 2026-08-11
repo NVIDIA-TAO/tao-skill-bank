@@ -141,6 +141,9 @@ def validate(args: argparse.Namespace) -> tuple[dict, list[str], list[str]]:
         "coco_images": n_images,
         "coco_annotations": n_anns,
         "annotations_by_class": dict(per_class),
+        "prep_inputs": dict(
+            item.split("=", 1) for item in args.record if "=" in item
+        ),
         "categories": list(categories.values()),
     }
 
@@ -228,6 +231,11 @@ def parse_args() -> argparse.Namespace:
                              "and dropped-class checks.")
     parser.add_argument("--images-dir", default=None,
                         help="Pool image directory. Enables the image-count reconciliation.")
+    parser.add_argument("--record", action="append", default=[], metavar="KEY=VALUE",
+                        help="Provenance to store under prep_inputs in the report: the "
+                             "checkpoint, container image and settings the pool was built "
+                             "with. Existence alone cannot show a pool is current, so a "
+                             "later run compares these before reusing it. Repeatable.")
     parser.add_argument("--report-json", default=None, help="Where to write the full report.")
     parser.add_argument("--allow-empty-classes", action="store_true",
                         help="Downgrade the empty-target-class error to a warning. Reasonable "

@@ -301,7 +301,15 @@ Do not read that as "the image survives to training". It does not: this step ski
   --labels-dir  "${PREP_DIR}/inference/labels" \
   --images-dir  "$POOL_IMAGES" \
   --report-json "${PREP_DIR}/pool_report.json"
+  --record target_classes="<comma-separated target classes>" \
+  --record codetr_checkpoint="$CODETR_CHECKPOINT" \
+  --record pyt_image="$TAO_PYT_IMAGE" \
 ```
+
+`--record` writes those under `prep_inputs` in the report. Prep is idempotent by
+existence, and existence cannot show a pool was folded to the same classes with the
+same checkpoint — `init_deft_state.py` compares the recorded classes against the
+run's and refuses a pool prepared for a different set.
 
 Both TAO folds fail *quietly* when names do not line up: an unmatched name is a log warning, an unmapped detection is silently dropped, and the conversion still prints `Execution status: PASS` and exits 0 while writing a COCO with no annotations. Nothing downstream notices until training produces a model that cannot detect a class, several GPU-hours later. So verify the artifact.
 
