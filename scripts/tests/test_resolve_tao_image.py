@@ -18,7 +18,7 @@ resolve_tao_image = importlib.import_module("resolve_tao_image")
 resolve_tao_model = importlib.import_module("resolve_tao_model")
 
 
-COSMOS_RL_IMAGE = "nvcr.io/nvstaging/tao/cosmos_rl:2026.8.9-rc-222-multiarch"
+COSMOS_RL_IMAGE = "nvcr.io/nvstaging/tao/tao-cosmos-rl:main-direct-train-no-cache-20260811-v1"
 
 
 def test_cosmos_nano_default_train_preserves_rl_image_contract():

@@ -7,7 +7,11 @@ allocation and do not substitute a direct registry reference in the training
 job. Use the model planner's explicit post-review `materialize` verb to write
 generated TOMLs and any merged/smoke manifests atomically on user-supplied
 shared storage, then verify their checksums before rendering or submitting the
-job. Planning and preflight must remain read-only and must not require the
+job. Run the expensive remote model/dataset inspection once during `plan`, save
+it with an explicit controller-side `--plan-artifact`, and reuse that sealed
+artifact for `preflight`, `materialize`, and `render-slurm`; those later verbs
+must not rebuild the plan. Planning and preflight must remain read-only with
+respect to the target compute frame and must not require the
 shared filesystem to be mounted on the SSH launch host. Stage the Framework
 status bridge in the repository-derived image, not as an ad hoc source patch.
 

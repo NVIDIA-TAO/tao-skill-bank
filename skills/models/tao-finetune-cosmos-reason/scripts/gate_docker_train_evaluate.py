@@ -123,8 +123,35 @@ def validate_safetensors(path: Path) -> None:
         raise ValueError(f"safetensors contains no tensor index: {path}")
 
 
+def validate_dense_checkpoint(checkpoint: Path) -> None:
+    config_path = checkpoint / "config.json"
+    config = load_json(config_path)
+    if not config.get("model_type"):
+        raise ValueError(f"dense checkpoint config has no model_type: {config_path}")
+
+    index_path = checkpoint / "model.safetensors.index.json"
+    if index_path.exists():
+        index = load_json(index_path)
+        weight_map = index.get("weight_map")
+        if not isinstance(weight_map, dict) or not weight_map:
+            raise ValueError(f"dense checkpoint weight_map is empty: {index_path}")
+        weight_files = sorted({checkpoint / str(name) for name in weight_map.values()})
+    else:
+        weight_files = sorted(checkpoint.glob("*.safetensors"))
+    if not weight_files:
+        raise ValueError(f"dense checkpoint has no safetensors weights: {checkpoint}")
+    missing = [path for path in weight_files if not path.is_file()]
+    if missing:
+        raise ValueError(f"dense checkpoint index references missing weights: {missing}")
+    for weights_path in weight_files:
+        validate_safetensors(weights_path)
+
+
 def find_and_validate_checkpoint(
-    train_results: Path, epoch: int, expected_config_path: Path
+    train_results: Path,
+    epoch: int,
+    checkpoint_kind: str,
+    expected_config_path: Path | None = None,
 ) -> Path:
     matches = sorted(train_results.glob(f"**/safetensors/epoch_{epoch}"))
     if len(matches) != 1:
@@ -133,20 +160,50 @@ def find_and_validate_checkpoint(
             f"{train_results}, found {len(matches)}: {matches}"
         )
     checkpoint = matches[0]
-    config_path = checkpoint / "adapter_config.json"
-    weights_path = checkpoint / "adapter_model.safetensors"
-    actual = load_json(config_path)
-    expected = load_json(expected_config_path)
-    mismatches = {
-        key: {"expected": value, "actual": actual.get(key)}
-        for key, value in expected.items()
-        if actual.get(key) != value
-    }
-    if mismatches:
-        raise ValueError(f"adapter config mismatch: {json.dumps(mismatches, sort_keys=True)}")
-    validate_safetensors(weights_path)
-    LOG.info("validated epoch-%d adapter checkpoint at %s", epoch, checkpoint)
+    if checkpoint_kind == "dense":
+        validate_dense_checkpoint(checkpoint)
+    else:
+        if expected_config_path is None:
+            raise ValueError("adapter validation requires --expected-adapter-config")
+        config_path = checkpoint / "adapter_config.json"
+        weights_path = checkpoint / "adapter_model.safetensors"
+        actual = load_json(config_path)
+        expected = load_json(expected_config_path)
+        mismatches = {
+            key: {"expected": value, "actual": actual.get(key)}
+            for key, value in expected.items()
+            if actual.get(key) != value
+        }
+        if mismatches:
+            raise ValueError(f"adapter config mismatch: {json.dumps(mismatches, sort_keys=True)}")
+        validate_safetensors(weights_path)
+    LOG.info(
+        "validated epoch-%d %s checkpoint at %s", epoch, checkpoint_kind, checkpoint
+    )
     return checkpoint
+
+
+def require_structured_success(status_path: Path) -> None:
+    if not status_path.is_file():
+        raise ValueError(f"training structured status file is missing: {status_path}")
+    terminal: str | None = None
+    with status_path.open(encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, start=1):
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"invalid structured status JSON at {status_path}:{line_number}: {exc}"
+                ) from exc
+            status = event.get("status") if isinstance(event, dict) else None
+            if status in {"SUCCESS", "FAILURE"}:
+                terminal = status
+    if terminal != "SUCCESS":
+        raise ValueError(
+            f"training structured terminal status is {terminal or 'missing'}, expected SUCCESS"
+        )
 
 
 def open_eval_record(args: argparse.Namespace) -> tuple[str, Path]:
@@ -232,7 +289,7 @@ def launch_eval(
         "--mount",
         f"type=bind,src={args.eval_cache},dst=/cache",
         "--mount",
-        f"type=bind,src={args.dataset_root},dst={args.dataset_root},readonly",
+        f"type=bind,src={args.dataset_root},dst={args.dataset_mount_destination},readonly",
         "--mount",
         f"type=bind,src={args.eval_spec.parent},dst=/specs,readonly",
         "--mount",
@@ -312,11 +369,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-container", required=True)
     parser.add_argument("--train-results", required=True, type=Path)
     parser.add_argument("--checkpoint-epoch", required=True, type=int)
-    parser.add_argument("--expected-adapter-config", required=True, type=Path)
+    parser.add_argument(
+        "--checkpoint-kind", choices=("adapter", "dense"), default="adapter"
+    )
+    parser.add_argument("--expected-adapter-config", type=Path)
+    parser.add_argument("--train-status-file", type=Path)
     parser.add_argument("--eval-spec", required=True, type=Path)
     parser.add_argument("--eval-results-root", required=True, type=Path)
     parser.add_argument("--eval-cache", required=True, type=Path)
     parser.add_argument("--dataset-root", required=True, type=Path)
+    parser.add_argument(
+        "--dataset-mount-destination",
+        type=Path,
+        help="container destination for --dataset-root (default: same absolute path)",
+    )
     parser.add_argument("--base-model", required=True, type=Path)
     parser.add_argument("--image", required=True)
     parser.add_argument("--job-helper", required=True, type=Path)
@@ -346,7 +412,10 @@ def parse_args() -> argparse.Namespace:
         metavar="GID",
         help="supplementary container group; repeat for video/render device groups",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.dataset_mount_destination is None:
+        args.dataset_mount_destination = args.dataset_root
+    return args
 
 
 def main() -> int:
@@ -384,14 +453,19 @@ def main() -> int:
                 )
                 save_summary(args, state, "ERROR", message)
                 return 1
+            if args.train_status_file is not None:
+                require_structured_success(args.train_status_file)
+            checkpoint = find_and_validate_checkpoint(
+                args.train_results,
+                args.checkpoint_epoch,
+                args.checkpoint_kind,
+                args.expected_adapter_config,
+            )
             mark(
                 args.job_helper,
                 args.train_job,
                 "COMPLETE",
-                "training Docker container exited successfully",
-            )
-            checkpoint = find_and_validate_checkpoint(
-                args.train_results, args.checkpoint_epoch, args.expected_adapter_config
+                "training Docker container exited successfully with validated structured status and checkpoint",
             )
             state["checkpoint"] = str(checkpoint)
             atomic_json(args.state_file, state)
@@ -461,6 +535,22 @@ def main() -> int:
             return 1
     except Exception as exc:
         LOG.exception("workflow gate failed")
+        if "checkpoint" not in state:
+            mark(
+                args.job_helper,
+                args.train_job,
+                "ERROR",
+                f"training gate validation failed: {exc}",
+                err_class="ERR_PROGRAM",
+            )
+        elif state.get("evaluation_job"):
+            mark(
+                args.job_helper,
+                state["evaluation_job"],
+                "ERROR",
+                f"evaluation gate validation failed: {exc}",
+                err_class="ERR_PROGRAM",
+            )
         save_summary(args, state, "ERROR", str(exc))
         return 1
     finally:

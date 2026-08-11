@@ -73,14 +73,23 @@ qwen-vl-utils' torchvision path backed by source-built PyAV and the restricted
 system FFmpeg/NVDEC codecs; Decord and PyNvVideoCodec are intentionally absent.
 Positive DataLoader worker counts require the runtime's `spawn` context and
 spawn-picklable cache implementation; worker count zero requires prefetch to be
-absent or null. Full Cosmos-RL video runs prewarm separate train and validation
-caches before model allocation. Cache keys combine dataset, model, and
-processor fingerprints; completeness manifests and every entry are validated
-before training.
+absent or null. Cosmos-RL defaults to direct on-demand processing and starts
+model training without a dataset-cache prewarm phase. Prewarming is an explicit
+opt-in; when selected for conversation-style data, separate train and validation
+cache keys combine dataset, model, and processor fingerprints, and completeness
+manifests plus every entry are validated before training. Task-aware runs decode
+directly on GPU and use the
+packaged `cosmos_rl.utils.video_override_artifacts` builder for a deterministic
+map, manifest, and fingerprint. Pair each annotation with its real media root,
+force every validation annotation with `--force-annotation`, and reserve
+`--force-video` for independently diagnosed training streams. The packaged
+`cosmos_rl.utils.validate_video_override_artifacts` validator must prove the
+fingerprints, complete validation-media coverage, and GPU random access before
+smoke or full training starts.
 
-Do not recover a full video run by falling back silently to CPU decoding or by
-reusing another run's cache. A decoder, cache, or media failure is a failed
-smoke gate.
+Do not recover a full video run by falling back silently to CPU decoding, by
+forcing every training stream, or by reusing another run's cache or override
+artifact. A decoder, cache, or media failure is a failed smoke gate.
 
 ## Failure classes
 

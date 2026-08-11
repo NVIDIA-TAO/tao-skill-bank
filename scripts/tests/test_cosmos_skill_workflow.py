@@ -331,7 +331,7 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
         assert tomllib.load(stream)["trainer"]["max_iter"] == 2
 
 
-def test_cosmos_rl_peft_spec_has_equivalent_lora_and_cache(tmp_path):
+def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     args = args_for(tmp_path, backend="cosmos-rl", training_mode="peft")
     args.optimizer_epsilon = 1e-6
     plan = workflow.build_plan(args)
@@ -352,13 +352,47 @@ def test_cosmos_rl_peft_spec_has_equivalent_lora_and_cache(tmp_path):
     schema = native_contract["configuration"]["peft_schema"]
     assert set(lora) == set(schema["fields"])
     assert not set(lora) & set(schema["forbidden_legacy_fields"])
-    assert plan["cache_prewarm"]["required"]
-    assert plan["spec"]["train"]["train_policy"]["enable_dataset_cache"]
-    assert "require_complete_dataset_cache" not in plan["spec"]["train"]["train_policy"]
-    assert plan["environment"]["COSMOS_CACHE"] == "/cache"
+    assert plan["cache_prewarm"]["mode"] == "direct"
+    assert plan["cache_prewarm"]["required"] is False
+    assert plan["spec"]["train"]["train_policy"]["enable_dataset_cache"] is False
+    train_policy = plan["spec"]["train"]["train_policy"]
+    assert train_policy["dataloader_drop_last"] is False
+    for key in (
+        "dataset_cache_dir",
+        "dataset_cache_fingerprint",
+        "validation_dataset_cache_fingerprint",
+        "require_complete_dataset_cache",
+    ):
+        assert key not in train_policy
+    assert "cache_dir" not in plan["spec"]["custom"]["vision"]
+    assert "COSMOS_CACHE" not in plan["environment"]
     assert "dataloader_prefetch_factor" not in plan["spec"]["train"]["train_policy"]
     assert plan["spec"]["validation"]["dataloader_num_workers"] == 0
     assert "dataloader_prefetch_factor" not in plan["spec"]["validation"]
+
+
+def test_cosmos_rl_prewarm_remains_an_explicit_opt_in(tmp_path):
+    args = args_for(tmp_path, backend="cosmos-rl")
+    args.rl_dataset_cache_mode = "prewarm"
+
+    plan = workflow.build_plan(args)
+
+    assert plan["cache_prewarm"]["mode"] == "prewarm"
+    assert plan["cache_prewarm"]["required"] is True
+    train_policy = plan["spec"]["train"]["train_policy"]
+    assert train_policy["enable_dataset_cache"] is True
+    assert train_policy["dataset_cache_dir"] == "/cache"
+    assert (
+        train_policy["dataset_cache_fingerprint"]
+        == plan["cache_prewarm"]["keys"]["train"]
+    )
+    assert (
+        train_policy["validation_dataset_cache_fingerprint"]
+        == plan["cache_prewarm"]["keys"]["validation"]
+    )
+    assert train_policy["require_complete_dataset_cache"] is True
+    assert plan["spec"]["custom"]["vision"]["cache_dir"] == "/cache"
+    assert plan["environment"]["COSMOS_CACHE"] == "/cache"
 
 
 def test_cosmos_rl_maps_common_constant_scheduler_to_native_none(tmp_path):
@@ -426,10 +460,68 @@ def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
     assert framework["spec"]["trainer"]["max_iter"] == 6
     assert rl["cache_prewarm"]["required"] is False
     assert rl["spec"]["train"]["train_policy"]["enable_dataset_cache"] is False
+    assert rl["spec"]["train"]["train_policy"]["dataloader_drop_last"] is False
     assert "enable_dataset_cache" not in rl["spec"]["validation"]
     assert "require_complete_dataset_cache" not in rl["spec"]["train"]["train_policy"]
     assert "cache_dir" not in rl["spec"]["custom"]["vision"]
     assert rl["spec"]["train"]["optm_impl"] == "fused"
+    for plan in (framework, rl):
+        artifact = plan["decoder_artifact"]
+        assert artifact["required"] is True
+        assert artifact["enabled"] is False
+        assert artifact["policy"]["force_all_validation_media"] is True
+        assert artifact["policy"]["gpu_random_access_validation_required"] is True
+        assert artifact["preparation_arguments"].count("--force-annotation") == 3
+
+
+def test_task_aware_decoder_artifact_is_validated_before_training(tmp_path):
+    args = args_for(
+        tmp_path, backend="cosmos-rl",
+        dataset_family="task_aware_video_reasoning",
+    )
+    args.video_override_map = str(tmp_path / "override-map.json")
+    args.video_override_manifest = str(tmp_path / "override-manifest.json")
+    args.video_override_fingerprint = "a" * 64
+    args.video_override_force_video = [
+        str(tmp_path / "train" / "media" / "train-bcq-0.mp4")
+    ]
+
+    plan = workflow.build_plan(args)
+
+    artifact = plan["decoder_artifact"]
+    assert artifact["enabled"] is True
+    assert artifact["preparation_arguments"].count("--annotation-media-root") == 6
+    assert artifact["preparation_arguments"].count("--force-annotation") == 3
+    assert artifact["preparation_arguments"].count("--force-video") == 1
+    assert "cosmos_rl.utils.video_override_artifacts" in artifact["preparation_command"]
+    assert "cosmos_rl.utils.validate_video_override_artifacts" in artifact["validation_command"]
+    assert "cosmos_rl.utils.validate_video_override_artifacts" in plan["command"]
+    assert "--skip-file-hashes &&\n" in plan["command"]
+    assert "--skip-file-hashes" in plan["command"]
+    assert "cosmos_rl.utils.validate_video_override_artifacts" in plan["preflight"]["container_runtime"]
+    assert "--skip-file-hashes" not in plan["preflight"]["container_runtime"]
+
+
+def test_decoder_artifact_requires_map_manifest_and_fingerprint(tmp_path):
+    args = args_for(tmp_path)
+    args.video_override_map = str(tmp_path / "override-map.json")
+
+    with pytest.raises(common.WorkflowError, match="must be supplied together"):
+        workflow.build_plan(args)
+
+
+def test_task_aware_slurm_render_blocks_missing_decoder_artifact(tmp_path):
+    args = args_for(
+        tmp_path, dataset_family="task_aware_video_reasoning"
+    )
+    args.platform = "slurm"
+    args.partition = "compute"
+    args.account = "project"
+    args.container_mount = [f"{tmp_path}:{tmp_path}"]
+    plan = workflow.build_plan(args)
+
+    with pytest.raises(common.WorkflowError, match="requires a complete fingerprinted"):
+        workflow.render_slurm(args, plan)
 
 
 def test_task_aware_constant_schedule_keeps_lr_factor_at_one(tmp_path):
@@ -779,6 +871,7 @@ def test_rl_sft_batch_is_per_dp_worker_and_multinode_launchers_are_packaged(tmp_
     assert plan["spec"]["train"]["train_batch_per_replica"] == 8
     assert plan["spec"]["train"]["train_policy"]["mini_batch"] == 1
     assert plan["spec"]["train"]["train_policy"]["dataloader_num_workers"] == 1
+    assert plan["spec"]["train"]["train_policy"]["dataloader_drop_last"] is False
     assert plan["spec"]["train"]["train_policy"]["dataloader_prefetch_factor"] == 1
     assert plan["spec"]["validation"]["dataloader_num_workers"] == 1
     assert plan["spec"]["validation"]["dataloader_prefetch_factor"] == 1
@@ -1007,6 +1100,48 @@ def test_remote_slurm_materializes_config_and_rl_smoke_manifests(monkeypatch, tm
     assert plan["config"]["materialized"] is True
     assert all(item["materialized"] for item in plan["generated_artifacts"])
     assert plan["spec"]["custom"]["train_dataset"]["annotation_path"].endswith("train_smoke.json")
+
+
+def test_sealed_plan_artifact_is_reused_without_reinspection(monkeypatch, tmp_path, capsys):
+    args = args_for(tmp_path / "request", backend="cosmos-rl")
+    plan = workflow.build_plan(args)
+    workflow.write_spec(args, plan)
+    metadata = workflow.initial_metadata(args, plan)
+    workflow.validate_metadata(metadata)
+    plan["initial_metadata"] = metadata
+    artifact = tmp_path / "approved-plan.json"
+    workflow.save_plan_artifact(args, plan, str(artifact))
+
+    current = workflow.parse_args(["materialize", "--plan-artifact", str(artifact)])
+    restored_args, restored_plan = workflow.load_plan_artifact(current, str(artifact))
+    assert restored_args.model == "nvidia/Cosmos3-Nano"
+    assert restored_args.dataset_family == "video_conversation"
+    assert restored_args.write_spec == args.write_spec
+    assert restored_plan["datasets"] == plan["datasets"]
+
+    def unexpected_reinspection(_args):
+        raise AssertionError("build_plan must not run after the approved plan is sealed")
+
+    monkeypatch.setattr(workflow, "build_plan", unexpected_reinspection)
+    assert workflow.main(["materialize", "--plan-artifact", str(artifact)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"]
+    assert result["approved_plan"]["sha256"]
+
+
+def test_sealed_plan_artifact_rejects_tampering(tmp_path):
+    args = args_for(tmp_path / "request", backend="cosmos-rl")
+    plan = workflow.build_plan(args)
+    workflow.write_spec(args, plan)
+    artifact = tmp_path / "approved-plan.json"
+    workflow.save_plan_artifact(args, plan, str(artifact))
+
+    changed = json.loads(artifact.read_text())
+    changed["training"]["epochs"] = 99
+    artifact.write_text(json.dumps(changed))
+    current = workflow.parse_args(["render-slurm", "--plan-artifact", str(artifact)])
+    with pytest.raises(common.WorkflowError, match="checksum mismatch"):
+        workflow.load_plan_artifact(current, str(artifact))
 
 
 def test_pairwise_parity_blocks_model_dataset_and_optimization_mismatch(tmp_path):

@@ -165,7 +165,8 @@ for p in manifests:
         continue
     d = json.load(open(p))
     versions[p] = d.get('metadata', {}).get('version') if p.endswith('marketplace.json') else d.get('version')
-if len(set(versions.values())) > 1:
+base_versions = {p: value.split('+', 1)[0] if value else value for p, value in versions.items()}
+if len(set(base_versions.values())) > 1:
     print(f"ERROR: plugin manifest versions disagree: {versions}", file=sys.stderr)
     errs += 1
 sys.exit(errs)

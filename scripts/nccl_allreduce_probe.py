@@ -9,7 +9,11 @@ burns GPU-hours hanging on the first collective.
 It reads the same rendezvous env the multi-node templates export (WORLD_SIZE =
 NODE COUNT, NUM_GPU_PER_NODE, NODE_RANK, plus torchrun's LOCAL_RANK and
 MASTER_ADDR/MASTER_PORT), computes the true GLOBAL world-size/rank, does one
-all-reduce, and prints NCCL_PROBE_OK. If NCCL is misconfigured (e.g. the CS-OCI-ORD
+all-reduce, and prints NCCL_PROBE_OK. Launchers that invoke this probe under
+``torchrun`` must preserve the TAO values in ``TAO_NODE_COUNT``,
+``TAO_GPUS_PER_NODE``, and ``TAO_NODE_RANK`` because torchrun overwrites the
+standard ``WORLD_SIZE`` environment variable with the global process count.
+If NCCL is misconfigured (e.g. the CS-OCI-ORD
 intra-node P2P hang) it HANGS on all_reduce — the orchestrating skill wraps this
 with a timeout and, on timeout, sets the cluster's NCCL knob (NCCL_P2P_DISABLE=1,
 NCCL_SOCKET_IFNAME, ...) and re-probes, caching the working env per cluster.
@@ -36,9 +40,14 @@ def rendezvous_config(env: dict | None = None) -> dict:
     node_rank * gpus_per_node + local_rank.
     """
     e = os.environ if env is None else env
-    node_count = int(e.get("WORLD_SIZE", "1"))            # TAO convention: node count
-    gpus_per_node = int(e.get("NUM_GPU_PER_NODE", "1"))
-    node_rank = int(e.get("NODE_RANK", "0"))
+    # torchrun rewrites WORLD_SIZE to the global process count.  Preserve TAO's
+    # node-count convention through explicit aliases when the probe is launched
+    # beneath torchrun, while retaining the template variables as a fallback.
+    node_count = int(e.get("TAO_NODE_COUNT", e.get("WORLD_SIZE", "1")))
+    gpus_per_node = int(
+        e.get("TAO_GPUS_PER_NODE", e.get("NUM_GPU_PER_NODE", "1"))
+    )
+    node_rank = int(e.get("TAO_NODE_RANK", e.get("NODE_RANK", "0")))
     local_rank = int(e.get("LOCAL_RANK", "0"))
     return {
         "global_world_size": node_count * gpus_per_node,

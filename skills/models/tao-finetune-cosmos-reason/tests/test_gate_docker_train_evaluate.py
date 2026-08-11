@@ -28,13 +28,37 @@ def write_adapter(root: Path, config: dict) -> Path:
     return checkpoint
 
 
+def write_dense(root: Path) -> Path:
+    checkpoint = root / "checkpoints" / "stamp" / "safetensors" / "epoch_1"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "config.json").write_text(
+        json.dumps({"model_type": "qwen3_vl"}), encoding="utf-8"
+    )
+    header = json.dumps(
+        {"layer.weight": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}
+    ).encode()
+    (checkpoint / "00000.safetensors").write_bytes(
+        struct.pack("<Q", len(header)) + header + b"\0\0\0\0"
+    )
+    (checkpoint / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"layer.weight": "00000.safetensors"}}),
+        encoding="utf-8",
+    )
+    return checkpoint
+
+
 def test_validates_unique_adapter_checkpoint(tmp_path: Path) -> None:
     expected = {"r": 64, "use_rslora": False}
     expected_path = tmp_path / "expected.json"
     expected_path.write_text(json.dumps(expected), encoding="utf-8")
     checkpoint = write_adapter(tmp_path / "results", expected)
 
-    assert gate.find_and_validate_checkpoint(tmp_path / "results", 3, expected_path) == checkpoint
+    assert (
+        gate.find_and_validate_checkpoint(
+            tmp_path / "results", 3, "adapter", expected_path
+        )
+        == checkpoint
+    )
 
 
 def test_rejects_adapter_metadata_mismatch(tmp_path: Path) -> None:
@@ -43,7 +67,36 @@ def test_rejects_adapter_metadata_mismatch(tmp_path: Path) -> None:
     write_adapter(tmp_path / "results", {"r": 32})
 
     with pytest.raises(ValueError, match="adapter config mismatch"):
-        gate.find_and_validate_checkpoint(tmp_path / "results", 3, expected_path)
+        gate.find_and_validate_checkpoint(
+            tmp_path / "results", 3, "adapter", expected_path
+        )
+
+
+def test_validates_dense_checkpoint_and_index(tmp_path: Path) -> None:
+    checkpoint = write_dense(tmp_path / "results")
+
+    assert (
+        gate.find_and_validate_checkpoint(tmp_path / "results", 1, "dense")
+        == checkpoint
+    )
+
+
+def test_requires_structured_training_success(tmp_path: Path) -> None:
+    status_path = tmp_path / "status.json"
+    status_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"status": "STARTED"}),
+                json.dumps({"status": "SUCCESS"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    gate.require_structured_success(status_path)
+
+    status_path.write_text(json.dumps({"status": "FAILURE"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="expected SUCCESS"):
+        gate.require_structured_success(status_path)
 
 
 def test_atomic_json_replaces_complete_document(tmp_path: Path) -> None:
@@ -111,3 +164,4 @@ def test_cli_identity_defaults_follow_invoking_account(monkeypatch: pytest.Monke
     assert args.user == f"{os.getuid()}:{os.getgid()}"
     assert args.runtime_user
     assert args.group_add == []
+    assert args.dataset_mount_destination == Path("/tmp/data")

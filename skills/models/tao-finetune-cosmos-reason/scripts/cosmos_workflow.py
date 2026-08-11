@@ -59,6 +59,8 @@ ALIASES = {
 SUPPORTED_ACTIONS = {
     "train", "export", "evaluate", "inference", "inference_microservice", "quantize",
 }
+PLAN_ARTIFACT_SCHEMA_VERSION = 1
+_PLAN_ARTIFACT_TRANSIENT_ARGS = {"verb", "format", "plan_artifact"}
 
 
 def resolve_model_name(
@@ -234,6 +236,16 @@ def _annotation_args(args: argparse.Namespace, split: str) -> tuple[list[str], l
     return annotations, media
 
 
+def _paired_annotation_roots(
+    annotations: Sequence[str], media_roots: Sequence[str]
+) -> list[tuple[str, str]]:
+    if len(media_roots) == 1:
+        return [(annotation, media_roots[0]) for annotation in annotations]
+    if len(media_roots) != len(annotations):
+        raise WorkflowError("supply one shared media root or one media root per annotation")
+    return list(zip(annotations, media_roots, strict=True))
+
+
 def _needs_remote_inspection(args: argparse.Namespace) -> bool:
     if args.platform != "slurm":
         return False
@@ -245,6 +257,8 @@ def _needs_remote_inspection(args: argparse.Namespace) -> bool:
         args.cache_dir,
         args.sqsh_cache_dir,
         args.sqsh_path,
+        args.video_override_map,
+        args.video_override_manifest,
         *args.train_annotation,
         *args.train_media_root,
         *args.validation_annotation,
@@ -596,11 +610,15 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     train_manifest = train_annotations[0] if len(train_annotations) == 1 else "__TAO_TRAIN_MERGED_MANIFEST__"
     val_manifest = val_annotations[0] if len(val_annotations) == 1 else "__TAO_VALIDATION_MERGED_MANIFEST__"
     spec = load_yaml(REFERENCES / "spec_template_train.yaml")
-    # The known-good conversation recipe prewarms immutable processor outputs.
-    # The known-good task-aware recipe instead decodes directly with a
-    # fingerprinted override map; a distributed 128-rank cache build is not
-    # part of that recipe and introduces an unnecessary rendezvous phase.
-    use_dataset_cache = args.dataset_family == "video_conversation"
+    cache_mode = getattr(args, "rl_dataset_cache_mode", "direct")
+    if cache_mode not in {"direct", "prewarm"}:
+        raise WorkflowError(f"unsupported Cosmos-RL dataset cache mode: {cache_mode}")
+    # Direct mode deliberately sends every sample through the training data
+    # path on demand. Prewarm remains an explicit opt-in for workloads that
+    # benefit from immutable processor-output reuse.
+    use_dataset_cache = (
+        args.dataset_family == "video_conversation" and cache_mode == "prewarm"
+    )
     train_batch_per_replica = getattr(args, "rl_train_batch_per_replica", 0) or args.rl_mini_batch
     if train_batch_per_replica % args.rl_mini_batch:
         raise WorkflowError(
@@ -646,6 +664,8 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "dataloader_num_workers": dataloader_num_workers,
         "conversation_column_name": "conversations", "enable_dataset_cache": use_dataset_cache,
         "dataloader_shuffle": True, "dataloader_seed": args.seed,
+        # A full epoch must consume the final partial per-rank batch.
+        "dataloader_drop_last": False,
     })
     if dataloader_num_workers:
         spec["train"]["train_policy"]["dataloader_prefetch_factor"] = (
@@ -653,16 +673,29 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         )
     else:
         spec["train"]["train_policy"].pop("dataloader_prefetch_factor", None)
-    # Dataset cache storage is selected by the COSMOS_CACHE environment
-    # variable at launch. These historical TOML keys are not members of
-    # SFTDataConfig and must not cross the native configuration boundary.
-    for key in (
-        "dataset_cache_dir",
-        "dataset_cache_fingerprint",
-        "validation_dataset_cache_fingerprint",
-        "require_complete_dataset_cache",
-    ):
-        spec["train"]["train_policy"].pop(key, None)
+    prewarmed_cache = use_dataset_cache and args.run_mode == "full"
+    if prewarmed_cache:
+        missing_cache_keys = {"train", "validation"} - set(cache_keys)
+        if missing_cache_keys:
+            raise WorkflowError(
+                f"full Cosmos-RL cache keys are missing: {sorted(missing_cache_keys)}"
+            )
+        spec["train"]["train_policy"].update(
+            {
+                "dataset_cache_dir": args.container_cache_dir,
+                "dataset_cache_fingerprint": cache_keys["train"],
+                "validation_dataset_cache_fingerprint": cache_keys["validation"],
+                "require_complete_dataset_cache": True,
+            }
+        )
+    else:
+        for key in (
+            "dataset_cache_dir",
+            "dataset_cache_fingerprint",
+            "validation_dataset_cache_fingerprint",
+            "require_complete_dataset_cache",
+        ):
+            spec["train"]["train_policy"].pop(key, None)
     spec["validation"].update(
         {
             "enable": True,
@@ -758,9 +791,11 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
                 train_limit *= 2
             common.update({"TAO_VIDEO_TRAIN_LIMIT": str(train_limit), "TAO_VIDEO_VAL_LIMIT": str(args.smoke_validation_samples)})
     else:
-        # Cosmos-RL's native DiskCache reads this environment variable; there
-        # is no dataset-cache-directory field in SFTDataConfig.
-        common["COSMOS_CACHE"] = args.container_cache_dir
+        if (
+            args.dataset_family == "video_conversation"
+            and getattr(args, "rl_dataset_cache_mode", "direct") == "prewarm"
+        ):
+            common["COSMOS_CACHE"] = args.container_cache_dir
         if args.dataset_family == "video_conversation":
             common["FORCE_QWENVL_VIDEO_READER"] = "torchvision"
     return common
@@ -959,7 +994,15 @@ def _model_preparation(args: argparse.Namespace, model: Mapping[str, Any]) -> tu
     }
 
 
-def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapping[str, Any], prepared_model: str, representative_media: str) -> dict[str, Any]:
+def _preflight_contract(
+    args: argparse.Namespace,
+    backend: str,
+    plan_image: Mapping[str, Any],
+    prepared_model: str,
+    representative_media: str,
+    decoder_artifact: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    decoder_artifact = decoder_artifact or {"enabled": False}
     python = "/workspace/.venv/bin/python" if backend == "cosmos-framework" else "/opt/venv/cosmos_rl/bin/python"
     imports = ["import torch", "assert torch.cuda.is_available()", f"assert torch.cuda.device_count() == {args.gpus_per_node}"]
     if backend == "cosmos-framework":
@@ -991,7 +1034,16 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
         "import tempfile; f=tempfile.NamedTemporaryFile(delete=False); f.close(); torch.distributed.init_process_group('nccl', init_method='file://'+f.name, rank=0, world_size=1); torch.distributed.destroy_process_group()",
         "print({'gpu': p.name, 'capability': (p.major,p.minor), 'memory':p.total_memory, 'torch':torch.__version__, 'cuda':torch.version.cuda})",
     ])
-    container_check = f"{python} -c {shlex.quote('; '.join(imports))}"
+    container_checks = [f"{python} -c {shlex.quote('; '.join(imports))}"]
+    if decoder_artifact["enabled"]:
+        validator = [
+            python,
+            "-m",
+            "cosmos_rl.utils.validate_video_override_artifacts",
+            *decoder_artifact["validation_arguments"],
+        ]
+        container_checks.append(shlex.join(validator))
+    container_check = " && ".join(container_checks)
     path_values = [prepared_model, args.results_dir, args.checkpoint_dir, args.cache_dir, *args.train_annotation, *args.train_media_root, *args.validation_annotation, *args.validation_media_root]
     path_checks = " && ".join(f"test -r {shlex.quote(value)}" for value in path_values)
     host = "command -v docker >/dev/null && docker version >/dev/null"
@@ -1022,8 +1074,135 @@ def _preflight_contract(args: argparse.Namespace, backend: str, plan_image: Mapp
             "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization",
             "system PyAV/FFmpeg NVDEC and libnvcuvid", "backward-safe Qwen3-VL PatchEmbed",
             "DeepEP Python/extension ABI", "vLLM Qwen3-VL Conv3D dispatch guard",
-            "384 GiB free result/checkpoint space",
+            "fingerprinted decoder-artifact coverage", "384 GiB free result/checkpoint space",
         ],
+    }
+
+
+def _decoder_artifact_plan(
+    args: argparse.Namespace,
+    *,
+    backend: str,
+    model: Mapping[str, Any],
+    model_profile: Mapping[str, Any],
+    train_data: Mapping[str, Any],
+    val_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    if args.video_override_max_macroblocks < 1 or args.video_override_workers < 1:
+        raise WorkflowError(
+            "video_override_max_macroblocks and video_override_workers must be positive"
+        )
+    supplied = (
+        bool(args.video_override_map),
+        bool(args.video_override_manifest),
+        bool(args.video_override_fingerprint),
+    )
+    if any(supplied) and not all(supplied):
+        raise WorkflowError(
+            "video_override_map, video_override_manifest, and "
+            "video_override_fingerprint must be supplied together"
+        )
+    if args.video_override_fingerprint and not re.fullmatch(
+        r"[0-9a-f]{64}", args.video_override_fingerprint
+    ):
+        raise WorkflowError("video_override_fingerprint must be a lowercase SHA256 digest")
+
+    dataset_fingerprint = stable_hash({
+        "train": train_data["dataset_fingerprint"],
+        "validation": val_data["dataset_fingerprint"],
+    })
+    processor_fingerprint = stable_hash({
+        "revision": args.processor_revision,
+        "profile": model_profile,
+    })
+    artifact_root = (
+        Path(args.cache_dir).expanduser()
+        / "video-overrides"
+        / f"{dataset_fingerprint[:16]}-{args.tao_integration_commit[:12]}"
+    )
+    map_path = args.video_override_map or str(artifact_root / "video_override_map.json")
+    manifest_path = args.video_override_manifest or str(artifact_root / "manifest.json")
+    output_dir = str(artifact_root / "videos")
+
+    preparation_arguments: list[str] = []
+    for annotation, media_root in [
+        *_paired_annotation_roots(args.train_annotation, args.train_media_root),
+        *_paired_annotation_roots(args.validation_annotation, args.validation_media_root),
+    ]:
+        preparation_arguments.extend([
+            "--annotation-media-root", _containerize(args, annotation),
+            _containerize(args, media_root),
+        ])
+    for annotation in args.validation_annotation:
+        preparation_arguments.extend([
+            "--force-annotation", _containerize(args, annotation)
+        ])
+    for video in args.video_override_force_video:
+        preparation_arguments.extend(["--force-video", _containerize(args, video)])
+    preparation_arguments.extend([
+        "--output-dir", _containerize(args, output_dir),
+        "--override-map", _containerize(args, map_path),
+        "--manifest", _containerize(args, manifest_path),
+        "--dataset-fingerprint", dataset_fingerprint,
+        "--model-fingerprint", model["fingerprint"],
+        "--processor-fingerprint", processor_fingerprint,
+        "--max-macroblocks", str(args.video_override_max_macroblocks),
+        "--workers", str(args.video_override_workers),
+    ])
+
+    validation_arguments = [
+        "--override-map", _containerize(args, map_path),
+        "--manifest", _containerize(args, manifest_path),
+        "--artifact-fingerprint", args.video_override_fingerprint or "<ARTIFACT_FINGERPRINT>",
+        "--dataset-fingerprint", dataset_fingerprint,
+        "--model-fingerprint", model["fingerprint"],
+        "--processor-fingerprint", processor_fingerprint,
+        "--integration-commit", args.tao_integration_commit,
+    ]
+    for annotation in args.validation_annotation:
+        validation_arguments.extend([
+            "--require-covered-annotation", _containerize(args, annotation)
+        ])
+
+    python = (
+        "/workspace/.venv/bin/python"
+        if backend == "cosmos-framework"
+        else "/opt/venv/cosmos_rl/bin/python"
+    )
+
+    return {
+        "required": args.dataset_family == "task_aware_video_reasoning",
+        "enabled": all(supplied),
+        "path": args.video_override_map or None,
+        "manifest": args.video_override_manifest or None,
+        "sha256": args.video_override_fingerprint or None,
+        "input_fingerprints": {
+            "dataset": dataset_fingerprint,
+            "model": model["fingerprint"],
+            "processor": processor_fingerprint,
+        },
+        "policy": {
+            "macroblock_scan": True,
+            "force_all_validation_media": True,
+            "forced_runtime_sources": list(args.video_override_force_video),
+            "gpu_random_access_validation_required": True,
+        },
+        "preparation_module": "cosmos_rl.utils.video_override_artifacts",
+        "preparation_arguments": preparation_arguments,
+        "preparation_command": shlex.join([
+            python,
+            "-m",
+            "cosmos_rl.utils.video_override_artifacts",
+            *preparation_arguments,
+        ]),
+        "validation_module": "cosmos_rl.utils.validate_video_override_artifacts",
+        "validation_arguments": validation_arguments,
+        "validation_command": shlex.join([
+            python,
+            "-m",
+            "cosmos_rl.utils.validate_video_override_artifacts",
+            *validation_arguments,
+        ]),
     }
 
 
@@ -1085,15 +1264,14 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     })
     commits = _source_commits(args, backend)
     image = _image_plan(args, backend, commits)
-    if bool(args.video_override_map) != bool(args.video_override_fingerprint):
-        raise WorkflowError("video_override_map and video_override_fingerprint must be supplied together")
-    if args.video_override_fingerprint and not re.fullmatch(r"[0-9a-f]{64}", args.video_override_fingerprint):
-        raise WorkflowError("video_override_fingerprint must be a lowercase SHA256 digest")
-    decoder_artifact = {
-        "path": args.video_override_map or None,
-        "sha256": args.video_override_fingerprint or None,
-        "enabled": bool(args.video_override_map),
-    }
+    decoder_artifact = _decoder_artifact_plan(
+        args,
+        backend=backend,
+        model=model,
+        model_profile=model_profile,
+        train_data=train_data,
+        val_data=val_data,
+    )
     processor_fingerprint = stable_hash({
         "revision": args.processor_revision,
         "profile": model_profile,
@@ -1116,6 +1294,17 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     val_media_container = [_containerize(args, value) for value in val_media]
     spec = _framework_spec(args, train_data["record_count"], val_data["record_count"], contract) if backend == "cosmos-framework" else _rl_spec(args, contract, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, cache_keys)
     environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container)
+    command = _command(args, backend)
+    if decoder_artifact["enabled"]:
+        python = "/workspace/.venv/bin/python" if backend == "cosmos-framework" else "/opt/venv/cosmos_rl/bin/python"
+        runtime_validation = [
+            python,
+            "-m",
+            decoder_artifact["validation_module"],
+            *decoder_artifact["validation_arguments"],
+            "--skip-file-hashes",
+        ]
+        command = f"{shlex.join(runtime_validation)} &&\n{command}"
     remote_paths = remote_inspection.get("runtime_paths", {}) if remote_inspection else {}
 
     def runtime_path(label: str, value: str, *, required: bool = True) -> dict[str, Any]:
@@ -1125,6 +1314,12 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             return path_identity(value, required=False)
         return planned_path_identity(value)
 
+    cache_mode = getattr(args, "rl_dataset_cache_mode", "direct")
+    cache_prewarm_required = (
+        backend == "cosmos-rl"
+        and args.dataset_family == "video_conversation"
+        and cache_mode == "prewarm"
+    )
     plan = {
         "schema_version": 2, "experiment_id": args.experiment_id, "model_name": args.model,
         "model": model, "action": args.action, "workflow": args.workload, "dataset_family": args.dataset_family, "backend": backend,
@@ -1145,14 +1340,16 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         },
         "image": image, "sqsh": runtime_path("sqsh_path", args.sqsh_path, required=args.platform == "slurm"),
         "compute": {"platform": args.platform, "nodes": args.nodes, "gpus_per_node": args.gpus_per_node, "total_gpus": total_gpus, "cpus_per_task": args.cpus_per_task},
-        "cache_prewarm": {"required": backend == "cosmos-rl" and args.dataset_family == "video_conversation", "keys": cache_keys, "path": args.cache_dir, "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": backend == "cosmos-rl" and args.dataset_family == "video_conversation", "resumable": True, "selection_basis": {"media_reuse": train_data["profile"]["media_reuse_class"], "record_count": train_data["record_count"], "resolution_class": train_data["profile"]["resolution"]["class"]}},
-        "spec": spec, "environment": environment, "command": _command(args, backend),
+        "cache_prewarm": {"mode": cache_mode, "required": cache_prewarm_required, "keys": cache_keys if cache_prewarm_required else {}, "path": args.cache_dir if cache_prewarm_required else "", "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": cache_prewarm_required, "resumable": cache_prewarm_required, "selection_basis": {"media_reuse": train_data["profile"]["media_reuse_class"], "record_count": train_data["record_count"], "resolution_class": train_data["profile"]["resolution"]["class"]}},
+        "spec": spec, "environment": environment, "command": command,
         "config_container_path": args.container_spec_path,
         "smoke_gate": {"required": not args.skip_smoke and args.run_mode == "full", "train_samples": args.smoke_train_samples, "validation_samples": args.smoke_validation_samples, "criteria": ["child_exit_code=0", "terminal_status=SUCCESS", "finite_train_avg_loss", "finite_val_avg_loss", "checkpoint_event", "validation_accuracy_present"]},
         "metric_contract": {"train": {"key": "train/avg_loss", "weight": "valid_labels", "requires": ["train/loss_numerator", "train/valid_label_count"]}, "validation": {"key": "val/avg_loss", "weight": "valid_labels", "requires": ["val/loss_numerator", "val/valid_label_count"]}, "accuracy": {"route": "shared repository evaluator", "aggregation": val_data["metric_coverage"]["aggregate"], "coverage": val_data["metric_coverage"]}},
     }
     representative_media = _containerize(args, train_data["media_manifest"][0]["path"])
-    plan["preflight"] = _preflight_contract(args, backend, image, prepared_model, representative_media)
+    plan["preflight"] = _preflight_contract(
+        args, backend, image, prepared_model, representative_media, decoder_artifact
+    )
     return plan
 
 
@@ -1283,6 +1480,88 @@ def verify_materialized_spec(args: argparse.Namespace, plan: Mapping[str, Any]) 
         )
 
 
+def _planner_request(args: argparse.Namespace) -> dict[str, Any]:
+    """Return the resolved, credential-free request needed by later verbs."""
+    request: dict[str, Any] = {}
+    for name, value in vars(args).items():
+        if name in _PLAN_ARTIFACT_TRANSIENT_ARGS:
+            continue
+        if isinstance(value, Path):
+            value = str(value)
+        elif isinstance(value, tuple):
+            value = list(value)
+        try:
+            json.dumps(value)
+        except TypeError as exc:
+            raise WorkflowError(f"planner request field {name!r} is not JSON serializable") from exc
+        request[name] = copy.deepcopy(value)
+    return request
+
+
+def _plan_artifact_sha256(plan: Mapping[str, Any]) -> str:
+    payload = copy.deepcopy(dict(plan))
+    payload.pop("plan_artifact", None)
+    return stable_hash(payload)
+
+
+def save_plan_artifact(
+    args: argparse.Namespace,
+    plan: dict[str, Any],
+    artifact_path: str,
+) -> Path:
+    """Atomically persist the inspected plan for all post-review verbs."""
+    if not artifact_path or "://" in artifact_path:
+        raise WorkflowError("plan_artifact must be a local controller-side filesystem path")
+    path = Path(artifact_path).expanduser().resolve()
+    plan["planner_request"] = _planner_request(args)
+    plan["plan_artifact"] = {
+        "schema_version": PLAN_ARTIFACT_SCHEMA_VERSION,
+        "path": str(path),
+        "sha256": _plan_artifact_sha256(plan),
+    }
+    encoded = json.dumps(plan, indent=2, sort_keys=True) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(encoded, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
+
+
+def load_plan_artifact(
+    current_args: argparse.Namespace,
+    artifact_path: str,
+) -> tuple[argparse.Namespace, dict[str, Any]]:
+    """Load a sealed plan and make its resolved request authoritative."""
+    if not artifact_path or "://" in artifact_path:
+        raise WorkflowError("plan_artifact must be a local controller-side filesystem path")
+    path = Path(artifact_path).expanduser().resolve()
+    if not path.is_file():
+        raise WorkflowError(f"approved plan artifact is inaccessible: {path}")
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(plan, dict):
+        raise WorkflowError("approved plan artifact must contain a JSON object")
+    artifact = plan.get("plan_artifact", {})
+    if artifact.get("schema_version") != PLAN_ARTIFACT_SCHEMA_VERSION:
+        raise WorkflowError("approved plan artifact has an unsupported schema version")
+    expected = str(artifact.get("sha256") or "")
+    actual = _plan_artifact_sha256(plan)
+    if not expected or actual != expected:
+        raise WorkflowError(
+            f"approved plan artifact checksum mismatch: expected {expected or '<missing>'}, found {actual}"
+        )
+    request = plan.get("planner_request")
+    if not isinstance(request, dict) or not request:
+        raise WorkflowError("approved plan artifact has no resolved planner request")
+    args = argparse.Namespace(**copy.deepcopy(request))
+    args.verb = current_args.verb
+    args.format = current_args.format
+    args.plan_artifact = str(path)
+    return args, plan
+
+
 def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     if args.platform != "slurm":
         raise WorkflowError("SLURM script rendering requires platform=slurm")
@@ -1290,6 +1569,10 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         raise WorkflowError("SLURM partition, account, and SQSH path are required")
     if args.use_requeue:
         raise WorkflowError("requeue is disabled by default and is not validated for Cosmos training")
+    if plan["decoder_artifact"]["required"] and not plan["decoder_artifact"]["enabled"]:
+        raise WorkflowError(
+            "task-aware Cosmos training requires a complete fingerprinted decoder artifact"
+        )
     try:
         timeout_hours, timeout_minutes, timeout_seconds = (
             int(value) for value in args.timeout.split(":")
@@ -1304,7 +1587,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     sqsh = Path(args.sqsh_path)
     if not args.container_mount:
         raise WorkflowError("at least one explicit container mount is required for SLURM")
-    mount_args = " ".join(f"--container-mounts={shlex.quote(value)}" for value in args.container_mount)
+    mount_args = f"--container-mounts={shlex.quote(','.join(args.container_mount))}"
     env_exports = "\n".join(f"export {key}={shlex.quote(value)}" for key, value in plan["environment"].items())
     native = plan["command"]
     wrapped = "\n".join([
@@ -1324,6 +1607,13 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         mount_args, "bash -lc", shlex.quote(wrapped),
     ]))
     job_name = args.tao_job_id or args.experiment_id
+    writable_runtime_dirs = list(dict.fromkeys(
+        str(Path(value).expanduser())
+        for value in (args.results_dir, args.checkpoint_dir, args.cache_dir)
+    ))
+    runtime_dir_setup = [
+        f"mkdir -p -- {shlex.quote(value)}" for value in writable_runtime_dirs
+    ]
     lines = [
         "#!/usr/bin/env bash", f"#SBATCH --job-name={job_name}",
         f"#SBATCH --partition={args.partition}",
@@ -1340,6 +1630,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         lines.append("#SBATCH --exclusive")
     lines.extend([
         "", "set -Eeuo pipefail",
+        *runtime_dir_setup,
         f"mkdir -p {shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id)))}",
         f"export TAO_CHILD_EXIT_FILE={shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id) / 'child_exit_code'))}",
         env_exports, 'export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)"',
@@ -1400,11 +1691,21 @@ def parity_report(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str
         "validation_dataset": dataset_parity(left["datasets"]["validation"], right["datasets"]["validation"]),
         "optimization": optimization_parity(left["training"], right["training"]),
     }
-    decoder_equal = left.get("decoder_artifact") == right.get("decoder_artifact")
+    decoder_keys = (
+        "required", "enabled", "path", "manifest", "sha256",
+        "input_fingerprints", "policy",
+    )
+    left_decoder = {
+        key: left.get("decoder_artifact", {}).get(key) for key in decoder_keys
+    }
+    right_decoder = {
+        key: right.get("decoder_artifact", {}).get(key) for key in decoder_keys
+    }
+    decoder_equal = left_decoder == right_decoder
     checks["decoder_artifact"] = {
         "status": "equivalent" if decoder_equal else "invalid_mismatch",
-        "left": left.get("decoder_artifact"),
-        "right": right.get("decoder_artifact"),
+        "left": left_decoder,
+        "right": right_decoder,
     }
     evaluator_left = left.get("metric_contract", {}).get("accuracy", {})
     evaluator_right = right.get("metric_contract", {}).get("accuracy", {})
@@ -1473,6 +1774,12 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
     env = os.environ if env is None else env
     errors: list[str] = []
     warnings: list[str] = []
+    decoder_artifact = plan["decoder_artifact"]
+    if decoder_artifact["required"] and not decoder_artifact["enabled"]:
+        errors.append(
+            "task-aware Cosmos training requires video_override_map, "
+            "video_override_manifest, and video_override_fingerprint"
+        )
 
     def check_repository(name: str, identity: Mapping[str, Any], commit: str, tree: str) -> None:
         if not identity.get("exists") or identity.get("kind") != "directory":
@@ -1571,6 +1878,12 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     )
     parser.add_argument("--rl-dataloader-num-workers", type=int, default=0)
     parser.add_argument("--rl-dataloader-prefetch-factor", type=int, default=1)
+    parser.add_argument(
+        "--rl-dataset-cache-mode",
+        choices=("direct", "prewarm"),
+        default="direct",
+        help="Process samples on demand (direct) or require deterministic prewarmed dataset caches (prewarm).",
+    )
     parser.add_argument("--rl-validation-freq-steps", type=int, default=0)
     parser.add_argument("--validation-batch-size", type=int, default=1)
     parser.add_argument("--optimizer", default="AdamW"); parser.add_argument("--learning-rate", type=float, default=1e-5)
@@ -1583,7 +1896,11 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--video-max-pixels", type=int, default=0); parser.add_argument("--video-frame-width", type=int, default=0)
     parser.add_argument("--video-frame-height", type=int, default=0)
     parser.add_argument("--video-override-map", default="")
+    parser.add_argument("--video-override-manifest", default="")
     parser.add_argument("--video-override-fingerprint", default="")
+    parser.add_argument("--video-override-force-video", action="append", default=[])
+    parser.add_argument("--video-override-max-macroblocks", type=int, default=8192)
+    parser.add_argument("--video-override-workers", type=int, default=16)
     parser.add_argument("--system-prompt", default=""); parser.add_argument("--attention-implementation", default="auto")
     parser.add_argument("--processor-revision", default="packaged"); parser.add_argument("--run-mode", choices=("smoke", "full"), default="full")
     parser.add_argument("--skip-smoke", action="store_true"); parser.add_argument("--smoke-train-samples", type=int, default=16)
@@ -1616,6 +1933,14 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--master-port", type=int, default=29500); parser.add_argument("--stdout-path", default="")
     parser.add_argument("--stderr-path", default=""); parser.add_argument("--tao-job-id", default="")
     parser.add_argument("--nccl-debug", default="INFO"); parser.add_argument("--cuda-allocator", default="expandable_segments:True")
+    parser.add_argument(
+        "--plan-artifact",
+        default="",
+        help=(
+            "Local sealed plan written by the plan verb and reused by preflight, "
+            "materialize, and render-slurm without repeating input inspection."
+        ),
+    )
     parser.add_argument("--format", choices=("json", "text"), default="json")
 
 
@@ -1675,7 +2000,10 @@ def main(argv: list[str] | None = None) -> int:
             backend, reason = select_backend(model=args.model, action=args.action, backend=args.backend, workload=args.workload, comparative=args.comparative)
             result = {"schema_version": 2, "model": args.model, "backend": backend, "backend_selection_reason": reason, "backend_contract": str(BACKEND_FILES[backend])}
         else:
-            plan = build_plan(args)
+            if args.plan_artifact and args.verb != "plan":
+                args, plan = load_plan_artifact(args, args.plan_artifact)
+            else:
+                plan = build_plan(args)
             write_spec(args, plan, allow_remote_write=args.verb == "materialize")
             if args.verb == "preflight": result = local_preflight(args, plan)
             elif args.verb == "materialize":
@@ -1683,12 +2011,15 @@ def main(argv: list[str] | None = None) -> int:
                     "ok": True,
                     "config": plan["config"],
                     "generated_artifacts": plan.get("generated_artifacts", []),
+                    "approved_plan": plan.get("plan_artifact"),
                 }
             elif args.verb == "render-slurm":
                 verify_materialized_spec(args, plan)
                 result = render_slurm(args, plan)
             else:
                 metadata = initial_metadata(args, plan); validate_metadata(metadata); plan["initial_metadata"] = metadata; result = plan
+                if args.plan_artifact:
+                    save_plan_artifact(args, plan, args.plan_artifact)
     except (OSError, json.JSONDecodeError, tomllib.TOMLDecodeError, WorkflowError, TypeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr); return 2
     if isinstance(result, str):

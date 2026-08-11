@@ -153,7 +153,12 @@ Same four verbs, with three additions at submit:
    change it to a global-rank count.
 2. **NCCL probe first** — before the real job, run a cheap 2-node all-reduce
    (`scripts/nccl_allreduce_probe.py` under the container's torchrun) with a
-   ~120s timeout. `NCCL_PROBE_OK` → proceed. **Timed out** (the collective hung)
+   ~120s timeout. Before invoking torchrun, preserve the TAO rendezvous values
+   as `TAO_NODE_COUNT=$WORLD_SIZE`,
+   `TAO_GPUS_PER_NODE=$NUM_GPU_PER_NODE`, and
+   `TAO_NODE_RANK=$SLURM_PROCID`; torchrun overwrites its standard
+   `WORLD_SIZE` with the global process count. `NCCL_PROBE_OK` → proceed.
+   **Timed out** (the collective hung)
    → set the cluster's NCCL knob in `EXTRA_ENV` and re-probe — on CS-OCI-ORD that
    is `export NCCL_P2P_DISABLE=1` (the intra-node P2P hang), often with
    `NCCL_SOCKET_IFNAME=eth0` / `NCCL_IB_DISABLE=1`. **Cache the working env per
@@ -220,8 +225,14 @@ once on a **CPU partition**, then point every later job at the resulting file:
 ```bash
 # One-time per image, on CPU — costs no GPU time.
 ssh $LOGIN "test -e <sqsh>" || \
-  ssh $LOGIN "srun -n1 -p <cpu_partition> -t <minutes> \
-    enroot import -o <sqsh> docker://<registry>#<image>:<tag>"
+  ssh $LOGIN "srun --chdir=/tmp -n1 -p <cpu_partition> -t <minutes> \
+    bash -c 'set -Eeuo pipefail
+      export TMPDIR=/tmp
+      export ENROOT_TEMP_PATH=/tmp/enroot-tao-\${SLURM_JOB_ID}
+      export SLURM_ENROOT_TEMP_PATH=\${ENROOT_TEMP_PATH}
+      mkdir -p \"\${ENROOT_TEMP_PATH}\"
+      cd /tmp
+      enroot import -o <sqsh> docker://<registry>#<image>:<tag>'"
 
 # Every GPU job then references the file, never the registry.
 srun --container-image=<sqsh> ...
@@ -236,11 +247,11 @@ these numbers are not, and are recorded because each cost real allocations:
 - Conversion partition `cpu_long`, **not** the default `cpu` — `cpu` has a
   ~30-minute wall-time cap, shorter than a TAO conversion, so the conversion job
   is killed partway and leaves a truncated file.
-- `SLURM_ENROOT_TEMP_PATH=/tmp/enroot-tao` — Lustre rejects the
-  `enroot-aufs2ovlfs` xattr whiteouts with `Operation not permitted`. Note
-  `/lustre/fsw/...` user dirs may be symlinks onto another Lustre filesystem, so
-  pointing the temp path at "a different Lustre path" is a no-op; it must be
-  node-local.
+- Set both `ENROOT_TEMP_PATH` and `SLURM_ENROOT_TEMP_PATH` to a job-unique
+  `/tmp/enroot-tao-${SLURM_JOB_ID}` and force `TMPDIR=/tmp`. Direct
+  Enroot uses the first variable and Pyxis may use the second. The directory
+  must be node-local and unique; shared paths can fail on cleanup races or
+  unsupported overlay whiteouts.
 - Conversion timeout ≥ 120 minutes.
 
 Partial conversions are self-detecting: the SQSH is validated by `hsqs` magic,
@@ -361,11 +372,17 @@ scheduler-idle constraint.
 
 On an infrastructure failure (`NODE_FAIL`, `BOOT_FAIL`, NCCL transport timeouts,
 CUDA driver init failures, GPU/IB link-down, OOM-killer node reaping, Xid
-errors), classify infra-vs-program from the logs and re-submit the staged sbatch
-script (M6). Plain training failures surface immediately so a broken spec does
-not consume the retry budget. `#SBATCH --requeue` is enabled by default via
+errors), classify infra-vs-program from the logs and create a new retry record
+with `--retry-of` before re-submitting the staged workload (M6). Plain training
+failures surface immediately so a broken spec does not consume the retry
+budget. `#SBATCH --requeue` is enabled by default via
 `SLURM_USE_REQUEUE=true`, so SLURM itself re-queues the job on `NODE_FAIL` or
-pre-emption before any agent-level resubmit.
+pre-emption before any agent-level resubmit; workload contracts such as Cosmos
+may require `--no-requeue`.
+
+Treat an empty `sbatch --parsable` response or SSH disconnect as ambiguous:
+reconcile by exact job name, never submit blindly, and validate inherited node
+exclusions. The referenced execution guide defines the full decision table.
 
 See `references/slurm-container-execution.md` for the full multi-node
 env-var/sbatch directive detail and table, cluster requirements, the

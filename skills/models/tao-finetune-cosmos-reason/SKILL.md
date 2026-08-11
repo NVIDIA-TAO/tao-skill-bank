@@ -137,15 +137,36 @@ Execute these stages in order and persist their outputs.
    `cosmos_workflow.py` stream its checked-in `cosmos_common.py` inspector to a
    login host over SSH. It runs from stdin, preserves remote `realpath` values,
    and creates no remote script or source overlay. Do not require local Lustre,
-   `sbatch`, or `srun` on an SSH-based launch host.
-7. For Cosmos-RL full video runs, prewarm train and validation caches using
-   separate deterministic dataset+model+processor keys. Require complete
-   manifests and resumable entries. Never reuse an unproven cache.
+   `sbatch`, or `srun` on an SSH-based launch host. Run this expensive input
+   inspection exactly once with the `plan` verb and pass a local
+   `--plan-artifact <path>` so the resolved request and inspection results are
+   sealed for the remaining launch verbs.
+7. Prepare the decoder input selected by the structural dataset contract.
+   Cosmos-RL defaults to direct on-demand sample processing so training starts
+   without a dataset-cache prewarm phase. Conversation-style runs prewarm only
+   when the user explicitly selects `--rl-dataset-cache-mode prewarm`; that
+   opt-in uses separate deterministic train and validation keys. Task-aware
+   runs decode directly on GPU and require a fingerprinted override artifact
+   from the packaged
+   `cosmos_rl.utils.video_override_artifacts` builder. Pair every annotation
+   with its actual media root, scan the full input set for the NVDEC macroblock
+   limit, force every validation annotation with `--force-annotation`, and add
+   only independently diagnosed train streams with `--force-video`. Validate
+   the artifact with the packaged
+   `cosmos_rl.utils.validate_video_override_artifacts` command, including full
+   validation-media coverage and GPU random-access decoding, before smoke.
+   The JSON plan emits exact `decoder_artifact.preparation_command` and
+   `decoder_artifact.validation_command` values for the selected clean image;
+   re-plan once with their map, manifest, and artifact fingerprint outputs,
+   seal that plan, and never reuse another run's cache or override artifact.
 8. Generate backend-native TOML, environment, topology, preflight commands,
    parity data, and machine-readable job metadata. Full specs must contain no
-   sample limit. `plan` and `preflight` are read-only. After launch review,
-   invoke `cosmos_workflow.py materialize` to atomically create the TOML and
-   any merged/smoke manifest in the verified compute frame. For SSH-based
+   sample limit. `plan` and `preflight` are read-only with respect to the
+   target compute frame; the explicitly requested controller-side plan artifact
+   is their handoff. Invoke `preflight`, post-review `materialize`, and
+   `render-slurm` with that same `--plan-artifact` and no repeated original
+   input arguments. `materialize` atomically creates the TOML and any
+   merged/smoke manifest in the verified compute frame. For SSH-based
    SLURM, the checked-in helper is streamed to the verified login host and the
    generated files are written directly to user-supplied shared storage; do
    not read a remote annotation through the launch host or copy a temporary
@@ -159,8 +180,9 @@ Execute these stages in order and persist their outputs.
     mode × checkpoint/evaluator path. Continue only on child exit zero,
     structured `SUCCESS`, finite global train/validation loss, checkpoint
     completion, and evaluator accuracy coverage.
-11. Materialize a fresh full spec with all smoke limits removed and verify its
-    SHA256 in the compute frame before rendering the job. Launch with
+11. Create one fresh sealed full plan after the smoke gate, with all smoke
+    limits removed. Materialize its full spec once and verify its SHA256 in the
+    compute frame before rendering the job from the same plan artifact. Launch with
     `afterok` only after the smoke gate, monitor scheduler and structured TAO
     state to a terminal result, and preserve the child exit code independently
     of scheduler state.
@@ -247,3 +269,6 @@ owning repository, add a test, commit it, rebuild both image and SQSH from a
 clean checkout, rerun smoke, and rerun every affected full job. Never edit a
 running container, patch an existing image, reuse an old SQSH after a source
 change, or rely on a temporary launch script as the implementation.
+
+Use `references/cosmos-reproducibility-gates.md` as the source-owner and test
+map before proposing a workaround in a fresh session.

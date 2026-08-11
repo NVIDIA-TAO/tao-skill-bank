@@ -293,9 +293,14 @@ def inspect_dataset(
     task_metrics: dict[str, str] = {}
     conversation_targets: dict[str, list[str]] = {}
     for annotation_index, annotation_id in enumerate(annotation_ids):
-        annotation_path = Path(annotation_id["resolved"])
+        # Keep dataset runtime paths in the caller's lexical namespace. A
+        # shared-filesystem alias where the submitted and canonical roots differ
+        # may resolve differently on the remote inspection host than on the
+        # submission host.  Returning the remote realpath would then make an
+        # otherwise valid explicit container mount impossible to match.
+        annotation_path = Path(annotation_id["expanded"]).absolute()
         root_id = media_ids[0 if len(media_ids) == 1 else annotation_index]
-        root = Path(root_id["resolved"])
+        root = Path(root_id["expanded"]).absolute()
         records, metadata = load_annotation(annotation_path)
         observed_family = _detect_dataset_family(records, metadata)
         observed_families.add(observed_family)
@@ -366,15 +371,15 @@ def inspect_dataset(
             for relative in _record_media(record):
                 candidate = Path(relative)
                 media_path = candidate if candidate.is_absolute() else root / candidate
-                resolved = str(media_path.resolve()) if media_path.exists() else str(media_path)
+                runtime_path = str(media_path.absolute())
                 if not media_path.is_file():
                     missing.append({"annotation": str(annotation_path), "record": index, "media": relative})
                     continue
-                if resolved not in media_entries:
-                    entry = {"path": resolved, "size": media_path.stat().st_size}
+                if runtime_path not in media_entries:
+                    entry = {"path": runtime_path, "size": media_path.stat().st_size}
                     if verify_media_content:
                         entry["sha256"] = sha256_file(media_path)
-                    media_entries[resolved] = entry
+                    media_entries[runtime_path] = entry
     if schema_errors:
         raise WorkflowError("dataset schema validation failed: " + "; ".join(schema_errors[:20]))
     if len(observed_families) != 1:
