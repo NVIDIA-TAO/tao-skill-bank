@@ -56,6 +56,38 @@ errors=0
 
 ok()  { echo "  OK: $*"; }
 
+# ─── scope: per-skill checks validate only the skills this branch changed ─────
+# Per-skill checks (1c, 2, 3, 3b, 3c, 4, 5, 5b, 6, 7) run only on the skills
+# changed vs the base ref, so an unrelated skill's pre-existing issue can't fail
+# your PR and a failure maps to what you touched. Repo-wide checks (1, 1a, 1b, 1d)
+# always run whole-tree. Falls back to whole-tree when no base ref is available
+# (a local full run) or when invoked with --all.
+#   Base ref: $VALIDATE_BASE_REF, else auto-detect origin/main.
+SCOPE_CHANGED=0
+CHANGED_SKILL_DIRS=""
+BASE_REF="${VALIDATE_BASE_REF:-}"
+for _arg in "$@"; do [ "$_arg" = "--all" ] && BASE_REF="--all-forced"; done
+if [ -z "$BASE_REF" ]; then
+  # auto-detect the base ref from the CI environment, falling back to origin/main.
+  for _cand in "${GITHUB_BASE_REF:+origin/$GITHUB_BASE_REF}" "${CHANGE_TARGET:+origin/$CHANGE_TARGET}" origin/main main; do
+    [ -n "$_cand" ] || continue
+    if git rev-parse -q --verify "$_cand" >/dev/null 2>&1; then BASE_REF="$_cand"; break; fi
+  done
+fi
+if [ -n "$BASE_REF" ] && [ "$BASE_REF" != "--all-forced" ]; then
+  base_sha="$(git merge-base "$BASE_REF" HEAD 2>/dev/null || git rev-parse -q --verify "$BASE_REF" 2>/dev/null || true)"
+  if [ -n "$base_sha" ] && [ "$base_sha" != "$(git rev-parse HEAD 2>/dev/null)" ]; then
+    CHANGED_SKILL_DIRS="$(git diff --name-only "$base_sha" HEAD -- 'skills/' 2>/dev/null \
+        | awk -F/ 'NF>=3 && $1=="skills"{print $1"/"$2"/"$3}' | sort -u || true)"
+    SCOPE_CHANGED=1
+    n_changed="$(printf '%s' "$CHANGED_SKILL_DIRS" | grep -c . || true)"
+    echo "Scope: changed-only — ${n_changed:-0} skill dir(s) changed vs ${BASE_REF}"
+    [ "${n_changed:-0}" -gt 0 ] && printf '  %s\n' $CHANGED_SKILL_DIRS
+    echo
+  fi
+fi
+export SCOPE_CHANGED CHANGED_SKILL_DIRS
+
 # ─── 1. marketplace paths ───────────────────────────────────────────────────
 echo "=== 1. marketplace.json skill paths ==="
 [ -f "$MARKETPLACE" ] || { echo "ERROR: $MARKETPLACE not found"; exit 1; }
@@ -105,6 +137,9 @@ PY
 echo
 echo "=== 1c. every skill directory has a SKILL.md ==="
 orphans="$(find skills -mindepth 2 -maxdepth 2 -type d '!' -exec test -f '{}/SKILL.md' ';' -print | sort || true)"
+if [ "$SCOPE_CHANGED" = 1 ] && [ -n "$orphans" ]; then
+  orphans="$(printf '%s\n' "$orphans" | grep -Fxf <(printf '%s\n' "$CHANGED_SKILL_DIRS") || true)"
+fi
 if [ -n "$orphans" ]; then
   orphan_errors=0
   while IFS= read -r path; do
@@ -160,6 +195,9 @@ python3 - <<'PY'
 import os, sys, yaml, re
 errs = 0
 warns = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 
 def iter_skill_files():
     for root, dirs, files in os.walk('.', followlinks=False):
@@ -173,6 +211,8 @@ def iter_skill_files():
             yield os.path.join(root, 'SKILL.md').lstrip('./')
 
 for skill_md in iter_skill_files():
+    if _oos(os.path.dirname(skill_md)):
+        continue
     with open(skill_md) as f:
         content = f.read()
     m = re.match(r'^---\n(.*?)\n---\n', content, re.DOTALL)
@@ -235,6 +275,9 @@ import os, sys, re
 #   - the skill dir has references/skill_info.yaml or references/model_info.yaml on disk
 # Skips templates/.
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 
 def iter_skill_files():
     for root, dirs, files in os.walk('.', followlinks=False):
@@ -249,6 +292,8 @@ def iter_skill_files():
 
 for skill_md in iter_skill_files():
     skill_dir = os.path.dirname(skill_md)
+    if _oos(skill_dir):
+        continue
     with open(skill_md) as f:
         content = f.read()
     has_qs = re.search(r'^##\s+quick ?start', content, re.IGNORECASE | re.MULTILINE)
@@ -271,6 +316,9 @@ echo "=== 3c. models/ skills are docker-native or venv-native ==="
 python3 - <<'PY'
 import os, re, sys
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 # skills/data/ is deliberately not gated yet: 5 of 10 data skills are agent-native or
 # pip-CLI with no container at all, a category the docker-native rule does not describe.
 for layer in ('models',):
@@ -281,6 +329,8 @@ for layer in ('models',):
         skill_dir = os.path.join(root, name)
         skill_md = os.path.join(skill_dir, 'SKILL.md')
         if not os.path.isfile(skill_md):
+            continue
+        if _oos(skill_dir):
             continue
         # explicit, reviewable exemption for upstream workflows that are not TAO containers
         head = open(skill_md, encoding='utf-8').read(4000)
@@ -324,6 +374,9 @@ import os, sys
 # hard ceiling; recommend ≤ 18000 in docs for margin.
 SIZE_CEILING = 20000
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 for root, dirs, files in os.walk('.', followlinks=False):
     dirs[:] = [
         d for d in dirs
@@ -334,6 +387,7 @@ for root, dirs, files in os.walk('.', followlinks=False):
     if 'SKILL.md' not in files: continue
     skill_md = os.path.join(root, 'SKILL.md').lstrip('./')
     skill_dir = os.path.dirname(skill_md)
+    if _oos(skill_dir): continue
     # Size
     with open(skill_md) as f: size = len(f.read())
     if size > SIZE_CEILING:
@@ -365,10 +419,15 @@ leak_re = re.compile(r'tao_sdk|TaoExecutionSDK|sdk\.create_job|sdk\.list_path|sd
 neg_re  = re.compile(r"no [`']?tao_sdk|no [`']?nvidia-tao-sdk|without the TAO SDK|there is no [`']?tao_sdk|SDK-free|no in-container", re.IGNORECASE)
 EXEMPT = './skills/applications/tao-run-automl/'
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 for root, dirs, files in os.walk('./skills'):
     if any(x in root for x in ('.git', '.venv', '__pycache__')):
         continue
     in_refs = os.path.basename(root) == 'references'
+    if _oos('/'.join(root.lstrip('./').split('/')[:3])):
+        continue
     for fn in files:
         if fn != 'SKILL.md' and not (in_refs and fn.endswith('.md')):
             continue
@@ -390,10 +449,15 @@ echo "=== 5. hook paths resolve ==="
 python3 - <<'PY'
 import re, os, sys, yaml
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 for root, dirs, files in os.walk('.'):
     if any(x in root for x in ('.git', 'templates/skill-skeleton', '.venv')):
         continue
     if 'SKILL.md' not in files: continue
+    if _oos(root):
+        continue
     path = os.path.join(root, 'SKILL.md')
     with open(path) as f:
         content = f.read()
@@ -423,12 +487,17 @@ echo "=== 5b. evals/evals.json exists ==="
 python3 - <<'PY'
 import json, os, sys
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 for root, dirs, files in os.walk('.'):
     if any(x in root for x in ('.git', 'templates/skill-skeleton', 'plugins', '.venv')):
         continue
     if 'SKILL.md' not in files:
         continue
     skill_dir = root.lstrip('./')
+    if _oos(skill_dir):
+        continue
     evals_path = os.path.join(skill_dir, 'evals/evals.json')
     if not os.path.isfile(evals_path):
         print(f"ERROR: {skill_dir} — missing `evals/evals.json`. Required for Tier-3 signing; see docs/skill-requirements.md § 2.3.", file=sys.stderr)
@@ -458,7 +527,12 @@ echo
 echo "=== 6. AutoML baseline eval guardrail ==="
 python3 - <<'PY'
 from pathlib import Path
-import sys
+import os, sys
+
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+if _SC and 'skills/applications/tao-run-automl' not in _CH:
+    sys.exit(0)
 
 required = {
     "skills/applications/tao-run-automl/SKILL.md": [
@@ -508,6 +582,9 @@ if [ "${1:-}" != "--quick" ]; then
   python3 - <<'PY'
 import os, re, sys, yaml
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 VALID_MODES = {'config', 'args', 'passthrough'}
 VALID_CONFIG_FORMATS = {'yaml', 'toml', 'json'}
 VALID_GPU_RUNTIME_KEYS = {
@@ -576,6 +653,8 @@ for path in iter_metadata_files():
         print(f"ERROR: {path} — metadata file must contain a YAML mapping", file=sys.stderr); errs += 1; continue
 
     skill_dir = skill_dir_for(path)
+    if _oos(skill_dir):
+        continue
     is_model_or_data = skill_dir.startswith('./skills/models/') or skill_dir.startswith('./skills/data/')
     is_primary_model_metadata = (
         path.startswith('./skills/models/')
