@@ -25,7 +25,7 @@ uses) reaches the local bridge cleanly and moves execution to where it works.
 ## Quick start
 
 Prerequisites: a NemoClaw sandbox already onboarded with the **OpenClaw** agent
-(validated with **Claude Opus 5** as the agent brain — see Verified versions),
+(validated with **Claude Opus 5** as the agent brain — see Tested configuration),
 and the host logged into
 NGC (`docker login nvcr.io`). All agent-side setup is written into the
 sandbox's `openclaw.json`, so an OpenClaw-based NemoClaw sandbox is required.
@@ -58,41 +58,23 @@ Put datasets under `<workspace>/<name>/`; the agent discovers them with `tao_ls`
 
 ## Output ownership and cleanup
 
-`tao_run` runs the container process as the UID:GID of the host user running
-the MCP server and preserves that user's non-privileged supplementary groups
-for shared-data access. Checkpoints, result directories, and other files created on the
-writable workspace mounts therefore remain removable by that host user without
-`sudo`. Because overriding an image's baked-in root user also makes `/root`
-unwritable, the bridge prepares a private home and common framework cache
-directories inside the exact per-job result path at `.tao-runtime/home` and
-sets `HOME`, `USER`, `LOGNAME`, and cache environment variables for the job.
-The bridge refuses to launch writable jobs when the bridge itself is running
-as root; start it as the submitting host user. The Docker socket's group is
-never passed into workloads, Linux capabilities are dropped, and
-`no-new-privileges` prevents setuid/file-capability elevation.
+`tao_run` runs the container as the UID:GID of the host user running the MCP
+server, so checkpoints and results stay removable by that user without `sudo`.
+Because overriding an image's root user makes `/root` unwritable, the bridge
+prepares `HOME` and framework caches inside the job's own result path at
+`.tao-runtime/home`. It refuses to launch writable jobs when the bridge itself
+runs as root — start it as the submitting user.
 
-The caller's `results_subdir` is a collection root. Each `tao_run` mounts a
-unique `<results_subdir>/.tao-jobs/<token>/` at `/results` and returns that
-exact relative path. This prevents cleanup of a failed experiment from
-deleting another run's winner. The bridge exposes subdirectories through one
-verified, fixed-root Docker local volume and Docker's traversal-safe
-`volume-subpath` support; it never gives Docker a caller-mutable host bind
-pathname. Containers carry managed labels that bind their identity to the
-result path plus its filesystem device/inode; lifecycle tools reject unrelated
-NGC containers or a different directory swapped into that pathname.
+Each `tao_run` mounts a unique `<results_subdir>/.tao-jobs/<token>/` at
+`/results` and returns that exact path, so cleaning up one failed experiment
+cannot delete another run's checkpoints.
 
-`tao_stop` and `tao_rm` manage only the Docker process, container metadata, and
-writable container layer. They deliberately do not delete bind-mounted data,
-checkpoints, results, or `.tao-runtime` caches. Inspect and retain or delete
-those host files separately. For an interrupted or disposable run, call
-`tao_stop` and then `tao_cleanup_results`; cleanup refuses an active writer,
-validates the exact managed directory identity, deletes only that run's
-checkpoints and caches, and then removes the restart-disabled terminal
-container. If deletion fails, the container metadata is deliberately retained
-so the same cleanup call can be retried. Do not call `tao_rm` first when cleanup
-is intended, because removing the container also removes the trusted metadata.
-Results from older bridge versions may already be root-owned and need a one-time
-ownership repair by the host administrator.
+`tao_stop` and `tao_rm` manage only the container — they do **not** delete
+results, checkpoints or caches, so do not report container removal as output
+cleanup. To dispose of a run: `tao_stop`, inspect any logs you need, then
+`tao_cleanup_results`. Never `tao_rm` first; removing the container also removes
+the metadata that authorizes cleanup. Results from older bridge versions may be
+root-owned and need a one-time ownership repair.
 
 ## Security
 
@@ -134,53 +116,18 @@ runtime; other TAO workflows run through this surface.
 | `uninstall-tao-nemoclaw.sh` | Reverses setup: policy, `openclaw.json`, skill tree, `AGENTS.md` block, host server. Never touches workspace data; `--purge-bank` also removes the cloned bank |
 | `AGENTS.md` | Runtime operating guide appended to the sandbox's workspace `AGENTS.md` |
 
-## Notes / gotchas (baked into the script)
+## Notes / gotchas
 
-- Server binds the sandbox's docker-bridge gateway IP; discover per host.
-- `policy-add` needs `--yes` non-interactively (else it hangs silently).
-- Editing `openclaw.json` must `chmod 660` after (else `GATEWAY_UNSAFE_CONFIG_PATH`).
-- The MCP SDK's DNS-rebinding guard requires `host.openshell.internal` in the
-  server's `allowed_hosts` (already set in `server.py`).
-- Adding/changing tools requires `nemoclaw <sandbox> gateway restart` for the
-  agent to re-fetch the tool list.
-- Docker must support `volume-subpath` mounts; setup fails closed at launch if
-  the host engine does not.
+- Adding or changing tools requires `nemoclaw <sandbox> gateway restart` before the
+  agent re-fetches the tool list.
+- Docker must support `volume-subpath` mounts; setup fails closed if the host
+  engine does not.
 - **Experimental** — NemoClaw is alpha; see Tested configuration below.
 
 ## Tested configuration
 
 Last full validation: **2026-08-10**, Ubuntu 22.04.5 x86_64, 36 vCPU / 31 GiB,
 NVIDIA RTX A6000 (49 GB), corporate IT-managed host with `ufw` active.
-
-### Reproducing it
-
-Onboard the sandbox. `NEMOCLAW_ENDPOINT_URL` is undocumented in the quickstart
-but required non-interactively; the URL is normalised, so the full messages
-path is accepted as-is:
-
-```bash
-NEMOCLAW_AGENT=openclaw \
-NEMOCLAW_PROVIDER=anthropicCompatible \
-NEMOCLAW_ENDPOINT_URL=https://<your-endpoint>/v1/messages \
-NEMOCLAW_MODEL=aws/anthropic/bedrock-claude-opus-5 \
-NEMOCLAW_INFERENCE_API=anthropic-messages \
-NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS=<your-endpoint-host> \
-NEMOCLAW_PROVIDER_KEY="$YOUR_KEY" \
-  nemoclaw onboard --fresh --non-interactive --yes \
-    --name <sandbox> --agent openclaw --sandbox-gpu
-```
-
-`NEMOCLAW_PROVIDER` takes the internal id `anthropicCompatible` — the
-`compatible-anthropic-endpoint` label shown by `nemoclaw list` is rejected.
-Without `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS`, an endpoint resolving to
-RFC1918 fails the SSRF preflight with `no HTTP response` even though `curl`
-gets a 200.
-
-Then install TAO, pointing the workspace at the dataset root:
-
-```bash
-./setup-tao-nemoclaw.sh <sandbox> /path/to/workspace
-```
 
 ### Resulting configuration
 
@@ -196,6 +143,8 @@ Then install TAO, pointing the workspace at the dataset root:
 | `maxTokens` | `128000` | same |
 | `reasoning` | `true` | same |
 | `memorySearch.enabled` | `false` | `agents.defaults.memorySearch` |
+| `timeoutSeconds` | `3600` (agent and heartbeat) | `agents.defaults` |
+| `heartbeat.every` | `2m`, `skipWhenBusy: true` | `agents.defaults.heartbeat` |
 | ufw | `allow from 172.19.0.0/16 to 172.19.0.1 port 8080,9901 proto tcp` | host |
 
 Capability values were measured against the endpoint, not assumed: the
@@ -237,6 +186,35 @@ Anthropic-compatible sandbox it fails with
 `No API key found for provider "openai"` the first time the agent uses it.
 Enabling it would require a live embeddings credential inside the sandbox,
 which this integration exists to avoid.
+
+### Long-running workflows
+
+An orchestration workflow runs for hours across many stages, and two stock
+defaults quietly stop it.
+
+`agents.defaults.timeoutSeconds` is **600**. A single stage can exceed that on its
+own — AnomalyGen SDG measured 520s — so an orchestration turn is cut off
+mid-stage, and nothing reports it. Setup raises it to 3600
+(`AGENT_TIMEOUT_SECONDS`).
+
+The heartbeat is the **recovery path**, not just a liveness ping. When a turn dies
+— a truncated SSE stream from the provider is the common case — OpenClaw will not
+replay it: replay safety is decided by whether execution had already started, and
+a tool cannot declare itself safe once it has. The agent is simply left idle, and
+the next heartbeat is what resumes the work. OpenClaw's default cadence is
+**30m**, so a dead turn can look like a hung run for half an hour. Setup sets 2m
+(`HEARTBEAT_EVERY`), and `skipWhenBusy` means a short cadence costs nothing while
+the agent is working — those wakes are deferred.
+
+> A heartbeat turn is bounded by the same timeout, so the two settings must move
+> together. Observed on a stock sandbox:
+> `{"reason":"interval","status":"ok-empty","durationMs":619326,"silent":true}` —
+> 619s against a 600s cap. The agent was woken, worked for exactly the limit, was
+> truncated, and the event was recorded as **OK**. From outside that is
+> indistinguishable from an idle agent.
+
+Check it with `nemoclaw <sandbox> exec -- openclaw system heartbeat last`: a
+`durationMs` close to your `timeoutSeconds` means truncation, not idleness.
 
 ### On corporate hosts
 

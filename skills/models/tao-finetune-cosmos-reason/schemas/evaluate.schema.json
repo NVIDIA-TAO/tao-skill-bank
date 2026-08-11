@@ -1,6 +1,12 @@
 {
   "automl_default_parameters": [
-    "vision.fps"
+    "dataset.system_prompt",
+    "vision.nframes",
+    "generation.max_tokens",
+    "generation.temperature",
+    "generation.repetition_penalty",
+    "generation.presence_penalty",
+    "generation.frequency_penalty"
   ],
   "automl_disabled_parameters": [
     "metrics",
@@ -68,14 +74,25 @@
       "save_individual_results": true,
       "save_metrics_summary": true
     },
+    "results_dir": "",
     "task": {
       "type": ""
     },
     "vision": {
       "nframes": 8
-    },
-    "results_dir": ""
+    }
   },
+  "evaluate_automl_disabled_parameters": [
+    "evaluate.task",
+    "evaluate.dataset",
+    "evaluate.model",
+    "evaluate.evaluation",
+    "evaluate.vision",
+    "evaluate.generation",
+    "evaluate.metrics",
+    "evaluate.results"
+  ],
+  "evaluate_automl_enabled": false,
   "properties": {
     "automl_disabled_parameters": [
       "metrics",
@@ -89,12 +106,6 @@
       "dataset",
       "generation"
     ],
-    "results_dir": {
-      "default": "",
-      "description": "Directory to save evaluation results",
-      "title": "Results directory",
-      "type": "string"
-    },
     "dataset": {
       "automl_enabled": false,
       "default": {
@@ -117,10 +128,23 @@
           "type": "string"
         },
         "system_prompt": {
+          "automl_enabled": true,
           "default": "You are a helpful assistant that can answer questions about a street-view CCTV footage. The vehicles that need attention are marked with bounding boxes and IDs.",
-          "description": "System prompt for the evaluation tasks",
+          "description": "System prompt for zero-shot Metropolis/VSS evaluation. The enum provides seed candidates for bounded algorithms; autoresearch can evolve free-form prompts when dataset.system_prompt is listed in evolvable_text_parameters.",
+          "enum": [
+            "You are a helpful assistant that can answer questions about a street-view CCTV footage. The vehicles that need attention are marked with bounding boxes and IDs.",
+            "You are a careful video event verification assistant for traffic and security CCTV. Answer only from visible evidence, track object IDs and bounding boxes, and state yes/no when the question asks whether an event occurred.",
+            "You are a Metropolis VLM assistant for surveillance video QA. Focus on temporal order, object interactions, near misses, direction of travel, and safety-relevant evidence. Prefer concise factual answers.",
+            "You are an event-verification assistant. Inspect the full clip before answering, compare the question with observed actions, ignore unsupported assumptions, and return the most specific answer allowed by the evidence."
+          ],
+          "option_weights": [
+            0.4,
+            0.25,
+            0.2,
+            0.15
+          ],
           "title": "System prompt",
-          "type": "string"
+          "type": "categorical"
         }
       },
       "type": "collection"
@@ -238,10 +262,11 @@
       "description": "Generation parameters",
       "properties": {
         "frequency_penalty": {
+          "automl_enabled": true,
           "default": 0.0,
           "description": "Frequency penalty for generation",
-          "maximum": 2.0,
-          "minimum": -2.0,
+          "maximum": 0.5,
+          "minimum": -0.5,
           "title": "Frequency penalty",
           "type": "float"
         },
@@ -254,33 +279,43 @@
           "type": "int"
         },
         "max_tokens": {
+          "automl_enabled": true,
           "default": 1024,
           "description": "Maximum number of tokens in the generated response",
+          "enum": [
+            256,
+            512,
+            1024,
+            2048
+          ],
           "maximum": 8192,
           "minimum": 1,
           "title": "Maximum tokens",
-          "type": "int"
+          "type": "ordered_int"
         },
         "presence_penalty": {
+          "automl_enabled": true,
           "default": 0.0,
           "description": "Presence penalty for generation",
-          "maximum": 2.0,
-          "minimum": -2.0,
+          "maximum": 0.5,
+          "minimum": -0.5,
           "title": "Presence penalty",
           "type": "float"
         },
         "repetition_penalty": {
+          "automl_enabled": true,
           "default": 1.0,
           "description": "Repetition penalty for generation",
-          "maximum": 2.0,
-          "minimum": 0.1,
+          "maximum": 1.2,
+          "minimum": 0.8,
           "title": "Repetition penalty",
           "type": "float"
         },
         "temperature": {
+          "automl_enabled": true,
           "default": 0.0,
           "description": "Temperature for sampling (0.0 for greedy decoding)",
-          "maximum": 2.0,
+          "maximum": 0.4,
           "minimum": 0.0,
           "title": "Temperature",
           "type": "float"
@@ -306,6 +341,19 @@
       },
       "description": "Metrics configuration for general evaluation",
       "properties": {
+        "bertscore_batch_size": {
+          "default": 1,
+          "description": "Optional BERTScore batch size; lower values reduce peak memory",
+          "minimum": 1,
+          "title": "BERTScore batch size",
+          "type": "int"
+        },
+        "bertscore_device": {
+          "default": "cpu",
+          "description": "Device for BERTScore computation (use cpu to avoid competing with the eval model for GPU memory)",
+          "title": "BERTScore device",
+          "type": "string"
+        },
         "bertscore_lang": {
           "default": "en",
           "description": "Language for BERTScore computation",
@@ -317,19 +365,6 @@
           "description": "Model to use for BERTScore computation (e.g., microsoft/deberta-xlarge-mnli)",
           "title": "BERTScore model",
           "type": "string"
-        },
-        "bertscore_device": {
-          "default": "cpu",
-          "description": "Device for BERTScore computation (use cpu to avoid competing with the eval model for GPU memory)",
-          "title": "BERTScore device",
-          "type": "string"
-        },
-        "bertscore_batch_size": {
-          "default": 1,
-          "description": "Optional BERTScore batch size; lower values reduce peak memory",
-          "minimum": 1,
-          "title": "BERTScore batch size",
-          "type": "int"
         },
         "names": {
           "automl_enabled": false,
@@ -457,6 +492,12 @@
       },
       "type": "collection"
     },
+    "results_dir": {
+      "default": "",
+      "description": "Directory to save evaluation results",
+      "title": "Results directory",
+      "type": "string"
+    },
     "task": {
       "automl_enabled": false,
       "default": {
@@ -496,12 +537,18 @@
           "type": "int"
         },
         "nframes": {
+          "automl_enabled": true,
           "default": 8,
-          "description": "Number of frames for vision processing.",
-          "maximum": 8,
+          "description": "Number of evenly sampled frames for vision processing. Higher values increase host memory, preprocessing time, and inference cost.",
+          "enum": [
+            4,
+            8,
+            16
+          ],
+          "maximum": 16,
           "minimum": 1,
           "title": "Number of frames",
-          "type": "int"
+          "type": "ordered_int"
         },
         "total_pixels": {
           "description": "Total number of pixels for vision processing.",
@@ -523,16 +570,5 @@
     "schema_action": "evaluate",
     "schema_version": 1,
     "source": "tao-core dataclass config"
-  },
-  "evaluate_automl_disabled_parameters": [
-    "evaluate.task",
-    "evaluate.dataset",
-    "evaluate.model",
-    "evaluate.evaluation",
-    "evaluate.vision",
-    "evaluate.generation",
-    "evaluate.metrics",
-    "evaluate.results"
-  ],
-  "evaluate_automl_enabled": false
+  }
 }

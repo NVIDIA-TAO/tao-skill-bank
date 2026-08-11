@@ -61,7 +61,7 @@ If missing, the agent prompts the user to authorize the install via Bash, then r
 Before running AutoML:
 
 1. **Shared launch preflight**: Run the `tao-launch-workflow` intake pattern first. AutoML must not create runner files, workspaces, state files, logs, compatibility shims, or install dependencies until the selected platform's credentials, access check, dataset visibility, model credentials, container image confirmation, and compute shape are satisfied. This prevents wasting the AutoML budget on fake recommendation failures caused by SSH, storage, image, or credential setup.
-2. **SDK credentials**: env vars read from the session environment (export them in your shell before launching). Required env vars depend on which SDK you choose — see each platform's SKILL.md (`skills/platform/tao-run-on-brev`, `skills/platform/tao-run-on-slurm`, `skills/platform/tao-run-on-kubernetes`, `skills/platform/tao-run-on-local-docker`). Before asking for credentials, read the chosen platform skill's `## Credentials` section and `references/skill_info.yaml` (required_credentials / credential_groups). Ask only for the credentials listed there. For example, SLURM needs SLURM credentials and not Brev or S3 credentials; Kubernetes and local Docker do not need SLURM or Brev credentials. Ask S3 credentials only when the selected platform and dataset/result URIs use `s3://`. For container pulls: `NGC_KEY`. The agent never reads values — only checks presence with `[ -n "$VAR_NAME" ]`. Construct the SDK with no arguments — e.g., `BrevSDK()`, `SlurmSDK()`, `KubernetesSDK()`, or `DockerSDK()`.
+2. **SDK credentials**: env vars read from the session environment (export them in your shell before launching, or source a user-approved env file with `set -a; source /path/to/.env; set +a`). Required env vars depend on which SDK you choose — see each platform's SKILL.md (`skills/platform/tao-run-on-brev`, `skills/platform/tao-run-on-slurm`, `skills/platform/tao-run-on-kubernetes`, `skills/platform/tao-run-on-local-docker`). Before asking for credentials, read the chosen platform skill's `## Credentials` section and `references/skill_info.yaml` (required_credentials / credential_groups). Ask only for the credentials listed there. For example, SLURM needs SLURM credentials and not Brev or S3 credentials; Kubernetes and local Docker do not need SLURM or Brev credentials. Ask S3 credentials only when the selected platform and dataset/result URIs use `s3://`. For container pulls: `NGC_KEY`. The agent never reads values — only checks presence with `[ -n "$VAR_NAME" ]`. Construct the SDK with no arguments — e.g., `BrevSDK()`, `SlurmSDK()`, `KubernetesSDK()`, or `DockerSDK()`.
 
    **Verify the SDK actually constructs before generating runner files.** A successful `import tao_automl` does not prove the selected AutoML platform extra is installed. Instantiate the SDK class for the chosen platform, for example:
 
@@ -167,8 +167,8 @@ When the user asks what models/networks are supported for AutoML, run the
 packaged model-list helper in AutoML mode. AutoML enablement is **model-level**
 metadata (`skills/models/<network>/references/skill_info.yaml` has
 `automl_enabled: true`), not workflow-level metadata. The helper reads that
-model metadata, then validates whether the model also has a packaged,
-parseable train dataclass schema:
+model metadata, then validates whether the model also has packaged,
+parseable selected-action dataclass schemas:
 
 ```bash
 ${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_tao_models.py \
@@ -186,7 +186,7 @@ Return both sections from that output: runnable AutoML model/actions and
 AutoML-enabled model/actions still blocked on schema packaging. The support
 rule is: AutoML is enabled at model level; runnable AutoML for an action also
 requires `skills/models/<model_skill>/schemas/<action>.schema.json` to be packaged and
-valid. Use `--action distill`, `--action prune`, or `--action quantize` for a
-focused compression-action query.
+valid. Use `--action evaluate`, `--action inference`, `--action distill`,
+`--action prune`, or `--action quantize` for a focused non-train action query.
 
 ---

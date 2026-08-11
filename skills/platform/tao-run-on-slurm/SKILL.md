@@ -81,7 +81,8 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    `~/.config/enroot/.credentials` (see `references/slurm-ssh-credentials.md`),
    not the job env:
    ```bash
-   ssh $LOGIN "umask 077; printf 'export HF_TOKEN=%s\n' \"\$HF_TOKEN\" > <job_dir>/job_$JOB_ID.env"
+   set -a; source /path/to/.env; set +a   # omit if already exported
+   printf 'export HF_TOKEN=%s\n' "$HF_TOKEN" | ssh $LOGIN "umask 077; cat > <job_dir>/job_$JOB_ID.env"
    ```
 3. **Open the record — mints the id, binds `results_dir` on Lustre, before launch:**
    ```bash

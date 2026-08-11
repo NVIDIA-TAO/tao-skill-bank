@@ -60,6 +60,41 @@ COMMON_ACTION_KEYS = {
     "train",
 }
 
+COSMOS_METROPOLIS_SYSTEM_PROMPT_OPTIONS = [
+    (
+        "You are a helpful assistant that can answer questions about a "
+        "street-view CCTV footage. The vehicles that need attention are "
+        "marked with bounding boxes and IDs."
+    ),
+    (
+        "You are a careful video event verification assistant for traffic "
+        "and security CCTV. Answer only from visible evidence, track object "
+        "IDs and bounding boxes, and state yes/no when the question asks "
+        "whether an event occurred."
+    ),
+    (
+        "You are a Metropolis VLM assistant for surveillance video QA. Focus "
+        "on temporal order, object interactions, near misses, direction of "
+        "travel, and safety-relevant evidence. Prefer concise factual answers."
+    ),
+    (
+        "You are an event-verification assistant. Inspect the full clip before "
+        "answering, compare the question with observed actions, ignore "
+        "unsupported assumptions, and return the most specific answer allowed "
+        "by the evidence."
+    ),
+]
+
+COSMOS_EVALUATE_AUTOML_DEFAULT_PARAMETERS = [
+    "dataset.system_prompt",
+    "vision.nframes",
+    "generation.max_tokens",
+    "generation.temperature",
+    "generation.repetition_penalty",
+    "generation.presence_penalty",
+    "generation.frequency_penalty",
+]
+
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
@@ -178,6 +213,88 @@ def filter_schema(schema: dict[str, Any], valid_actions: set[str], current_actio
     return schema
 
 
+def unwrap_cosmos_non_train_action_schema(schema: dict[str, Any], action: str) -> dict[str, Any]:
+    """Keep Cosmos non-train schemas in the flat TOML shape consumed by runtime."""
+    properties = schema.get("properties", {})
+    defaults = schema.get("default", {})
+    action_properties = properties.get(action)
+    action_defaults = defaults.get(action)
+    if not isinstance(action_properties, dict) or not isinstance(action_defaults, dict):
+        return schema
+
+    nested_properties = action_properties.get("properties")
+    if not isinstance(nested_properties, dict):
+        return schema
+
+    properties = {key: value for key, value in properties.items() if key != action}
+    defaults = {key: value for key, value in defaults.items() if key != action}
+    properties.update(nested_properties)
+    defaults.update(action_defaults)
+    schema["properties"] = properties
+    schema["default"] = defaults
+    return schema
+
+
+def apply_cosmos_evaluate_autoprompt_metadata(schema: dict[str, Any]) -> dict[str, Any]:
+    """Add bounded seeds and reflective Auto-Prompter metadata for Cosmos evaluate."""
+    schema["automl_default_parameters"] = list(COSMOS_EVALUATE_AUTOML_DEFAULT_PARAMETERS)
+
+    properties = schema.setdefault("properties", {})
+    dataset = properties.get("dataset", {}).get("properties", {})
+    vision = properties.get("vision", {}).get("properties", {})
+    generation = properties.get("generation", {}).get("properties", {})
+
+    if "system_prompt" in dataset:
+        dataset["system_prompt"].update(
+            {
+                "automl_enabled": True,
+                "description": (
+                    "System prompt for zero-shot Metropolis/VSS evaluation. The enum "
+                    "provides seed candidates for bounded algorithms; autoresearch can "
+                    "evolve free-form prompts when dataset.system_prompt is listed in "
+                    "evolvable_text_parameters."
+                ),
+                "enum": list(COSMOS_METROPOLIS_SYSTEM_PROMPT_OPTIONS),
+                "option_weights": [0.4, 0.25, 0.2, 0.15],
+                "type": "categorical",
+            }
+        )
+    if "nframes" in vision:
+        vision["nframes"].update(
+            {
+                "automl_enabled": True,
+                "enum": [4, 8],
+                "type": "ordered_int",
+            }
+        )
+    if "max_tokens" in generation:
+        generation["max_tokens"].update(
+            {
+                "automl_enabled": True,
+                "enum": [256, 512, 1024, 2048],
+                "type": "ordered_int",
+            }
+        )
+
+    ranges = {
+        "temperature": (0.0, 0.4),
+        "repetition_penalty": (0.8, 1.2),
+        "presence_penalty": (-0.5, 0.5),
+        "frequency_penalty": (-0.5, 0.5),
+    }
+    for parameter, (minimum, maximum) in ranges.items():
+        if parameter in generation:
+            generation[parameter].update(
+                {
+                    "automl_enabled": True,
+                    "minimum": minimum,
+                    "maximum": maximum,
+                }
+            )
+
+    return schema
+
+
 def generate_schema_for_action(
     skill_config: dict[str, Any],
     model_name: str,
@@ -222,6 +339,10 @@ def generate_schema_for_action(
             json_with_meta = dataclass2json_converter.dataclass_to_json(exp_config)
             schema = dataclass2json_converter.create_json_schema(json_with_meta)
             schema = filter_schema(schema, get_valid_action_keys(skill_config, core_module), schema_action)
+            if core_module == "cosmos-rl" and schema_action in {"evaluate", "inference"}:
+                schema = unwrap_cosmos_non_train_action_schema(schema, schema_action)
+            if core_module == "cosmos-rl" and schema_action == "evaluate":
+                schema = apply_cosmos_evaluate_autoprompt_metadata(schema)
             schema["x_tao_schema"] = {
                 "schema_version": 1,
                 "model": model_name,

@@ -15,7 +15,7 @@ In a Claude Code session, add the marketplace and install the plugin:
 /plugin install tao-skills@tao-skill-bank
 ```
 
-That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundles all 66 skills (every model, data, platform, and application). The plugin's [`SessionStart`](hooks/session_start.sh) hook loads the [`AGENTS.md`](AGENTS.md) identity at the start of every session.
+That's it — no `git clone`, no `pip install`. The TAO Skill Bank plugin bundles all skills (every model, data, platform, and application). The plugin's [`SessionStart`](hooks/session_start.sh) hook loads the [`AGENTS.md`](AGENTS.md) identity at the start of every session.
 
 ### Codex
 
@@ -87,13 +87,13 @@ The vars each skill looks for (export only the ones your workflow needs):
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `AWS_ENDPOINT_URL`, `AWS_DEFAULT_REGION` | S3 / object-storage I/O via `tao-data-io` (legacy `ACCESS_KEY`/`SECRET_KEY` still accepted) |
 | `WANDB_API_KEY`, `WANDB_PROJECT` | WandB experiment logging (AutoML / HF fine-tune) |
 
-The plugin does **not** create, load, or source any credentials file. On session start the hook reports which of these it detects in the environment (names only). The agent never reads credential values — it only checks presence.
+Some runtimes (notably Codex) do not reliably inherit shell exports; there, put bare `KEY=value` lines — no `export`, which `docker --env-file` rejects — in your own credential env file and load it with `set -a; source /path/to/.env; set +a`. Unprompted, the agent sources only the fixed user-owned locations (`~/.tao/secrets.env`, `~/.config/tao/.env`); a repo-relative `./.env` or `<workspace>/.env` is loaded only when you point the agent at it. On session start the hook reports which vars it detects in the environment (names only). The agent never reads credential values — it only checks presence, and never writes a credential to a file you did not ask for; registry logins (`docker login nvcr.io`), the one-time enroot credentials install on a SLURM cluster (`~/.config/enroot/.credentials`, which persists your NGC key in plaintext on shared storage), and SLURM job sidecars happen only after you approve them.
 
 When a workflow needs Hugging Face access, get a token from [Hugging Face settings](https://huggingface.co/settings/tokens) and accept the model or dataset license before launch.
 
 If a readiness check reports a missing CLI, container image, backbone, or credential, the TAO skills can often install or stage the missing piece after you approve the action. Ask the agent to continue the original workflow after a blocker is resolved; it should rerun preflight and proceed from the same task.
 
-> **Persisting secrets is your own responsibility.** If you'd rather not re-export each session, persist the exports yourself (shell rc, a sourced file, or a secrets manager) — the skill bank will not manage a credentials file on your behalf.
+> **Persisting secrets is your own responsibility.** If you'd rather not re-export each session, keep them in an env file and either source it yourself or point the agent at it; a shell rc or a secrets manager works just as well. The agent never creates that file for you.
 
 ### Do I need to install anything else?
 
@@ -140,6 +140,7 @@ The quickest way to verify your setup: run a Visual ChangeNet inference on a sam
 ### Prerequisites
 
 ```shell
+set -a; source /path/to/.env; set +a   # omit if already exported
 docker --version
 docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 echo "$NGC_KEY" | docker login nvcr.io -u '$oauthtoken' --password-stdin

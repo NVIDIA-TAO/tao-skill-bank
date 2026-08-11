@@ -128,6 +128,7 @@ jobs are submitted with plain `kubectl apply`.
    disk and is readable via `kubectl get job -o yaml`). Create it from an env-file
    on **stdin** so no value hits a command line:
    ```bash
+   set -a; source /path/to/.env; set +a   # omit if already exported
    printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nHF_TOKEN=%s\n' \
      "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$HF_TOKEN" \
      | kubectl create secret generic "tao-creds-$JOB_ID" --from-env-file=/dev/stdin
@@ -308,6 +309,7 @@ This skill's Indexed Job path is intentionally simple and dependency-free; if yo
 Feed the key over stdin — `--docker-password=$NGC_KEY` would put the secret in
 argv, where it is visible in the host's process table and shell history:
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 kubectl create secret generic ngc-pull-secret -n tao-jobs \
   --type=kubernetes.io/dockerconfigjson \
   --from-file=.dockerconfigjson=/dev/stdin <<EOF

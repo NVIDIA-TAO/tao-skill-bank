@@ -16,6 +16,8 @@ After the user approves the launch review, prepare the selected checkpoint with
 the helper owned by `tao-finetune-cosmos-reason`:
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
+
 # --checkpoint-path is resolved as a filesystem path by the upstream converter,
 # so it must be a LOCAL DIRECTORY. A bare HuggingFace repo id can never work,
 # and the failure only surfaces after the container's slow `uv sync`. Download
@@ -31,7 +33,6 @@ hf download nvidia/Cosmos3-Nano --local-dir "$COSMOS3_SOURCE_DIR" \
   "$TAO_SKILL_BANK_PATH/skills/models/tao-finetune-cosmos-reason/scripts/prepare_cosmos3_vlm_checkpoint.py" \
   --checkpoint-path "$COSMOS3_SOURCE_DIR" \
   --output-path "$PREPARED_MODEL_HOST_PATH" \
-  --secrets-env "" \
   --validate-with-image "$COSMOS_RL_IMAGE"
 ```
 
@@ -55,12 +56,11 @@ and re-converting means re-downloading the source checkpoint too. Once the
 ownership is fixed the helper reports `status=skipped_existing` and reuses it.
 
 The helper may clone NVIDIA/cosmos-framework, pull its conversion image, and
-write a large checkpoint, so never run it before approval. `--secrets-env ""`
-keeps credentials in the session environment; the helper forwards whichever of
-`HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` is set, by name and without printing
-values. Those are two names for the same HuggingFace access token — the second
-is the legacy alias — not two separate credentials, so exporting either one is
-enough.
+write a large checkpoint, so never run it before approval. It forwards
+whichever of `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` is set in the session, by
+name and without printing values; the second is the legacy alias for the same
+HuggingFace access token, so either one is enough. For `--secrets-env`, see the
+model skill.
 
 Do not convert again when the helper reports `status=skipped_existing`; it has
 already verified a complete `qwen3_vl` safetensors directory. Mount or stage

@@ -32,7 +32,9 @@ error handling. Summary:
   RADIO, NVDINOV2, DINOv2, SAM2, Qwen3-VL-4B.
 - Pass `--model-sizes <2B|14B>` to `check.sh`/`download_checkpoints.sh` matching
   this run's `model_size` — the 2B-only default otherwise skips a 14B download
-- `HF_TOKEN` must be exported; `download_checkpoints.sh` refuses to start if unset
+- `HF_TOKEN` must be present in the environment — exported in your shell or
+  sourced from a user-approved env file (`set -a; source /path/to/.env; set +a`);
+  `download_checkpoints.sh` refuses to start if unset
 - `check.sh` exits 0 if all present, 1 with a remediation list if not — run it first
 
 ### Environment check

@@ -83,7 +83,13 @@
         {
           "action": "evaluate",
           "automl_default_parameters": [
-            "evaluate.vision.fps"
+            "dataset.system_prompt",
+            "vision.nframes",
+            "generation.max_tokens",
+            "generation.temperature",
+            "generation.repetition_penalty",
+            "generation.presence_penalty",
+            "generation.frequency_penalty"
           ],
           "schema": "schemas/evaluate.schema.json",
           "schema_status": "schemas/evaluate.schema.json is packaged and valid",

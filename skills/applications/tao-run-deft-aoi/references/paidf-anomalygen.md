@@ -146,9 +146,7 @@ directly) with:
 Used by both the bootstrap and the per-iteration calls:
 
 ```bash
-# Never read or source a credentials file. Per-iteration calls use staged
-# assets and require no credential; HF_TOKEN is only for an explicitly
-# networked post-gate bootstrap.
+# Per-iteration calls use staged assets and require no credential.
 WS=<workspace>
 DS=$WS/augmentation/anomalygen/datasets/<project>
 CKPT=$(find -L "$WS/augmentation/anomalygen/checkpoints/<project>" -path '*/ag_config.yaml' -print -quit | xargs dirname)  # -L follows a symlinked project checkpoint dir
@@ -214,6 +212,8 @@ Run only the steps the Pre-Flight Summary flagged `WILL_AUTO_FETCH`. Both
 are idempotent — re-running a completed step exits quickly.
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
+
 # (a) Cosmos base checkpoints (~22 GB for 2B-only, ~140 GB with 14B + T5-11b).
 # WRITABLE mount (no :ro) so download_checkpoints.sh can populate the cache.
 docker run --pull=never --rm \
@@ -241,6 +241,8 @@ The AnomalyGen fine-tuned checkpoint at `$CKPT` auto-downloads by default
 from the per-UC HF repo (see *Fine-tuned checkpoint sources* above) via:
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
+
 # (c) AnomalyGen fine-tuned checkpoint (PCB UC; ~5 GB).
 if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ]; then
   docker run --pull=never --rm \

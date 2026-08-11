@@ -304,6 +304,10 @@ MODEL_THINKING="${MODEL_THINKING:-medium}"
 # Turn cap for an orchestration turn and for each heartbeat turn. The stock 600s
 # truncates stages that legitimately run longer.
 AGENT_TIMEOUT_SECONDS="${AGENT_TIMEOUT_SECONDS:-3600}"
+# Heartbeat cadence, and so the worst-case recovery time after an interrupted
+# turn. OpenClaw defaults to 30m, which for an orchestration means a run can sit
+# idle for up to half an hour before anything wakes it.
+HEARTBEAT_EVERY="${HEARTBEAT_EVERY:-2m}"
 case "$MODEL_REASONING" in true) MODEL_REASONING_PY=True ;; *) MODEL_REASONING_PY=False ;; esac
 nemoclaw "$SB" exec --stdin -- python3 <<PY
 import json, os
@@ -368,6 +372,14 @@ d.setdefault("agents", {}).setdefault("defaults", {}) \
 _orch = d.setdefault("agents", {}).setdefault("defaults", {})
 _orch["timeoutSeconds"] = ${AGENT_TIMEOUT_SECONDS}
 _hb = _orch.setdefault("heartbeat", {})
+# every is the recovery interval, not just a liveness ping. A turn that dies —
+# a truncated SSE stream from the provider is the common case — leaves the agent
+# idle, and OpenClaw will not replay it: replay safety is decided by whether
+# execution had started, and a tool cannot declare itself safe once it has. So
+# the next heartbeat is what resumes the work, and at the stock 30m default that
+# is up to half an hour of visible idle. skipWhenBusy means a short cadence costs
+# nothing while the agent is actually working: those wakes are deferred.
+_hb["every"] = "${HEARTBEAT_EVERY}"
 _hb["skipWhenBusy"] = True
 _hb["timeoutSeconds"] = ${AGENT_TIMEOUT_SECONDS}
 _hb["includeSystemPromptSection"] = True

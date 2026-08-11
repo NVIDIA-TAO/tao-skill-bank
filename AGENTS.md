@@ -131,15 +131,22 @@ already made the selection.
   helpers installable with `python -m pip install ...` retain the established
   exception: install them by default and report what was installed. An
   application may impose a stricter approval gate for its own runtime.
-- **Never ask for API keys, tokens, or passwords via chat.** Credentials come
-  from the **session environment** — the user exports them in their own shell
-  before launching. If a required var is missing, tell the user which one to
-  `export`; do not collect the value yourself. The skill bank does not read or
-  load any credentials file.
+- **Never ask for API keys, tokens, or passwords via chat.** Credentials reach
+  the **session environment** two ways: the user exports them before launching,
+  or you source a user-approved env file of bare `KEY=value` lines (needed
+  where exports aren't inherited, e.g. Codex). Unprompted, source only
+  `~/.tao/secrets.env` or `~/.config/tao/.env`; any other path only when the
+  user points you at it. Agent shells do not persist environment between tool
+  calls, so `set -a; source /path/to/.env; set +a` must run in the same bash
+  call as the command that consumes the variable. If a var is missing, name it;
+  never collect the value. Never create or write a credentials file on your own
+  initiative — only as an approved platform step (e.g. the SLURM sidecar).
 - **Never read credential values.** To verify a var is set:
-  `[ -n "$VAR_NAME" ] && echo SET || echo UNSET`. Never `cat`, `Read`,
-  `grep`, or `head` a credentials file (e.g. any `.env` the user may have
-  created).
+  `[ -n "$VAR_NAME" ] && echo SET || echo UNSET`. Sourcing a credentials file
+  is fine; reading its contents is not — never `cat`, `Read`, `grep`, `head`,
+  `tail`, echo, or log a credentials file or the value of a credential
+  variable. Never pass a secret on argv (use stdin, e.g. `--password-stdin`),
+  and never write secret values into job records, logs, specs, or commits.
 - **Never assume anything beyond docker is present.** Model and data skills run
   with just `docker`; platform execution needs only the native CLI
   (`docker`/`kubectl`/`ssh`/`brev`) plus the bank's helper scripts — there is no

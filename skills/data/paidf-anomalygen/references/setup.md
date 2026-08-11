@@ -8,8 +8,9 @@ running setup for the first time.
 ## Prerequisites
 
 - `cosmos-predict2` conda env active. The scripts do **not** create it.
-- `HF_TOKEN` exported (Hugging Face access token — required for the
-  `nvidia/Cosmos-Predict2-*` repos, which are gated).
+- `HF_TOKEN` (Hugging Face access token — required for the
+  `nvidia/Cosmos-Predict2-*` repos, which are gated) in the environment —
+  exported in your shell or sourced from a user-approved env file.
 - `huggingface_hub >= 1.x` installed, which provides the `hf` CLI (already in
   the env per the tutorial). If missing: `pip install -U huggingface_hub`.
 
@@ -77,7 +78,7 @@ ${ANOMALYGEN_SCRIPTS}/check.sh \
 
 | Symptom | Fix |
 |---|---|
-| "HF_TOKEN unset" on start | `export HF_TOKEN=<your_token>` |
+| "HF_TOKEN unset" on start | `export HF_TOKEN=<your_token>`, or `set -a; source /path/to/.env; set +a` |
 | HF 401 Unauthorized | Re-issue token at https://huggingface.co/settings/tokens with read access; accept license on each `nvidia/Cosmos-Predict2-*` model page |
 | Disk full mid-download | ~40 GB for the default set (~150 GB with 14B + t5-11b); free space or use `--checkpoint-dir` on a larger volume |
 | `hf: command not found` | `pip install -U huggingface_hub` (needs `>= 1.x`) |
