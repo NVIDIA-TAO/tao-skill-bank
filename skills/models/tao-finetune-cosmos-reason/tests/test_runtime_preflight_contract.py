@@ -17,7 +17,7 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
-def _wts_args() -> SimpleNamespace:
+def _video_args() -> SimpleNamespace:
     return SimpleNamespace(
         dataset_family="video_conversation",
         rl_train_batch_per_replica=0,
@@ -42,20 +42,20 @@ def _wts_args() -> SimpleNamespace:
         nodes=1,
         gpus_per_node=8,
         training_mode="dense",
-        experiment_id="wts-smoke",
+        experiment_id="video-smoke",
         frames=8,
         system_prompt="You are a helpful assistant.",
         container_cache_dir="/cache",
         video_override_map="",
-        tao_job_id="wts-smoke",
+        tao_job_id="video-smoke",
         container_results_dir="/results",
         nccl_debug="INFO",
         cuda_allocator="expandable_segments:True",
     )
 
 
-def test_wts_spec_and_environment_force_packaged_system_pyav_contract() -> None:
-    args = _wts_args()
+def test_video_spec_and_environment_force_packaged_system_pyav_contract() -> None:
+    args = _video_args()
     spec = MODULE._rl_spec(
         args,
         {"epochs": 1},

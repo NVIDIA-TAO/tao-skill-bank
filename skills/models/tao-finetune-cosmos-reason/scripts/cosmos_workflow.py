@@ -703,7 +703,7 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "system_prompt": args.system_prompt,
     })
     if args.dataset_family == "video_conversation":
-        # The packaged WTS hook consumes the decoder at custom.video_decoder;
+        # The packaged video hook consumes the decoder at custom.video_decoder;
         # vision.video_decoder is retained for preprocessing provenance.
         spec["custom"]["video_decoder"] = "torchvision"
     if use_dataset_cache:
