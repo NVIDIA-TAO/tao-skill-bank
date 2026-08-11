@@ -167,8 +167,8 @@ When the user asks what models/networks are supported for AutoML, run the
 packaged model-list helper in AutoML mode. AutoML enablement is **model-level**
 metadata (`skills/models/<network>/references/skill_info.yaml` has
 `automl_enabled: true`), not workflow-level metadata. The helper reads that
-model metadata, then validates whether the model also has a packaged,
-parseable train dataclass schema:
+model metadata, then validates whether the model also has packaged,
+parseable selected-action dataclass schemas:
 
 ```bash
 ${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_tao_models.py \
@@ -186,7 +186,7 @@ Return both sections from that output: runnable AutoML model/actions and
 AutoML-enabled model/actions still blocked on schema packaging. The support
 rule is: AutoML is enabled at model level; runnable AutoML for an action also
 requires `skills/models/<model_skill>/schemas/<action>.schema.json` to be packaged and
-valid. Use `--action distill`, `--action prune`, or `--action quantize` for a
-focused compression-action query.
+valid. Use `--action evaluate`, `--action inference`, `--action distill`,
+`--action prune`, or `--action quantize` for a focused non-train action query.
 
 ---

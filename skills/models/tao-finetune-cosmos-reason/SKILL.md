@@ -109,13 +109,13 @@ exact form. Pass `HF_TOKEN` as an environment variable — never in a spec or lo
 
 ## Dataclass Schemas
 
-Generated TAO Core schemas are packaged in `schemas/<action>.schema.json`, with `schemas/manifest.json` listing available actions. Each generated schema also emits `references/spec_template_<action>.yaml` from the schema top-level `default` field. AutoML enablement is declared at the model layer in `references/skill_info.yaml` via `automl_enabled`. Runnable AutoML still requires `schemas/train.schema.json` and `references/spec_template_train.yaml` to exist and parse. Use the packaged train schema for `automl_default_parameters`, `automl_disabled_parameters`, defaults, min/max bounds, enums, option weights, math conditions, dependencies, and popular parameters. Do not expect `~/tao-core` at runtime; maintainers regenerate schemas/templates before packaging the skill bank.
+Generated TAO Core schemas are packaged in `schemas/<action>.schema.json`, with `schemas/manifest.json` listing available actions. Each generated schema also emits `references/spec_template_<action>.yaml` from the schema top-level `default` field. AutoML enablement is declared at the model layer in `references/skill_info.yaml` via `automl_enabled`. Runnable AutoML for any selected action requires that action's schema and spec template to exist and parse. Use the packaged selected-action schema for `automl_default_parameters`, `automl_disabled_parameters`, defaults, min/max bounds, enums, option weights, math conditions, dependencies, and popular parameters. Do not expect `~/tao-core` at runtime; maintainers regenerate schemas/templates before packaging the skill bank.
 
 ## Train Action Policy
 
 This model is AutoML-enabled at the model layer. Before handling any train-stage request, read `references/skill_info.yaml` and resolve the run override from either an explicit `automl_policy` value or the user's workflow request. Use `automl_policy: on` by default and only expose `on` / `off` in new launch prompts. Treat phrases like "turn off AutoML", "disable AutoML", "no HPO", or "plain training" as `automl_policy: off` for this run only. When `automl_policy: on`, `automl_enabled: true`, and both `schemas/train.schema.json` and `references/spec_template_train.yaml` are packaged, route the train action through `tao-skill-bank:tao-run-automl` by default with this model's `skill_dir`. Preserve workflow/application overrides for datasets, specs, output directories, GPU/platform settings, parent checkpoints, and `automl_policy`. Use direct model training only when `automl_policy: off` or the packaged train schema/template is missing; in the missing-schema case, report that AutoML is enabled but not runnable for this model until schemas are generated.
 
-Non-train actions such as `evaluate`, `inference`, and `quantize` stay in this model skill. The per-run `automl_policy` override does not change model metadata.
+For non-train actions, run this model skill directly unless the user explicitly asks to optimize that action or sets `automl_policy: on`. When an action schema/template is packaged, route that optimization through `tao-skill-bank:tao-run-automl` with `action=<selected-action>`. The Cosmos `evaluate` action has default AutoML search parameters for zero-shot prompt/config tuning: `dataset.system_prompt`, `vision.nframes`, and generation controls. The per-run `automl_policy` override does not change model metadata.
 
 ## Credentials
 
@@ -287,7 +287,8 @@ consistently to train (`policy.model_name_or_path`) and post-training evaluation
 selection, the `eval_fn` per-recommendation evaluate flow, the knob mapping
 (learning rate, batch size, epochs, weight decay, warmup ratio), example
 `custom_param_ranges`, `train_sample_count` batch-size capping,
-`ordered_int` requirements, and the pre-launch recommendation summary.
+`ordered_int` requirements, zero-shot evaluate AutoML prompt/config search,
+and the pre-launch recommendation summary.
 
 ## Parameters, Hardware, Errors, DEFT, Inference
 
