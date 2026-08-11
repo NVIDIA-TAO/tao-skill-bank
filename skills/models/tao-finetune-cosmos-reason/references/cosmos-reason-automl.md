@@ -40,6 +40,13 @@ summarization/answering prompts when the user asks for semantic text quality.
 Use `val/avg_loss` only when the user accepts a proxy metric or no task metric
 is available.
 
+`val/avg_loss` is a training-only metric; the `evaluate` action does not emit
+it. The mandatory AutoML baseline, per-recommendation evaluation, and final
+evaluation must therefore use one consistent evaluator task metric through
+`eval_fn` and `final_eval_fn`. If the user explicitly chooses training loss as
+a proxy, obtain approval to skip the evaluation-backed baseline comparison and
+state that limitation in the report.
+
 Before launching AutoML for an accuracy objective, run the model's evaluate
 action once after preflight and before recommendation jobs on the same
 validation subset. Use the selected base model or starting checkpoint,
@@ -219,6 +226,16 @@ evaluator materializes processed video inputs before inference; split a large
 corpus into complete, video-disjoint execution shards when one monolithic action
 would exhaust host memory, then reject missing or duplicate prediction IDs
 before computing the aggregate metric.
+With the TAO 7.0.1 Cosmos-RL image, every evaluation annotation record must
+contain `video_fps`, even when `vision.nframes` is configured. Validate that
+field and confirm that each record's `video` path resolves beneath
+`dataset.media_dir` before launching the baseline. Do not invent frame rates or
+patch source annotations unless the user explicitly requests dataset repair.
+With the TAO 7.0.1 Cosmos-RL image, every evaluation annotation record must
+contain `video_fps`, even when `vision.nframes` is configured. Validate that
+field and confirm that each record's `video` path resolves beneath
+`dataset.media_dir` before launching the baseline. Do not invent frame rates or
+patch source annotations unless the user explicitly requests dataset repair.
 
 For the evaluator prompt "search over learning rate, batch size, number of
 epochs, weight decay, warmup ratio", map the requested knobs to:

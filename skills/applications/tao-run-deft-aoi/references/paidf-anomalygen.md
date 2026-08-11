@@ -255,6 +255,23 @@ fi
 
 Users who want to override pre-stage the dir before the loop starts.
 
+## Flat HF checkpoint layout — build a `checkpoint_view`
+
+`run_sdg.sh` resolves the model file as
+`<checkpoint_dir>/checkpoints/model/iter_<STEP>.pt`, but the HuggingFace
+checkpoint downloads land **flat** (`<dir>/iter_<STEP>.pt` + `ag_config.yaml`).
+Passing the flat directory fails with
+`FileNotFoundError: .../checkpoints/model/iter_000014000.pt`. Build a symlink
+adapter once per iteration output dir and pass it as `--checkpoint_dir`:
+
+```bash
+CV=${RUN_DIR}/checkpoint_view
+mkdir -p $CV/checkpoints/model
+ln -sf $CKPT_DIR/iter_000014000.pt $CV/checkpoints/model/iter_000014000.pt
+ln -sf $CKPT_DIR/ag_config.yaml   $CV/ag_config.yaml
+echo "iter_000014000.pt" > $CV/checkpoints/latest_checkpoint.txt
+```
+
 ## Per-iteration invocation (every loop iteration)
 
 After bootstrap, the per-iteration AnomalyGen stage is two `docker run`

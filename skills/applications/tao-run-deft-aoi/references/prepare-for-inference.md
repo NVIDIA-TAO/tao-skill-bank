@@ -36,6 +36,9 @@ commit if either is absent. Never hand-edit either file.
   },
   "iteration":      "iter1",
   "backbone":       "/abs/path/to/c_radio_v2_b.ckpt",
+  "backbone_container_path": "/data/pretrained_models/c_radio_v2_b.ckpt",
+  "backbone_type":  "c_radio_v2_vit_base_patch16_224",
+  "backbone_frozen": false,
   "images_dir":     "/abs/path/to/workspace/images",
   "training_spec":  "/abs/path/to/baseline_spec.yaml"
 }
@@ -49,6 +52,9 @@ commit if either is absent. Never hand-edit either file.
 | `metric_result` | Best measured value, recomputed pass state, evidence, constraints, and optional diagnostics |
 | `iteration` | Which iteration won (`baseline`, `iter1`, …) |
 | `backbone` | Absolute path to the backbone `.ckpt` (mount this into the container) |
+| `backbone_container_path` | Exact container destination matching the generated inference spec |
+| `backbone_type` | Visual ChangeNet backbone type used by training |
+| `backbone_frozen` | Whether the backbone was frozen during task-level training |
 | `images_dir` | Path the model was evaluated against. Useful default for re-running on KPI data. |
 | `training_spec` | Path to the training YAML used. Read this if you need fields the JSON doesn't expose. |
 
@@ -85,12 +91,16 @@ cp ${RESULTS_DIR}/best_model_inference_spec.yaml /tmp/my_inference.yaml
 TAO_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
 
 # 4. Run inference. Mount paths from best_model.json into the container.
+HANDOFF="${RESULTS_DIR}/best_model.json"
+BACKBONE=$(jq -er '.backbone | strings | select(length > 0)' "$HANDOFF")
+BACKBONE_CONTAINER_PATH=$(jq -er '.backbone_container_path | strings | select(startswith("/"))' "$HANDOFF")
+
 docker run --pull=never --rm --gpus all --shm-size=8g \
     --user "$(id -u):$(id -g)" \
     -v <your_csv_dir>:/data/infer \
-    -v $(jq -r .images_dir ${RESULTS_DIR}/best_model.json):/data/images \
-    -v $(jq -r .checkpoint ${RESULTS_DIR}/best_model.json):/model/best.pth \
-    -v $(jq -r .backbone ${RESULTS_DIR}/best_model.json):/data/pretrained_models/C-RADIOv2_B.pth \
+    -v "$(jq -er .images_dir "$HANDOFF"):/data/images:ro" \
+    -v "$(jq -er .checkpoint "$HANDOFF"):/model/best.pth:ro" \
+    -v "${BACKBONE}:${BACKBONE_CONTAINER_PATH}:ro" \
     -v /tmp/my_inference.yaml:/specs/inference.yaml \
     -v <output_dir>:/results \
     "$TAO_PYT_IMAGE" \

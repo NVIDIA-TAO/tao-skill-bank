@@ -20,13 +20,17 @@ Read `IMAGES_DIR` from `deft_state.json::config.images_dir`; for a new
 workspace it is `<workspace>/images` (legacy `<workspace>/kpi/images` is only a
 Pre-Flight fallback).
 
+`STAGED` is the host file returned by `stage_backbone.py`.
+`BACKBONE_CONTAINER_PATH` is the matching container path written into the
+training spec. Use this resolved pair for every train, evaluate, and inference launch.
+
 ```
 -v <workspace>:/data/workspace                                  # combined iter CSVs + staged images
 -v ${RESULTS_DIR}:/results                                      # canonical run root; never /results/iterN
 -v ${IMAGES_DIR}:/data/datasets/NV_PCB_Siamese/images            # canonical real-image root from state
 -v <workspace>/train/base:/data/datasets/NV_PCB_Siamese/csv      # training_set.csv, validation_set.csv
 -v <workspace>/kpi:/data/datasets/NV_PCB_Siamese/kpi             # testing_set.csv
--v <workspace>/augmentation/backbone/c_radio_v2_b.safetensors:/data/pretrained_models/C-RADIOv2_B.safetensors  # C-RADIO backbone file
+-v "${STAGED}:${BACKBONE_CONTAINER_PATH}:ro"                    # selected backbone file
 ```
 
 ## Spec Key Paths (container-side)
@@ -198,7 +202,9 @@ Pre-Flight **must stage the backbone locally** before launch. The HuggingFace re
 
 ```bash
 STAGED=$(<skill_root>/scripts/deft_python.sh <skill_root>/scripts/stage_backbone.py --workspace <workspace>)
-# STAGED -> <workspace>/augmentation/backbone/c_radio_v2_b.safetensors
+BACKBONE_CONTAINER_PATH="/data/pretrained_models/$(basename "$STAGED")"
+# Rewrite model.backbone.pretrained_backbone_path in the baseline and derived
+# specs to exactly ${BACKBONE_CONTAINER_PATH}.
 ```
 
 Equivalent manual recipe (only if running the script is not possible):
@@ -214,18 +220,19 @@ shutil.copy(src, dst)
 PY
 ```
 
-Then mount as a single file in the train docker invocation:
+Then mount that exact host/container pair in every train, evaluate, and inference
+Docker invocation:
 
 ```bash
--v <workspace>/augmentation/backbone/c_radio_v2_b.safetensors:/data/pretrained_models/C-RADIOv2_B.safetensors
+-v "${STAGED}:${BACKBONE_CONTAINER_PATH}:ro"
 ```
 
-And set the spec field to the container-side path:
+Set the spec field to the same container-side path:
 
 ```yaml
 model:
   backbone:
-    pretrained_backbone_path: /data/pretrained_models/C-RADIOv2_B.safetensors
+    pretrained_backbone_path: /data/pretrained_models/<staged-backbone-filename>
 ```
 
 If `HF_TOKEN` is unset or the workspace already has a staged file, Pre-Flight uses the staged file as-is and skips the download. If neither is available, Pre-Flight **hard stops** — there is no working URL fallback in this TAO version, so silently falling through would just produce the FileNotFoundError above after the container starts.
