@@ -29,6 +29,7 @@
         "./skills/data/tao-mine-nearest-neighbors",
         "./skills/data/tao-mine-aoi-images",
         "./skills/data/tao-analyze-gaps-visual-changenet",
+        "./skills/data/tao-analyze-gaps-od-map",
         "./skills/data/tao-route-visual-changenet-samples",
         "./skills/data/paidf-cosmos-predict",
         "./skills/data/tao-generate-video-reasoning-annotations",
@@ -80,8 +81,7 @@
         "./skills/data/tao-analyze-gaps-vlm-bcq",
         "./skills/data/tao-generate-image-grounding",
         "./skills/data/tao-generate-referring-expressions",
-        "./skills/data/tao-mine-od-images",
-        "./skills/data/tao-analyze-gaps-od-map"
+        "./skills/data/tao-mine-od-images"
       ]
     },
     {
