@@ -117,3 +117,35 @@ They may still be compressible, but they are in the right layer.
 Pasteable PR feedback
 The reference documentation currently mixes workflow orchestration with extensive TAO product troubleshooting. For example, grounding-dino.md contains detailed class_embed_bias/log_scale diagnosis, tensor inspection, and a pgrep postmortem; prep-source-pool.md contains Co-DETR entrypoint, architecture-loading, NMS, and annotation-converter internals; and the KPI/gap/mining overlays document leaf-command quirks and even future TAO DS design proposals.
 This material is useful, but it should live in the corresponding leaf skills or dedicated troubleshooting references. The DEFT workflow should primarily define stage inputs, outputs, transitions, fixed configuration, validation gates, and stop conditions, linking to leaf documentation for command-specific diagnosis. Moving ownership downward would materially shorten this skill and prevent TAO behavior from being documented independently in both the workflow and leaf skills.
+
+
+
+-- bugs 2
+
+Fresh source-pool prep is ordered incorrectly. Step 1 consumes codetr_category_mapping.yaml, explicitly described as Step 2’s output, but Step 2 creates it later. A clean run cannot follow the documented order. Step 1, premature consumption, actual creation.
+
+Neither documented training command works as written. The primary recipe omits required checkpoint and validation arguments. The other recipe includes them but points at iterN/staged/..., while staging writes iterN/tmm/.... Primary recipe, actual CLI contract, wrong paths.
+
+The new mining-budget command is invalid shell. A missing \ after --report-json makes --pool-size execute as a separate command. Broken block.
+
+A false pool-exhaustion assertion can mark a zero-iteration run complete. I reproduced this after baseline with max_iterations=3:
+--iter-label baseline --stage loop_stop
+--pool-exhausted --pool-remaining 999999
+audit_deft_run.py --require-complete succeeded with 0/3 iterations. loop_stop bypasses normal transition validation, and the audit trusts the boolean without evidence. Commit handling, audit completion.
+
+An accepted stage can be rolled back on the next resume. State and log become durable and pass audit before the recovery journal is cleared. A crash in that window leaves audit saying “run the next stage”; the following commit sees the journal and restores the pre-commit snapshot. I reproduced this with an embed commit. Commit window, unconditional rollback.
+
+Evaluation leakage remains unprotected. The skill explicitly assumes the mining pool and KPI set are disjoint, although overlap moves evaluation images into training and makes every mAP optimistic. Additionally, training validation is sampled from the mining pool and those images are never added to mining exclusions. KPI leakage assumption, validation sampling.
+
+KPI failures can appear successful. Docker is piped to tee without pipefail or checking PIPESTATUS, so TAO can exit nonzero while the command returns success. Separately, map_value is optional, so the audit can declare a run complete without any aggregate mAP. KPI invocation, optional mAP.
+
+The advertised staging hard-stop is not enforced. --min-success-rate defaults to 0.0; one annotated image out of thousands succeeds. Missing annotations become “harmless” orphan images, and the entire mined batch can then be added to the exclusion set. Staging gate, orphans accepted.
+
+Retries accept stale output as fresh success. await_stage.py accepts any existing nonempty checkpoint or any historical “finished successfully” status line. A restarted failed training job can therefore immediately reuse the old artifact. Await logic.
+
+
+The documented KPI mapping example uses - car: car, the exact scalar form the bundled validator says silently produces zero metrics. The validator is never actually invoked. Example, validator warning.
+JSONL artifact validation stops after the first valid record, so valid line 1 plus corrupted remainder passes. Short-circuit.
+Selected platform is effectively ignored: the workflow asks for Docker/SLURM/Kubernetes/Brev, but its executable references hardcode Docker and do not use the bank’s submit/status/logs/cancel job contract.
+Four named leaf-skill dependencies are absent from this checkout, leaving the Docker-only fallback as the practical execution path.
+Preflight downloads a 1.93-GB checkpoint before the workflow’s own approval gate.

@@ -62,10 +62,10 @@ The output feeds the *next* iteration's miner as `exclude_path`, so the loop nev
   --weak-parquet "${RESULTS_DIR}/iter1/gaps/weak_images.parquet" \
   --multiplier "<multiplier>" \
   --max-count "<source pool row count>" \
+  --pool-size "<source pool row count>" \
+  --already-mined "<rows in the cumulative exclude parquet, 0 on iteration 1>" \
+  --remaining-iterations "<iterations still to run, including this one>" \
   --report-json "${RESULTS_DIR}/iter${N}/mining/budget.json"
-  --pool-size <source pool row count> \
-  --already-mined <rows in the cumulative exclude parquet, 0 on iteration 1> \
-  --remaining-iterations <iterations still to run, including this one> \
 ```
 
 `--pool-size`, `--already-mined` and `--remaining-iterations` make the budget a

@@ -268,6 +268,10 @@ def _pool_exhausted(iterations: dict[str, Any]) -> str | None:
     non-zero, since too few images is exhaustion just as much as none.
     """
     for phase in sorted(iterations, key=_phase_sort_key):
+        # Only an iteration can run out of pool: baseline never mines, so a claim
+        # recorded there is not evidence of anything.
+        if iter_number(phase) is None:
+            continue
         info = iterations.get(phase)
         if not isinstance(info, dict):
             continue
@@ -730,7 +734,10 @@ def audit(results_dir: Path) -> dict[str, Any]:
             completion_reason = (
                 f"documented early stop: {early}/gap_analysis recorded zero weak images"
             )
-        elif exhausted is not None:
+        elif exhausted is not None and iterations_completed >= 1:
+            # A spent pool ends a loop that produced something. With no iteration
+            # finished there is no trend, and the claim is unfalsifiable — it would
+            # let any abandoned run be relabelled as a documented stop.
             complete = True
             completion_reason = (
                 f"documented early stop: the source pool was exhausted at {exhausted} "
@@ -741,8 +748,8 @@ def audit(results_dir: Path) -> dict[str, Any]:
             completion_reason = (
                 f"only {iterations_completed} of {max_iterations} iterations finished "
                 f"{ITER_ORDER[-1]}, and the loop was stopped by neither documented early "
-                f"stop (zero weak images, or an exhausted source pool recorded with "
-                f"--pool-exhausted)"
+                f"stop (zero weak images, or a source pool exhausted after at least one "
+                f"completed iteration)"
             )
     if status == "INVALID":
         complete = False

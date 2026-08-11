@@ -2197,6 +2197,49 @@ case "$RUN_OUT" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G23 — a pool-exhaustion claim needs evidence behind it
+#
+# The flag asserts a terminal state, so on its own it would let any abandoned run
+# be relabelled complete. Only an iteration mines, and only a loop that finished
+# one has a trend to report.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G23 false pool-exhaustion claims"
+
+G23=$(new_workspace g23); make_pool "$G23"
+G23_RUN="$G23/results/run_g23"
+init_run "$G23" "$G23_RUN" 3
+make_phase_artifacts "$G23_RUN" baseline
+commit "$G23_RUN" baseline inference \
+  --inference-labels-dir "$G23_RUN/baseline/inference/labels" --summary s --duration-sec 1
+commit "$G23_RUN" baseline kpi_analyze \
+  --kpi-csv "$G23_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.4 --summary s --duration-sec 1
+assert_rc 0 "[G23] baseline committed"
+
+commit "$G23_RUN" baseline loop_stop --pool-exhausted --pool-remaining 999999 \
+  --summary "false claim" --duration-sec 1
+assert_rc 1 "[G23] exhaustion cannot be claimed on baseline, which never mines"
+case "$RUN_OUT" in
+  *"only an iteration mines"*) ok "[G23] the refusal says why baseline cannot claim it" ;;
+  *) notok "[G23] the refusal says why baseline cannot claim it" "output: $RUN_OUT" ;;
+esac
+
+# Claimed on iteration 1 before any iteration finished: still not a completed run.
+make_iter_artifacts "$G23_RUN" iter1
+commit "$G23_RUN" iter1 gap_analysis \
+  --weak-images "$G23_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G23_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 50 --summary s --duration-sec 1
+commit "$G23_RUN" iter1 loop_stop --pool-exhausted --pool-remaining 0 \
+  --summary "stopped at iter1" --duration-sec 1
+assert_rc 0 "[G23] the claim is recordable on an iteration"
+run "$PY" "$AUDIT" --results-dir "$G23_RUN" --require-complete
+assert_rc 1 "[G23] but 0 completed iterations is not a complete run"
+case "$RUN_OUT" in
+  *"at least one completed iteration"*) ok "[G23] the reason states the evidence required" ;;
+  *) notok "[G23] the reason states the evidence required" "output: $RUN_OUT" ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then

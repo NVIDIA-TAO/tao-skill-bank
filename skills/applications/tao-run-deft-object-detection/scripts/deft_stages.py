@@ -195,9 +195,16 @@ def check_artifact(path: str, kind: str) -> str | None:
             with p.open("r", encoding="utf-8") as fh:
                 json.load(fh)
         elif suffix == ".jsonl":
+            # Every line, not just the first: `any()` over a truthy expression stops
+            # at record one and a file whose remainder is corrupt reads as valid.
+            records = 0
             with p.open("r", encoding="utf-8") as fh:
-                if not any(json.loads(line) or True for line in fh if line.strip()):
-                    return f"no records in {path}"
+                for line in fh:
+                    if line.strip():
+                        json.loads(line)
+                        records += 1
+            if not records:
+                return f"no records in {path}"
         elif suffix == ".csv":
             with p.open("r", encoding="utf-8") as fh:
                 rows = [line for line in fh if line.strip()]

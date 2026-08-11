@@ -734,6 +734,11 @@ def main() -> int:
                         f"{flag} belongs to loop_stop, not {stage!r}; it records why the "
                         f"loop stopped, not the outcome of a stage"
                     )
+                if given and phase in ("prep", "baseline"):
+                    raise ValueError(
+                        f"{flag} on {phase!r}: only an iteration mines, so neither "
+                        f"phase can exhaust the pool"
+                    )
             if args.pool_remaining is not None:
                 if args.pool_remaining < 0:
                     raise ValueError(
