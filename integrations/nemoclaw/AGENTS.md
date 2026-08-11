@@ -104,11 +104,31 @@ Data and results live on the **host** — never look under `/sandbox` for datase
 
 - `tao_exec` sees the whole workspace at `/workspace`. This is the `<workspace>`
   every skill reference means: `train/`, `kpi/`, `results/` sit directly under it.
-- `tao_run` sees `<data_subdir>` at `/data` and its own isolated results tree at
-  `/results`, and **nothing else**. Write spec paths as `/data/...` and
-  `/results/...`, never `/workspace/...` and never a host path — a `/workspace`
-  path staged by `tao_exec` does not exist inside a GPU job.
+- `tao_run` mounts `<data_subdir>` at `/data` and its own isolated results tree
+  at `/results`. Write spec paths as `/data/...` and `/results/...` — never
+  `/workspace/...` and never a host path, because a `/workspace` path staged by
+  `tao_exec` does not exist inside a GPU job.
 - `tao_run` returns that job's exact `results_subdir`; use the returned path.
+
+Those two mounts are the **defaults, not the limit**. An image with a baked-in
+path contract gets what it needs through `mounts`, plus `workdir` and `env`:
+
+```
+tao_run(
+  image="nvcr.io/nvidia/paidf-anomalygen:1.0.1",
+  command=[...],
+  mounts=[{"subdir": "augmentation/anomalygen/base_checkpoints",
+           "target": "/workspace/paidf-anomalygen/checkpoints", "ro": true}],
+  workdir="/workspace/paidf-anomalygen",
+  env={"PYTHONPATH": "/workspace/paidf-anomalygen"})
+```
+
+Prefer a mount to copying: no duplication, no staleness, and `ro` keeps the job
+from corrupting a staged input. Mount at the **subpath** the image expects —
+never over a directory the image populates itself, or you hide the code the job
+is supposed to run. Only materialise files when you must reshape a directory the
+image cannot be pointed at, and build it under `/results`, which is already
+mounted.
 
 Workflow state is not at `<workspace>/results/<name>.json`. Timestamped workflows
 write under a per-run directory — DEFT AOI's is `results/run_<TS>/deft_state.json`.
