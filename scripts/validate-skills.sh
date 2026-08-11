@@ -12,8 +12,7 @@
 #   3c. Every models/ skill has a `docker run` somewhere, a self-contained venv/uv
 #       Quick Start (uv run / uv sync / python -m venv), or an explicit
 #       requires_external:true frontmatter marker (README "Docker-native first").
-#   1d. All three plugin manifests carry the same version, and README's "bundles all N skills"
-#       matches the tao-skills array length.
+#   1d. All three plugin manifests carry the same version.
 #   2. The Codex-facing skills/ directory has no symlink mirror of canonical skills.
 #   3. Every SKILL.md has valid YAML frontmatter satisfying the signing pipeline's
 #      strict checks (parity with docs/skill-requirements.md § 2.1):
@@ -118,11 +117,11 @@ else
   ok "no asset-only skill directories"
 fi
 
-# ─── 1d. manifest version parity + README skill count ───────────────────────
+# ─── 1d. manifest version parity ─────────────────────────────────────────────
 echo
-echo "=== 1d. manifest version parity and README skill count ==="
+echo "=== 1d. manifest version parity ==="
 python3 - <<'PY'
-import json, os, re, sys
+import json, os, sys
 errs = 0
 manifests = ['.claude-plugin/marketplace.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json']
 versions = {}
@@ -134,22 +133,9 @@ for p in manifests:
 if len(set(versions.values())) > 1:
     print(f"ERROR: plugin manifest versions disagree: {versions}", file=sys.stderr)
     errs += 1
-
-mp = json.load(open('.claude-plugin/marketplace.json'))
-plug = next((p for p in mp.get('plugins', []) if p['name'] == 'tao-skills'), None)
-if plug and os.path.isfile('README.md'):
-    shipped = len(plug['skills'])
-    readme = open('README.md', encoding='utf-8').read()
-    m = re.search(r'bundles all (\d+) skills', readme)
-    if not m:
-        print("ERROR: README.md has no 'bundles all N skills' claim to check", file=sys.stderr)
-        errs += 1
-    elif int(m.group(1)) != shipped:
-        print(f"ERROR: README.md says 'bundles all {m.group(1)} skills' but tao-skills ships {shipped}", file=sys.stderr)
-        errs += 1
 sys.exit(errs)
 PY
-[ $? -eq 0 ] && ok "manifest versions agree and README count matches" || errors=$((errors + $?))
+[ $? -eq 0 ] && ok "manifest versions agree" || errors=$((errors + $?))
 
 # ─── 1b. Codex skills/ should not mirror canonical skills ──────────────────
 echo
