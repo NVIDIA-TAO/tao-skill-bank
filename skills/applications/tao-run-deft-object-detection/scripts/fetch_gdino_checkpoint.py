@@ -115,6 +115,10 @@ def parse_args() -> argparse.Namespace:
                         help=f"NGC model version. Default {DEFAULT_VERSION}. Use a "
                              "`trainable` release — `deployable` is TensorRT-only and "
                              "cannot be fine-tuned.")
+    parser.add_argument("--plan", action="store_true",
+                        help="Print the path the checkpoint would occupy and exit, "
+                             "downloading nothing. For Pre-Flight, which reports what a run "
+                             "will do before the user has approved it.")
     parser.add_argument("--force", action="store_true",
                         help="Re-download even when a checkpoint is already present.")
     return parser.parse_args()
@@ -125,8 +129,23 @@ def main() -> int:
         args = parse_args()
         dest = Path(args.dest).expanduser().resolve()
 
+        existing = find_checkpoint(dest) if dest.is_dir() else None
+
+        if args.plan:
+            # Pre-Flight runs before the user has approved anything, so it reports
+            # what the run will do rather than doing it.
+            if existing is not None:
+                print(f"already present: {existing} "
+                      f"({existing.stat().st_size / 1e9:.2f} GB); no download needed",
+                      file=sys.stderr)
+                print(existing)
+            else:
+                print(f"WILL DOWNLOAD after approval: {args.version} (~1.93 GB) -> {dest}",
+                      file=sys.stderr)
+                print(dest)
+            return 0
+
         if not args.force:
-            existing = find_checkpoint(dest) if dest.is_dir() else None
             if existing is not None:
                 verify(existing)
                 print(f"reusing {existing} ({existing.stat().st_size / 1e9:.2f} GB)",

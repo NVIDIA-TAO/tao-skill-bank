@@ -2122,6 +2122,49 @@ run "$PY" "$VCC" --captions '["bicycle","car","person"]'
 assert_rc 1 "[G20] a single source is not a comparison"
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G21 — inputs outside the workspace need their own mounts, derived not guessed
+#
+# Containers see only "$WORKSPACE:$WORKSPACE". KPI data and checkpoints commonly
+# live elsewhere, and a warning that names the problem without naming the mounts
+# leaves every stage to work it out.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G21 container mounts"
+
+G21_WS=$(new_workspace g21); make_pool "$G21_WS"
+G21_OUT="$WORK/g21_outside"
+make_file "$G21_OUT/kpi/images/000001.png" "png"
+make_file "$G21_OUT/kpi/labels/000001.txt" "car 0.0 0 0.0 10 10 100 100 0 0 0 0 0 0 0"
+G21_RUN="$G21_WS/results/run_g21"
+
+run "$PY" "$INIT" \
+  --results-dir "$G21_RUN" --workspace "$G21_WS" --max-iterations 1 \
+  --num-epochs 1 --learning-rate 0.0001 \
+  --zero-shot-checkpoint "$G21_WS/ckpt/gdino_zero_shot.pth" \
+  --train-spec-template "$G21_WS/specs/train_grounding_dino.yaml" \
+  --source-pool-embeddings "$G21_WS/source_pool/source_embeddings.parquet" \
+  --source-pool-annotations "$G21_WS/source_pool/odvg" \
+  --embedding-model-path "$G21_WS/encoder/siglip" \
+  --kpi-images-dir "$G21_OUT/kpi/images" \
+  --ground-truth-labels-dir "$G21_OUT/kpi/labels" \
+  --class-mapping "$G21_WS/classes/classes_its.yaml" \
+  --ap50-thresholds-json '{"car": 0.9}'
+assert_rc 0 "[G21] inputs outside the workspace still initialize"
+case "$RUN_OUT" in
+  *'-v "'*) ok "[G21] the warning gives the -v arguments to add" ;;
+  *) notok "[G21] the warning gives the -v arguments to add" "output: $RUN_OUT" ;;
+esac
+assert_eq 1 "$("$PY" -c 'import json,sys
+mounts = json.load(open(sys.argv[1]))["config"]["extra_container_mounts"]
+print(1 if any(sys.argv[2] in m for m in mounts) else 0)' "$G21_RUN/deft_state.json" "$G21_OUT")" \
+  "[G21] the outside path is recorded in state as a mount"
+
+# Everything inside the workspace needs no extra mount at all.
+G21B=$(new_workspace g21b); make_pool "$G21B"
+init_run "$G21B" "$G21B/results/run_g21b" 1
+assert_eq '[]' "$(state_json "$G21B/results/run_g21b" extra_container_mounts)" \
+  "[G21] a fully self-contained run records no extra mounts"
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then

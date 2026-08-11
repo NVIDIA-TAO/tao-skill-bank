@@ -84,10 +84,17 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    **The user's own path always wins.** When they did not give one, fetch the published
    checkpoint rather than asking:
 
+   Pre-Flight resolves the path only. `--plan` reports whether the checkpoint is
+   already present or would be downloaded, and writes nothing — the download is a
+   side effect and belongs after the gate, with the container pulls:
+
    ```bash
    ZERO_SHOT_CHECKPOINT=$(<skill_root>/scripts/deft_python.sh \
-     <skill_root>/scripts/fetch_gdino_checkpoint.py --dest "$WORKSPACE/checkpoints/gdino")
+     <skill_root>/scripts/fetch_gdino_checkpoint.py --plan \
+     --dest "$WORKSPACE/checkpoints/gdino")
    ```
+
+   After approval, run the same command without `--plan` to perform the download.
 
    That resolves `nvidia/tao/grounding_dino:grounding_dino_swin_tiny_commercial_trainable_v1.1`
    (1.93 GB, ~20s) and prints the checkpoint path on stdout. It is idempotent — an existing
@@ -209,6 +216,14 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 - `iou_threshold` — `0.5`
 - `kpi.conf_threshold` — `0.3`
 - workspace root — user prompt, else `~/workspace`
+
+## Container mounts
+
+`init_deft_state.py` records `config.extra_container_mounts`: the directories that
+inputs live in outside `$WORKSPACE`. Containers see only `"$WORKSPACE:$WORKSPACE"`,
+so **every** `docker run` in this skill must add a `-v "$m:$m"` for each entry, in
+addition to the workspace mount. KPI images, ground truth and checkpoints commonly
+sit outside the workspace, and a container cannot read what is not mounted.
 
 ## Pre-Flight Summary
 

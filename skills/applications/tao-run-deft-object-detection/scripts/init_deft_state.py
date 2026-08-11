@@ -499,11 +499,21 @@ def main() -> int:
         # embedding_model_path is exempt: HF_HOME legitimately lives outside the workspace.
         mounted = [results_dir, zero_shot_checkpoint, train_spec_template, source_pool_embeddings,
                    source_pool_annotations, kpi_images_dir, ground_truth_labels_dir, class_mapping]
-        outside = [str(p) for p in mounted if not p.is_relative_to(workspace)]
-        if outside:
+        # Anything outside the workspace needs its own -v or the container cannot read
+        # it. Deriving the mounts here means the stages get a list to use rather than a
+        # warning to act on, which is what left earlier runs to work it out mid-flight.
+        outside = [p for p in mounted if not p.is_relative_to(workspace)]
+        extra_mounts: list[str] = []
+        for path in outside:
+            anchor = path if path.is_dir() else path.parent
+            if not any(anchor.is_relative_to(Path(m)) for m in extra_mounts):
+                extra_mounts = [m for m in extra_mounts if not Path(m).is_relative_to(anchor)]
+                extra_mounts.append(str(anchor))
+        extra_mounts.sort()
+        if extra_mounts:
             warnings.append(
-                "path(s) outside --workspace will not be visible inside the containers "
-                f"(only {workspace} is mounted): {outside}")
+                "path(s) outside --workspace need their own mount; every container launch "
+                "must add: " + " ".join(f'-v "{m}:{m}"' for m in extra_mounts))
         if not any(p.suffix.lower() == ".txt" for p in ground_truth_labels_dir.iterdir()):
             warnings.append(
                 f"--ground-truth-labels-dir has no .txt label files: {ground_truth_labels_dir}")
@@ -564,6 +574,7 @@ def main() -> int:
                 "multiplier": args.multiplier,
                 "allocation_policy": args.allocation_policy,
                 "target_classes": target_classes,
+                "extra_container_mounts": extra_mounts,
                 "rare_class_list": ",".join(rare_classes) if rare_classes else None,
                 "source_detection_file": resolved_detection["--source-detection-file"],
                 "target_detection_file": resolved_detection["--target-detection-file"],
