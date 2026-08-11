@@ -369,11 +369,36 @@ def _recover_journal(results_dir: Path) -> None:
             "interrupted commit, so move it aside only after comparing deft_state.json "
             "and loop_log.jsonl by hand"
         ) from exc
+    # The journal is written before the two renames and cleared after the audit
+    # accepts, so a crash in between leaves it describing a commit that already
+    # landed and is already durable. Rolling that back discards an accepted stage.
+    # Whether it landed is answerable from the log: the last event is this commit's.
+    phase, stage = payload.get("phase"), payload.get("stage")
+    landed = False
+    try:
+        events = [json.loads(line) for line in
+                  log_path(results_dir).read_text(encoding="utf-8").splitlines() if line.strip()]
+        if events:
+            last = events[-1]
+            landed = last.get("iter") == phase and last.get("stage") == stage
+    except (OSError, ValueError):
+        landed = False
+
+    if landed:
+        path.unlink(missing_ok=True)
+        _fsync_path(results_dir)
+        print(
+            f"an interrupted commit of {phase}/{stage} had already been written and is "
+            "recorded in loop_log.jsonl; cleared its journal rather than undoing it",
+            file=sys.stderr,
+        )
+        return
+
     _restore([(results_dir / name, text) for name, text in files.items()])
     path.unlink(missing_ok=True)
     _fsync_path(results_dir)
     print(
-        f"recovered an interrupted commit of {payload.get('phase')}/{payload.get('stage')}: "
+        f"recovered an interrupted commit of {phase}/{stage}: "
         "deft_state.json and loop_log.jsonl were restored to the state before it. That "
         "stage was NOT recorded — run it again",
         file=sys.stderr,

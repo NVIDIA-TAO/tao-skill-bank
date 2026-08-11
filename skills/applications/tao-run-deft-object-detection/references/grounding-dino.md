@@ -196,9 +196,9 @@ that cannot train, because each of these failed silently or expensively at least
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_spec_for_train.py \
   --previous-spec        "<template or assets/train_grounding_dino.yaml>" \
   --output-spec          "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
-  --tmm-image-dir        "${RESULTS_DIR}/iter${N}/staged/images" \
-  --tmm-odvg-file        "${RESULTS_DIR}/iter${N}/staged/annotations/tmm_odvg.jsonl" \
-  --tmm-label-map-file   "${RESULTS_DIR}/iter${N}/staged/annotations/labelmap.json" \
+  --tmm-image-dir        "${RESULTS_DIR}/iter${N}/tmm/images" \
+  --tmm-odvg-file        "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_odvg.jsonl" \
+  --tmm-label-map-file   "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json" \
   --val-image-dir        "<pool images>" \
   --val-json-file        "${RESULTS_DIR}/val_coco.json" \
   --pretrained-model-path "<config.zero_shot_checkpoint>" \
@@ -226,8 +226,17 @@ docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
 the waiting shell's own command line, so the wait never ends — that cost 10h11m on a run whose
 training had already finished correctly in 14m20s:
 
+Take a launch marker first, and pass it as `--newer-than`. Without it a retry of a
+failed job is satisfied instantly by the checkpoint and success line the previous
+attempt left behind:
+
 ```bash
+LAUNCH_MARKER="${RESULTS_DIR}/iter${N}/train/.launched"
+mkdir -p "$(dirname "$LAUNCH_MARKER")" && touch "$LAUNCH_MARKER"
+# ... launch training ...
+
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
+  --newer-than "$LAUNCH_MARKER" \
   --artifact "${RESULTS_DIR}/iter${N}/train/gdino_model_latest.pth" \
   --status-json "${RESULTS_DIR}/iter${N}/train/status.json" \
   --status-contains "finished successfully"

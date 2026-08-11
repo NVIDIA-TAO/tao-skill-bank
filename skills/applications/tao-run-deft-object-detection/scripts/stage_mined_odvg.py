@@ -211,7 +211,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-images-dir", required=True)
     parser.add_argument("--output-annotations-dir", required=True)
     parser.add_argument("--report-json", default=None, help="Where to write the staging report JSON.")
-    parser.add_argument("--min-success-rate", type=float, default=0.0,
+    parser.add_argument("--min-success-rate", type=float, default=0.9,
                         help="Fail when annotations_written/mined_unique falls below this (0.0-1.0).")
     return parser.parse_args()
 

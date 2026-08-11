@@ -11,7 +11,7 @@ The loop trains on your detection data. It cannot fabricate or download any of t
 | `specs/inference_gdino.yaml` | Inference spec template. Supplies `dataset.infer_data_sources` and `inference.conf_threshold`. |
 | `kpi/images/` | KPI evaluation images. Must not be referenced with a trailing slash — `kpi_analyze` derives its sequence name from the second-to-last path component. |
 | `kpi/labels/` | KPI ground truth, KITTI `.txt` per image. |
-| `kpi/mapping.yaml` | Class mapping for `kpi_analyze`: a YAML list of single-key dicts, e.g. `- car: car`. |
+| `kpi/mapping.yaml` | Class mapping for `kpi_analyze`: a YAML list of single-key dicts whose values are **lists**, e.g. `- car: [car, automobile]`. A bare string (`- car: car`) is iterated character by character, so nothing matches and every metric is zero while the run still exits 0. |
 | `source_pool/source_embeddings.parquet` | Pre-embedded candidate pool. Columns `filepath` + `embedding`. Must be non-empty. |
 | `source_pool/odvg/` | ODVG annotations for the pool: `*.jsonl` keyed by `file_name`, plus ideally `labelmap.json`. |
 | `kpi/coco.json` | COCO detections for the KPI set. Required only for `class_stratified` mining — this one you do supply, since it describes your evaluation set. |

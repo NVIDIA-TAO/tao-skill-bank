@@ -24,7 +24,7 @@ Two deliberate differences from the reference implementation:
 - **`tmm_odvg.jsonl` is truncated, not appended.** The reference opened it in append mode, so re-running an iteration silently doubled every annotation. Re-running this script is idempotent.
 - **Both `filepath` and `source_filepath` are accepted** as the mined-image column, because the miner generations disagree on the name.
 
-`--min-success-rate` (default `0.0`) hard-fails when the fraction of mined images that resolved to an annotation falls below the given ratio. The script always fails when *zero* annotations were staged, since training would then have no new data.
+`--min-success-rate` (default `0.9`) hard-fails when the fraction of mined images that resolved to an annotation falls below the given ratio. A default of 0 would let one annotated image out of thousands pass while the rest stage as unlabelled orphans and the whole batch still enters the exclusion set — mined, excluded from future iterations, and never trained on. The script always fails when *zero* annotations were staged, since training would then have no new data.
 
 ## Step 2 — Validate the staged source
 

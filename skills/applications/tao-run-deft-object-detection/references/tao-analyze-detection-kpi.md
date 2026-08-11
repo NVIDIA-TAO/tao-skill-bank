@@ -90,6 +90,11 @@ docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
   -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   analytics kpi_analyze -e "$KPI_SPEC" 2>&1 | tee "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log"
+# mAP appears only on stdout, so the tee is required — but a pipeline reports the
+# exit status of `tee`, not of the container. Without one of these, a failed
+# kpi_analyze looks like a success:
+#   set -o pipefail   (before the pipeline), or
+#   [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "kpi_analyze failed"; exit 1; }
 ```
 
 Tee the log: the aggregate **mAP is printed to stdout only** and is not written into `kpi_calc.csv`. Parse it from the log line `mAP: <value>` and record it in state; otherwise the trend across iterations cannot be reported.

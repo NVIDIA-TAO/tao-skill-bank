@@ -12,6 +12,10 @@ Polls for whichever condition is given:
   line to ``status.json``; the stage is done when a line's ``message`` matches.
   Use this when the artifact path is not known up front.
 
+Pass ``--newer-than`` with a timestamp taken just before launching: without it a
+retry is satisfied by whatever the failed attempt left on disk, and a restarted job
+"finishes" instantly against a stale checkpoint or an old success line.
+
 Exits 0 when a condition is met, 2 on timeout, so a caller can distinguish
 "finished" from "still running".
 
@@ -28,8 +32,8 @@ import time
 from pathlib import Path
 
 
-def artifact_ready(path: Path) -> bool:
-    """True once the path exists and is non-empty.
+def artifact_ready(path: Path, newer_than: float | None = None) -> bool:
+    """True once the path exists, is non-empty, and is newer than ``newer_than``.
 
     ``exists()`` follows symlinks, so a checkpoint link pointing at a file that has
     not been written yet is correctly reported as not ready. Size is checked because
@@ -38,8 +42,15 @@ def artifact_ready(path: Path) -> bool:
     """
     try:
         if path.is_dir():
-            return any(path.iterdir())
-        return path.exists() and path.stat().st_size > 0
+            entries = list(path.iterdir())
+            if not entries:
+                return False
+            if newer_than is None:
+                return True
+            return any(e.stat().st_mtime > newer_than for e in entries)
+        if not (path.exists() and path.stat().st_size > 0):
+            return False
+        return newer_than is None or path.stat().st_mtime > newer_than
     except OSError:
         return False
 
@@ -85,6 +96,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-sec", type=int, default=14400,
                         help="Give up after this long. Default 4h.")
     parser.add_argument("--poll-sec", type=int, default=20)
+    parser.add_argument("--newer-than", default=None, metavar="PATH_OR_EPOCH",
+                        help="Only accept an artifact modified after this: a unix timestamp, "
+                             "or a file whose mtime is used. Take it immediately before "
+                             "launching the stage. Without it a retry of a failed job is "
+                             "satisfied by the artifact the previous attempt left behind.")
     return parser.parse_args()
 
 
@@ -102,13 +118,28 @@ def main() -> int:
             print("ERROR: --status-json and --status-contains go together.", file=sys.stderr)
             return 2
 
+        newer_than: float | None = None
+        if args.newer_than:
+            try:
+                newer_than = float(args.newer_than)
+            except ValueError:
+                marker = Path(args.newer_than).expanduser().resolve()
+                if not marker.exists():
+                    print(f"ERROR: --newer-than is neither a timestamp nor an existing path: "
+                          f"{args.newer_than}", file=sys.stderr)
+                    return 2
+                newer_than = marker.stat().st_mtime
+
         deadline = time.monotonic() + args.timeout_sec
         while True:
             for path in artifacts:
-                if artifact_ready(path):
+                if artifact_ready(path, newer_than):
                     print(f"ready: {path}")
                     return 0
-            if status is not None:
+            if status is not None and (
+                newer_than is None
+                or (status.exists() and status.stat().st_mtime > newer_than)
+            ):
                 message = status_matches(status, args.status_contains)
                 if message is not None:
                     print(f"ready: {status} -> {message}")

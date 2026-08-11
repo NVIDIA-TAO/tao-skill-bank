@@ -2240,6 +2240,40 @@ case "$RUN_OUT" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G24 — a run with no baseline mAP has produced no trend
+#
+# --map-value is optional, because a log printing "mAP: nan" has none to record.
+# Completion is not: the baseline mAP is what every iteration is compared against.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G24 completion needs a baseline mAP"
+
+G24=$(new_workspace g24); make_pool "$G24"
+G24_RUN="$G24/results/run_g24"
+init_run "$G24" "$G24_RUN" 1
+make_phase_artifacts "$G24_RUN" baseline
+commit "$G24_RUN" baseline inference \
+  --inference-labels-dir "$G24_RUN/baseline/inference/labels" --summary s --duration-sec 1
+commit "$G24_RUN" baseline kpi_analyze \
+  --kpi-csv "$G24_RUN/baseline/kpi/kpi_calc.csv" \
+  --summary "mAP: nan — no value to record" --duration-sec 1
+assert_rc 0 "[G24] kpi_analyze may commit without a map_value"
+
+make_iter_artifacts "$G24_RUN" iter1
+commit "$G24_RUN" iter1 gap_analysis \
+  --weak-images "$G24_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G24_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 0 --summary "no weak images" --duration-sec 1
+commit "$G24_RUN" iter1 loop_stop --summary "early stop" --duration-sec 1
+assert_rc 0 "[G24] the documented early stop is committed"
+
+run "$PY" "$AUDIT" --results-dir "$G24_RUN" --require-complete
+assert_rc 1 "[G24] but with no baseline mAP the run is not complete"
+case "$RUN_OUT" in
+  *"no baseline mAP"*) ok "[G24] the reason names the missing baseline mAP" ;;
+  *) notok "[G24] the reason names the missing baseline mAP" "output: $RUN_OUT" ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then

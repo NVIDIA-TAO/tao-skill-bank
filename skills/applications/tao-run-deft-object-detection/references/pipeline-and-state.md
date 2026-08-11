@@ -91,8 +91,17 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
      --num-epochs "<epochs>" --learning-rate "<lr>" \
      --tmm-image-dir "${RESULTS_DIR}/iter${N}/tmm/images" \
      --tmm-odvg-file "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_odvg.jsonl" \
-     --tmm-label-map-file "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json"
+     --tmm-label-map-file "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json" \
+     --val-image-dir "<pool images>" \
+     --val-json-file "${RESULTS_DIR}/val_coco.json" \
+     --pretrained-model-path "<config.zero_shot_checkpoint>"
    ```
+
+   `--pretrained-model-path` and the `--val-*` pair are not optional: without the
+   checkpoint, training starts from no pretrained weights, reports success, and emits a
+   model that detects nothing — visible only at KPI, a full training run later. The
+   validation COCO comes from `prepare_val_split_for_train.py` and must be 0-based. See
+   `references/grounding-dino.md`.
 
    This copies the previous spec and **appends** one `{image_dir, json_file, label_map}` entry to the `dataset.train_data_sources` list, then sets `train.num_epochs` and `train.optim.lr`. Growth is by list-append; earlier sources are never removed.
 

@@ -698,6 +698,17 @@ def audit(results_dir: Path) -> dict[str, Any]:
         completion_reason = "the run committed a status=error hard stop"
     elif run_status == "failed":
         completion_reason = "state.status is 'failed'"
+    elif (
+        completed_by_phase.get("baseline") == BASELINE_ORDER[-1]
+        and not isinstance((iterations.get("baseline") or {}).get("map_value"), (int, float))
+    ):
+        # --map-value is optional, because a log printing "mAP: nan" has none to
+        # record. But the baseline mAP is what every iteration is compared against,
+        # so a run without one has produced no trend and is not complete.
+        completion_reason = (
+            "baseline/kpi_analyze committed no map_value, so there is no baseline mAP to "
+            "compare iterations against"
+        )
     elif completed_by_phase.get("baseline") != BASELINE_ORDER[-1]:
         # The baseline mAP is the number every iteration is compared against.
         # Without it there is no trend, which is the only thing the loop produces.

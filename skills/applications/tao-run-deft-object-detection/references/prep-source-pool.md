@@ -43,7 +43,56 @@ by then the GPU time is already spent.
 
 A directory walk, so run it before the labelling pass rather than after.
 
-## Step 1 — Pseudo-label the pool with Co-DETR, folding as you go
+## Step 1 — Emit the two mappings
+
+TAO does the folding; this step only writes the files that tell it how.
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_class_mappings_for_mining_data_prep.py \
+  --classes "$CLASSES_YAML" \
+  --emit-codetr-category-mapping "${PREP_DIR}/codetr_category_mapping.yaml" \
+  --emit-kitti-mapping           "${PREP_DIR}/kitti_mapping.yaml" \
+  --emit-classmap                "${PREP_DIR}/classmap_target.txt"
+```
+
+Two accepted forms for `classes.yaml`. **Explicit folding** — several predicted classes collapse into one target:
+
+```yaml
+classes:
+  car:     [car, truck, bus]
+  person:  [person]
+  bicycle: [bicycle]
+```
+
+This is the shipped ITS default (`references/example_classes_its.yaml`): trucks and buses count as `car`, because the target vocabulary has no separate heavy-vehicle class and dropping them would discard real road users the model must detect.
+
+**Identity form** — when the target names already match the predicted names and you only want to drop the rest:
+
+```yaml
+classes: [car, person, bicycle]
+```
+
+**Confirm the fold rather than inventing one.** For a new dataset, whether two predicted classes belong together is a decision about what the metric should mean, so ask instead of guessing. Where a class sits ambiguously between targets — `motorcycle` is neither a car nor a bicycle — surface the choice, since folding it either way silently changes what the numbers report.
+
+### Class names are matched exactly, including case
+
+Both consumers do exact-string lookups — Co-DETR checks `orig_name not in name_to_id`, and `annotations convert` does `labels2cat.get(row_p[0])`. A source written `Car` against a detector that emits `car` matches nothing and every one of its boxes is dropped. Neither raises; Co-DETR logs a warning among many, and the converter says nothing at all.
+
+Copy source names verbatim from the detector's classmap. `validate_pool_coco.py` (step 4) names case-only mismatches explicitly, because this is the most likely way a fold goes wrong and the least visible.
+
+> **Improvement to make to `annotations convert`:** `construct_category_map` /
+> `labels2cat` in `kitti_to_coco.py` should match class names case-insensitively, or
+> at minimum warn when a label class differs from a mapping alias only by case. Today
+> the reference mapping works around it by hand-enumerating variants — `Bicycle`,
+> `bicycle`, `AutoMobile`, `Automobile` — which is fragile and silently incomplete for
+> any spelling nobody thought of. The same function is imported by
+> `analytics kpi_analyze`, so a fix there covers both.
+
+### Target names must be single tokens
+
+Targets become COCO categories, then ODVG labels, then the Grounding DINO caption list, and finally the class field of KITTI inference labels. KITTI is space-delimited, so a multi-word target makes those unparseable — the script rejects it. Source names may contain spaces; COCO has `traffic light`.
+
+## Step 2 — Pseudo-label the pool with Co-DETR, folding as you go
 
 Invoke `tao-skill-bank:tao-train-codetr` (read its `SKILL.md` first).
 
@@ -101,7 +150,7 @@ boxes** — the unloaded layers stay randomly initialised. `annotations convert`
 on an empty COCO and the first hard failure lands stages later.
 
 `assets/overlays/codetr_inference.yaml` pins the six fields the ViT-Large COCO-80 checkpoint
-needs, so the schema defaults never apply. Step 1's gate (`verify_pseudo_labels.py`) catches
+needs, so the schema defaults never apply. Step 2's gate (`verify_pseudo_labels.py`) catches
 it if they are wrong anyway.
 
 For a different checkpoint, derive the values from its tensors rather than guessing — see
@@ -114,7 +163,7 @@ For a different checkpoint, derive the values from its tensors rather than guess
 the Hydra command line — `dataset.infer_data_sources.image_dir=...` fails with
 `AssertionError: Unexpected type for root: NoneType` before the run starts. Set the
 whole mapping into the spec first, together with the workflow defaults and the
-`category_mapping` block emitted by step 2:
+`category_mapping` block emitted by step 1:
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
@@ -126,7 +175,7 @@ whole mapping into the spec first, together with the workflow defaults and the
   --report-json "${PREP_DIR}/codetr_spec_report.json"
 ```
 
-Set the fold from step 2's emitted file into the same spec — the spec, not the
+Set the fold from step 1's emitted file into the same spec — the spec, not the
 command line, carries it for the same reason. Load the file; do not retype it:
 
 ```bash
@@ -169,55 +218,6 @@ Obtaining a checkpoint is outside this skill — see `tao-train-codetr`'s SKILL.
 Non-zero exit stops prep here. This costs a directory walk and is the difference
 between catching an architecture mismatch now and discovering it after the
 conversion, embedding and mining stages have all succeeded on an empty pool.
-
-## Step 2 — Emit the two mappings
-
-TAO does the folding; this step only writes the files that tell it how.
-
-```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_class_mappings_for_mining_data_prep.py \
-  --classes "$CLASSES_YAML" \
-  --emit-codetr-category-mapping "${PREP_DIR}/codetr_category_mapping.yaml" \
-  --emit-kitti-mapping           "${PREP_DIR}/kitti_mapping.yaml" \
-  --emit-classmap                "${PREP_DIR}/classmap_target.txt"
-```
-
-Two accepted forms for `classes.yaml`. **Explicit folding** — several predicted classes collapse into one target:
-
-```yaml
-classes:
-  car:     [car, truck, bus]
-  person:  [person]
-  bicycle: [bicycle]
-```
-
-This is the shipped ITS default (`references/example_classes_its.yaml`): trucks and buses count as `car`, because the target vocabulary has no separate heavy-vehicle class and dropping them would discard real road users the model must detect.
-
-**Identity form** — when the target names already match the predicted names and you only want to drop the rest:
-
-```yaml
-classes: [car, person, bicycle]
-```
-
-**Confirm the fold rather than inventing one.** For a new dataset, whether two predicted classes belong together is a decision about what the metric should mean, so ask instead of guessing. Where a class sits ambiguously between targets — `motorcycle` is neither a car nor a bicycle — surface the choice, since folding it either way silently changes what the numbers report.
-
-### Class names are matched exactly, including case
-
-Both consumers do exact-string lookups — Co-DETR checks `orig_name not in name_to_id`, and `annotations convert` does `labels2cat.get(row_p[0])`. A source written `Car` against a detector that emits `car` matches nothing and every one of its boxes is dropped. Neither raises; Co-DETR logs a warning among many, and the converter says nothing at all.
-
-Copy source names verbatim from the detector's classmap. `validate_pool_coco.py` (step 4) names case-only mismatches explicitly, because this is the most likely way a fold goes wrong and the least visible.
-
-> **Improvement to make to `annotations convert`:** `construct_category_map` /
-> `labels2cat` in `kitti_to_coco.py` should match class names case-insensitively, or
-> at minimum warn when a label class differs from a mapping alias only by case. Today
-> the reference mapping works around it by hand-enumerating variants — `Bicycle`,
-> `bicycle`, `AutoMobile`, `Automobile` — which is fragile and silently incomplete for
-> any spelling nobody thought of. The same function is imported by
-> `analytics kpi_analyze`, so a fix there covers both.
-
-### Target names must be single tokens
-
-Targets become COCO categories, then ODVG labels, then the Grounding DINO caption list, and finally the class field of KITTI inference labels. KITTI is space-delimited, so a multi-word target makes those unparseable — the script rejects it. Source names may contain spaces; COCO has `traffic light`.
 
 ## Step 3 — KITTI → COCO
 
