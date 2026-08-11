@@ -50,9 +50,9 @@ for each, so filling the template needs none of them changed:
 | Field | Default | Meaning |
 |---|---:|---|
 | `kpi.iou_threshold` | `0.5` | IoU at or above which a prediction counts as a true positive. |
-| `kpi.conf_threshold` | `0.5` | Predictions below this are dropped. **Must be greater than 0**; the template uses `0.3`. An undetected ground-truth box is entered with confidence `0.0` and the check is `p >= conf_threshold`, so `0.0` scores every missed box as a true positive — `TP` becomes the ground-truth count, `FN` is always 0, `Re` is always 1.0, and AP inflates. A small positive value keeps effectively the whole PR curve without that. |
-| `kpi.num_recall_points` | `11` | Recall points for the interpolated PR curve. **Use `101`** — the reference default, and the COCO-standard sampling. |
-| `kpi.ignore_sqwidth` | `0` | Boxes narrower than this are ignored. **Keep `0`** unless you deliberately want small objects excluded — a non-zero value silently drops them from both GT and predictions. |
+| `kpi.conf_threshold` | `0.5` | Predictions below this are dropped. The template uses `0.0`, which keeps the whole PR curve so a threshold can be swept afterwards without re-running inference. On the pinned image that is safe: unmatched ground truth carries a `-1.0` sentinel and lands in FN at any threshold. On a build predating that fix, `0.0` scored every missed box as a true positive — `TP` became the ground-truth count and `FN` was always 0 — so use a small positive value there. |
+| `kpi.num_recall_points` | `11` | Recall points for the interpolated PR curve. The template keeps `11` (VOC-style), matching the reference ITS pipeline. `101` selects COCO-standard sampling and reports different numbers for the same detections. |
+| `kpi.ignore_sqwidth` | `0` | Boxes narrower than this are ignored. The template uses `40`, matching the reference ITS pipeline, which never counted boxes below that. `0` scores small objects the reference excluded, so the two are not comparable. |
 | `kpi.filter` | `false` | Enable source filtering. |
 | `kpi.is_internal` | `false` | When true, drops every class except `person` and appends a `Summary` row. |
 | `visualize.platform` | `local` | `local` writes a PR-curve plot into `results_dir`; `wandb` logs a run and table instead. |
@@ -200,7 +200,7 @@ box and `mAP: 1.0`; anything else means the mapping, not the model.
 
 **`data.mapping` is required.** The Hydra schema marks it mandatory even though the underlying category-map builder can derive classes from the label directory when it is absent. Supply the YAML.
 
-**Two different `conf_threshold` defaults.** The dataclass default is `0.5`, the shipped spec template uses `0.3`. Whichever you rely on, set it explicitly — an unset value silently changes which predictions are scored.
+**Two different `conf_threshold` defaults.** The dataclass default is `0.5`, the shipped spec template uses `0.0`. Whichever you rely on, set it explicitly — an unset value silently changes which predictions are scored.
 
 **`is_internal: true` is destructive to the report.** It drops every class except `person` and appends a `Summary` row. Leave it false unless you specifically want the internal person-only KPI.
 
