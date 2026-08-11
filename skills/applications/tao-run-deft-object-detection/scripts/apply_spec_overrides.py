@@ -35,8 +35,10 @@ Keys are dotted paths into nested mappings. Values are parsed as YAML scalars, s
 ``8`` is an int, ``true`` a bool, ``null`` None, ``[a, b]`` a list, and anything
 else a string — matching how the same text would behave written into the file.
 
-``--set-from-yaml KEY=FILE`` takes the value from a generated file, so a mapping
-another script emitted is never retyped by hand.
+``--set-from-file KEY=FILE`` is ``--set`` with the value read from a file, so a
+mapping another script emitted is never retyped by hand. Unlike a workflow-defaults
+file, which holds one dotted key per leaf, this assigns a whole block — which is why
+it is a separate flag rather than another file to apply.
 
 Creating a key that is not already present requires ``--allow-new``. Without it a
 typo'd path is an error rather than a silently added field the loader ignores,
@@ -153,10 +155,12 @@ def parse_args() -> argparse.Namespace:
                              "order, before --set. (--overlay is the former name.)")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help="Run-specific dotted key and YAML-parsed value. Repeatable.")
-    parser.add_argument("--set-from-yaml", action="append", default=[], metavar="KEY=FILE",
-                        help="Set a dotted key to the contents of a YAML file, so a generated "
-                             "block goes in whole instead of being retyped. A file with one "
-                             "top-level key contributes that key's value. Repeatable.")
+    parser.add_argument("--set-from-file", "--set-from-yaml",
+                        dest="set_from_yaml", action="append", default=[], metavar="KEY=FILE",
+                        help="Like --set, but the value is read from a YAML file, so a "
+                             "generated block goes in whole instead of being retyped. A file "
+                             "with one top-level key contributes that key's value. Repeatable. "
+                             "(--set-from-yaml is the former name.)")
     parser.add_argument("--allow-workflow-default-override", "--allow-overlay-override",
                         dest="allow_overlay_override", action="store_true",
                         help="Permit a --set to change a key a workflow-defaults file "
@@ -216,18 +220,18 @@ def main() -> int:
         # `category_mapping:` file drops straight onto `inference.category_mapping`.
         for item in args.set_from_yaml:
             if "=" not in item:
-                raise ValueError(f"--set-from-yaml expects KEY=FILE, got {item!r}")
+                raise ValueError(f"--set-from-file expects KEY=FILE, got {item!r}")
             dotted, filename = item.split("=", 1)
             dotted = dotted.strip()
             src = Path(filename.strip()).expanduser().resolve()
             if not src.is_file():
-                raise FileNotFoundError(f"--set-from-yaml file does not exist: {src}")
+                raise FileNotFoundError(f"--set-from-file does not exist: {src}")
             loaded = yaml.safe_load(src.read_text(encoding="utf-8"))
             if isinstance(loaded, dict) and len(loaded) == 1:
                 loaded = next(iter(loaded.values()))
             if dotted in from_overlay and not args.allow_overlay_override:
                 raise ValueError(
-                    f"--set-from-yaml {dotted} collides with workflow defaults "
+                    f"--set-from-file {dotted} collides with workflow defaults "
                     f"{from_overlay[dotted]}; pass --allow-workflow-default-override "
                     "if this run genuinely must differ."
                 )
@@ -238,7 +242,7 @@ def main() -> int:
                     f"{exc.args[0]} — no changes were written; the spec is unmodified"
                 ) from exc
             record[dotted] = {"source": src.name, "value": loaded}
-            applied.append(f"  {dotted}: {previous} -> <{src.name}>  [set-from-yaml]")
+            applied.append(f"  {dotted}: {previous} -> <{src.name}>  [set-from-file]")
 
         for item in args.set:
             if "=" not in item:

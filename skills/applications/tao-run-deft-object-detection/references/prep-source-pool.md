@@ -147,7 +147,7 @@ command line, carries it for the same reason. Load the file; do not retype it:
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
   --spec "$CODETR_SPEC" --allow-new \
-  --set-from-yaml inference.category_mapping="${PREP_DIR}/codetr_category_mapping.yaml"
+  --set-from-file inference.category_mapping="${PREP_DIR}/codetr_category_mapping.yaml"
 ```
 
 The emitted file's single top-level `category_mapping:` key is unwrapped, so its
