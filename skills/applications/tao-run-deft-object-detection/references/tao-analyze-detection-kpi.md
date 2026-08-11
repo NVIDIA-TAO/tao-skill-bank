@@ -65,30 +65,15 @@ kpi:
 
 ## Scoring at more than one confidence threshold
 
-`conf_threshold` here selects from the labels inference wrote; it cannot recover a
-box inference dropped. Inference runs at `0.0`, so the labels carry every
-detection and this stage is free to score at any threshold — including several,
-against the same labels:
+Inference runs at `0.0`, so the labels carry every detection and this stage can score them
+at any threshold without re-running inference — re-apply the overlay with
+`--set kpi.conf_threshold=<t> --allow-workflow-default-override` and a distinct
+`results_dir` per point, since `kpi_calc.csv` is written unconditionally and a shared
+directory keeps only the last. `conf_threshold` selects from what inference wrote; it cannot
+recover a box inference dropped.
 
-```bash
-for t in 0.0 0.3 0.5; do
-  <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
-    --spec "${RESULTS_DIR}/<phase>/kpi_spec.yaml" \
-    --apply-workflow-defaults <skill_root>/assets/overlays/kpi_analyze.yaml \
-    --set kpi.conf_threshold="$t" --allow-workflow-default-override \
-    --set results_dir="${RESULTS_DIR}/<phase>/kpi_conf${t}" \
-    --out "${RESULTS_DIR}/<phase>/kpi_spec_conf${t}.yaml"
-done
-```
-
-`--allow-workflow-default-override` is required because the overlay pins the default, and
-it prints which key was overridden. Each sweep point needs its own `results_dir`;
-`kpi_calc.csv` is written unconditionally and a shared directory silently keeps
-only the last one.
-
-A sweep costs one `kpi_analyze` per point and no inference, so it is far cheaper
-than re-running the phase. Only the `0.0` result is comparable to the loop's
-reported mAP.
+Only the `0.0` result is comparable to the loop's reported mAP. The loop itself scores once,
+at `0.0`; sweeps are a diagnostic.
 
 **`input_format` is uppercase here.** `analytics kpi_analyze` accepts only `KITTI` or `COCO`. This differs from `gap_analysis object_detection` in the same container, which takes lowercase `kitti` / `coco`. The two stages in this loop therefore spell the same format differently — that is expected, not a typo to "fix".
 

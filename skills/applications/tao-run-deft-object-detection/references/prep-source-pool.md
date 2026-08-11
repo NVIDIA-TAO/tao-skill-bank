@@ -47,7 +47,8 @@ A directory walk, so run it before the labelling pass rather than after.
 
 Invoke `tao-skill-bank:tao-train-codetr` (read its `SKILL.md` first).
 
-**The `codetr` console script is unregistered in every TAO PyTorch image checked so far** — `7.0.1-pyt` and the `2026.7.31-rc-12` nightly both answer `codetr: command not found` while `grounding_dino`, `dino`, and `rtdetr` are registered. The module ships, so this is a packaging gap, not a missing feature. Probe both forms and use whichever answers; only if *both* fail is Co-DETR genuinely absent:
+The `codetr` console script is unregistered in the TAO PyTorch images, though the module
+ships. Probe both forms and use whichever answers; only if *both* fail is Co-DETR absent:
 
 ```bash
 docker run --rm "$TAO_PYT_IMAGE" codetr --help >/dev/null 2>&1 && CODETR="codetr"
@@ -85,59 +86,27 @@ emitted spec before launching. Two of its settings decide what the pool contains
 Sizing is by resize-and-pad — `test_random_resize: 1280`, `random_resize_max_size:
 2048` — with `inference.input_width`/`input_height` left unset.
 
-From `category_mapping.py`: unmapped originals are dropped, a name claimed by two groups keeps the first with a warning, names absent from the classmap are warned about and ignored, an empty remap raises, and output category IDs are assigned `0..K-1` **in the order the mapping is written**.
+Two consequences to respect: output category IDs are assigned `0..K-1` **in the order the
+mapping is written**, and the fold runs a per-output-category soft-NMS afterwards. That NMS
+is why the fold belongs here — one object detected as both `truck` and `car` becomes two
+boxes of the *same* class the moment they merge, and only a post-fold pass removes the
+duplicate. Renaming labels later ships the duplicates into training. See `tao-train-codetr`
+for how unmapped and conflicting names are handled.
 
-Then it runs `apply_category_mapping_groupnms` — per-output-category soft-NMS *after* the merge. That is the reason to fold here rather than by rewriting labels afterwards: one object detected as both `truck` and `car` becomes two boxes of the *same* class the moment those fold together, and only a post-fold NMS removes the duplicate. Renaming labels later cannot; it ships the duplicates into training.
+### The spec's architecture must match the checkpoint
 
-### The spec's architecture must match the checkpoint, and a mismatch is silent
+A mismatch does not raise. `codetr inference` loads what fits, discards what does not,
+prints `Execution status: PASS`, exits 0, and writes one label file per image with **zero
+boxes** — the unloaded layers stay randomly initialised. `annotations convert` then succeeds
+on an empty COCO and the first hard failure lands stages later.
 
-**This is the most damaging way this step goes wrong.** `codetr inference` loads what
-it can, discards what does not fit, and reports success either way: it prints
-`Execution status: PASS`, exits 0, and writes one label file per pool image
-containing nothing. The layers the checkpoint could not populate stay randomly
-initialised, so no detection clears `conf_threshold`. Nothing downstream notices —
-`annotations convert` succeeds on an empty COCO, and the first hard failure lands
-several stages later with no visible connection to this one.
+`assets/overlays/codetr_inference.yaml` pins the six fields the ViT-Large COCO-80 checkpoint
+needs, so the schema defaults never apply. Step 1's gate (`verify_pseudo_labels.py`) catches
+it if they are wrong anyway.
 
-The only signal at load time is a line like this, among thousands:
-
-```
-Skipping size-mismatched key ... patch_embed.proj.weight: ckpt [1024,3,16,16] vs model [192,3,4,4]
-```
-
-`assets/overlays/codetr_inference.yaml` pins the four fields for the ViT-Large
-COCO-80 detector this workflow uses, so the schema defaults — every one of which is
-wrong for it — never apply:
-
-| field | this checkpoint | TAO schema default | wrong value fails |
-|---|---|---|---|
-| `model.backbone` | `vit_large_codetr` | `swin_large_patch4_window7_224` | silently |
-| `model.num_queries` | 1500 | 900 | silently |
-| `model.num_feature_levels` | 5 | 4 | silently |
-| `dataset.num_classes` | 80 | 91 | silently |
-| `model.return_interm_indices` | `[0, 1, 2, 3, 4]` | `[1, 2, 3, 4]` | loudly |
-| `dataset.augmentation.fixed_random_crop` | 1536 | `null` | loudly |
-
-The last two are consequences of the first four rather than independent choices.
-`return_interm_indices` must hold exactly `num_feature_levels` entries — TAO raises
-`num_feature_levels: 5 does not match the size of return_interm_indices` — and its
-values index the stride map `{0: 4, 1: 8, 2: 16, 3: 32, 4: 64}`, so five levels
-means strides 4 through 64. `fixed_random_crop` becomes the transformer's
-`lsj_resolution`, and `vit_large_codetr` refuses a null one outright. Both fail at
-startup, so they cost seconds rather than a whole pass.
-
-For a **different** checkpoint, derive the values rather than guessing — and because
-they are workflow defaults, changing them needs `--allow-workflow-default-override`:
-
-* `patch_embed.proj.weight` of shape `[D, 3, P, P]` gives embed dim `D` and patch
-  size `P`. `1024/16` here means ViT-L/16, which is `vit_large_codetr`. The patch-14
-  DINOv2 backbone (`pretrained_dinov2_classification_imagenet:vit_large_patch14_dinov2`)
-  cannot load into it.
-* `query_embed`'s first dimension gives `num_queries`.
-* The classification head's output width gives `num_classes` — COCO-80, not COCO-91.
-
-A correctly paired load reports missing keys but **no** unexpected ones; the missing
-keys are the training-only collaborative heads.
+For a different checkpoint, derive the values from its tensors rather than guessing — see
+`tao-train-codetr`'s **Checkpoint/spec pairing** reference, which also covers the
+`cls_branches` vs `roi_head` class-count trap and the patch-size constraint on the backbone.
 
 ### Launching
 

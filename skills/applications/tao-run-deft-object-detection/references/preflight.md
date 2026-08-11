@@ -16,12 +16,8 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    `pandas numpy matplotlib pyarrow PIL yaml` imports; a host missing just `matplotlib`
    makes it exit 2 with no interpreter at all, and every bundled script becomes unrunnable.
    Probing a shorter list will pass here and then fail at the first real call. If the probe
-   fails, provision a venv and re-probe:
-
-   ```bash
-   python3 -m venv "$WORKSPACE/.venv" && \
-     "$WORKSPACE/.venv/bin/pip" install pandas numpy matplotlib pyarrow pyyaml pillow
-   ```
+   fails, the host is not provisioned. Installing packages is out of scope for this skill —
+   `deft_python.sh` never installs. Report what is missing and stop.
 
    `deft_python.sh` finds `$WORKSPACE/.venv` only when `WORKSPACE` (or `WORKSPACE_DIR`) is
    exported in the calling shell — otherwise pass the interpreter as `DEFT_PYTHON`.
@@ -100,10 +96,6 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    (1.93 GB, ~20s) and prints the checkpoint path on stdout. It is idempotent — an existing
    download is reused, so a resumed run re-costs nothing. Use a **`trainable`** release; the
    sibling `deployable` one is for TensorRT export and cannot be fine-tuned.
-
-   This is verified, not assumed: the NGC file was compared tensor-by-tensor against a
-   hand-staged copy that had been circulating as `fixed_ckpt.pth`, and all 951 tensors are
-   bit-identical with no key differing in either direction. The rename was not a repair.
 
    Requires the `ngc` CLI and a configured account (check 3). On an air-gapped host, or any
    time the download cannot run, the user supplies `--zero-shot-checkpoint` directly — the

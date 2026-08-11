@@ -59,22 +59,13 @@ dot products of 256-dim features reach the sigmoid unscaled and saturate: every 
 scores `1.000`, `conf_threshold` filters nothing, and every one of `num_select` slots is
 written for every image.
 
-Unlike `class_embed_bias`, this **does not error** — the run exits 0 and writes a full set of
-label files. Measured on 20 KPI frames with the same checkpoint:
+Unlike `class_embed_bias`, this **does not error**: the run exits 0 with a full set of label
+files. `null` is the schema default and is absent from the shipped `infer.yaml`, so it is the
+out-of-the-box failure.
 
-| `log_scale` | boxes written | scoring ≥ 0.999 |
-|---|---:|---:|
-| `auto` | 309 (~15/image) | 0 |
-| `null` | 6000 (300/image = `num_select`) | 6000 |
-
-`null` is the default and is absent from the shipped `infer.yaml`, so the failure mode is the
-out-of-the-box one.
-
-**Symptom to recognise:** exactly `num_select` boxes per image and a score histogram piled at
-1.000. The detector is usually fine — spot-checks showed the top-20 predictions matching
-10–12 of ~28 GT boxes at IoU 0.5 — only the confidences are meaningless. Set
-`model.log_scale: auto` (or the learnable float the checkpoint trained with; a checkpoint
-containing no `log_scale` tensor was trained with `auto` or `None`).
+**Symptom:** exactly `num_select` boxes per image, every score at ~1.000. The boxes are fine;
+only the confidences are meaningless. Set `model.log_scale: auto`, or the learnable float the
+checkpoint trained with — a checkpoint carrying no `log_scale` tensor trained with `auto`.
 
 Left unnoticed this poisons the whole loop: gap analysis sees overwhelming FP, precision
 collapses to ~0 on every image, and *every* image is flagged weak — so mining gets no signal

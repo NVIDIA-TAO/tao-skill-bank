@@ -32,28 +32,16 @@ TAO DS raises `detection_format is required (coco or kitti) when a detection fil
 
 Note this stage uses **COCO** detection files while `gap_analysis` in the same loop reads **KITTI** inference labels. That split is correct: they are different inputs to different steps.
 
-## Rare classes are derived here, and should not be
+## Rare classes
 
-`class_stratified` allocation needs to know which classes are rare. The loop derives that
-from the prepared pool: `pool_report.json` records `annotations_by_class`, and any target
-class holding a below-mean share of the pool's annotations is treated as rare. Scarcity in
-the **pool** is the right signal — stratified allocation exists so that classes the pool holds
-few of still get their share of the budget, while a class the pool is full of will be found by
-global allocation anyway.
+`class_stratified` allocation needs to know which classes are rare. The loop derives it from
+`pool_report.json`: any target class holding a below-mean share of the pool's annotations.
+Scarcity in the **pool** is the signal, not scarcity in the KPI set — stratified allocation
+exists so classes the pool holds few of still get their share of the budget.
 
-> **Improvement to make in TAO DS:** this belongs in `tmm unique_neighbor_matching`, not in a
-> caller's glue code. The mining action already reads the source pool and the
-> `source_detection_file` COCO, so it holds everything needed to compute the class
-> distribution itself — every caller wanting stratified allocation currently has to
-> re-derive the same thing from outside, and each will pick a slightly different rule
-> (median vs mean vs a fixed percentile), so the same pool yields different allocations
-> depending on who asked. Exposing `rare_class_list: auto`, with the threshold rule owned
-> and documented by TAO DS, would make the behaviour reproducible across callers and remove
-> the need for a pool report to travel alongside the pool.
->
-> Until then, `rare_class_list` stays an explicit input, and the loop's derivation is
-> reported as a warning naming both the chosen classes and the counts behind them, so the
-> decision is visible rather than silent.
+The derivation is reported with the counts behind it, so the choice is visible rather than
+silent. It belongs in `tmm unique_neighbor_matching` itself, which already reads both inputs
+it would need; tracked separately as a TAO DS request.
 
 ## Spec
 
