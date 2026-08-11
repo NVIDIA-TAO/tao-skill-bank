@@ -311,8 +311,8 @@ d.setdefault("mcp", {}).setdefault("servers", {})["tao"] = {
 d.setdefault("tools", {})["profile"] = "coding"   # exec + fs + subagents (sandbox-scoped)
 
 # Expose the tao_* MCP tools directly instead of behind Tool Search's generic
-# `tool_call` wrapper. With the wrapper on, a whole class of calls fails
-# validation with `args: must be object` when the model serialises arguments as
+# tool_call wrapper. With the wrapper on, a whole class of calls fails
+# validation with args: must be object when the model serialises arguments as
 # a Python-repr dict rather than JSON — observed 49 times in a single DEFT run,
 # each one a silent retry the operator experiences as the agent stalling. The
 # tao surface is 12 tools; it does not need progressive disclosure.
@@ -345,8 +345,8 @@ for prov in d.get("models", {}).get("providers", {}).values():
 d.setdefault("agents", {}).setdefault("defaults", {}) \
  .setdefault("memorySearch", {})["enabled"] = False
 
-# Turn thinking on by default. `models…models[].reasoning` above only declares
-# that the model CAN think; `thinkingDefault` decides whether it does, and it
+# Turn thinking on by default. models…models[].reasoning above only declares
+# that the model CAN think; thinkingDefault decides whether it does, and it
 # ships as "off" — so a sandbox can show reasoning=true in its model config and
 # still run every turn without it. Levels: off|minimal|low|medium|high|xhigh.
 if ${MODEL_REASONING_PY}:
