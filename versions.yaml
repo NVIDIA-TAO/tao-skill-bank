@@ -32,11 +32,13 @@ images:
     pyt:                nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt
     deploy:             nvcr.io/nvidia/tao/tao-toolkit:7.1.0-deploy
     data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services
+    data_services_nightly: nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.8.10-rc-26-multiarch
     # Interim until `gap_analysis object_detection` and `tmm unique_neighbor_matching` ship
     # in a release data-services image. Verified to carry all five actions the DEFT
     # object-detection pipeline uses: gap_analysis, tmm, analytics, embedding, annotations.
     data_services_od:   nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02
     cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-rl
+    deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
     cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
     # Interim until tao-pytorch !620 merges and TAO publishes an official IV2CLIP image.

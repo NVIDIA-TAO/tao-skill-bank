@@ -22,7 +22,7 @@ tags:
 
 > **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
 
-Reads a VLM predictions JSON, compares each model response against ground truth, and writes FP/FN failure cases to a JSONL file with a summary report.
+Reads a VLM predictions JSON, compares each model response against ground truth, and writes FP/FN failure cases to a JSONL file with a summary report. Run it with a TAO Data Services spec file; the data-services entrypoint requires `-e <spec>`.
 
 ## Purpose
 
@@ -30,29 +30,46 @@ After running a VLM on a binary yes/no evaluation task, the predictions need to 
 
 ## Usage
 
-Invoke the `vlm_bcq` action inside the TAO Toolkit data services container with Hydra-style key=value overrides:
+Generate a `vlm_bcq_spec.yaml` with the bundled helper:
 
 ```bash
-gap_analysis vlm_bcq \
-  predictions_json=/path/to/results.json \
-  results_dir=/path/to/output/gaps
+python3 skills/data/tao-analyze-gaps-vlm-bcq/scripts/prepare_vlm_bcq_spec.py \
+  --predictions-json /path/to/results.json \
+  --videos-dir /path/to/videos/root \
+  --results-dir /path/to/output/gaps \
+  --output-spec /path/to/output/gaps/vlm_bcq_spec.yaml
 ```
 
-Include `videos_dir` when `video_id` values in the predictions are relative paths:
+Omit `--videos-dir` when prediction `video_id` values are already absolute. The generated spec has this shape:
+
+```yaml
+predictions_json: /path/to/results.json
+videos_dir: ""
+results_dir: /path/to/output/gaps
+```
+
+Set `videos_dir` when `video_id` values in the predictions are relative paths:
+
+```yaml
+predictions_json: /path/to/results.json
+videos_dir: /path/to/videos/root
+results_dir: /path/to/output/gaps
+```
+
+Invoke the `vlm_bcq` action inside the TAO Toolkit data services container with `-e <spec>`:
 
 ```bash
-gap_analysis vlm_bcq \
-  predictions_json=/path/to/results.json \
-  results_dir=/path/to/output/gaps \
-  videos_dir=/path/to/videos/root
+gap_analysis vlm_bcq -e /path/to/vlm_bcq_spec.yaml
 ```
 
 After the run, surface the FP/FN counts from `kpi_gaps_report.txt` and point downstream stages at `kpi_gaps.jsonl`.
 
 ## Inputs
 
+- **config spec**: YAML file passed with `-e`. Template: `assets/default_vlm_bcq.yaml`.
 - **predictions_json**: Path to predictions JSON file. Must be a JSON array where each item has `video_id`, `response`, and `gt` fields. `response` and `gt` are parsed with word-boundary matching — `'yes'` or `'no'` anywhere in the string is recognized. Samples where both or neither are present are skipped with a warning.
 - **videos_dir** (optional): Base directory for resolving relative `video_id` paths. If omitted, `video_id` values are used as absolute paths.
+- **results_dir**: Output directory for gap-analysis artifacts.
 
 **Predictions JSON format:**
 ```json
@@ -73,7 +90,7 @@ After the run, surface the FP/FN counts from `kpi_gaps_report.txt` and point dow
 
 If no gaps are found, no files are written and a message is logged.
 
-## Key Parameters
+## Spec Fields
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
@@ -81,11 +98,14 @@ If no gaps are found, no files are written and a message is logged.
 | results_dir | Yes | Output directory; created if it does not exist |
 | videos_dir | No | Base directory for resolving relative `video_id` paths |
 
+Keep the spec file and every path it references under the bind-mounted workspace so they resolve inside the container. Pass `-e <spec>` even if you also add Hydra overrides; current TAO Data Services entrypoints hard-require an experiment spec file before processing overrides.
+
 ## Error Patterns
 
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `FileNotFoundError` | `predictions_json` does not exist | Check the path |
+| `requires the following argument: -e/--experiment_spec_file` | The container was launched without a spec file | Write `vlm_bcq_spec.yaml` and pass `gap_analysis vlm_bcq -e <spec>` |
 | `ValueError: must be a JSON array` | Predictions file is not a list | Wrap predictions in `[...]` |
 | `ValueError: missing 'gt'/'response'/'video_id'` | A prediction item is missing a required field | Inspect and fix the predictions JSON |
 | Samples silently skipped | `response` or `gt` contains both or neither 'yes'/'no' | Check logs for warnings; inspect those samples |
