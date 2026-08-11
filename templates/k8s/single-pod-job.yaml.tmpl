@@ -37,7 +37,7 @@ spec:
       containers:
         - name: tao
           image: "@@IMAGE@@"
-          command: ["/bin/bash", "-lc", "@@COMMAND@@"]
+          command: ["/bin/sh", "-c", "@@COMMAND@@"]
           resources:
             limits:
               "nvidia.com/gpu": "@@NUM_GPUS@@"
