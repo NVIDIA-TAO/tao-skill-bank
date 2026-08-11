@@ -1926,10 +1926,35 @@ run "$PY" "$INIT" \
   --source-pool-embeddings "$G17_WS2/source_pool/source_embeddings.parquet"
 assert_rc 1 "[G17] with no prep inputs the missing detection file is still an error"
 
-# class_stratified without a pool report: the pool is never proved to hold the
-# requested classes, so mining returns neighbours of something else.
+# class_stratified on an ALREADY-PREPARED pool, with no pool report: nothing proves
+# the pool holds the requested classes, so mining would return neighbours of
+# something else.
+G17_WS3=$(new_workspace g17_prepared); make_pool "$G17_WS3"
+make_file "$G17_WS3/kpi/target.json" '{"images": [], "annotations": [], "categories": []}'
 run "$PY" "$INIT" \
-  --results-dir "$G17_WS/results/run_g17c" --workspace "$G17_WS" --max-iterations 1 \
+  --results-dir "$G17_WS3/results/run_g17c" --workspace "$G17_WS3" --max-iterations 1 \
+  --num-epochs 1 --learning-rate 0.0001 \
+  --zero-shot-checkpoint "$G17_WS3/ckpt/gdino_zero_shot.pth" \
+  --train-spec-template "$G17_WS3/specs/train_grounding_dino.yaml" \
+  --embedding-model-path "$G17_WS3/encoder/siglip" \
+  --kpi-images-dir "$G17_WS3/kpi/sequence_a/images" \
+  --ground-truth-labels-dir "$G17_WS3/kpi/labels" \
+  --class-mapping "$G17_WS3/classes/classes_its.yaml" \
+  --allocation-policy class_stratified --rare-class-list car \
+  --target-detection-file "$G17_WS3/kpi/target.json" \
+  --source-detection-file "$G17_WS3/kpi/target.json" \
+  --source-pool-annotations "$G17_WS3/source_pool/odvg" \
+  --source-pool-embeddings "$G17_WS3/source_pool/source_embeddings.parquet"
+assert_rc 1 "[G17] class_stratified on a prepared pool without --pool-report is rejected"
+case "$RUN_OUT" in
+  *pool-report*) ok "[G17] the rejection names --pool-report" ;;
+  *) notok "[G17] the rejection names --pool-report" "output: $RUN_OUT" ;;
+esac
+
+# ...but a run that still has to prep must not be blocked by it: pool_report.json is
+# prep's own output, so requiring it there recreates the init/prep deadlock.
+run "$PY" "$INIT" \
+  --results-dir "$G17_WS/results/run_g17d" --workspace "$G17_WS" --max-iterations 1 \
   --num-epochs 1 --learning-rate 0.0001 \
   --zero-shot-checkpoint "$G17_WS/ckpt/gdino_zero_shot.pth" \
   --embedding-model-path "$G17_WS/encoder/siglip" \
@@ -1944,10 +1969,10 @@ run "$PY" "$INIT" \
   --pool-images "$G17_WS/pool_images" \
   --codetr-checkpoint "$G17_WS/ckpt/codetr.pth" \
   --codetr-classmap "$G17_WS/ckpt/coco80.txt"
-assert_rc 1 "[G17] class_stratified without --pool-report is rejected"
+assert_rc 0 "[G17] a prep run is not blocked by the --pool-report requirement"
 case "$RUN_OUT" in
-  *pool-report*) ok "[G17] the rejection names --pool-report" ;;
-  *) notok "[G17] the rejection names --pool-report" "output: $RUN_OUT" ;;
+  *"prep\` runs first and produces it"*) ok "[G17] the pool report is deferred to prep" ;;
+  *) notok "[G17] the pool report is deferred to prep" "output: $RUN_OUT" ;;
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════

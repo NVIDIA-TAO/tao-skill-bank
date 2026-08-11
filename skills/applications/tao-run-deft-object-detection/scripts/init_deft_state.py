@@ -464,13 +464,18 @@ def main() -> int:
                 errors.append("--allocation-policy class_stratified requires --rare-class-list")
             if not args.pool_report:
                 # pool_report.json is the only artifact that cross-checks the prepared
-                # pool against the requested classes. Without it a pool prepared for a
-                # different class set initializes cleanly and returns plausible
-                # neighbours of the wrong thing.
-                errors.append(
-                    "--allocation-policy class_stratified requires --pool-report "
+                # pool against the requested classes. It is also prep's own output, so
+                # demanding it on a run that still has to prep would make init and prep
+                # each other's precondition — the same deadlock --source-detection-file
+                # had. Required only when the pool already exists.
+                message = (
+                    "--allocation-policy class_stratified needs --pool-report "
                     "(validate_pool_coco.py writes it; --pool-dir picks it up "
                     "automatically when it sits beside the pool)")
+                if missing_pool and not absent_inputs:
+                    warnings.append(f"{message} — `prep` runs first and produces it")
+                else:
+                    errors.append(message)
             for flag, raw in detection_files.items():
                 if not raw:
                     errors.append(f"--allocation-policy class_stratified requires {flag}")
