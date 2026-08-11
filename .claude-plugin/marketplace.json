@@ -80,7 +80,8 @@
         "./skills/data/tao-analyze-gaps-vlm-bcq",
         "./skills/data/tao-generate-image-grounding",
         "./skills/data/tao-generate-referring-expressions",
-        "./skills/data/tao-mine-od-images"
+        "./skills/data/tao-mine-od-images",
+        "./skills/data/tao-analyze-detection-kpi"
       ]
     },
     {
