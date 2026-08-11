@@ -395,6 +395,16 @@ def test_cosmos_rl_resolves_sft_hook_from_installed_native_package(tmp_path):
     assert nested.returncode == 0, nested.stderr
 
 
+def test_cosmos_rl_static_train_contract_resolves_installed_hook():
+    metadata = workflow.load_yaml(SKILL / "references" / "skill_info.yaml")
+    command = metadata["actions"]["train"]["command"]
+
+    assert "Path(cosmos_rl.__file__).parent" in command
+    assert 'test -f "$hook"' in command
+    assert 'cosmos-rl --config {config_path} "$hook"' in command
+    assert "package://" not in command
+
+
 def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
     framework_args = args_for(
         tmp_path / "framework", backend="cosmos-framework",

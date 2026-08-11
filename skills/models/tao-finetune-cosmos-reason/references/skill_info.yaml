@@ -309,7 +309,10 @@ actions:
     upload_excludes:
     - inputs/
   train:
-    command: cosmos-rl --config {config_path} package://cosmos_rl/tools/custom_hooks/tao_sft_example.py
+    command: |
+      hook="$(/opt/venv/cosmos_rl/bin/python -c 'import cosmos_rl; from pathlib import Path; print(Path(cosmos_rl.__file__).parent / "tools" / "custom_hooks" / "tao_sft_example.py")')"
+      test -f "$hook"
+      cosmos-rl --config {config_path} "$hook"
     config_format: toml
     mode: config
     inputs:
