@@ -2267,6 +2267,14 @@
                 "contrastive"
               ],
               "type": "categorical"
+            },
+            "cls_weight[1]": {
+              "automl_enabled": true,
+              "default": 10.0,
+              "description": "AutoML-searchable defect-class CE weight \u2014 writes cls_weight[1] via the runner's indexed-path spec merge. The list param cls_weight itself stays automl_enabled=false; this scalar view exposes the imbalance lever to HPO.",
+              "maximum": 100.0,
+              "minimum": 1.0,
+              "type": "float"
             }
           },
           "type": "collection"

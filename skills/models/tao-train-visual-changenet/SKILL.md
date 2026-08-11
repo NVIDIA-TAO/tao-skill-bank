@@ -84,6 +84,11 @@ Visual ChangeNet has two separate task modes with different dataset types and da
 - **Formats:** default
 - **Accepted dataset intents:** training, evaluation, testing, calibration
 - **Monitoring metric:** val_loss
+- **Standalone evaluate metric:** `test_acc` (with `test_fpr`, `test_fnr`, and
+  `defect_acc` also emitted). AutoML must rank recommendations by the training
+  `val_loss`; use `test_acc` only to verify that the selected checkpoint loads
+  and evaluates successfully. Do not expect the evaluate action to emit
+  `val_loss`.
 
 #### Per-Action Dataset Requirements (Classify)
 

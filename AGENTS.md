@@ -14,6 +14,11 @@ The skill bank works **standalone**. Model and data skills run with just
 helper scripts (`scripts/tao_job_record.py`, `scripts/redact_secrets.py`, and
 the `tao-data-io` skill) — no TAO SDK install.
 
+User-facing DEFT shorthand resolves to canonical application skills:
+`tao-deft-aoi` → `tao-run-deft-aoi` and `tao-deft-iaa` →
+`tao-run-deft-iaa`. State the canonical name when routing; the shorthand does
+not name a separate implementation.
+
 ## Discovery flow
 
 Model-first routing is mandatory. Resolve a supplied model ID with
@@ -26,18 +31,22 @@ the metadata policy. Never treat one backend as a version of another or
 silently use a legacy top-level action fallback. The shared Cosmos frontend
 uses `scripts/cosmos_workflow.py` for this step.
 
-0. **Preflight the chosen platform.** Open `skills/platform/<chosen>/SKILL.md` and run
-   its Preflight section. If a missing prerequisite is a small Python helper that
-   can be installed with `python -m pip install ...` (e.g. `boto3` for
-   `tao-data-io`), install it in the active Python environment, then rerun
-   preflight. Bail on missing non-Python/system prerequisites — do not draft
-   launch commands against an unconfigured environment.
-
-1. **Read the task skill.** `skills/models/<arch>/SKILL.md` (network specifics),
+0. **Read the task skill.** `skills/models/<arch>/SKILL.md` (network specifics),
    `skills/data/<name>/SKILL.md` (transforms), or `skills/applications/<name>/SKILL.md`
    (workflows that compose model + data + platform — `tao-run-automl`,
-   `tao-run-deft-aoi`, etc.). Get the model facts, data format, action
-   parameters, and known error patterns.
+   `tao-run-deft-aoi`, `tao-run-deft-iaa`, etc.). Get the model facts, data
+   format, action parameters, supported-platform contract, and known error
+   patterns. Resolve documented shorthand names to the canonical frontmatter
+   name before continuing.
+
+1. **Resolve and preflight the platform.** If the application supports exactly
+   one platform, treat that contract as the selection. If it supports several
+   and the user did not select one, ask once among its supported installed
+   platforms. Then open `skills/platform/<chosen>/SKILL.md` and run its
+   Preflight section. If a missing prerequisite is a small Python helper that
+   can be installed with `python -m pip install ...` (for example `boto3` for
+   `tao-data-io`), install it in the active environment, report it, and rerun
+   preflight. Bail on missing non-Python/system prerequisites.
 
 2. **Read `references/skill_info.yaml`** for the structured contract:
    - `container_image` — image key or absolute URI
@@ -95,9 +104,10 @@ the bank:
   verbs over `kubectl` / `ssh`+`sbatch` / `brev exec`; `tao-run-on-virtualenv`
   adds docker-free local Python execution.
 
-All installed platforms — the bank's five plus any external platform skill
-(e.g. kratos) — are **equal-class peers, no default**. If the user hasn't
-chosen, ask.
+When an application supports several platforms, all supported installed
+peers—the bank's five plus external platform skills—are equal class with no
+default; ask if the user has not chosen. A single-platform application has
+already made the selection.
 
 > AutoML hyperparameter search (`tao-run-automl`) is the one workflow that
 > additionally uses the `nvidia-tao-automl` wheel — and its transitive
@@ -112,16 +122,15 @@ chosen, ask.
   `spec_overrides` argument is the one exception: it accepts dotted path keys as
   an override map and expands them into the nested spec before launch. Do not
   pass that override map directly to a config file or container boundary.
-- **Never default to one platform** when several would fit. If the user hasn't
-  said which platform (Docker, SLURM, Kubernetes, Brev, virtualenv, or an
-  installed external one), ask. Installed platforms are equal-class peers;
-  biasing toward one is wrong.
+- **Never default to one platform when several fit.** If the application
+  supports several and the user did not select one, ask among its supported
+  installed peers. Do not ask again for a single-platform application.
 - **Never start a side-effecting action without user confirmation.** This
-  means: `docker run` / the `submit` verb, `git push`, file mutations outside
-  the working directory. Missing small Python helpers (e.g. `boto3` for
-  `tao-data-io`) installable with `python -m pip install ...` are an explicit
-  exception for TAO workflows: install them by default and report what was
-  installed.
+  means: `docker run` / the `submit` verb, registry login or pulls, asset
+  downloads, `git push`, and workspace/state mutations. Missing small Python
+  helpers installable with `python -m pip install ...` retain the established
+  exception: install them by default and report what was installed. An
+  application may impose a stricter approval gate for its own runtime.
 - **Never ask for API keys, tokens, or passwords via chat.** Credentials come
   from the **session environment** — the user exports them in their own shell
   before launching. If a required var is missing, tell the user which one to

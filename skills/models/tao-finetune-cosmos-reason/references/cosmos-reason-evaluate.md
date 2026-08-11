@@ -63,8 +63,19 @@ When the input declaration carries a `selective` block (`{annotation, format, ke
 
 - `results.json` — per-sample predictions with `video_id`, `response`, `question`, `gt`
 - Binary metrics: accuracy, balanced accuracy, precision, recall, F1
-- Text metrics: BLEU, ROUGE, BERTScore
+- Text metrics: `BLEU`, `ROUGE*`, and the emitted `BERTScore_F1` scalar
 - When Lustre is available, results write to Lustre for cross-job persistence (e.g., gap analysis reads directly), then upload to S3.
+
+These are evaluation-task metrics. `val/avg_loss`, `val/reward_avg`, and
+`val/loss` are training-only metrics and are not emitted by `evaluate`; do not
+configure an evaluation-backed AutoML baseline or final evaluation to extract
+one of those training metrics.
+
+With the TAO 7.0.1 Cosmos-RL image, evaluation requires a `video_fps` field on
+every annotation record even when `vision.nframes` is set. Also verify that the
+record's `video` value resolves beneath `dataset.media_dir`. Treat either
+missing condition as preflight failure rather than inventing metadata or
+rewriting source annotations.
 
 ## Datasets
 
