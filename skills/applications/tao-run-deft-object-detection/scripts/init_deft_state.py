@@ -383,8 +383,8 @@ def main() -> int:
         }
         missing_pool = [(flag, problem) for flag, path, kind in pool
                         if (problem := check_artifact(str(path), kind))]
+        absent_inputs = sorted(f for f, v in prep_inputs.items() if not v)
         if missing_pool:
-            absent_inputs = sorted(f for f, v in prep_inputs.items() if not v)
             if absent_inputs:
                 for flag, problem in missing_pool:
                     errors.append(f"{flag}: {problem}")
@@ -427,7 +427,15 @@ def main() -> int:
             resolved_detection[flag] = str(path)
             problem = check_artifact(str(path), "file")
             if problem:
-                errors.append(f"{flag}: {problem}")
+                # --source-detection-file is prep's own output (source_pool/coco.json),
+                # so on a run that still has to prep, requiring it here would make init
+                # and prep each other's precondition. Same downgrade as the pool
+                # artifacts above; it is still required by the time `mine` reads it.
+                if flag == "--source-detection-file" and missing_pool and not absent_inputs:
+                    warnings.append(
+                        f"{flag}: {problem} — `prep` runs first and produces it")
+                else:
+                    errors.append(f"{flag}: {problem}")
             elif path.suffix.lower() != ".json":
                 warnings.append(f"{flag}: {path} is not a .json file; mining needs COCO JSON")
 

@@ -119,6 +119,7 @@ RESERVED_RECORD_FIELDS = {
     "weak_image_count": "--weak-image-count",
     "zero_weak_images": "--zero-weak-images",
     "pool_remaining": "--pool-remaining",
+    "pool_exhausted": "--pool-exhausted",
 }
 STATE_BOOKKEEPING_FIELDS = {"stage_completed", "status", "failed_stage"}
 
@@ -494,13 +495,17 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="[gap_analysis only] record the zero-weak-image early stop "
                              "explicitly, when the row count itself is not to hand.")
     parser.add_argument("--pool-remaining", type=int, default=None,
-                        help="[loop_stop only] source-pool images not already in the "
+                        help="[loop_stop only] Source-pool images not already in the "
                              "cumulative exclude set, counted before the mine that could not "
-                             "run. 0 records the pool-exhaustion early stop, which is a "
-                             "legitimate terminal state: the loop cannot mine what it has "
-                             "already mined. Without this the audit reports the run "
-                             "INCOMPLETE, because it cannot tell a spent pool from an "
-                             "abandoned run.")
+                             "run. Record the real count, whatever it is.")
+    parser.add_argument("--pool-exhausted", action="store_true",
+                        help="[loop_stop only] The pool cannot supply another iteration. "
+                             "This is a legitimate terminal state and the audit accepts it "
+                             "as a documented early stop; without it a stop before the "
+                             "configured iterations reads as an abandoned run. The pool need "
+                             "not be empty: too few images left to meet the budget is "
+                             "exhaustion, since the miner raises rather than returning a "
+                             "short result.")
     return parser
 
 
@@ -719,17 +724,24 @@ def main() -> int:
             # committed. Restricted to loop_stop for the same reason the weak-image
             # count is restricted to gap_analysis: a completion claim must come from
             # the one place that measured it.
-            if args.pool_remaining is not None:
-                if stage != "loop_stop":
+            # Both belong to loop_stop for the same reason the weak-image count
+            # belongs to gap_analysis: a completion claim must come from the one
+            # place that measured it.
+            for flag, given in (("--pool-remaining", args.pool_remaining is not None),
+                                ("--pool-exhausted", args.pool_exhausted)):
+                if given and stage != "loop_stop":
                     raise ValueError(
-                        f"--pool-remaining belongs to loop_stop, not {stage!r}; it records "
-                        f"why the loop stopped, not the outcome of a stage"
+                        f"{flag} belongs to loop_stop, not {stage!r}; it records why the "
+                        f"loop stopped, not the outcome of a stage"
                     )
+            if args.pool_remaining is not None:
                 if args.pool_remaining < 0:
                     raise ValueError(
                         f"--pool-remaining must be >= 0, got {args.pool_remaining}"
                     )
                 extras["pool_remaining"] = args.pool_remaining
+            if args.pool_exhausted:
+                extras["pool_exhausted"] = True
 
             if args.weak_image_count is not None:
                 if args.weak_image_count < 0:

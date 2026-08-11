@@ -62,7 +62,28 @@ The output feeds the *next* iteration's miner as `exclude_path`, so the loop nev
   --multiplier "<multiplier>" \
   --max-count "<source pool row count>" \
   --report-json "${RESULTS_DIR}/iter${N}/mining/budget.json"
+  --pool-size <source pool row count> \
+  --already-mined <rows in the cumulative exclude parquet, 0 on iteration 1> \
+  --remaining-iterations <iterations still to run, including this one> \
 ```
+
+`--pool-size`, `--already-mined` and `--remaining-iterations` make the budget a
+feasibility check. The pool is finite and each iteration excludes what earlier ones
+mined, so the run needs roughly `budget x remaining_iterations` unmined images to
+finish. When it does not have them the script says so here — before this
+iteration's train, inference and KPI — rather than at the next iteration's `mine`
+an hour later:
+
+```
+POOL SHORTFALL: 59 unmined pool images remain (5000 pool - 4941 already mined), but
+1 more iterations at a budget of 5000 need 5000.
+  This pool can supply 0 more full iteration(s).
+```
+
+That is not an error: a spent pool is a documented terminal state. Stop the loop and
+record it with `commit_stage.py --stage loop_stop --pool-exhausted --pool-remaining N`,
+where N is the real remaining count. Pass `--fail-on-shortfall` to exit 2 instead of
+warning.
 
 Point `--weak-parquet` at **iteration 1's** weak-images parquet on every iteration. Iteration 1 has the largest gap set (the model is weakest against the zero-shot baseline), so the budget stays constant as later iterations improve, instead of decaying toward zero. Only the number is written to stdout, so the caller can capture it directly.
 

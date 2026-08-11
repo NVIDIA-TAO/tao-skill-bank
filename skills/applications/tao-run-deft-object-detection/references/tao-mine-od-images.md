@@ -14,7 +14,7 @@ Iteration stage 3, after `embed`. Mines the source pool for images resembling th
 | `config.source_pool_embeddings` | Pre-embedded source pool — the mining **source**. Must use the same encoder as the target. |
 | `iterations.iter$((N-1)).exclude_parquet` | Previous cumulative mined set. **Absent on iteration 1.** |
 | `config.source_detection_file` | Source-pool COCO JSON — required for `class_stratified`. |
-| `config.target_detection_file` | KPI COCO JSON — required for `class_stratified`. |
+| `config.target_detection_file` | KPI COCO JSON — required for `class_stratified`. It describes the **KPI** set, not the pool: stratified allocation reads it to find how many boxes of each rare class the target set holds. If the KPI package ships one, use it. If the ground truth is KITTI, build one with `annotations convert` the same way prep converts the pool (`references/prep-source-pool.md`, step 3), pointing it at the KPI labels. Without it, use `--allocation-policy global`. |
 | `config.rare_class_list` | Comma-separated rare classes, e.g. `"person,bicycle"`. |
 
 ## `exclude_path` must be `null` on iteration 1

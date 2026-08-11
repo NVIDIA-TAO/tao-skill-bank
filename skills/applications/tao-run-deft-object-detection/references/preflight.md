@@ -38,10 +38,12 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
    | Variable | Required for |
    |---|---|
-   | `NGC_KEY` | Always — every `nvcr.io` pull (TAO PyTorch and data-services). |
+   | `NGC_KEY` | **Conditionally** — only when an `nvcr.io` image has to be pulled, or the Grounding DINO checkpoint downloaded. Both images already local and an `ngc` CLI holding its own credentials is a complete run with this unset. See check 5. |
    | `HF_TOKEN` | **Conditionally** — only when the encoder resolves to a HuggingFace id rather than a local snapshot directory. See check 9. |
 
-   If `NGC_KEY` is unset, tell the user which variable to export and relaunch. Defer the `HF_TOKEN` verdict until check 9 has resolved the encoder; a run using a local snapshot needs no HuggingFace access at all.
+   Defer both verdicts. Check 5 sets `WILL_PULL_AFTER_APPROVAL`, and only then does an unset `NGC_KEY` stop the run; check 9 resolves the encoder, and a local snapshot needs no HuggingFace access at all. Stopping a run whose inputs are all present is the failure to avoid here.
+
+   `fetch_gdino_checkpoint.py` shells out to the `ngc` CLI, which is not always on `PATH` — check for it and add its directory before deciding a checkpoint cannot be fetched.
 
 4. **Export the pinned images.** Export both verbatim; every later stage reads them from the environment, and an unset one makes `docker image inspect` report a misleading failure rather than an obvious one.
 
@@ -145,6 +147,7 @@ Resolve everything you can before asking the user. Parameter precedence is stric
      for cache_root in \
        "${HF_HOME:+$HF_HOME/hub}" \
        "${HUGGINGFACE_HUB_CACHE:-}" \
+       "$HOME/.cache/huggingface/hub" \
        "$WORKSPACE/source_pool/hf_cache/hub" \
        "$WORKSPACE/source_pool/hf_cache"; do
        [ -n "$cache_root" ] || continue
@@ -247,6 +250,14 @@ Remind the user to enable auto-mode (shift+tab) before approving — the post-ga
 ## Immediately After Approval
 
 Perform the planned pulls and directory creation, then initialize state once:
+**Order:** `init_deft_state.py` runs first and `prep` is the run's first committed
+stage. On a pool that still needs preparing, the pool artifacts and
+`--source-detection-file` do not exist yet — pass them anyway, as the paths prep
+*will* write, together with prep's inputs (`--pool-images`, `--codetr-checkpoint`,
+`--codetr-classmap`). Init reports them as warnings rather than errors, because prep
+produces them. Supplying neither the artifacts nor prep's inputs is still an error:
+nothing would create them.
+
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/init_deft_state.py \

@@ -262,15 +262,16 @@ def _contradictory_zero_weak(info: Any) -> bool:
 def _pool_exhausted(iterations: dict[str, Any]) -> str | None:
     """The phase whose loop_stop recorded a spent source pool, if any.
 
-    Pool exhaustion is the second documented terminal state. The miner cannot
-    return images already in the exclude set, and it raises rather than returning
-    an empty result, so a run that has mined its whole pool must stop. That is a
-    correct outcome, not an abandoned run, and only a recorded count distinguishes
-    the two — ``--pool-remaining 0`` on the loop_stop commit.
+    The second documented terminal state. The miner raises rather than returning a
+    short result, so a pool that cannot fill the budget ends the run. ``--pool-exhausted``
+    on the loop_stop commit asserts it; ``pool_remaining`` is the count and may be
+    non-zero, since too few images is exhaustion just as much as none.
     """
     for phase in sorted(iterations, key=_phase_sort_key):
         info = iterations.get(phase)
-        if isinstance(info, dict) and info.get("pool_remaining") == 0:
+        if not isinstance(info, dict):
+            continue
+        if info.get("pool_exhausted") is True or info.get("pool_remaining") == 0:
             return phase
     return None
 
@@ -733,14 +734,15 @@ def audit(results_dir: Path) -> dict[str, Any]:
             complete = True
             completion_reason = (
                 f"documented early stop: the source pool was exhausted at {exhausted} "
-                f"(pool_remaining=0), so no further iteration could mine"
+                f"(pool_remaining={iterations[exhausted].get('pool_remaining', 'unrecorded')}), "
+                f"so no further iteration could mine"
             )
         else:
             completion_reason = (
                 f"only {iterations_completed} of {max_iterations} iterations finished "
                 f"{ITER_ORDER[-1]}, and the loop was stopped by neither documented early "
                 f"stop (zero weak images, or an exhausted source pool recorded with "
-                f"--pool-remaining 0)"
+                f"--pool-exhausted)"
             )
     if status == "INVALID":
         complete = False

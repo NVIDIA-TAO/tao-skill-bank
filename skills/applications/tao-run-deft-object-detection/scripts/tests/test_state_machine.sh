@@ -1727,105 +1727,187 @@ esac
 # ═══════════════════════════════════════════════════════════════════════════
 # G16 — an exhausted source pool is a documented early stop, not an abandoned run
 #
-# The miner cannot return images already in the exclude set and raises rather
-# than returning an empty result, so a run that has mined its whole pool has to
-# stop. Only a recorded count separates that from a run someone walked away
-# from, which is why --pool-remaining lives on loop_stop and is a number.
+# The miner raises rather than returning a short result, so a pool that cannot
+# fill the budget ends the run. Only a recorded assertion separates that from a
+# run someone walked away from.
+#
+# Each variant is a full run: commit_stage.py pins state.results_dir, so a copied
+# run directory is correctly rejected and cannot stand in for one.
 # ═══════════════════════════════════════════════════════════════════════════
 CURRENT_SECTION="G16 pool exhaustion as a terminal state"
 
-G16_WS=$(new_workspace g16); make_pool "$G16_WS"
-G16_RUN="$G16_WS/results/run_g16"
-init_run "$G16_WS" "$G16_RUN" 2
-assert_rc 0 "[G16] init with max_iterations=2"
+# pool_exhausted_run LABEL EXPECT_RC [loop_stop flags...]
+pool_exhausted_run() {
+  local label=$1 expect_rc=$2; shift 2
+  local ws results
+  ws=$(new_workspace "g16_${label}"); make_pool "$ws"
+  results="$ws/results/run_g16_${label}"
+  init_run "$ws" "$results" 2
 
+  make_phase_artifacts "$results" baseline
+  commit "$results" baseline inference \
+    --inference-labels-dir "$results/baseline/inference/labels" \
+    --summary "inference" --duration-sec 120
+  commit "$results" baseline kpi_analyze \
+    --kpi-csv "$results/baseline/kpi/kpi_calc.csv" --map-value 0.76 \
+    --summary "kpi: mAP=0.76" --duration-sec 60
+
+  # Iteration 1 mines the entire pool and completes every stage.
+  make_iter_artifacts "$results" iter1
+  commit "$results" iter1 gap_analysis \
+    --weak-images "$results/iter1/gaps/weak_images.parquet" \
+    --gap-report "$results/iter1/gaps/gap_report.json" \
+    --weak-image-count 10891 --summary "10891 weak" --duration-sec 133
+  commit "$results" iter1 embed \
+    --embeddings-parquet "$results/iter1/embeddings/weak_images_embeddings.parquet" \
+    --summary "embedded" --duration-sec 229
+  commit "$results" iter1 mine \
+    --mining-output "$results/iter1/mining/final_unique_files.parquet" \
+    --mining-summary "$results/iter1/mining/summary.json" \
+    --summary "mined 4941 of 5000" --duration-sec 35
+  commit "$results" iter1 stage \
+    --odvg "$results/iter1/tmm/annotations/tmm_odvg.jsonl" \
+    --label-map "$results/iter1/tmm/annotations/labelmap.json" \
+    --staged-images-dir "$results/iter1/tmm/images" \
+    --exclude-parquet "$results/iter1/mined_cumulative.parquet" \
+    --summary "staged 4941" --duration-sec 4
+  commit "$results" iter1 train \
+    --checkpoint "$results/iter1/train/gdino_model_latest.pth" \
+    --training-spec "$results/iter1/train_grounding_dino.yaml" \
+    --summary "trained" --duration-sec 1272
+  commit "$results" iter1 inference \
+    --inference-labels-dir "$results/iter1/inference/labels" \
+    --summary "inference" --duration-sec 1535
+  commit "$results" iter1 kpi_analyze \
+    --kpi-csv "$results/iter1/kpi/kpi_calc.csv" --map-value 0.78082 \
+    --summary "kpi: mAP=0.78082" --duration-sec 1319
+  assert_rc 0 "[G16/$label] iteration 1 completed every stage"
+
+  # Iteration 2 finds weak images but the pool cannot fill another budget.
+  make_iter_artifacts "$results" iter2
+  commit "$results" iter2 gap_analysis \
+    --weak-images "$results/iter2/gaps/weak_images.parquet" \
+    --gap-report "$results/iter2/gaps/gap_report.json" \
+    --weak-image-count 10362 --summary "10362 weak" --duration-sec 153
+  assert_rc 0 "[G16/$label] iteration 2 reached gap_analysis"
+
+  commit "$results" iter2 loop_stop "$@" --summary "stop: $label" --duration-sec 1
+  assert_rc 0 "[G16/$label] loop_stop committed"
+  run "$PY" "$AUDIT" --results-dir "$results" --require-complete
+  assert_rc "$expect_rc" "[G16/$label] --require-complete exits $expect_rc"
+  G16_OUT=$RUN_OUT
+}
+
+# 1. The real 5k case: 59 images left, far below the budget. Exhaustion is asserted
+#    by the flag; the count stays honest.
+pool_exhausted_run exhausted 0 --pool-exhausted --pool-remaining 59
+case "$G16_OUT" in
+  *"source pool was exhausted"*) ok "[G16] the reason names pool exhaustion" ;;
+  *) notok "[G16] the reason names pool exhaustion" "output: $G16_OUT" ;;
+esac
+case "$G16_OUT" in
+  *"pool_remaining=59"*) ok "[G16] the honest count is reported, not forced to 0" ;;
+  *) notok "[G16] the honest count is reported, not forced to 0" "output: $G16_OUT" ;;
+esac
+
+# 2. A literally empty pool, the earlier spelling, still records the stop.
+pool_exhausted_run zero 0 --pool-remaining 0
+
+# 3. Without either, an early stop is indistinguishable from abandonment.
+pool_exhausted_run bare 1
+
+# Both flags belong to loop_stop, like the weak-image count belongs to gap_analysis.
+G16_WS=$(new_workspace g16_stage); make_pool "$G16_WS"
+G16_RUN="$G16_WS/results/run_g16_stage"
+init_run "$G16_WS" "$G16_RUN" 2
 make_phase_artifacts "$G16_RUN" baseline
 commit "$G16_RUN" baseline inference \
   --inference-labels-dir "$G16_RUN/baseline/inference/labels" \
-  --summary "inference" --duration-sec 120
+  --summary "inference" --duration-sec 1
 commit "$G16_RUN" baseline kpi_analyze \
-  --kpi-csv "$G16_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.76 \
-  --summary "kpi: mAP=0.76" --duration-sec 60
-assert_rc 0 "[G16] baseline committed"
-
-# Iteration 1 mines the entire pool and completes every stage.
+  --kpi-csv "$G16_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 \
+  --summary "kpi" --duration-sec 1
 make_iter_artifacts "$G16_RUN" iter1
 commit "$G16_RUN" iter1 gap_analysis \
   --weak-images "$G16_RUN/iter1/gaps/weak_images.parquet" \
   --gap-report "$G16_RUN/iter1/gaps/gap_report.json" \
-  --weak-image-count 10847 --summary "10847 weak" --duration-sec 91
-commit "$G16_RUN" iter1 embed \
-  --embeddings-parquet "$G16_RUN/iter1/embeddings/weak_images_embeddings.parquet" \
-  --summary "embedded weak images" --duration-sec 210
-commit "$G16_RUN" iter1 mine \
-  --mining-output "$G16_RUN/iter1/mining/final_unique_files.parquet" \
-  --mining-summary "$G16_RUN/iter1/mining/summary.json" \
-  --summary "mined 5000 = the whole pool" --duration-sec 60
-commit "$G16_RUN" iter1 stage \
-  --odvg "$G16_RUN/iter1/tmm/annotations/tmm_odvg.jsonl" \
-  --label-map "$G16_RUN/iter1/tmm/annotations/labelmap.json" \
-  --staged-images-dir "$G16_RUN/iter1/tmm/images" \
-  --exclude-parquet "$G16_RUN/iter1/mined_cumulative.parquet" \
-  --summary "staged 5000" --duration-sec 2
-commit "$G16_RUN" iter1 train \
-  --checkpoint "$G16_RUN/iter1/train/gdino_model_latest.pth" \
-  --training-spec "$G16_RUN/iter1/train_grounding_dino.yaml" \
-  --summary "trained iter1" --duration-sec 658
-commit "$G16_RUN" iter1 inference \
-  --inference-labels-dir "$G16_RUN/iter1/inference/labels" \
-  --summary "inference" --duration-sec 881
-commit "$G16_RUN" iter1 kpi_analyze \
-  --kpi-csv "$G16_RUN/iter1/kpi/kpi_calc.csv" --map-value 0.7363 \
-  --summary "kpi: mAP=0.7363" --duration-sec 1673
-assert_rc 0 "[G16] iteration 1 completed every stage"
-
-# Iteration 2 finds weak images but the pool has nothing left to give.
-make_iter_artifacts "$G16_RUN" iter2
-commit "$G16_RUN" iter2 gap_analysis \
-  --weak-images "$G16_RUN/iter2/gaps/weak_images.parquet" \
-  --gap-report "$G16_RUN/iter2/gaps/gap_report.json" \
-  --weak-image-count 11174 --summary "11174 weak" --duration-sec 120
-commit "$G16_RUN" iter2 embed \
-  --embeddings-parquet "$G16_RUN/iter2/embeddings/weak_images_embeddings.parquet" \
-  --summary "embedded weak images" --duration-sec 210
-assert_rc 0 "[G16] iteration 2 reached embed"
-
-# Without the count, the stop is indistinguishable from abandonment.
-G16_RUN_B="$G16_WS/results/run_g16_nocount"
-cp -r "$G16_RUN" "$G16_RUN_B" 2>/dev/null || true
-commit "$G16_RUN_B" iter2 loop_stop \
-  --summary "stopping: pool exhausted" --duration-sec 1
-run "$PY" "$AUDIT" --results-dir "$G16_RUN_B" --require-complete
-assert_rc 1 "[G16] a bare loop_stop before the last iteration is still INCOMPLETE"
-
-# --pool-remaining is loop_stop's to record, not a stage's.
-commit "$G16_RUN" iter2 mine --pool-remaining 0 \
-  --mining-output "$G16_RUN/iter2/mining/final_unique_files.parquet" \
-  --mining-summary "$G16_RUN/iter2/mining/summary.json" \
-  --summary "pool exhausted" --duration-sec 1
+  --weak-image-count 5 --pool-remaining 0 --summary "wrong stage" --duration-sec 1
 assert_rc 1 "[G16] --pool-remaining is rejected on a stage that is not loop_stop"
 case "$RUN_OUT" in
   *"belongs to loop_stop"*) ok "[G16] the rejection names loop_stop" ;;
   *) notok "[G16] the rejection names loop_stop" "output: $RUN_OUT" ;;
 esac
+commit "$G16_RUN" iter1 gap_analysis \
+  --weak-images "$G16_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G16_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 5 --pool-exhausted --summary "wrong stage" --duration-sec 1
+assert_rc 1 "[G16] --pool-exhausted is rejected on a stage that is not loop_stop"
 
-commit "$G16_RUN" iter2 loop_stop --pool-remaining -1 \
-  --summary "negative" --duration-sec 1
-assert_rc 1 "[G16] a negative --pool-remaining is rejected"
+# ═══════════════════════════════════════════════════════════════════════════
+# G17 — init and prep must not be each other's precondition
+#
+# --source-detection-file is source_pool/coco.json, which prep produces. Requiring
+# it at init makes a class_stratified run from raw images unstartable.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G17 init before prep on an unprepared pool"
 
-commit "$G16_RUN" iter2 loop_stop --pool-remaining 0 \
-  --summary "early stop: source pool exhausted, 0 of 5000 remain outside the exclude set" \
-  --duration-sec 1
-assert_rc 0 "[G16] loop_stop records the exhausted pool"
+G17_WS=$(new_workspace g17)
+mkdir -p "$G17_WS/pool_images" "$G17_WS/ckpt" "$G17_WS/encoder/siglip" "$G17_WS/kpi/labels" "$G17_WS/classes"
+make_file "$G17_WS/pool_images/a.jpg" "x"
+make_file "$G17_WS/ckpt/gdino_zero_shot.pth" "x"
+make_file "$G17_WS/ckpt/codetr.pth" "x"
+make_file "$G17_WS/ckpt/coco80.txt" "person"
+make_file "$G17_WS/encoder/siglip/config.json" '{}'
+mkdir -p "$G17_WS/kpi/sequence_a/images"
+make_file "$G17_WS/kpi/labels/a.txt" "car 0 0 0 1 1 2 2 0 0 0 0 0 0 0"
+make_file "$G17_WS/classes/classes_its.yaml" 'car: ["car"]'
+make_file "$G17_WS/kpi/target.json" '{"images": [], "annotations": [], "categories": []}'
+G17_RUN="$G17_WS/results/run_g17"
 
-audit_kv "$G16_RUN"
-assert_eq true "$AUDIT_COMPLETE" "[G16] complete=true on an exhausted pool"
-run "$PY" "$AUDIT" --results-dir "$G16_RUN" --require-complete
-assert_rc 0 "[G16] --require-complete passes"
+run "$PY" "$INIT" \
+  --results-dir "$G17_RUN" --workspace "$G17_WS" --max-iterations 1 \
+  --num-epochs 1 --learning-rate 0.0001 \
+  --zero-shot-checkpoint "$G17_WS/ckpt/gdino_zero_shot.pth" \
+  --embedding-model-path "$G17_WS/encoder/siglip" \
+  --kpi-images-dir "$G17_WS/kpi/sequence_a/images" \
+  --ground-truth-labels-dir "$G17_WS/kpi/labels" \
+  --class-mapping "$G17_WS/classes/classes_its.yaml" \
+  --allocation-policy class_stratified --rare-class-list car \
+  --target-detection-file "$G17_WS/kpi/target.json" \
+  --source-detection-file "$G17_WS/source_pool/coco.json" \
+  --source-pool-annotations "$G17_WS/source_pool/odvg" \
+  --source-pool-embeddings "$G17_WS/source_pool/source_embeddings.parquet" \
+  --pool-images "$G17_WS/pool_images" \
+  --codetr-checkpoint "$G17_WS/ckpt/codetr.pth" \
+  --codetr-classmap "$G17_WS/ckpt/coco80.txt"
+assert_rc 0 "[G17] init succeeds when prep will produce the detection file"
 case "$RUN_OUT" in
-  *"source pool was exhausted"*) ok "[G16] the reason names pool exhaustion" ;;
-  *) notok "[G16] the reason names pool exhaustion" "output: $RUN_OUT" ;;
+  *"prep\` runs first and produces it"*) ok "[G17] the absent detection file is a warning, not an error" ;;
+  *) notok "[G17] the absent detection file is a warning, not an error" "output: $RUN_OUT" ;;
 esac
+
+# Without prep's inputs there is nothing to produce it, so it stays an error.
+G17_WS2=$(new_workspace g17_noinputs)
+mkdir -p "$G17_WS2/ckpt" "$G17_WS2/encoder/siglip" "$G17_WS2/kpi/labels" "$G17_WS2/classes" "$G17_WS2/kpi/sequence_a/images"
+make_file "$G17_WS2/ckpt/gdino_zero_shot.pth" "x"
+make_file "$G17_WS2/encoder/siglip/config.json" '{}'
+make_file "$G17_WS2/kpi/labels/a.txt" "car 0 0 0 1 1 2 2 0 0 0 0 0 0 0"
+make_file "$G17_WS2/classes/classes_its.yaml" 'car: ["car"]'
+make_file "$G17_WS2/kpi/target.json" '{"images": [], "annotations": [], "categories": []}'
+run "$PY" "$INIT" \
+  --results-dir "$G17_WS2/results/run_g17b" --workspace "$G17_WS2" --max-iterations 1 \
+  --num-epochs 1 --learning-rate 0.0001 \
+  --zero-shot-checkpoint "$G17_WS2/ckpt/gdino_zero_shot.pth" \
+  --embedding-model-path "$G17_WS2/encoder/siglip" \
+  --kpi-images-dir "$G17_WS2/kpi/sequence_a/images" \
+  --ground-truth-labels-dir "$G17_WS2/kpi/labels" \
+  --class-mapping "$G17_WS2/classes/classes_its.yaml" \
+  --allocation-policy class_stratified --rare-class-list car \
+  --target-detection-file "$G17_WS2/kpi/target.json" \
+  --source-detection-file "$G17_WS2/source_pool/coco.json" \
+  --source-pool-annotations "$G17_WS2/source_pool/odvg" \
+  --source-pool-embeddings "$G17_WS2/source_pool/source_embeddings.parquet"
+assert_rc 1 "[G17] with no prep inputs the missing detection file is still an error"
 
 # ═══════════════════════════════════════════════════════════════════════════
 

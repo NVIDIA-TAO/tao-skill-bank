@@ -56,11 +56,18 @@ inference:
     road_sign: ["road_sign", "traffic light", "stop sign"]
 ```
 
-`assets/overlays/codetr_inference.yaml` supplies the rest — `conf_threshold: 0.3`
-(TAO defaults to 0.5) and `input_width`/`input_height: 640`. Apply it to the
-emitted spec before launching; leaving the resolution null makes the run roughly
-4× slower **and** produces different boxes, because the input is then sized by the
-augmentation path instead, and neither symptom is reported.
+`assets/overlays/codetr_inference.yaml` supplies the rest and must be applied to the
+emitted spec before launching. Two of its settings decide what the pool contains:
+
+* `model.num_select: 1000` (TAO: 300) caps how many decoder queries become
+  candidates, *before* the fold and soft-NMS. At TAO's 300 the abundant class fills
+  the candidate set and the rare ones are gone before the fold runs — bicycle drops
+  from 55 boxes to 2 across the same 8 images. Mining rare classes is the point of
+  the loop, so this is the field to check first if a pool looks class-skewed.
+* `inference.conf_threshold: 0.3` (TAO: 0.5) is the quality gate on the labels.
+
+Sizing is by resize-and-pad — `test_random_resize: 1280`, `random_resize_max_size:
+2048` — with `inference.input_width`/`input_height` left unset.
 
 From `category_mapping.py`: unmapped originals are dropped, a name claimed by two groups keeps the first with a warning, names absent from the classmap are warned about and ignored, an empty remap raises, and output category IDs are assigned `0..K-1` **in the order the mapping is written**.
 
@@ -93,7 +100,7 @@ wrong for it — never apply:
 | `model.num_feature_levels` | 5 | 4 | silently |
 | `dataset.num_classes` | 80 | 91 | silently |
 | `model.return_interm_indices` | `[0, 1, 2, 3, 4]` | `[1, 2, 3, 4]` | loudly |
-| `dataset.augmentation.fixed_random_crop` | 1024 | `null` | loudly |
+| `dataset.augmentation.fixed_random_crop` | 1536 | `null` | loudly |
 
 The last two are consequences of the first four rather than independent choices.
 `return_interm_indices` must hold exactly `num_feature_levels` entries — TAO raises
@@ -134,9 +141,17 @@ whole mapping into the spec first, together with the workflow defaults and the
   --report-json "${PREP_DIR}/codetr_spec_report.json"
 ```
 
-Merge `${PREP_DIR}/codetr_category_mapping.yaml` (step 2) into the same spec under
-`inference.category_mapping` before launching — the spec, not the command line,
-carries it for the same reason.
+Set the fold from step 2's emitted file into the same spec — the spec, not the
+command line, carries it for the same reason. Load the file; do not retype it:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
+  --spec "$CODETR_SPEC" --allow-new \
+  --set-from-yaml inference.category_mapping="${PREP_DIR}/codetr_category_mapping.yaml"
+```
+
+The emitted file's single top-level `category_mapping:` key is unwrapped, so its
+value lands directly on `inference.category_mapping`.
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
