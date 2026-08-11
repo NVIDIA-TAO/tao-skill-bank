@@ -129,7 +129,6 @@ runtime; other TAO workflows run through this surface.
 
 | File | What |
 |------|------|
-| `TUTORIAL.md` | End-to-end walkthrough: install NemoClaw → onboard → run the DEFT AOI loop → teardown, with a troubleshooting table |
 | `server.py` | The MCP server (stdlib + `mcp` + `uvicorn`) |
 | `setup-tao-nemoclaw.sh` | One-command setup for a sandbox |
 | `uninstall-tao-nemoclaw.sh` | Reverses setup: policy, `openclaw.json`, skill tree, `AGENTS.md` block, host server. Never touches workspace data; `--purge-bank` also removes the cloned bank |
