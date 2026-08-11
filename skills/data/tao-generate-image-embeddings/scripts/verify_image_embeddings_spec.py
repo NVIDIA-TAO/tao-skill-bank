@@ -73,6 +73,17 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"model must be one of {sorted(VALID_MODELS)}.")
     config["model"] = model
 
+    # `model` selects the loader and `model_path` the weights, and they are otherwise
+    # independent — a SigLIP path under model: CLIP passes every other check here and
+    # fails inside the container, or worse loads something that embeds badly.
+    mp = str(config["model_path"]).lower()
+    for name, marker in (("SigLIP", "siglip"), ("CLIP", "clip")):
+        if marker in mp and model != name and not (name == "CLIP" and "siglip" in mp):
+            raise ValueError(
+                f"model is {model!r} but model_path names {name} ({config['model_path']}). "
+                "The two must agree — they select the loader and the weights separately."
+            )
+
     # A TAO checkpoint cannot be rebuilt without its training spec.
     model_path = str(config["model_path"])
     if Path(model_path).suffix in TAO_CKPT_SUFFIXES and not config.get("model_config_path"):

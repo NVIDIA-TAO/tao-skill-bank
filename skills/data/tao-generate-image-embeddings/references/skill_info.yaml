@@ -2,7 +2,7 @@ network_arch: tao-generate-image-embeddings
 type: data
 container_image: nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
 gpu_spec_key: null
-required_credentials: []
+required_credentials: [NGC_KEY]   # the pinned image is nvstaging/*, which is not public
 actions:
   image_embeddings:
     command: embedding image_embeddings -e {config_path}

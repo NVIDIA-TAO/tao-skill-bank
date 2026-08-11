@@ -41,7 +41,7 @@ Required spec fields:
 | `input_parquet` | Absolute path to a parquet containing image filepaths. |
 | `output_parquet` | Absolute path where the embedding parquet is written. |
 | `model` | `CLIP` or `SigLIP`. |
-| `model_path` | HuggingFace model id, local HF snapshot directory, or a TAO `.pth`/`.ckpt` checkpoint. |
+| `model_path` | HuggingFace model id, local HF snapshot directory, or a TAO `.pth`/`.ckpt` checkpoint. **Must match `model`.** SigLIP: `google/siglip-base-patch16-224` (768-dim, the template default). CLIP: `openai/clip-vit-base-patch32` (512-dim). The two fields are validated independently, so a mismatched pair is accepted here and fails or mis-loads inside the container. |
 
 Common optional fields:
 
@@ -56,7 +56,7 @@ The default template is `assets/default_image_embeddings.yaml`.
 
 ## Encoder Consistency
 
-When embeddings feed a mining step, every parquet compared against another must be produced with the **same** `model` and `model_path`. Embeddings from different encoders are not comparable, and mismatched encoders are the most common cause of mining output that looks unrelated to the targets. Reuse one spec across every parquet in a mining run and override only `input_parquet` / `output_parquet`.
+When embeddings feed a mining step, every parquet compared against another must be produced with the **same** `model` and `model_path`. Embedding dimensionality follows the encoder — 768 for the SigLIP default, 512 for CLIP ViT-B/32 — and nothing in the output parquet records which encoder wrote it. Embeddings from different encoders are not comparable, and mismatched encoders are the most common cause of mining output that looks unrelated to the targets. Reuse one spec across every parquet in a mining run and override only `input_parquet` / `output_parquet`.
 
 ## Quick Start
 
@@ -81,6 +81,7 @@ DS_IMAGE=nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: 
 
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
   -w "$RUN_ROOT" \
   "$DS_IMAGE" \
   embedding image_embeddings -e "$SPEC"
