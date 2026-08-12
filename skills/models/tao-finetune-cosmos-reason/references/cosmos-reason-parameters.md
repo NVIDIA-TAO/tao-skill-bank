@@ -15,18 +15,25 @@ Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `
 - **train.output_dir**: Output directory for checkpoints and logs.
 
 ### Model & Policy
-- **policy.model_name_or_path**: HuggingFace model path. The packaged default is `hf_model://nvidia/Cosmos3-Nano`. Override this only when the user provides a different HuggingFace model id, `hf_model://...` URI, or cluster-local snapshot path.
+- **policy.model_name_or_path**: Required runtime Hugging Face model URI or cluster-local snapshot path. URI sources also require an immutable revision.
 - **policy.model_max_length**: Context window size. Must be 40960 for video SFT. Affected by FPS, resolution, and prompt length.
 - **policy.model_gradient_checkpointing**: Save VRAM by recomputing activations. Keep true for large models.
 
 ### Parallelism (Multi-GPU / Multi-Node)
-- **policy.parallelism.dp_shard_size**: Data-parallel shard size. CRITICAL: should equal **GPUs per node** (the Cosmos-RL equivalent of `num_gpus`).
-- **policy.parallelism.dp_replicate_size**: Data-parallel replication = **node count** (equivalent of `num_nodes`). For single-node training set to 1.
+- **policy.parallelism.dp_shard_size**: Data-parallel shard size. For
+  single-node SFT it equals visible GPUs. The validated custom policy-only
+  multi-node launcher sets it to total policy ranks (nodes × GPUs per node).
+- **policy.parallelism.dp_replicate_size**: Keep 1 for the validated
+  single-node and custom policy-only multi-node SFT launchers.
 - **policy.parallelism.tp_size**: Tensor parallelism. Default 1.
 - **policy.parallelism.cp_size**: Context parallelism. Default 1.
 - **policy.parallelism.pp_size**: Pipeline parallelism. Default 1.
 
-For multi-node, set `dp_replicate_size = num_nodes` and `dp_shard_size = gpus_per_node`. Cosmos-RL handles the distributed init internally via FSDP — it does **not** rely on the platform-level `MASTER_ADDR` / `WORLD_SIZE` env vars the way `torchrun`-launched jobs do. Just submit with `gpu_count=<gpus_per_node>` and `num_nodes=<N>` on the SDK; the Cosmos-RL spec keys drive the actual sharding.
+For multi-node policy-only SFT, do not submit the single-node CLI unchanged.
+Start one controller on node zero and one policy replica on every node, pass
+`--ngpus`, `--nnodes`, and the SLURM rendezvous endpoint, and preserve the
+policy process exit code. Other Cosmos-RL role topologies must use their own
+declared contract; do not infer them from this SFT profile.
 
 Training and evaluation can use different Slurm shapes. If the user requests
 multi-node training and single-node evaluation, preserve that distinction:
@@ -80,7 +87,7 @@ For evaluate, pass the resolved LoRA folder directly:
 `model.model_name=<train_output_dir>/<timestamp>/safetensors/epoch_N`,
 `model.enable_lora=true`, and
 `model.base_model_path=<same base model used for training>` (default
-`hf_model://nvidia/Cosmos3-Nano`, or the local base-model snapshot path). For
+the user-supplied immutable model URI, or the local base-model snapshot path). For
 resume/retrain, pass the exact Cosmos checkpoint policy folder as a string:
 `train.resume=<train_output_dir>/<timestamp>/checkpoints/epoch_N/policy`.
 Avoid `train.resume=true` for local Docker epoch-based checkpoints because the
@@ -95,7 +102,7 @@ fine-tuned checkpoints for handoff.
   step-based cadence.
 - **validation.freq**: Run a complete validation pass every N optimizer steps.
   Use only when explicitly requested and account for the full dataset cost; on
-  WTS, a frequency of 20 dominated total runtime.
+  a large validation split, frequent complete passes can dominate total runtime.
 
 ### Logging
 - **logging.logger**: Options: `console`, `wandb`.
@@ -108,8 +115,8 @@ Cosmos-RL models are 8B parameters and use FSDP sharding. SFT requires at least
 per-device capacity. Set `dp_shard_size` to the actual visible GPU count and
 `dp_replicate_size=1` for a single node. The production recommendation remains
 8x A100 or H100 (80 GB each). A single high-memory GB300 is also viable with a
-compatible image, `dp_shard_size=1`, and the WTS/GB300 guards documented in
-`cosmos-reason-wts-gb300.md`. Every visible architecture must be supported by
+compatible image, `dp_shard_size=1`, and the single-GPU video guards documented in
+`cosmos-reason-single-gpu-video.md`. Every visible architecture must be supported by
 the selected image and pass the runtime CUDA-stack smoke test.
 
 Read `runtime_requirements.gpu_host` from `references/skill_info.yaml` and pass
@@ -137,10 +144,12 @@ do not lower it to tiny values such as 128 for video calibration.
 
 **Stale dataset cache after changing fps/total_pixels**: Change `train.train_policy.dataset.name` to a new unique identifier to force cache regeneration.
 
-**Forked CUDA video decoder returns zero frames**: On a single GB300, nonzero
-train or validation `dataloader_num_workers` can initialize video decoding in a
-forked process before CUDA is ready, producing `total_frames=0` and an invalid
-`nframes` error. Set both worker counts to `0` and remove their prefetch factors.
+**Forked CUDA video decoder fails or returns zero frames**: A positive train or
+validation `dataloader_num_workers` must use a clean `spawn` multiprocessing
+context. Forking after the policy process initializes CUDA/NCCL can make the
+FFmpeg NVDEC codec fail to open or produce `total_frames=0`. Use a Cosmos-RL
+revision with the spawned-worker fix and a spawn-picklable dataset cache. When
+the worker count is `0`, omit the multiprocessing context and prefetch factor.
 
 **Checkpoint save failure (scheduler is None)**: The cosmos-rl trainer crashes with `'NoneType' object has no attribute 'state_dict'` when saving a checkpoint before any training step has executed. This happens when the dataset is too small for the batch size (0 steps per epoch). See the batch size error above.
 

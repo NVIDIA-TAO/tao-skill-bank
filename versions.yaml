@@ -37,7 +37,8 @@ images:
     # in a release data-services image. Verified to carry all five actions the DEFT
     # object-detection pipeline uses: gap_analysis, tmm, analytics, embedding, annotations.
     data_services_od:   nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02
-    cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-rl
+    # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
+    cosmos_rl:          nvcr.io/nvstaging/tao/tao-cosmos-rl:main-direct-train-no-cache-20260811-v1
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
     cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed

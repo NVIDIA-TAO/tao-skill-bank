@@ -142,6 +142,19 @@ def test_multinode_capability_matches_frontmatter(platform):
         f"so this platform will never be selected for multi-node work")
 
 
+def test_slurm_enroot_conversion_uses_job_unique_node_local_temp():
+    """Direct Enroot imports need the real Enroot variable, not only Pyxis' alias.
+
+    A fixed ``/tmp/enroot-tao`` directory can be removed by cleanup from another
+    allocation.  Enroot then fails during whiteout conversion with ``getcwd``
+    and ``failed to resolve path`` errors after all image layers were fetched.
+    """
+    text = _skill_text("tao-run-on-slurm")
+    assert "ENROOT_TEMP_PATH=/tmp/enroot-tao-\\${SLURM_JOB_ID}" in text
+    assert "SLURM_ENROOT_TEMP_PATH=\\${ENROOT_TEMP_PATH}" in text
+    assert "--chdir=/tmp" in text
+
+
 # Required flags of `tao_job_record.py open`, per its argparse definition. A
 # documented invocation missing any of these fails at runtime with exit 2 —
 # which is exactly how this test was born: a hand-written Brev example omitted

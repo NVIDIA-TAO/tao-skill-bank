@@ -8,7 +8,7 @@ compatibility: Requires SSH access to a SLURM login node (passwordless via key a
   No nvidia-tao-sdk install is required; jobs are driven directly over ssh + sbatch/squeue/sacct/scancel.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.1.1"
 allowed-tools: Read Bash
 tags:
 - platform
@@ -34,6 +34,11 @@ the cluster.
 
 Confirm `SLURM_USER` and `SLURM_HOSTNAME` are exported and passwordless SSH to a
 login host works (`ssh -o BatchMode=yes`).
+The launch host needs `ssh`, not local `sbatch`, `srun`, Enroot, or a Lustre
+mount. Preflight those scheduler, Pyxis, Enroot, and shared-storage dependencies
+on the selected remote login/compute frame. Model-specific inspectors may be
+streamed from the installed skill over SSH stdin; do not stage an ad-hoc source
+patch or treat the launch host as the SLURM frame.
 For private `nvcr.io` images, install `~/.config/enroot/.credentials` on the
 cluster once per (cluster, user): Pyxis/Enroot does not read `NGC_KEY` from the
 job env, and without persistent credentials, auth-gated pulls fail with "Could
@@ -86,7 +91,7 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    ```
 4. **Render** `templates/slurm/singlenode.sbatch.tmpl` — substitute every
    `@@<NAME>@@` (`JOB_NAME=$JOB_ID`, `NUM_GPUS`, `CPUS_PER_TASK`, `TIME`, `LOG_DIR`,
-   `IMAGE`, `CONTAINER_MOUNTS=/lustre`, `COMMAND=<bundle command reading the Lustre
+   `IMAGE`, `CONTAINER_MOUNTS=<RUNTIME_SUPPLIED_MOUNTS>`, `COMMAND=<bundle command reading the shared-storage
    spec>`, `SBATCH_EXTRA=` account/partition lines, `ENV_FILE=` the sidecar path or
    empty, `EXTRA_ENV=` any cluster NCCL knobs) → `<job_dir>/sbatch/job_$JOB_ID.sbatch`.
    **Lint + syntax-check before submit:** `redact_secrets.py lint <sbatch>` must
@@ -148,13 +153,25 @@ Same four verbs, with three additions at submit:
    change it to a global-rank count.
 2. **NCCL probe first** — before the real job, run a cheap 2-node all-reduce
    (`scripts/nccl_allreduce_probe.py` under the container's torchrun) with a
-   ~120s timeout. `NCCL_PROBE_OK` → proceed. **Timed out** (the collective hung)
+   ~120s timeout. Before invoking torchrun, preserve the TAO rendezvous values
+   as `TAO_NODE_COUNT=$WORLD_SIZE`,
+   `TAO_GPUS_PER_NODE=$NUM_GPU_PER_NODE`, and
+   `TAO_NODE_RANK=$SLURM_PROCID`; torchrun overwrites its standard
+   `WORLD_SIZE` with the global process count. `NCCL_PROBE_OK` → proceed.
+   **Timed out** (the collective hung)
    → set the cluster's NCCL knob in `EXTRA_ENV` and re-probe — on CS-OCI-ORD that
    is `export NCCL_P2P_DISABLE=1` (the intra-node P2P hang), often with
    `NCCL_SOCKET_IFNAME=eth0` / `NCCL_IB_DISABLE=1`. **Cache the working env per
    cluster** so later jobs skip the probe. Gate on **`gpus_per_node > 1` too** —
    the P2P hang triggers on a single node with 2+ GPUs.
 3. Tier-A Lustre, sidecar creds, record, and lint are unchanged.
+
+### Cosmos backend guardrails
+
+Read [`references/cosmos-slurm-guardrails.md`](references/cosmos-slurm-guardrails.md)
+before rendering a Cosmos command. It defines image staging, planner
+materialization, Framework and Cosmos-RL launch contracts, worker/runtime
+requirements, and exit/status handling.
 
 ## Storage
 
@@ -184,7 +201,7 @@ direct-spec modes, backend details, and the results-dir default.
    allocation* below.
 3. Write an sbatch script under `<job_dir>/sbatch/job_<job_id>.sbatch`.
 4. Submit `sbatch --export=ALL <script>`.
-5. Run the container with `srun --container-image=<image> --container-mounts=/lustre`.
+5. Run the container with `srun --container-image=<image> --container-mounts=<RUNTIME_SUPPLIED_MOUNTS>`.
 
 Accepted image formats: `/path/to/image.sqsh`, `registry#image:tag`,
 `docker://registry#image:tag`, and ordinary `registry/image:tag` (converted to
@@ -208,8 +225,14 @@ once on a **CPU partition**, then point every later job at the resulting file:
 ```bash
 # One-time per image, on CPU — costs no GPU time.
 ssh $LOGIN "test -e <sqsh>" || \
-  ssh $LOGIN "srun -n1 -p <cpu_partition> -t <minutes> \
-    enroot import -o <sqsh> docker://<registry>#<image>:<tag>"
+  ssh $LOGIN "srun --chdir=/tmp -n1 -p <cpu_partition> -t <minutes> \
+    bash -c 'set -Eeuo pipefail
+      export TMPDIR=/tmp
+      export ENROOT_TEMP_PATH=/tmp/enroot-tao-\${SLURM_JOB_ID}
+      export SLURM_ENROOT_TEMP_PATH=\${ENROOT_TEMP_PATH}
+      mkdir -p \"\${ENROOT_TEMP_PATH}\"
+      cd /tmp
+      enroot import -o <sqsh> docker://<registry>#<image>:<tag>'"
 
 # Every GPU job then references the file, never the registry.
 srun --container-image=<sqsh> ...
@@ -224,11 +247,11 @@ these numbers are not, and are recorded because each cost real allocations:
 - Conversion partition `cpu_long`, **not** the default `cpu` — `cpu` has a
   ~30-minute wall-time cap, shorter than a TAO conversion, so the conversion job
   is killed partway and leaves a truncated file.
-- `SLURM_ENROOT_TEMP_PATH=/tmp/enroot-tao` — Lustre rejects the
-  `enroot-aufs2ovlfs` xattr whiteouts with `Operation not permitted`. Note
-  `/lustre/fsw/...` user dirs may be symlinks onto another Lustre filesystem, so
-  pointing the temp path at "a different Lustre path" is a no-op; it must be
-  node-local.
+- Set both `ENROOT_TEMP_PATH` and `SLURM_ENROOT_TEMP_PATH` to a job-unique
+  `/tmp/enroot-tao-${SLURM_JOB_ID}` and force `TMPDIR=/tmp`. Direct
+  Enroot uses the first variable and Pyxis may use the second. The directory
+  must be node-local and unique; shared paths can fail on cleanup races or
+  unsupported overlay whiteouts.
 - Conversion timeout ≥ 120 minutes.
 
 Partial conversions are self-detecting: the SQSH is validated by `hsqs` magic,
@@ -288,7 +311,7 @@ for the full credential list, microservices schema keys, and defaults.
   non-interactive public-key auth. Ask for this first in remediation; prefer it
   over the `SSH_AUTH_SOCK` agent-socket fallback.
 - **SLURM_BASE_RESULTS_DIR** (optional): base shared-filesystem path; default
-  `/lustre/fsw/portfolios/edgeai/users/<your-dir>` (your per-user Lustre dir).
+  a shared-storage root supplied and verified at runtime.
 - **SLURM_ACCOUNT** (usually required by site policy): account for `#SBATCH --account`.
 
 Do not ask for `SLURM_ACCOUNT` or `SLURM_BASE_RESULTS_DIR` in the initial
@@ -306,7 +329,7 @@ Defaults from `tao-core`:
 - `time_hours`: 4
 - `timeout_hours`: 3.8
 - `max_time_hours`: 4
-- `container_mounts`: `/lustre`
+- `container_mounts`: explicit source-to-target mounts supplied at runtime
 - `use_requeue`: true
 - `use_sqsh`: true
 
@@ -349,11 +372,17 @@ scheduler-idle constraint.
 
 On an infrastructure failure (`NODE_FAIL`, `BOOT_FAIL`, NCCL transport timeouts,
 CUDA driver init failures, GPU/IB link-down, OOM-killer node reaping, Xid
-errors), classify infra-vs-program from the logs and re-submit the staged sbatch
-script (M6). Plain training failures surface immediately so a broken spec does
-not consume the retry budget. `#SBATCH --requeue` is enabled by default via
+errors), classify infra-vs-program from the logs and create a new retry record
+with `--retry-of` before re-submitting the staged workload (M6). Plain training
+failures surface immediately so a broken spec does not consume the retry
+budget. `#SBATCH --requeue` is enabled by default via
 `SLURM_USE_REQUEUE=true`, so SLURM itself re-queues the job on `NODE_FAIL` or
-pre-emption before any agent-level resubmit.
+pre-emption before any agent-level resubmit; workload contracts such as Cosmos
+may require `--no-requeue`.
+
+Treat an empty `sbatch --parsable` response or SSH disconnect as ambiguous:
+reconcile by exact job name, never submit blindly, and validate inherited node
+exclusions. The referenced execution guide defines the full decision table.
 
 See `references/slurm-container-execution.md` for the full multi-node
 env-var/sbatch directive detail and table, cluster requirements, the
@@ -368,4 +397,6 @@ Lustre-not-S3 rule in full, and the failure-mode checklist.
   monitoring, status mapping, cancellation, multi-node detail,
   Lustre-not-S3, retries, failure modes.
 - `references/slurm-preflight-storage.md` — extended preflight/storage notes.
+- `references/cosmos-slurm-guardrails.md` — Cosmos Framework and Cosmos-RL
+  launch and status guardrails.
 - `references/detailed-guide.md` — navigation map for the split references.

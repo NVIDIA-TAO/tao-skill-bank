@@ -58,6 +58,16 @@ def parse_args() -> argparse.Namespace:
         help="Dataset/spec path to verify. May be repeated.",
     )
     parser.add_argument(
+        "--min-free-disk-gb",
+        action="append",
+        default=[],
+        metavar="LABEL=GIB",
+        help=(
+            "Require at least GIB GiB free on the filesystem containing a "
+            "previously supplied local --path LABEL=PATH. May be repeated."
+        ),
+    )
+    parser.add_argument(
         "--json-required-field",
         action="append",
         default=[],
@@ -128,6 +138,16 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Known target GPU memory in GiB. May be repeated once per GPU, or "
             "provided once with --target-gpu-count to apply to all target GPUs."
+        ),
+    )
+    parser.add_argument(
+        "--target-gpu-index",
+        action="append",
+        default=[],
+        metavar="INDEX",
+        help=(
+            "Restrict local/remote Docker GPU validation and the smoke container "
+            "to an explicitly allocated GPU index. May be repeated."
         ),
     )
     parser.add_argument(
@@ -349,6 +369,85 @@ def parse_effective_batch_limits(values: list[str]) -> dict[str, list[tuple[int,
     return limits
 
 
+def parse_min_free_disk_gb(values: list[str]) -> dict[str, float]:
+    requirements: dict[str, float] = {}
+    for value in values:
+        if "=" not in value:
+            raise SystemExit("--min-free-disk-gb must use LABEL=GIB syntax")
+        label, raw_gib = value.split("=", 1)
+        label = label.strip()
+        try:
+            gib = float(raw_gib)
+        except ValueError as exc:
+            raise SystemExit("--min-free-disk-gb GIB must be numeric") from exc
+        if not label or gib <= 0:
+            raise SystemExit(
+                "--min-free-disk-gb must include a label and a positive GIB value"
+            )
+        requirements[label] = gib
+    return requirements
+
+
+def _existing_disk_probe_path(path: Path) -> Path:
+    candidate = path.expanduser().resolve(strict=False)
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    if not candidate.exists():
+        raise FileNotFoundError(path)
+    return candidate
+
+
+def check_free_disk_space(
+    paths: list[tuple[str, str]],
+    requirements: dict[str, float],
+    *,
+    skip_access: bool,
+) -> bool:
+    if not requirements:
+        return True
+    if skip_access:
+        print(
+            "Free-disk requirements present; skipped filesystem capacity checks. "
+            "Verify them on the target host before launch."
+        )
+        return True
+
+    path_by_label = dict(paths)
+    ok = True
+    for label, required_gib in requirements.items():
+        raw_path = path_by_label.get(label)
+        if raw_path is None:
+            print(f"Free-disk check failed: no --path found for label {label}")
+            ok = False
+            continue
+        path = normalize_local_path(raw_path)
+        if path is None:
+            print(
+                f"Free-disk check failed: {label}={raw_path} is not a local filesystem path"
+            )
+            ok = False
+            continue
+        try:
+            probe = _existing_disk_probe_path(Path(path))
+            free_gib = shutil.disk_usage(probe).free / 1024**3
+        except OSError as exc:
+            print(f"Free-disk check failed: {label}={path}: {exc}")
+            ok = False
+            continue
+        if free_gib < required_gib:
+            print(
+                "Free-disk check failed: "
+                f"{label}={path}, free={free_gib:.1f}GiB < required={required_gib:g}GiB"
+            )
+            ok = False
+        else:
+            print(
+                "Free-disk OK: "
+                f"{label}={path}, free={free_gib:.1f}GiB, required={required_gib:g}GiB"
+            )
+    return ok
+
+
 def env_missing(platform: dict[str, Any]) -> list[str]:
     missing = []
     for item in platform.get("required_credentials", []):
@@ -567,6 +666,42 @@ def check_gpu_resources(
         f"detected={detected}"
     )
     return True
+
+
+def parse_target_gpu_indices(values: list[str]) -> list[str]:
+    indices: list[str] = []
+    for value in values:
+        index = value.strip()
+        if not index.isdigit():
+            raise SystemExit("--target-gpu-index must be a nonnegative integer")
+        if index not in indices:
+            indices.append(index)
+    return indices
+
+
+def filter_target_gpus(
+    gpus: list[dict[str, Any]], target_indices: list[str]
+) -> tuple[bool, list[dict[str, Any]]]:
+    if not target_indices:
+        return True, gpus
+    by_index = {str(gpu.get("index")): gpu for gpu in gpus}
+    missing = [index for index in target_indices if index not in by_index]
+    if missing:
+        print(
+            "Target GPU selection failed: missing index(es)=" + ",".join(missing)
+        )
+        return False, []
+    selected = [by_index[index] for index in target_indices]
+    print("Target GPU selection OK: indices=" + ",".join(target_indices))
+    return True, selected
+
+
+def docker_gpu_request(target_indices: list[str]) -> str:
+    if not target_indices:
+        return "all"
+    # Docker parses --gpus with encoding/csv. Preserve literal quotes around a
+    # comma-separated device selector even when subprocess bypasses a shell.
+    return '"device=' + ",".join(target_indices) + '"'
 
 
 def command_detail(result: subprocess.CompletedProcess[str]) -> str:
@@ -1035,7 +1170,9 @@ def query_host_gpus() -> tuple[bool, list[dict[str, Any]]]:
     return True, gpus
 
 
-def query_docker_gpus(image: str, pull_smoke_image: bool) -> tuple[bool, list[dict[str, Any]]]:
+def query_docker_gpus(
+    image: str, pull_smoke_image: bool, target_gpu_indices: list[str]
+) -> tuple[bool, list[dict[str, Any]]]:
     if not pull_smoke_image and not docker_image_exists(image):
         print(
             "Remote Docker GPU query image is not present on the Docker host: "
@@ -1049,7 +1186,7 @@ def query_docker_gpus(image: str, pull_smoke_image: bool) -> tuple[bool, list[di
         "--rm",
         "--runtime=nvidia",
         "--gpus",
-        "all",
+        docker_gpu_request(target_gpu_indices),
         image,
         "nvidia-smi",
         "--query-gpu=index,name,driver_version,memory.total,compute_cap",
@@ -1064,7 +1201,7 @@ def query_docker_gpus(image: str, pull_smoke_image: bool) -> tuple[bool, list[di
             "--rm",
             "--runtime=nvidia",
             "--gpus",
-            "all",
+            docker_gpu_request(target_gpu_indices),
             image,
             "nvidia-smi",
             "--query-gpu=index,name,driver_version,memory.total",
@@ -1186,6 +1323,7 @@ def check_docker_gpu_smoke(
     container_image: str | None,
     gpu_smoke_image: str,
     pull_smoke_image: bool,
+    target_gpu_indices: list[str],
 ) -> bool:
     image = container_image or gpu_smoke_image
     if not image:
@@ -1205,7 +1343,7 @@ def check_docker_gpu_smoke(
         "--rm",
         "--runtime=nvidia",
         "--gpus",
-        "all",
+        docker_gpu_request(target_gpu_indices),
         image,
         "nvidia-smi",
         "-L",
@@ -1383,6 +1521,25 @@ def check_slurm(
     else:
         working_host = hosts[0]
 
+    if not skip_access:
+        runtime_command = (
+            "command -v sbatch >/dev/null && "
+            "command -v srun >/dev/null && "
+            "command -v sacct >/dev/null && "
+            "command -v enroot >/dev/null && "
+            "srun --help 2>&1 | grep -q -- --container-image"
+        )
+        result = run(ssh_command(working_host, runtime_command), timeout=30)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            reason = detail[-1] if detail else f"exit {result.returncode}"
+            print(
+                "Remote SLURM/Pyxis/Enroot preflight failed: "
+                f"host={working_host}: {reason}"
+            )
+            return False
+        print(f"Remote SLURM/Pyxis/Enroot tools OK: {working_host}")
+
     for label, raw_path in paths:
         path = normalize_local_path(raw_path)
         if path is None:
@@ -1480,6 +1637,7 @@ def check_local_docker(
     min_gpu_memory_gb: float | None,
     low_vram_threshold_gb: float,
     require_remote_docker: bool,
+    target_gpu_indices: list[str],
 ) -> bool:
     ok = True
     docker_host = os.environ.get("DOCKER_HOST")
@@ -1516,9 +1674,13 @@ def check_local_docker(
 
             if remote_docker:
                 print(f"Remote Docker daemon requested: DOCKER_HOST={os.environ.get('DOCKER_HOST')}")
-                gpu_ok, gpus = query_docker_gpus(gpu_smoke_image, pull_smoke_image)
+                gpu_ok, gpus = query_docker_gpus(
+                    gpu_smoke_image, pull_smoke_image, target_gpu_indices
+                )
             else:
                 gpu_ok, gpus = query_host_gpus()
+                selection_ok, gpus = filter_target_gpus(gpus, target_gpu_indices)
+                gpu_ok = gpu_ok and selection_ok
             ok = gpu_ok and ok
             if gpu_ok:
                 ok = (
@@ -1542,6 +1704,7 @@ def check_local_docker(
                     container_image,
                     gpu_smoke_image,
                     pull_smoke_image,
+                    target_gpu_indices,
                 )
                 and ok
             )
@@ -1608,6 +1771,8 @@ def main() -> int:
     required_json_fields = parse_required_fields(args.json_required_field)
     gpu_arch_allowlists = parse_gpu_arch_allowlists(args.gpu_arch_allowlist)
     effective_batch_limits = parse_effective_batch_limits(args.effective_batch_limit)
+    min_free_disk_gb = parse_min_free_disk_gb(args.min_free_disk_gb)
+    target_gpu_indices = parse_target_gpu_indices(args.target_gpu_index)
     name = platform["name"]
 
     if name == "slurm":
@@ -1631,6 +1796,7 @@ def main() -> int:
             args.min_gpu_memory_gb,
             args.low_vram_threshold_gb,
             name == "remote-docker" or bool(args.docker_host or os.environ.get("DOCKER_HOST")),
+            target_gpu_indices,
         )
     elif name == "brev":
         platform_ok = check_brev(platform, args.skip_platform_access)
@@ -1667,6 +1833,11 @@ def main() -> int:
         effective_batch_limits,
         args.skip_platform_access,
     )
+    free_disk_ok = check_free_disk_space(
+        paths,
+        min_free_disk_gb,
+        skip_access=args.skip_platform_access,
+    )
     ok = (
         platform_ok
         and storage_ok
@@ -1674,6 +1845,7 @@ def main() -> int:
         and gpu_arch_ok
         and gpu_resources_ok
         and effective_batch_ok
+        and free_disk_ok
     )
 
     if ok:

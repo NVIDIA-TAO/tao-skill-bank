@@ -43,6 +43,20 @@ def test_last_rank():
                                    "NODE_RANK": "1", "LOCAL_RANK": "7"})
     assert cfg["global_rank"] == cfg["global_world_size"] - 1   # 15
 
+
+def test_tao_aliases_survive_torchrun_world_size_overwrite():
+    cfg = probe.rendezvous_config({
+        "WORLD_SIZE": "16",       # torchrun's global process count
+        "RANK": "11",
+        "LOCAL_RANK": "3",
+        "TAO_NODE_COUNT": "2",
+        "TAO_GPUS_PER_NODE": "8",
+        "TAO_NODE_RANK": "1",
+    })
+    assert cfg["node_count"] == 2
+    assert cfg["global_world_size"] == 16
+    assert cfg["global_rank"] == 11
+
 def test_master_addr_port_passthrough():
     cfg = probe.rendezvous_config({"MASTER_ADDR": "dino-0.dino", "MASTER_PORT": "29500"})
     assert cfg["master_addr"] == "dino-0.dino" and cfg["master_port"] == "29500"

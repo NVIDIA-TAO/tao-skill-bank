@@ -1,0 +1,98 @@
+schema_version: 2
+backend: cosmos-rl
+display_name: Cosmos-RL
+native_source_repository: cosmos-rl-github
+tao_integration_repository: cosmos-rl
+container_image: nvcr.io/nvstaging/tao/tao-cosmos-rl:main-direct-train-no-cache-20260811-v1  # versions-key: images.tao_toolkit.cosmos_rl
+build:
+  owner: cosmos-rl
+  dockerfile: Dockerfile.cosmos_rl
+  required_build_args:
+  - COSMOS_RL_BASE_IMAGE
+  - COSMOS_RL_COMMIT
+  - COSMOS_RL_TREE
+  - ACTIONS_COMMIT
+  - ACTIONS_TREE
+  - DAFT_COMMIT
+  - DAFT_TREE
+  - TAO_CORE_COMMIT
+  - TAO_CORE_TREE
+  - SOURCE_DIRTY
+  - BUILD_TIMESTAMP
+  clean_source_required: true
+  provenance_file: /opt/tao/image-provenance.json
+runtime:
+  shell: /bin/bash
+  python: /opt/venv/cosmos_rl/bin/python
+  working_directory: /workspace/cosmos_rl
+  non_root_executable_required: true
+  video_decoder: torchvision_PyAV_system_FFmpeg_NVDEC
+  driver_capabilities: [compute, utility, video]
+configuration:
+  format: toml
+  schema: cosmos_rl.policy.config.Config
+  entrypoint: cosmos-rl --config <config> <dataset_hook>
+  peft_schema:
+    type: cosmos_rl.policy.config.LoraConfig
+    fields: [r, lora_alpha, lora_dropout, target_modules, bias, use_rslora, modules_to_save, adapter_dtype]
+    forbidden_legacy_fields: [dim, alpha, dropout]
+dataset_families:
+  video_conversation:
+    hook: package://cosmos_rl/tools/custom_hooks/tao_sft_example.py
+    runtime_inputs: [train_annotation, train_media_root, validation_annotation, validation_media_root]
+  task_aware_video_reasoning:
+    hook: package://cosmos_rl/tools/custom_hooks/tao_vl_reason_daft_sft_example.py
+    format_package: nvidia-tao-daft
+    runtime_inputs: [train_annotations, train_media_roots, validation_annotations, validation_media_roots, task_selection]
+parallelism:
+  controller: one_on_node_zero
+  policy_worker: one_replica_command_per_node
+  dp_shard_size: total_gpus
+  dp_replicate_size: 1
+  pipeline_parallelism_for_parity: 1
+checkpoint:
+  input: qwen3_vl_hf_safetensors
+  output: cosmos_rl_epoch_policy_and_hf_safetensors
+  cadence: epoch
+  async_multinode: disabled
+status:
+  native_logger: TAOStatusLogger
+  structured_only: true
+  metrics:
+  - train/avg_loss
+  - train/loss_numerator
+  - train/valid_label_count
+  - val/avg_loss
+  - val/loss_numerator
+  - val/valid_label_count
+  events: [started, validation_complete, checkpoint_complete, training_complete, success, failure]
+actions:
+  train: {supported: true, implementation: native}
+  export: {supported: true, implementation: native_checkpoint_export}
+  evaluate: {supported: true, implementation: tao_integration}
+  inference: {supported: true, implementation: tao_integration}
+  inference_microservice: {supported: true, implementation: tao_integration}
+  quantize: {supported: true, implementation: tao_integration}
+cache:
+  default_mode: direct
+  direct_training_starts_without_prewarm: true
+  prewarm_required_for_video_conversation_runs: false
+  prewarm_mode: explicit_opt_in
+  task_aware_policy: direct_gpu_decode_with_fingerprinted_override_artifact
+  deterministic_key: dataset_plus_model_plus_processor
+  train_validation_keys_separate: true
+  completeness_manifest_required: true
+decoder_artifact:
+  schema_version: 2
+  builder: cosmos_rl.utils.video_override_artifacts
+  validator: cosmos_rl.utils.validate_video_override_artifacts
+  force_all_validation_annotations: true
+  diagnosed_train_sources_are_explicit: true
+  gpu_random_access_validation_required: true
+compatibility:
+  a100_qwen3_vl_patch_embed: native_per_model_linear_equivalent
+  vllm_qwen3_vl_patch_embed: equal_or_newer_pytorch_linear_guard_verified
+  deepep_extension: python_binding_and_required_internode_symbols_verified
+  cuda_video_workers: spawn_context_and_picklable_dataset_cache
+  worker_zero_prefetch: num_workers_zero_and_prefetch_omitted
+  host_source_mount: forbidden

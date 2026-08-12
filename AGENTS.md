@@ -21,6 +21,16 @@ not name a separate implementation.
 
 ## Discovery flow
 
+Model-first routing is mandatory. Resolve a supplied model ID with
+`scripts/resolve_tao_model.py` before selecting a generic workflow. When the
+request names an action or workload, pass `--action` and `--workload`. If the
+matched metadata declares `backend_contracts`, resolve the implementation
+before image/spec selection, show the backend and rationale, and use its
+packaged planner/contract. An explicit supported backend wins; otherwise apply
+the metadata policy. Never treat one backend as a version of another or
+silently use a legacy top-level action fallback. The shared Cosmos frontend
+uses `scripts/cosmos_workflow.py` for this step.
+
 0. **Read the task skill.** `skills/models/<arch>/SKILL.md` (network specifics),
    `skills/data/<name>/SKILL.md` (transforms), or `skills/applications/<name>/SKILL.md`
    (workflows that compose model + data + platform — `tao-run-automl`,
@@ -49,6 +59,9 @@ not name a separate implementation.
    - `actions.<action>.outputs` — declared output contract (paths + types)
    - `actions.<action>.upload_excludes` — what NOT to upload back
    - `data_format` (if present)
+   - `backend_contracts` / `backend_selection` / `backend_resolver` (if
+     present) — implementation-specific image, command, TOML, dataset,
+     topology, checkpoint, and structured-status contracts
 
 3. **Read the platform SKILL.md you'll dispatch to** for execution conventions
    (mounts, env vars, resource shapes, retry behavior, the four verbs).

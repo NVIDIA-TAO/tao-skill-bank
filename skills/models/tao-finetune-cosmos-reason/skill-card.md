@@ -1,5 +1,5 @@
 ## Description: <br>
-Cosmos3-Nano video QA supervised fine-tuning with FSDP parallelism. <br>
+Shared Cosmos3-Nano and Cosmos3-Edge TAO frontend with explicit Cosmos Framework versus Cosmos-RL backend selection, native dense-SFT configuration, checkpoint preparation, and structured metric reporting. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers training or evaluating video question-answering models, fine-tuning Cosmos3-Nano or compatible Cosmos Reason models with SFT/LoRA, or working with Cosmos-RL. <br>
+Developers and engineers training Cosmos3-Nano or Cosmos3-Edge on customer-provided conversation-style or task-aware video datasets, running Cosmos-RL non-train actions, comparing backend parity, or launching Cosmos workflows from a fresh Docker/SLURM host. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -21,6 +21,9 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Cosmos3-Nano on Hugging Face](https://huggingface.co/nvidia/Cosmos3-Nano) <br>
 - [Agent Skills Open Standard](https://agentskills.io) <br>
+- [Cosmos Backend Operations](references/cosmos-backend-operations.md) <br>
+- [Cosmos Framework Contract](references/cosmos-framework-backend.yaml) <br>
+- [Cosmos-RL Contract](references/cosmos-rl-backend.yaml) <br>
 - [Cosmos Reason Launch Guide](references/cosmos-reason-launch.md) <br>
 - [Cosmos Reason Evaluate Guide](references/cosmos-reason-evaluate.md) <br>
 - [Cosmos Reason AutoML Guide](references/cosmos-reason-automl.md) <br>
@@ -71,7 +74,7 @@ Underlying evaluation signals used in this run: <br>
 | Efficiency | 1 | 27% (-3%) | 96% (+68%) |
 
 ## Skill Version(s): <br>
-0.1.0 (source: frontmatter) <br>
+0.2.0 (source: frontmatter) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

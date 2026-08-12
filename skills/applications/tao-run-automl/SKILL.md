@@ -44,12 +44,11 @@ final evaluation runs in the selected model action's resolved
 training-environment setup. A local checkpoint or Hugging Face model ID does not
 change this rule.
 
-Use venv-based **model action execution** only when the user explicitly asks for
-venv execution. Never infer venv mode from `local-docker`, local GPUs, an
-installed Python stack, or the presence of `pyproject.toml`. If the execution
-mode is absent, it is container-backed. A host/controller venv installed for
-`tao_automl`, TAO SDK, or a platform adapter is control-plane-only; state this
-clearly and keep all child model actions in the resolved container image.
+Use venv-based **model execution** only when explicitly requested. Never infer
+venv mode from `local-docker`, local GPUs, Python, or `pyproject.toml`. If
+absent, execution is container-backed. A host/controller venv for `tao_automl`,
+TAO SDK, or a platform adapter is
+control-plane-only; keep child model actions in the resolved container image.
 
 ## Reference Map
 

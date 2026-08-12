@@ -2,6 +2,11 @@
 
 Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or platform/model skills, the current/compact source wins.
 
+This is the Cosmos-RL backend supplement. First resolve the shared frontend
+with `scripts/cosmos_workflow.py`; do not use this reference to select a
+backend. Plain Nano SFT defaults to Cosmos-RL; Cosmos3-Edge and an explicit
+Framework request resolve to Cosmos Framework.
+
 ## Launch Intake Reminder
 
 When prompting for Cosmos-RL train or AutoML data, list the actual spec keys as
@@ -17,11 +22,12 @@ For root mode, explain the automatic mapping: `train_root` maps to
 `custom.train_dataset.media_path=train_root`; `eval_root` maps the same way for
 `custom.val_dataset`.
 
-Before train or AutoML runner generation, read the pinned action=train
-container image from `references/skill_info.yaml` (`container_image`), show the
-exact image to the user, and ask whether to use it or override with
-`image=<override>`. Do not silently launch on the default image. This skill does not package a
-`skills/models/tao-finetune-cosmos-reason/config.json` file.
+Before train or AutoML runner generation, resolve the Cosmos-RL backend
+contract and its pinned action image, show the exact image to the user, and ask
+whether to use it or override with `image=<override>`. Do not read the shared
+top-level image instead of the selected backend contract; the two pins match
+only to preserve compatibility with legacy skill consumers. This skill does
+not package a `skills/models/tao-finetune-cosmos-reason/config.json` file.
 
 The same metadata declares model-level GPU host minimums. They override the
 TAO-wide platform defaults for Cosmos-RL. On a self-managed Docker host, run:
@@ -45,10 +51,10 @@ shared helper:
 
 ```bash
 scripts/check_tao_launch_preflight.py --platform slurm \
-  --path train_annotation=/lustre/.../train/annotations.json \
-  --path train_media=/lustre/.../train \
-  --path val_annotation=/lustre/.../eval/annotations.json \
-  --path val_media=/lustre/.../eval \
+  --path train_annotation=<TRAIN_ANNOTATION_PATH> \
+  --path train_media=<TRAIN_MEDIA_ROOT> \
+  --path val_annotation=<VALIDATION_ANNOTATION_PATH> \
+  --path val_media=<VALIDATION_MEDIA_ROOT> \
   --gpu-min-total-memory-gb 256 \
   --gpu-arch-allowlist cosmos_rl=sm_80,sm_90,sm_100,sm_103,sm_103a,sm_120
 ```
@@ -60,12 +66,29 @@ checks before any model/data download:
 ```bash
 scripts/check_tao_launch_preflight.py --platform local-docker \
   --container-image <resolved-cosmos-rl-image> \
+  --target-gpu-index 0 --target-gpu-index 1 \
+  --target-gpu-index 2 --target-gpu-index 3 \
+  --path results_dir=/abs/path/to/job-results \
+  --min-free-disk-gb results_dir=384 \
   --path train_annotation=/abs/path/train/annotations.json \
   --path train_media=/abs/path/train \
   --path val_annotation=/abs/path/eval/annotations.json \
   --path val_media=/abs/path/eval \
   --gpu-min-total-memory-gb 256
 ```
+
+Set `--target-gpu-index` to the exact indices passed to Docker's `--gpus`
+allocation. This prevents an unallocated display or heterogeneous accelerator
+from contaminating memory, architecture, and runtime-smoke checks.
+
+The 384 GiB result-filesystem gate is mandatory for Cosmos-RL Nano training
+with synchronous epoch checkpoints. A dense four-way sharded checkpoint plus
+its optimizer state and Hugging Face safetensor export can consume roughly
+115 GiB; retention briefly needs the new checkpoint and retained predecessors
+at the same time. Check actual free bytes on the filesystem containing the
+host-mounted result directory, not Docker's logical/reclaimable size. If this
+gate fails, reclaim or relocate storage before launch; a PyTorch zip-writer
+`unexpected pos` error during `torch.save` is a common ENOSPC symptom.
 
 For `s3://` paths, if this helper reports that `aws` is missing, ask for
 approval and rerun the same command with `--install-missing-tools` so the helper
@@ -94,8 +117,8 @@ preflight helper.
 The production recommendation remains at least 4 GPUs with 80GB-class memory.
 A single high-memory GB300 is also supported when the selected image passes
 architecture introspection and the spec sets
-`policy.parallelism.dp_shard_size=1`; apply the WTS/GB300 guards in
-`cosmos-reason-wts-gb300.md` when that workflow is selected. A remote image
+`policy.parallelism.dp_shard_size=1`; apply the single-GPU video guards in
+`cosmos-reason-single-gpu-video.md` when that profile is selected. A remote image
 manifest that advertises `linux/arm64` only proves CPU architecture support; it
 does not prove CUDA SM support. `sm_121` must be blocked for this image unless
 direct runtime validation confirms support or the user chooses a compatible
@@ -203,7 +226,7 @@ scripts/check_tao_launch_preflight.py --platform <platform> \
 ```
 
 The packaged train/evaluate/inference/quantize templates default to
-`hf_model://nvidia/Cosmos3-Nano` for base-model fields. Override that only when
+the user-supplied immutable model URI or local path for base-model fields. Resolve it only when
 the user provides a different HuggingFace model id, `hf_model://...` URI, or
 cluster-local snapshot path.
 

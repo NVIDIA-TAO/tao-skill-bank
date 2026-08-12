@@ -2,7 +2,7 @@
 
 Load this only when `SKILL.md` points here for an AutoML/HPO task. If this conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or platform/model skills, the current/compact source wins.
 
-The packaged default base model is `hf_model://nvidia/Cosmos3-Nano`. Apply this
+The base model URI or local path is required at runtime. Apply it
 base model consistently to train (`policy.model_name_or_path`) and
 post-training evaluation (`model.base_model_path`) unless the user explicitly
 provides a different HuggingFace model id, `hf_model://...` URI, or
@@ -32,8 +32,10 @@ explicitly asks for a dataset repair.
 If the user's objective names `accuracy` or an accuracy target such as
 `>=90%`, optimize an evaluation metric, not `val/avg_loss`. Use AutoMLRunner's
 `eval_fn` to run the model skill's `evaluate` action on the validation dataset
-after each recommendation, with `task=""`, `model.enable_lora=true`, and
-`model.base_model_path` set to the same base model used for training. Return
+after each recommendation, with `task=""`, `model.enable_lora=false`, and
+`model.base_model_path` set to the same base model used for training. Use true
+only when the user explicitly requested a PEFT/LoRA search and the train spec
+contains a LoRA table. Return
 the evaluator's task metric and set `direction="maximize"`. Use `accuracy` for
 constrained classification prompts and BERTScore F1 for free-form
 summarization/answering prompts when the user asks for semantic text quality.
@@ -113,12 +115,12 @@ budget remains. Prefer the metric budget plus a wall-time guard, or set a
 proposal cap that cannot become the unintended limiting condition.
 
 For a strict budget comparison, checkpoint one seeded GEPA trajectory by metric
-calls instead of comparing independent stochastic searches. In the full WTS
+calls instead of comparing independent stochastic searches. In the full reference video-QA
 Nano run, the best prompt available at 1,124 calls scored 1,721/2,676 (64.31%)
 in a fresh full evaluation; the best prompt through 3,002 calls scored
 1,754/2,676 (65.55%). The same fresh default run scored 1,449/2,676 (54.15%).
 All three specs used the same model, data, order, 8 frames, decoding settings,
-seed, and exact-match metric. Treat these as WTS integration evidence, not as a
+seed, and exact-match metric. Treat these as integration evidence, not as a
 VANTAGE benchmark.
 
 Use the canonical set-level `macro_f1` metric for VANTAGE binary event
@@ -212,7 +214,7 @@ text.
   Alerts accuracy side by side. If both are available for every recommendation,
   return both metrics and configure `automl_settings["objectives"]`; otherwise
   optimize VK in-loop and run AB as final system validation.
-- Never describe a four-static-prompt run, a subset-only run, a WTS video-QA
+- Never describe a four-static-prompt run, a subset-only run, a reference video-QA
   run, or the historical two-way VANTAGE result as validation of the current
   three-way GEPA/VLM implementation. Those remain useful ablations or historical
   evidence and must be labeled as such.

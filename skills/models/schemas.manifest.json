@@ -13,11 +13,13 @@
     "tao-finetune-cosmos-reason": {
       "actions": [
         "evaluate",
+        "inference",
+        "quantize",
         "train"
       ],
       "automl_enabled": true,
       "failures": {},
-      "network_arch": "cosmos-rl"
+      "network_arch": "cosmos-reason"
     },
     "tao-train-action-recognition": {
       "actions": [
