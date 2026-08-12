@@ -21,6 +21,13 @@ Iteration stage 3, after `embed`. Mines the source pool for images resembling th
 
 This is a hard failure, not a warning. TAO DS `load_datasets` raises `FileNotFoundError` when `exclude_path` is set but is not a file — and on iteration 1 no cumulative parquet exists yet. Pointing at the not-yet-written path kills the stage before any mining happens.
 
+A *spent* pool fails differently and worse. When the exclude set already covers every
+pool image, `split_datasets_by_class` raises `TypeError: Series object is not iterable`
+from `selection.py` — an unhandled cudf error naming neither the pool nor the exclude
+set. Count the pool rows not already excluded **before** invoking, and stop the loop
+instead of calling the miner with nothing left to give
+(`commit_stage.py --stage loop_stop --pool-exhausted --pool-remaining N`).
+
 - **Iteration 1**: emit `exclude_path: null`.
 - **Iteration N > 1**: emit the absolute path to `${RESULTS_DIR}/iter$((N-1))/mined_cumulative.parquet`, and confirm the file exists before writing the spec.
 
@@ -76,7 +83,7 @@ visualize:              false
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   tmm unique_neighbor_matching -e "$MINE_SPEC"
 ```

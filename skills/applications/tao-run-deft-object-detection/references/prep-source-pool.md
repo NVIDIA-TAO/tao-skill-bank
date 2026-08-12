@@ -206,7 +206,7 @@ value lands directly on `inference.category_mapping`.
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   $CODETR inference -e "$CODETR_SPEC" \
     inference.checkpoint="$CODETR_CHECKPOINT" \

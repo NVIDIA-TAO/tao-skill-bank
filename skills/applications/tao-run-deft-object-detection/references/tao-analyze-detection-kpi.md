@@ -111,11 +111,13 @@ at `0.0`; sweeps are a diagnostic.
 
 ## Invocation
 
-KPI analysis is CPU-only — do not request a GPU.
+Pass `--gpus all` even though the scoring itself is CPU-bound: the TAO launcher calls
+`nvidia-smi -L` unconditionally at startup, so omitting it fails with
+`FileNotFoundError: 'nvidia-smi'` before any work begins.
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   analytics kpi_analyze -e "$KPI_SPEC" 2>&1 | tee "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log"
 # mAP appears only on stdout, so the tee is required — but a pipeline reports the

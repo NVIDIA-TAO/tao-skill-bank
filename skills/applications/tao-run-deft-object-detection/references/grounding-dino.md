@@ -172,7 +172,7 @@ No training at baseline. Score the user-supplied zero-shot / pretrained checkpoi
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   grounding_dino inference -e "$INFER_SPEC" \
   results_dir="${RESULTS_DIR}/baseline" \
@@ -215,7 +215,7 @@ Then:
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   grounding_dino train -e "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
   results_dir="${RESULTS_DIR}/iter${N}" \
@@ -268,7 +268,7 @@ Required output: a newly emitted checkpoint under `${RESULTS_DIR}/iter${N}/train
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   grounding_dino inference -e "$INFER_SPEC" \
   results_dir="${RESULTS_DIR}/iter${N}" \
