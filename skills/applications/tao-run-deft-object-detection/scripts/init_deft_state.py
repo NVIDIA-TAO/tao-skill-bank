@@ -527,8 +527,19 @@ def main() -> int:
 
         # Containers see only "$WORKSPACE:$WORKSPACE"; anything outside is invisible inside them.
         # embedding_model_path is exempt: HF_HOME legitimately lives outside the workspace.
+        # Every path a container has to read, not a subset. The encoder is included
+        # despite living outside the workspace by design: prep's embed reads it from
+        # inside the container, and an unmounted local snapshot is passed to
+        # HuggingFace as a repo id, which fails as HFValidationError rather than as a
+        # missing mount. Prep's own inputs are here for the same reason -- Co-DETR
+        # reads the classmap and checkpoint from inside the container.
         mounted = [results_dir, zero_shot_checkpoint, train_spec_template, source_pool_embeddings,
                    source_pool_annotations, kpi_images_dir, ground_truth_labels_dir, class_mapping]
+        if looks_local:
+            mounted.append(Path(model_path))
+        for extra in (args.pool_images, args.codetr_checkpoint, args.codetr_classmap):
+            if extra:
+                mounted.append(_abs(extra))
         # Anything outside the workspace needs its own -v or the container cannot read
         # it. Deriving the mounts here means the stages get a list to use rather than a
         # warning to act on, which is what left earlier runs to work it out mid-flight.

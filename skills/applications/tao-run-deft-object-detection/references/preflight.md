@@ -215,6 +215,21 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
 ## Container mounts
 
+Export them once, right after init, and use the variable in every launch:
+
+```bash
+EXTRA_MOUNTS=$("$DEFT_PY" -c 'import json,sys
+m=json.load(open(sys.argv[1]))["config"].get("extra_container_mounts") or []
+print(" ".join(f"-v {p}:{p}" for p in m))' "${RESULTS_DIR}/deft_state.json")
+export EXTRA_MOUNTS
+```
+
+Every `docker run` in this skill is written as
+`-v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE"`. With inputs inside the
+workspace it expands to nothing and the command is unchanged; with KPI data or
+checkpoints outside it, it is the difference between a working stage and
+`No .txt label files found`.
+
 `init_deft_state.py` records `config.extra_container_mounts`: the directories that
 inputs live in outside `$WORKSPACE`. Containers see only `"$WORKSPACE:$WORKSPACE"`,
 so **every** `docker run` in this skill must add a `-v "$m:$m"` for each entry, in
@@ -271,6 +286,11 @@ Remind the user to enable auto-mode (shift+tab) before approving — the post-ga
 ## Immediately After Approval
 
 Perform the planned pulls and directory creation, then initialize state once:
+**`--pool-report` is the exception: omit it on a prep run.** Unlike the pool artifacts
+and `--source-detection-file`, a `--pool-report` path that does not exist yet is a hard
+error, not a warning — validate_pool_coco.py writes it during prep, so pass the flag
+only when the pool already exists. Omitting it is what downgrades the requirement.
+
 **Order:** `init_deft_state.py` runs first and `prep` is the run's first committed
 stage. On a pool that still needs preparing, the pool artifacts and
 `--source-detection-file` do not exist yet — pass them anyway, as the paths prep

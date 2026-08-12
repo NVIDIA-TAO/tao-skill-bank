@@ -21,6 +21,13 @@ Iteration stage 3, after `embed`. Mines the source pool for images resembling th
 
 This is a hard failure, not a warning. TAO DS `load_datasets` raises `FileNotFoundError` when `exclude_path` is set but is not a file — and on iteration 1 no cumulative parquet exists yet. Pointing at the not-yet-written path kills the stage before any mining happens.
 
+A *spent* pool fails differently and worse. When the exclude set already covers every
+pool image, `split_datasets_by_class` raises `TypeError: Series object is not iterable`
+from `selection.py` — an unhandled cudf error naming neither the pool nor the exclude
+set. Count the pool rows not already excluded **before** invoking, and stop the loop
+instead of calling the miner with nothing left to give
+(`commit_stage.py --stage loop_stop --pool-exhausted --pool-remaining N`).
+
 - **Iteration 1**: emit `exclude_path: null`.
 - **Iteration N > 1**: emit the absolute path to `${RESULTS_DIR}/iter$((N-1))/mined_cumulative.parquet`, and confirm the file exists before writing the spec.
 
@@ -51,7 +58,7 @@ Write per-iteration under `${RESULTS_DIR}/iter${N}/mining/unique_neighbor_matchi
 source_path:            <config.source_pool_embeddings>
 target_path:            <iterations.iter${N}.embeddings_parquet>
 output_dir:             <absolute path to ${RESULTS_DIR}/iter${N}/mining>
-desired_unique_count:   <from prepare_budget_for_mining.py>
+desired_unique_count:   <from prepare_budget_for_mining.py — see below>
 allocation_policy:      class_stratified     # or global — see below
 distance_metric:        euclidean
 candidate_expansion_factor: 5
@@ -76,7 +83,7 @@ visualize:              false
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   tmm unique_neighbor_matching -e "$MINE_SPEC"
 ```
@@ -105,3 +112,20 @@ Read `coverage_pct` from `summary.json`:
   --mining-summary "${RESULTS_DIR}/iter${N}/mining/summary.json" \
   --summary "mined <retrieved>/<desired> unique images (<coverage_pct>% coverage)"
 ```
+
+## Computing `desired_unique_count`
+
+The budget is produced before this stage by `prepare_budget_for_mining.py`, and its full
+invocation lives in `references/stage-mined-data.md`. Reading only this overlay leaves
+the field with no documented way to compute it, so the short form is repeated here:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_budget_for_mining.py \
+  --weak-parquet "${RESULTS_DIR}/iter1/gaps/weak_images.parquet" \
+  --multiplier "<multiplier>" --pool-size "<pool rows>" \
+  --already-mined "<cumulative exclude rows, 0 on iteration 1>" \
+  --remaining-iterations "<iterations left, including this one>"
+```
+
+Seed it from **iteration 1's** weak parquet on every iteration, so the amount of data
+added per iteration stays constant as the gap set shrinks.

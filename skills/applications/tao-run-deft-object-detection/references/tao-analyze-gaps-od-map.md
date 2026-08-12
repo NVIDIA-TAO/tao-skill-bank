@@ -61,7 +61,7 @@ class_mapping: {}
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   gap_analysis object_detection -e "$OD_GAP_SPEC"
 ```
