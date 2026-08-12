@@ -109,7 +109,34 @@ at `0.0`; sweeps are a diagnostic.
 
 **`is_internal` must stay `false`.** Setting it true drops every class except `person` and appends a `Summary` row, silently changing what the report means.
 
+## Narrow the mapping to the target classes first
+
+The user's mapping usually names more classes than the run targets. Scoring an
+untargeted class adds a constant-0 AP row and averages it into the mAP, so the number
+stops being comparable with any run that did not:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_mapping_for_kpi_analyze.py \
+  --mapping "<the user's class mapping>" \
+  --target-classes "<comma-separated target classes>" \
+  --out "${RESULTS_DIR}/<phase>/kpi/mapping.yaml"
+```
+
+Pass the narrowed file as `data.mapping`, not the user's original.
+
 ## Invocation
+
+**Launch it detached.** This stage runs ~22 minutes on a 14k-image KPI set and the mAP
+appears *only* on stdout. A foreground `docker run | tee` loses the number if the client
+dies, while the container keeps running — name the container, redirect to the log, and
+wait on the log with `await_stage.py`:
+
+```bash
+docker run -d --name "deft_${PHASE}_kpi" ... > /dev/null
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
+  --artifact "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" --timeout-sec 5400
+docker logs "deft_${PHASE}_kpi" > "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" 2>&1
+```
 
 Pass `--gpus all` even though the scoring itself is CPU-bound: the TAO launcher calls
 `nvidia-smi -L` unconditionally at startup, so omitting it fails with

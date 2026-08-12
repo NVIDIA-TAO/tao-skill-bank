@@ -286,6 +286,11 @@ Remind the user to enable auto-mode (shift+tab) before approving — the post-ga
 ## Immediately After Approval
 
 Perform the planned pulls and directory creation, then initialize state once:
+**`--pool-report` is the exception: omit it on a prep run.** Unlike the pool artifacts
+and `--source-detection-file`, a `--pool-report` path that does not exist yet is a hard
+error, not a warning — validate_pool_coco.py writes it during prep, so pass the flag
+only when the pool already exists. Omitting it is what downgrades the requirement.
+
 **Order:** `init_deft_state.py` runs first and `prep` is the run's first committed
 stage. On a pool that still needs preparing, the pool artifacts and
 `--source-detection-file` do not exist yet — pass them anyway, as the paths prep

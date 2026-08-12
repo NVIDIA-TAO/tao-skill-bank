@@ -58,7 +58,7 @@ Write per-iteration under `${RESULTS_DIR}/iter${N}/mining/unique_neighbor_matchi
 source_path:            <config.source_pool_embeddings>
 target_path:            <iterations.iter${N}.embeddings_parquet>
 output_dir:             <absolute path to ${RESULTS_DIR}/iter${N}/mining>
-desired_unique_count:   <from prepare_budget_for_mining.py>
+desired_unique_count:   <from prepare_budget_for_mining.py — see below>
 allocation_policy:      class_stratified     # or global — see below
 distance_metric:        euclidean
 candidate_expansion_factor: 5
@@ -112,3 +112,20 @@ Read `coverage_pct` from `summary.json`:
   --mining-summary "${RESULTS_DIR}/iter${N}/mining/summary.json" \
   --summary "mined <retrieved>/<desired> unique images (<coverage_pct>% coverage)"
 ```
+
+## Computing `desired_unique_count`
+
+The budget is produced before this stage by `prepare_budget_for_mining.py`, and its full
+invocation lives in `references/stage-mined-data.md`. Reading only this overlay leaves
+the field with no documented way to compute it, so the short form is repeated here:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_budget_for_mining.py \
+  --weak-parquet "${RESULTS_DIR}/iter1/gaps/weak_images.parquet" \
+  --multiplier "<multiplier>" --pool-size "<pool rows>" \
+  --already-mined "<cumulative exclude rows, 0 on iteration 1>" \
+  --remaining-iterations "<iterations left, including this one>"
+```
+
+Seed it from **iteration 1's** weak parquet on every iteration, so the amount of data
+added per iteration stays constant as the gap set shrinks.
