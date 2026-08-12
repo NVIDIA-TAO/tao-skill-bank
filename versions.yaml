@@ -76,8 +76,8 @@ wheels:
   # nvidia-tao-automl pulls nvidia-tao-sdk as a transitive dep. One entry per
   # platform extra; append `,llm` or `,wandb` to an extra at install time for
   # the agentic-search or experiment-tracking deps.
-  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.1.0
-  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.1.0
-  tao_automl_docker:     nvidia-tao-automl[docker]==7.1.0
-  tao_automl_brev:       nvidia-tao-automl[brev]==7.1.0
-  tao_automl_all:        nvidia-tao-automl[all]==7.1.0
+  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.2.0rc18
+  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.2.0rc18
+  tao_automl_docker:     nvidia-tao-automl[docker]==7.2.0rc18
+  tao_automl_brev:       nvidia-tao-automl[brev]==7.2.0rc18
+  tao_automl_all:        nvidia-tao-automl[all]==7.2.0rc18
