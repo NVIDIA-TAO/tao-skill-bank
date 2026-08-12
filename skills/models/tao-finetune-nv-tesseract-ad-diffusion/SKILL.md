@@ -56,7 +56,8 @@ If you ever hit a `401`/`403` (gated access or private fork) or a `504` on first
 ## Quick start
 
 ```bash
-cd /path/to/NV-Tesseract/ad_diffusion  # git clone https://github.com/NVIDIA/NV-Tesseract
+git clone --branch main --single-branch https://github.com/NVIDIA/NV-Tesseract
+cd NV-Tesseract/ad_diffusion
 uv sync                              # install dependencies (one-time)
 
 # Inference — synthetic data, auto-downloads weights from HF on first run
@@ -88,7 +89,7 @@ and returns the original DataFrame with `Anomaly` (0/1) and `MAE` columns append
 
 ```python
 import sys, pandas as pd
-sys.path.append("/path/to/NV-Tesseract/ad_diffusion")  # git clone https://github.com/NVIDIA/NV-Tesseract
+sys.path.append("/path/to/NV-Tesseract/ad_diffusion")  # clone NV-Tesseract with --branch main
 from sdk.anomaly_analysis import perform_anomaly_analysis_with_diffusion
 
 df = pd.read_csv("your_data.csv")

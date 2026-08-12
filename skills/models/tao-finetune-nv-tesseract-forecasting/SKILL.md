@@ -53,7 +53,7 @@ If you hit a `401`/`403` (gated access or license not accepted) or a `504` on fi
 ## Quick start
 
 ```bash
-git clone https://github.com/NVIDIA/NV-Tesseract
+git clone --branch main --single-branch https://github.com/NVIDIA/NV-Tesseract
 cd NV-Tesseract/forecasting
 uv sync --group dev
 uv pip install -e .          # editable install — required for clean sdk.* imports
@@ -70,7 +70,7 @@ with `{target_column}_forecast` rows for the requested horizon.
 
 ```python
 import sys, pandas as pd
-sys.path.append("/path/to/NV-Tesseract/forecasting")  # git clone https://github.com/NVIDIA/NV-Tesseract
+sys.path.append("/path/to/NV-Tesseract/forecasting")  # clone NV-Tesseract with --branch main
 from sdk.forecasting import perform_forecasting
 
 df = pd.read_csv("your_data.csv")   # must have timestamp + numeric target column
