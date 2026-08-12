@@ -41,7 +41,7 @@ The threshold sweep, weakness ranking, and per-lighting expansion all run inside
 
 ```bash
 # Pinned TAO data-services container URI (stamped from the release manifest)
-DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.2-rc-28-multiarch  # versions-key: images.tao_toolkit.data_services
 echo "DS_IMAGE=$DS_IMAGE"
 
 docker info > /dev/null && echo "OK: docker"
@@ -123,7 +123,7 @@ MIN_RECALL=1.0                       # zero-miss default; lower if KPI relaxes
 TOP_K=50                             # per-label augmentation budget
 OUT="$EXP_DIR/rca_results/$(date +%Y-%m-%d_%H%M%S)"
 SPEC="$OUT/vcn_aoi_spec.yaml"
-IMG=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+IMG=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.2-rc-28-multiarch  # versions-key: images.tao_toolkit.data_services
 
 mkdir -p "$OUT"
 

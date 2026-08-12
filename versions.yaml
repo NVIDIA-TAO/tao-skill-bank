@@ -29,10 +29,10 @@
 
 images:
   tao_toolkit:
-    pyt:                nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt
-    deploy:             nvcr.io/nvidia/tao/tao-toolkit:7.1.0-deploy
-    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services
-    cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-rl
+    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.0.2-rc-27-multiarch
+    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.0.2-rc-29-multiarch
+    data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.0.2-rc-28-multiarch
+    cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.0.2-rc-234-multiarch
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
     cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
     # Interim until tao-pytorch !620 merges and TAO publishes an official IV2CLIP image.
@@ -60,12 +60,12 @@ wheels:
   # platform skills run containers via docker/kubectl/srun and the SDK-free
   # 4-verb consumer path (tao-data-io + tao_job_record + tao-launch-workflow).
   # These `tao_sdk_*` keys exist so nvidia-tao-automl can pull a matching SDK.
-  tao_sdk:            nvidia-tao-sdk==7.1.0
-  tao_sdk_brev:       nvidia-tao-sdk[brev]==7.1.0
-  tao_sdk_slurm:      nvidia-tao-sdk[slurm]==7.1.0
-  tao_sdk_kubernetes: nvidia-tao-sdk[kubernetes]==7.1.0
-  tao_sdk_docker:     nvidia-tao-sdk[docker]==7.1.0
-  tao_sdk_all:        nvidia-tao-sdk[all]==7.1.0
+  tao_sdk:            nvidia-tao-sdk==7.0.2rc11
+  tao_sdk_brev:       nvidia-tao-sdk[brev]==7.0.2rc11
+  tao_sdk_slurm:      nvidia-tao-sdk[slurm]==7.0.2rc11
+  tao_sdk_kubernetes: nvidia-tao-sdk[kubernetes]==7.0.2rc11
+  tao_sdk_docker:     nvidia-tao-sdk[docker]==7.0.2rc11
+  tao_sdk_all:        nvidia-tao-sdk[all]==7.0.2rc11
   # nvidia-tao-automl pulls nvidia-tao-sdk as a transitive dep. One entry per
   # platform extra; append `,llm` or `,wandb` to an extra at install time for
   # the agentic-search or experiment-tracking deps.

@@ -72,7 +72,7 @@ Python. This satisfies the Execution Environment hard gate above: the container
 stricter environment-specific command.
 
 ```bash
-COSMOS_RL_IMAGE_DEFAULT=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-rl  # versions-key: images.tao_toolkit.cosmos_rl
+COSMOS_RL_IMAGE_DEFAULT=nvcr.io/nvstaging/tao/cosmos_rl:7.0.2-rc-234-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
 COSMOS_RL_IMAGE="${COSMOS_RL_IMAGE:-$COSMOS_RL_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
 DOCKER_COMMON=(

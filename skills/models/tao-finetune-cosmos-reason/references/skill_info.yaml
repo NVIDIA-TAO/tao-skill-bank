@@ -6,7 +6,7 @@ aliases:
 - Cosmos3 Nano Reasoner
 - Cosmos3-Nano
 automl_enabled: true
-container_image: nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-rl  # versions-key: images.tao_toolkit.cosmos_rl
+container_image: nvcr.io/nvstaging/tao/cosmos_rl:7.0.2-rc-234-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
 required_credentials:
 - HF_TOKEN
 data_format: llava
