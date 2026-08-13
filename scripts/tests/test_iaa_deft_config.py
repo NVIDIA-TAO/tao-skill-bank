@@ -85,3 +85,11 @@ def test_only_absent_optional_values_take_defaults(tmp_path):
     path = _write(tmp_path, payload)
 
     assert IaaDeftConfig(str(path)).mining_topn == 5
+
+
+@pytest.mark.parametrize("mode", ["real", "augmented", "real_and_augmented"])
+def test_mining_pool_mode_accepts_only_documented_values(tmp_path, mode):
+    payload = copy.deepcopy(_template())
+    payload["iaa"]["mining_pool_mode"] = mode
+    config = IaaDeftConfig(str(_write(tmp_path, payload)))
+    assert config.iaa_mining_pool_mode == mode
