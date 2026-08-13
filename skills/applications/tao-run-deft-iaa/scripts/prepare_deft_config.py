@@ -331,7 +331,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--history-aware", default=True, type=_bool)
     parser.add_argument("--replay-fraction", default=0.20, type=float)
     parser.add_argument("--continual-dataset", default=True, type=_bool)
-    parser.add_argument("--continual-model", default=False, type=_bool)
+    parser.add_argument("--continual-model", default=True, type=_bool)
     parser.add_argument("--visualize", default=True, type=_bool)
     parser.add_argument("--visualize-embeddings", default=True, type=_bool)
     parser.add_argument("--metric-name", default="Rank-1")

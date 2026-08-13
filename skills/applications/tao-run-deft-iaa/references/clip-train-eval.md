@@ -102,10 +102,11 @@ another label/path even when its numeric value is plausible.
        --deft-config "$RESULTS_DIR/config/deft_config.yaml" --iter-num "$N"
    ```
 
-   In the default continual-dataset/non-continual-model mode, the accumulated
-   mined datasets are included but training starts from the configured base
-   model each iteration. With approved continual-model mode, the adapter uses
-   the prior iteration's normalized state. Never hand-edit the generated YAML.
+   In the default continual-dataset/continual-model mode, each iteration uses
+   the accumulated mined datasets and the prior iteration's normalized model
+   state. When non-continual model mode is explicitly approved, training starts
+   from the configured base model each iteration. Never hand-edit the generated
+   YAML.
 2. Recheck occupancy for the approved GPU IDs. If the shape must change, stop
    for a revised pre-flight approval and begin a new immutable run; do not
    patch the current config.
