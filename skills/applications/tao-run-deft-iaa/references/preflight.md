@@ -147,6 +147,8 @@ Run this section only after required intake is resolved.
    docker image inspect nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt >/dev/null 2>&1  # versions-key: images.tao_toolkit.pyt
    docker image inspect nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services >/dev/null 2>&1  # versions-key: images.tao_toolkit.data_services
    nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
+   VISIBLE_GPU_IDS="$(nvidia-smi --query-gpu=index --format=csv,noheader \
+     | tr -d ' ' | paste -sd, -)"
    ```
 
    Missing local images are planned pulls. Do not run a CUDA container probe
@@ -160,7 +162,8 @@ Run this section only after required intake is resolved.
    If the user explicitly asks for a permissions check, `stat` only that named
    file, warn about group/other readability, and still require credentials to
    be exported in the launching environment.
-6. Resolve the approved GPU shape. SigLIP2-so400m training commonly needs
+6. Record the complete visible GPU ID list as `VISIBLE_GPU_IDS`, then resolve
+   the approved subset as `GPU_IDS`/`NUM_GPUS`. SigLIP2-so400m training commonly needs
    roughly 30–45 GB free per selected GPU at the bundled batch size. Treat this
    as a planning estimate, not a capability guarantee. Surface occupied GPUs;
    do not silently reshape `gpu_ids`.
@@ -193,7 +196,7 @@ hardware, pool size, and accumulated data can change this substantially.
 |---|---|
 | metric | `Rank-1`, query type `medium`, operator `>=`, no target |
 | training epochs | `1` per iteration |
-| GPU shape | `num_gpus=1`, `gpu_ids=0` |
+| GPU shape | selected `num_gpus=1`, `gpu_ids=0`; visible IDs recorded from host preflight |
 | mining | budget `10000`, top-N `25`, cosine distance |
 | history selection | enabled, replay fraction `0.20` |
 | continual behavior | dataset `true`, model `false` |
@@ -229,8 +232,9 @@ Run
         target=<value | no target> (source=<user | default>);
         max_iterations=<N> (source=<user | derived from approved time budget>)
   train: epochs=<N> (source=<user | template | default>);
+         visible_gpus=<count>, visible_gpu_ids=<list> (source=host preflight);
          num_gpus=<N> (source=<user | default>);
-         gpu_ids=<list> (source=<user | default>)
+         gpu_ids=<selected list> (source=<user | default>)
   mining: budget=<N> (source=<user | template | default>);
           topn=<N> (source=<user | template | default>);
           metric=<name> (source=<user | template | default>);
@@ -348,6 +352,7 @@ For a new run, perform the following in order.
        --max-iterations "$MAX_ITERATIONS" \
        --training-epochs "$TRAINING_EPOCHS" \
        --num-gpus "$NUM_GPUS" --gpu-ids "$GPU_IDS" \
+       --visible-gpu-ids "$VISIBLE_GPU_IDS" \
        --mining-topn "$MINING_TOPN" --knn-metric "$KNN_METRIC" \
        --target-query-count "$TARGET_QUERY_COUNT" \
        --history-aware "$HISTORY_AWARE" --replay-fraction "$REPLAY_FRACTION" \
