@@ -53,7 +53,7 @@ SERVER="$(cd "$(dirname "$0")" && pwd)/server.py"
 # …or skip the network entirely and use a local checkout directly:
 #   export SKILL_LOCAL="$HOME/tao-skills-external"
 SKILL_LOCAL="${SKILL_LOCAL:-}"
-SKILL_REPO="${SKILL_REPO:-https://github.com/NVIDIA-TAO/tao-skills-bank}"
+SKILL_REPO="${SKILL_REPO:-https://github.com/NVIDIA-TAO/tao-skill-bank}"
 SKILL_REF="${SKILL_REF:-${TAO_RELEASE:-main}}"
 
 log() { printf '\033[1;32m[tao-nemoclaw]\033[0m %s\n' "$*"; }
