@@ -47,3 +47,11 @@ def test_mining_template_has_no_competing_runtime_defaults():
 
     assert mining["topn"] == "???"
     assert mining["knn_metric"] == "???"
+
+
+def test_embedding_specs_name_the_same_siglip2_model():
+    models = {
+        yaml.safe_load((IAA_ROOT / "specs" / name).read_text())["model"]
+        for name in ("image_embed_spec.yaml", "text_embed_spec.yaml")
+    }
+    assert models == {"SigLIP2"}
