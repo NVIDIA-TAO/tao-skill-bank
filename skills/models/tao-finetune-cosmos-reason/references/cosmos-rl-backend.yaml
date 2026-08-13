@@ -3,7 +3,7 @@ backend: cosmos-rl
 display_name: Cosmos-RL
 native_source_repository: cosmos-rl-github
 tao_integration_repository: cosmos-rl
-container_image: nvcr.io/nvstaging/tao/tao-cosmos-rl:main-direct-train-no-cache-20260811-v1  # versions-key: images.tao_toolkit.cosmos_rl
+container_image: nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
 build:
   owner: cosmos-rl
   dockerfile: Dockerfile.cosmos_rl

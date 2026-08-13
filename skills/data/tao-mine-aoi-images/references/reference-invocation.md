@@ -14,7 +14,7 @@ MODEL_PATH=google/siglip-base-patch16-224  # or a local checkpoint path
 TOPN=5
 METRIC=cosine
 FILTER_BY_LABEL=false
-IMG=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+IMG=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
 
 mkdir -p "$OUT"
 
