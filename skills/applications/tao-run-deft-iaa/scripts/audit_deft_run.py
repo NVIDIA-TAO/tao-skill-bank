@@ -1104,6 +1104,10 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         "pyt_image": config.get("pyt_image"),
                         "ds_image": config.get("ds_image"),
                     }
+                    if "visible_gpu_ids" in config:
+                        expected_approval["visible_gpu_ids"] = config.get(
+                            "visible_gpu_ids"
+                        )
                     if approval != expected_approval:
                         errors.append(
                             "state immutable approval fields disagree with approval.json"
@@ -1229,6 +1233,28 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         gpu_ids = config.get("gpu_ids")
         if not isinstance(gpu_ids, list) or len(gpu_ids) != config.get("num_gpus"):
             errors.append("state.config.gpu_ids must match state.config.num_gpus")
+        if "visible_gpu_ids" in config or "visible_gpu_count" in config:
+            visible_gpu_ids = config.get("visible_gpu_ids")
+            if (
+                not isinstance(visible_gpu_ids, list)
+                or not visible_gpu_ids
+                or len(set(visible_gpu_ids)) != len(visible_gpu_ids)
+                or any(
+                    not isinstance(item, int) or isinstance(item, bool) or item < 0
+                    for item in visible_gpu_ids
+                )
+            ):
+                errors.append(
+                    "state.config.visible_gpu_ids must be unique non-negative integers"
+                )
+            elif isinstance(gpu_ids, list) and not set(gpu_ids).issubset(
+                visible_gpu_ids
+            ):
+                errors.append("state.config.gpu_ids must be a subset of visible_gpu_ids")
+            if config.get("visible_gpu_count") != (
+                len(visible_gpu_ids) if isinstance(visible_gpu_ids, list) else None
+            ):
+                errors.append("state.config.visible_gpu_count must match visible_gpu_ids")
         for field in (
             "history_aware",
             "continual_dataset",
