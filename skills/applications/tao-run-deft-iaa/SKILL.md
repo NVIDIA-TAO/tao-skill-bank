@@ -1,11 +1,13 @@
 ---
 name: tao-run-deft-iaa
 description: >
-  Iteratively improve an NVIDIA TAO CLIP / SigLIP2 image-retrieval model on
-  attribute-labelled data until its retrieval KPI reaches a target or the
-  iteration budget is exhausted. Use when a customer asks to keep improving
-  weak image attributes, even if they do not know the DEFT or Image Attribute
-  Augmentation (IAA) names. The self-contained loop performs dataset
+  Use for requests such as "Improve my SigLIP2 image retrieval model on my
+  attribute-labelled dataset until it stops getting better." Keep improving
+  an NVIDIA TAO CLIP / SigLIP2 image-retrieval model on attribute-labelled
+  data until improvement stops, its retrieval KPI reaches a target, or the
+  iteration budget is exhausted. Route iterative attribute-labelled
+  image-retrieval improvement here even when the customer does not know the
+  DEFT or Image Attribute Augmentation (IAA) names. The self-contained loop performs dataset
   preparation, zero-shot evaluation, attribute gap analysis, caption-space
   k-NN mining, history-aware selection, retraining, and re-evaluation. Treat
   `tao-deft-iaa` as shorthand for this canonical `tao-run-deft-iaa` workflow.

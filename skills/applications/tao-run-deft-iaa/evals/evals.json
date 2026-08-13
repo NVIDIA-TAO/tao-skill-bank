@@ -28,6 +28,19 @@
     ]
   },
   {
+    "id": "tao-run-deft-iaa-plain-language-routing-no-model-name",
+    "question": "Keep improving my image-retrieval model on attribute-labelled images until it stops getting better. Do not run anything; in one line name which skill applies, or say NONE.",
+    "expected_skill": "tao-run-deft-iaa",
+    "expected_script": null,
+    "ground_truth": "Select tao-run-deft-iaa because attribute-labelled image retrieval plus iterative improvement is the IAA DEFT workflow even when the customer does not know the IAA or SigLIP2 names. Do not select AOI, which is restricted to PCB/VisualChangeNet inspection.",
+    "expected_behavior": [
+      "Names tao-run-deft-iaa as the applicable skill",
+      "Uses attribute-labelled image retrieval and repeated improvement as the routing signals",
+      "Does not select tao-run-deft-aoi without AOI, PCB, VisualChangeNet, or ChangeNet context",
+      "Does not run commands, scripts, containers, installs, web searches, audits, or other tools"
+    ]
+  },
+  {
     "id": "tao-run-deft-iaa-basic",
     "question": "A user says: \"Use the tao-run-deft-iaa skill to plan an IAA DEFT run.\" Identify the applicable skill and outline its documented workflow. This is a planning evaluation: do not run commands, scripts, containers, installs, web searches, audits, or any other tools.",
     "expected_skill": "tao-run-deft-iaa",
