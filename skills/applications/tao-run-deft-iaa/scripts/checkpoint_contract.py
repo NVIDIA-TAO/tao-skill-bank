@@ -93,7 +93,7 @@ def validate_best_checkpoint(
     )
     if source.stat().st_mtime_ns < started_ns:
         raise ValueError(
-            f"selected checkpoint predates the current train attempt: {source}"
+            f"selected checkpoint predates the train attempt lineage: {source}"
         )
     if metadata.get("published_checkpoint") != str(best):
         raise ValueError(
@@ -101,6 +101,13 @@ def validate_best_checkpoint(
         )
     if metadata.get("metric_name") != "val/t2i_mAP":
         raise ValueError("best checkpoint metadata.metric_name must be 'val/t2i_mAP'")
+    selection_strategy = metadata.get("selection_strategy")
+    if selection_strategy not in {"metric", "newest_fallback"}:
+        raise ValueError("best checkpoint metadata.selection_strategy is invalid")
+    if selection_strategy == "metric" and not isinstance(metadata.get("metric"), dict):
+        raise ValueError("metric checkpoint selection requires metric evidence")
+    if selection_strategy == "newest_fallback" and metadata.get("metric") is not None:
+        raise ValueError("newest fallback selection must record metric=null")
     mode = metadata.get("publish_mode")
     if mode not in {"symlink", "hardlink", "copy"}:
         raise ValueError("best checkpoint metadata.publish_mode is invalid")
@@ -137,4 +144,5 @@ def validate_best_checkpoint(
         "best_ckpt_metadata": str(metadata_path),
         "best_ckpt_source": str(source),
         "publish_mode": mode,
+        "checkpoint_selection_strategy": selection_strategy,
     }

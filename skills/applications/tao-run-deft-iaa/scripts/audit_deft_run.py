@@ -1810,10 +1810,13 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 if not isinstance(train_payload, dict):
                     raise ValueError("train command status root must be an object")
                 started_ns = train_payload.get("started_ns")
+                lineage_started_ns = train_payload.get(
+                    "lineage_started_ns", started_ns
+                )
                 provenance = validate_best_checkpoint(
                     pathlib.Path(str(info.get("best_ckpt_path", ""))),
                     phase_root / "train",
-                    started_ns=started_ns,
+                    started_ns=lineage_started_ns,
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
                 errors.append(
