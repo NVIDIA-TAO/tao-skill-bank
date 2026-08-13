@@ -68,6 +68,8 @@ def test_selected_gpu_shape_is_materialized_once_and_inventory_is_recorded(tmp_p
     assert approval["visible_gpu_ids"] == list(range(8))
     assert spec["train"]["gpu_ids"] == [0, 2]
     assert spec["evaluate"]["gpu_ids"] == [0, 2]
+    assert spec["inference"]["gpu_ids"] == [0, 2]
+    assert spec["inference"]["num_gpus"] == 2
     assert template["train"]["num_gpus"] == "???"
     assert template["evaluate"]["gpu_ids"] == "???"
     assert template["inference"]["num_gpus"] == "???"
