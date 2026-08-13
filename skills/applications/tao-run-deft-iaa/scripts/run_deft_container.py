@@ -419,6 +419,7 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
 
         existing = _load_existing_status(status_path)
         prior_attempt = 0
+        lineage_started_ns = None
         if existing is not None:
             raw_attempt = existing.get("attempt", 1)
             if (
@@ -428,6 +429,17 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
             ):
                 raise ValueError(f"existing command status has invalid attempt: {status_path}")
             prior_attempt = raw_attempt
+            lineage_started_ns = existing.get(
+                "lineage_started_ns", existing.get("started_ns")
+            )
+            if (
+                not isinstance(lineage_started_ns, int)
+                or isinstance(lineage_started_ns, bool)
+                or lineage_started_ns < 1
+            ):
+                raise ValueError(
+                    f"existing command status has invalid attempt lineage: {status_path}"
+                )
         if existing is not None and existing.get("status") == "running":
             prior_name = existing.get("container_name")
             if prior_name != container_name:
@@ -451,6 +463,8 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
         except FileNotFoundError:
             pass
         started_ns = time.time_ns()
+        if lineage_started_ns is None:
+            lineage_started_ns = started_ns
         started_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
         # Invalidate any previous successful attempt *before* deleting outputs
         # or launching Docker. A deterministic container name plus the launch
@@ -470,6 +484,7 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
             "cidfile": str(cidfile_path),
             "started_at": started_at,
             "started_ns": started_ns,
+            "lineage_started_ns": lineage_started_ns,
             "finished_at": None,
             "status": "running",
             "exit_code": None,

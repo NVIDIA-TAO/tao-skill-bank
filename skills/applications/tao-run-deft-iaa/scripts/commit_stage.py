@@ -1065,7 +1065,9 @@ def _apply_success(
         provenance = validate_best_checkpoint(
             args.best_ckpt,
             train_dir,
-            started_ns=train_payload["started_ns"],
+            started_ns=train_payload.get(
+                "lineage_started_ns", train_payload["started_ns"]
+            ),
         )
         phase.update(provenance)
         publish_status = _required_command_status(
