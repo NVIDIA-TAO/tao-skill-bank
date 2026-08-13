@@ -20,7 +20,34 @@ PACKAGE_TOOLS = {
     "apt", "apt-get", "conda", "dnf", "mamba", "micromamba", "pip",
     "pip3", "uv", "yum",
 }
-NETWORK_TOOLS = {"aria2c", "curl", "git-lfs", "http", "httpie", "ngc", "scp", "wget"}
+NETWORK_TOOLS = {
+    "aria2c",
+    "aws",
+    "curl",
+    "git-lfs",
+    "http",
+    "httpie",
+    "ngc",
+    "rsync",
+    "s3cmd",
+    "scp",
+    "sftp",
+    "ssh",
+    "wget",
+}
+# Launchers that hand the real command to another scheduler, host, or runtime.
+# The air-gap checks below can only reason about a local docker/podman argv, so
+# these are refused rather than waved through unexamined.
+REMOTE_LAUNCHERS = {
+    "apptainer",
+    "enroot",
+    "kubectl",
+    "nerdctl",
+    "sbatch",
+    "singularity",
+    "srun",
+}
+SHELLS = {"bash", "dash", "ksh", "sh", "zsh"}
 OFFLINE_ENV = {
     "AIR_GAPPED": "1",
     "HF_HUB_OFFLINE": "1",
@@ -54,6 +81,11 @@ def _reject_airgap(command: list[str], policy: dict[str, Any]) -> None:
     if not command:
         raise ValueError("command is empty")
     tokens = [_basename(token) for token in command]
+    if any(token in REMOTE_LAUNCHERS for token in tokens):
+        raise ValueError(
+            "remote launchers are not supported by this execution path; it can "
+            "enforce air-gap policy for local docker/podman commands only"
+        )
     if any(token in PACKAGE_TOOLS for token in tokens):
         raise ValueError("package installation is forbidden by air-gap policy")
     if any(token in NETWORK_TOOLS for token in tokens):
@@ -96,9 +128,25 @@ def _reject_airgap(command: list[str], policy: dict[str, Any]) -> None:
             name = name.upper()
             if name in OFFLINE_ENV and value != OFFLINE_ENV[name]:
                 raise ValueError(f"air-gap container cannot override {name}={value}")
-    if tokens[0] in {"bash", "sh", "zsh"} and "-c" in tokens:
-        script = command[tokens.index("-c") + 1]
-        _reject_airgap(shlex.split(script), policy)
+    # Recurse into an inline shell payload wherever the shell appears, not only
+    # at argv[0]: `<launcher> bash -c '<payload>'` hides the real command.
+    for index, token in enumerate(tokens):
+        if token not in SHELLS:
+            continue
+        for offset in range(index + 1, len(tokens) - 1):
+            flag = tokens[offset]
+            if not flag.startswith("-"):
+                break
+            if "c" not in flag[1:]:
+                continue
+            try:
+                nested = shlex.split(command[offset + 1])
+            except ValueError as err:
+                raise ValueError(
+                    f"air-gap policy cannot parse the inline shell payload: {err}"
+                ) from err
+            _reject_airgap(nested, policy)
+            break
 
 
 def _with_no_pull(command: list[str], policy: dict[str, Any]) -> list[str]:
