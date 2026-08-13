@@ -20,7 +20,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [Agent Skills Open Standard](https://agentskills.io) <br>
-- [NVIDIA TAO Skill Bank Repository](https://github.com/NVIDIA-TAO/tao-skills-bank) <br>
+- [NVIDIA TAO Skill Bank Repository](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
 
 
 ## Skill Output: <br>
