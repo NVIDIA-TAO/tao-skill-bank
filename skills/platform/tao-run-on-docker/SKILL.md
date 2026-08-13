@@ -117,8 +117,8 @@ read -r st code < <(docker inspect --format '{{.State.Status}} {{.State.ExitCode
 | `exited`, code ≠ 0 | `ERROR` |
 | `dead` / missing | `UNKNOWN` (confirm via `docker ps -a`) |
 
-On a terminal state, `mark` it — and for **tier C**, `tao-data-io` uploads
-results **before** you `docker rm` (the container is the only copy).
+For **tier C**, `tao-data-io` uploads results **before** the terminal `mark` and
+before `docker rm` (the container is the only copy). Then `mark` it.
 
 ### logs
 

@@ -99,8 +99,23 @@ platform skills); nothing else is platform-specific.
   `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`; the native sub-state
   (`ImagePullBackOff`, `PENDING`-resources, slurm `COMPLETING`) rides in the
   transition `message`. Never read "what's running" from records — poll the backend.
+  A terminal native state **closes the record**:
+  ```bash
+  "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state COMPLETE
+  # or: --state ERROR --err-class ERR_INFRA|ERR_PROGRAM
+  ```
+  Nothing else writes a terminal state, so a record still at `RUNNING` means an
+  unfinished verb, not a running job.
 - **logs(id, tail)** — native log fetch.
 - **cancel(id)** — native cancel + orphan teardown, then `mark <id> --state CANCELED`.
+
+**`COMPLETE` means the results survived, not that the process exited 0.** Mark it
+only once `results_dir` is readable and — for **tier C** — the upload returned 0.
+Upload, verify, *then* mark: `mark` is one-way (a terminal record refuses any
+further transition), so a failure discovered after `COMPLETE` cannot be recorded,
+and a `COMPLETE` record whose results were discarded looks exactly like a good
+one. A failed upload is `ERROR --err-class ERR_INFRA`, never a post-terminal
+repair.
 
 **Record-then-launch is the ordering invariant.** `open` mints the id and binds
 `results_dir` *before* any launch, and the id it returns is the only handle the
