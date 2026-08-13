@@ -100,8 +100,14 @@ a file without successful matching command status is not resumable evidence.
 The wrapper uses a deterministic Docker name, CID file, and nonblocking launch
 lock. If its process dies while Docker continues, a later call inspects that
 container read-only and refuses to overlap it. Wait for the named container to
-exit; never kill it automatically. `HF_TOKEN` is not forwarded unless the
-approved command needs it and `--pass-hf-token` is supplied explicitly.
+exit; never kill it automatically. Rerun the exact wrapper command after exit.
+Before consuming a retry, it verifies the prior command identity and reconciles
+a status left at `running` when Docker reports exit zero or an auto-removed
+container's bounded log tail ends in `Execution status: PASS`, and every named
+fresh output is non-empty and newer than that attempt. The normal stage commit
+then applies the format/cardinality validators. Incomplete or contradictory
+evidence is never reconciled. `HF_TOKEN` is not forwarded unless the approved
+command needs it and `--pass-hf-token` is supplied explicitly.
 Docker and host-adapter statuses also carry a stable `attempt` value. Attempt
 1 is the initial call, attempt 2 is the single evidence-based correction, and
 either wrapper refuses attempt 3. Keep the documented stable command names;
