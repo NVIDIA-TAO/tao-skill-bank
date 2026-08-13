@@ -12,7 +12,7 @@ iteration:
 
 training:
   init_checkpoint: ""
-  continual_model: false
+  continual_model: true
   continual_dataset: true
   num_nodes: 1
 
