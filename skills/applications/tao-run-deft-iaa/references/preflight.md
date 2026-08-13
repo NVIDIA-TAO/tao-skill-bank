@@ -139,7 +139,8 @@ Run this section only after required intake is resolved.
    ```
 
    Record the presence of adjacent `SHA256SUMS`. Its absence is a warning, not
-   a blocker; `rebuild.py` verification remains mandatory.
+   a blocker; verification by the skill's bundled dataset rebuild remains
+   mandatory.
 4. Inspect, but do not modify, Docker/GPU state:
 
    ```bash

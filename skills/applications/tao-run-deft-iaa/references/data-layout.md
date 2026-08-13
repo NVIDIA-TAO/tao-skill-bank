@@ -17,12 +17,14 @@ The IAA TAO-FT export contains:
 | File | Required | Expected content |
 |---|---|---|
 | `images_raw.tar` | yes | source images under `images_raw/<source_split>/...` |
-| `meta.tar.gz` | yes | pair/list metadata, README/vocabulary files, and `rebuild.py` |
+| `meta.tar.gz` | yes | pair/list metadata and README/vocabulary files |
 | `SHA256SUMS` | no | checksums for the two archives |
 
 There is no download branch. Preserve the archives in place; extraction goes
 to the approved `DATASET_ROOT`. Do not copy multi-gigabyte archives into the
-dataset tree.
+dataset tree. If an export also contains a legacy `rebuild.py`, leave it
+unused; the workflow always executes the hash-bound copy bundled with this
+skill.
 
 ## Approved extraction and rebuild
 
@@ -51,12 +53,13 @@ tar -xzf "$METADATA_ARCHIVE" -C "$DATASET_ROOT"
 tar -xf "$IMAGES_ARCHIVE" -C "$DATASET_ROOT"
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-  "$DATASET_ROOT/rebuild.py" --workers 16 \
+  "$SKILL_ROOT/scripts/iaa_deft/rebuild.py" \
+    --metadata-root "$DATASET_ROOT" --out "$DATASET_ROOT" --workers 16 \
   2>&1 | tee "$RESULTS_DIR/dataset_setup/rebuild_verify.log"
 ```
 
 Omit the checksum command when no manifest was approved. A checksum mismatch,
-tar failure, missing `rebuild.py`, or nonzero rebuild is a hard stop. The
+tar failure or nonzero rebuild is a hard stop. The
 rebuild log must contain `VERIFY: PASS`; `VERIFY: FAIL` or a missing pass line
 is not valid evidence. Do not continue using a partly rebuilt dataset.
 
@@ -68,8 +71,7 @@ DATASET_ROOT/
 ├── images/
 ├── captions/
 ├── train_pairs.json
-├── val_pairs.json
-└── rebuild.py
+└── val_pairs.json
 ```
 
 ## Materialize run splits and pool
