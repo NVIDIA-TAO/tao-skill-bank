@@ -29,6 +29,7 @@ occasionally wanted, so it warns rather than fails.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -54,8 +55,8 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     """Raise on anything that would fail or silently mis-select. Returns warnings."""
     warnings: list[str] = []
 
-    fmt = str(config.get("input_format") or "")
-    if fmt not in VALID_FORMATS:
+    fmt = config.get("input_format")
+    if not isinstance(fmt, str) or fmt not in VALID_FORMATS:
         raise ValueError(
             f"input_format must be one of {sorted(VALID_FORMATS)} (lowercase); got {fmt!r}. "
             "It is never inferred from the path."
@@ -63,7 +64,7 @@ def validate_config(config: dict[str, Any]) -> list[str]:
 
     for key in PATH_KEYS:
         value = config.get(key)
-        if not value:
+        if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{key} is required.")
         path = Path(str(value)).expanduser()
         if not path.is_absolute():
@@ -72,22 +73,33 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             raise FileNotFoundError(f"{key} does not exist: {path}")
 
     results_dir = config.get("results_dir")
-    if not results_dir:
+    if not isinstance(results_dir, str) or not results_dir.strip():
         raise ValueError("results_dir is required.")
     out = Path(str(results_dir)).expanduser()
     if not out.is_absolute():
         raise ValueError(f"results_dir must be absolute: {out}")
     out.mkdir(parents=True, exist_ok=True)
 
-    if not config.get("kpi"):
+    if not isinstance(config.get("kpi"), str) or not config["kpi"].strip():
         raise ValueError("kpi is required — it labels the rows in the emitted parquets.")
 
-    iou = float(config.get("iou_threshold", 0.5))
+    iou = config.get("iou_threshold", 0.5)
+    if isinstance(iou, bool) or not isinstance(iou, (int, float)) or not math.isfinite(iou):
+        raise ValueError("iou_threshold must be a finite number within (0, 1].")
     if not 0.0 < iou <= 1.0:
         raise ValueError(f"iou_threshold must be within (0, 1]; got {iou}")
-    conf = float(config.get("conf_threshold", 0.0))
+    conf = config.get("conf_threshold", 0.0)
+    if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not math.isfinite(conf):
+        raise ValueError("conf_threshold must be a finite number within [0, 1].")
     if not 0.0 <= conf <= 1.0:
         raise ValueError(f"conf_threshold must be within [0, 1]; got {conf}")
+
+    min_area = config.get("min_area", 0)
+    if isinstance(min_area, bool) or not isinstance(min_area, (int, float)) or min_area < 0:
+        raise ValueError("min_area must be a non-negative number.")
+    class_mapping = config.get("class_mapping", {})
+    if not isinstance(class_mapping, dict):
+        raise ValueError("class_mapping must be a mapping.")
 
     thresholds = config.get("weak_thresholds") or {}
     if not isinstance(thresholds, dict):
@@ -115,7 +127,18 @@ def validate_config(config: dict[str, Any]) -> list[str]:
                     f"weak_thresholds[{name!r}][{metric!r}] must be within [0, 1]; got {value}"
                 )
 
-    gated = [d for d in DEFAULT_KEYS if float(config.get(d, 0.0)) > 0.0]
+    defaults: dict[str, float] = {}
+    for key in DEFAULT_KEYS:
+        value = config.get(key, 0.0)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0.0 <= value <= 1.0
+        ):
+            raise ValueError(f"{key} must be a finite number within [0, 1].")
+        defaults[key] = float(value)
+    gated = [key for key, value in defaults.items() if value > 0.0]
     if gated:
         warnings.append(
             f"{', '.join(gated)} is above zero, so every class absent from weak_thresholds is "
