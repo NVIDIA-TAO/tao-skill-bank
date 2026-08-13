@@ -630,7 +630,7 @@ def _apply_success(
         )
         metrics = _require_exact(
             _required_file(args.metrics_aggregate_csv, "--metrics-aggregate-csv"),
-            evaluate_dir / "nvidia_iaa_metrics_aggregate.csv",
+            evaluate_dir / "nvidia_pas_metrics_aggregate.csv",
             "--metrics-aggregate-csv",
         )
         eval_status = _require_exact(

@@ -195,3 +195,18 @@ def test_interrupted_wrapper_does_not_trust_pass_log_without_fresh_output(
 
     assert reconciled is False
     assert not (tmp_path / "stage.status.json").exists()
+
+
+def test_metric_contract_uses_the_pinned_containers_pas_filenames():
+    relevant_suffixes = {".py", ".md", ".json"}
+    text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in IAA_ROOT.rglob("*")
+        if path.is_file()
+        and path.suffix in relevant_suffixes
+        and "__pycache__" not in path.parts
+    )
+
+    assert "nvidia_iaa_metrics" not in text
+    assert "nvidia_pas_metrics.csv" in text
+    assert "nvidia_pas_metrics_aggregate.csv" in text
