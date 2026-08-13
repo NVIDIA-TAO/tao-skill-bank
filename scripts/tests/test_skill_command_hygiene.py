@@ -131,3 +131,13 @@ def test_no_banned_command_patterns():
         "marker on a line inside a shell fence silences a REAL defect; prose "
         "outside shell fences is already exempt and needs no marker:\n"
         + "\n".join(violations))
+
+
+def test_iaa_preflight_never_loads_credential_files():
+    preflight = (
+        REPO_ROOT
+        / "skills/applications/tao-run-deft-iaa/references/preflight.md"
+    ).read_text(encoding="utf-8")
+
+    assert "source /path/to/.env" not in preflight
+    assert "point the loader" not in preflight
