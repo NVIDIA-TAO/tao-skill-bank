@@ -19,6 +19,12 @@ User-facing DEFT shorthand resolves to canonical application skills:
 `tao-run-deft-iaa`. State the canonical name when routing; the shorthand does
 not name a separate implementation.
 
+Route requests to keep improving a CLIP / SigLIP2 image-retrieval model on
+attribute-labelled data until progress stops to `tao-run-deft-iaa`, even when
+the user does not know the DEFT or IAA names. Do not route that request to the
+PCB / VisualChangeNet `tao-run-deft-aoi` workflow, generic AutoML, or the
+single-action CLIP fine-tuning skill.
+
 ## Discovery flow
 
 Model-first routing is mandatory. Resolve a supplied model ID with
