@@ -134,6 +134,13 @@ class IaaDeftConfig:
         self.iaa_max_seed_rows: int = int(_iaa.get("max_seed_rows", 0) or 0)
         self.iaa_max_aug_pool_rows: int = int(_iaa.get("max_aug_pool_rows", 0) or 0)
         self.iaa_mining_pool_mode: str = _iaa.get("mining_pool_mode", "real_and_augmented")
+        valid_pool_modes = {"real", "augmented", "real_and_augmented"}
+        if self.iaa_mining_pool_mode not in valid_pool_modes:
+            choices = ", ".join(sorted(valid_pool_modes))
+            raise ValueError(
+                f"{self.config_path}: iaa.mining_pool_mode must be one of "
+                f"{choices}; got {self.iaa_mining_pool_mode!r}"
+            )
         self.iaa_val_sample_size: int = int(_iaa.get("val_sample_size", 512) or 512)
         self.iaa_train_pairs_source_file: str = _abs_data_path(
             _iaa.get("train_pairs_source_file", "")
