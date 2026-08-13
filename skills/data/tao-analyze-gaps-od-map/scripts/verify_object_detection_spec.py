@@ -95,8 +95,13 @@ def validate_config(config: dict[str, Any]) -> list[str]:
         raise ValueError(f"conf_threshold must be within [0, 1]; got {conf}")
 
     min_area = config.get("min_area", 0)
-    if isinstance(min_area, bool) or not isinstance(min_area, (int, float)) or min_area < 0:
-        raise ValueError("min_area must be a non-negative number.")
+    if (
+        isinstance(min_area, bool)
+        or not isinstance(min_area, (int, float))
+        or not math.isfinite(min_area)
+        or min_area < 0
+    ):
+        raise ValueError("min_area must be a finite non-negative number.")
     class_mapping = config.get("class_mapping", {})
     if not isinstance(class_mapping, dict):
         raise ValueError("class_mapping must be a mapping.")
@@ -120,9 +125,15 @@ def validate_config(config: dict[str, Any]) -> list[str]:
                     f"weak_thresholds[{name!r}] has unknown metric {metric!r}; "
                     f"expected one of {list(METRICS)}"
                 )
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError(f"weak_thresholds[{name!r}][{metric!r}] must be a number.")
-            if not 0.0 <= float(value) <= 1.0:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                raise ValueError(
+                    f"weak_thresholds[{name!r}][{metric!r}] must be a finite number."
+                )
+            if not 0.0 <= value <= 1.0:
                 raise ValueError(
                     f"weak_thresholds[{name!r}][{metric!r}] must be within [0, 1]; got {value}"
                 )

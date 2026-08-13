@@ -117,10 +117,16 @@ def test_object_detection_gap_validator_rejects_coerced_values(paths):
         ("conf_threshold", False),
         ("kpi", True),
         ("min_area", True),
+        ("min_area", float("nan")),
         ("default_ap50_threshold", "0.5"),
     ):
         with pytest.raises(ValueError, match=key):
             GAPS.validate_config({**base, key: value})
+
+    with pytest.raises(ValueError, match="weak_thresholds"):
+        GAPS.validate_config(
+            {**base, "weak_thresholds": {"vehicle": {"ap50": float("inf")}}}
+        )
 
 
 def test_detection_kpi_validator_rejects_coerced_values(paths):
