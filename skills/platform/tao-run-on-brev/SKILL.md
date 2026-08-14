@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login. Instance provisioning is handled by the official brev-cli agent skill or the Brev MCP server.
 metadata:
   author: NVIDIA Corporation
-  version: "0.2.0"
+  version: "0.2.1"
 allowed-tools: Read Bash
 tags:
 - gpu
@@ -51,11 +51,21 @@ target instance — poll with a **two-word** command until it succeeds before
 issuing real work (a fresh instance reports `RUNNING` before sshd is up):
 
 ```bash
-for i in $(seq 1 60); do [ "$(brev exec <instance> "echo ok" 2>/dev/null)" = ok ] && break; sleep 5; done
-[ "$(brev exec <instance> "echo ok" 2>/dev/null)" = ok ] || { echo "instance not exec-ready"; exit 1; }
+BREV_TRANSPORT="${TAO_SKILL_BANK_PATH:?}/skills/platform/tao-run-on-brev/scripts/brev_transport.py"
+for i in $(seq 1 60); do
+  python3 "$BREV_TRANSPORT" ready --instance <instance> && break
+  sleep 5
+done
+python3 "$BREV_TRANSPORT" ready --instance <instance> || {
+  echo "instance not exec-ready"
+  exit 1
+}
 ```
 
-The probe must be **two words, quoted as one argument**. A single-token probe
+The helper sends a **two-word command as one argument** and accepts a complete
+`TAO_BREV_READY` output line. Current Brev CLI releases may append an instance
+name to successful output, so byte-for-byte stdout equality is not a readiness
+test. A single-token probe
 (`brev exec <instance> -- true`) passes even when every real command is broken,
 because `brev exec [instance...] <command>` treats only the LAST positional as
 the command — so a lone `true` lands in the right slot by accident while
@@ -120,15 +130,20 @@ an error that reads like an instance or SSH fault but is a syntax fault. Quote
 every remote command as a single string, exactly as `brev exec --help` shows.
 
 NGC auth once per instance — **never put `NGC_KEY` on argv** (it lands in the
-remote process table); pipe it to `--password-stdin`:
+remote process table). Brev CLI consumes its own stdin as piped instance names;
+it does not forward that stream to the remote command. Use the packaged helper,
+which sends the password over the Brev-managed SSH alias directly to
+`--password-stdin`:
 
 ```bash
 IMG=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
 
-# NGC auth (one-time per instance) — value never on argv.
-# Single-quoted locally so $NGC_KEY expands in the instance's shell; export it
-# there first (or pipe it in from the local shell, if the instance has no copy).
-brev exec <instance> 'printf %s "$NGC_KEY" | docker login nvcr.io -u "$oauthtoken" --password-stdin'
+# NGC auth (one-time per instance) — value never appears on argv.
+set -a; source /path/to/user-approved.env; set +a
+printf %s "$NGC_KEY" | python3 \
+  "${TAO_SKILL_BANK_PATH:?}/skills/platform/tao-run-on-brev/scripts/brev_transport.py" \
+  registry-login --instance <instance> --registry nvcr.io \
+  --username '$oauthtoken'
 
 # Verify auth without reading ~/.docker/config.json. Failure before a successful
 # login = not authenticated; failure after = the key's org lacks entitlement.
