@@ -45,10 +45,13 @@ Or connect the **Brev MCP server** (`https://docs.nvidia.com/brev/_mcp/server`).
 Either one owns login/auth quirks, placement IDs, GPU search, and teardown flags.
 It does **not** cover container execution on the instance — that is this skill.
 
-**Preflight for this skill:** the `brev` CLI is on `PATH` and logged in (headless:
-`brev login --token "$BREV_API_TOKEN"` before any other call), and you can reach a
-target instance — poll with a **two-word** command until it succeeds before
-issuing real work (a fresh instance reports `RUNNING` before sshd is up):
+**Preflight for this skill:** the `brev` CLI is on `PATH` and has an active
+authenticated session. An existing interactive/cached login is valid; headless
+automation may instead set `BREV_API_TOKEN` and run
+`brev login --token "$BREV_API_TOKEN"` before any other call. Do not require or
+request a token when `brev ls --json` already succeeds. You must also be able to
+reach a target instance — poll with a **two-word** command until it succeeds
+before issuing real work (a fresh instance reports `RUNNING` before sshd is up):
 
 ```bash
 BREV_TRANSPORT="${TAO_SKILL_BANK_PATH:?}/skills/platform/tao-run-on-brev/scripts/brev_transport.py"
