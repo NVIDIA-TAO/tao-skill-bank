@@ -12,7 +12,7 @@ session, with a durable on-disk lifecycle that survives the launching process:
     submit  --job-dir D --venv V --script S [--arg TOKEN]... -> prints {pid,...}
     status  --job-dir D            -> {status: PENDING|RUNNING|COMPLETE|ERROR|CANCELED|UNKNOWN}
     logs    --job-dir D [--tail N] -> bounded tail of the job log
-    cancel  --job-dir D            -> SIGTERM->SIGKILL the whole process group
+    cancel  --job-dir D            -> pidfd SIGTERM->SIGKILL for job processes
 
 Job records are NOT written here — the agent owns them via tao_job_record.py
 (open binds results_dir BEFORE submit; mark records the states this CLI
@@ -21,17 +21,18 @@ reports). The runner's own durable truth lives under ``<job-dir>/.tao_runner/``:
 moment it starts: pid + start marker), ``exit_status.json`` (fsync'd atomic
 write on exit), a ``start_authorized`` gate, and a ``cancel_requested`` marker.
 
-Correctness properties ported from the reviewed upstream implementation:
+Correctness properties:
 - The wrapper blocks on the start gate, so a submit that fails bookkeeping can
   abort before the training script ever runs.
-- Process identity is (pid, pgid-leader, process start marker, wrapper path in
-  cmdline) — a reused PID is never treated as the job, and cancel can never
-  kill an innocent process.
+- The wrapper, a durable guardian, and the direct workload are persisted with
+  start markers before waiting. The guardian anchors the original process group
+  even after the workload exec-replaces its submitted command line.
 - After the script exits, leftover process-group members are SIGTERM/SIGKILLed
-  so background DataLoader workers cannot leak (exit code 126 if any survive
-  a clean run).
-- Linux is first-class (/proc); on other POSIX systems `ps`/`pgrep` fallbacks
-  keep the verbs functional for local smokes.
+  through Linux pidfds so background DataLoader workers cannot leak and reused
+  numeric IDs cannot be signaled.
+- Observation is tri-state and fail-closed. Other POSIX systems can prove an
+  empty group, but active cancellation is refused without an equivalent
+  kernel-held process identity.
 """
 
 from __future__ import annotations
@@ -45,6 +46,13 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+from virtualenv_group_supervisor import (
+    OwnershipError,
+    SupervisionError,
+    group_facts,
+    supervise,
+)
 
 VOCAB_PENDING = "PENDING"
 VOCAB_RUNNING = "RUNNING"
@@ -61,10 +69,14 @@ LAUNCHER_RECORD_TIMEOUT_SECONDS = 10.0
 PENDING_LAUNCH_GRACE_SECONDS = LAUNCHER_RECORD_TIMEOUT_SECONDS + 5.0
 GATE_WAIT_TIMEOUT_SECONDS = 30.0  # wrapper gives up if submit dies pre-gate
 _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+SUPERVISOR_SOURCE_PATH = Path(__file__).resolve().with_name(
+    "virtualenv_group_supervisor.py"
+)
 
 # ---------------------------------------------------------------------------
 # The wrapper written into the job dir and executed as
-#   <venv>/bin/python launch_job.py <exit_status> <launcher_status> <gate> <cancel> <command...>
+#   <venv>/bin/python launch_job.py <exit> <launcher> <gate> <cancel>
+#       <supervisor> <guardian-release> <command...>
 # It must stay self-contained (stdlib only) and portable.
 # ---------------------------------------------------------------------------
 JOB_WRAPPER_SOURCE = r'''
@@ -75,6 +87,21 @@ import subprocess
 import sys
 import time
 import traceback
+
+
+GUARDIAN_SOURCE = r"""
+import os
+import signal
+import sys
+import time
+
+for name in ("SIGTERM", "SIGINT", "SIGHUP"):
+    if hasattr(signal, name):
+        signal.signal(getattr(signal, name), signal.SIG_IGN)
+release_path = sys.argv[1]
+while not os.path.exists(release_path):
+    time.sleep(0.02)
+"""
 
 
 def _write_status(path, payload):
@@ -88,102 +115,80 @@ def _write_status(path, payload):
 
 
 def _probe(argv):
-    """Run a ps/pgrep probe OUTSIDE our process group so membership scans
-    never see the probe itself. Locale/TZ pinned so `ps lstart` markers are
-    invocation-invariant."""
     return subprocess.run(
         argv, capture_output=True, text=True, timeout=5, start_new_session=True,
-        env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
+        env={**os.environ, "LC_ALL": "C", "TZ": "UTC"}, check=False,
     ).stdout
 
 
-def _start_marker():
+def _start_marker(pid):
     try:
-        with open(f"/proc/{os.getpid()}/stat", encoding="utf-8") as stream:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as stream:
             stat = stream.read()
-        fields = stat[stat.rfind(")") + 2:].split()
+        closing = stat.rfind(")")
+        fields = stat[closing + 2:].split() if closing >= 0 else []
         return fields[19] if len(fields) > 19 else None
     except OSError:
         pass
     try:
-        out = _probe(["ps", "-p", str(os.getpid()), "-o", "lstart="]).strip()
+        out = _probe(["ps", "-p", str(pid), "-o", "lstart="]).strip()
         return out or None
     except Exception:
         return None
 
 
-def _active_group_members():
-    """Return non-zombie members of this launcher's process group (not us)."""
-    own_pid = os.getpid()
-    group_id = os.getpgrp()
-    members = []
-    try:
-        proc_entries = os.scandir("/proc")
-    except OSError:
-        proc_entries = None
-    if proc_entries is not None:
-        with proc_entries:
-            for entry in proc_entries:
-                if not entry.name.isdigit():
-                    continue
-                pid = int(entry.name)
-                if pid == own_pid:
-                    continue
-                try:
-                    with open(f"/proc/{pid}/stat", encoding="utf-8") as stream:
-                        stat = stream.read()
-                    fields = stat[stat.rfind(")") + 2:].split()
-                    state = fields[0]
-                    process_group = int(fields[2])
-                except (OSError, ValueError, IndexError):
-                    continue
-                if process_group == group_id and state != "Z":
-                    members.append(pid)
-        return members
-    # Non-/proc fallback (macOS): pgrep by process group, filter zombies via ps.
-    try:
-        out = _probe(["pgrep", "-g", str(group_id)]).split()
-    except Exception:
-        return members
-    for token in out:
-        try:
-            pid = int(token)
-        except ValueError:
-            continue
-        if pid == own_pid:
-            continue
-        try:
-            state = _probe(["ps", "-p", str(pid), "-o", "stat="]).strip()
-        except Exception:
-            state = ""
-        if state and not state.startswith("Z"):
-            members.append(pid)
-    return members
+def _release_guardian(path, guardian):
+    open(path, "a", encoding="utf-8").close()
+    guardian.wait(timeout=5)
 
 
-def _stop_remaining_group_members(timeout=1.0):
-    """Prevent a finished script from leaking background workers."""
-    members = _active_group_members()
-    for pid in members:
+def _release_guardian_reliably(path, guardian, launch_path=None,
+                               launch_record=None):
+    """Do not publish terminal state while the durable group anchor is live."""
+    failed = False
+    while True:
         try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    deadline = time.monotonic() + timeout
-    while members and time.monotonic() < deadline:
-        time.sleep(0.05)
-        members = _active_group_members()
-    for pid in members:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    kill_deadline = time.monotonic() + max(1.0, timeout)
-    while members and time.monotonic() < kill_deadline:
-        time.sleep(0.05)
-        members = _active_group_members()
-    if members:
-        raise RuntimeError(f"process group still has live members: {members}")
+            _release_guardian(path, guardian)
+            return failed
+        except BaseException as exc:
+            failed = True
+            if launch_path and launch_record is not None:
+                launch_record["cleanup_error"] = (
+                    f"Guardian release failed: {type(exc).__name__}: {exc}"
+                )
+                _write_status(launch_path, launch_record)
+            time.sleep(1.0)
+
+
+def _cancel_timeout(path):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            value = json.load(stream).get("timeout", 1.0)
+        return max(0.0, float(value))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 1.0
+
+
+def _supervise(supervisor_path, guardian_pid, guardian_marker, wrapper_marker,
+               timeout):
+    command = [
+        sys.executable, supervisor_path,
+        "--pgid", str(os.getpgrp()),
+        "--guardian-pid", str(guardian_pid),
+        "--guardian-marker", str(guardian_marker),
+        "--exclude", f"{guardian_pid}:{guardian_marker}",
+        "--exclude", f"{os.getpid()}:{wrapper_marker}",
+        "--term-timeout", str(timeout),
+        "--kill-timeout", str(max(1.0, timeout)),
+    ]
+    completed = subprocess.run(
+        command, capture_output=True, text=True,
+        timeout=max(10.0, timeout * 2 + 5.0), start_new_session=True,
+        env={**os.environ, "LC_ALL": "C", "TZ": "UTC"}, check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stdout or completed.stderr).strip()
+        raise RuntimeError(detail or f"group supervisor exited {completed.returncode}")
 
 
 def main():
@@ -191,30 +196,61 @@ def main():
     launch_path = sys.argv[2]
     start_gate_path = sys.argv[3]
     cancel_path = sys.argv[4]
-    command = sys.argv[5:]
+    supervisor_path = sys.argv[5]
+    guardian_release_path = sys.argv[6]
+    command = sys.argv[7:]
     started_at = time.time()
-    _write_status(launch_path, {
+    wrapper_marker = _start_marker(os.getpid())
+    guardian = subprocess.Popen(
+        [sys.executable, "-c", GUARDIAN_SOURCE, guardian_release_path],
+        stdin=subprocess.DEVNULL,
+    )
+    guardian_marker = _start_marker(guardian.pid)
+    if not wrapper_marker or not guardian_marker:
+        _release_guardian_reliably(guardian_release_path, guardian)
+        _write_status(status_path, {
+            "return_code": 127,
+            "canceled": False,
+            "error": "Could not establish wrapper/guardian process identity",
+            "started_at": started_at,
+            "finished_at": time.time(),
+        })
+        return 127
+    launch_record = {
         "pid": os.getpid(),
-        "process_start_marker": _start_marker(),
+        "process_start_marker": wrapper_marker,
+        "guardian_pid": guardian.pid,
+        "guardian_start_marker": guardian_marker,
         "started_at": started_at,
-    })
-    # A healthy submit opens the gate within one poll of reading our record;
-    # if it died first, give up with a durable record instead of spinning as
-    # a phantom RUNNING job forever.
+    }
+    _write_status(launch_path, launch_record)
+
     gate_timeout = float(os.environ.get("TAO_RUNNER_GATE_TIMEOUT", "30"))
     gate_deadline = time.monotonic() + gate_timeout
     while not os.path.exists(start_gate_path):
         if time.monotonic() > gate_deadline:
+            _release_guardian_reliably(
+                guardian_release_path, guardian, launch_path, launch_record,
+            )
+            launch_record.pop("cleanup_error", None)
+            _write_status(launch_path, launch_record)
             _write_status(status_path, {
                 "return_code": 125,
+                "canceled": False,
                 "error": "Start was never authorized (submit died before opening the gate)",
                 "started_at": started_at,
                 "finished_at": time.time(),
             })
             return 125
         if os.path.exists(cancel_path):
+            _release_guardian_reliably(
+                guardian_release_path, guardian, launch_path, launch_record,
+            )
+            launch_record.pop("cleanup_error", None)
+            _write_status(launch_path, launch_record)
             _write_status(status_path, {
                 "return_code": -signal.SIGTERM,
+                "canceled": True,
                 "error": "Canceled before the script started",
                 "started_at": started_at,
                 "finished_at": time.time(),
@@ -222,30 +258,93 @@ def main():
             return 128 + signal.SIGTERM
         time.sleep(0.02)
     if os.path.exists(cancel_path):
+        _release_guardian_reliably(
+            guardian_release_path, guardian, launch_path, launch_record,
+        )
+        launch_record.pop("cleanup_error", None)
+        _write_status(launch_path, launch_record)
         _write_status(status_path, {
             "return_code": -signal.SIGTERM,
+            "canceled": True,
             "error": "Canceled before the script started",
             "started_at": started_at,
             "finished_at": time.time(),
         })
         return 128 + signal.SIGTERM
+
     error = None
+    canceled = False
     try:
-        return_code = subprocess.call(command)
-    except BaseException as exc:  # Preserve a durable failure record.
-        traceback.print_exc()
-        return_code = 127
-        error = f"{type(exc).__name__}: {exc}"
-    try:
-        _stop_remaining_group_members()
+        workload = subprocess.Popen(command, stdin=subprocess.DEVNULL)
     except BaseException as exc:
         traceback.print_exc()
-        cleanup_error = f"{type(exc).__name__}: {exc}"
+        workload = None
+        return_code = 127
+        error = f"{type(exc).__name__}: {exc}"
+    if workload is not None:
+        workload_marker = _start_marker(workload.pid)
+        if not workload_marker:
+            # This Popen object is still the unreaped parent-owned child, so its
+            # pid cannot be reused before wait; requesting termination is safe.
+            workload.terminate()
+            try:
+                workload.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                workload.kill()
+                workload.wait()
+            return_code = 127
+            error = "Could not establish direct workload process identity"
+        else:
+            launch_record.update({
+                "workload_pid": workload.pid,
+                "workload_start_marker": workload_marker,
+            })
+            _write_status(launch_path, launch_record)
+            while workload.poll() is None:
+                if os.path.exists(cancel_path):
+                    canceled = True
+                    break
+                time.sleep(0.05)
+            if not canceled:
+                return_code = workload.returncode
+
+    # The same checked-in supervisor copied by submit owns every cleanup path.
+    # Keep wrapper+guardian alive on indeterminate evidence and retry rather
+    # than writing a false terminal record while workers may still execute.
+    cleanup_failed = False
+    while True:
+        try:
+            timeout = _cancel_timeout(cancel_path) if canceled else 1.0
+            _supervise(
+                supervisor_path, guardian.pid, guardian_marker, wrapper_marker,
+                timeout,
+            )
+            break
+        except BaseException as exc:
+            cleanup_failed = True
+            launch_record["cleanup_error"] = f"{type(exc).__name__}: {exc}"
+            _write_status(launch_path, launch_record)
+            time.sleep(1.0)
+
+    if workload is not None and workload.poll() is None:
+        workload.wait()
+    cleanup_failed = _release_guardian_reliably(
+        guardian_release_path, guardian, launch_path, launch_record,
+    ) or cleanup_failed
+    launch_record.pop("cleanup_error", None)
+    _write_status(launch_path, launch_record)
+    if canceled:
+        return_code = -signal.SIGTERM
+        error = "Canceled by process-group supervisor"
+    elif cleanup_failed:
+        cleanup_error = "Process-group cleanup was temporarily indeterminate"
         error = f"{error}; {cleanup_error}" if error else cleanup_error
         if return_code == 0:
             return_code = 126
+
     _write_status(status_path, {
         "return_code": return_code,
+        "canceled": canceled,
         "error": error,
         "started_at": started_at,
         "finished_at": time.time(),
@@ -312,43 +411,6 @@ def _coerce_pid(value) -> int:
     return pid if pid > 0 else 0
 
 
-def _proc_entry_group_state(entry: Path, pgid: int) -> str:
-    """Classify one Linux proc entry for a target group.
-
-    The result is ``active``, ``zombie``, ``other``, ``gone``, or
-    ``indeterminate``.  A malformed or unreadable stat file is harmless when
-    ``getpgid`` proves the process belongs to another group, but it must not be
-    silently treated as gone when it may be one of this job's processes.
-    """
-    pid = int(entry.name)
-    try:
-        stat = (entry / "stat").read_text(encoding="utf-8")
-        closing = stat.rfind(")")
-        if closing < 0:
-            raise ValueError("missing comm terminator")
-        fields = stat[closing + 2:].split()
-        if len(fields) < 3:
-            raise ValueError("truncated proc stat")
-        state = fields[0]
-        process_group = int(fields[2])
-    except FileNotFoundError:
-        return "gone"
-    except (PermissionError, OSError, ValueError, IndexError):
-        # Reading stat can race process exit.  getpgid distinguishes that case
-        # and, crucially, tells us whether unreadable evidence is relevant to
-        # this group rather than silently converting uncertainty into success.
-        try:
-            process_group = os.getpgid(pid)
-        except ProcessLookupError:
-            return "gone"
-        except (PermissionError, OSError, ValueError):
-            return "indeterminate"
-        return "indeterminate" if process_group == pgid else "other"
-    if process_group != pgid:
-        return "other"
-    return "zombie" if state == "Z" else "active"
-
-
 def _active_process_group_members(
     pgid: int, *, proc_root: Path | None = None,
 ) -> list[int] | None:
@@ -359,74 +421,17 @@ def _active_process_group_members(
     cannot execute or receive a signal.  Lifecycle waits therefore need an
     explicit state-aware membership probe rather than signalability.
 
-    Linux uses ``/proc`` (the first-class platform).  The fallback uses
-    ``pgrep`` plus ``ps`` and deliberately returns ``None`` when it cannot
-    establish state: callers may then decline to signal or report success.
+    This delegates to the same scanner used by destructive supervision so
+    status and cancellation cannot disagree about missing or malformed evidence.
     """
     if pgid <= 0:
         return []
 
-    proc_root = Path("/proc") if proc_root is None else proc_root
-    if proc_root.is_dir():
-        members: list[int] = []
-        try:
-            entries = proc_root.iterdir()
-            for entry in entries:
-                if not entry.name.isdigit():
-                    continue
-                state = _proc_entry_group_state(entry, pgid)
-                if state == "indeterminate":
-                    return None
-                if state == "active":
-                    members.append(int(entry.name))
-            return sorted(members)
-        except OSError:
-            pass
-
     try:
-        completed = subprocess.run(
-            ["pgrep", "-g", str(pgid)],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
-        )
-    except Exception:
+        facts = group_facts(pgid, proc_root=proc_root)
+    except SupervisionError:
         return None
-    if completed.returncode == 1:
-        return []
-    if completed.returncode != 0:
-        return None
-
-    members = []
-    for token in completed.stdout.split():
-        if not token.isdigit():
-            continue
-        pid = int(token)
-        try:
-            state_probe = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "stat="],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
-            )
-        except Exception:
-            return None
-        state = state_probe.stdout.strip()
-        if state_probe.returncode != 0 or not state:
-            try:
-                process_group = os.getpgid(pid)
-            except ProcessLookupError:
-                continue  # Process exited between pgrep and ps.
-            except (PermissionError, OSError, ValueError):
-                return None
-            if process_group != pgid:
-                continue
-            return None  # Still in this group, but state is indeterminate.
-        if not state.startswith("Z"):
-            members.append(pid)
-    return sorted(members)
+    return [fact.pid for fact in facts if fact.active]
 
 
 def _identity_matches(pid: int, marker: str, pgid: int) -> bool | None:
@@ -479,73 +484,49 @@ def _capture_group_identities(
     return identities
 
 
-def _observe_owned_group(
-    pgid: int, identities: dict[int, str],
-) -> tuple[str, list[int]]:
-    """Observe a group without allowing a reused PGID to inherit ownership.
+def _durably_owned_survivors(
+    pgid: int, launcher: dict,
+) -> dict[int, str] | None:
+    """Return active survivors while a persisted job identity anchors the PGID.
 
-    Returns ``owned``, ``empty``, ``indeterminate``, or ``ownership_lost``.
-    While at least one previously bound identity is live, any newly observed
-    member belongs to the same still-existing POSIX process group and can be
-    safely added to the durable identity set for later escalation.
+    Guardian ownership is preferred.  The direct workload identity is retained
+    as a read-only fallback so an externally killed guardian cannot make a live
+    workload look terminal.  ``None`` means active membership could not be
+    attributed safely; callers must report UNKNOWN and must not signal.
     """
     members = _active_process_group_members(pgid)
     if members is None:
-        return "indeterminate", []
-    if not members:
-        return "empty", []
-
-    matched = []
-    indeterminate = False
-    for member_pid, marker in list(identities.items()):
-        if member_pid not in members:
-            continue
-        match = _identity_matches(member_pid, marker, pgid)
-        if match is True:
-            matched.append(member_pid)
-        elif match is None:
-            indeterminate = True
-    if not matched:
-        return ("indeterminate" if indeterminate else "ownership_lost"), members
-
-    unbound = [member_pid for member_pid in members if member_pid not in identities]
-    captured = _capture_group_identities(pgid, unbound)
-    if captured is None:
-        return "indeterminate", members
-    identities.update(captured)
-    return "owned", members
-
-
-def _group_member_identities(
-    pgid: int, identity_hint: str | None,
-) -> dict[int, str] | None:
-    """POSITIVELY identify surviving members (leader excluded).
-
-    Used when the launcher is dead: a surviving training script must not be
-    reported terminal or left unkillable. Only members whose cmdline matches
-    ``identity_hint`` count, and every returned PID is bound to its process
-    start marker. ``None`` means the probe itself was indeterminate.
-    """
-    candidates = _active_process_group_members(pgid)
-    if candidates is None:
         return None
-    members = [pid for pid in candidates if pid != pgid]
-    if not identity_hint:
+    if not members:
         return {}
-    matched: list[int] = []
-    for member_pid in members:
-        cmdline_match = _cmdline_probe(member_pid, identity_hint)
-        if cmdline_match is None:
-            return None
-        if cmdline_match:
-            matched.append(member_pid)
-    return _capture_group_identities(pgid, matched)
 
+    anchors: list[tuple[int, str]] = []
+    guardian = _guardian_identity(launcher)
+    if guardian is not None:
+        anchors.append(guardian)
+    workload_pid = _coerce_pid(launcher.get("workload_pid"))
+    workload_marker = launcher.get("workload_start_marker")
+    if workload_pid and isinstance(workload_marker, str) and workload_marker:
+        anchors.append((workload_pid, workload_marker))
 
-def _group_members(pgid: int, identity_hint: str | None) -> list[int]:
-    """Compatibility view used by status displays and tests."""
-    identities = _group_member_identities(pgid, identity_hint)
-    return [] if identities is None else sorted(identities)
+    owned = False
+    indeterminate = False
+    for anchor_pid, anchor_marker in anchors:
+        match = _identity_matches(anchor_pid, anchor_marker, pgid)
+        if match is True:
+            owned = True
+            break
+        if match is None:
+            indeterminate = True
+    if not owned:
+        return None if members or indeterminate else {}
+
+    excluded = {pgid}
+    if guardian is not None:
+        excluded.add(guardian[0])
+    return _capture_group_identities(
+        pgid, [member for member in members if member not in excluded]
+    )
 
 
 def _cmdline_probe(pid: int, needle: str) -> bool | None:
@@ -601,6 +582,34 @@ def _launcher_state(pid: int, expected_marker: str | None, wrapper_path: str | N
     return "running"
 
 
+def _recorded_launcher_reused(pid: int, expected_marker: str | None) -> bool | None:
+    """Whether a still-live numeric PID is provably not the recorded launcher.
+
+    ``False`` includes a process that is definitively gone. ``None`` means the
+    identity probe is indeterminate and must not support a terminal result.
+    """
+    if pid <= 0 or not expected_marker:
+        return None
+    try:
+        process_group = os.getpgid(pid)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError, ValueError):
+        return None
+    if process_group != pid:
+        return True
+    marker_now = _process_start_marker(pid)
+    if marker_now is None:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError, ValueError):
+            return None
+        return None
+    return marker_now != str(expected_marker)
+
+
 def _process_matches(pid: int, expected_marker: str | None, wrapper_path: str | None) -> bool:
     """True only if ``pid`` is POSITIVELY this job's launcher (PID-reuse safe).
 
@@ -622,92 +631,49 @@ def _process_matches(pid: int, expected_marker: str | None, wrapper_path: str | 
     return True
 
 
-def _terminate_process_group(
-    pid: int,
-    expected_identities: dict[int, str],
-    timeout: float = 5.0,
-) -> str:
-    """SIGTERM then SIGKILL the group. Returns 'gone' | 'terminated' | raises.
+def _guardian_identity(launcher: dict | None) -> tuple[int, str] | None:
+    if not isinstance(launcher, dict):
+        return None
+    pid = _coerce_pid(launcher.get("guardian_pid"))
+    marker = launcher.get("guardian_start_marker")
+    if not pid or not isinstance(marker, str) or not marker:
+        return None
+    return pid, marker
 
-    Every signal is preceded by a durable start-identity check. A PGID that is
-    reused after this job's members exit can therefore never inherit authority
-    from the old job record. Completion means no non-zombie group member
-    remains; an unreaped zombie is already dead and must not turn a successful
-    cancellation into a timeout. An indeterminate membership probe or a real
-    permission failure is not reported as success.
+
+def _supervise_orphan(
+    paths: "RunnerPaths", launcher: dict, timeout: float,
+) -> dict[str, object]:
+    """Terminate an orphaned group through the shared pidfd supervisor.
+
+    The guardian is deliberately excluded and released only after every other
+    active member is gone, so the numeric process-group id cannot be reused
+    during discovery. No destructive signal in this process uses a raw PID or
+    PGID.
     """
-    identities = {
-        _coerce_pid(member_pid): str(marker)
-        for member_pid, marker in expected_identities.items()
-        if _coerce_pid(member_pid) and marker
-    }
-    if not identities:
-        raise RuntimeError(
-            f"refusing to signal process group {pid} without a durable process identity"
-        )
-
-    def observe_or_raise() -> tuple[str, list[int]]:
-        ownership, members = _observe_owned_group(pid, identities)
-        if ownership == "indeterminate":
-            raise RuntimeError(
-                f"could not establish process-group {pid} membership safely"
-            )
-        if ownership == "ownership_lost":
-            raise RuntimeError(
-                f"process group {pid} no longer matches this job; refusing to signal it"
-            )
-        return ownership, members
-
-    ownership, _ = observe_or_raise()
-    if ownership == "empty":
-        return "terminated"
-
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return "gone"
-    except PermissionError as exc:
-        members = _active_process_group_members(pid)
-        if members == []:
-            return "terminated"
-        raise RuntimeError(
-            f"permission denied signaling process group {pid} with SIGTERM"
-        ) from exc
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        ownership, _ = observe_or_raise()
-        if ownership == "empty":
-            return "terminated"
-        time.sleep(0.05)
-
-    # Revalidate immediately before escalation. In particular, a new process
-    # group that reused the old numeric PGID must not receive this SIGKILL.
-    ownership, _ = observe_or_raise()
-    if ownership == "empty":
-        return "terminated"
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return "terminated"
-    except PermissionError as exc:
-        members = _active_process_group_members(pid)
-        if members == []:
-            return "terminated"
-        raise RuntimeError(
-            f"permission denied signaling process group {pid} with SIGKILL"
-        ) from exc
-    kill_deadline = time.monotonic() + max(1.0, timeout)
-    while time.monotonic() < kill_deadline:
-        ownership, _ = observe_or_raise()
-        if ownership == "empty":
-            return "terminated"
-        time.sleep(0.05)
-    ownership, members = observe_or_raise()
-    if ownership == "empty":
-        return "terminated"
-    raise RuntimeError(
-        f"process group {pid} still has live members after SIGKILL: {members}"
+    identity = _guardian_identity(launcher)
+    if identity is None:
+        raise SupervisionError("orphaned job lacks a durable guardian identity")
+    guardian_pid, guardian_marker = identity
+    result = supervise(
+        pgid=_coerce_pid(launcher.get("pid")),
+        guardian_pid=guardian_pid,
+        guardian_marker=guardian_marker,
+        excludes={guardian_pid: guardian_marker},
+        term_timeout=max(0.0, timeout),
+        kill_timeout=max(1.0, timeout),
     )
+    paths.guardian_release.touch()
+    release_deadline = time.monotonic() + 5.0
+    while time.monotonic() < release_deadline:
+        facts = group_facts(_coerce_pid(launcher.get("pid")))
+        guardian = next((fact for fact in facts if fact.pid == guardian_pid), None)
+        if guardian is None or not guardian.active:
+            return result
+        if guardian.start_marker != guardian_marker:
+            raise OwnershipError("guardian identity changed during release")
+        time.sleep(0.02)
+    raise SupervisionError("durable guardian did not exit after release")
 
 
 def _read_tail(path: Path, line_count: int, max_bytes: int = LOG_TAIL_MAX_BYTES) -> str:
@@ -742,11 +708,13 @@ class RunnerPaths:
         self.job_dir = job_dir
         self.runner_dir = job_dir / RUNNER_DIR_NAME
         self.wrapper = self.runner_dir / "launch_job.py"
+        self.supervisor = self.runner_dir / "supervise_group.py"
         self.submit_meta = self.runner_dir / "submit_meta.json"
         self.launcher_status = self.runner_dir / "launcher_status.json"
         self.exit_status = self.runner_dir / "exit_status.json"
         self.start_gate = self.runner_dir / "start_authorized"
         self.cancel_marker = self.runner_dir / "cancel_requested"
+        self.guardian_release = self.runner_dir / "guardian_release"
         self.log_path = job_dir / "logs" / "job.log"
 
 
@@ -868,6 +836,26 @@ def cmd_submit(args: argparse.Namespace) -> int:
     with os.fdopen(wrapper_fd, "w", encoding="utf-8") as stream:
         stream.write(JOB_WRAPPER_SOURCE)
 
+    supervisor_created = False
+    try:
+        supervisor_source = SUPERVISOR_SOURCE_PATH.read_bytes()
+        supervisor_fd = os.open(
+            paths.supervisor,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        supervisor_created = True
+        with os.fdopen(supervisor_fd, "wb") as stream:
+            stream.write(supervisor_source)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as exc:
+        if supervisor_created:
+            paths.supervisor.unlink(missing_ok=True)
+        paths.wrapper.unlink(missing_ok=True)
+        paths.submit_meta.unlink(missing_ok=True)
+        return _fail(f"Could not install group supervisor {paths.supervisor}: {exc}")
+
     script_argv = [str(python_path), str(script_path), *rendered_args]
     launcher_argv = [
         str(python_path),
@@ -876,6 +864,8 @@ def cmd_submit(args: argparse.Namespace) -> int:
         str(paths.launcher_status),
         str(paths.start_gate),
         str(paths.cancel_marker),
+        str(paths.supervisor),
+        str(paths.guardian_release),
         *script_argv,
     ]
 
@@ -906,6 +896,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
             "argv": script_argv,
             "venv_path": str(venv_path),
             "wrapper_path": str(paths.wrapper),
+            "supervisor_path": str(paths.supervisor),
             "cwd": str(cwd),
             "log_path": str(paths.log_path),
             "gpu_ids": gpu_ids,
@@ -932,8 +923,6 @@ def cmd_submit(args: argparse.Namespace) -> int:
             log_file.close()  # Popen duplicated the descriptor for the child.
     except OSError as exc:
         return _fail(f"Failed to launch the wrapper: {exc}")
-    spawned_marker = _process_start_marker(process.pid)
-
     # Wait for the wrapper's durable identity record, then open the gate. A
     # wrapper that never writes it means the interpreter/env is broken — kill
     # the group and report, before the script has had any chance to run.
@@ -947,16 +936,11 @@ def cmd_submit(args: argparse.Namespace) -> int:
             break
         time.sleep(0.05)
     if not launcher or not launcher.get("pid"):
-        # The marker captured immediately after Popen binds cleanup to this
-        # exact process. If it was unavailable, let the wrapper's closed gate
-        # time out rather than risk signaling a subsequently reused PGID.
-        if spawned_marker:
-            try:
-                _terminate_process_group(
-                    process.pid, {process.pid: str(spawned_marker)}
-                )
-            except RuntimeError:
-                pass
+        # The wrapper may not yet have created its durable guardian. Request a
+        # gate self-cancel and never signal the numeric Popen pid: a process can
+        # fork between this timeout and a signal, and there is no persisted
+        # supervision anchor to own those descendants yet.
+        _atomic_write_json(paths.cancel_marker, {"timeout": 1.0})
         tail = _read_tail(paths.log_path, 40) if paths.log_path.exists() else ""
         return _fail(
             "Launcher never wrote its durable identity record "
@@ -987,7 +971,11 @@ def _status_from_exit_record(paths: RunnerPaths) -> tuple[str, str, dict] | None
     code = exit_record.get("return_code")
     if not isinstance(code, int) or isinstance(code, bool):
         return None
-    if paths.cancel_marker.exists():
+    canceled = exit_record.get("canceled")
+    # Records predating the explicit field retain their historical behavior.
+    # New records make the wrapper's observed outcome authoritative so a late
+    # cancel marker cannot relabel a natural exit as canceled.
+    if canceled is True or (canceled is None and paths.cancel_marker.exists()):
         return VOCAB_CANCELED, "Process group was canceled", {"return_code": code}
     if code == 0:
         return VOCAB_COMPLETE, "Process exited successfully", {"return_code": 0}
@@ -1019,6 +1007,12 @@ def _derive_status(paths: RunnerPaths) -> tuple[str, str, dict]:
         pid = _coerce_pid(launcher.get("pid"))
         marker = launcher.get("process_start_marker")
         if _launcher_state(pid, marker, wrapper_path) == "running":
+            if launcher.get("cleanup_error"):
+                return (
+                    VOCAB_UNKNOWN,
+                    "Process-group cleanup is indeterminate; supervision remains active",
+                    {"pid": pid, "cleanup_error": launcher.get("cleanup_error")},
+                )
             message = f"Process {pid} is running"
             if canceled:
                 message += " (cancel requested)"
@@ -1030,18 +1024,14 @@ def _derive_status(paths: RunnerPaths) -> tuple[str, str, dict]:
         from_record = _status_from_exit_record(paths)
         if from_record is not None:
             return from_record
-        # A dead launcher does NOT mean a dead job: the training script is a
-        # same-group child that survives a wrapper-only SIGKILL/OOM. Probe for
-        # positively-identified survivors before declaring anything terminal.
-        script_hint = None
-        argv = (submit_meta or {}).get("argv") or []
-        if len(argv) > 1:
-            script_hint = argv[1]
-        survivor_identities = _group_member_identities(pid, script_hint)
+        # A direct workload may have exec-replaced the submitted Python script,
+        # so cmdline text is not identity. The durable guardian anchors the
+        # original PGID and the persisted workload start marker survives exec.
+        survivor_identities = _durably_owned_survivors(pid, launcher)
         if survivor_identities is None:
             return (
                 VOCAB_UNKNOWN,
-                "Launcher ended and surviving process identity is indeterminate",
+                "Launcher ended and process-group ownership is indeterminate",
                 {"pid": pid},
             )
         survivors = sorted(survivor_identities)
@@ -1053,6 +1043,13 @@ def _derive_status(paths: RunnerPaths) -> tuple[str, str, dict]:
             if canceled:
                 message += " (cancel requested)"
             return VOCAB_RUNNING, message, {"pid": pid, "orphaned": True}
+        reused = _recorded_launcher_reused(pid, marker)
+        if reused is not False:
+            return (
+                VOCAB_UNKNOWN,
+                "Launcher ended and process-group ownership is indeterminate",
+                {"pid": pid},
+            )
         if canceled:
             return (
                 VOCAB_CANCELED,
@@ -1107,79 +1104,63 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     status, message, extra = _derive_status(paths)
     if status in (VOCAB_COMPLETE, VOCAB_ERROR, VOCAB_CANCELED):
         return _emit(result="already_terminal", status=status, message=message, **extra)
-    if status == VOCAB_UNKNOWN:
-        return _fail(message)
 
-    # Mark first so a wrapper still waiting on the gate self-cancels, then
-    # verify identity before signaling anything.
-    paths.cancel_marker.touch()
     launcher = _read_json(paths.launcher_status)
+    submit_meta = _read_json(paths.submit_meta)
+    if launcher is None and submit_meta is None:
+        return _fail(message, status=VOCAB_UNKNOWN)
+
+    # Mark first so a healthy wrapper performs supervision while its durable
+    # guardian anchors the PGID. The timeout value is non-secret control data.
+    try:
+        _atomic_write_json(
+            paths.cancel_marker, {"timeout": max(0.0, args.timeout)},
+        )
+    except OSError as exc:
+        return _fail(
+            f"could not persist cancel request: {exc}", status=VOCAB_UNKNOWN,
+        )
     pid = _coerce_pid(launcher.get("pid")) if launcher else 0
     marker = (launcher or {}).get("process_start_marker")
-    submit_meta = _read_json(paths.submit_meta)
     wrapper_path = (submit_meta or {}).get("wrapper_path") or str(paths.wrapper)
 
-    signaled = False
     if pid and _process_matches(pid, marker, wrapper_path):
-        signaled = True
-        try:
-            outcome = _terminate_process_group(
-                pid, {pid: str(marker)}, timeout=args.timeout
-            )
-        except RuntimeError as exc:
-            return _fail(str(exc), status=VOCAB_UNKNOWN)
-    else:
-        outcome = "gone"
-
-    if outcome == "gone" and pid:
-        # Launcher gone, but the script group may have survived it (orphaned
-        # children of a killed wrapper). Kill positively-identified survivors.
-        argv = (submit_meta or {}).get("argv") or []
-        script_hint = argv[1] if len(argv) > 1 else None
-        survivor_identities = _group_member_identities(pid, script_hint)
-        if survivor_identities is None:
-            return _fail(
-                f"could not establish surviving process identities for group {pid}",
-                status=VOCAB_UNKNOWN,
-            )
-        if survivor_identities:
-            signaled = True
-            try:
-                _terminate_process_group(
-                    pid, survivor_identities, timeout=args.timeout
-                )
-            except RuntimeError as exc:
-                return _fail(str(exc), status=VOCAB_UNKNOWN)
-
-    if outcome == "gone" and not signaled:
-        # Nothing was signaled by this cancel: any landed exit record is a
-        # NATURAL exit that beat the cancel — undo the cancel claim rather
-        # than mislabel it (the one exception: the wrapper's gate self-cancel
-        # record, which only exists because of OUR marker).
-        deadline = time.monotonic() + 2.0
-        exit_record = _read_json(paths.exit_status)
-        while exit_record is None and time.monotonic() < deadline:
+        # No external destructive signal is needed: the wrapper sees the
+        # marker, invokes the same copied pidfd supervisor, writes status, and
+        # releases the guardian. Wait a bounded interval for that durable path.
+        deadline = time.monotonic() + max(3.0, args.timeout * 2 + 2.0)
+        while time.monotonic() < deadline:
+            status, message, extra = _derive_status(paths)
+            if status in (VOCAB_COMPLETE, VOCAB_ERROR, VOCAB_CANCELED):
+                result = "canceled" if status == VOCAB_CANCELED else "already_terminal"
+                return _emit(result=result, status=status, message=message, **extra)
             time.sleep(0.05)
-            exit_record = _read_json(paths.exit_status)
-        code = (exit_record or {}).get("return_code")
-        if isinstance(code, int) and not isinstance(code, bool):
-            self_canceled = (
-                (exit_record or {}).get("error") == "Canceled before the script started"
-            )
-            if not self_canceled:
-                paths.cancel_marker.unlink(missing_ok=True)
-                status, message, extra = _derive_status(paths)
-                return _emit(
-                    result="already_terminal", status=status, message=message, **extra
-                )
+        status, message, extra = _derive_status(paths)
+        if status == VOCAB_UNKNOWN:
+            return _fail(message, status=VOCAB_UNKNOWN, **extra)
+        return _emit(result="cancel_requested", status=status, message=message, **extra)
 
-    status, message, extra = _derive_status(paths)
-    result = "canceled"
-    if not signaled and status in (VOCAB_PENDING, VOCAB_RUNNING):
-        # Honest reply: the marker is set (a gated wrapper will self-cancel)
-        # but nothing live was signaled — the caller should re-run cancel.
-        result = "cancel_requested"
-    return _emit(result=result, status=status, message=message, **extra)
+    if pid and launcher:
+        try:
+            _supervise_orphan(paths, launcher, args.timeout)
+        except (OSError, OwnershipError, SupervisionError, ValueError) as exc:
+            return _fail(str(exc), status=VOCAB_UNKNOWN)
+        deadline = time.monotonic() + max(2.0, args.timeout)
+        while time.monotonic() < deadline:
+            status, message, extra = _derive_status(paths)
+            if status == VOCAB_CANCELED:
+                return _emit(result="canceled", status=status, message=message, **extra)
+            time.sleep(0.05)
+        return _fail(
+            "guardian did not release after orphan supervision",
+            status=VOCAB_UNKNOWN,
+        )
+
+    # A pre-launch wrapper will consume the marker if it appears. Without any
+    # durable launcher/guardian identity there is nothing safe to signal.
+    if status == VOCAB_PENDING:
+        return _emit(result="cancel_requested", status=status, message=message, **extra)
+    return _fail(message, status=VOCAB_UNKNOWN)
 
 
 # ---------------------------------------------------------------------------
