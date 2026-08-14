@@ -3,7 +3,8 @@
 
 """Deterministic host-side adapters for the IAA DEFT stages.
 
-Container work remains in ``run_deft_container.py``.  This command exposes the
+TAO work is prepared/finalized by ``run_deft_action.py`` and executed by the
+selected platform skill. This command exposes the
 canonical Python calls as bounded subcommands so an agent never has to invent
 inline Python or rediscover function signatures.
 """
@@ -31,6 +32,7 @@ from command_contract import (
     expected_hf_forwarding,
     expected_image_kind,
 )
+from deft_action_contract import platform_evidence_error, remote_freshness_attested
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -520,14 +522,12 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     attempt = payload.get("attempt") if isinstance(payload, dict) else None
     if (
         not isinstance(payload, dict)
-        or payload.get("schema_version") != "1"
+        or payload.get("schema_version") not in {"1", "2"}
         or payload.get("workflow") != "tao-run-deft-iaa"
-        or payload.get("kind") != "container"
+        or platform_evidence_error(payload, str(state_config.get("platform"))) is not None
         or payload.get("name") != "train"
         or payload.get("status") != "ok"
         or payload.get("exit_code") != 0
-        or payload.get("docker_exit_code") != 0
-        or payload.get("artifact_error") is not None
         or payload.get("image_kind") != expected_image_kind("train")
         or payload.get("image") != state_config.get("pyt_image")
         or payload.get("command") != expected_command
@@ -570,7 +570,10 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         or train_tao_status.stat().st_size == 0
         or train_tao_status.is_symlink()
         or train_tao_status.resolve() != train_tao_status
-        or train_tao_status.stat().st_mtime_ns < started_ns
+        or (
+            train_tao_status.stat().st_mtime_ns < started_ns
+            and not remote_freshness_attested(payload)
+        )
     ):
         raise ValueError("TAO train status is missing, unsafe, empty, or stale")
     if "Train finished successfully." not in train_tao_status.read_text(errors="replace"):

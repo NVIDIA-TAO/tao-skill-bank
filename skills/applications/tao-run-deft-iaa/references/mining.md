@@ -1,8 +1,10 @@
 # Pool Embedding, Mining, and History Selection
 
 Read only when the audit selects `pool_embed`, `data_mining`, or
-`history_select`. All container calls use the immutable `/specs` mount prepared
-for the run.
+`history_select`. Every `run_deft_action.py prepare` call only writes the action
+request. Immediately execute and finalize it through
+`platform-execution.md` before committing or starting the next step. All
+container platforms use the immutable `/specs` mount from that request.
 
 ## Contents
 
@@ -23,7 +25,7 @@ POOL_DIR="$RESULTS_DIR/embeddings/source"
 POOL_OUT="$POOL_DIR/embeddings.parquet"
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-  "$SKILL_ROOT/scripts/run_deft_container.py" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
     --results-dir "$RESULTS_DIR" --image ds \
     --stage-dir "$POOL_DIR" --name pool_embed \
     "${HF_ARGS[@]}" \
@@ -46,13 +48,15 @@ Commit with the exact generated status file:
 
 On resume, an existing parquet is reusable only when the matching status has
 exit code zero, names that file as a fresh output, and passes commit/audit
-schema and row checks. Otherwise rerun the wrapper; it removes only the exact
-output before launch. File existence alone is never a cache hit.
+schema and row checks. Otherwise prepare the one permitted retry; the producer
+removes only the exact output before launch. File existence alone is never a
+cache hit.
 
 ## Iteration data mining
 
 For iteration N, `iter_N/gaps/kpi_gaps.parquet` was created by the prior
-label's gap analysis. Run these three steps in order.
+label's gap analysis. Run these three steps in order, fully executing and
+finalizing each prepared action before its consumer step.
 
 ### 1. Embed target gap captions
 
@@ -66,7 +70,7 @@ if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
 fi
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-  "$SKILL_ROOT/scripts/run_deft_container.py" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
     --results-dir "$RESULTS_DIR" --image ds \
     --stage-dir "$TARGET_DIR" --name target_embed \
     "${HF_ARGS[@]}" \
@@ -83,7 +87,7 @@ MINING_DIR="$ITER_DIR/mining"
 MINED_OUT="$MINING_DIR/mined_samples.parquet"
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-  "$SKILL_ROOT/scripts/run_deft_container.py" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
     --results-dir "$RESULTS_DIR" --image ds \
     --stage-dir "$MINING_DIR" --name knn \
     --fresh-output "$MINED_OUT" -- \
