@@ -38,6 +38,12 @@ from command_contract import (
     expected_hf_forwarding,
     expected_image_kind,
 )
+from deft_action_contract import (
+    SUPPORTED_PLATFORMS,
+    platform_evidence_error,
+    remote_freshness_attested,
+    validate_tao_virtualenv,
+)
 from metric_contract import (
     compare,
     pick_best,
@@ -612,12 +618,13 @@ def _validate_command_status(
     required_image_kind: str | None = None,
     required_image: str | None = None,
     required_hf_forwarding: bool | None = None,
+    required_platform: str | None = None,
 ) -> dict[str, Any] | None:
     payload = _validate_json_shape(path, field, errors, dict)
     if payload is None:
         return None
-    if payload.get("schema_version") != "1":
-        errors.append(f"{field}.schema_version must be '1'")
+    if payload.get("schema_version") not in {"1", "2"}:
+        errors.append(f"{field}.schema_version must be '1' or '2'")
     if not isinstance(payload.get("name"), str) or not payload.get("name", "").strip():
         errors.append(f"{field}.name must be a non-empty string")
     elif required_name is not None and payload.get("name") != required_name:
@@ -625,16 +632,17 @@ def _validate_command_status(
             f"{field}.name must be {required_name!r}, got {payload.get('name')!r}"
         )
     if required_command is not None:
-        if payload.get("kind") != "container":
-            errors.append(f"{field}.kind must be 'container'")
+        if required_platform is None:
+            errors.append(f"{field} lacks an initialized workflow platform contract")
+            evidence_error = "expected platform was not supplied"
+        else:
+            evidence_error = platform_evidence_error(payload, required_platform)
+        if evidence_error is not None:
+            errors.append(f"{field} does not prove native action success: {evidence_error}")
         if payload.get("command") != required_command:
             errors.append(f"{field} does not record the approved command argv")
         if payload.get("command_sha256") != command_sha256(required_command):
             errors.append(f"{field}.command_sha256 does not match approved argv")
-        if payload.get("docker_exit_code") != 0:
-            errors.append(f"{field}.docker_exit_code must be zero")
-        if payload.get("artifact_error") is not None:
-            errors.append(f"{field}.artifact_error must be null")
         if payload.get("image_kind") != required_image_kind:
             errors.append(
                 f"{field}.image_kind must be {required_image_kind!r}, "
@@ -1084,8 +1092,9 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 except (OSError, json.JSONDecodeError) as exc:
                     errors.append(f"approval manifest is invalid JSON: {exc}")
                 else:
+                    approval_version = approval.get("schema_version")
                     expected_approval = {
-                        "schema_version": "2",
+                        "schema_version": approval_version,
                         "workflow": WORKFLOW,
                         "workspace": str(pathlib.Path(str(config.get("workspace", ""))).resolve()),
                         "results_dir": str(results_dir.resolve()),
@@ -1107,6 +1116,32 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     if "visible_gpu_ids" in config:
                         expected_approval["visible_gpu_ids"] = config.get(
                             "visible_gpu_ids"
+                        )
+                    if approval_version == "3":
+                        expected_approval["platform"] = config.get("platform")
+                        expected_approval["docker_remote"] = config.get(
+                            "docker_remote", False
+                        )
+                        if "virtualenvs" in approval:
+                            expected_approval["virtualenvs"] = config.get("virtualenvs")
+                        else:
+                            legacy_virtualenv = config.get("virtualenv")
+                            profiles = config.get("virtualenvs")
+                            if (
+                                legacy_virtualenv is None
+                                and isinstance(profiles, dict)
+                                and profiles.get("pyt") == profiles.get("ds")
+                            ):
+                                legacy_virtualenv = profiles.get("pyt")
+                            expected_approval["virtualenv"] = legacy_virtualenv
+                    elif not (
+                        approval_version == "2"
+                        and config.get("platform") == "docker"
+                        and config.get("virtualenv") is None
+                    ):
+                        errors.append(
+                            "approval manifest schema must be version 3; version 2 is "
+                            "accepted only for legacy Docker runs"
                         )
                     if approval != expected_approval:
                         errors.append(
@@ -1220,8 +1255,59 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             value = config.get(field)
             if not isinstance(value, str) or not value.strip():
                 errors.append(f"state.config.{field} must be a non-empty string")
-        if config.get("platform") != "docker":
-            errors.append("state.config.platform must be 'docker' for this workflow")
+        if config.get("platform") not in SUPPORTED_PLATFORMS:
+            errors.append(
+                "state.config.platform must be one of "
+                + ", ".join(SUPPORTED_PLATFORMS)
+            )
+        docker_remote = config.get("docker_remote", False)
+        if not isinstance(docker_remote, bool):
+            errors.append("state.config.docker_remote must be boolean")
+        elif docker_remote and config.get("platform") != "docker":
+            errors.append(
+                "state.config.docker_remote may be true only for platform=docker"
+            )
+        virtualenv = config.get("virtualenv")
+        virtualenvs = config.get("virtualenvs")
+        if config.get("platform") == "virtualenv":
+            if isinstance(virtualenvs, dict) and set(virtualenvs) == {"pyt", "ds"}:
+                selected_profiles = virtualenvs
+            elif isinstance(virtualenv, str) and virtualenv.strip():
+                selected_profiles = {"pyt": virtualenv, "ds": virtualenv}
+            else:
+                selected_profiles = {}
+                errors.append(
+                    "state.config.virtualenvs must bind the pyt and ds profiles"
+                )
+            for profile, selected in selected_profiles.items():
+                if pathlib.Path(str(selected)).expanduser().resolve() == (
+                    pathlib.Path(str(config.get("workspace"))).expanduser().resolve()
+                    / ".venv"
+                ).resolve():
+                    errors.append(
+                        f"state.config.virtualenvs.{profile} must be separate from "
+                        "the workspace control .venv"
+                    )
+                    continue
+                try:
+                    venv = validate_tao_virtualenv(
+                        pathlib.Path(str(selected)),
+                        profile=profile,
+                        probe_imports=False,
+                    )
+                except (OSError, ValueError) as exc:
+                    errors.append(
+                        f"state.config.virtualenvs.{profile} is not TAO-capable: {exc}"
+                    )
+                else:
+                    if not venv.is_absolute():
+                        errors.append(
+                            f"state.config.virtualenvs.{profile} must be absolute"
+                        )
+        elif virtualenv is not None or virtualenvs is not None:
+            errors.append(
+                "state virtualenv configuration must be null unless platform is virtualenv"
+            )
         if config.get("pyt_image") != PINNED_PYT_IMAGE:
             errors.append("state.config.pyt_image must be the pinned IAA PyTorch image")
         if config.get("ds_image") != PINNED_DS_IMAGE:
@@ -1748,6 +1834,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 required_image_kind=required_kind,
                 required_image=required_image,
                 required_hf_forwarding=required_hf,
+                required_platform=config.get("platform"),
             )
             output_fields = status_outputs[field]
             if payload is not None:
@@ -1792,6 +1879,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         isinstance(started_ns, int)
                         and output_path.is_file()
                         and output_path.stat().st_mtime_ns < started_ns
+                        and not remote_freshness_attested(payload)
                         and not (
                             field == "history_select_status"
                             and payload.get("resume") is True
@@ -1932,6 +2020,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                             required_hf_forwarding=expected_hf_forwarding(
                                 command_name, config
                             ),
+                            required_platform=config.get("platform"),
                         )
                         output = expected_visual_outputs[index]
                         _validate_parquet(
@@ -1955,6 +2044,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                                 isinstance(started_ns, int)
                                 and output.is_file()
                                 and output.stat().st_mtime_ns < started_ns
+                                and not remote_freshness_attested(payload)
                             ):
                                 errors.append(
                                     f"state.iterations.{label}.visualization_embedding"
@@ -2016,6 +2106,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         isinstance(started_ns, int)
                         and output.exists()
                         and output.stat().st_mtime_ns < started_ns
+                        and not remote_freshness_attested(prepare_payload)
                     ):
                         errors.append(
                             f"state.iterations.{label} visualization input/output "
@@ -2046,6 +2137,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 if (
                     isinstance(started_ns, int)
                     and tsne.stat().st_mtime_ns < started_ns
+                    and not remote_freshness_attested(finish_payload)
                 ):
                     errors.append(
                         f"state.iterations.{label}.tsne_plot predates "

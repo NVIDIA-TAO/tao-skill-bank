@@ -5,7 +5,7 @@
 
 TAO CLIP optimizer checkpoints may contain numpy scalar/dtype objects.  Torch
 2.6+ rejects those objects unless their concrete dtype classes are allowlisted.
-The container wrapper mounts this module through ``PYTHONPATH``; keep this behavior
+The platform action mounts or injects this module through ``PYTHONPATH``; keep this behavior
 for the skill until the container includes the fix.
 """
 

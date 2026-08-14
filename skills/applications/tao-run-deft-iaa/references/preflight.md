@@ -15,8 +15,14 @@ run creation occur only after approval.
 
 ## Initial intake
 
-IAA fixes the execution platform to local Docker. Before full preflight, do
-only bounded, lightweight discovery that can reduce user questions:
+IAA supports Docker (a local daemon or an approved remote `DOCKER_HOST`),
+SLURM, Kubernetes, Brev, and virtualenv. If the user did not select one,
+include that single platform choice with the other missing intake; never
+default to Docker. When Docker is selected, resolve whether its compute frame
+is local or remote before approval and persist that choice; never infer local
+filesystem semantics merely because the platform name is `docker`. Before full
+preflight, do only bounded, lightweight discovery that can reduce user
+questions:
 
 1. Resolve an explicitly named workspace or the conventional `~/workspace`
    candidate without creating it.
@@ -141,30 +147,50 @@ Run this section only after required intake is resolved.
    Record the presence of adjacent `SHA256SUMS`. Its absence is a warning, not
    a blocker; verification by the skill's bundled dataset rebuild remains
    mandatory.
-4. Inspect, but do not modify, Docker/GPU state:
+4. Read the selected platform skill and run its read-only access preflight.
+   For Docker, SLURM, Kubernetes, and Brev, also run the shared checker with
+   the exact platform, pinned image, and approved GPU requirements. Do not pass
+   local archive paths to a remote platform check; validate their staged
+   compute paths after the approved staging step. Do not use
+   `--skip-platform-access` for launch readiness. The shared checker's Docker
+   image-specific CUDA framework probes are side-effecting, so defer those
+   invocations until approval.
+   Virtualenv uses its platform skill's venv/import/CLI checks instead of the
+   container-oriented shared checker. Platform-native checks are:
 
    ```bash
-   docker version --format '{{.Server.Version}}'
-   docker image inspect nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt >/dev/null 2>&1  # versions-key: images.tao_toolkit.pyt
-   docker image inspect nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services >/dev/null 2>&1  # versions-key: images.tao_toolkit.data_services
-   nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
-   VISIBLE_GPU_IDS="$(nvidia-smi --query-gpu=index --format=csv,noheader \
-     | tr -d ' ' | paste -sd, -)"
+   python3 "$BANK/scripts/check_tao_launch_preflight.py" \
+     --platform "$PLATFORM" \
+     --container-image nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt \
+     --gpu-min-count "$NUM_GPUS"
    ```
 
-   Missing local images are planned pulls. Do not run a CUDA container probe
-   yet.
-5. Check only whether `NGC_KEY` and `HF_TOKEN` exist in the current process
-   environment. Never open or source a credential file and never echo a value.
-   `NGC_KEY` is required only if an image must be pulled or registry login is
-   otherwise needed. The default SigLIP2 model is public, so `HF_TOKEN` is
-   optional unless the deployment environment requires authenticated access.
+   Docker inspects the selected local or `DOCKER_HOST` daemon, images, GPU, and
+   paths from that daemon's compute frame; SLURM checks SSH, scheduler, Lustre,
+   Pyxis/Enroot, and scheduler-declared allocation shape; Kubernetes checks
+   context, namespace/PVC, and allocatable GPUs; Brev checks its CLI/API and
+   target-instance reachability. Remote Docker/GPU compatibility is not
+   inferred from the launcher's inventory: the approved compute-frame probe in
+   step 2 verifies it. Virtualenv checks the venv interpreter, CUDA, and that
+   `clip`, `embedding`, and `tmm` resolve under `<venv>/bin`. Missing
+   system/native prerequisites are blockers, not reasons to choose another
+   platform. Image acquisition and CUDA jobs remain planned actions until
+   approval.
+5. Check only whether credentials required by the selected platform and model
+   exist in the current process environment. When the user approves an env
+   file under the repository credential contract, source it only in the same
+   shell as the consuming check or command; never print, grep, copy, or inspect
+   its contents and never echo a value. This can include `NGC_KEY`, `HF_TOKEN`,
+   `BREV_API_TOKEN`, SLURM connection variables, Kubernetes context variables,
+   or tier-C storage variables. `NGC_KEY` is required only if the selected
+   platform must acquire an image. The default SigLIP2 model is public, so
+   `HF_TOKEN` is optional unless authenticated access is required.
    Do not inspect credential-file metadata when neither variable is required.
    If the user explicitly asks for a permissions check, `stat` only that named
-   file, warn about group/other readability, and still require credentials to
-   be exported in the launching environment.
-6. Record the complete visible GPU ID list as `VISIBLE_GPU_IDS`, then resolve
-   the approved subset as `GPU_IDS`/`NUM_GPUS`. SigLIP2-so400m training commonly needs
+   file and warn about group/other readability.
+6. Record the complete platform-visible GPU ID list as `VISIBLE_GPU_IDS`, then
+   resolve the approved subset or allocation as `GPU_IDS`/`NUM_GPUS`.
+   SigLIP2-so400m training commonly needs
    roughly 30–45 GB free per selected GPU at the bundled batch size. Treat this
    as a planning estimate, not a capability guarantee. Surface occupied GPUs;
    do not silently reshape `gpu_ids`.
@@ -220,8 +246,9 @@ launch confirmation into separate prompts.
 IAA DEFT pre-flight
 
 Workflow
-  skill: tao-run-deft-iaa 0.3.3 (source=SKILL.md frontmatter)
-  platform: local Docker (source=fixed by workflow)
+  skill: tao-run-deft-iaa 0.4.0 (source=SKILL.md frontmatter)
+  platform: <docker | slurm | kubernetes | brev | virtualenv> (source=<user | resume state>)
+  Docker endpoint: <local daemon | remote DOCKER_HOST | n/a> (source=<user | environment | resume state>)
   workspace: <absolute path> (source=<user | default>)
   monitoring: attached=true; interval=5 minutes (source=default)
 
@@ -255,19 +282,26 @@ Inputs
   dataset root: <absolute intended path> (source=<user | default>)
   IAA runtime: bundled with skill (source=fixed by workflow);
                integrity=<verified | mismatch>
-  credentials: NGC_KEY=<set | not needed | missing>;
+  credentials: <selected platform variables with set/not-needed/missing only>;
+               NGC_KEY=<set | not needed | missing>;
                HF_TOKEN=<set | optional/unset | missing>
   token forwarding: requires_hf_token=<bool> (source=<user | default>)
   PyTorch image: nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
-                 (source=versions.yaml; status=<local | pull after approval>)
+                 (source=versions.yaml; status=<available | acquire after approval>)
   data-services image: nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
-                       (source=versions.yaml; status=<local | pull after approval>)
-  GPUs: <selected IDs> (source=<user | default>);
-        memory=<free/total discovery result>
+                       (source=versions.yaml; status=<available | acquire after approval>)
+  virtualenv profiles: pyt=<absolute path | n/a>; ds=<absolute path | n/a>;
+                       ABI/packages/entrypoints/imports/pip/CUDA=<pass | fail | n/a>
+  control environment: <absolute path>; distinct from execution profiles=<true | false>
+  storage/staging: tier=<A | B | C>; compute targets=<resolved platform paths>
+  GPUs: <selected IDs or platform allocation> (source=<user | default>);
+        memory=<free/total or platform inventory>
 
 Planned writes/actions
-  <login/pulls if needed>; CUDA probe; <venv install if needed>;
-  config/state creation; archive extraction/rebuild; baseline and at most N iterations
+  <platform image/venv preparation>; image-specific CUDA framework/CLI probes;
+  <runtime venv install if needed>;
+  config/state creation; archive extraction/rebuild; staged action submits;
+  baseline and at most N iterations
 
 Estimate: <baseline + bounded-loop estimate and assumptions>
 ```
@@ -282,36 +316,76 @@ after approval, show only the changed rows and wait for approval again.
 
 For a new run, perform the following in order.
 
-1. If an image pull is needed, require `NGC_KEY` in the launching process,
-   login without placing it in argv or output, then pull only the pinned images:
+1. Follow the selected platform skill's approved image/runtime acquisition.
+   Docker and Brev acquire the pinned images through Docker; SLURM converts and
+   caches both images as SQSH before allocating GPUs; Kubernetes makes both
+   images pullable by the namespace. Virtualenv uses two immutable execution
+   profiles: `pyt` for `clip` train/evaluate and `ds` for `embedding`/`tmm`.
+   They may resolve to the same directory only when that one environment
+   independently satisfies both contracts. The checked-in
+   `virtualenv-runtime-manifest.json` binds CPython 3.12, Linux x86_64/glibc,
+   exact TAO/PyTorch distributions, console-script ownership, imports, and
+   CUDA 13.0. Inspect acquisition readiness without mutation:
 
    ```bash
-   (
-     if [ -z "${NGC_KEY:-}" ]; then
-       echo "NGC_KEY is not set. Export it in the shell that launches the agent." >&2
-       exit 2
-     fi
-     printf '%s' "$NGC_KEY" | docker login nvcr.io \
-       --username '$oauthtoken' --password-stdin >/dev/null
-   )
-   docker pull nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
-   docker pull nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+   python3 "$SKILL_ROOT/scripts/manage_iaa_virtualenv.py" plan \
+     --profile pyt --virtualenv "$IAA_PYT_VIRTUALENV"
+   python3 "$SKILL_ROOT/scripts/manage_iaa_virtualenv.py" plan \
+     --profile ds --virtualenv "$IAA_DS_VIRTUALENV"
    ```
 
-   Never print, persist, or place the credential value in argv.
+   A supplied prebuilt profile is verified directly against the manifest's
+   exact ABI, resolved distribution/version set, console-script metadata,
+   imports, dependency consistency, CUDA build, and real GPU behavior. That
+   read-only verification does not depend on an installation lock and never
+   mutates the supplied environment. Creating a new profile is different: it
+   is allowed only from the same complete, reviewed, hash-locked transitive
+   requirements file. The packaged manifest currently marks lock generation
+   as required, so `install` fails before creating anything and reports the
+   exact missing approved resolver step, while `verify` remains available for
+   a supplied compatible profile. Do not install unpinned packages, infer
+   hashes, use a source checkout as runtime, or weaken the acquisition
+   boundary. Never expose credentials or silently substitute a platform.
 
-2. Prove that the PyTorch image can execute CUDA on the selected host:
+2. Run an image-specific CUDA framework smoke using the exact approved resource
+   shape. GPU enumeration or `nvidia-smi` inside a container is not sufficient:
+   it can succeed when the image's PyTorch/CUDA build cannot initialize against
+   the host driver. Bind-mount and execute
+   `scripts/check_iaa_cuda_runtime.py` inside every pinned runtime that the
+   approved run will use. Require `clip` for the PyTorch image and require both
+   `embedding` and `tmm` for the data-services image:
 
    ```bash
-   : "${GPU_IDS:?approved comma-separated GPU ids are required}"
-   DOCKER_GPU_REQUEST="\"device=${GPU_IDS}\""
-   docker run --rm --gpus "$DOCKER_GPU_REQUEST" \
-     nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt python3 -c 'import torch; torch.zeros(1).cuda()'  # versions-key: images.tao_toolkit.pyt
+   python3 /probe/check_iaa_cuda_runtime.py \
+     --min-gpus "$NUM_GPUS" --require-cli clip
+   python3 /probe/check_iaa_cuda_runtime.py \
+     --min-gpus "$NUM_GPUS" --require-cli embedding --require-cli tmm
    ```
 
-   `GPU_IDS` is the exact approved `gpu_ids` list (for example `0` or `0,2`).
-   CUDA initialization or unsupported-architecture failure is a hard stop.
-3. Reuse a complete workspace venv if the runtime probe passes. Otherwise
+   The selected platform consumer owns the surrounding Docker, `srun`, pod, or
+   Brev command and must allocate the approved GPUs to the probe exactly as it
+   will to the action. A bounded verification that uses only one image may
+   probe only that image; a normal DEFT loop must probe both. For virtualenv,
+   perform the complete profile verification, including the same real probe:
+
+   ```bash
+   python3 "$SKILL_ROOT/scripts/manage_iaa_virtualenv.py" verify \
+     --profile pyt --virtualenv "$IAA_PYT_VIRTUALENV" --min-gpus "$NUM_GPUS"
+   python3 "$SKILL_ROOT/scripts/manage_iaa_virtualenv.py" verify \
+     --profile ds --virtualenv "$IAA_DS_VIRTUALENV" --min-gpus "$NUM_GPUS"
+   ```
+
+   The verifier rejects a fake executable unless pinned distribution metadata
+   owns the exact console script, and checks the Python/platform ABI, package
+   versions, action imports, `pip check`, PyTorch CUDA build, and then tensor
+   allocation. The probe must allocate
+   and synchronize a CUDA tensor on every requested visible device. Any
+   framework initialization failure, missing TAO CLI entrypoint, insufficient
+   visible GPU count, or unsupported architecture is a hard stop before state,
+   data staging, or action submission.
+3. Reuse a complete **control** workspace venv if the bundled-runtime import
+   passes. This is separate from the two TAO execution profiles above and may
+   use CPU PyTorch because it runs host-side analysis, not TAO actions. Otherwise
    create it and install only the bundled runtime's third-party dependencies:
 
    ```bash
@@ -326,12 +400,25 @@ For a new run, perform the following in order.
 
    Never install into the system interpreter. If package installation was not
    in the approved actions, obtain approval first.
+   The control interpreter used by `run_deft_action.py` must also import
+   `jsonschema`; install that small helper in an approved non-system
+   environment if no existing Python provides it.
 4. Materialize an immutable run config and `approval.json` from the bundled
    templates. Pass every approved override explicitly; this command writes
    only `${RESULTS_DIR}/config/` and refuses an initialized run:
 
    ```bash
    PREP_OPTIONAL_ARGS=()
+   PLATFORM_ARGS=(--platform "$PLATFORM")
+   if [ "$PLATFORM" = docker ] && [ "${DOCKER_REMOTE:-false}" = true ]; then
+     PLATFORM_ARGS+=(--docker-remote)
+   fi
+   if [ "$PLATFORM" = virtualenv ]; then
+     PLATFORM_ARGS+=(
+       --pyt-virtualenv "$IAA_PYT_VIRTUALENV"
+       --ds-virtualenv "$IAA_DS_VIRTUALENV"
+     )
+   fi
    if [ -n "${CHECKSUMS_FILE:-}" ]; then
      PREP_OPTIONAL_ARGS+=(--checksums-file "$CHECKSUMS_FILE")
    fi
@@ -348,6 +435,7 @@ For a new run, perform the following in order.
        --dataset-root "$DATASET_ROOT" \
        --images-archive "$IMAGES_ARCHIVE" \
        --metadata-archive "$METADATA_ARCHIVE" \
+       "${PLATFORM_ARGS[@]}" \
        "${PREP_OPTIONAL_ARGS[@]}" \
        --max-iterations "$MAX_ITERATIONS" \
        --training-epochs "$TRAINING_EPOCHS" \
@@ -369,6 +457,16 @@ For a new run, perform the following in order.
 
    ```bash
    INIT_OPTIONAL_ARGS=()
+   PLATFORM_ARGS=(--platform "$PLATFORM")
+   if [ "$PLATFORM" = docker ] && [ "${DOCKER_REMOTE:-false}" = true ]; then
+     PLATFORM_ARGS+=(--docker-remote)
+   fi
+   if [ "$PLATFORM" = virtualenv ]; then
+     PLATFORM_ARGS+=(
+       --pyt-virtualenv "$IAA_PYT_VIRTUALENV"
+       --ds-virtualenv "$IAA_DS_VIRTUALENV"
+     )
+   fi
    if [ -n "${CHECKSUMS_FILE:-}" ]; then
      INIT_OPTIONAL_ARGS+=(--checksums-file "$CHECKSUMS_FILE")
    fi
@@ -392,7 +490,7 @@ For a new run, perform the following in order.
        --max-iterations "$MAX_ITERATIONS" \
        --metric-name "$METRIC_NAME" --metric-query-type "$QUERY_TYPE" \
        --metric-op "$METRIC_OP" \
-       --platform docker \
+       "${PLATFORM_ARGS[@]}" \
        --pyt-image "$IAA_PYT_IMAGE" \
        --ds-image "$IAA_DS_IMAGE" \
        --deft-config "$RESULTS_DIR/config/deft_config.yaml" \
@@ -408,7 +506,7 @@ For a new run, perform the following in order.
 
 For an existing run, do not repeat image/config/state setup merely because a
 new shell lacks variables. `deft_python.sh` takes the workspace explicitly and
-the container wrapper reads workspace, images, mounts, and config paths from
-state. Run the audit, read its one stage reference, and follow `next_action`.
+the action producer reads platform, workspace, images, mounts, and config paths
+from state. Run the audit, read its one stage reference, and follow `next_action`.
 If the user's requested values differ from immutable state, explain the
 difference and start a separately approved run rather than mutating history.

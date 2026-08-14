@@ -37,6 +37,7 @@ from command_contract import (
     expected_hf_forwarding,
     expected_image_kind,
 )
+from deft_action_contract import platform_evidence_error, remote_freshness_attested
 from log_stage import append_stage, next_seq
 
 try:
@@ -225,12 +226,13 @@ def _required_command_status(
     required_image_kind: str | None = None,
     required_image: str | None = None,
     required_hf_forwarding: bool | None = None,
+    required_platform: str | None = None,
 ) -> str:
     resolved_text, payload = _required_json(path, name, root_type=dict)
     resolved = pathlib.Path(resolved_text)
     _require_within(str(resolved), scope, name)
     if (
-        payload.get("schema_version") != "1"
+        payload.get("schema_version") not in {"1", "2"}
         or payload.get("workflow") != "tao-run-deft-iaa"
         or payload.get("status") != "ok"
         or payload.get("exit_code") != 0
@@ -245,14 +247,15 @@ def _required_command_status(
             f"{name}.name must be {required_name!r}, got {payload.get('name')!r}"
         )
     if required_command is not None:
-        if payload.get("kind") != "container":
-            raise ValueError(f"{name}.kind must be 'container'")
+        if required_platform is None:
+            raise ValueError(f"{name} requires an initialized workflow platform")
+        evidence_error = platform_evidence_error(payload, required_platform)
+        if evidence_error is not None:
+            raise ValueError(f"{name} does not prove native action success: {evidence_error}")
         if payload.get("command") != required_command:
             raise ValueError(f"{name} does not record the approved command argv")
         if payload.get("command_sha256") != command_sha256(required_command):
             raise ValueError(f"{name}.command_sha256 does not match its approved argv")
-        if payload.get("docker_exit_code") != 0 or payload.get("artifact_error") is not None:
-            raise ValueError(f"{name} does not prove Docker and artifact success")
         if payload.get("image_kind") != required_image_kind:
             raise ValueError(
                 f"{name}.image_kind must be {required_image_kind!r}, "
@@ -316,6 +319,7 @@ def _required_command_status(
                 )
             if (
                 output.stat().st_mtime_ns < started_ns
+                and not remote_freshness_attested(payload)
                 and not (allow_stale_resume and payload.get("resume") is True)
             ):
                 raise ValueError(
@@ -601,6 +605,7 @@ def _apply_success(
                 required_image_kind=expected_image_kind("pool_embed"),
                 required_image=config["ds_image"],
                 required_hf_forwarding=expected_hf_forwarding("pool_embed", config),
+                required_platform=config["platform"],
             ),
             results_dir / "embeddings" / "source" / "pool_embed.status.json",
             "--pool-embed-command-status",
@@ -655,6 +660,7 @@ def _apply_success(
                 required_image_kind=expected_image_kind("evaluate"),
                 required_image=config["pyt_image"],
                 required_hf_forwarding=expected_hf_forwarding("evaluate", config),
+                required_platform=config["platform"],
             ),
             evaluate_dir / "evaluate.status.json",
             "--eval-command-status",
@@ -785,6 +791,7 @@ def _apply_success(
                 required_image_kind=expected_image_kind("target_embed"),
                 required_image=config["ds_image"],
                 required_hf_forwarding=expected_hf_forwarding("target_embed", config),
+                required_platform=config["platform"],
             ),
             phase_root / "embeddings" / "target" / "target_embed.status.json",
             "--target-embed-command-status",
@@ -800,6 +807,7 @@ def _apply_success(
                 required_image_kind=expected_image_kind("knn"),
                 required_image=config["ds_image"],
                 required_hf_forwarding=expected_hf_forwarding("knn", config),
+                required_platform=config["platform"],
             ),
             phase_root / "mining" / "knn.status.json",
             "--knn-command-status",
@@ -978,6 +986,7 @@ def _apply_success(
                                 required_hf_forwarding=expected_hf_forwarding(
                                     command_name, config
                                 ),
+                                required_platform=config["platform"],
                             ),
                             output.parent / f"{command_name}.status.json",
                             "--visualize-command-status",
@@ -1054,6 +1063,7 @@ def _apply_success(
             required_image_kind=expected_image_kind("train"),
             required_image=config["pyt_image"],
             required_hf_forwarding=expected_hf_forwarding("train", config),
+            required_platform=config["platform"],
         )
         phase["train_command_status"] = _require_exact(
             train_command_status,

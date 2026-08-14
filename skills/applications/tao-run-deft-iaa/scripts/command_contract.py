@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Exact Docker argv contracts for the IAA DEFT workflow."""
+"""Exact platform-neutral TAO argv contracts for the IAA DEFT workflow."""
 
 from __future__ import annotations
 

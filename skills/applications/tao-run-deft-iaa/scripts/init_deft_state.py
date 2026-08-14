@@ -50,6 +50,9 @@ import tempfile
 
 import yaml
 
+from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
+from virtualenv_runtime import resolve_virtualenv_profiles
+
 from metric_contract import validate_contract
 
 
@@ -100,14 +103,14 @@ def _parse_gpu_ids(raw: str, num_gpus: int) -> list[int]:
 
 def _resolve_dataset_root(root: pathlib.Path) -> pathlib.Path:
     """Resolve the intended dataset root before dataset_setup materializes it."""
-    resolved = root.expanduser().resolve()
+    resolved = safe_absolute_path(root, "--dataset-root")
     if resolved.exists() and not resolved.is_dir():
         raise ValueError(f"--dataset-root exists but is not a directory: {resolved}")
     return resolved
 
 
 def _workspace_child(path: pathlib.Path, workspace: pathlib.Path, name: str) -> pathlib.Path:
-    resolved = path.expanduser().resolve()
+    resolved = safe_absolute_path(path, name)
     try:
         relative = resolved.relative_to(workspace)
     except ValueError as exc:
@@ -142,8 +145,7 @@ def _validate_metric_gate(
 
 
 def _required_input_file(path: pathlib.Path, name: str) -> pathlib.Path:
-    expanded = path.expanduser()
-    resolved = expanded.resolve()
+    resolved = safe_absolute_path(path, name, require_exists=True)
     if not resolved.is_file():
         raise ValueError(f"{name} must be an existing file: {path}")
     if resolved.stat().st_size == 0:
@@ -152,7 +154,7 @@ def _required_input_file(path: pathlib.Path, name: str) -> pathlib.Path:
 
 
 def _required_input_dir(path: pathlib.Path, name: str) -> pathlib.Path:
-    resolved = path.expanduser().resolve()
+    resolved = safe_absolute_path(path, name, require_exists=True)
     if not resolved.is_dir():
         raise ValueError(f"{name} must be an existing directory: {path}")
     return resolved
@@ -240,8 +242,10 @@ def _load_run_config(args: argparse.Namespace) -> dict:
     ):
         raise ValueError("approval.json visible_gpu_ids must be unique non-negative integers")
     expected_approval = {
-        "schema_version": "2",
+        "schema_version": "3",
         "workflow": WORKFLOW,
+        "platform": args.platform,
+        "docker_remote": args.docker_remote,
         "workspace": str(args.workspace.resolve()),
         "results_dir": str(args.results_dir.resolve()),
         "dataset_root": str(args.dataset_root.resolve()),
@@ -260,6 +264,16 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "pyt_image": args.pyt_image,
         "ds_image": args.ds_image,
     }
+    if "virtualenvs" in approval:
+        expected_approval["virtualenvs"] = (
+            {name: str(path) for name, path in args.virtualenvs.items()}
+            if args.virtualenvs is not None
+            else None
+        )
+    else:
+        expected_approval["virtualenv"] = (
+            str(args.virtualenv.resolve()) if args.virtualenv is not None else None
+        )
     if approval != expected_approval:
         raise ValueError(
             "approval.json does not match the approved initialization inputs; "
@@ -392,6 +406,12 @@ def build_state(args: argparse.Namespace) -> dict:
             ),
             "requires_hf_token": args.requires_hf_token,
             "platform": args.platform,
+            "docker_remote": args.docker_remote,
+            "virtualenvs": (
+                {name: str(path) for name, path in args.virtualenvs.items()}
+                if args.virtualenvs is not None
+                else None
+            ),
             "pyt_image": args.pyt_image,
             "ds_image": args.ds_image,
             "deft_config": str(args.deft_config),
@@ -487,7 +507,34 @@ def _build_parser() -> argparse.ArgumentParser:
             "the loop runs to --max-iterations."
         ),
     )
-    parser.add_argument("--platform", default="docker", choices=("docker",))
+    parser.add_argument(
+        "--platform",
+        required=True,
+        choices=SUPPORTED_PLATFORMS,
+    )
+    parser.add_argument(
+        "--docker-remote",
+        action="store_true",
+        help="Record the approved remote-DOCKER_HOST staging contract.",
+    )
+    parser.add_argument(
+        "--virtualenv",
+        type=pathlib.Path,
+        help=(
+            "Compatibility form: one environment that independently satisfies both "
+            "pyt and ds profiles; cannot be combined with profile-specific options."
+        ),
+    )
+    parser.add_argument(
+        "--pyt-virtualenv",
+        type=pathlib.Path,
+        help="Python 3.12 TAO PyTorch execution profile for train/evaluate.",
+    )
+    parser.add_argument(
+        "--ds-virtualenv",
+        type=pathlib.Path,
+        help="Python 3.12 TAO data-services execution profile for embedding/mining.",
+    )
     parser.add_argument(
         "--pyt-image",
         required=True,
@@ -516,6 +563,21 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
+        args.virtualenvs = resolve_virtualenv_profiles(
+            platform=args.platform,
+            legacy=args.virtualenv,
+            pyt=args.pyt_virtualenv,
+            ds=args.ds_virtualenv,
+            probe_imports=True,
+        )
+        if args.docker_remote and args.platform != "docker":
+            raise ValueError("--docker-remote is valid only with --platform docker")
+        if args.virtualenvs is not None:
+            control_environment = (args.workspace.expanduser().resolve() / ".venv").resolve()
+            if any(path == control_environment for path in args.virtualenvs.values()):
+                raise ValueError(
+                    "TAO execution profiles must be separate from the workspace control .venv"
+                )
         args.metric_contract = _validate_metric_gate(
             args.metric_name, args.metric_query_type, args.metric_op, args.metric_target
         )
@@ -586,7 +648,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    out = args.results_dir.expanduser().resolve() / "deft_state.json"
+    out = safe_absolute_path(
+        args.results_dir / "deft_state.json", "deft state output"
+    )
     if out.exists():
         print(
             f"init_deft_state: refusing to reinitialize {out}; deft_state.json "

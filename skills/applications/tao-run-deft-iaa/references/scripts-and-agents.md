@@ -8,7 +8,7 @@ through deterministic scripts.
 
 - [Script interfaces](#script-interfaces)
 - [Stage ownership](#stage-ownership)
-- [Container launch contract](#container-launch-contract)
+- [Platform action contract](#platform-action-contract)
 - [Bundled adapter contract](#bundled-adapter-contract)
 - [Path invariants](#path-invariants)
 - [Bounded recovery](#bounded-recovery)
@@ -18,10 +18,15 @@ through deterministic scripts.
 | Script | Role | Runtime |
 |---|---|---|
 | `deft_python.sh` | select a Python per call and cap BLAS/OpenMP threads | shell |
+| `check_iaa_cuda_runtime.py` | allocate and synchronize CUDA tensors, then verify image-specific TAO CLI entrypoints | selected image or approved TAO virtualenv |
+| `manage_iaa_virtualenv.py` | non-mutating lock plan, approved hash-locked install, or full profile/CUDA verification | control Python plus selected profile |
+| `virtualenv_runtime.py` | enforce the schema-validated `pyt`/`ds` ABI, package, console-script, import, pip, and CUDA contract | control Python plus selected profile |
 | `prepare_deft_config.py` | copy templates into a run and apply approved values | IAA runtime |
 | `init_deft_state.py` | validate config/metric inputs and create schema-v3 state once | IAA runtime |
 | `audit_deft_run.py` | read-only state, transition, evidence, and artifact audit | IAA runtime (parquet/YAML validation) |
-| `run_deft_container.py` | launch one pinned TAO container and atomically record log/status/fresh outputs | control Python |
+| `run_deft_action.py` | prepare one platform-neutral TAO bundle and finalize native job/output evidence | control Python |
+| `run_deft_cli.py` | verified TAO CLI/path adapter used only by the virtualenv platform | action-selected `pyt` or `ds` profile |
+| `run_deft_container.py` | legacy Docker-only compatibility adapter for schema-v1 runs | control Python |
 | `run_iaa_stage.py` | expose bundled IAA host operations as named subcommands | IAA runtime |
 | `iaa_deft/` | bundled IAA gap, mining, selection, visualization, config, and checkpoint implementation | imported only through `run_iaa_stage.py` |
 | `commit_stage.py` | validate and atomically commit one stage | IAA runtime for parquet checks |
@@ -30,7 +35,7 @@ through deterministic scripts.
 | `render_deft_report.py` | audit and atomically render a deterministic HTML report | IAA runtime (its audit validates parquet) |
 | `metric_contract.py`, `command_contract.py`, `checkpoint_contract.py`, `record_metric_result.py`, `log_stage.py` | internal validation/commit helpers | never invoke directly |
 
-Use the control plane for container launch and metric parsing:
+Use the control plane for platform-action preparation/finalization and metric parsing:
 
 ```bash
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
@@ -56,25 +61,26 @@ or logs.
 | State stage | Producer | Adapter or launch | Read first |
 |---|---|---|---|
 | `dataset_setup` | bundled `iaa_deft/rebuild.py` plus bundled IAA data utilities | `run_iaa_stage.py dataset-materialize` | `data-layout.md` |
-| `pool_embed` | TAO data services | `run_deft_container.py` | `mining.md` |
-| `evaluate` | TAO CLIP plus bound parser | `run_iaa_stage.py eval-config`, container wrapper, parser | `clip-train-eval.md`, `metric-contract.md` |
+| `pool_embed` | TAO data services | `run_deft_action.py` + selected platform | `mining.md`, `platform-execution.md` |
+| `evaluate` | TAO CLIP plus bound parser | `run_iaa_stage.py eval-config`, platform action, parser | `clip-train-eval.md`, `metric-contract.md`, `platform-execution.md` |
 | `gap_analysis` | bundled IAA gap analysis | `run_iaa_stage.py gap-analysis` | `gap-analysis.md` |
-| `data_mining` | TAO text embedding/k-NN plus bundled IAA data utilities | two container launches, then `mining-postprocess` | `mining.md` |
+| `data_mining` | TAO text embedding/k-NN plus bundled IAA data utilities | two platform actions, then `mining-postprocess` | `mining.md`, `platform-execution.md` |
 | `history_select` | bundled IAA history selection | `run_iaa_stage.py history-select` | `mining.md` |
-| `visualize` | bundled IAA visualization plus optional TAO image embedding | `visualize-prepare`, container launches, `visualize-finish` | `visualization.md` |
-| `train` | bundled config/checkpoint helpers plus TAO CLIP | `train-config`, container launch, `publish-checkpoint` | `clip-train-eval.md` |
+| `visualize` | bundled IAA visualization plus optional TAO image embedding | `visualize-prepare`, platform actions, `visualize-finish` | `visualization.md`, `platform-execution.md` |
+| `train` | bundled config/checkpoint helpers plus TAO CLIP | `train-config`, platform action, `publish-checkpoint` | `clip-train-eval.md`, `platform-execution.md` |
 | `loop_stop` / report | bundled control scripts | commit, audit, renderer | `pipeline-and-state.md` |
 
 The canonical workflow executes plain `clip train`, so there is no AutoML branch.
 Never add `automl_policy`, `workflow`, or another orchestration key to a TAO
 YAML schema.
 
-## Container launch contract
+## Platform action contract
 
-Always launch TAO through the wrapper, not an assembled `docker run`. It reads
-the image and standard mounts from state, forwards the existing `HF_TOKEN`
-only with the explicit option below and without exposing its value, mounts the
-compatibility patch, writes the full log, and records exact command status.
+Always prepare and finalize TAO through `run_deft_action.py`, and execute through
+the selected platform skill. Never assemble an untracked native command. The
+producer reads the platform, image, resource shape, mounts, exact argv, output
+set, and credential-forwarding policy from immutable state and emits a
+schema-valid spec bundle.
 
 The following is a launch shape, not a literal copy/paste command; each stage
 reference supplies the exact stable name, outputs, command, and independently
@@ -82,36 +88,28 @@ reconstructs credential arguments from immutable approval:
 
 ```bash
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-  "$SKILL_ROOT/scripts/run_deft_container.py" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
     --results-dir "$RESULTS_DIR" --image <pyt|ds> \
     --stage-dir "$STAGE_DIR" --name <stable-stage-name> \
     "${HF_ARGS[@]}" \
     --fresh-output "$ABSOLUTE_EXPECTED_FILE" \
-    -- <container command and arguments>
+    -- <TAO command and arguments>
 ```
 
-Repeat `--fresh-output` for every exact file whose freshness proves the
-launch. The wrapper deletes only those non-symlink, results-scoped files before
-launch, verifies they were recreated after launch, and records the exact argv
-plus its digest. Pass its generated `<name>.status.json` to
-`commit_stage.py`. A zero Docker exit without fresh, valid output is failure;
-a file without successful matching command status is not resumable evidence.
+Repeat `--fresh-output` for every exact file whose freshness proves the action.
+After preparation, follow `platform-execution.md`: reconcile interrupted
+launch state; stage remote inputs with delete semantics and attest the exact
+durable results scope; open the request-owned job-record; bind it while it is
+still PENDING; then run the selected platform's four verbs, capture logs,
+synchronize outputs, and finalize. A native exit zero without fresh, valid
+output is failure; a file without successful matching job/action evidence is
+not resumable evidence. Never submit when reconciliation reports an existing
+bound job.
 
-The wrapper uses a deterministic Docker name, CID file, and nonblocking launch
-lock. If its process dies while Docker continues, a later call inspects that
-container read-only and refuses to overlap it. Wait for the named container to
-exit; never kill it automatically. Rerun the exact wrapper command after exit.
-Before consuming a retry, it verifies the prior command identity and reconciles
-a status left at `running` when Docker reports exit zero or an auto-removed
-container's bounded log tail ends in `Execution status: PASS`, and every named
-fresh output is non-empty and newer than that attempt. The normal stage commit
-then applies the format/cardinality validators. Incomplete or contradictory
-evidence is never reconciled. `HF_TOKEN` is not forwarded unless the approved
-command needs it and `--pass-hf-token` is supplied explicitly.
-Docker and host-adapter statuses also carry a stable `attempt` value. Attempt
-1 is the initial call, attempt 2 is the single evidence-based correction, and
-either wrapper refuses attempt 3. Keep the documented stable command names;
-changing a name does not create a valid new retry budget.
+Action and host-adapter statuses carry a stable `attempt` value. Attempt 1 is
+the initial call, attempt 2 is the single evidence-based correction, and the
+producer refuses attempt 3. Keep the documented stable command names; changing
+a name does not create a new retry budget.
 
 Required stable names are `pool_embed`, `target_embed`, `knn`,
 `viz_weak_embed`, `viz_mined_embed`, `viz_previous_embed`, `train`, and
@@ -145,9 +143,10 @@ these calls with inline Python.
 - State label `iterN` maps to `${RESULTS_DIR}/iter_N`.
 - Split files are exactly under `iaa_splits/`; source pool/embeddings are
   exactly under `embeddings/source/`.
-- The wrapper mounts `${RESULTS_DIR}` as `/results`, the dataset parent as
-  `/data` and at its absolute host path, the immutable config as `/specs`, and
-  workspace cache as `/cache`.
+- The action request maps `${RESULTS_DIR}` to `/results` and its approved
+  absolute path, the dataset parent to `/data` and its approved absolute path,
+  the immutable config to `/specs`, compatibility code to `/patches`, and the
+  workspace cache to `/cache`. Every container platform must render all aliases.
 - Container YAML and commands use `/results`, `/data`, and `/specs`; state and
   commit arguments use absolute host paths.
 - Iteration evidence must come from that iteration. Never satisfy iterN with a
