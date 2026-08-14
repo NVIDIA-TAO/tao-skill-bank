@@ -124,18 +124,12 @@ jobs are submitted with plain `kubectl apply`.
    or a first-time multi-GB image pull — is billed and reaper-eligible idle GPU
    time, exactly like pulling inside a SLURM allocation. Prefer tier A when the
    data is already on a PVC; choose tier C knowingly, for small inputs.
-3. **Credentials → a per-job Secret (never inline in the manifest** — it lands on
-   disk and is readable via `kubectl get job -o yaml`). Create it from an env-file
-   on **stdin** so no value hits a command line:
-   ```bash
-   set -a; source /path/to/.env; set +a   # omit if already exported
-   printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nHF_TOKEN=%s\n' \
-     "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$HF_TOKEN" \
-     | kubectl create secret generic "tao-creds-$JOB_ID" --from-env-file=/dev/stdin
-   ```
-   The template references it via `envFrom.secretRef` — only the Secret *name* is
-   in the manifest.
-4. **Open the record — mints the id, binds `results_dir`, before launch:**
+
+   A producer action request may declare several mounts, including duplicate-
+   source aliases for logical and embedded absolute paths. Read
+   `references/action-request.md` and use its staging map plus packaged
+   renderer; the legacy single-root template cannot represent that contract.
+3. **Open the record — mints the id, binds `results_dir`, before launch:**
    ```bash
    JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform kubernetes --image "$IMAGE" \
      --network-arch "$ARCH" --action "$ACTION" --storage-tier "$TIER" --results-dir "$RESULTS_DIR")
@@ -143,26 +137,30 @@ jobs are submitted with plain `kubectl apply`.
    `results_dir` must be a **mounted (surviving) volume path or an S3 prefix** —
    `ttlSecondsAfterFinished` deletes the Job and its logs after it ends, so
    nothing is recoverable from the Job object later.
-5. **Render** `templates/k8s/single-pod-job.yaml.tmpl` (`CRED_SECRET=tao-creds-$JOB_ID`),
-   then **gate**: `redact_secrets.py lint <manifest>` (fails on any inline
-   credential) + `kubectl apply --dry-run=server -f <manifest>` (schema validity).
-6. **Apply + record RUNNING:**
-   ```bash
-   kubectl apply -f "$MANIFEST"
-   "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING --backend-ref "$NAMESPACE/$JOB_ID"
-   ```
+4. **Render, gate, apply, and record RUNNING.** For a producer action request,
+   follow `references/action-request.md`; it owns backend-name normalization,
+   conditional Secret references, native argv rendering, server dry-run, and
+   binding the applied object name to the job-record. For a simple one-root
+   spec-bundle, render `templates/k8s/single-pod-job.yaml.tmpl`, run
+   `redact_secrets.py lint` plus `kubectl apply --dry-run=server`, apply it, and
+   mark the record with `backend-ref=<namespace>/<actual-object-name>`.
 
 A submit that skipped the gate or the open has no id — so it cannot launch.
 
 ### status
 
+Keep `K8S_JOB_NAME` from submit. On reattach, read the job-record's
+`backend_ref=<namespace>/<name>` and recover both values from that field; do
+not assume the Kubernetes name equals the record id.
+
 ```bash
-kubectl get job "$JOB_ID" -o jsonpath='{.status.conditions[0].type} {.status.active} {.status.succeeded} {.status.failed}'
+kubectl get job "$K8S_JOB_NAME" -n "$NAMESPACE" \
+  -o jsonpath='{.status.conditions[0].type} {.status.active} {.status.succeeded} {.status.failed}'
 ```
 
 | kubectl signal | vocab |
 |---|---|
-| no pods scheduled | `PENDING` (`kubectl get pods -l job-name=$JOB_ID` → `ImagePullBackOff` / `Insufficient nvidia.com/gpu` in `message`) |
+| no pods scheduled | `PENDING` (`kubectl get pods -n "$NAMESPACE" -l job-name="$K8S_JOB_NAME"` → `ImagePullBackOff` / `Insufficient nvidia.com/gpu` in `message`) |
 | `active` ≥ 1 | `RUNNING` |
 | condition `Complete` | `COMPLETE` |
 | condition `Failed` | `ERROR` (classify from the pod's terminated reason — `OOMKilled` → `ERR_INFRA`) |
@@ -171,14 +169,16 @@ kubectl get job "$JOB_ID" -o jsonpath='{.status.conditions[0].type} {.status.act
 ### logs
 
 ```bash
-kubectl logs -l "job-name=$JOB_ID" --tail "${N:-200}"
+kubectl logs -n "$NAMESPACE" -l "job-name=$K8S_JOB_NAME" --tail "${N:-200}"
 ```
 
 ### cancel
 
 ```bash
-kubectl delete job "$JOB_ID" --cascade=foreground   # also deletes the pods
-kubectl delete secret "tao-creds-$JOB_ID" --ignore-not-found    # tear down the per-job Secret
+kubectl delete job "$K8S_JOB_NAME" -n "$NAMESPACE" --cascade=foreground
+if [ -n "${CRED_SECRET:-}" ]; then
+  kubectl delete secret "$CRED_SECRET" -n "$NAMESPACE" --ignore-not-found
+fi
 "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state CANCELED --source agent
 ```
 
@@ -220,9 +220,11 @@ fake-device-plugin middle option: `references/local-cluster.md`.
 
 ## Container shell
 
-The single-pod template invokes the container command via `/bin/sh -c` (POSIX
-sh, present in busybox/distroless as well as TAO images). If your image relies
-on bash-only syntax, override the interpreter in the rendered manifest.
+The simple single-pod template invokes its command via `/bin/sh -c` (POSIX sh,
+present in busybox/distroless as well as TAO images). The producer-action
+template does not invoke a shell: it preserves `spec_bundle.command` and every
+`args` token as native container `command`/`args` arrays. A producer that needs
+a shell must declare the shell and its script as explicit argv.
 
 ## GPU Operator dependency
 
