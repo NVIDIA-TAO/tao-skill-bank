@@ -10,14 +10,14 @@ NVIDIA <br>
 Apache-2.0 AND CC-BY-4.0 <br>
 
 ## Use Case: <br>
-Developers and engineers use this skill to execute or resume the IAA DEFT workflow on local NVIDIA Docker. The workflow establishes a zero-shot baseline, analyzes weak attributes, mines a caption pool, selects samples without reusing evaluation data, retrains, and repeats until the approved metric target passes or the finite iteration budget is exhausted. A target-free run executes its approved budget and reports the best result. <br>
+Developers and engineers use this skill to execute or resume the IAA DEFT workflow on Docker, SLURM, Kubernetes, Brev, or a TAO-capable virtualenv. The workflow establishes a zero-shot baseline, analyzes weak attributes, mines a caption pool, selects samples without reusing evaluation data, retrains, and repeats until the approved metric target passes or the finite iteration budget is exhausted. A target-free run executes its approved budget and reports the best result. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: GPU/container cost, interrupted multi-stage runs, stale artifacts, data leakage, or incorrect metric evidence can make an iterative result unreliable. <br>
-Mitigation: The skill uses one explicit approval boundary before side effects, a bounded loop, deterministic config and container wrappers, exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. Credential files are never opened or sourced, and credential values are never printed or persisted. <br>
+Mitigation: The skill uses one explicit approval boundary before side effects, a bounded loop, deterministic config and platform-neutral action bundles, native job-record plus exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. User-approved env files are sourced only in the consuming shell under the repository credential contract; their contents and credential values are never printed, inspected, or persisted. <br>
 
 ## Reference(s): <br>
 - [Pipeline and State](references/pipeline-and-state.md) <br>
@@ -29,6 +29,7 @@ Mitigation: The skill uses one explicit approval boundary before side effects, a
 - [Mining and Selection](references/mining.md) <br>
 - [Visualization](references/visualization.md) <br>
 - [Scripts and Stage Adapters](references/scripts-and-agents.md) <br>
+- [Platform Execution](references/platform-execution.md) <br>
 
 ## Skill Output: <br>
 **Output Type(s):** [Shell commands, HTML report, JSON state, JSONL event log, metrics and model artifacts] <br>
@@ -42,7 +43,8 @@ Mitigation: The skill uses one explicit approval boundary before side effects, a
 ## Evaluation Tasks: <br>
 - Static validation: compile all bundled Python scripts, syntax-check the shell wrapper and metadata, and run the repository skill validator. <br>
 - Synthetic state-machine smoke: render and initialize immutable inputs, complete a two-iteration max-budget path, require the completion audit, and render the report twice deterministically. <br>
-- Branch/recovery checks: exercise disabled and enabled visualization, optional checksum evidence, nonterminal failure to terminal hard-stop, journaled state/log recovery, orphan-container overlap rejection, and persisted two-attempt limits. <br>
+- Branch/recovery checks: exercise disabled and enabled visualization, optional checksum evidence, nonterminal failure to terminal hard-stop, journaled state/log recovery, native job ownership, and persisted two-attempt limits. <br>
+- Cross-platform action checks: validate equivalent bundles and terminal native evidence for Docker, SLURM, Kubernetes, Brev, and virtualenv, including per-action `pyt`/`ds` profile selection, fake-runtime rejection, exact-profile shim binding, real detached-process execution, and compute-path translation. <br>
 - Negative-path checks: reject cross-iteration artifacts, zero-row mining, false KPI stops, duplicate metric rows, unsupported KPI query types, stale/unbound outputs, command tampering, stale or cross-iteration checkpoint targets, symlink chains/escapes, and malformed state/log labels. <br>
 
 ## Evaluation Metrics Used: <br>
@@ -51,10 +53,10 @@ Mitigation: The skill uses one explicit approval boundary before side effects, a
 - Expected rejection of tested invalid inputs and transitions. <br>
 
 ## Evaluation Results: <br>
-Repository/static checks and the synthetic two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, and clean bundled-runtime import tests passed. The listed invalid evidence, transition, provenance, and path cases were rejected as expected. The checkpoint contract was also checked against a real IAA reference-run relative-symlink artifact shape. A live end-to-end run through the revised wrapper was not performed as part of this review. <br>
+Repository/static checks and the synthetic two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, clean bundled-runtime import, and five-platform action-contract tests passed. The listed invalid evidence, transition, provenance, platform ownership, and path cases were rejected as expected. The checkpoint contract was also checked against a real IAA reference-run relative-symlink artifact shape. Live backend results are reported separately from this static card. <br>
 
 ## Skill Version(s): <br>
-0.3.3 (source: frontmatter) <br>
+0.4.0 (source: frontmatter) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

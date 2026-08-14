@@ -4,6 +4,10 @@ Read with `metric-contract.md` when the audit selects `train` or `evaluate`.
 The IAA workflow uses plain TAO CLIP train/evaluate commands. There is no
 AutoML branch and no hand-authored per-stage YAML.
 
+Every `run_deft_action.py prepare` call only writes the immutable action
+request. Execute and finalize it through `platform-execution.md` before parsing,
+publishing, or committing its outputs.
+
 ## Contents
 
 - [Evaluate](#evaluate)
@@ -40,7 +44,7 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
    fi
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-     "$SKILL_ROOT/scripts/run_deft_container.py" \
+     "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
        --results-dir "$RESULTS_DIR" --image pyt \
        --stage-dir "$EVAL_DIR" --name evaluate \
        "${HF_ARGS[@]}" \
@@ -48,7 +52,7 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
        clip evaluate -e "/results/$CONTAINER_PHASE/specs/eval_config.yaml"
    ```
 
-   The Docker exit must be zero, the aggregate CSV must be non-empty, and the
+   The native backend exit must be zero, the aggregate CSV must be non-empty, and the
    TAO status must contain `Evaluate finished successfully`. A stale CSV next
    to a failed status is not evidence.
 3. Parse the approved metric contract exactly as shown in
@@ -122,7 +126,7 @@ another label/path even when its numeric value is plausible.
    fi
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-     "$SKILL_ROOT/scripts/run_deft_container.py" \
+     "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
        --results-dir "$RESULTS_DIR" --image pyt \
        --stage-dir "$TRAIN_DIR" --name train \
        "${HF_ARGS[@]}" \
@@ -130,7 +134,8 @@ another label/path even when its numeric value is plausible.
        clip train -e "/results/iter_$N/specs/train_config.yaml"
    ```
 
-4. Only after a zero container exit, select the best validation
+4. Only after a zero native backend exit and successful action finalization,
+   select the best validation
    checkpoint and create the normalized warm-start state:
 
    ```bash
@@ -184,13 +189,13 @@ stale targets, and cross-iteration targets are rejected.
 
 ## Failure handling
 
-- Nonzero Docker exit: inspect the wrapper log's last meaningful error block,
+- Nonzero native backend exit: inspect the captured action log's last meaningful error block,
   do not publish or evaluate outputs, and apply at most one documented retry.
 - CUDA OOM caused by changed occupancy: retry the same approved shape once
   after those GPUs are free. Config reshaping requires a new run.
 - Hydra reports an unknown key: regenerate the config; never add `workflow` or
   `automl_policy` to TAO YAML.
-- A PyTorch 2.6+ NumPy dtype allowlist error: the container wrapper already
+- A PyTorch 2.6+ NumPy dtype allowlist error: the platform action already
   mounts the bundled `sitecustomize.py`. If the error persists, hard-stop
   rather than weakening checkpoint loading.
 - Eval success marker absent: treat all CSVs from that launch as partial and
