@@ -130,7 +130,7 @@ def test_no_credentials_or_registry_secret_means_no_dangling_secret_refs():
     job, action = container(render())
     pod = job["spec"]["template"]["spec"]
     assert pod["imagePullSecrets"] == []
-    assert action["envFrom"] == []
+    assert "envFrom" not in action
 
 
 def test_forwarded_credentials_are_secret_references_not_inline_values():
@@ -145,12 +145,39 @@ def test_forwarded_credentials_are_secret_references_not_inline_values():
     assert job["spec"]["template"]["spec"]["imagePullSecrets"] == [
         {"name": "ngc-pull-secret"}
     ]
-    assert action["envFrom"] == [
-        {"secretRef": {"name": "tao-creds-abc123"}}
-    ]
-    inline_names = {item["name"] for item in action["env"]}
-    assert "HF_TOKEN" not in inline_names
-    assert "HF_TOKEN" not in manifest
+    assert "envFrom" not in action
+    environment = {item["name"]: item for item in action["env"]}
+    assert environment["HF_TOKEN"] == {
+        "name": "HF_TOKEN",
+        "valueFrom": {
+            "secretKeyRef": {
+                "name": "tao-creds-abc123",
+                "key": "HF_TOKEN",
+            }
+        },
+    }
+
+
+def test_secret_projects_only_explicitly_forwarded_names():
+    request = iaa_pool_embed_request()
+    request["forward_env"] = ["HF_TOKEN", "AWS_ACCESS_KEY_ID"]
+    _, action = container(
+        render(request=request, credential_secret="shared-credential-secret")
+    )
+
+    assert "envFrom" not in action
+    forwarded = {
+        item["name"]: item["valueFrom"]["secretKeyRef"]
+        for item in action["env"]
+        if "valueFrom" in item
+    }
+    assert forwarded == {
+        "HF_TOKEN": {"name": "shared-credential-secret", "key": "HF_TOKEN"},
+        "AWS_ACCESS_KEY_ID": {
+            "name": "shared-credential-secret",
+            "key": "AWS_ACCESS_KEY_ID",
+        },
+    }
 
 
 def test_forwarded_credentials_require_a_secret():
@@ -160,12 +187,28 @@ def test_forwarded_credentials_require_a_secret():
         render(request=request)
 
 
+def test_credential_secret_is_rejected_when_no_names_are_approved():
+    with pytest.raises(renderer.RenderError, match="must be omitted"):
+        render(credential_secret="unexpected-shared-secret")
+
+
 def test_inline_and_forwarded_name_collision_is_rejected():
     request = iaa_pool_embed_request()
     request["environment"]["HF_TOKEN"] = "must-not-be-inline"
     request["forward_env"] = ["HF_TOKEN"]
     with pytest.raises(renderer.RenderError, match="must not be present"):
         render(request=request, credential_secret="tao-creds-abc123")
+
+
+@pytest.mark.parametrize("schema_version", [None, "0", "2", 1])
+def test_unsupported_request_schema_version_is_rejected(schema_version):
+    request = iaa_pool_embed_request()
+    if schema_version is None:
+        request.pop("schema_version")
+    else:
+        request["schema_version"] = schema_version
+    with pytest.raises(renderer.RenderError, match="request.schema_version"):
+        render(request=request)
 
 
 def test_command_tokens_are_not_interpolated_into_a_shell_string():

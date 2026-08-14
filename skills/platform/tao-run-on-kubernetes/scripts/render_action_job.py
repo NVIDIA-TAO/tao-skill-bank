@@ -10,9 +10,10 @@ each source.  This renderer preserves every producer-declared target and access
 mode, including multiple target aliases for the same source, by mounting that
 PVC subPath once per target.
 
-Credentials are deliberately not accepted as values.  ``forward_env`` names
-are made available only through an optional, pre-created Secret reference, and
-registry authentication is an independent optional image-pull Secret.
+Credentials are deliberately not accepted as values.  Each ``forward_env``
+name is projected from the same key of an optional, pre-created Secret; keys
+that the producer did not approve are never imported.  Registry authentication
+is an independent optional image-pull Secret.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ DNS_SUBDOMAIN_RE = re.compile(
 )
 QUANTITY_RE = re.compile(r"[1-9][0-9]*(?:Ki|Mi|Gi|Ti|Pi|Ei)")
 MAX_JOB_NAME = 52
+REQUEST_SCHEMA_VERSION = "1"
 
 
 class RenderError(ValueError):
@@ -242,11 +244,11 @@ def _require_writable_outputs(
 
 def _environment(
     request: dict[str, Any], credential_secret: str | None
-) -> tuple[list[dict[str, str]], list[dict[str, dict[str, str]]]]:
+) -> list[dict[str, Any]]:
     raw_environment = request.get("environment", {})
     if not isinstance(raw_environment, dict):
         raise RenderError("request.environment must be an object")
-    environment: list[dict[str, str]] = []
+    environment: list[dict[str, Any]] = []
     for name in sorted(raw_environment):
         if ENV_NAME_RE.fullmatch(name) is None:
             raise RenderError(f"invalid environment variable name: {name!r}")
@@ -270,12 +272,21 @@ def _environment(
         raise RenderError(
             "request.forward_env is non-empty but no --credential-secret was supplied"
         )
-    env_from = (
-        [{"secretRef": {"name": credential_secret}}]
-        if credential_secret is not None
-        else []
-    )
-    return environment, env_from
+    if not forward and credential_secret is not None:
+        raise RenderError(
+            "--credential-secret must be omitted when request.forward_env is empty"
+        )
+    if credential_secret is not None:
+        environment.extend(
+            {
+                "name": name,
+                "valueFrom": {
+                    "secretKeyRef": {"name": credential_secret, "key": name}
+                },
+            }
+            for name in forward
+        )
+    return environment
 
 
 def render_action_job(
@@ -292,6 +303,10 @@ def render_action_job(
     template_path: pathlib.Path = DEFAULT_TEMPLATE,
 ) -> str:
     """Validate inputs and return a complete Kubernetes Job manifest."""
+    if request.get("schema_version") != REQUEST_SCHEMA_VERSION:
+        raise RenderError(
+            f"request.schema_version must be {REQUEST_SCHEMA_VERSION!r}"
+        )
     if request.get("platform") != "kubernetes":
         raise RenderError("request.platform must be 'kubernetes'")
     job_id = _nonempty_string(job_id, "job id")
@@ -315,7 +330,7 @@ def render_action_job(
     staged = _staged_sources(staging_map)
     volume_mounts, source_modes = _mounts(request, staged)
     _require_writable_outputs(request, source_modes)
-    environment, env_from = _environment(request, credential_secret)
+    environment = _environment(request, credential_secret)
     image_pull_secrets = (
         [{"name": image_pull_secret}] if image_pull_secret is not None else []
     )
@@ -330,7 +345,6 @@ def render_action_job(
         "COMMAND_JSON": [command],
         "ARGS_JSON": args,
         "NUM_GPUS_JSON": str(gpus),
-        "ENV_FROM_JSON": env_from,
         "ENV_JSON": environment,
         "VOLUME_MOUNTS_JSON": volume_mounts,
         "SHM_SIZE_JSON": shm_size,

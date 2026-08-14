@@ -4,6 +4,10 @@ Read this reference before consuming a platform-neutral action request that
 contains a `mounts` array. The simple one-root spec-bundle template cannot
 preserve duplicate-source aliases or per-target access modes.
 
+The renderer accepts action-request schema version `"1"` only and fails closed
+on a missing or unsupported `request.schema_version`; update the renderer and
+this contract together before consuming a future version.
+
 ## Stage every declared source
 
 Use `tao-data-io` when the producer source is not already visible from the
@@ -54,9 +58,12 @@ printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nHF_TOKEN=%s\n' \
       --from-env-file=/dev/stdin
 ```
 
-The manifest references only the Secret name. Omit the credential Secret when
-`forward_env` is empty. Likewise, pass an image-pull Secret only when the
-namespace needs one; do not create a dependency on a placeholder Secret.
+The manifest projects each approved `forward_env` name from the same-named key
+with an individual `env.valueFrom.secretKeyRef`; unrelated keys in the Secret
+are not imported. Omit both the credential Secret and `--credential-secret`
+when `forward_env` is empty (the renderer rejects that mismatch). Likewise,
+pass an image-pull Secret only when the namespace needs one; do not create a
+dependency on a placeholder Secret.
 
 ## Render and gate
 
