@@ -31,7 +31,6 @@ spec:
           resources:
             limits:
               nvidia.com/gpu: @@NUM_GPUS_JSON@@
-          envFrom: @@ENV_FROM_JSON@@
           env: @@ENV_JSON@@
           volumeMounts: @@VOLUME_MOUNTS_JSON@@
       volumes:

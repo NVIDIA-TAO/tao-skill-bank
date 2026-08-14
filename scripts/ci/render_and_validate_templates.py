@@ -69,7 +69,6 @@ K8S_VALS = {
     "COMMAND_JSON": '["python3"]',
     "ARGS_JSON": '["-c","print(1)"]',
     "NUM_GPUS_JSON": '"1"',
-    "ENV_FROM_JSON": '[]',
     "ENV_JSON": '[{"name":"HOME","value":"/tmp"}]',
     "VOLUME_MOUNTS_JSON": (
         '[{"name":"dshm","mountPath":"/dev/shm","readOnly":false},'
