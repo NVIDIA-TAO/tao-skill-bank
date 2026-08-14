@@ -312,7 +312,46 @@ def _coerce_pid(value) -> int:
     return pid if pid > 0 else 0
 
 
-def _active_process_group_members(pgid: int) -> list[int] | None:
+def _proc_entry_group_state(entry: Path, pgid: int) -> str:
+    """Classify one Linux proc entry for a target group.
+
+    The result is ``active``, ``zombie``, ``other``, ``gone``, or
+    ``indeterminate``.  A malformed or unreadable stat file is harmless when
+    ``getpgid`` proves the process belongs to another group, but it must not be
+    silently treated as gone when it may be one of this job's processes.
+    """
+    pid = int(entry.name)
+    try:
+        stat = (entry / "stat").read_text(encoding="utf-8")
+        closing = stat.rfind(")")
+        if closing < 0:
+            raise ValueError("missing comm terminator")
+        fields = stat[closing + 2:].split()
+        if len(fields) < 3:
+            raise ValueError("truncated proc stat")
+        state = fields[0]
+        process_group = int(fields[2])
+    except FileNotFoundError:
+        return "gone"
+    except (PermissionError, OSError, ValueError, IndexError):
+        # Reading stat can race process exit.  getpgid distinguishes that case
+        # and, crucially, tells us whether unreadable evidence is relevant to
+        # this group rather than silently converting uncertainty into success.
+        try:
+            process_group = os.getpgid(pid)
+        except ProcessLookupError:
+            return "gone"
+        except (PermissionError, OSError, ValueError):
+            return "indeterminate"
+        return "indeterminate" if process_group == pgid else "other"
+    if process_group != pgid:
+        return "other"
+    return "zombie" if state == "Z" else "active"
+
+
+def _active_process_group_members(
+    pgid: int, *, proc_root: Path | None = None,
+) -> list[int] | None:
     """Return non-zombie members of ``pgid``; ``None`` means indeterminate.
 
     ``killpg(pgid, 0)`` only proves that a process-group entry still exists.
@@ -327,7 +366,7 @@ def _active_process_group_members(pgid: int) -> list[int] | None:
     if pgid <= 0:
         return []
 
-    proc_root = Path("/proc")
+    proc_root = Path("/proc") if proc_root is None else proc_root
     if proc_root.is_dir():
         members: list[int] = []
         try:
@@ -335,19 +374,10 @@ def _active_process_group_members(pgid: int) -> list[int] | None:
             for entry in entries:
                 if not entry.name.isdigit():
                     continue
-                try:
-                    stat = (entry / "stat").read_text(encoding="utf-8")
-                    fields = stat[stat.rfind(")") + 2:].split()
-                    state = fields[0]
-                    process_group = int(fields[2])
-                except (FileNotFoundError, PermissionError):
-                    # Processes can exit during the scan.  On hidepid mounts,
-                    # unrelated users' entries can also be visible but unreadable;
-                    # this runner's same-UID job processes remain inspectable.
-                    continue
-                except (OSError, ValueError, IndexError):
-                    continue
-                if process_group == pgid and state != "Z":
+                state = _proc_entry_group_state(entry, pgid)
+                if state == "indeterminate":
+                    return None
+                if state == "active":
                     members.append(int(entry.name))
             return sorted(members)
         except OSError:
@@ -383,36 +413,139 @@ def _active_process_group_members(pgid: int) -> list[int] | None:
             )
         except Exception:
             return None
-        if state_probe.returncode != 0:
+        state = state_probe.stdout.strip()
+        if state_probe.returncode != 0 or not state:
             try:
-                os.kill(pid, 0)
+                process_group = os.getpgid(pid)
             except ProcessLookupError:
                 continue  # Process exited between pgrep and ps.
-            except (PermissionError, ValueError):
+            except (PermissionError, OSError, ValueError):
                 return None
-            return None  # Still signalable, but its state is indeterminate.
-        state = state_probe.stdout.strip()
-        if not state:
-            continue
+            if process_group != pgid:
+                continue
+            return None  # Still in this group, but state is indeterminate.
         if not state.startswith("Z"):
             members.append(pid)
     return sorted(members)
 
 
-def _group_members(pgid: int, identity_hint: str | None) -> list[int]:
-    """POSITIVELY-identified surviving members of ``pgid`` (leader excluded).
+def _identity_matches(pid: int, marker: str, pgid: int) -> bool | None:
+    """Tri-state durable identity check for one active group member."""
+    try:
+        if os.getpgid(pid) != pgid:
+            return False
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError, ValueError):
+        return None
+    marker_now = _process_start_marker(pid)
+    if marker_now is None:
+        # The member may have exited between getpgid and the marker read.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError, ValueError):
+            return None
+        return None
+    return marker_now == marker
+
+
+def _capture_group_identities(
+    pgid: int, members: list[int],
+) -> dict[int, str] | None:
+    """Capture start identities for known-active members of an owned group."""
+    identities: dict[int, str] = {}
+    for member_pid in members:
+        try:
+            if os.getpgid(member_pid) != pgid:
+                continue
+        except ProcessLookupError:
+            continue
+        except (PermissionError, OSError, ValueError):
+            return None
+        marker = _process_start_marker(member_pid)
+        if marker is None:
+            # An exited member is benign; a still-live unidentifiable member is
+            # not safe to use as authority for a later group signal.
+            try:
+                os.kill(member_pid, 0)
+            except ProcessLookupError:
+                continue
+            except (PermissionError, OSError, ValueError):
+                return None
+            return None
+        identities[member_pid] = str(marker)
+    return identities
+
+
+def _observe_owned_group(
+    pgid: int, identities: dict[int, str],
+) -> tuple[str, list[int]]:
+    """Observe a group without allowing a reused PGID to inherit ownership.
+
+    Returns ``owned``, ``empty``, ``indeterminate``, or ``ownership_lost``.
+    While at least one previously bound identity is live, any newly observed
+    member belongs to the same still-existing POSIX process group and can be
+    safely added to the durable identity set for later escalation.
+    """
+    members = _active_process_group_members(pgid)
+    if members is None:
+        return "indeterminate", []
+    if not members:
+        return "empty", []
+
+    matched = []
+    indeterminate = False
+    for member_pid, marker in list(identities.items()):
+        if member_pid not in members:
+            continue
+        match = _identity_matches(member_pid, marker, pgid)
+        if match is True:
+            matched.append(member_pid)
+        elif match is None:
+            indeterminate = True
+    if not matched:
+        return ("indeterminate" if indeterminate else "ownership_lost"), members
+
+    unbound = [member_pid for member_pid in members if member_pid not in identities]
+    captured = _capture_group_identities(pgid, unbound)
+    if captured is None:
+        return "indeterminate", members
+    identities.update(captured)
+    return "owned", members
+
+
+def _group_member_identities(
+    pgid: int, identity_hint: str | None,
+) -> dict[int, str] | None:
+    """POSITIVELY identify surviving members (leader excluded).
 
     Used when the launcher is dead: a surviving training script must not be
     reported terminal or left unkillable. Only members whose cmdline matches
-    ``identity_hint`` count — a recycled pgid of foreign processes never does.
+    ``identity_hint`` count, and every returned PID is bound to its process
+    start marker. ``None`` means the probe itself was indeterminate.
     """
     candidates = _active_process_group_members(pgid)
     if candidates is None:
-        return []
+        return None
     members = [pid for pid in candidates if pid != pgid]
     if not identity_hint:
-        return []
-    return [pid for pid in members if _cmdline_probe(pid, identity_hint) is True]
+        return {}
+    matched: list[int] = []
+    for member_pid in members:
+        cmdline_match = _cmdline_probe(member_pid, identity_hint)
+        if cmdline_match is None:
+            return None
+        if cmdline_match:
+            matched.append(member_pid)
+    return _capture_group_identities(pgid, matched)
+
+
+def _group_members(pgid: int, identity_hint: str | None) -> list[int]:
+    """Compatibility view used by status displays and tests."""
+    identities = _group_member_identities(pgid, identity_hint)
+    return [] if identities is None else sorted(identities)
 
 
 def _cmdline_probe(pid: int, needle: str) -> bool | None:
@@ -474,7 +607,7 @@ def _process_matches(pid: int, expected_marker: str | None, wrapper_path: str | 
     The bias is the inverse of _launcher_state: this gates SIGNALING, so an
     indeterminate probe means "do not kill".
     """
-    if pid <= 0:
+    if pid <= 0 or not expected_marker:
         return False
     try:
         os.kill(pid, 0)
@@ -482,56 +615,96 @@ def _process_matches(pid: int, expected_marker: str | None, wrapper_path: str | 
             return False
     except (OSError, ValueError):
         return False
-    if expected_marker and _process_start_marker(pid) != str(expected_marker):
+    if _process_start_marker(pid) != str(expected_marker):
         return False
     if wrapper_path and _cmdline_probe(pid, wrapper_path) is not True:
         return False
     return True
 
 
-def _terminate_process_group(pid: int, timeout: float = 5.0) -> str:
+def _terminate_process_group(
+    pid: int,
+    expected_identities: dict[int, str],
+    timeout: float = 5.0,
+) -> str:
     """SIGTERM then SIGKILL the group. Returns 'gone' | 'terminated' | raises.
 
-    Callers verify process identity first, so this never signals a foreign
-    group. Completion means no non-zombie group member remains; an unreaped
-    zombie is already dead and must not turn a successful cancellation into a
-    timeout.  An indeterminate membership probe or a permission failure is not
-    reported as success.
+    Every signal is preceded by a durable start-identity check. A PGID that is
+    reused after this job's members exit can therefore never inherit authority
+    from the old job record. Completion means no non-zombie group member
+    remains; an unreaped zombie is already dead and must not turn a successful
+    cancellation into a timeout. An indeterminate membership probe or a real
+    permission failure is not reported as success.
     """
+    identities = {
+        _coerce_pid(member_pid): str(marker)
+        for member_pid, marker in expected_identities.items()
+        if _coerce_pid(member_pid) and marker
+    }
+    if not identities:
+        raise RuntimeError(
+            f"refusing to signal process group {pid} without a durable process identity"
+        )
+
+    def observe_or_raise() -> tuple[str, list[int]]:
+        ownership, members = _observe_owned_group(pid, identities)
+        if ownership == "indeterminate":
+            raise RuntimeError(
+                f"could not establish process-group {pid} membership safely"
+            )
+        if ownership == "ownership_lost":
+            raise RuntimeError(
+                f"process group {pid} no longer matches this job; refusing to signal it"
+            )
+        return ownership, members
+
+    ownership, _ = observe_or_raise()
+    if ownership == "empty":
+        return "terminated"
 
     try:
         os.killpg(pid, signal.SIGTERM)
     except ProcessLookupError:
         return "gone"
     except PermissionError as exc:
+        members = _active_process_group_members(pid)
+        if members == []:
+            return "terminated"
         raise RuntimeError(
             f"permission denied signaling process group {pid} with SIGTERM"
         ) from exc
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        members = _active_process_group_members(pid)
-        if members == []:
+        ownership, _ = observe_or_raise()
+        if ownership == "empty":
             return "terminated"
         time.sleep(0.05)
+
+    # Revalidate immediately before escalation. In particular, a new process
+    # group that reused the old numeric PGID must not receive this SIGKILL.
+    ownership, _ = observe_or_raise()
+    if ownership == "empty":
+        return "terminated"
     try:
         os.killpg(pid, signal.SIGKILL)
     except ProcessLookupError:
         return "terminated"
     except PermissionError as exc:
+        members = _active_process_group_members(pid)
+        if members == []:
+            return "terminated"
         raise RuntimeError(
             f"permission denied signaling process group {pid} with SIGKILL"
         ) from exc
     kill_deadline = time.monotonic() + max(1.0, timeout)
     while time.monotonic() < kill_deadline:
-        members = _active_process_group_members(pid)
-        if members == []:
+        ownership, _ = observe_or_raise()
+        if ownership == "empty":
             return "terminated"
         time.sleep(0.05)
-    members = _active_process_group_members(pid)
-    if members is None:
-        raise RuntimeError(
-            f"could not verify that process group {pid} terminated after SIGKILL"
-        )
+    ownership, members = observe_or_raise()
+    if ownership == "empty":
+        return "terminated"
     raise RuntimeError(
         f"process group {pid} still has live members after SIGKILL: {members}"
     )
@@ -759,6 +932,7 @@ def cmd_submit(args: argparse.Namespace) -> int:
             log_file.close()  # Popen duplicated the descriptor for the child.
     except OSError as exc:
         return _fail(f"Failed to launch the wrapper: {exc}")
+    spawned_marker = _process_start_marker(process.pid)
 
     # Wait for the wrapper's durable identity record, then open the gate. A
     # wrapper that never writes it means the interpreter/env is broken — kill
@@ -773,10 +947,16 @@ def cmd_submit(args: argparse.Namespace) -> int:
             break
         time.sleep(0.05)
     if not launcher or not launcher.get("pid"):
-        try:
-            _terminate_process_group(process.pid)
-        except RuntimeError:
-            pass
+        # The marker captured immediately after Popen binds cleanup to this
+        # exact process. If it was unavailable, let the wrapper's closed gate
+        # time out rather than risk signaling a subsequently reused PGID.
+        if spawned_marker:
+            try:
+                _terminate_process_group(
+                    process.pid, {process.pid: str(spawned_marker)}
+                )
+            except RuntimeError:
+                pass
         tail = _read_tail(paths.log_path, 40) if paths.log_path.exists() else ""
         return _fail(
             "Launcher never wrote its durable identity record "
@@ -857,7 +1037,14 @@ def _derive_status(paths: RunnerPaths) -> tuple[str, str, dict]:
         argv = (submit_meta or {}).get("argv") or []
         if len(argv) > 1:
             script_hint = argv[1]
-        survivors = _group_members(pid, script_hint)
+        survivor_identities = _group_member_identities(pid, script_hint)
+        if survivor_identities is None:
+            return (
+                VOCAB_UNKNOWN,
+                "Launcher ended and surviving process identity is indeterminate",
+                {"pid": pid},
+            )
+        survivors = sorted(survivor_identities)
         if survivors:
             message = (
                 f"Launcher {pid} died but the script group is still running "
@@ -936,7 +1123,9 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     if pid and _process_matches(pid, marker, wrapper_path):
         signaled = True
         try:
-            outcome = _terminate_process_group(pid, timeout=args.timeout)
+            outcome = _terminate_process_group(
+                pid, {pid: str(marker)}, timeout=args.timeout
+            )
         except RuntimeError as exc:
             return _fail(str(exc), status=VOCAB_UNKNOWN)
     else:
@@ -947,10 +1136,18 @@ def cmd_cancel(args: argparse.Namespace) -> int:
         # children of a killed wrapper). Kill positively-identified survivors.
         argv = (submit_meta or {}).get("argv") or []
         script_hint = argv[1] if len(argv) > 1 else None
-        if _group_members(pid, script_hint):
+        survivor_identities = _group_member_identities(pid, script_hint)
+        if survivor_identities is None:
+            return _fail(
+                f"could not establish surviving process identities for group {pid}",
+                status=VOCAB_UNKNOWN,
+            )
+        if survivor_identities:
             signaled = True
             try:
-                _terminate_process_group(pid, timeout=args.timeout)
+                _terminate_process_group(
+                    pid, survivor_identities, timeout=args.timeout
+                )
             except RuntimeError as exc:
                 return _fail(str(exc), status=VOCAB_UNKNOWN)
 

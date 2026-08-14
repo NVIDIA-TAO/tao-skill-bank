@@ -342,11 +342,15 @@ def test_terminate_process_group_treats_unreaped_zombie_as_dead():
         start_new_session=True,
     )
     try:
+        marker = vr._process_start_marker(process.pid)
+        assert marker is not None
         # Do not call poll(): it would reap our child and erase the condition.
         assert wait_for(lambda: not _pid_active(process.pid)), \
             "child did not reach zombie state"
         assert os.killpg(process.pid, 0) is None  # Group is still signalable.
-        assert vr._terminate_process_group(process.pid, timeout=0.1) == "terminated"
+        assert vr._terminate_process_group(
+            process.pid, {process.pid: marker}, timeout=0.1
+        ) == "terminated"
     finally:
         process.wait(timeout=5)
 
@@ -362,12 +366,91 @@ def test_terminate_process_group_escalates_for_live_sigterm_ignorer(tmp_path):
     process = subprocess.Popen([sys.executable, str(script)], start_new_session=True)
     try:
         assert wait_for(ready.exists), "SIGTERM-ignoring child never became ready"
-        assert vr._terminate_process_group(process.pid, timeout=0.1) == "terminated"
+        marker = vr._process_start_marker(process.pid)
+        assert marker is not None
+        assert vr._terminate_process_group(
+            process.pid, {process.pid: marker}, timeout=0.1
+        ) == "terminated"
         assert process.wait(timeout=5) == -signal.SIGKILL
     finally:
         if process.poll() is None:
             process.kill()
             process.wait()
+
+
+def test_permission_error_is_success_only_for_definitively_empty_group(monkeypatch):
+    """macOS may reject a signal to a zombie-only group with EPERM."""
+    probes = iter(([73], []))
+    monkeypatch.setattr(vr, "_active_process_group_members", lambda _pgid: next(probes))
+    monkeypatch.setattr(vr, "_identity_matches", lambda *_args: True)
+    monkeypatch.setattr(vr.os, "killpg", lambda *_args: (_ for _ in ()).throw(
+        PermissionError("zombie-only group")
+    ))
+
+    assert vr._terminate_process_group(73, {73: "start-1"}, timeout=0) == "terminated"
+
+
+def test_permission_error_with_live_or_indeterminate_members_is_not_success(monkeypatch):
+    for after_signal in ([74], None):
+        probes = iter(([74], after_signal))
+        monkeypatch.setattr(
+            vr, "_active_process_group_members", lambda _pgid, probes=probes: next(probes)
+        )
+        monkeypatch.setattr(vr, "_identity_matches", lambda *_args: True)
+        monkeypatch.setattr(vr.os, "killpg", lambda *_args: (_ for _ in ()).throw(
+            PermissionError("not signalable")
+        ))
+        with pytest.raises(RuntimeError, match="permission denied"):
+            vr._terminate_process_group(74, {74: "start-1"}, timeout=0)
+
+
+def test_reused_pgid_is_rejected_before_sigkill(monkeypatch):
+    """A marker change after SIGTERM must revoke authority to escalate."""
+    markers = iter((True, False))
+    signals = []
+    monkeypatch.setattr(vr, "_active_process_group_members", lambda _pgid: [75])
+    monkeypatch.setattr(vr, "_identity_matches", lambda *_args: next(markers))
+    monkeypatch.setattr(vr.os, "killpg", lambda pgid, sig: signals.append((pgid, sig)))
+
+    with pytest.raises(RuntimeError, match="no longer matches this job"):
+        vr._terminate_process_group(75, {75: "old-start"}, timeout=0)
+    assert signals == [(75, signal.SIGTERM)]  # The reused group never receives SIGKILL.
+
+
+@pytest.mark.parametrize("failure", ["malformed", "unreadable"])
+def test_relevant_proc_probe_failure_is_indeterminate(
+    monkeypatch, tmp_path, failure,
+):
+    proc_root = tmp_path / "proc"
+    entry = proc_root / "76"
+    entry.mkdir(parents=True)
+    stat_path = entry / "stat"
+    stat_path.write_text("not a proc stat", encoding="utf-8")
+    monkeypatch.setattr(vr.os, "getpgid", lambda _pid: 76)
+    if failure == "unreadable":
+        real_read_text = Path.read_text
+
+        def denied(path, *args, **kwargs):
+            if path == stat_path:
+                raise PermissionError("hidden proc entry")
+            return real_read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", denied)
+
+    assert vr._active_process_group_members(76, proc_root=proc_root) is None
+
+
+def test_irrelevant_unreadable_proc_entry_does_not_poison_group_probe(
+    monkeypatch, tmp_path,
+):
+    proc_root = tmp_path / "proc"
+    entry = proc_root / "77"
+    entry.mkdir(parents=True)
+    stat_path = entry / "stat"
+    stat_path.write_text("not a proc stat", encoding="utf-8")
+    monkeypatch.setattr(vr.os, "getpgid", lambda _pid: 999)
+
+    assert vr._active_process_group_members(76, proc_root=proc_root) == []
 
 
 # ---------------------------------------------------------------------------
