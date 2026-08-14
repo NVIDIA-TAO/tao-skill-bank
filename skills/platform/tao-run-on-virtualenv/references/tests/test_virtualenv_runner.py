@@ -270,11 +270,20 @@ def test_leaked_background_child_is_cleaned_up(capsys, venv, job_dir, tmp_path):
     final = wait_terminal(capsys, job_dir)
     assert final["status"] == "COMPLETE", final  # cleanup succeeded, exit stays 0
     child_pid = int((job_dir / "child.pid").read_text())
-    assert wait_for(lambda: not _pid_alive(child_pid), timeout=5), \
+    assert wait_for(lambda: not _pid_active(child_pid), timeout=5), \
         "background child leaked past job completion"
 
 
-def _pid_alive(pid):
+def _pid_active(pid):
+    """Whether a process can still execute (an unreaped zombie cannot)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        fields = stat[stat.rfind(")") + 2:].split()
+        return fields[0] != "Z"
+    except FileNotFoundError:
+        return False
+    except (OSError, IndexError):
+        pass
     try:
         os.kill(pid, 0)
         return True
@@ -321,6 +330,44 @@ def test_marker_mismatch_rejects_group_leader(capsys, venv, job_dir):
     finally:
         foreign.kill()
         foreign.wait()
+
+
+@pytest.mark.skipif(
+    not Path("/proc").is_dir(), reason="deterministic zombie state needs /proc"
+)
+def test_terminate_process_group_treats_unreaped_zombie_as_dead():
+    """Signalability of a zombie group leader is not process liveness."""
+    process = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        start_new_session=True,
+    )
+    try:
+        # Do not call poll(): it would reap our child and erase the condition.
+        assert wait_for(lambda: not _pid_active(process.pid)), \
+            "child did not reach zombie state"
+        assert os.killpg(process.pid, 0) is None  # Group is still signalable.
+        assert vr._terminate_process_group(process.pid, timeout=0.1) == "terminated"
+    finally:
+        process.wait(timeout=5)
+
+
+def test_terminate_process_group_escalates_for_live_sigterm_ignorer(tmp_path):
+    ready = tmp_path / "ready"
+    script = write_script(tmp_path, "ignore_term.py", (
+        "import pathlib, signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"pathlib.Path({str(ready)!r}).touch()\n"
+        "time.sleep(300)\n"
+    ))
+    process = subprocess.Popen([sys.executable, str(script)], start_new_session=True)
+    try:
+        assert wait_for(ready.exists), "SIGTERM-ignoring child never became ready"
+        assert vr._terminate_process_group(process.pid, timeout=0.1) == "terminated"
+        assert process.wait(timeout=5) == -signal.SIGKILL
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +464,8 @@ def test_orphaned_script_group_reports_running_and_cancel_kills_it(
     assert wait_for(lambda: len(script_child()) > 0), "script child never appeared"
     children = script_child()
     os.kill(wrapper_pid, signal.SIGKILL)
-    assert wait_for(lambda: not _pid_alive(wrapper_pid) or True, timeout=2)
+    assert wait_for(lambda: not _pid_active(wrapper_pid), timeout=2), \
+        "killed wrapper remained active"
 
     _, status = run_verb(capsys, "status", "--job-dir", str(job_dir))
     assert status["status"] == "RUNNING", status
@@ -426,7 +474,7 @@ def test_orphaned_script_group_reports_running_and_cancel_kills_it(
     rc, cancel = run_verb(capsys, "cancel", "--job-dir", str(job_dir))
     assert rc == 0 and cancel["result"] == "canceled", cancel
     for child in children:
-        assert wait_for(lambda: not _pid_alive(child), timeout=5), \
+        assert wait_for(lambda: not _pid_active(child), timeout=5), \
             f"orphaned child {child} survived cancel"
     _, after = run_verb(capsys, "status", "--job-dir", str(job_dir))
     assert after["status"] == "CANCELED", after

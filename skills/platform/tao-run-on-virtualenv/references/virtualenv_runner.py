@@ -312,6 +312,93 @@ def _coerce_pid(value) -> int:
     return pid if pid > 0 else 0
 
 
+def _active_process_group_members(pgid: int) -> list[int] | None:
+    """Return non-zombie members of ``pgid``; ``None`` means indeterminate.
+
+    ``killpg(pgid, 0)`` only proves that a process-group entry still exists.
+    In particular, it succeeds for an unreaped zombie even though that process
+    cannot execute or receive a signal.  Lifecycle waits therefore need an
+    explicit state-aware membership probe rather than signalability.
+
+    Linux uses ``/proc`` (the first-class platform).  The fallback uses
+    ``pgrep`` plus ``ps`` and deliberately returns ``None`` when it cannot
+    establish state: callers may then decline to signal or report success.
+    """
+    if pgid <= 0:
+        return []
+
+    proc_root = Path("/proc")
+    if proc_root.is_dir():
+        members: list[int] = []
+        try:
+            entries = proc_root.iterdir()
+            for entry in entries:
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    stat = (entry / "stat").read_text(encoding="utf-8")
+                    fields = stat[stat.rfind(")") + 2:].split()
+                    state = fields[0]
+                    process_group = int(fields[2])
+                except (FileNotFoundError, PermissionError):
+                    # Processes can exit during the scan.  On hidepid mounts,
+                    # unrelated users' entries can also be visible but unreadable;
+                    # this runner's same-UID job processes remain inspectable.
+                    continue
+                except (OSError, ValueError, IndexError):
+                    continue
+                if process_group == pgid and state != "Z":
+                    members.append(int(entry.name))
+            return sorted(members)
+        except OSError:
+            pass
+
+    try:
+        completed = subprocess.run(
+            ["pgrep", "-g", str(pgid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
+        )
+    except Exception:
+        return None
+    if completed.returncode == 1:
+        return []
+    if completed.returncode != 0:
+        return None
+
+    members = []
+    for token in completed.stdout.split():
+        if not token.isdigit():
+            continue
+        pid = int(token)
+        try:
+            state_probe = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "stat="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
+            )
+        except Exception:
+            return None
+        if state_probe.returncode != 0:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue  # Process exited between pgrep and ps.
+            except (PermissionError, ValueError):
+                return None
+            return None  # Still signalable, but its state is indeterminate.
+        state = state_probe.stdout.strip()
+        if not state:
+            continue
+        if not state.startswith("Z"):
+            members.append(pid)
+    return sorted(members)
+
+
 def _group_members(pgid: int, identity_hint: str | None) -> list[int]:
     """POSITIVELY-identified surviving members of ``pgid`` (leader excluded).
 
@@ -319,27 +406,9 @@ def _group_members(pgid: int, identity_hint: str | None) -> list[int]:
     reported terminal or left unkillable. Only members whose cmdline matches
     ``identity_hint`` count — a recycled pgid of foreign processes never does.
     """
-    candidates: list[int] = []
-    if Path("/proc").exists():
-        for entry in Path("/proc").iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                stat = (entry / "stat").read_text(encoding="utf-8")
-                fields = stat[stat.rfind(")") + 2:].split()
-                if int(fields[2]) == pgid and fields[0] != "Z":
-                    candidates.append(int(entry.name))
-            except (OSError, ValueError, IndexError):
-                continue
-    else:
-        try:
-            out = subprocess.run(
-                ["pgrep", "-g", str(pgid)],
-                capture_output=True, text=True, timeout=5,
-            ).stdout.split()
-            candidates = [int(t) for t in out if t.isdigit()]
-        except Exception:
-            candidates = []
+    candidates = _active_process_group_members(pgid)
+    if candidates is None:
+        return []
     members = [pid for pid in candidates if pid != pgid]
     if not identity_hint:
         return []
@@ -424,43 +493,48 @@ def _terminate_process_group(pid: int, timeout: float = 5.0) -> str:
     """SIGTERM then SIGKILL the group. Returns 'gone' | 'terminated' | raises.
 
     Callers verify process identity first, so this never signals a foreign
-    group. PermissionError on a real signal is treated as terminated: it
-    happens when only unreaped zombies remain in the group (observed on
-    macOS), which cannot be signaled and are already dead.
+    group. Completion means no non-zombie group member remains; an unreaped
+    zombie is already dead and must not turn a successful cancellation into a
+    timeout.  An indeterminate membership probe or a permission failure is not
+    reported as success.
     """
-
-    def group_exists() -> bool:
-        try:
-            os.killpg(pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
 
     try:
         os.killpg(pid, signal.SIGTERM)
     except ProcessLookupError:
         return "gone"
-    except PermissionError:
-        return "terminated"
+    except PermissionError as exc:
+        raise RuntimeError(
+            f"permission denied signaling process group {pid} with SIGTERM"
+        ) from exc
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not group_exists():
+        members = _active_process_group_members(pid)
+        if members == []:
             return "terminated"
         time.sleep(0.05)
     try:
         os.killpg(pid, signal.SIGKILL)
     except ProcessLookupError:
         return "terminated"
-    except PermissionError:
-        return "terminated"
+    except PermissionError as exc:
+        raise RuntimeError(
+            f"permission denied signaling process group {pid} with SIGKILL"
+        ) from exc
     kill_deadline = time.monotonic() + max(1.0, timeout)
     while time.monotonic() < kill_deadline:
-        if not group_exists():
+        members = _active_process_group_members(pid)
+        if members == []:
             return "terminated"
         time.sleep(0.05)
-    raise RuntimeError(f"process group {pid} survived SIGKILL")
+    members = _active_process_group_members(pid)
+    if members is None:
+        raise RuntimeError(
+            f"could not verify that process group {pid} terminated after SIGKILL"
+        )
+    raise RuntimeError(
+        f"process group {pid} still has live members after SIGKILL: {members}"
+    )
 
 
 def _read_tail(path: Path, line_count: int, max_bytes: int = LOG_TAIL_MAX_BYTES) -> str:
