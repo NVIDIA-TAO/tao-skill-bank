@@ -9,7 +9,7 @@ license: Apache-2.0
 compatibility: Docker with NVIDIA Container Toolkit, or SLURM with Pyxis/Enroot and a user-supplied shared-storage configuration.
 metadata:
   author: NVIDIA Corporation
-  version: "0.3.1"
+  version: "0.3.2"
 allowed-tools: Read Bash
 tags: [cosmos, vlm, sft, peft, video, reasoning, slurm]
 ---
@@ -145,16 +145,16 @@ Execute these stages in order and persist their outputs.
    Cosmos-RL defaults to direct on-demand sample processing so training starts
    without a dataset-cache prewarm phase. Conversation-style runs prewarm only
    when the user explicitly selects `--rl-dataset-cache-mode prewarm`; that
-   opt-in uses separate deterministic train and validation keys. Task-aware
-   runs decode directly on GPU and require a fingerprinted override artifact
-   from the packaged
-   `cosmos_rl.utils.video_override_artifacts` builder. Pair every annotation
-   with its actual media root, scan the full input set for the NVDEC macroblock
-   limit, force every validation annotation with `--force-annotation`, and add
-   only independently diagnosed train streams with `--force-video`. Validate
-   the artifact with the packaged
-   `cosmos_rl.utils.validate_video_override_artifacts` command, including full
-   validation-media coverage and GPU random-access decoding, before smoke.
+   opt-in uses separate deterministic train and validation keys. On A100,
+   which has no NVDEC engine, both conversation and task-aware hooks select
+   `custom.video_decoder="torchvision"`; the packaged reader must register
+   the sparse software System-PyAV backend in the controller and every spawned
+   DataLoader worker. The image must install the checksum-pinned official PyAV
+   wheel and prove that generic `h264` and `hevc` resolve to software decoders.
+   A source-built wheel resolving those names to `*_cuvid` is an image defect,
+   not a reason to change SLURM CPU allocation. Only an explicitly selected
+   NVDEC/PyNvVideoCodec path requires a fingerprinted override artifact and
+   GPU random-access validation.
    The JSON plan emits exact `decoder_artifact.preparation_command` and
    `decoder_artifact.validation_command` values for the selected clean image;
    re-plan once with their map, manifest, and artifact fingerprint outputs,

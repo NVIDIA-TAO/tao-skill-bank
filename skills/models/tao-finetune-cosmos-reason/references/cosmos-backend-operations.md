@@ -68,28 +68,27 @@ resource limits without credentials.
 
 ## Decoder and cache recovery
 
-Framework uses its native CUDA TorchCodec path. The pinned Cosmos-RL image uses
-qwen-vl-utils' torchvision path backed by source-built PyAV and the restricted
-system FFmpeg/NVDEC codecs; Decord and PyNvVideoCodec are intentionally absent.
-Positive DataLoader worker counts require the runtime's `spawn` context and
-spawn-picklable cache implementation; worker count zero requires prefetch to be
+Framework uses its native CUDA TorchCodec path. On A100, the pinned Cosmos-RL
+image maps the qwen-vl-utils torchvision name to its sparse software System-
+PyAV reader. The canonical image build downloads the exact official PyAV wheel,
+verifies its SHA256, and requires `h264 -> h264` and `hevc -> hevc`; generic
+codec names resolving to CUVID are rejected because A100 has no NVDEC engine.
+Positive DataLoader worker counts require the runtime's `spawn` context, a
+picklable cache, and worker initialization that registers the reader without
+creating or selecting a CUDA context. Worker count zero requires prefetch to be
 absent or null. Cosmos-RL defaults to direct on-demand processing and starts
 model training without a dataset-cache prewarm phase. Prewarming is an explicit
 opt-in; when selected for conversation-style data, separate train and validation
 cache keys combine dataset, model, and processor fingerprints, and completeness
-manifests plus every entry are validated before training. Task-aware runs decode
-directly on GPU and use the
-packaged `cosmos_rl.utils.video_override_artifacts` builder for a deterministic
-map, manifest, and fingerprint. Pair each annotation with its real media root,
-force every validation annotation with `--force-annotation`, and reserve
-`--force-video` for independently diagnosed training streams. The packaged
-`cosmos_rl.utils.validate_video_override_artifacts` validator must prove the
-fingerprints, complete validation-media coverage, and GPU random access before
-smoke or full training starts.
+manifests plus every entry are validated before training. An explicitly
+selected NVDEC/PyNvVideoCodec task-aware run uses the packaged
+`cosmos_rl.utils.video_override_artifacts` builder and validator; the A100
+software path decodes the original paired media directly and does not create a
+GPU override artifact.
 
-Do not recover a full video run by falling back silently to CPU decoding, by
-forcing every training stream, or by reusing another run's cache or override
-artifact. A decoder, cache, or media failure is a failed smoke gate.
+Do not change decoder semantics silently. The generated configuration must
+record the selected software or hardware contract, and a decoder, cache, or
+media failure is a failed gate.
 
 ## Failure classes
 

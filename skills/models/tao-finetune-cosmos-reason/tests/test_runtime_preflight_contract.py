@@ -116,14 +116,19 @@ def test_cosmos_rl_preflight_rejects_dependency_abi_and_dispatch_regressions() -
     runtime = contract["container_runtime"]
     assert "verify_deepep" in runtime
     assert "verify_vllm_conv3d" in runtime
-    assert "h264_cuvid" in runtime
+    assert "h264_cuvid" not in runtime
+    assert "libnvcuvid" not in runtime
+    assert "_assert_software_video_decoders" in runtime
     assert "FORCE_QWENVL_VIDEO_READER" in runtime
     assert "torchvision" in runtime
     assert "_tao_linear_patch_embed" in runtime
     assert "_tao_channels_last_3d" in runtime
     assert "DeepEP Python/extension ABI" in contract["checks"]
     assert "vLLM Qwen3-VL Conv3D dispatch guard" in contract["checks"]
-    assert "system PyAV/FFmpeg NVDEC and libnvcuvid" in contract["checks"]
+    assert (
+        "checksum-pinned software System PyAV with h264/hevc CPU resolution"
+        in contract["checks"]
+    )
     assert "backward-safe Qwen3-VL PatchEmbed" in contract["checks"]
     assert "384 GiB free result/checkpoint space" in contract["checks"]
 

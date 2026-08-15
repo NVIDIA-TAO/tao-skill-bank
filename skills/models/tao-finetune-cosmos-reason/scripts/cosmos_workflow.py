@@ -733,12 +733,9 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "train_dataset": {"annotation_path": train_manifest, "media_path": train_media[0], "media_root": train_media[0], "response_mode": "hybrid" if args.dataset_family == "task_aware_video_reasoning" else "answer"},
         "val_dataset": {"annotation_path": val_manifest, "media_path": val_media[0], "media_root": val_media[0], "response_mode": "answer"},
         "vision": {"nframes": args.frames, "video_decoder": "torchvision"},
+        "video_decoder": "torchvision",
         "system_prompt": args.system_prompt,
     })
-    if args.dataset_family == "video_conversation":
-        # The packaged video hook consumes the decoder at custom.video_decoder;
-        # vision.video_decoder is retained for preprocessing provenance.
-        spec["custom"]["video_decoder"] = "torchvision"
     if use_dataset_cache:
         spec["custom"]["vision"]["cache_dir"] = args.container_cache_dir
     if args.video_override_map:
@@ -796,8 +793,7 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
             and getattr(args, "rl_dataset_cache_mode", "direct") == "prewarm"
         ):
             common["COSMOS_CACHE"] = args.container_cache_dir
-        if args.dataset_family == "video_conversation":
-            common["FORCE_QWENVL_VIDEO_READER"] = "torchvision"
+        common["FORCE_QWENVL_VIDEO_READER"] = "torchvision"
     return common
 
 
@@ -847,7 +843,7 @@ def _source_commits(args: argparse.Namespace, backend: str) -> dict[str, str]:
 
 
 def _image_plan(args: argparse.Namespace, backend: str, commits: Mapping[str, str]) -> dict[str, Any]:
-    dockerfile = "Dockerfile.cosmos_framework" if backend == "cosmos-framework" else "Dockerfile.cosmos_rl"
+    dockerfile = "Dockerfile.cosmos_framework" if backend == "cosmos-framework" else "Dockerfile"
     integration = path_identity(args.tao_integration_repo)
     native_name = "cosmos-framework" if backend == "cosmos-framework" else "cosmos-rl-github"
     native_repo = path_identity(args.cosmos_framework_repo if backend == "cosmos-framework" else args.cosmos_rl_repo)
@@ -893,16 +889,19 @@ def _image_plan(args: argparse.Namespace, backend: str, commits: Mapping[str, st
         if not args.cosmos_rl_base_image:
             raise WorkflowError("cosmos_rl_base_image is required for the clean Cosmos-RL build")
         build_args = {
-            "COSMOS_RL_BASE_IMAGE": args.cosmos_rl_base_image,
+            "COSMOS_BACKEND": "cosmos-rl",
+            "VLLM_BASE_IMAGE": args.cosmos_rl_base_image,
+            "USE_LOCAL_COSMOS_RL_GITHUB": "true",
             "COSMOS_RL_COMMIT": commits[native_name], "COSMOS_RL_TREE": args.native_tree,
             "ACTIONS_COMMIT": commits["cosmos-rl"], "ACTIONS_TREE": args.integration_tree,
             "DAFT_COMMIT": commits["nvidia-tao-daft"], "DAFT_TREE": args.daft_tree,
             "TAO_CORE_COMMIT": commits["tao-core"], "TAO_CORE_TREE": args.tao_core_tree,
             "SOURCE_DIRTY": "0", "BUILD_TIMESTAMP": args.build_timestamp,
-            "LOCAL_COSMOS_RL_PATH": args.native_context_path,
-            "LOCAL_COSMOS_ACTIONS_PATH": args.integration_context_path,
+            "LOCAL_COSMOS_RL_PATH": args.integration_context_path,
+            "LOCAL_COSMOS_RL_GITHUB_PATH": args.native_context_path,
             "LOCAL_TAO_DAFT_PATH": args.daft_context_path,
             "LOCAL_TAO_CORE_PATH": args.tao_core_context_path,
+            "PYAV_WHEEL_SHA256": "f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f",
         }
         commands = []
     command = ["docker", "build", "--pull", "-f", str(Path(integration["expanded"]) / dockerfile), "-t", image]
@@ -1014,16 +1013,20 @@ def _preflight_contract(
         ])
     else:
         imports.extend([
-            "import cosmos_rl", "import av", "import os", "import ctypes", "ctypes.CDLL('libnvcuvid.so.1')",
+            "import cosmos_rl", "import av", "import os",
             "from nvidia_tao_core.microservices.handlers import huggingface_inference_microservice_server",
             "from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionPatchEmbed",
             "assert (getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False) or getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_channels_last_3d', False))",
-            "assert av.codec.Codec('h264_cuvid', 'r') is not None",
+            "assert av.codec.Codec('h264', 'r').name == 'h264'",
+            "assert av.codec.Codec('hevc', 'r').name == 'hevc'",
+            "from cosmos_rl.utils.system_pyav_video_reader import _assert_software_video_decoders, register_system_pyav_video_reader",
+            "assert _assert_software_video_decoders() == {'h264': 'h264', 'hevc': 'hevc'}",
             "from cosmos_rl.utils.runtime_dependency_contract import verify_deepep, verify_vllm_conv3d",
             "verify_deepep()", "verify_vllm_conv3d()",
             "import qwen_vl_utils.vision_process as vp",
             "assert os.environ.get('FORCE_QWENVL_VIDEO_READER') == 'torchvision'",
             "assert vp.get_video_reader_backend() == 'torchvision'",
+            "register_system_pyav_video_reader()",
             f"c=av.open({representative_media!r}); frame=next(c.decode(video=0)); assert frame is not None; c.close()",
         ])
     if args.dataset_family == "task_aware_video_reasoning":
@@ -1072,7 +1075,7 @@ def _preflight_contract(
             "host and scheduler tools", "credential presence without reading values", "repository clean state",
             "Pyxis/Enroot and SQSH readability", "container mounts/shared storage", "non-root Python imports",
             "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization",
-            "system PyAV/FFmpeg NVDEC and libnvcuvid", "backward-safe Qwen3-VL PatchEmbed",
+            "checksum-pinned software System PyAV with h264/hevc CPU resolution", "backward-safe Qwen3-VL PatchEmbed",
             "DeepEP Python/extension ABI", "vLLM Qwen3-VL Conv3D dispatch guard",
             "fingerprinted decoder-artifact coverage", "384 GiB free result/checkpoint space",
         ],
@@ -1170,9 +1173,13 @@ def _decoder_artifact_plan(
         else "/opt/venv/cosmos_rl/bin/python"
     )
 
+    artifact_required = (
+        backend != "cosmos-rl"
+        and args.dataset_family == "task_aware_video_reasoning"
+    )
     return {
-        "required": args.dataset_family == "task_aware_video_reasoning",
-        "enabled": all(supplied),
+        "required": artifact_required,
+        "enabled": artifact_required and all(supplied),
         "path": args.video_override_map or None,
         "manifest": args.video_override_manifest or None,
         "sha256": args.video_override_fingerprint or None,
@@ -1185,7 +1192,7 @@ def _decoder_artifact_plan(
             "macroblock_scan": True,
             "force_all_validation_media": True,
             "forced_runtime_sources": list(args.video_override_force_video),
-            "gpu_random_access_validation_required": True,
+            "gpu_random_access_validation_required": artifact_required,
         },
         "preparation_module": "cosmos_rl.utils.video_override_artifacts",
         "preparation_arguments": preparation_arguments,

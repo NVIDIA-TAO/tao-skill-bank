@@ -465,18 +465,19 @@ def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
     assert "require_complete_dataset_cache" not in rl["spec"]["train"]["train_policy"]
     assert "cache_dir" not in rl["spec"]["custom"]["vision"]
     assert rl["spec"]["train"]["optm_impl"] == "fused"
-    for plan in (framework, rl):
-        artifact = plan["decoder_artifact"]
-        assert artifact["required"] is True
-        assert artifact["enabled"] is False
-        assert artifact["policy"]["force_all_validation_media"] is True
-        assert artifact["policy"]["gpu_random_access_validation_required"] is True
-        assert artifact["preparation_arguments"].count("--force-annotation") == 3
+    assert framework["decoder_artifact"]["required"] is True
+    assert framework["decoder_artifact"]["enabled"] is False
+    assert framework["decoder_artifact"]["policy"]["gpu_random_access_validation_required"] is True
+    assert rl["decoder_artifact"]["required"] is False
+    assert rl["decoder_artifact"]["enabled"] is False
+    assert rl["decoder_artifact"]["policy"]["gpu_random_access_validation_required"] is False
+    assert rl["spec"]["custom"]["video_decoder"] == "torchvision"
+    assert rl["environment"]["FORCE_QWENVL_VIDEO_READER"] == "torchvision"
 
 
 def test_task_aware_decoder_artifact_is_validated_before_training(tmp_path):
     args = args_for(
-        tmp_path, backend="cosmos-rl",
+        tmp_path, backend="cosmos-framework",
         dataset_family="task_aware_video_reasoning",
     )
     args.video_override_map = str(tmp_path / "override-map.json")
@@ -935,7 +936,12 @@ def test_clean_build_plan_requires_new_sqsh_and_provenance(tmp_path):
     assert plan["image"]["required_commits"]["cosmos-framework"] == "f" * 40
 
     rl_plan = workflow.build_plan(args_for(tmp_path / "rl", backend="cosmos-rl"))
-    assert rl_plan["image"]["dockerfile"] == "Dockerfile.cosmos_rl"
+    assert rl_plan["image"]["dockerfile"] == "Dockerfile"
+    assert rl_plan["image"]["build_arguments"]["COSMOS_BACKEND"] == "cosmos-rl"
+    assert rl_plan["image"]["build_arguments"]["USE_LOCAL_COSMOS_RL_GITHUB"] == "true"
+    assert rl_plan["image"]["build_arguments"]["LOCAL_COSMOS_RL_PATH"] == "cosmos-rl"
+    assert rl_plan["image"]["build_arguments"]["LOCAL_COSMOS_RL_GITHUB_PATH"] == "cosmos-rl-github"
+    assert rl_plan["image"]["build_arguments"]["PYAV_WHEEL_SHA256"] == "f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f"
 
 
 def test_container_mount_translation_preserves_original_paths(tmp_path):
