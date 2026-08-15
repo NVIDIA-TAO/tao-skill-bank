@@ -457,6 +457,14 @@ def _remote_file_sha256(args: argparse.Namespace, *, path: str, host: str) -> st
     return fields[0]
 
 
+def _remote_file_exists(args: argparse.Namespace, *, path: str, host: str) -> bool:
+    result = subprocess.run(
+        _ssh_command(args, host, shlex.join(["test", "-f", "--", path])),
+        text=True, capture_output=True, check=False, timeout=120,
+    )
+    return result.returncode == 0
+
+
 def _mount_mapping(value: str) -> tuple[Path, Path]:
     parts = value.split(":")
     if len(parts) < 2 or not parts[0] or not parts[1]:
@@ -2006,8 +2014,16 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
             errors.append("partition and account are required")
         if not args.sqsh_path.endswith(".sqsh"):
             errors.append("sqsh_path must name a .sqsh artifact")
-        elif not plan["sqsh"].get("exists") or plan["sqsh"].get("kind") != "file":
-            errors.append("new SQSH has not been created from the planned image")
+        else:
+            verified_host = str(plan.get("input_frame", {}).get("verified_host") or "")
+            if plan.get("input_frame", {}).get("kind") == "slurm_remote":
+                sqsh_exists = bool(verified_host) and _remote_file_exists(
+                    args, path=args.sqsh_path, host=verified_host,
+                )
+            else:
+                sqsh_exists = Path(args.sqsh_path).expanduser().is_file()
+            if not sqsh_exists:
+                errors.append("new SQSH has not been created from the planned image")
         if not args.container_mount:
             errors.append("at least one explicit SLURM container mount is required")
     else:

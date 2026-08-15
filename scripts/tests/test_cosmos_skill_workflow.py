@@ -998,6 +998,25 @@ def test_clean_build_plan_requires_new_sqsh_and_provenance(tmp_path):
     assert rl_plan["image"]["build_arguments"]["PYAV_WHEEL_SHA256"] == "f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f"
 
 
+def test_slurm_preflight_refreshes_sqsh_existence_without_replanning(monkeypatch, tmp_path):
+    args = args_for(tmp_path, backend="cosmos-rl")
+    plan = workflow.build_plan(args)
+    args.platform = "slurm"
+    args.partition = "polar3,polar4"
+    args.account = "account"
+    args.slurm_user = "user"
+    args.slurm_host = ["login"]
+    args.container_mount = [f"{tmp_path}:{tmp_path}"]
+    plan["input_frame"] = {
+        "kind": "slurm_remote",
+        "verified_host": "login",
+    }
+    plan["sqsh"] = {"exists": False, "kind": "missing"}
+    monkeypatch.setattr(workflow, "_remote_file_exists", lambda *_args, **_kwargs: True)
+    result = workflow.local_preflight(args, plan)
+    assert not any("new SQSH" in error for error in result["errors"])
+
+
 def test_container_mount_translation_preserves_original_paths(tmp_path):
     args = args_for(tmp_path)
     args.platform = "slurm"
