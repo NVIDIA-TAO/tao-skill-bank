@@ -24,13 +24,20 @@ from typing import Any, Iterable, Mapping, Sequence
 
 URI_RE = re.compile(r"^(?:hf_model://|https?://|s3://|ngc://|hf://)")
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-ACCURACY_TASKS = {"bcq", "mcq", "binary_choice", "multiple_choice"}
+ACCURACY_TASKS = {"bcq", "binary", "mcq", "binary_choice", "multiple_choice"}
 DATASET_FAMILIES = {"auto", "video_conversation", "task_aware_video_reasoning"}
 MEDIA_FIELDS = ("video", "video_id", "image", "image_id", "media", "media_path")
 CLASSIFICATION_LABEL_SETS = (
     frozenset({"a", "b", "c", "d"}),
     frozenset({"yes", "no"}),
 )
+EVALUATOR_TASK_ALIASES = {
+    "bcq": "binary",
+    "binary": "binary",
+    "binary_choice": "binary",
+    "mcq": "mcq",
+    "multiple_choice": "mcq",
+}
 
 
 class WorkflowError(ValueError):
@@ -291,7 +298,7 @@ def inspect_dataset(
     frame_rates: list[float] = []
     durations: list[float] = []
     task_metrics: dict[str, str] = {}
-    conversation_targets: dict[str, list[str]] = {}
+    answer_targets: dict[str, list[str]] = {}
     for annotation_index, annotation_id in enumerate(annotation_ids):
         # Keep dataset runtime paths in the caller's lexical namespace. A
         # shared-filesystem alias where the submitted and canonical roots differ
@@ -364,10 +371,17 @@ def inspect_dataset(
             record_keys.append(_record_key(record))
             task_key = task or "default"
             task_counts[task_key] = task_counts.get(task_key, 0) + 1
-            if active_family == "video_conversation":
-                target = _conversation_target(record)
-                if target is not None:
-                    conversation_targets.setdefault(task_key, []).append(target)
+            target = _conversation_target(record)
+            if target is None:
+                raw_target = record.get("answer", record.get("references"))
+                if isinstance(raw_target, str) and raw_target.strip():
+                    target = raw_target.strip()
+                elif isinstance(raw_target, list):
+                    values = [str(value).strip() for value in raw_target if str(value).strip()]
+                    if len(values) == 1:
+                        target = values[0]
+            if target is not None:
+                answer_targets.setdefault(task_key, []).append(target)
             for relative in _record_media(record):
                 candidate = Path(relative)
                 media_path = candidate if candidate.is_absolute() else root / candidate
@@ -395,7 +409,7 @@ def inspect_dataset(
     media_manifest = sorted(media_entries.values(), key=lambda item: item["path"])
     media_sizes = [entry["size"] for entry in media_manifest]
     inferred_metrics: dict[str, str] = {}
-    for task, values in conversation_targets.items():
+    for task, values in answer_targets.items():
         normalized = {value.casefold() for value in values}
         if len(values) == task_counts[task] and any(
             normalized <= labels for labels in CLASSIFICATION_LABEL_SETS
@@ -408,6 +422,62 @@ def inspect_dataset(
         task for task in task_counts
         if task in ACCURACY_TASKS or task_metrics.get(task) in {"accuracy", "exact_match_accuracy"}
     )
+    task_semantics: dict[str, dict[str, Any]] = {}
+    for task in sorted(task_counts):
+        labels = {
+            value.casefold().strip()
+            for value in answer_targets.get(task, [])
+            if value.strip()
+        }
+        task_type = EVALUATOR_TASK_ALIASES.get(task)
+        source = "task_metadata" if task_type else None
+        if task_type is None:
+            if labels and labels <= {"yes", "no"}:
+                task_type, source = "binary", "complete_label_vocabulary"
+            elif labels and labels <= {"a", "b"}:
+                task_type, source = None, "ambiguous_a_b_label_vocabulary"
+            elif labels and labels <= {"a", "b", "c", "d"}:
+                task_type, source = "mcq", "complete_label_vocabulary"
+            elif task in accuracy_tasks:
+                task_type, source = None, "accuracy_declared_but_answer_semantics_unknown"
+            else:
+                task_type, source = "text", "non_accuracy_task"
+        task_semantics[task] = {
+            "task_type": task_type,
+            "source": source,
+            "target_count": len(answer_targets.get(task, [])),
+            "complete_target_coverage": len(answer_targets.get(task, [])) == task_counts[task],
+            "classification_vocabulary": (
+                sorted(labels)
+                if labels <= {"yes", "no", "a", "b", "c", "d"}
+                else []
+            ),
+            "declared_metric": task_metrics.get(task),
+        }
+    known_task_types = {
+        value["task_type"] for value in task_semantics.values() if value["task_type"]
+    }
+    unresolved_accuracy_tasks = sorted(
+        task for task, value in task_semantics.items()
+        if task in accuracy_tasks and value["task_type"] is None
+    )
+    inferred_task_type = next(iter(known_task_types)) if len(known_task_types) == 1 else ""
+    metric_names = sorted({
+        metric for metric in task_metrics.values()
+        if metric not in {"accuracy", "exact_match_accuracy"}
+    })
+    evaluation_profile = {
+        "inferred_task_type": inferred_task_type,
+        "answer_type": "letter" if known_task_types == {"mcq"} else "freeform",
+        "task_semantics": task_semantics,
+        "metric_names": metric_names,
+        "normalization": "tao-cosmos-shared-v2",
+        "requires_user_input": [
+            *(["task.type"] if unresolved_accuracy_tasks else []),
+            *(["metrics.names"] if set(task_counts) - set(accuracy_tasks) and not metric_names else []),
+        ],
+        "unresolved_accuracy_tasks": unresolved_accuracy_tasks,
+    }
     profile = {
         "family": resolved_family,
         "record_count": len(record_keys),
@@ -468,6 +538,7 @@ def inspect_dataset(
             "inferred_metrics": inferred_metrics,
             "aggregate": "example_weighted_over_accuracy_defined_tasks",
         },
+        "evaluation_profile": evaluation_profile,
     }
 
 

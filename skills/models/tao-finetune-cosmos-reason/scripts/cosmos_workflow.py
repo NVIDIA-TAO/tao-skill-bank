@@ -1350,6 +1350,38 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "cache_prewarm": {"mode": cache_mode, "required": cache_prewarm_required, "keys": cache_keys if cache_prewarm_required else {}, "path": args.cache_dir if cache_prewarm_required else "", "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": cache_prewarm_required, "resumable": cache_prewarm_required, "selection_basis": {"media_reuse": train_data["profile"]["media_reuse_class"], "record_count": train_data["record_count"], "resolution_class": train_data["profile"]["resolution"]["class"]}},
         "spec": spec, "environment": environment, "command": command,
         "config_container_path": args.container_spec_path,
+        "evaluation_contract": {
+            "schema_version": 1,
+            "source": "sealed_training_plan",
+            "validation_dataset_fingerprint": val_data["dataset_fingerprint"],
+            "validation_annotations": [
+                item["original"] for item in val_data["annotations"]
+            ],
+            "validation_media_roots": [
+                item["original"] for item in val_data["media_roots"]
+            ],
+            "system_prompt": contract["system_prompt"],
+            "frames": model_profile["frames"],
+            "max_video_pixels": model_profile["max_video_pixels"],
+            "precision": contract["precision"],
+            "seed": contract["seed"],
+            "batch_size": args.validation_batch_size,
+            "task_profile": val_data["evaluation_profile"],
+            "generation": {
+                "max_tokens": None,
+                "temperature": 0.0,
+                "repetition_penalty": 1.0,
+                "presence_penalty": 0.0,
+                "frequency_penalty": 0.0,
+            },
+            "checkpoint_selection": None,
+            "required_evaluation_intake": [
+                "results_dir",
+                "checkpoint_selection",
+                "generation.max_tokens",
+                *val_data["evaluation_profile"]["requires_user_input"],
+            ],
+        },
         "smoke_gate": {"required": not args.skip_smoke and args.run_mode == "full", "train_samples": args.smoke_train_samples, "validation_samples": args.smoke_validation_samples, "criteria": ["child_exit_code=0", "terminal_status=SUCCESS", "finite_train_avg_loss", "finite_val_avg_loss", "checkpoint_event", "validation_accuracy_present"]},
         "metric_contract": {"train": {"key": "train/avg_loss", "weight": "valid_labels", "requires": ["train/loss_numerator", "train/valid_label_count"]}, "validation": {"key": "val/avg_loss", "weight": "valid_labels", "requires": ["val/loss_numerator", "val/valid_label_count"]}, "accuracy": {"route": "shared repository evaluator", "aggregation": val_data["metric_coverage"]["aggregate"], "coverage": val_data["metric_coverage"]}},
     }

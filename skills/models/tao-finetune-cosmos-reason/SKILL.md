@@ -9,7 +9,7 @@ license: Apache-2.0
 compatibility: Docker with NVIDIA Container Toolkit, or SLURM with Pyxis/Enroot and a user-supplied shared-storage configuration.
 metadata:
   author: NVIDIA Corporation
-  version: "0.3.2"
+  version: "0.3.3"
 allowed-tools: Read Bash
 tags: [cosmos, vlm, sft, peft, video, reasoning, slurm]
 ---
@@ -85,6 +85,42 @@ Nano training without changing model ownership. Comparative runs reject
 Framework-trained checkpoints use the native exact-key exporter, then the
 repository-backed TAO evaluation adapter. That does not make Framework a
 Cosmos-RL version.
+
+## Evaluation intake and inheritance
+
+For every `evaluate` action, run `scripts/evaluation_workflow.py` before
+materializing action TOML. Never submit
+`references/spec_template_evaluate.yaml` directly; it is a dataset-neutral
+shape template with intentionally unresolved semantic fields.
+
+When evaluating a selected fine-tuning job, give the helper that job's sealed
+training plan and structured terminal status. It automatically inherits the
+exact validation annotation/media paths and fingerprint, system prompt
+(including recorded empty), frame count, pixel budget, precision, seed,
+validation batch size, task/answer/metric profile, backend, training mode,
+prepared base model, and GPU count. It records field-level provenance and
+blocks a checksum-invalid plan. Do not ask the user to repeat an inherited
+value and do not replace it with a template value.
+
+The helper writes all genuinely missing fields to `required_user_inputs` in
+one pass. Ask once for only those entries: normally the new results directory,
+an exact checkpoint/epoch when checkpoint events are ambiguous, generation
+maximum tokens when the training plan did not record an evaluation contract,
+or task/metric semantics that annotation inspection could not prove. If the
+user selects a different evaluation corpus, also require its exact annotation
+and media paths and re-run structural/fingerprint inspection; do not carry the
+old dataset's prompt or scorer semantics into it.
+
+Entries in `automated_actions` are not questions for the user. In particular,
+the skill owns Framework DCP export/verification and deterministic recovery of
+a Cosmos-RL PEFT base model from training provenance. It also owns
+deterministic full-coverage materialization when the sealed validation split
+contains multiple manifests or media roots; never ask the user to choose a
+subset. Rerun the helper with the
+Framework pre-action's verified `action_model_path`; only a `ready=true` plan
+may write or launch the evaluation TOML. Preserve the plan/config SHA256 values
+in the evaluation job record. See `references/cosmos-reason-evaluate.md` for
+the complete action flow.
 
 ## Framework checkpoint pre-action
 
@@ -186,9 +222,12 @@ Execute these stages in order and persist their outputs.
     `afterok` only after the smoke gate, monitor scheduler and structured TAO
     state to a terminal result, and preserve the child exit code independently
     of scheduler state.
-12. Export/evaluate the selected checkpoint with identical prompt,
-    preprocessing, generation, normalization, and task scoring. Extract final
-    metrics with `scripts/extract_cosmos_metrics.py`.
+12. Resolve evaluation with `scripts/evaluation_workflow.py`. Inherit exact
+    fine-tuning artifacts, collect only its remaining user inputs, run its
+    backend-owned automated checkpoint pre-actions, and require `ready=true`.
+    Evaluate the selected checkpoint with identical prompt, preprocessing,
+    generation, normalization, and task scoring. Extract final metrics with
+    `scripts/extract_cosmos_metrics.py`.
 
 ## Dataset contracts
 

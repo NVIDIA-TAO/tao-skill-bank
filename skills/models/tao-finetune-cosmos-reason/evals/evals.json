@@ -78,5 +78,19 @@
       "Preserves the native training exit code",
       "Uses extract_cosmos_metrics.py and ignores validation heartbeat loss for the final validation metric"
     ]
+  },
+  {
+    "id": "tao-finetune-cosmos-reason-evaluation-inheritance",
+    "question": "Plan evaluation of a checkpoint from a completed Cosmos fine-tuning job. The selected job has a sealed training plan and structured status, but the user has not repeated its validation paths, prompt, frame count, model path, LoRA mode, or scoring semantics. Explain which inputs to infer, which to ask for, and how Framework DCP differs. Do not execute anything.",
+    "expected_skill": "tao-finetune-cosmos-reason",
+    "expected_script": "scripts/evaluation_workflow.py",
+    "ground_truth": "Verify the sealed training plan and terminal structured status, then use evaluation_workflow.py to inherit the exact validation fingerprint/paths, prompt, preprocessing, model/LoRA/base-model provenance, task metrics, and resources. Ask only for fields reported in required_user_inputs, such as a new results directory, ambiguous checkpoint selection, or generation length that was never recorded. Treat Framework DCP export as an automated framework_checkpoint_action.py pre-action, not a user question, and never submit the raw dataset-neutral template.",
+    "expected_behavior": [
+      "Runs evaluation_workflow.py over the selected job's sealed training plan and structured status",
+      "Inherits fine-tuning validation, prompt, preprocessing, model, LoRA, and task semantics instead of asking the user to repeat them",
+      "Asks only for required_user_inputs and does not use a template or historical path as an experiment profile",
+      "Runs Framework DCP export and verification automatically before shared evaluation",
+      "Preserves field provenance and config SHA256"
+    ]
   }
 ]

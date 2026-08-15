@@ -60,34 +60,9 @@ COMMON_ACTION_KEYS = {
     "train",
 }
 
-COSMOS_METROPOLIS_SYSTEM_PROMPT_OPTIONS = [
-    (
-        "You are a helpful assistant that can answer questions about a "
-        "street-view CCTV footage. The vehicles that need attention are "
-        "marked with bounding boxes and IDs."
-    ),
-    (
-        "You are a careful video event verification assistant for traffic "
-        "and security CCTV. Answer only from visible evidence, track object "
-        "IDs and bounding boxes, and state yes/no when the question asks "
-        "whether an event occurred."
-    ),
-    (
-        "You are a Metropolis VLM assistant for surveillance video QA. Focus "
-        "on temporal order, object interactions, near misses, direction of "
-        "travel, and safety-relevant evidence. Prefer concise factual answers."
-    ),
-    (
-        "You are an event-verification assistant. Inspect the full clip before "
-        "answering, compare the question with observed actions, ignore "
-        "unsupported assumptions, and return the most specific answer allowed "
-        "by the evidence."
-    ),
-]
-
 COSMOS_EVALUATE_AUTOML_DEFAULT_PARAMETERS = [
     "dataset.system_prompt",
-    "vision.nframes",
+    "vision.num_frames",
     "generation.max_tokens",
     "generation.temperature",
     "generation.repetition_penalty",
@@ -235,8 +210,8 @@ def unwrap_cosmos_non_train_action_schema(schema: dict[str, Any], action: str) -
     return schema
 
 
-def apply_cosmos_evaluate_autoprompt_metadata(schema: dict[str, Any]) -> dict[str, Any]:
-    """Add bounded seeds and reflective Auto-Prompter metadata for Cosmos evaluate."""
+def apply_cosmos_evaluate_resolution_metadata(schema: dict[str, Any]) -> dict[str, Any]:
+    """Make the generated Cosmos evaluate template dataset-neutral and gated."""
     schema["automl_default_parameters"] = list(COSMOS_EVALUATE_AUTOML_DEFAULT_PARAMETERS)
 
     properties = schema.setdefault("properties", {})
@@ -248,49 +223,101 @@ def apply_cosmos_evaluate_autoprompt_metadata(schema: dict[str, Any]) -> dict[st
         dataset["system_prompt"].update(
             {
                 "automl_enabled": True,
+                "default": "",
                 "description": (
-                    "System prompt for zero-shot Metropolis/VSS evaluation. The enum "
-                    "provides seed candidates for bounded algorithms; autoresearch can "
-                    "evolve free-form prompts when dataset.system_prompt is listed in "
-                    "evolvable_text_parameters."
+                    "Inherit the exact fine-tuning prompt when evaluating its validation "
+                    "split; otherwise require explicit current-run intake."
                 ),
-                "enum": list(COSMOS_METROPOLIS_SYSTEM_PROMPT_OPTIONS),
-                "option_weights": [0.4, 0.25, 0.2, 0.15],
-                "type": "categorical",
+                "type": "string",
             }
         )
+        dataset["system_prompt"].pop("enum", None)
+        dataset["system_prompt"].pop("option_weights", None)
     if "nframes" in vision:
-        vision["nframes"].update(
-            {
-                "automl_enabled": True,
-                "enum": [4, 8],
-                "type": "ordered_int",
-            }
-        )
-    if "max_tokens" in generation:
-        generation["max_tokens"].update(
-            {
-                "automl_enabled": True,
-                "enum": [256, 512, 1024, 2048],
-                "type": "ordered_int",
-            }
-        )
-
-    ranges = {
-        "temperature": (0.0, 0.4),
-        "repetition_penalty": (0.8, 1.2),
-        "presence_penalty": (-0.5, 0.5),
-        "frequency_penalty": (-0.5, 0.5),
+        vision["num_frames"] = vision.pop("nframes")
+    if "num_frames" in vision:
+        vision["num_frames"].update({"automl_enabled": True, "default": 0, "type": "int"})
+        vision["num_frames"].pop("enum", None)
+    tunable_generation = {
+        "max_tokens", "temperature", "repetition_penalty",
+        "presence_penalty", "frequency_penalty",
     }
-    for parameter, (minimum, maximum) in ranges.items():
-        if parameter in generation:
-            generation[parameter].update(
-                {
-                    "automl_enabled": True,
-                    "minimum": minimum,
-                    "maximum": maximum,
-                }
-            )
+    for name, parameter in generation.items():
+        if isinstance(parameter, dict):
+            parameter["automl_enabled"] = name in tunable_generation
+            parameter.pop("enum", None)
+
+    defaults = schema.setdefault("default", {})
+    defaults.update(
+        {
+            "results_dir": "",
+            "task": {"type": ""},
+            "dataset": {"annotation_path": "", "media_dir": "", "system_prompt": ""},
+            "model": {
+                "model_name": "", "dtype": "", "enable_lora": False,
+                "base_model_path": "", "config_file": "", "export_dir": "",
+                "vit_checkpoint_path": "",
+            },
+            "evaluation": {
+                "answer_type": "", "num_processes": 1, "skip_saved": False,
+                "seed": 0, "limit": -1, "shard_id": 0, "batch_size": 0,
+                "barrier_timeout_seconds": 14400,
+                "soft_accuracy": {"enabled": True, "f1_threshold": 0.8},
+            },
+            "vision": {
+                "num_frames": 0, "max_pixels": 0,
+                "video_decoder": "pynvvideocodec", "video_cache_size": 0,
+            },
+            "generation": {
+                "max_retries": 10, "max_tokens": 0, "temperature": 0.0,
+                "repetition_penalty": 1.0, "presence_penalty": 0.0,
+                "frequency_penalty": 0.0,
+            },
+            "metrics": {"names": []},
+            "results": {
+                "save_individual_results": True, "save_confusion_matrix": True,
+                "save_metrics_summary": True,
+            },
+            "num_gpus": 0,
+        }
+    )
+    for section, value in defaults.items():
+        if isinstance(value, dict) and isinstance(properties.get(section), dict):
+            properties[section]["default"] = value
+            child_properties = properties[section].get("properties", {})
+            if isinstance(child_properties, dict):
+                for name, child_default in value.items():
+                    if isinstance(child_properties.get(name), dict):
+                        child_properties[name]["default"] = child_default
+    model_properties = properties.get("model", {}).get("properties", {})
+    if isinstance(model_properties, dict):
+        for obsolete in ("save_folder", "tokenizer_model_name", "max_length", "tp_size"):
+            model_properties.pop(obsolete, None)
+        for name in ("config_file", "export_dir", "vit_checkpoint_path"):
+            model_properties.setdefault(name, {"default": "", "type": "string"})
+    metric_properties = properties.get("metrics", {}).get("properties", {})
+    if isinstance(metric_properties, dict) and isinstance(metric_properties.get("names"), dict):
+        metric_properties["names"]["default"] = []
+    if isinstance(properties.get("num_gpus"), dict):
+        properties["num_gpus"]["default"] = 0
+    if isinstance(properties.get("results_dir"), dict):
+        properties["results_dir"]["default"] = ""
+    schema["x_tao_resolution"] = {
+        "materializer": "scripts/evaluation_workflow.py",
+        "template_launchable": False,
+        "infer_from_training_plan": [
+            "dataset.annotation_path", "dataset.media_dir", "dataset.system_prompt",
+            "evaluation.answer_type", "evaluation.batch_size", "evaluation.seed",
+            "metrics.names", "model.base_model_path", "model.dtype",
+            "model.enable_lora", "num_gpus", "task.type", "vision.max_pixels",
+            "vision.num_frames",
+        ],
+        "required_current_run_intake_when_not_recorded": [
+            "checkpoint_selection", "dataset.annotation_path", "dataset.media_dir",
+            "dataset.system_prompt", "evaluation.answer_type", "generation.max_tokens",
+            "metrics.names", "results_dir", "task.type",
+        ],
+    }
 
     return schema
 
@@ -342,7 +369,7 @@ def generate_schema_for_action(
             if core_module == "cosmos-rl" and schema_action in {"evaluate", "inference"}:
                 schema = unwrap_cosmos_non_train_action_schema(schema, schema_action)
             if core_module == "cosmos-rl" and schema_action == "evaluate":
-                schema = apply_cosmos_evaluate_autoprompt_metadata(schema)
+                schema = apply_cosmos_evaluate_resolution_metadata(schema)
             schema["x_tao_schema"] = {
                 "schema_version": 1,
                 "model": model_name,

@@ -1,105 +1,164 @@
-# Cosmos Evaluate and Datasets
+# Cosmos evaluation
 
-Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or platform/model skills, the current/compact source wins.
+Load this only when `SKILL.md` points here. The repository evaluator is shared
+by Cosmos-RL checkpoints and Framework checkpoints after the mandatory native
+Framework export.
 
-## Evaluate
+## Resolution contract
 
-The `actions.evaluate` block in `references/skill_info.yaml` declares the action's inputs (annotation file + media folder + model) and outputs (results directory).
+Never submit `references/spec_template_evaluate.yaml` directly. It is a
+dataset-neutral shape template whose zero and empty semantic values are
+deliberately unresolved. Run `scripts/evaluation_workflow.py` first. The
+helper verifies a sealed fine-tuning plan, records field-level provenance,
+returns all missing user inputs in one bounded list, and emits runtime TOML
+only when the request is complete.
 
-### Framework DCP pre-action
+Resolve fields in this order:
 
-When `backend=cosmos-framework`, never pass a native Framework DCP directly to
-the generic action or ask the user to export it. First run the checked-in
-`scripts/framework_checkpoint_action.py plan` helper with the selected
-checkpoint, saved Framework config when it cannot be inferred, base-model
-identity/revision, and optional export directory. Then run `prepare` in the
-clean repository-derived Framework TAO action image. It invokes the
-Framework-owned exact-key exporter only when its manifest/config/DCP/base-model
-checks do not prove that a complete export already exists.
+1. Use an explicit current evaluation override when the user is deliberately
+   changing the validation corpus or evaluation semantics.
+2. Otherwise inherit exact values from the selected fine-tuning plan.
+3. Run deterministic checkpoint pre-actions owned by the backend.
+4. Ask the user only for fields that remain absent or ambiguous.
 
-Capture the helper JSON in the job metadata, run `verify` from the target
-compute frame, put its `action_model_path` in `model.model_name`, and launch
-`cosmos-framework-evaluate --config <config>`. The same pre-action contract
-applies to `cosmos-framework-inference` and
-`cosmos-framework-inference-microservice`, using `model_path`. Export child
-failure or provenance mismatch blocks the downstream action. Framework PEFT
-checkpoints are reconstructed from the saved config and merged by the native
-exporter; do not set `model.enable_lora=true` after that merge.
+Do not use a template value, nearby directory, historical run, checkpoint
+mtime, or filename convention as a fifth source.
 
-### Config format
+### Inherit from fine-tuning
 
-The evaluator reads a **flat TOML** config with top-level keys: `dataset`,
-`model`, `task`, `evaluation`, `vision`, `generation`, `metrics`, `results`,
-`num_gpus`, and `results_dir`. The defaults template
-(`references/spec_template_evaluate.yaml`) matches this flat structure. Use
-dotted overrides such as `dataset.annotation_path`, `model.model_name`, and
-`evaluation.batch_size`.
+For the original validation split, inherit these without asking again:
 
-### Task type
+- annotation manifest, media root, and dataset fingerprint;
+- system prompt, including an explicitly empty prompt;
+- frame count, pixel budget, precision, seed, and validation batch size;
+- task/answer/metric semantics when validation inspection proved them;
+- backend, training mode, base-model identity/fingerprint, and GPU count;
+- dense versus PEFT behavior and the prepared base model required to merge a
+  Cosmos-RL adapter.
 
-- Empty string (`""`) — General Evaluator. Auto-detects binary classification (yes/no) from ground truth and computes TP/FP/TN/FN/accuracy/precision/recall/F1.
-- `"its_directionality"` — ITS-specific evaluator for left/right/straight classification. Do NOT use for collision detection.
+The fine-tuning planner stores these in `evaluation_contract`. Dataset
+inspection stores `evaluation_profile`, including task semantics, declared
+metrics, answer type, normalization version, and any fields that could not be
+inferred safely.
 
-### Cosmos-RL LoRA evaluation
+### Ask only when unresolved
 
-To evaluate a fine-tuned LoRA model, pass the checkpoint path via spec_overrides:
+Prompt once for the remaining fields reported in
+`required_user_inputs`. Common cases are:
 
-```python
-spec_overrides={
-    'model.model_name': 's3://bucket/results/{train_job_id}/safetensors/epoch_2',
-    'model.enable_lora': True,
-    'model.base_model_path': '<BASE_MODEL_PATH_OR_URI>',
-    'evaluation.batch_size': 10,
-}
+- the new user-owned evaluation results directory;
+- exact checkpoint or checkpoint epoch when more than one checkpoint event is
+  present and the training plan did not record a selection;
+- generation maximum tokens, because it is not a fine-tuning parameter;
+- task type or metric names when annotation targets/metadata were ambiguous;
+- exact annotation and media paths when evaluating a different corpus.
+
+An empty system prompt is valid. The flow must distinguish “recorded empty” or
+“user supplied empty” from “missing”. For a different evaluation corpus,
+fingerprint and inspect that exact manifest/media pair on the selected compute
+frame before launch; do not inherit the old dataset's prompt or scoring
+semantics automatically.
+
+### Resolver usage
+
+First run with the selected training artifacts and whatever evaluation inputs
+are already known:
+
+```bash
+python scripts/evaluation_workflow.py \
+  --training-plan <sealed-training-plan.json> \
+  --training-status <structured-training-status.json-or-jsonl> \
+  --results-dir <new-evaluation-results-dir> \
+  --plan-output <evaluation-plan.json> \
+  --config-output <evaluation.toml>
 ```
 
-The LoRA adapter is downloaded from S3/Lustre before the evaluator runs; the evaluator merges it with the base model and runs inference on the merged weights.
+Exit code `3` means the JSON plan was written but contains unresolved intake or
+an automated pre-action. Ask only for entries in `required_user_inputs`; do
+not ask for entries in `automated_actions`. Multiple recorded validation
+manifests/media roots are an automated deterministic materialization step, not
+a reason to ask the user to select a subset; preserve the sealed fingerprint
+and full record coverage. Rerun with user inputs such as
+`--checkpoint-epoch`, `--checkpoint`, `--generation-max-tokens`,
+`--task-type`, `--answer-type`, `--metric`, `--validation-annotation`, or
+`--validation-media-root`.
 
-### Selective download
+The plan and TOML contain SHA256 values. Persist both in the evaluation job
+record. Validate all inherited fingerprints and paths from the target compute
+frame before submit.
 
-When the input declaration carries a `selective` block (`{annotation, format, keys}`), only the files referenced in `dataset.annotation_path` (under the `video` key) are pulled — not the full media folder. For a 112-sample collision dataset, this downloads ~500MB instead of the full 4.8GB folder.
+## Exact checkpoint selection
 
-### Results
+Use a checkpoint recorded by the selected training job. A single structured
+checkpoint event is unambiguous. With multiple events, require an exact path,
+an exact epoch, or a checkpoint selection already sealed in the training plan.
+Never choose “latest” by directory order or mtime. Require terminal successful
+training status before consuming a checkpoint.
 
-- `results.json` — per-sample predictions with `video_id`, `response`, `question`, `gt`
-- Binary metrics: accuracy, balanced accuracy, precision, recall, F1
-- Text metrics: `BLEU`, `ROUGE*`, and the emitted `BERTScore_F1` scalar
-- When Lustre is available, results write to Lustre for cross-job persistence (e.g., gap analysis reads directly), then upload to S3.
+For Cosmos-RL dense training, the selected checkpoint becomes
+`model.model_name`. For Cosmos-RL PEFT, the selected adapter becomes
+`model.model_name`, `model.enable_lora=true`, and
+`model.base_model_path` is inherited from the fine-tuning model-preparation
+record. Do not ask the user to repeat that base-model path.
 
-These are evaluation-task metrics. `val/avg_loss`, `val/reward_avg`, and
-`val/loss` are training-only metrics and are not emitted by `evaluate`; do not
-configure an evaluation-backed AutoML baseline or final evaluation to extract
-one of those training metrics.
+## Framework DCP pre-action
 
-With the TAO 7.0.1 Cosmos-RL image, evaluation requires a `video_fps` field on
-every annotation record even when `vision.nframes` is set. Also verify that the
-record's `video` value resolves beneath `dataset.media_dir`. Treat either
-missing condition as preflight failure rather than inventing metadata or
-rewriting source annotations.
+When `backend=cosmos-framework`, never pass native DCP directly to the shared
+evaluator and never ask the user to export it. `evaluation_workflow.py` emits a
+`framework_checkpoint_pre_action` entry. Run
+`scripts/framework_checkpoint_action.py plan`, then `prepare` in the clean
+repository-derived Framework action image. The helper validates the saved
+Framework config, DCP metadata, base-model identity/revision, exact exported
+keys, indexed weights, and export manifest. Run `verify` from the target
+compute frame and pass its `action_model_path` back to
+`evaluation_workflow.py --action-model-path`.
 
-## Datasets
+Framework PEFT is reconstructed and merged by the native exporter, so the
+shared evaluation config keeps `model.enable_lora=false`. Export failure or
+provenance mismatch blocks evaluation; it never selects another checkpoint or
+export.
 
-The `data_sources` config in config.json maps dataset URIs to spec paths. It
-appends `annotations.json` to the dataset directory URI by convention. If your
-annotations and media do not share a root, or if the annotation file has a
-different name, use direct spec overrides instead of forcing a root:
+## Task and metric semantics
 
-```python
-spec_overrides={
-    'custom.train_dataset': {
-        'annotation_path': 's3://bucket/train/my_annotations.json',
-        'media_path': 's3://bucket/media/videos_train.tar.gz',
-    },
-    'custom.val_dataset': {
-        'annotation_path': 's3://bucket/eval/my_annotations.json',
-        'media_path': 's3://bucket/eval/videos/',
-    },
-}
-```
+The generic evaluator supports structurally detected conversation and
+task-aware records. Validation inspection classifies complete `yes`/`no`
+targets as binary and complete `A`-through-`D` targets as multiple choice.
+Explicit task metadata such as `bcq`, `binary`, `binary_choice`, `mcq`, and
+`multiple_choice` is canonicalized to the repository evaluator semantics.
+Ambiguous `A`/`B` targets require the user to choose binary or multiple choice.
 
-**Eval dataset** is optional for plain training only when `train.train_policy.dataset.test_size` is used to auto-split training data. For AutoML or any workflow optimizing a validation metric such as `val/avg_loss`, require either an explicit `custom.val_dataset` or a deliberate auto-split setting before launch preflight passes. If a validation dataset is provided, validation metrics are computed at the frequency set by `validation.freq_in_epoch`.
+Accuracy-defined tasks use the shared task-aware scorer and `metrics.names=[]`.
+Generative tasks use only metrics declared by the annotation metadata or
+explicitly selected by the user. Do not turn text metrics on for a
+classification task, and do not relabel generation NLL or validation loss as
+answer accuracy.
 
-Do not infer dataset paths from prior validation runs. Ask the user for the
-train and validation roots or direct spec paths unless a selected workflow
-profile explicitly supplies them. Missing optional annotation fields are not a
-launch blocker for current Cosmos-RL SFT training.
+Preserve the resolved prompt, frame sampling, pixel budget, generation,
+parsing, normalization, coverage, and evaluator version in metadata. Aggregate
+accuracy as correct/covered examples over tasks that define accuracy; report
+excluded tasks and reasons.
+
+## Decoder and execution
+
+The packaged shared evaluator currently requires its strict
+`pynvvideocodec` path. The template records that repository-owned runtime
+contract, not a dataset choice. If fine-tuning recorded a validated video
+override artifact, inherit its exact path/fingerprint. Otherwise validate GPU
+random-access decoding for every evaluation media encoding on the allocated
+GPU before launch. Never invent FPS metadata, rewrite annotations, or silently
+fall back to CPU decoding.
+
+Use `torchrun` data parallelism according to the resolved GPU count. Keep one
+model replica per rank unless the selected backend contract explicitly
+requires another topology. Full evaluation uses `limit=-1`, exact record
+coverage, rank-aware result files, and global deduplication before scoring.
+
+## Completion and results
+
+Treat scheduler completion as provisional. Require child exit zero, terminal
+TAO `SUCCESS`, a complete prediction set with no duplicate IDs, and evaluator
+metrics whose numerator/denominator recompute to the reported accuracy.
+Persist the selected checkpoint, Framework export when applicable, resolved
+config and SHA256, evaluation plan and provenance, stdout/stderr, status,
+results, per-task coverage, normalization/evaluator version, and duration in
+the job record.

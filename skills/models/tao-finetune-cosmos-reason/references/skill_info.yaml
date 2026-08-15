@@ -184,7 +184,7 @@ actions:
     mode: config
     automl_default_parameters:
     - dataset.system_prompt
-    - vision.nframes
+    - vision.num_frames
     - generation.max_tokens
     - generation.temperature
     - generation.repetition_penalty

@@ -1,0 +1,599 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Resolve a dataset-neutral Cosmos evaluation from sealed training artifacts.
+
+This helper never searches historical runs and never treats the packaged
+template as an experiment profile.  It records the source of every semantic
+field, returns a bounded list of genuinely missing user inputs, and writes a
+runtime TOML only after the evaluation request is complete.
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+from cosmos_common import WorkflowError, sha256_file, stable_hash
+from cosmos_workflow import dump_toml
+
+
+SUCCESS = {"SUCCESS", "COMPLETE", "COMPLETED"}
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise WorkflowError(f"expected a JSON object: {path}")
+    return value
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path = path.expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _verify_training_plan(path: Path) -> dict[str, Any]:
+    plan = _load_json(path)
+    artifact = plan.get("plan_artifact")
+    if isinstance(artifact, Mapping):
+        expected = str(artifact.get("sha256") or "")
+        payload = copy.deepcopy(plan)
+        payload.pop("plan_artifact", None)
+        actual = stable_hash(payload)
+        if not expected or expected != actual:
+            raise WorkflowError(
+                f"sealed training plan checksum mismatch: expected {expected or '<missing>'}, found {actual}"
+            )
+    if plan.get("action") != "train" or plan.get("backend") not in {"cosmos-rl", "cosmos-framework"}:
+        raise WorkflowError("training_plan must be a Cosmos train plan with an explicit backend")
+    required = ("training", "datasets", "model", "compute")
+    missing = [key for key in required if not isinstance(plan.get(key), Mapping)]
+    if missing:
+        raise WorkflowError(f"training plan is missing required sections: {missing}")
+    return plan
+
+
+def _status_records(path: Path) -> list[dict[str, Any]]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        value = None
+    if isinstance(value, dict):
+        records = value.get("records", [value])
+    elif isinstance(value, list):
+        records = value
+    else:
+        records = []
+        for number, line in enumerate(text.splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise WorkflowError(f"invalid structured status JSON at line {number}: {exc}") from exc
+            if isinstance(item, dict):
+                records.append(item)
+    if not records or not all(isinstance(item, dict) for item in records):
+        raise WorkflowError("structured training status contains no object records")
+    terminal = str(records[-1].get("status", "")).upper()
+    if terminal not in SUCCESS:
+        raise WorkflowError(
+            f"training status is not terminal-success ({terminal or 'missing'}); checkpoint evaluation is blocked"
+        )
+    return records
+
+
+def _checkpoint_events(records: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for record in records:
+        values: dict[str, Any] = {}
+        for key in ("kpi", "metrics", "data"):
+            if isinstance(record.get(key), Mapping):
+                values.update(record[key])
+        path = record.get("checkpoint_path", values.get("checkpoint_path", values.get("checkpoint/path")))
+        if not path:
+            continue
+        epoch = values.get("epoch", record.get("epoch"))
+        key = (str(path), str(epoch))
+        if key in seen:
+            continue
+        seen.add(key)
+        events.append(
+            {
+                "path": str(path),
+                "epoch": epoch,
+                "phase": str(record.get("phase", values.get("phase", ""))),
+            }
+        )
+    return events
+
+
+def _identity_originals(dataset: Mapping[str, Any], key: str) -> list[str]:
+    values = dataset.get(key, [])
+    if not isinstance(values, list):
+        return []
+    result = []
+    for value in values:
+        if isinstance(value, Mapping):
+            original = value.get("original")
+            if isinstance(original, str) and original:
+                result.append(original)
+    return result
+
+
+def _prepared_base_model(plan: Mapping[str, Any]) -> str:
+    preparation = plan.get("model_preparation", {})
+    output = preparation.get("output", {}) if isinstance(preparation, Mapping) else {}
+    if isinstance(output, Mapping):
+        for key in ("original", "resolved"):
+            value = output.get(key)
+            if isinstance(value, str) and value:
+                return value
+    value = plan.get("prepared_model_container_path")
+    if isinstance(value, str) and value:
+        return value
+    supplied = plan.get("model", {}).get("supplied", {})
+    if isinstance(supplied, Mapping):
+        return str(supplied.get("original") or supplied.get("resolved") or "")
+    return ""
+
+
+def _choose_checkpoint(
+    *,
+    explicit: str | None,
+    epoch: int | None,
+    evaluation_contract: Mapping[str, Any],
+    events: Sequence[Mapping[str, Any]],
+) -> tuple[str | None, str | None, list[dict[str, Any]]]:
+    if explicit and epoch is not None:
+        raise WorkflowError("supply either checkpoint or checkpoint_epoch, not both")
+    if explicit:
+        return explicit, "user", list(events)
+    recorded = evaluation_contract.get("checkpoint_selection")
+    if isinstance(recorded, Mapping) and isinstance(recorded.get("path"), str) and recorded["path"]:
+        return recorded["path"], "sealed_training_plan.evaluation_contract", list(events)
+    if epoch is not None:
+        matches = [event for event in events if str(event.get("epoch")) == str(epoch)]
+        if len(matches) != 1:
+            raise WorkflowError(
+                f"checkpoint_epoch={epoch} matched {len(matches)} structured checkpoint events; supply the exact checkpoint"
+            )
+        return str(matches[0]["path"]), "training_status.epoch", list(events)
+    if len(events) == 1:
+        return str(events[0]["path"]), "training_status.single_checkpoint", list(events)
+    return None, None, list(events)
+
+
+def _source(value: Any, origin: str) -> dict[str, Any]:
+    return {"value": value, "source": origin}
+
+
+def resolve(args: argparse.Namespace) -> dict[str, Any]:
+    training_plan_path = args.training_plan.expanduser().resolve()
+    plan = _verify_training_plan(training_plan_path)
+    training = plan["training"]
+    validation = plan["datasets"]["validation"]
+    evaluation_contract = plan.get("evaluation_contract", {})
+    if not isinstance(evaluation_contract, Mapping):
+        evaluation_contract = {}
+    profile = evaluation_contract.get("task_profile", validation.get("evaluation_profile", {}))
+    if not isinstance(profile, Mapping):
+        profile = {}
+
+    required_user_inputs: list[dict[str, Any]] = []
+    automated_actions: list[dict[str, Any]] = []
+    provenance: dict[str, Any] = {}
+
+    annotations = list(args.validation_annotation)
+    if annotations:
+        provenance["dataset.annotation_path"] = _source(annotations, "user")
+    else:
+        annotations = list(evaluation_contract.get("validation_annotations", []))
+        if not annotations:
+            annotations = _identity_originals(validation, "annotations")
+        provenance["dataset.annotation_path"] = _source(annotations, "sealed_training_plan.validation")
+    resolved_annotation = args.action_validation_annotation
+    if len(annotations) > 1 and not resolved_annotation:
+        automated_actions.append(
+            {
+                "action": "materialize_exact_validation_manifest",
+                "owner": "scripts/cosmos_common.py materialize-dataset",
+                "input_annotations": annotations,
+                "validation_dataset_fingerprint": validation.get("dataset_fingerprint"),
+                "required_output": "action_validation_annotation",
+                "user_input": False,
+            }
+        )
+    elif len(annotations) == 1:
+        resolved_annotation = annotations[0]
+    elif not annotations:
+        required_user_inputs.append(
+            {
+                "field": "dataset.annotation_path",
+                "reason": "no validation annotation was recorded",
+                "recorded_candidates": annotations,
+            }
+        )
+    if args.action_validation_annotation:
+        provenance["dataset.annotation_path"] = _source(
+            args.action_validation_annotation, "materialize_exact_validation_manifest"
+        )
+
+    media_roots = list(args.validation_media_root)
+    if media_roots:
+        provenance["dataset.media_dir"] = _source(media_roots, "user")
+    else:
+        media_roots = list(evaluation_contract.get("validation_media_roots", []))
+        if not media_roots:
+            media_roots = _identity_originals(validation, "media_roots")
+        provenance["dataset.media_dir"] = _source(media_roots, "sealed_training_plan.validation")
+    unique_media_roots = list(dict.fromkeys(media_roots))
+    resolved_media_root = args.action_validation_media_root
+    if len(unique_media_roots) == 1:
+        resolved_media_root = unique_media_roots[0]
+    elif len(unique_media_roots) > 1 and not resolved_media_root:
+        automated_actions.append(
+            {
+                "action": "materialize_validation_manifest_with_absolute_media",
+                "owner": "scripts/cosmos_common.py",
+                "input_media_roots": unique_media_roots,
+                "validation_dataset_fingerprint": validation.get("dataset_fingerprint"),
+                "required_output": "action_validation_media_root",
+                "user_input": False,
+            }
+        )
+    elif not unique_media_roots:
+        required_user_inputs.append(
+            {
+                "field": "dataset.media_dir",
+                "reason": "no validation media root was recorded",
+                "recorded_candidates": media_roots,
+            }
+        )
+    if args.action_validation_media_root:
+        provenance["dataset.media_dir"] = _source(
+            args.action_validation_media_root, "materialize_validation_manifest_with_absolute_media"
+        )
+
+    if args.system_prompt is not None:
+        system_prompt = args.system_prompt
+        provenance["dataset.system_prompt"] = _source(system_prompt, "user")
+    elif "system_prompt" in evaluation_contract:
+        system_prompt = evaluation_contract["system_prompt"]
+        provenance["dataset.system_prompt"] = _source(system_prompt, "sealed_training_plan.evaluation_contract")
+    elif "system_prompt" in training:
+        system_prompt = training["system_prompt"]
+        provenance["dataset.system_prompt"] = _source(system_prompt, "sealed_training_plan.training")
+    else:
+        system_prompt = None
+        required_user_inputs.append(
+            {"field": "dataset.system_prompt", "reason": "training artifacts do not record it; an explicit empty string is valid"}
+        )
+
+    task_type = args.task_type
+    if task_type is not None:
+        provenance["task.type"] = _source(task_type, "user")
+    elif "inferred_task_type" in profile and not profile.get("unresolved_accuracy_tasks"):
+        task_type = str(profile.get("inferred_task_type", ""))
+        provenance["task.type"] = _source(task_type, "sealed_training_plan.validation.evaluation_profile")
+    else:
+        task_type = None
+        required_user_inputs.append(
+            {
+                "field": "task.type",
+                "reason": "validation answer semantics are not unambiguous in the sealed training plan",
+                "recorded_profile": profile,
+            }
+        )
+
+    answer_type = args.answer_type
+    if answer_type is not None:
+        provenance["evaluation.answer_type"] = _source(answer_type, "user")
+    elif profile.get("answer_type"):
+        answer_type = str(profile["answer_type"])
+        provenance["evaluation.answer_type"] = _source(answer_type, "sealed_training_plan.validation.evaluation_profile")
+    else:
+        answer_type = None
+        required_user_inputs.append(
+            {"field": "evaluation.answer_type", "reason": "not inferable from validation task semantics"}
+        )
+
+    metric_names = list(args.metric)
+    if metric_names:
+        provenance["metrics.names"] = _source(metric_names, "user")
+    elif (
+        isinstance(profile.get("metric_names"), list)
+        and "metrics.names" not in profile.get("requires_user_input", [])
+    ):
+        metric_names = list(profile["metric_names"])
+        provenance["metrics.names"] = _source(metric_names, "sealed_training_plan.validation.evaluation_profile")
+    else:
+        required_user_inputs.append(
+            {"field": "metrics.names", "reason": "no evaluation metric semantics were recorded"}
+        )
+
+    generation_contract = evaluation_contract.get("generation", {})
+    if not isinstance(generation_contract, Mapping):
+        generation_contract = {}
+    max_tokens = args.generation_max_tokens
+    if max_tokens is not None:
+        provenance["generation.max_tokens"] = _source(max_tokens, "user")
+    elif generation_contract.get("max_tokens") is not None:
+        max_tokens = int(generation_contract["max_tokens"])
+        provenance["generation.max_tokens"] = _source(max_tokens, "sealed_training_plan.evaluation_contract")
+    else:
+        required_user_inputs.append(
+            {"field": "generation.max_tokens", "reason": "generation length is not a fine-tuning parameter"}
+        )
+
+    status_events: list[dict[str, Any]] = []
+    if args.training_status:
+        status_events = _checkpoint_events(_status_records(args.training_status.expanduser().resolve()))
+    checkpoint, checkpoint_source, status_events = _choose_checkpoint(
+        explicit=args.checkpoint,
+        epoch=args.checkpoint_epoch,
+        evaluation_contract=evaluation_contract,
+        events=status_events,
+    )
+    if checkpoint:
+        provenance["checkpoint"] = _source(checkpoint, checkpoint_source or "unknown")
+    else:
+        required_user_inputs.append(
+            {
+                "field": "checkpoint_selection",
+                "reason": "no single exact checkpoint is selected by the training artifacts",
+                "recorded_candidates": status_events,
+            }
+        )
+
+    if not args.results_dir:
+        required_user_inputs.append(
+            {"field": "results_dir", "reason": "evaluation outputs require a new user-owned path"}
+        )
+    else:
+        provenance["results_dir"] = _source(args.results_dir, "user")
+
+    backend = str(plan["backend"])
+    action_model_path = args.action_model_path
+    if backend == "cosmos-framework" and checkpoint and not action_model_path:
+        automated_actions.append(
+            {
+                "action": "framework_checkpoint_pre_action",
+                "owner": "scripts/framework_checkpoint_action.py",
+                "input_checkpoint": checkpoint,
+                "required_output": "action_model_path",
+                "user_input": False,
+            }
+        )
+    model_name = action_model_path if backend == "cosmos-framework" else checkpoint
+    if backend == "cosmos-framework" and action_model_path:
+        provenance["model.model_name"] = _source(action_model_path, "framework_checkpoint_pre_action")
+    elif model_name:
+        provenance["model.model_name"] = _source(model_name, "selected_checkpoint")
+
+    training_mode = str(training.get("training_mode", ""))
+    enable_lora = backend == "cosmos-rl" and training_mode == "peft"
+    base_model_path = _prepared_base_model(plan) if enable_lora else ""
+    if enable_lora and not base_model_path:
+        automated_actions.append(
+            {
+                "action": "recover_prepared_base_model_from_training_provenance",
+                "required_output": "model.base_model_path",
+                "user_input": False,
+            }
+        )
+    provenance["model.enable_lora"] = _source(enable_lora, "sealed_training_plan.training_mode_and_backend")
+    provenance["model.base_model_path"] = _source(base_model_path, "sealed_training_plan.model_preparation")
+
+    frames = int(evaluation_contract.get("frames") or training.get("frames") or 0)
+    max_video_pixels = int(
+        evaluation_contract.get("max_video_pixels")
+        or plan.get("processor_profile", {}).get("max_video_pixels")
+        or 0
+    )
+    precision = str(evaluation_contract.get("precision") or training.get("precision") or "")
+    seed = int(evaluation_contract.get("seed", training.get("seed", 0)))
+    batch_size = int(evaluation_contract.get("batch_size") or plan.get("planner_request", {}).get("validation_batch_size") or 0)
+    num_gpus = args.num_gpus or int(plan["compute"].get("total_gpus") or 0)
+    inherited_values = {
+        "model.dtype": precision,
+        "evaluation.seed": seed,
+        "evaluation.batch_size": batch_size,
+        "vision.num_frames": frames,
+        "vision.max_pixels": max_video_pixels,
+        "num_gpus": num_gpus,
+    }
+    for field, value in inherited_values.items():
+        provenance[field] = _source(value, "sealed_training_plan")
+        if value in {"", 0, None}:
+            required_user_inputs.append(
+                {"field": field, "reason": "the sealed training plan did not record a usable value"}
+            )
+
+    vision: dict[str, Any] = {
+        "num_frames": frames,
+        "max_pixels": max_video_pixels,
+        "video_decoder": "pynvvideocodec",
+        "video_cache_size": 0,
+    }
+    decoder_artifact = plan.get("decoder_artifact", {})
+    if isinstance(decoder_artifact, Mapping) and decoder_artifact.get("enabled"):
+        vision["video_override_map"] = decoder_artifact.get("path")
+        provenance["vision.video_override_map"] = _source(
+            decoder_artifact.get("path"), "sealed_training_plan.decoder_artifact"
+        )
+
+    config = {
+        "results_dir": args.results_dir or "",
+        "task": {"type": task_type if task_type is not None else ""},
+        "dataset": {
+            "annotation_path": resolved_annotation or "",
+            "media_dir": resolved_media_root or "",
+            "system_prompt": system_prompt if system_prompt is not None else "",
+        },
+        "model": {
+            "model_name": model_name or "",
+            "dtype": precision,
+            "enable_lora": enable_lora,
+            "base_model_path": base_model_path,
+            "config_file": "",
+            "export_dir": "",
+            "vit_checkpoint_path": "",
+        },
+        "evaluation": {
+            "answer_type": answer_type or "",
+            "num_processes": 1,
+            "skip_saved": False,
+            "seed": seed,
+            "limit": -1,
+            "shard_id": 0,
+            "batch_size": batch_size,
+            "barrier_timeout_seconds": 14400,
+            "soft_accuracy": {"enabled": True, "f1_threshold": 0.8},
+        },
+        "vision": vision,
+        "generation": {
+            "max_retries": 10,
+            "max_tokens": max_tokens or 0,
+            "temperature": float(generation_contract.get("temperature", 0.0)),
+            "repetition_penalty": float(generation_contract.get("repetition_penalty", 1.0)),
+            "presence_penalty": float(generation_contract.get("presence_penalty", 0.0)),
+            "frequency_penalty": float(generation_contract.get("frequency_penalty", 0.0)),
+        },
+        "metrics": {"names": metric_names},
+        "results": {
+            "save_individual_results": True,
+            "save_confusion_matrix": True,
+            "save_metrics_summary": True,
+        },
+        "num_gpus": num_gpus,
+    }
+
+    blockers = list(required_user_inputs)
+    if backend == "cosmos-framework" and checkpoint and not action_model_path:
+        blockers.append(
+            {
+                "field": "model.model_name",
+                "reason": "awaiting the mandatory automatic Framework checkpoint pre-action",
+                "user_input": False,
+            }
+        )
+    if enable_lora and not base_model_path:
+        blockers.append(
+            {
+                "field": "model.base_model_path",
+                "reason": "awaiting deterministic recovery from training provenance",
+                "user_input": False,
+            }
+        )
+    for action in automated_actions:
+        output = str(action.get("required_output") or "")
+        if output in {"action_validation_annotation", "action_validation_media_root"}:
+            blockers.append(
+                {
+                    "field": output,
+                    "reason": f"awaiting automated action {action['action']}",
+                    "user_input": False,
+                }
+            )
+    ready = not blockers
+    result = {
+        "schema_version": 1,
+        "ready": ready,
+        "backend": backend,
+        "training_plan": {
+            "path": str(training_plan_path),
+            "sha256": sha256_file(training_plan_path),
+            "experiment_id": plan.get("experiment_id"),
+            "dataset_fingerprint": validation.get("dataset_fingerprint"),
+            "model_fingerprint": plan.get("model", {}).get("fingerprint"),
+        },
+        "checkpoint": {
+            "selected": checkpoint,
+            "source": checkpoint_source,
+            "events": status_events,
+        },
+        "required_user_inputs": required_user_inputs,
+        "automated_actions": automated_actions,
+        "blockers": blockers,
+        "provenance": provenance,
+        "config": config,
+        "config_sha256": hashlib.sha256(dump_toml(config).encode()).hexdigest() if ready else None,
+    }
+    return result
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--training-plan", type=Path, required=True)
+    parser.add_argument("--training-status", type=Path)
+    parser.add_argument("--checkpoint")
+    parser.add_argument("--checkpoint-epoch", type=int)
+    parser.add_argument("--action-model-path")
+    parser.add_argument("--action-validation-annotation")
+    parser.add_argument("--action-validation-media-root")
+    parser.add_argument("--validation-annotation", action="append", default=[])
+    parser.add_argument("--validation-media-root", action="append", default=[])
+    parser.add_argument("--system-prompt", default=None)
+    parser.add_argument(
+        "--task-type",
+        choices=("", "binary", "mcq", "text", "its_directionality", "metropolis_sgd"),
+        default=None,
+    )
+    parser.add_argument("--answer-type", choices=("letter", "reasoning", "freeform", "naive"))
+    parser.add_argument("--generation-max-tokens", type=int)
+    parser.add_argument("--metric", action="append", default=[])
+    parser.add_argument("--results-dir", default="")
+    parser.add_argument("--num-gpus", type=int)
+    parser.add_argument("--plan-output", type=Path, required=True)
+    parser.add_argument("--config-output", type=Path)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        if args.generation_max_tokens is not None and args.generation_max_tokens <= 0:
+            raise WorkflowError("generation_max_tokens must be positive")
+        if args.num_gpus is not None and args.num_gpus <= 0:
+            raise WorkflowError("num_gpus must be positive")
+        result = resolve(args)
+        _atomic_write(args.plan_output, json.dumps(result, indent=2, sort_keys=True) + "\n")
+        if result["ready"]:
+            if not args.config_output:
+                raise WorkflowError("config_output is required when the evaluation request is ready")
+            encoded = dump_toml(result["config"])
+            tomllib.loads(encoded)
+            _atomic_write(args.config_output, encoded)
+            result["config_path"] = str(args.config_output.expanduser().resolve())
+            result["config_sha256"] = sha256_file(args.config_output.expanduser().resolve())
+            _atomic_write(args.plan_output, json.dumps(result, indent=2, sort_keys=True) + "\n")
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result["ready"] else 3
+    except (OSError, json.JSONDecodeError, tomllib.TOMLDecodeError, WorkflowError, TypeError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
