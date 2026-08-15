@@ -10,7 +10,7 @@ aliases:
 - cosmos-rl
 - cosmos-framework
 automl_enabled: true
-container_image: nvcr.io/nvstaging/tao/tao-cosmos-rl:main-direct-train-no-cache-20260811-v1  # versions-key: images.tao_toolkit.cosmos_rl
+container_image: nvcr.io/nvstaging/tao/cosmos-rl:enhanced-hooks-custom-loggers-20260815-source-pynv-device-rgbp-v1  # versions-key: images.tao_toolkit.cosmos_rl
 backend_contracts:
   cosmos-framework: references/cosmos-framework-backend.yaml
   cosmos-rl: references/cosmos-rl-backend.yaml
