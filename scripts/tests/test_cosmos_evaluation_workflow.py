@@ -30,6 +30,7 @@ def _sealed_plan(
     mode: str = "dense",
     prompt: str = "training prompt",
     max_video_pixels: int | None = 4096,
+    seed: int = 17,
 ) -> Path:
     plan = {
         "schema_version": 2,
@@ -39,7 +40,7 @@ def _sealed_plan(
         "training": {
             "training_mode": mode,
             "precision": "bfloat16",
-            "seed": 17,
+            "seed": seed,
             "frames": 8,
             "system_prompt": prompt,
         },
@@ -78,7 +79,7 @@ def _sealed_plan(
             "frames": 8,
             "max_video_pixels": max_video_pixels,
             "precision": "bfloat16",
-            "seed": 17,
+            "seed": seed,
             "batch_size": 1,
             "task_profile": {
                 "inferred_task_type": "binary",
@@ -139,6 +140,7 @@ def _run(
     multiple: bool = False,
     prompt: str = "training prompt",
     max_video_pixels: int | None = 4096,
+    seed: int = 17,
     extra: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     plan_output = tmp_path / "evaluation-plan.json"
@@ -154,6 +156,7 @@ def _run(
                 mode=mode,
                 prompt=prompt,
                 max_video_pixels=max_video_pixels,
+                seed=seed,
             )
         ),
         "--training-status",
@@ -216,6 +219,19 @@ def test_missing_pixel_budget_accepts_explicit_evaluation_input(tmp_path: Path) 
         "source": "user",
         "value": 3136000,
     }
+
+
+def test_zero_seed_is_a_valid_sealed_evaluation_seed(tmp_path: Path) -> None:
+    result, plan_path, config_path = _run(tmp_path, seed=0)
+    assert result.returncode == 0, result.stderr
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert plan["required_user_inputs"] == []
+    assert plan["provenance"]["evaluation.seed"] == {
+        "source": "sealed_training_plan",
+        "value": 0,
+    }
+    assert config["evaluation"]["seed"] == 0
 
 
 def test_cosmos_rl_peft_recovers_base_model_without_user_reentry(tmp_path: Path) -> None:

@@ -428,7 +428,7 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     }
     for field, value in inherited_values.items():
         provenance[field] = _source(value, "sealed_training_plan")
-        if value in {"", 0, None}:
+        if value in {"", None} or (value == 0 and field != "evaluation.seed"):
             required_user_inputs.append(
                 {"field": field, "reason": "the sealed training plan did not record a usable value"}
             )
