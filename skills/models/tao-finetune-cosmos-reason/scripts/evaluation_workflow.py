@@ -406,11 +406,15 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     provenance["model.base_model_path"] = _source(base_model_path, "sealed_training_plan.model_preparation")
 
     frames = int(evaluation_contract.get("frames") or training.get("frames") or 0)
-    max_video_pixels = int(
-        evaluation_contract.get("max_video_pixels")
-        or plan.get("processor_profile", {}).get("max_video_pixels")
-        or 0
-    )
+    if args.max_video_pixels is not None:
+        max_video_pixels = args.max_video_pixels
+        provenance["vision.max_pixels"] = _source(max_video_pixels, "user")
+    else:
+        max_video_pixels = int(
+            evaluation_contract.get("max_video_pixels")
+            or plan.get("processor_profile", {}).get("max_video_pixels")
+            or 0
+        )
     precision = str(evaluation_contract.get("precision") or training.get("precision") or "")
     seed = int(evaluation_contract.get("seed", training.get("seed", 0)))
     batch_size = int(evaluation_contract.get("batch_size") or plan.get("planner_request", {}).get("validation_batch_size") or 0)
@@ -420,7 +424,6 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         "evaluation.seed": seed,
         "evaluation.batch_size": batch_size,
         "vision.num_frames": frames,
-        "vision.max_pixels": max_video_pixels,
         "num_gpus": num_gpus,
     }
     for field, value in inherited_values.items():
@@ -429,6 +432,15 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             required_user_inputs.append(
                 {"field": field, "reason": "the sealed training plan did not record a usable value"}
             )
+    if args.max_video_pixels is None:
+        provenance["vision.max_pixels"] = _source(max_video_pixels, "sealed_training_plan")
+    if max_video_pixels <= 0:
+        required_user_inputs.append(
+            {
+                "field": "vision.max_pixels",
+                "reason": "the sealed training plan did not record a usable value",
+            }
+        )
 
     vision: dict[str, Any] = {
         "num_frames": frames,
@@ -562,6 +574,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--answer-type", choices=("letter", "reasoning", "freeform", "naive"))
     parser.add_argument("--generation-max-tokens", type=int)
+    parser.add_argument("--max-video-pixels", type=int)
     parser.add_argument("--metric", action="append", default=[])
     parser.add_argument("--results-dir", default="")
     parser.add_argument("--num-gpus", type=int)
@@ -575,6 +588,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.generation_max_tokens is not None and args.generation_max_tokens <= 0:
             raise WorkflowError("generation_max_tokens must be positive")
+        if args.max_video_pixels is not None and args.max_video_pixels <= 0:
+            raise WorkflowError("max_video_pixels must be positive")
         if args.num_gpus is not None and args.num_gpus <= 0:
             raise WorkflowError("num_gpus must be positive")
         result = resolve(args)

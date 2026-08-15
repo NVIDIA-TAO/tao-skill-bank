@@ -29,6 +29,7 @@ def _sealed_plan(
     backend: str = "cosmos-rl",
     mode: str = "dense",
     prompt: str = "training prompt",
+    max_video_pixels: int | None = 4096,
 ) -> Path:
     plan = {
         "schema_version": 2,
@@ -65,7 +66,7 @@ def _sealed_plan(
             "output": {"original": "/runtime/prepared-base-model"}
         },
         "prepared_model_container_path": "/runtime/prepared-base-model",
-        "processor_profile": {"frames": 8, "max_video_pixels": 4096},
+        "processor_profile": {"frames": 8, "max_video_pixels": max_video_pixels},
         "compute": {"total_gpus": 8},
         "decoder_artifact": {"enabled": False},
         "evaluation_contract": {
@@ -75,7 +76,7 @@ def _sealed_plan(
             "validation_media_roots": ["/runtime/validation-media"],
             "system_prompt": prompt,
             "frames": 8,
-            "max_video_pixels": 4096,
+            "max_video_pixels": max_video_pixels,
             "precision": "bfloat16",
             "seed": 17,
             "batch_size": 1,
@@ -137,6 +138,7 @@ def _run(
     mode: str = "dense",
     multiple: bool = False,
     prompt: str = "training prompt",
+    max_video_pixels: int | None = 4096,
     extra: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     plan_output = tmp_path / "evaluation-plan.json"
@@ -145,7 +147,15 @@ def _run(
         sys.executable,
         str(SCRIPT),
         "--training-plan",
-        str(_sealed_plan(tmp_path, backend=backend, mode=mode, prompt=prompt)),
+        str(
+            _sealed_plan(
+                tmp_path,
+                backend=backend,
+                mode=mode,
+                prompt=prompt,
+                max_video_pixels=max_video_pixels,
+            )
+        ),
         "--training-status",
         str(_status(tmp_path, multiple=multiple)),
         "--results-dir",
@@ -184,6 +194,28 @@ def test_dense_evaluation_inherits_training_parity_fields(tmp_path: Path) -> Non
     assert config["evaluation"]["batch_size"] == 1
     assert config["num_gpus"] == 8
     assert resolved["config_sha256"] == hashlib.sha256(config_path.read_bytes()).hexdigest()
+
+
+def test_missing_pixel_budget_accepts_explicit_evaluation_input(tmp_path: Path) -> None:
+    unresolved, plan_path, config_path = _run(tmp_path, max_video_pixels=None)
+    assert unresolved.returncode == 3, unresolved.stderr
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert [item["field"] for item in plan["required_user_inputs"]] == ["vision.max_pixels"]
+    assert not config_path.exists()
+
+    resolved, resolved_plan_path, resolved_config_path = _run(
+        tmp_path,
+        max_video_pixels=None,
+        extra=["--max-video-pixels", "3136000"],
+    )
+    assert resolved.returncode == 0, resolved.stderr
+    resolved_plan = json.loads(resolved_plan_path.read_text(encoding="utf-8"))
+    config = tomllib.loads(resolved_config_path.read_text(encoding="utf-8"))
+    assert config["vision"]["max_pixels"] == 3136000
+    assert resolved_plan["provenance"]["vision.max_pixels"] == {
+        "source": "user",
+        "value": 3136000,
+    }
 
 
 def test_cosmos_rl_peft_recovers_base_model_without_user_reentry(tmp_path: Path) -> None:

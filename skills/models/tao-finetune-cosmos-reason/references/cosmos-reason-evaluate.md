@@ -50,6 +50,8 @@ Prompt once for the remaining fields reported in
 - exact checkpoint or checkpoint epoch when more than one checkpoint event is
   present and the training plan did not record a selection;
 - generation maximum tokens, because it is not a fine-tuning parameter;
+- maximum video pixels when the training plan deliberately preserved the
+  Nano processor's native default instead of recording an explicit budget;
 - task type or metric names when annotation targets/metadata were ambiguous;
 - exact annotation and media paths when evaluating a different corpus.
 
@@ -80,6 +82,7 @@ manifests/media roots are an automated deterministic materialization step, not
 a reason to ask the user to select a subset; preserve the sealed fingerprint
 and full record coverage. Rerun with user inputs such as
 `--checkpoint-epoch`, `--checkpoint`, `--generation-max-tokens`,
+`--max-video-pixels`,
 `--task-type`, `--answer-type`, `--metric`, `--validation-annotation`, or
 `--validation-media-root`.
 
