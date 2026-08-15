@@ -110,6 +110,8 @@ def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", dataset_famil
         "--daft-commit", "d" * 40, "--tao-core-commit", "c" * 40,
         "--cosmos-framework-base-tag", "example/framework-base:test",
         "--cosmos-rl-base-image", "example/cosmos-rl-runtime:test",
+        "--cosmos-rl-source-repository", "ssh://git@gitlab.example.com:12051/group/cosmos-reason",
+        "--cosmos-rl-source-branch", "feature/enhanced-hooks-and-custom-loggers",
         "--native-tree", "n" * 40, "--integration-tree", "t" * 40,
         "--daft-tree", "d" * 40, "--tao-core-tree", "c" * 40,
         "--build-timestamp", "2026-08-05T00:00:00Z", "--write-spec", str(tmp_path / "spec.toml"),
@@ -989,9 +991,10 @@ def test_clean_build_plan_requires_new_sqsh_and_provenance(tmp_path):
     rl_plan = workflow.build_plan(args_for(tmp_path / "rl", backend="cosmos-rl"))
     assert rl_plan["image"]["dockerfile"] == "Dockerfile"
     assert rl_plan["image"]["build_arguments"]["COSMOS_BACKEND"] == "cosmos-rl"
-    assert rl_plan["image"]["build_arguments"]["USE_LOCAL_COSMOS_RL_GITHUB"] == "true"
-    assert rl_plan["image"]["build_arguments"]["LOCAL_COSMOS_RL_PATH"] == "cosmos-rl"
-    assert rl_plan["image"]["build_arguments"]["LOCAL_COSMOS_RL_GITHUB_PATH"] == "cosmos-rl-github"
+    assert rl_plan["image"]["build_arguments"]["COSMOS_RL_GITHUB_REPO"] == "ssh://git@gitlab.example.com:12051/group/cosmos-reason"
+    assert rl_plan["image"]["build_arguments"]["COSMOS_RL_GITHUB_BRANCH"] == "feature/enhanced-hooks-and-custom-loggers"
+    assert "USE_LOCAL_COSMOS_RL_GITHUB" not in rl_plan["image"]["build_arguments"]
+    assert "--ssh" in rl_plan["image"]["clean_build_commands"][0]
     assert rl_plan["image"]["build_arguments"]["PYAV_WHEEL_SHA256"] == "f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f"
 
 

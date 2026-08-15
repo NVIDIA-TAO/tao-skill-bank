@@ -1,7 +1,7 @@
 schema_version: 2
 backend: cosmos-rl
 display_name: Cosmos-RL
-native_source_repository: cosmos-rl-github
+native_source_repository: cosmos-reason-gitlab
 tao_integration_repository: cosmos-rl
 container_image: nvcr.io/nvstaging/tao/cosmos-rl:enhanced-hooks-custom-loggers-20260815-source-pynv-device-rgbp-v1  # versions-key: images.tao_toolkit.cosmos_rl
 build:
@@ -9,10 +9,10 @@ build:
   dockerfile: Dockerfile
   required_build_args:
   - COSMOS_BACKEND
+  - COSMOS_RL_BUILD_MODE
   - VLLM_BASE_IMAGE
-  - USE_LOCAL_COSMOS_RL_GITHUB
-  - COSMOS_RL_COMMIT
-  - COSMOS_RL_TREE
+  - COSMOS_RL_GITHUB_REPO
+  - COSMOS_RL_GITHUB_BRANCH
   - ACTIONS_COMMIT
   - ACTIONS_TREE
   - DAFT_COMMIT

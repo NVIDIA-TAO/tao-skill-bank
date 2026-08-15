@@ -43,6 +43,10 @@ from history, another user, a prior job, an image, or a developer checkout.
 - clean repository paths and exact commits for the selected native backend,
   TAO integration, DAFT, and TAO Core; image tags/base images/build context are
   runtime inputs.
+- Cosmos-RL clean builds also require the exact training-source repository URI
+  and existing branch. For the internal mirror, use the supplied
+  `cosmos-reason` GitLab URI and branch directly; do not substitute a GitHub
+  fork or create a temporary source branch.
 
 The planner preserves each original path and reports an accessible `realpath`.
 Missing paths fail. No fallback dataset, checkpoint, cache, result directory,

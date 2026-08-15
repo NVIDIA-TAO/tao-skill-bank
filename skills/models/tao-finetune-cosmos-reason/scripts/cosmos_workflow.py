@@ -988,23 +988,29 @@ def _image_plan(args: argparse.Namespace, backend: str, commits: Mapping[str, st
     else:
         if not args.cosmos_rl_base_image:
             raise WorkflowError("cosmos_rl_base_image is required for the clean Cosmos-RL build")
+        if not args.cosmos_rl_source_repository or not args.cosmos_rl_source_branch:
+            raise WorkflowError(
+                "cosmos_rl_source_repository and cosmos_rl_source_branch are required "
+                "for the clean Cosmos-RL build"
+            )
         build_args = {
             "COSMOS_BACKEND": "cosmos-rl",
+            "COSMOS_RL_BUILD_MODE": "no-efa",
             "VLLM_BASE_IMAGE": args.cosmos_rl_base_image,
-            "USE_LOCAL_COSMOS_RL_GITHUB": "true",
-            "COSMOS_RL_COMMIT": commits[native_name], "COSMOS_RL_TREE": args.native_tree,
+            "COSMOS_RL_GITHUB_REPO": args.cosmos_rl_source_repository,
+            "COSMOS_RL_GITHUB_BRANCH": args.cosmos_rl_source_branch,
             "ACTIONS_COMMIT": commits["cosmos-rl"], "ACTIONS_TREE": args.integration_tree,
             "DAFT_COMMIT": commits["nvidia-tao-daft"], "DAFT_TREE": args.daft_tree,
             "TAO_CORE_COMMIT": commits["tao-core"], "TAO_CORE_TREE": args.tao_core_tree,
             "SOURCE_DIRTY": "0", "BUILD_TIMESTAMP": args.build_timestamp,
-            "LOCAL_COSMOS_RL_PATH": args.integration_context_path,
-            "LOCAL_COSMOS_RL_GITHUB_PATH": args.native_context_path,
-            "LOCAL_TAO_DAFT_PATH": args.daft_context_path,
-            "LOCAL_TAO_CORE_PATH": args.tao_core_context_path,
             "PYAV_WHEEL_SHA256": "f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f",
         }
         commands = []
     command = ["docker", "build", "--pull", "-f", str(Path(integration["expanded"]) / dockerfile), "-t", image]
+    if backend == "cosmos-rl" and args.cosmos_rl_source_repository.startswith(("ssh://", "git@")):
+        if not args.ssh_key_path:
+            raise WorkflowError("ssh_key_path is required for an SSH Cosmos-RL source repository")
+        command[2:2] = ["--ssh", f"default={args.ssh_key_path}"]
     for key, value in build_args.items():
         command.extend(["--build-arg", f"{key}={value}"])
     command.append(args.build_context)
@@ -2114,6 +2120,8 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--native-context-path", default="cosmos-rl-github"); parser.add_argument("--integration-context-path", default="cosmos-rl")
     parser.add_argument("--daft-context-path", default="nvidia-tao-daft"); parser.add_argument("--tao-core-context-path", default="tao-core")
     parser.add_argument("--image-tag", default=""); parser.add_argument("--sqsh-path", default="")
+    parser.add_argument("--cosmos-rl-source-repository", default="")
+    parser.add_argument("--cosmos-rl-source-branch", default="")
     parser.add_argument("--cosmos-framework-base-tag", default=""); parser.add_argument("--cosmos-rl-base-image", default="")
     parser.add_argument("--cosmos-framework-commit", default=""); parser.add_argument("--cosmos-rl-commit", default="")
     parser.add_argument("--tao-integration-commit", default=""); parser.add_argument("--native-tree", default="")
