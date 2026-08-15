@@ -366,8 +366,59 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
         assert key not in train_policy
     assert "cache_dir" not in plan["spec"]["custom"]["vision"]
     assert "COSMOS_CACHE" not in plan["environment"]
+    runtime = plan["rl_video_runtime"]
+    assert runtime == {
+        "requested_profile": "auto",
+        "selected_profile": "pynv-device-rgbp",
+        "selection_reason": "video_conversation defaults to the source-baked device-RGBP throughput profile",
+        "video_decoder": "pynvvideocodec",
+        "implementation": "pynv_device_rgbp_dlpack",
+        "frame_transfer": "device_rgbp",
+        "video_cache_size": 16,
+        "video_cache_scope": "rank_local_processed_fetch_video_memory",
+        "video_cache_population": "on_demand_during_training",
+        "video_cache_persists_to_disk": False,
+        "decoder_cache_size": 16,
+        "decoder_cache_scope": "rank_local_pynv_native_sessions",
+        "sft_batch_threads": 4,
+        "dataloader_num_workers": 1,
+        "dataloader_prefetch_factor": 2,
+        "unique_media_capacity_basis": 16,
+        "dataset_prewarm": False,
+    }
+    assert plan["spec"]["custom"]["video_decoder"] == "pynvvideocodec"
+    assert plan["spec"]["custom"]["video_cache_size"] == 16
+    assert plan["spec"]["custom"]["video_decoder_cache_size"] == 16
+    assert train_policy["dataloader_num_workers"] == 1
+    assert train_policy["dataloader_prefetch_factor"] == 2
+    assert plan["spec"]["validation"]["dataloader_num_workers"] == 1
+    assert plan["spec"]["validation"]["dataloader_prefetch_factor"] == 2
+    assert plan["environment"]["FORCE_QWENVL_VIDEO_READER"] == "pynvvideocodec"
+    assert plan["environment"]["TAO_PYNV_FRAME_TRANSFER"] == "device_rgbp"
+    assert plan["environment"]["TAO_SFT_BATCH_THREADS"] == "4"
+    assert plan["environment"]["TAO_PYNV_VIDEO_CACHE_SIZE"] == "16"
+    assert plan["environment"]["TAO_PYNV_DECODER_CACHE_SIZE"] == "16"
+
+
+def test_cosmos_rl_system_pyav_profile_is_explicit_and_worker_zero_safe(tmp_path):
+    args = args_for(tmp_path, backend="cosmos-rl", training_mode="peft")
+    args.rl_video_profile = "system-pyav"
+
+    plan = workflow.build_plan(args)
+
+    runtime = plan["rl_video_runtime"]
+    assert runtime["selected_profile"] == "system-pyav"
+    assert runtime["video_decoder"] == "torchvision"
+    assert runtime["frame_transfer"] == "host_rgb"
+    assert runtime["video_cache_size"] == 0
+    assert runtime["decoder_cache_size"] == 1
+    assert runtime["sft_batch_threads"] == 1
+    assert runtime["dataloader_num_workers"] == 0
+    assert runtime["dataloader_prefetch_factor"] is None
+    assert plan["spec"]["custom"]["video_decoder"] == "torchvision"
+    assert plan["environment"]["FORCE_QWENVL_VIDEO_READER"] == "torchvision"
+    assert "TAO_PYNV_FRAME_TRANSFER" not in plan["environment"]
     assert "dataloader_prefetch_factor" not in plan["spec"]["train"]["train_policy"]
-    assert plan["spec"]["validation"]["dataloader_num_workers"] == 0
     assert "dataloader_prefetch_factor" not in plan["spec"]["validation"]
 
 

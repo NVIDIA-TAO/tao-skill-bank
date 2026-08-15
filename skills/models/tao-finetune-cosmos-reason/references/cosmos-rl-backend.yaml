@@ -29,7 +29,30 @@ runtime:
   python: /opt/venv/cosmos_rl/bin/python
   working_directory: /workspace/cosmos_rl
   non_root_executable_required: true
-  video_decoder: torchvision_sparse_software_system_PyAV
+  video_decoder_selection: explicit_profile
+  default_video_profiles:
+    video_conversation: pynv-device-rgbp
+    task_aware_video_reasoning: system-pyav
+  video_profiles:
+    pynv-device-rgbp:
+      decoder: pynvvideocodec
+      frame_transfer: device_rgbp_dlpack
+      processed_video_cache: rank_local_memory_on_demand
+      decoder_session_cache: rank_local_native_on_demand
+      dataloader_workers: 1
+      dataloader_prefetch_factor: 2
+      sft_batch_threads: 4
+      capacity_default: max_train_validation_unique_media
+      disk_cache: false
+      prewarm: false
+    system-pyav:
+      decoder: torchvision
+      implementation: sparse_software_system_PyAV
+      dataloader_workers: 0
+      dataloader_prefetch_factor: omitted
+      sft_batch_threads: 1
+      disk_cache: false
+      prewarm: false
   pyav_contract:
     version: 17.1.0
     wheel_sha256: f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f
@@ -87,6 +110,9 @@ cache:
   prewarm_required_for_video_conversation_runs: false
   prewarm_mode: explicit_opt_in
   task_aware_policy: direct_sparse_software_decode_on_a100
+  video_conversation_policy: direct_pynv_device_rgbp_with_rank_local_memory
+  fast_memory_cache_payload: processed_fetch_video_output_not_video_files
+  fast_memory_cache_population: on_demand_during_training
   deterministic_key: dataset_plus_model_plus_processor
   train_validation_keys_separate: true
   completeness_manifest_required: true
@@ -103,5 +129,8 @@ compatibility:
   vllm_qwen3_vl_patch_embed: equal_or_newer_pytorch_linear_guard_verified
   deepep_extension: python_binding_and_required_internode_symbols_verified
   software_video_workers: spawn_context_registered_reader_and_no_cuda_context
+  pynv_device_rgbp: dlpack_transfer_exact_batch_gate_and_scanned_retry
+  pynv_decoder_sessions: explicit_capacity_only_with_conservative_default_one
+  sft_batch_threads: order_preserving_thread_pool
   worker_zero_prefetch: num_workers_zero_and_prefetch_omitted
   host_source_mount: forbidden

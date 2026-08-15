@@ -181,22 +181,31 @@ Execute these stages in order and persist their outputs.
    Cosmos-RL defaults to direct on-demand sample processing so training starts
    without a dataset-cache prewarm phase. Conversation-style runs prewarm only
    when the user explicitly selects `--rl-dataset-cache-mode prewarm`; that
-   opt-in uses separate deterministic train and validation keys. On A100,
-   which has no NVDEC engine, both conversation and task-aware hooks select
-   `custom.video_decoder="torchvision"`; the packaged reader must register
-   the sparse software System-PyAV backend in the controller and every spawned
-   DataLoader worker. The image must install the checksum-pinned official PyAV
-   wheel and prove that generic `h264` and `hevc` resolve to software decoders.
-   A source-built wheel resolving those names to `*_cuvid` is an image defect,
-   not a reason to change SLURM CPU allocation. Only an explicitly selected
-   NVDEC/PyNvVideoCodec path requires a fingerprinted override artifact and
-   GPU random-access validation.
+   opt-in uses separate deterministic train and validation keys.
+   `--rl-video-profile auto` selects `pynv-device-rgbp` for
+   `video_conversation` and `system-pyav` for
+   `task_aware_video_reasoning`; record the resolved profile and rationale.
+   The fast profile uses the source-baked PyNvVideoCodec device-RGBP/DLPack
+   path, one spawned DataLoader worker, prefetch two, and four order-preserving
+   in-process batch threads. Its two capacities are derived from the larger
+   inspected split's unique-media count unless explicitly supplied. The video
+   LRU stores processed `fetch_video` outputs in rank-local memory and the
+   decoder cache stores rank-local native sessions; both populate during
+   ordinary training, persist no video files, and require no prewarm.
+   The explicit `system-pyav` profile remains the sparse software route for
+   codec-policy-constrained runs. Its packaged reader must register in the
+   controller and every spawned worker; the image installs the checksum-pinned
+   official PyAV wheel and proves that generic `h264` and `hevc` resolve to
+   software decoders. A source-built wheel resolving those names to `*_cuvid`
+   is an image defect. Never combine the two runtime profiles or describe the
+   PyNv route as satisfying a software-codec policy without a separate review.
    The JSON plan emits exact `decoder_artifact.preparation_command` and
    `decoder_artifact.validation_command` values for the selected clean image;
    re-plan once with their map, manifest, and artifact fingerprint outputs,
    seal that plan, and never reuse another run's cache or override artifact.
 8. Generate backend-native TOML, environment, topology, preflight commands,
-   parity data, and machine-readable job metadata. Full specs must contain no
+   parity data, resolved video-runtime profile, and machine-readable job
+   metadata. Full specs must contain no
    sample limit. `plan` and `preflight` are read-only with respect to the
    target compute frame; the explicitly requested controller-side plan artifact
    is their handoff. Invoke `preflight`, post-review `materialize`, and

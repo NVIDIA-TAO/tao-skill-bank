@@ -604,7 +604,93 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
     return spec
 
 
-def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_model: str, train_annotations: Sequence[str], train_media: Sequence[str], val_annotations: Sequence[str], val_media: Sequence[str], cache_keys: Mapping[str, str]) -> dict[str, Any]:
+def _rl_video_runtime(
+    args: argparse.Namespace,
+    train_data: Mapping[str, Any],
+    val_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve one explicit, attestable Cosmos-RL video runtime profile."""
+    requested = getattr(args, "rl_video_profile", "auto")
+    if requested not in {"auto", "system-pyav", "pynv-device-rgbp"}:
+        raise WorkflowError(f"unsupported Cosmos-RL video profile: {requested}")
+    if requested == "auto":
+        selected = (
+            "pynv-device-rgbp"
+            if args.dataset_family == "video_conversation"
+            else "system-pyav"
+        )
+        reason = (
+            "video_conversation defaults to the source-baked device-RGBP "
+            "throughput profile"
+            if selected == "pynv-device-rgbp"
+            else "task-aware video defaults to the sparse software profile"
+        )
+    else:
+        selected = requested
+        reason = "explicit user selection"
+
+    fast = selected == "pynv-device-rgbp"
+    workers_arg = getattr(args, "rl_dataloader_num_workers", None)
+    prefetch_arg = getattr(args, "rl_dataloader_prefetch_factor", None)
+    workers = (1 if fast else 0) if workers_arg is None else workers_arg
+    prefetch = (2 if fast else 1) if prefetch_arg is None else prefetch_arg
+    if workers < 0:
+        raise WorkflowError("rl_dataloader_num_workers must be nonnegative")
+    if workers and prefetch <= 0:
+        raise WorkflowError(
+            "rl_dataloader_prefetch_factor must be positive when workers are enabled"
+        )
+
+    unique_media_capacity = max(
+        int(train_data["profile"]["unique_media_count"]),
+        int(val_data["profile"]["unique_media_count"]),
+        1,
+    )
+    video_cache_override = getattr(args, "rl_video_cache_size", 0)
+    decoder_cache_override = getattr(args, "rl_video_decoder_cache_size", 0)
+    batch_threads_override = getattr(args, "rl_sft_batch_threads", 0)
+    if min(video_cache_override, decoder_cache_override, batch_threads_override) < 0:
+        raise WorkflowError(
+            "Cosmos-RL video cache sizes and SFT batch threads must be nonnegative"
+        )
+    if not fast and (video_cache_override or decoder_cache_override):
+        raise WorkflowError(
+            "Cosmos-RL PyNv cache overrides require --rl-video-profile pynv-device-rgbp"
+        )
+    video_cache_size = (
+        video_cache_override or unique_media_capacity if fast else 0
+    )
+    decoder_cache_size = (
+        decoder_cache_override or unique_media_capacity if fast else 1
+    )
+    batch_threads = batch_threads_override or (4 if fast else 1)
+    if batch_threads < 1:
+        raise WorkflowError("resolved Cosmos-RL SFT batch threads must be positive")
+
+    return {
+        "requested_profile": requested,
+        "selected_profile": selected,
+        "selection_reason": reason,
+        "video_decoder": "pynvvideocodec" if fast else "torchvision",
+        "implementation": (
+            "pynv_device_rgbp_dlpack" if fast else "system_pyav_sparse"
+        ),
+        "frame_transfer": "device_rgbp" if fast else "host_rgb",
+        "video_cache_size": video_cache_size,
+        "video_cache_scope": "rank_local_processed_fetch_video_memory",
+        "video_cache_population": "on_demand_during_training",
+        "video_cache_persists_to_disk": False,
+        "decoder_cache_size": decoder_cache_size,
+        "decoder_cache_scope": "rank_local_pynv_native_sessions" if fast else "none",
+        "sft_batch_threads": batch_threads,
+        "dataloader_num_workers": workers,
+        "dataloader_prefetch_factor": prefetch if workers else None,
+        "unique_media_capacity_basis": unique_media_capacity,
+        "dataset_prewarm": False,
+    }
+
+
+def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_model: str, train_annotations: Sequence[str], train_media: Sequence[str], val_annotations: Sequence[str], val_media: Sequence[str], cache_keys: Mapping[str, str], video_runtime: Mapping[str, Any]) -> dict[str, Any]:
     if len(train_media) != 1 or len(val_media) != 1:
         raise WorkflowError("Cosmos-RL requires one explicit shared media root per split when annotations are merged")
     train_manifest = train_annotations[0] if len(train_annotations) == 1 else "__TAO_TRAIN_MERGED_MANIFEST__"
@@ -648,15 +734,9 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "optm_grad_norm_clip": args.gradient_clip, "param_dtype": args.precision,
     })
     spec["train"]["ckpt"].update({"enable_checkpoint": True, "save_freq_in_epoch": 1, "save_mode": "async" if args.async_checkpoint else "sync", "max_keep": args.max_checkpoints})
-    dataloader_num_workers = getattr(args, "rl_dataloader_num_workers", 0)
-    dataloader_prefetch_factor = getattr(args, "rl_dataloader_prefetch_factor", 1)
+    dataloader_num_workers = int(video_runtime["dataloader_num_workers"])
+    dataloader_prefetch_factor = video_runtime["dataloader_prefetch_factor"]
     validation_freq_steps = getattr(args, "rl_validation_freq_steps", 0)
-    if dataloader_num_workers < 0:
-        raise WorkflowError("rl_dataloader_num_workers must be nonnegative")
-    if dataloader_num_workers and dataloader_prefetch_factor <= 0:
-        raise WorkflowError(
-            "rl_dataloader_prefetch_factor must be positive when workers are enabled"
-        )
     if validation_freq_steps < 0:
         raise WorkflowError("rl_validation_freq_steps must be nonnegative")
     spec["train"]["train_policy"].update({
@@ -732,8 +812,13 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     spec["custom"].update({
         "train_dataset": {"annotation_path": train_manifest, "media_path": train_media[0], "media_root": train_media[0], "response_mode": "hybrid" if args.dataset_family == "task_aware_video_reasoning" else "answer"},
         "val_dataset": {"annotation_path": val_manifest, "media_path": val_media[0], "media_root": val_media[0], "response_mode": "answer"},
-        "vision": {"nframes": args.frames, "video_decoder": "torchvision"},
-        "video_decoder": "torchvision",
+        "vision": {
+            "nframes": args.frames,
+            "video_decoder": video_runtime["video_decoder"],
+        },
+        "video_decoder": video_runtime["video_decoder"],
+        "video_cache_size": video_runtime["video_cache_size"],
+        "video_decoder_cache_size": video_runtime["decoder_cache_size"],
         "system_prompt": args.system_prompt,
     })
     if use_dataset_cache:
@@ -743,7 +828,7 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     return spec
 
 
-def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_annotations: Sequence[str], train_media: Sequence[str], val_annotations: Sequence[str], val_media: Sequence[str]) -> dict[str, str]:
+def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_annotations: Sequence[str], train_media: Sequence[str], val_annotations: Sequence[str], val_media: Sequence[str], rl_video_runtime: Mapping[str, Any] | None = None) -> dict[str, str]:
     tao_job_id = args.tao_job_id or args.experiment_id
     status_path = str(Path(args.container_results_dir) / tao_job_id / "status.json")
     common = {
@@ -793,7 +878,22 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
             and getattr(args, "rl_dataset_cache_mode", "direct") == "prewarm"
         ):
             common["COSMOS_CACHE"] = args.container_cache_dir
-        common["FORCE_QWENVL_VIDEO_READER"] = "torchvision"
+        if not rl_video_runtime:
+            raise WorkflowError("Cosmos-RL video runtime was not resolved")
+        common["FORCE_QWENVL_VIDEO_READER"] = str(
+            rl_video_runtime["video_decoder"]
+        )
+        common["TAO_SFT_BATCH_THREADS"] = str(
+            rl_video_runtime["sft_batch_threads"]
+        )
+        if rl_video_runtime["selected_profile"] == "pynv-device-rgbp":
+            common["TAO_PYNV_FRAME_TRANSFER"] = "device_rgbp"
+            common["TAO_PYNV_VIDEO_CACHE_SIZE"] = str(
+                rl_video_runtime["video_cache_size"]
+            )
+            common["TAO_PYNV_DECODER_CACHE_SIZE"] = str(
+                rl_video_runtime["decoder_cache_size"]
+            )
     return common
 
 
@@ -1000,6 +1100,7 @@ def _preflight_contract(
     prepared_model: str,
     representative_media: str,
     decoder_artifact: Mapping[str, Any] | None = None,
+    rl_video_runtime: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     decoder_artifact = decoder_artifact or {"enabled": False}
     python = "/workspace/.venv/bin/python" if backend == "cosmos-framework" else "/opt/venv/cosmos_rl/bin/python"
@@ -1019,16 +1120,39 @@ def _preflight_contract(
             "assert (getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False) or getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_channels_last_3d', False))",
             "assert av.codec.Codec('h264', 'r').name == 'h264'",
             "assert av.codec.Codec('hevc', 'r').name == 'hevc'",
-            "from cosmos_rl.utils.system_pyav_video_reader import _assert_software_video_decoders, register_system_pyav_video_reader",
-            "assert _assert_software_video_decoders() == {'h264': 'h264', 'hevc': 'hevc'}",
             "from cosmos_rl.utils.runtime_dependency_contract import verify_deepep, verify_vllm_conv3d",
             "verify_deepep()", "verify_vllm_conv3d()",
             "import qwen_vl_utils.vision_process as vp",
-            "assert os.environ.get('FORCE_QWENVL_VIDEO_READER') == 'torchvision'",
-            "assert vp.get_video_reader_backend() == 'torchvision'",
-            "register_system_pyav_video_reader()",
-            f"c=av.open({representative_media!r}); frame=next(c.decode(video=0)); assert frame is not None; c.close()",
         ])
+        if not rl_video_runtime:
+            raise WorkflowError("Cosmos-RL preflight has no resolved video runtime")
+        if rl_video_runtime["selected_profile"] == "pynv-device-rgbp":
+            imports.extend([
+                "import PyNvVideoCodec as nvc",
+                "from cuda.bindings import driver as cuda_driver",
+                "from cosmos_rl.utils.pynv_video_reader import register_pynv_video_reader",
+                "assert nvc.OutputColorType.RGBP is not None",
+                "assert cuda_driver is not None",
+                "assert os.environ.get('FORCE_QWENVL_VIDEO_READER') == 'pynvvideocodec'",
+                "assert os.environ.get('TAO_PYNV_FRAME_TRANSFER') == 'device_rgbp'",
+                (
+                    "profile=register_pynv_video_reader("
+                    f"cache_size={int(rl_video_runtime['video_cache_size'])},"
+                    f"decoder_cache_size={int(rl_video_runtime['decoder_cache_size'])},"
+                    "strict=True)"
+                ),
+                "assert profile['frame_transfer'] == 'device_rgbp'",
+                "assert vp.get_video_reader_backend() == 'pynvvideocodec'",
+            ])
+        else:
+            imports.extend([
+                "from cosmos_rl.utils.system_pyav_video_reader import _assert_software_video_decoders, register_system_pyav_video_reader",
+                "assert _assert_software_video_decoders() == {'h264': 'h264', 'hevc': 'hevc'}",
+                "assert os.environ.get('FORCE_QWENVL_VIDEO_READER') == 'torchvision'",
+                "assert vp.get_video_reader_backend() == 'torchvision'",
+                "register_system_pyav_video_reader()",
+                f"c=av.open({representative_media!r}); frame=next(c.decode(video=0)); assert frame is not None; c.close()",
+            ])
     if args.dataset_family == "task_aware_video_reasoning":
         imports.append("import nvidia_tao_daft")
     imports.extend([
@@ -1075,7 +1199,7 @@ def _preflight_contract(
             "host and scheduler tools", "credential presence without reading values", "repository clean state",
             "Pyxis/Enroot and SQSH readability", "container mounts/shared storage", "non-root Python imports",
             "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization",
-            "checksum-pinned software System PyAV with h264/hevc CPU resolution", "backward-safe Qwen3-VL PatchEmbed",
+            "explicit selected Cosmos-RL video profile", "checksum-pinned software System PyAV image capability", "backward-safe Qwen3-VL PatchEmbed",
             "DeepEP Python/extension ABI", "vLLM Qwen3-VL Conv3D dispatch guard",
             "fingerprinted decoder-artifact coverage", "384 GiB free result/checkpoint space",
         ],
@@ -1279,10 +1403,18 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         train_data=train_data,
         val_data=val_data,
     )
+    if backend == "cosmos-framework" and getattr(args, "rl_video_profile", "auto") != "auto":
+        raise WorkflowError("--rl-video-profile applies only to the cosmos-rl backend")
+    rl_video_runtime = (
+        _rl_video_runtime(args, train_data, val_data)
+        if backend == "cosmos-rl"
+        else None
+    )
     processor_fingerprint = stable_hash({
         "revision": args.processor_revision,
         "profile": model_profile,
         "decoder_artifact": decoder_artifact,
+        "rl_video_runtime": rl_video_runtime,
     })
     cache_keys = {
         split: hashlib.sha256(
@@ -1299,8 +1431,8 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     train_media_container = [_containerize(args, value) for value in train_media]
     val_annotations_container = [_containerize(args, value) for value in val_annotations]
     val_media_container = [_containerize(args, value) for value in val_media]
-    spec = _framework_spec(args, train_data["record_count"], val_data["record_count"], contract) if backend == "cosmos-framework" else _rl_spec(args, contract, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, cache_keys)
-    environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container)
+    spec = _framework_spec(args, train_data["record_count"], val_data["record_count"], contract) if backend == "cosmos-framework" else _rl_spec(args, contract, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, cache_keys, rl_video_runtime)
+    environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, rl_video_runtime)
     command = _command(args, backend)
     if decoder_artifact["enabled"]:
         python = "/workspace/.venv/bin/python" if backend == "cosmos-framework" else "/opt/venv/cosmos_rl/bin/python"
@@ -1334,6 +1466,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "backend_selection_reason": reason, "backend_contract": str(BACKEND_FILES[backend]),
         "run_mode": args.run_mode, "training": contract, "processor_profile": model_profile,
         "decoder_artifact": decoder_artifact,
+        "rl_video_runtime": rl_video_runtime,
         "datasets": {"train": train_data, "validation": val_data},
         "input_frame": {
             "kind": "slurm_remote" if remote_inspection else "submission_host",
@@ -1387,7 +1520,8 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     }
     representative_media = _containerize(args, train_data["media_manifest"][0]["path"])
     plan["preflight"] = _preflight_contract(
-        args, backend, image, prepared_model, representative_media, decoder_artifact
+        args, backend, image, prepared_model, representative_media,
+        decoder_artifact, rl_video_runtime
     )
     return plan
 
@@ -1915,8 +2049,35 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
         default=0,
         help="Explicit Cosmos-RL train_batch_per_replica; 0 preserves the mini-batch-derived default.",
     )
-    parser.add_argument("--rl-dataloader-num-workers", type=int, default=0)
-    parser.add_argument("--rl-dataloader-prefetch-factor", type=int, default=1)
+    parser.add_argument(
+        "--rl-video-profile",
+        choices=("auto", "system-pyav", "pynv-device-rgbp"),
+        default="auto",
+        help=(
+            "Cosmos-RL video runtime. Auto selects device-RGBP for video "
+            "conversation and sparse System-PyAV for task-aware data."
+        ),
+    )
+    parser.add_argument(
+        "--rl-video-cache-size",
+        type=int,
+        default=0,
+        help="Rank-local processed-video LRU entries; 0 derives the fast-profile capacity from unique media.",
+    )
+    parser.add_argument(
+        "--rl-video-decoder-cache-size",
+        type=int,
+        default=0,
+        help="Rank-local PyNv native decoder-session entries; 0 derives the fast-profile capacity from unique media.",
+    )
+    parser.add_argument(
+        "--rl-sft-batch-threads",
+        type=int,
+        default=0,
+        help="In-process logical-batch preprocessing threads; 0 selects the profile default.",
+    )
+    parser.add_argument("--rl-dataloader-num-workers", type=int, default=None)
+    parser.add_argument("--rl-dataloader-prefetch-factor", type=int, default=None)
     parser.add_argument(
         "--rl-dataset-cache-mode",
         choices=("direct", "prewarm"),

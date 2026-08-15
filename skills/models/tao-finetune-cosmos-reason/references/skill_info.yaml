@@ -91,6 +91,29 @@ workflow_contract:
     - declared resolution, FPS, and duration
     - model tier and explicit user overrides
     forbidden_routing_inputs: [dataset project name, benchmark name, directory basename, historical path]
+  cosmos_rl_video_runtime:
+    selector: --rl-video-profile
+    choices: [auto, system-pyav, pynv-device-rgbp]
+    auto:
+      video_conversation: pynv-device-rgbp
+      task_aware_video_reasoning: system-pyav
+    pynv-device-rgbp:
+      decoder: pynvvideocodec
+      transfer: device_rgbp_dlpack
+      dataloader: {workers: 1, prefetch_factor: 2}
+      sft_batch_threads: 4
+      processed_video_cache: rank_local_memory_populated_on_demand
+      decoder_session_cache: rank_local_native_populated_on_demand
+      capacity_default: max_train_validation_unique_media
+      prewarm: false
+      disk_cache: false
+    system-pyav:
+      decoder: torchvision
+      implementation: sparse_software_system_PyAV
+      dataloader: {workers: 0, prefetch_factor: omitted}
+      sft_batch_threads: 1
+      prewarm: false
+      disk_cache: false
   backend_action_commands:
     cosmos-framework:
       export: python -m cosmos_framework.scripts.export_vlm_dcp

@@ -625,6 +625,9 @@ def selected_environment(environment: Mapping[str, str]) -> dict[str, str]:
     allow = {
         "PYTHONUNBUFFERED", "PYTHONHASHSEED", "NCCL_DEBUG", "TORCH_NCCL_ASYNC_ERROR_HANDLING",
         "PYTORCH_CUDA_ALLOC_CONF", "NVIDIA_DRIVER_CAPABILITIES", "CUDA_FORWARD_COMPAT",
+        "FORCE_QWENVL_VIDEO_READER", "TAO_SFT_BATCH_THREADS",
+        "TAO_PYNV_FRAME_TRANSFER", "TAO_PYNV_VIDEO_CACHE_SIZE",
+        "TAO_PYNV_DECODER_CACHE_SIZE", "COSMOS_CACHE",
     }
     return {key: environment[key] for key in sorted(allow & set(environment))}
 

@@ -52,7 +52,13 @@
             "frame_height": {"type": "integer", "minimum": 1},
             "max_video_pixels": {"type": "integer", "minimum": 1},
             "sequence_length": {"type": "integer", "minimum": 1},
-            "attention_implementation": {"type": "string", "minLength": 1}
+            "attention_implementation": {"type": "string", "minLength": 1},
+            "rl_video_profile": {"enum": ["auto", "system-pyav", "pynv-device-rgbp"]},
+            "rl_video_cache_size": {"type": "integer", "minimum": 0},
+            "rl_video_decoder_cache_size": {"type": "integer", "minimum": 0},
+            "rl_sft_batch_threads": {"type": "integer", "minimum": 0},
+            "rl_dataloader_num_workers": {"type": "integer", "minimum": 0},
+            "rl_dataloader_prefetch_factor": {"type": "integer", "minimum": 1}
           }
         },
         "lora": {
