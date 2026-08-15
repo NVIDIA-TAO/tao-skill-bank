@@ -230,6 +230,11 @@ workspace it expands to nothing and the command is unchanged; with KPI data or
 checkpoints outside it, it is the difference between a working stage and
 `No .txt label files found`.
 
+A HuggingFace snapshot directory is a tree of symlinks into a sibling `blobs/`, so the
+mount must be the **repo root** (`.../models--org--name/`), not the snapshot. Mounting the
+snapshot alone makes the loader report a missing model file for a model that is present.
+`init_deft_state.py` handles this when it derives the list.
+
 `init_deft_state.py` records `config.extra_container_mounts`: the directories that
 inputs live in outside `$WORKSPACE`. Containers see only `"$WORKSPACE:$WORKSPACE"`,
 so **every** `docker run` in this skill must add a `-v "$m:$m"` for each entry, in

@@ -161,8 +161,9 @@ Nothing about this is enforced by TAO, so check it before every inference:
 
 It compares the caption list against the KPI classes, the staged ODVG labelmap
 order, `max_labels`, and the run's target classes, and exits non-zero naming both
-sides of any disagreement. At baseline there is no staged labelmap yet — drop
-`--labelmap` and pass `--classes` instead.
+sides of any disagreement. At baseline there is no staged labelmap yet, so drop `--labelmap`. `--classes` is
+not its replacement — it is an independent fourth source and takes the **path** to the
+pool's `classes.yaml`, not a class list. Pass it in every phase.
 
 `inference.color_map` in the reference spec is cosmetic — it only tints `images_annotated/`.
 

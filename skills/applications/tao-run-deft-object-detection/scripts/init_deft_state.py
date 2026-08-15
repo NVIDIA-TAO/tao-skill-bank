@@ -536,7 +536,14 @@ def main() -> int:
         mounted = [results_dir, zero_shot_checkpoint, train_spec_template, source_pool_embeddings,
                    source_pool_annotations, kpi_images_dir, ground_truth_labels_dir, class_mapping]
         if looks_local:
-            mounted.append(Path(model_path))
+            # A HuggingFace hub snapshot is all symlinks into a sibling blobs/ dir, so
+            # mounting the snapshot alone gives the container dangling links and the
+            # loader reports "no file named model.safetensors found" -- a missing-model
+            # error for a model that is present. Mount the repo root, which holds both.
+            encoder = Path(model_path)
+            if "snapshots" in encoder.parts:
+                encoder = Path(*encoder.parts[:encoder.parts.index("snapshots")])
+            mounted.append(encoder)
         for extra in (args.pool_images, args.codetr_checkpoint, args.codetr_classmap):
             if extra:
                 mounted.append(_abs(extra))

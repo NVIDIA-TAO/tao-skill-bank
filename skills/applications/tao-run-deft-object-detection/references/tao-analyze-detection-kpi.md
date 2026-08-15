@@ -110,7 +110,8 @@ Pass the narrowed file as `data.mapping`, not the user's original.
 
 ## Invocation
 
-**Launch it detached.** This stage runs ~22 minutes on a 14k-image KPI set and the mAP
+**Launch it detached.** This stage runs 25-45 minutes on a 14k-image KPI set — the
+baseline is the slowest, since every detection survives `conf_threshold: 0.0` — and the mAP
 appears *only* on stdout. A foreground `docker run | tee` loses the number if the client
 dies, while the container keeps running — name the container, redirect to the log, and
 wait on the log with `await_stage.py`:
@@ -127,15 +128,17 @@ Pass `--gpus all` even though the scoring itself is CPU-bound: the TAO launcher 
 `FileNotFoundError: 'nvidia-smi'` before any work begins.
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
+docker run -d --name "deft_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):$(id -g)" \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
-  analytics kpi_analyze -e "$KPI_SPEC" 2>&1 | tee "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log"
-# mAP appears only on stdout, so the tee is required — but a pipeline reports the
-# exit status of `tee`, not of the container. Without one of these, a failed
-# kpi_analyze looks like a success:
-#   set -o pipefail   (before the pipeline), or
-#   [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "kpi_analyze failed"; exit 1; }
+  analytics kpi_analyze -e "$KPI_SPEC" 2>&1
+# Detached, and NOT --rm: the mAP exists only on this container's stdout, so removing
+# it on exit discards the number. Wait on the artifact, then capture the log, then
+# remove the container yourself:
+#   await_stage.py --artifact "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" --timeout-sec 5400
+#   docker logs "deft_${PHASE}_kpi" > "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" 2>&1
+#   docker inspect -f '{{.State.ExitCode}}' "deft_${PHASE}_kpi"   # check before trusting it
+#   docker rm "deft_${PHASE}_kpi"
 ```
 
 Tee the log: the aggregate **mAP is printed to stdout only** and is not written into `kpi_calc.csv`. Parse it from the log line `mAP: <value>` and record it in state; otherwise the trend across iterations cannot be reported.
