@@ -459,7 +459,7 @@ def _remote_file_sha256(args: argparse.Namespace, *, path: str, host: str) -> st
 
 def _remote_file_exists(args: argparse.Namespace, *, path: str, host: str) -> bool:
     result = subprocess.run(
-        _ssh_command(args, host, shlex.join(["test", "-f", "--", path])),
+        _ssh_command(args, host, shlex.join(["test", "-f", path])),
         text=True, capture_output=True, check=False, timeout=120,
     )
     return result.returncode == 0

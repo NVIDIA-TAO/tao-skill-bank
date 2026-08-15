@@ -15,6 +15,7 @@ import sys
 import tomllib
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1015,6 +1016,27 @@ def test_slurm_preflight_refreshes_sqsh_existence_without_replanning(monkeypatch
     monkeypatch.setattr(workflow, "_remote_file_exists", lambda *_args, **_kwargs: True)
     result = workflow.local_preflight(args, plan)
     assert not any("new SQSH" in error for error in result["errors"])
+
+
+def test_remote_sqsh_existence_uses_portable_test_syntax(monkeypatch, tmp_path):
+    args = args_for(tmp_path, backend="cosmos-rl")
+    captured = {}
+
+    def fake_ssh(_args, host, remote_command):
+        captured.update(host=host, remote_command=remote_command)
+        return ["ssh", host, remote_command]
+
+    monkeypatch.setattr(workflow, "_ssh_command", fake_ssh)
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0),
+    )
+    assert workflow._remote_file_exists(args, path="/shared/image.sqsh", host="login")
+    assert captured == {
+        "host": "login",
+        "remote_command": "test -f /shared/image.sqsh",
+    }
 
 
 def test_container_mount_translation_preserves_original_paths(tmp_path):
