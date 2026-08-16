@@ -410,17 +410,20 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         max_video_pixels = args.max_video_pixels
         provenance["vision.max_pixels"] = _source(max_video_pixels, "user")
     else:
-        max_video_pixels = int(
+        recorded_max_video_pixels = (
             evaluation_contract.get("max_video_pixels")
             or plan.get("processor_profile", {}).get("max_video_pixels")
-            or 0
         )
+        max_video_pixels = int(recorded_max_video_pixels) if recorded_max_video_pixels else None
     precision = str(evaluation_contract.get("precision") or training.get("precision") or "")
+    max_length = int(training.get("sequence_length") or 0)
     seed = int(evaluation_contract.get("seed", training.get("seed", 0)))
     batch_size = int(evaluation_contract.get("batch_size") or plan.get("planner_request", {}).get("validation_batch_size") or 0)
     num_gpus = args.num_gpus or int(plan["compute"].get("total_gpus") or 0)
     inherited_values = {
         "model.dtype": precision,
+        "model.max_length": max_length,
+        "model.tp_size": 1,
         "evaluation.seed": seed,
         "evaluation.batch_size": batch_size,
         "vision.num_frames": frames,
@@ -434,7 +437,8 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             )
     if args.max_video_pixels is None:
         provenance["vision.max_pixels"] = _source(max_video_pixels, "sealed_training_plan")
-    if max_video_pixels <= 0:
+    model_tier = str(plan.get("processor_profile", {}).get("model_tier") or "")
+    if max_video_pixels is None and model_tier != "nano":
         required_user_inputs.append(
             {
                 "field": "vision.max_pixels",
@@ -444,10 +448,11 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
 
     vision: dict[str, Any] = {
         "num_frames": frames,
-        "max_pixels": max_video_pixels,
         "video_decoder": "pynvvideocodec",
         "video_cache_size": 0,
     }
+    if max_video_pixels is not None:
+        vision["max_pixels"] = max_video_pixels
     decoder_artifact = plan.get("decoder_artifact", {})
     if isinstance(decoder_artifact, Mapping) and decoder_artifact.get("enabled"):
         vision["video_override_map"] = decoder_artifact.get("path")
@@ -466,6 +471,8 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         "model": {
             "model_name": model_name or "",
             "dtype": precision,
+            "max_length": max_length,
+            "tp_size": 1,
             "enable_lora": enable_lora,
             "base_model_path": base_model_path,
             "config_file": "",

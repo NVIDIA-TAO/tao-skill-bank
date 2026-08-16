@@ -31,6 +31,7 @@ def _sealed_plan(
     prompt: str = "training prompt",
     max_video_pixels: int | None = 4096,
     seed: int = 17,
+    model_tier: str = "edge",
 ) -> Path:
     plan = {
         "schema_version": 2,
@@ -42,6 +43,7 @@ def _sealed_plan(
             "precision": "bfloat16",
             "seed": seed,
             "frames": 8,
+            "sequence_length": 40960,
             "system_prompt": prompt,
         },
         "datasets": {
@@ -67,7 +69,11 @@ def _sealed_plan(
             "output": {"original": "/runtime/prepared-base-model"}
         },
         "prepared_model_container_path": "/runtime/prepared-base-model",
-        "processor_profile": {"frames": 8, "max_video_pixels": max_video_pixels},
+        "processor_profile": {
+            "frames": 8,
+            "max_video_pixels": max_video_pixels,
+            "model_tier": model_tier,
+        },
         "compute": {"total_gpus": 8},
         "decoder_artifact": {"enabled": False},
         "evaluation_contract": {
@@ -141,6 +147,7 @@ def _run(
     prompt: str = "training prompt",
     max_video_pixels: int | None = 4096,
     seed: int = 17,
+    model_tier: str = "edge",
     extra: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     plan_output = tmp_path / "evaluation-plan.json"
@@ -157,6 +164,7 @@ def _run(
                 prompt=prompt,
                 max_video_pixels=max_video_pixels,
                 seed=seed,
+                model_tier=model_tier,
             )
         ),
         "--training-status",
@@ -193,6 +201,8 @@ def test_dense_evaluation_inherits_training_parity_fields(tmp_path: Path) -> Non
     assert config["vision"]["max_pixels"] == 4096
     assert "nframes" not in config["vision"]
     assert config["model"]["model_name"] == "/runtime/checkpoints/epoch_1"
+    assert config["model"]["max_length"] == 40960
+    assert config["model"]["tp_size"] == 1
     assert config["model"]["enable_lora"] is False
     assert config["evaluation"]["batch_size"] == 1
     assert config["num_gpus"] == 8
@@ -244,6 +254,22 @@ def test_missing_pixel_budget_accepts_explicit_evaluation_input(tmp_path: Path) 
     assert resolved_plan["provenance"]["vision.max_pixels"] == {
         "source": "user",
         "value": 3136000,
+    }
+
+
+def test_nano_native_pixel_budget_remains_an_omitted_runtime_override(tmp_path: Path) -> None:
+    resolved, plan_path, config_path = _run(
+        tmp_path,
+        max_video_pixels=None,
+        model_tier="nano",
+    )
+    assert resolved.returncode == 0, resolved.stderr
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert "max_pixels" not in config["vision"]
+    assert plan["provenance"]["vision.max_pixels"] == {
+        "source": "sealed_training_plan",
+        "value": None,
     }
 
 

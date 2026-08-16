@@ -31,6 +31,7 @@ For the original validation split, inherit these without asking again:
 - annotation manifest, media root, and dataset fingerprint;
 - system prompt, including an explicitly empty prompt;
 - frame count, pixel budget, precision, seed, and validation batch size;
+- training sequence limit and evaluator tensor-parallel degree (one model replica per rank);
 - task/answer/metric semantics when validation inspection proved them;
 - backend, training mode, base-model identity/fingerprint, and GPU count;
 - dense versus PEFT behavior and the prepared base model required to merge a
@@ -50,8 +51,9 @@ Prompt once for the remaining fields reported in
 - exact checkpoint or checkpoint epoch when more than one checkpoint event is
   present and the training plan did not record a selection;
 - generation maximum tokens, because it is not a fine-tuning parameter;
-- maximum video pixels when the training plan deliberately preserved the
-  Nano processor's native default instead of recording an explicit budget;
+- maximum video pixels when a non-Nano training plan did not record a usable
+  budget. For Nano, a sealed native default remains an omitted evaluator
+  override so preprocessing does not silently change;
 - task type or metric names when annotation targets/metadata were ambiguous;
 - exact annotation and media paths when evaluating a different corpus.
 

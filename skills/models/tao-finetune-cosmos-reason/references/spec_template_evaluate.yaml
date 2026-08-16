@@ -11,6 +11,8 @@ dataset:
 model:
   model_name: ''
   dtype: ''
+  max_length: 0
+  tp_size: 1
   enable_lora: false
   base_model_path: ''
   config_file: ''
