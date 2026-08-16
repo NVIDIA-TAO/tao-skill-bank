@@ -2510,8 +2510,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _text(data: Mapping[str, Any]) -> str:
-    if "ok" in data:
+    if "ok" in data and "errors" in data:
         return "\n".join([f"Cosmos preflight: {'PASS' if data['ok'] else 'FAIL'}", *(f"- ERROR: {x}" for x in data["errors"]), *(f"- warning: {x}" for x in data["warnings"])])
+    if "ok" in data:
+        lines = [f"Cosmos materialization: {'PASS' if data['ok'] else 'FAIL'}"]
+        config = data.get("config")
+        if isinstance(config, Mapping):
+            lines.extend(
+                f"- config {key}: {config[key]}"
+                for key in ("original", "resolved", "sha256")
+                if config.get(key)
+            )
+        return "\n".join(lines)
     return "\n".join(["Cosmos launch plan:", f"- backend: {data['backend']}", f"- reason: {data['backend_selection_reason']}", f"- contract: {data['backend_contract']}"])
 
 

@@ -723,6 +723,23 @@ def test_framework_warmup_epochs_translate_to_optimizer_steps(tmp_path):
     assert plan["spec"]["scheduler"]["f_min"] == [1.0]
 
 
+def test_materialization_text_result_is_not_misclassified_as_preflight():
+    rendered = workflow._text(
+        {
+            "ok": True,
+            "config": {
+                "original": "/results/specs/train.toml",
+                "resolved": "/results/specs/train.toml",
+                "sha256": "a" * 64,
+            },
+            "generated_artifacts": [],
+        }
+    )
+
+    assert rendered.startswith("Cosmos materialization: PASS")
+    assert "config sha256" in rendered
+
+
 def test_task_aware_smoke_limit_counts_logical_records_before_expansion(tmp_path):
     args = args_for(
         tmp_path, backend="cosmos-framework",
