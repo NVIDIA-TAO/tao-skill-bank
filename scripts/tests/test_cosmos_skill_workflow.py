@@ -447,7 +447,7 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
         "video_cache_persists_to_disk": False,
         "decoder_cache_size": 16,
         "decoder_cache_scope": "rank_local_pynv_native_sessions",
-        "sft_batch_threads": 1,
+        "sft_batch_threads": 4,
         "dataloader_num_workers": 1,
         "dataloader_prefetch_factor": 2,
         "unique_media_capacity_basis": 16,
@@ -473,7 +473,7 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert plan["spec"]["validation"]["dataloader_prefetch_factor"] == 2
     assert plan["environment"]["FORCE_QWENVL_VIDEO_READER"] == "pynvvideocodec"
     assert plan["environment"]["TAO_PYNV_FRAME_TRANSFER"] == "device_rgbp"
-    assert plan["environment"]["TAO_SFT_BATCH_THREADS"] == "1"
+    assert plan["environment"]["TAO_SFT_BATCH_THREADS"] == "4"
     assert plan["environment"]["TAO_PYNV_VIDEO_CACHE_SIZE"] == "16"
     assert plan["environment"]["TAO_PYNV_DECODER_CACHE_SIZE"] == "16"
     preflight = plan["preflight"]["container_runtime"]
@@ -482,6 +482,7 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert "persistent_workers" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:worker_decoder_cache_forwarding" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:worker_pixel_bound_normalization" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:processed_video_cache_binding" in preflight
     assert "packer_module.qwen_vl_process_vision_info" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_visibility" in preflight

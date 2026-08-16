@@ -732,11 +732,12 @@ def _rl_video_runtime(
         if fast and decoder_cache_override is None
         else (decoder_cache_override if fast else 1)
     )
-    # Serial logical-batch preprocessing is the measured fast path for the
-    # rank-local PyNv reader/cache.  The reader already overlaps one persistent
-    # DataLoader worker with GPU training; additional in-process threads cause
-    # cache churn and decoder-lock contention for this profile.
-    batch_threads = batch_threads_override or 1
+    # The video-conversation fast path preprocesses one 31-sample logical batch
+    # with four ordered threads.  The processed-video cache is single-flight,
+    # so duplicate media do not trigger duplicate decodes while tokenization
+    # and vision preprocessing can overlap.  The sparse software profile keeps
+    # its conservative serial default.
+    batch_threads = batch_threads_override or (4 if fast else 1)
     if batch_threads < 1:
         raise WorkflowError("resolved Cosmos-RL SFT batch threads must be positive")
 
@@ -1335,7 +1336,8 @@ def _preflight_contract(
                 "worker_source=inspect.getsource(vp._ensure_forced_video_reader)",
                 "assert 'TAO_PYNV_DECODER_CACHE_SIZE' in worker_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:worker_decoder_cache_forwarding'",
                 "packer_source=inspect.getsource(packer_module.qwen_vl_process_vision_info)",
-                "assert 'normalize_video_pixel_bounds(' in packer_source and 'vision_process' in packer_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:worker_pixel_bound_normalization'",
+                "assert 'normalize_video_pixel_bounds(' in packer_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:worker_pixel_bound_normalization'",
+                "assert 'vision_process.fetch_video(' in packer_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:processed_video_cache_binding'",
                 "worker_kwargs=_dataloader_worker_kwargs(1, 2)",
                 "assert worker_kwargs['persistent_workers'] is True, 'TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers'",
                 (
@@ -2441,7 +2443,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
         "--rl-sft-batch-threads",
         type=int,
         default=0,
-        help="In-process logical-batch preprocessing threads; 0 selects the validated serial fast path.",
+        help="In-process logical-batch preprocessing threads; 0 selects 4 for the PyNv video fast path and 1 otherwise.",
     )
     parser.add_argument("--rl-dataloader-num-workers", type=int, default=None)
     parser.add_argument("--rl-dataloader-prefetch-factor", type=int, default=None)
