@@ -1378,7 +1378,6 @@ def _decoder_artifact_plan(
     train_data: Mapping[str, Any],
     val_data: Mapping[str, Any],
     rl_video_runtime: Mapping[str, Any] | None,
-    framework_video_runtime: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if args.video_override_max_macroblocks < 1 or args.video_override_workers < 1:
         raise WorkflowError(
@@ -1426,17 +1425,9 @@ def _decoder_artifact_plan(
             _containerize(args, media_root),
         ])
     hardware_decoder_profile = (
-        (
-            backend == "cosmos-rl"
-            and rl_video_runtime is not None
-            and rl_video_runtime["selected_profile"] == "pynv-device-rgbp"
-        )
-        or (
-            backend == "cosmos-framework"
-            and framework_video_runtime is not None
-            and framework_video_runtime["selected_profile"]
-            == "torchcodec-cuda-on-demand"
-        )
+        backend == "cosmos-rl"
+        and rl_video_runtime is not None
+        and rl_video_runtime["selected_profile"] == "pynv-device-rgbp"
     )
     force_all_validation_media = (
         backend != "cosmos-rl"
@@ -1481,6 +1472,10 @@ def _decoder_artifact_plan(
         else "/opt/venv/cosmos_rl/bin/python"
     )
 
+    # A resolved RL hardware profile requires a stream-capability artifact so
+    # incompatible media are redirected before the timed training path. The
+    # source-baked capability-only software fallback remains a last resort for
+    # permanent limitations not represented by the structural scan.
     artifact_required = (
         hardware_decoder_profile
         or (
@@ -1629,7 +1624,6 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         train_data=train_data,
         val_data=val_data,
         rl_video_runtime=rl_video_runtime,
-        framework_video_runtime=framework_video_runtime,
     )
     processor_fingerprint = stable_hash({
         "revision": args.processor_revision,
@@ -2139,7 +2133,22 @@ def parity_report(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str
     right_decoder = {
         key: right.get("decoder_artifact", {}).get(key) for key in decoder_keys
     }
-    decoder_equal = left_decoder == right_decoder
+    if left_decoder["enabled"] and right_decoder["enabled"]:
+        decoder_equal = left_decoder == right_decoder
+    elif not left_decoder["enabled"] and not right_decoder["enabled"]:
+        # A backend-specific hardware compatibility gate may make the
+        # preparation artifact mandatory for only one implementation. Before
+        # either artifact exists, parity is still determined by the sealed
+        # inputs and any explicit forced sources; launch validation remains
+        # responsible for blocking a required-but-unprepared backend.
+        decoder_equal = (
+            left_decoder["input_fingerprints"]
+            == right_decoder["input_fingerprints"]
+            and left_decoder["policy"].get("forced_runtime_sources", [])
+            == right_decoder["policy"].get("forced_runtime_sources", [])
+        )
+    else:
+        decoder_equal = False
     checks["decoder_artifact"] = {
         "status": "equivalent" if decoder_equal else "invalid_mismatch",
         "left": left_decoder,

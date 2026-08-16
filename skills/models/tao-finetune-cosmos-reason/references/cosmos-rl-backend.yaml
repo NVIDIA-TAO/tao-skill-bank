@@ -126,13 +126,13 @@ decoder_artifact:
   schema_version: 2
   builder: cosmos_rl.utils.video_override_artifacts
   validator: cosmos_rl.utils.validate_video_override_artifacts
-  selection_basis: resolved_decoder_capability
+  selection_basis: resolved_rl_decoder_capability
   scan_all_referenced_media: true
   convert_only_incompatible_media_for_fast_profile: true
   force_all_validation_annotations: framework_task_aware_only
   diagnosed_train_sources_are_explicit: true
   gpu_random_access_validation_required: true
-  required_for_resolved_hardware_decoder: true
+  required_for_resolved_rl_hardware_decoder: true
 compatibility:
   a100_qwen3_vl_patch_embed: native_per_model_linear_equivalent
   vllm_qwen3_vl_patch_embed: equal_or_newer_pytorch_linear_guard_verified
@@ -141,7 +141,7 @@ compatibility:
   pynv_device_rgbp: dlpack_transfer_exact_batch_gate_and_scanned_retry
   pynv_capability_fallback: permanent_nvdec_capability_exception_only
   pynv_capability_fallback_attestation: first_use_per_rank
-  pynv_decoder_sessions: explicit_capacity_only_with_conservative_default_one
+  pynv_decoder_sessions: explicit_capacity_with_bounded_default_four
   pynv_spawned_worker_decoder_capacity: environment_forwarded_and_preflight_verified
   sft_batch_threads: order_preserving_thread_pool
   worker_zero_prefetch: num_workers_zero_and_prefetch_omitted

@@ -339,6 +339,8 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
     assert plan["training"]["optimizer_epsilon"] == 1e-6
     assert plan["spec"]["optimizer"]["eps"] == 1e-6
     assert "lora_enabled" not in plan["spec"]["model"]
+    assert plan["decoder_artifact"]["required"] is False
+    assert plan["decoder_artifact"]["enabled"] is False
     assert plan["framework_video_runtime"] == {
         "selected_profile": "torchcodec-cuda-on-demand",
         "selection_reason": "Framework video supervision uses its source-baked CUDA TorchCodec profile",
@@ -1402,7 +1404,7 @@ def test_pairwise_parity_blocks_model_dataset_and_optimization_mismatch(tmp_path
     right_args.validation_media_root = [item["resolved"] for item in left["datasets"]["validation"]["media_roots"]]
     right = workflow.build_plan(right_args)
     report = workflow.parity_report(left, right)
-    assert report["launch_allowed"]
+    assert report["launch_allowed"], report
     changed = deepcopy(right); changed["training"]["learning_rate"] *= 2
     report = workflow.parity_report(left, changed)
     assert not report["launch_allowed"] and "optimization" in report["invalid_mismatches"]
