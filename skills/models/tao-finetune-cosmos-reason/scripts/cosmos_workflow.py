@@ -1265,9 +1265,12 @@ def _preflight_contract(
         imports.extend([
             "import cosmos_framework", "import inspect", "import os", "from cosmos_framework.callbacks.tao_status import TAOStatusCallback",
             "from cosmos_framework.data.generator.dataflow import ContiguousBatcher",
+            "import cosmos_framework.data.generator.dataflow.loader as framework_dataflow_loader",
             "from cosmos_framework.scripts.export_vlm_dcp import export_vlm_dcp",
             "import torchcodec",
             "assert 'max_tokens' in inspect.signature(ContiguousBatcher).parameters, 'TAO_PREFLIGHT_ASSERTION_FAILED:contiguous_batcher_max_tokens'",
+            "assert ContiguousBatcher.preserves_source_order is True, 'TAO_PREFLIGHT_ASSERTION_FAILED:contiguous_batcher_source_order'",
+            "loader_source=inspect.getsource(framework_dataflow_loader._DataflowIterableDataset); assert 'group[-1]' in loader_source and 'cursor_epoch' in loader_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:cross_epoch_resume_cursor'",
             "assert os.environ.get('TAO_VIDEO_DECODER_DEVICE') == 'cuda'",
             f"assert os.environ.get('TAO_VIDEO_CACHE_SIZE') == {str(framework_video_runtime['video_cache_size'])!r}",
             f"assert os.environ.get('TAO_FRAMEWORK_SFT_PROCESS_THREADS') == {str(framework_video_runtime['sft_process_threads'])!r}",

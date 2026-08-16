@@ -368,6 +368,8 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
     assert plan["environment"]["TAO_VIDEO_DECODER_THREADS"] == "1"
     preflight = plan["preflight"]["container_runtime"]
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:contiguous_batcher_max_tokens" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:contiguous_batcher_source_order" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:cross_epoch_resume_cursor" in preflight
     assert plan["datasets"]["train"]["annotations"][0]["original"] == args.train_annotation[0]
     source = Path(workflow.__file__).read_text(encoding="utf-8")
     assert "/lustre/" not in source and "rarunachalam" not in source
