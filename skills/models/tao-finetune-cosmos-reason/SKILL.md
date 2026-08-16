@@ -332,7 +332,9 @@ training child, the same allocation runs the planner-owned packaged-runtime
 gate as the smoke job's first Pyxis step; a failed gate writes the independent
 child exit artifact and blocks training. Generated jobs set
 `SLURM_EXPORT_ENV=ALL`, and the platform consumer still submits with
-`sbatch --export=ALL`, so runtime profile variables reach every `srun` step.
+`sbatch --export=ALL`. Every Pyxis step also receives the planner-owned
+runtime variable names through `--container-env`, so a baked image `ENV` value
+cannot override the selected decoder, frame-transfer, cache, or worker profile.
 Framework topology is
 shard=`gpus_per_node`, replica=`nodes`.
 Cosmos-RL uses one controller on node zero and its policy-worker topology.

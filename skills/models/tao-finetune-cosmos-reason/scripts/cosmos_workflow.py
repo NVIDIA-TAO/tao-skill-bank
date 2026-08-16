@@ -1272,9 +1272,27 @@ def _preflight_contract(
             f"df -Pk {shlex.quote(args.results_dir)} {shlex.quote(args.checkpoint_dir)}",
             "nvidia-smi --query-gpu=index,name,memory.total,compute_cap --format=csv,noheader",
         ])
+        if backend == "cosmos-framework":
+            container_env_names = [
+                "TAO_VIDEO_DECODER_DEVICE",
+                "TAO_VIDEO_CACHE_SIZE",
+                "TAO_FRAMEWORK_SFT_PROCESS_THREADS",
+                "TAO_VIDEO_DECODER_THREADS",
+            ]
+        elif rl_video_runtime["selected_profile"] == "pynv-device-rgbp":
+            container_env_names = [
+                "FORCE_QWENVL_VIDEO_READER",
+                "TAO_PYNV_FRAME_TRANSFER",
+                "TAO_PYNV_VIDEO_CACHE_SIZE",
+                "TAO_PYNV_DECODER_CACHE_SIZE",
+                "TAO_SFT_BATCH_THREADS",
+            ]
+        else:
+            container_env_names = ["FORCE_QWENVL_VIDEO_READER"]
         container = " ".join([
             "srun", "--nodes=1", "--ntasks=1", f"--gpus={args.gpus_per_node}",
             "--no-container-remap-root", "--no-container-mount-home",
+            f"--container-env={','.join(container_env_names)}",
             f"--container-image={shlex.quote(args.sqsh_path)}",
             "bash -lc", shlex.quote(container_check),
         ])
@@ -1878,6 +1896,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     if not args.container_mount:
         raise WorkflowError("at least one explicit container mount is required for SLURM")
     mount_args = f"--container-mounts={shlex.quote(','.join(args.container_mount))}"
+    container_env_args = f"--container-env={','.join(sorted(plan['environment']))}"
     env_exports = "\n".join(f"export {key}={shlex.quote(value)}" for key, value in plan["environment"].items())
     native = plan["command"]
     wrapped = "\n".join([
@@ -1894,6 +1913,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         "srun", f"--nodes={args.nodes}", f"--ntasks={args.nodes}", "--ntasks-per-node=1",
         f"--gpus-per-node={args.gpus_per_node}", f"--cpus-per-task={step_cpu_value}",
         "--no-container-remap-root", "--no-container-mount-home",
+        container_env_args,
         f"--container-image={shlex.quote(str(sqsh))}",
         mount_args, "bash -lc", shlex.quote(wrapped),
     ]))

@@ -509,6 +509,9 @@ def test_cosmos_rl_resolves_sft_hook_from_installed_native_package(tmp_path):
     args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
     args.container_mount = [f"{tmp_path}:{tmp_path}"]
     script = workflow.render_slurm(args, plan)
+    assert "--container-env=" in script
+    assert "FORCE_QWENVL_VIDEO_READER" in script
+    assert "TAO_PYNV_DECODER_CACHE_SIZE" in script
     child_argv = shlex.split(script.split("set +e\n", 1)[1].split("\nchild_rc=", 1)[0])
     nested = subprocess.run(
         ["bash", "-n", "-c", child_argv[-1]], capture_output=True, text=True
@@ -911,6 +914,8 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert "TAO_COSMOS_PACKAGED_RUNTIME_PREFLIGHT_OK" in script
     assert plan["preflight"]["container_runtime"] in script
     assert "export SLURM_EXPORT_ENV=ALL" in script
+    assert "--container-env=" in script
+    assert "TAO_STATUS_FILE" in script
     assert 'exit "$child_rc"' in script
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
     child_argv = shlex.split(script.split("set +e\n", 1)[1].split("\nchild_rc=", 1)[0])
