@@ -50,7 +50,7 @@ runtime:
       prewarm: false
       compatibility_artifact: optional_and_never_a_direct_launch_gate
       capability_fallback: tao_system_pyav_sparse
-      capability_fallback_scope: nvdec_unsupported_stream_only
+      capability_fallback_scope: nvdec_incompatible_stream_only
     system-pyav:
       decoder: torchvision
       implementation: sparse_software_system_PyAV

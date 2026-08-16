@@ -764,7 +764,7 @@ def _rl_video_runtime(
             "tao_system_pyav_sparse" if fast else "not_applicable"
         ),
         "capability_fallback_scope": (
-            "nvdec_unsupported_stream_only" if fast else "not_applicable"
+            "nvdec_incompatible_stream_only" if fast else "not_applicable"
         ),
     }
 

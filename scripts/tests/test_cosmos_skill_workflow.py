@@ -446,7 +446,7 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
         "unique_media_capacity_basis": 16,
         "dataset_prewarm": False,
         "capability_fallback": "tao_system_pyav_sparse",
-        "capability_fallback_scope": "nvdec_unsupported_stream_only",
+        "capability_fallback_scope": "nvdec_incompatible_stream_only",
     }
     assert plan["decoder_artifact"]["required"] is False
     assert plan["decoder_artifact"]["enabled"] is False
