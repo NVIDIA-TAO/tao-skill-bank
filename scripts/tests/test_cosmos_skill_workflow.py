@@ -479,6 +479,7 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_visibility" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_type" in preflight
+    assert "pixel_probe=normalize_video_pixel_bounds" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:all_child_failures_propagate" in preflight
 
 

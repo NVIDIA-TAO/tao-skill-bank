@@ -1327,7 +1327,7 @@ def _preflight_contract(
                 "assert '_is_nvdec_capability_error' in inspect.getsource(pynv_reader), 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_classifier'",
                 "assert 'TAO_VIDEO_DECODER_CAPABILITY_FALLBACK_ATTESTATION' in inspect.getsource(pynv_reader), 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_attestation'",
                 "pixel_probe={'video':'/tmp/tao-pixel-bound-probe.mp4','max_pixels':'81920'}",
-                "normalize_video_pixel_bounds(pixel_probe,16,vp)",
+                "pixel_probe=normalize_video_pixel_bounds(pixel_probe,16,vp)",
                 "assert pixel_probe.get('min_pixels') == pixel_probe['max_pixels'] == 81920, 'TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_visibility'",
                 "assert isinstance(pixel_probe['min_pixels'],int) and isinstance(pixel_probe['max_pixels'],int), 'TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_type'",
                 "assert 'controller_id == -1 or i == controller_id' not in inspect.getsource(launch_all_module), 'TAO_PREFLIGHT_ASSERTION_FAILED:all_child_failures_propagate'",
