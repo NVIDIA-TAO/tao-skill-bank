@@ -1263,9 +1263,11 @@ def _preflight_contract(
         if not framework_video_runtime:
             raise WorkflowError("Cosmos Framework preflight has no resolved video runtime")
         imports.extend([
-            "import cosmos_framework", "import os", "from cosmos_framework.callbacks.tao_status import TAOStatusCallback",
+            "import cosmos_framework", "import inspect", "import os", "from cosmos_framework.callbacks.tao_status import TAOStatusCallback",
+            "from cosmos_framework.data.generator.dataflow import ContiguousBatcher",
             "from cosmos_framework.scripts.export_vlm_dcp import export_vlm_dcp",
             "import torchcodec",
+            "assert 'max_tokens' in inspect.signature(ContiguousBatcher).parameters, 'TAO_PREFLIGHT_ASSERTION_FAILED:contiguous_batcher_max_tokens'",
             "assert os.environ.get('TAO_VIDEO_DECODER_DEVICE') == 'cuda'",
             f"assert os.environ.get('TAO_VIDEO_CACHE_SIZE') == {str(framework_video_runtime['video_cache_size'])!r}",
             f"assert os.environ.get('TAO_FRAMEWORK_SFT_PROCESS_THREADS') == {str(framework_video_runtime['sft_process_threads'])!r}",
@@ -1292,7 +1294,9 @@ def _preflight_contract(
                 "import PyNvVideoCodec as nvc",
                 "from cuda.bindings import driver as cuda_driver",
                 "from cosmos_rl.policy.worker.sft_worker import _dataloader_worker_kwargs",
+                "import cosmos_rl.launcher.launch_all as launch_all_module",
                 "from cosmos_rl.utils.pynv_video_reader import register_pynv_video_reader",
+                "from cosmos_rl.utils.video_pixel_bounds import normalize_video_pixel_bounds",
                 "import cosmos_rl.utils.pynv_video_reader as pynv_reader",
                 "assert nvc.OutputColorType.RGBP is not None, 'TAO_PREFLIGHT_ASSERTION_FAILED:pynv_rgbp'",
                 "assert cuda_driver is not None, 'TAO_PREFLIGHT_ASSERTION_FAILED:cuda_driver_binding'",
@@ -1312,6 +1316,10 @@ def _preflight_contract(
                 "assert profile['capability_fallback'] == 'tao_system_pyav_sparse', 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_fallback'",
                 "assert '_is_nvdec_capability_error' in inspect.getsource(pynv_reader), 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_classifier'",
                 "assert 'TAO_VIDEO_DECODER_CAPABILITY_FALLBACK_ATTESTATION' in inspect.getsource(pynv_reader), 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_attestation'",
+                "pixel_probe={'video':'/tmp/tao-pixel-bound-probe.mp4','max_pixels':81920}",
+                "normalize_video_pixel_bounds(pixel_probe,16,vp)",
+                "assert pixel_probe.get('min_pixels') == pixel_probe['max_pixels'] == 81920, 'TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_visibility'",
+                "assert 'controller_id == -1 or i == controller_id' not in inspect.getsource(launch_all_module), 'TAO_PREFLIGHT_ASSERTION_FAILED:all_child_failures_propagate'",
                 "assert vp.get_video_reader_backend() == 'pynvvideocodec', 'TAO_PREFLIGHT_ASSERTION_FAILED:registered_qwen_backend'",
             ])
         else:

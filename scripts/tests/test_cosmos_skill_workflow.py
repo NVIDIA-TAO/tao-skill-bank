@@ -366,6 +366,8 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
     assert plan["environment"]["TAO_FRAMEWORK_SFT_PROCESS_THREADS"] == "4"
     assert plan["environment"]["TAO_VIDEO_DECODER_DEVICE"] == "cuda"
     assert plan["environment"]["TAO_VIDEO_DECODER_THREADS"] == "1"
+    preflight = plan["preflight"]["container_runtime"]
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:contiguous_batcher_max_tokens" in preflight
     assert plan["datasets"]["train"]["annotations"][0]["original"] == args.train_annotation[0]
     source = Path(workflow.__file__).read_text(encoding="utf-8")
     assert "/lustre/" not in source and "rarunachalam" not in source
@@ -471,6 +473,8 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert "persistent_workers" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:worker_decoder_cache_forwarding" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_visibility" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:all_child_failures_propagate" in preflight
 
 
 def test_cosmos_rl_system_pyav_profile_is_explicit_and_worker_zero_safe(tmp_path):
