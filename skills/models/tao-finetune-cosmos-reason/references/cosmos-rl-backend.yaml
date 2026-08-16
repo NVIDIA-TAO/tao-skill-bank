@@ -3,7 +3,7 @@ backend: cosmos-rl
 display_name: Cosmos-RL
 native_source_repository: cosmos-reason-gitlab
 tao_integration_repository: cosmos-rl
-container_image: nvcr.io/nvstaging/tao/cosmos-rl:enhanced-hooks-custom-loggers-20260815-source-pynv-device-rgbp-v1  # versions-key: images.tao_toolkit.cosmos_rl
+container_image: nvcr.io/nvstaging/tao/cosmos-rl:enhanced-hooks-custom-loggers-20260816-nvdec-capability-v1  # versions-key: images.tao_toolkit.cosmos_rl
 build:
   owner: cosmos-rl
   dockerfile: Dockerfile
@@ -44,9 +44,13 @@ runtime:
       dataloader_persistent_workers: true
       worker_decoder_cache_forwarding: TAO_PYNV_DECODER_CACHE_SIZE_required
       sft_batch_threads: 4
-      capacity_default: max_train_validation_unique_media
+      processed_video_cache_capacity_default: 0
+      decoder_session_cache_capacity_default: 4
       disk_cache: false
       prewarm: false
+      compatibility_artifact: required_for_resolved_hardware_profile
+      capability_fallback: tao_system_pyav_sparse
+      capability_fallback_scope: nvdec_unsupported_stream_only
     system-pyav:
       decoder: torchvision
       implementation: sparse_software_system_PyAV
@@ -122,16 +126,21 @@ decoder_artifact:
   schema_version: 2
   builder: cosmos_rl.utils.video_override_artifacts
   validator: cosmos_rl.utils.validate_video_override_artifacts
-  force_all_validation_annotations: true
+  selection_basis: resolved_decoder_capability
+  scan_all_referenced_media: true
+  convert_only_incompatible_media_for_fast_profile: true
+  force_all_validation_annotations: framework_task_aware_only
   diagnosed_train_sources_are_explicit: true
   gpu_random_access_validation_required: true
-  required_only_for_explicit_hardware_decoder: true
+  required_for_resolved_hardware_decoder: true
 compatibility:
   a100_qwen3_vl_patch_embed: native_per_model_linear_equivalent
   vllm_qwen3_vl_patch_embed: equal_or_newer_pytorch_linear_guard_verified
   deepep_extension: python_binding_and_required_internode_symbols_verified
   software_video_workers: spawn_context_registered_reader_and_no_cuda_context
   pynv_device_rgbp: dlpack_transfer_exact_batch_gate_and_scanned_retry
+  pynv_capability_fallback: permanent_nvdec_capability_exception_only
+  pynv_capability_fallback_attestation: first_use_per_rank
   pynv_decoder_sessions: explicit_capacity_only_with_conservative_default_one
   pynv_spawned_worker_decoder_capacity: environment_forwarded_and_preflight_verified
   sft_batch_threads: order_preserving_thread_pool

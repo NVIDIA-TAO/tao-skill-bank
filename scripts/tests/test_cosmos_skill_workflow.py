@@ -133,6 +133,14 @@ def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", dataset_famil
     return workflow.parse_args(values)
 
 
+def attach_decoder_artifact(args, tmp_path: Path) -> None:
+    args.video_override_map = str(tmp_path / "override-map.json")
+    args.video_override_manifest = str(tmp_path / "override-manifest.json")
+    args.video_override_fingerprint = "a" * 64
+    Path(args.video_override_map).write_text("{}")
+    Path(args.video_override_manifest).write_text("{}")
+
+
 def test_model_backend_resolution_and_comparative_explicitness():
     assert workflow.select_backend(model="Cosmos3-Nano", action="train", workload="training")[0] == "cosmos-rl"
     assert workflow.select_backend(model="Cosmos3-Nano", action="evaluate", workload="training")[0] == "cosmos-rl"
@@ -325,6 +333,8 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
     assert plan["training"]["training_mode"] == "dense"
     assert plan["spec"]["model"]["parallelism"]["data_parallel_shard_degree"] == 8
     assert plan["spec"]["trainer"]["grad_accum_iter"] == 1
+    assert plan["training"]["per_forward_batch"] == 1
+    assert plan["training"]["gradient_accumulation"] == 1
     assert plan["spec"]["trainer"]["max_iter"] == 2
     assert plan["training"]["optimizer_epsilon"] == 1e-6
     assert plan["spec"]["optimizer"]["eps"] == 1e-6
@@ -359,6 +369,20 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
     assert "/lustre/" not in source and "rarunachalam" not in source
     with Path(args.write_spec).open("rb") as stream:
         assert tomllib.load(stream)["trainer"]["max_iter"] == 2
+
+
+def test_framework_packed_forward_preserves_effective_global_batch(tmp_path):
+    args = args_for(tmp_path)
+    args.effective_global_batch = 64
+    args.framework_per_forward_batch = 8
+
+    plan = workflow.build_plan(args)
+
+    assert plan["spec"]["dataloader_train"]["max_samples_per_batch"] == 8
+    assert plan["spec"]["trainer"]["grad_accum_iter"] == 1
+    assert plan["training"]["effective_global_batch"] == 64
+    assert plan["training"]["per_forward_batch"] == 8
+    assert plan["training"]["gradient_accumulation"] == 1
 
 
 def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
@@ -404,21 +428,32 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
         "video_decoder": "pynvvideocodec",
         "implementation": "pynv_device_rgbp_dlpack",
         "frame_transfer": "device_rgbp",
-        "video_cache_size": 16,
+        "video_cache_size": 0,
         "video_cache_scope": "rank_local_processed_fetch_video_memory",
         "video_cache_population": "on_demand_during_training",
         "video_cache_persists_to_disk": False,
-        "decoder_cache_size": 16,
+        "decoder_cache_size": 4,
         "decoder_cache_scope": "rank_local_pynv_native_sessions",
         "sft_batch_threads": 4,
         "dataloader_num_workers": 1,
         "dataloader_prefetch_factor": 2,
         "unique_media_capacity_basis": 16,
         "dataset_prewarm": False,
+        "capability_fallback": "tao_system_pyav_sparse",
+        "capability_fallback_scope": "nvdec_unsupported_stream_only",
     }
+    assert plan["decoder_artifact"]["required"] is True
+    assert plan["decoder_artifact"]["enabled"] is False
+    assert plan["decoder_artifact"]["policy"]["force_all_validation_media"] is False
+    assert plan["decoder_artifact"]["policy"]["selection_basis"] == (
+        "resolved_hardware_decoder_profile"
+    )
+    assert plan["decoder_artifact"]["preparation_arguments"].count(
+        "--force-annotation"
+    ) == 0
     assert plan["spec"]["custom"]["video_decoder"] == "pynvvideocodec"
-    assert plan["spec"]["custom"]["video_cache_size"] == 16
-    assert plan["spec"]["custom"]["video_decoder_cache_size"] == 16
+    assert plan["spec"]["custom"]["video_cache_size"] == 0
+    assert plan["spec"]["custom"]["video_decoder_cache_size"] == 4
     assert train_policy["dataloader_num_workers"] == 1
     assert train_policy["dataloader_prefetch_factor"] == 2
     assert plan["spec"]["validation"]["dataloader_num_workers"] == 1
@@ -426,8 +461,8 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert plan["environment"]["FORCE_QWENVL_VIDEO_READER"] == "pynvvideocodec"
     assert plan["environment"]["TAO_PYNV_FRAME_TRANSFER"] == "device_rgbp"
     assert plan["environment"]["TAO_SFT_BATCH_THREADS"] == "4"
-    assert plan["environment"]["TAO_PYNV_VIDEO_CACHE_SIZE"] == "16"
-    assert plan["environment"]["TAO_PYNV_DECODER_CACHE_SIZE"] == "16"
+    assert plan["environment"]["TAO_PYNV_VIDEO_CACHE_SIZE"] == "0"
+    assert plan["environment"]["TAO_PYNV_DECODER_CACHE_SIZE"] == "4"
     preflight = plan["preflight"]["container_runtime"]
     assert "inspect.getsource" in preflight
     assert "TAO_PYNV_DECODER_CACHE_SIZE" in preflight
@@ -456,6 +491,36 @@ def test_cosmos_rl_system_pyav_profile_is_explicit_and_worker_zero_safe(tmp_path
     assert "TAO_PYNV_FRAME_TRANSFER" not in plan["environment"]
     assert "dataloader_prefetch_factor" not in plan["spec"]["train"]["train_policy"]
     assert "dataloader_prefetch_factor" not in plan["spec"]["validation"]
+
+
+def test_cosmos_rl_explicit_zero_disables_processed_video_cache(tmp_path):
+    args = args_for(tmp_path, backend="cosmos-rl", training_mode="peft")
+    args.rl_video_profile = "pynv-device-rgbp"
+    args.rl_video_cache_size = 0
+    args.rl_video_decoder_cache_size = 4
+
+    plan = workflow.build_plan(args)
+
+    runtime = plan["rl_video_runtime"]
+    assert runtime["video_cache_size"] == 0
+    assert runtime["decoder_cache_size"] == 4
+    assert plan["spec"]["custom"]["video_cache_size"] == 0
+    assert plan["spec"]["custom"]["video_decoder_cache_size"] == 4
+    assert plan["environment"]["TAO_PYNV_VIDEO_CACHE_SIZE"] == "0"
+    assert plan["environment"]["TAO_PYNV_DECODER_CACHE_SIZE"] == "4"
+
+
+def test_cosmos_nano_video_pixel_budget_is_shared_by_framework_and_rl(tmp_path):
+    framework_args = args_for(tmp_path / "framework", backend="cosmos-framework")
+    framework_plan = workflow.build_plan(framework_args)
+
+    rl_args = args_for(tmp_path / "rl", backend="cosmos-rl", training_mode="peft")
+    rl_plan = workflow.build_plan(rl_args)
+
+    assert framework_plan["processor_profile"]["max_video_pixels"] == 81920
+    assert framework_plan["environment"]["TAO_VIDEO_MAX_PIXELS"] == "81920"
+    assert rl_plan["processor_profile"]["max_video_pixels"] == 81920
+    assert rl_plan["spec"]["custom"]["vision"]["max_pixels"] == 81920
 
 
 def test_cosmos_rl_prewarm_remains_an_explicit_opt_in(tmp_path):
@@ -498,6 +563,7 @@ def test_cosmos_rl_maps_common_constant_scheduler_to_native_none(tmp_path):
 
 def test_cosmos_rl_resolves_sft_hook_from_installed_native_package(tmp_path):
     args = args_for(tmp_path, backend="cosmos-rl")
+    attach_decoder_artifact(args, tmp_path)
     plan = workflow.build_plan(args)
 
     assert "Path(cosmos_rl.__file__).parent" in plan["command"]
@@ -893,6 +959,7 @@ def test_smoke_limit_never_leaks_to_full(tmp_path):
 
 def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     args = args_for(tmp_path)
+    attach_decoder_artifact(args, tmp_path)
     args.platform = "slurm"; args.partition = "compute"; args.account = "project"
     args.slurm_user = "user"; args.slurm_host = ["login.example"]
     args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
@@ -911,8 +978,9 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert 'export HOME="/tmp/tao-${TAO_JOB_ID:?TAO_JOB_ID must be set}-${SLURM_PROCID:-0}"' in script
     assert 'mkdir -p -m 700 "$HOME"' in script
     assert "timeout --signal=TERM --kill-after=30s 13680s srun" in script
-    assert "TAO_COSMOS_PACKAGED_RUNTIME_PREFLIGHT_OK" in script
-    assert plan["preflight"]["container_runtime"] in script
+    assert "TAO_COSMOS_PACKAGED_RUNTIME_STARTUP_OK" in script
+    assert plan["preflight"]["container_runtime"] not in script
+    assert script.count("--container-image=") == 1
     assert "export SLURM_EXPORT_ENV=ALL" in script
     assert "--container-env=" in script
     assert "TAO_STATUS_FILE" in script
@@ -920,6 +988,7 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
     child_argv = shlex.split(script.split("set +e\n", 1)[1].split("\nchild_rc=", 1)[0])
     assert child_argv[-2] == "-lc"
+    assert plan["preflight"]["container_startup"] in child_argv[-1]
     assert subprocess.run(
         ["bash", "-n", "-c", child_argv[-1]], capture_output=True, text=True
     ).returncode == 0
@@ -931,6 +1000,7 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
 
 def test_single_node_exclusive_slurm_step_uses_allocated_cpus(tmp_path):
     args = args_for(tmp_path)
+    attach_decoder_artifact(args, tmp_path)
     args.platform = "slurm"; args.partition = "compute"; args.account = "project"
     args.slurm_user = "user"; args.slurm_host = ["login.example"]
     args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
@@ -951,6 +1021,7 @@ def test_single_node_exclusive_slurm_step_uses_allocated_cpus(tmp_path):
 
 def test_slurm_script_rejects_invalid_child_timeout(tmp_path):
     args = args_for(tmp_path)
+    attach_decoder_artifact(args, tmp_path)
     args.platform = "slurm"; args.partition = "compute"; args.account = "project"
     args.slurm_user = "user"; args.slurm_host = ["login.example"]
     args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
@@ -1090,6 +1161,7 @@ def test_slurm_preflight_refreshes_sqsh_existence_without_replanning(monkeypatch
     monkeypatch.setattr(workflow, "_remote_file_exists", lambda *_args, **_kwargs: True)
     result = workflow.local_preflight(args, plan)
     assert not any("new SQSH" in error for error in result["errors"])
+    assert not any("repository" in error for error in result["errors"])
 
 
 def test_remote_sqsh_existence_uses_portable_test_syntax(monkeypatch, tmp_path):

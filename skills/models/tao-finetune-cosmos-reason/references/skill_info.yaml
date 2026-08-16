@@ -10,7 +10,7 @@ aliases:
 - cosmos-rl
 - cosmos-framework
 automl_enabled: true
-container_image: nvcr.io/nvstaging/tao/cosmos-rl:enhanced-hooks-custom-loggers-20260815-source-pynv-device-rgbp-v1  # versions-key: images.tao_toolkit.cosmos_rl
+container_image: nvcr.io/nvstaging/tao/cosmos-rl:enhanced-hooks-custom-loggers-20260816-nvdec-capability-v1  # versions-key: images.tao_toolkit.cosmos_rl
 backend_contracts:
   cosmos-framework: references/cosmos-framework-backend.yaml
   cosmos-rl: references/cosmos-rl-backend.yaml
@@ -105,7 +105,18 @@ workflow_contract:
       processed_video_cache: rank_local_memory_populated_on_demand
       decoder_session_cache: rank_local_native_populated_on_demand
       worker_decoder_cache_forwarding: TAO_PYNV_DECODER_CACHE_SIZE_required
-      capacity_default: max_train_validation_unique_media
+      processed_video_cache_capacity_default: 0
+      decoder_session_cache_capacity_default: 4
+      prewarm: false
+      disk_cache: false
+      compatibility_artifact: required_for_resolved_hardware_profile
+      capability_fallback: tao_system_pyav_sparse
+      capability_fallback_scope: nvdec_unsupported_stream_only
+    system-pyav:
+      decoder: torchvision
+      implementation: sparse_software_system_PyAV
+      dataloader: {workers: 0, prefetch_factor: omitted}
+      sft_batch_threads: 1
       prewarm: false
       disk_cache: false
   cosmos_framework_video_runtime:
@@ -123,13 +134,6 @@ workflow_contract:
     actual_device_requirement: resolved_device_equals_cuda_local_rank
     prewarm: false
     disk_cache: false
-    system-pyav:
-      decoder: torchvision
-      implementation: sparse_software_system_PyAV
-      dataloader: {workers: 0, prefetch_factor: omitted}
-      sft_batch_threads: 1
-      prewarm: false
-      disk_cache: false
   backend_action_commands:
     cosmos-framework:
       export: python -m cosmos_framework.scripts.export_vlm_dcp

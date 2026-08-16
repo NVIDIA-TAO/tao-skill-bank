@@ -204,19 +204,32 @@ Execute these stages in order and persist their outputs.
    path, one persistent spawned DataLoader worker, prefetch two, and four
    order-preserving in-process batch threads. Preflight must prove the installed
    Qwen worker forwards `TAO_PYNV_DECODER_CACHE_SIZE`; a configured capacity
-   that falls back inside spawned workers is an image defect. Its two capacities
-   are derived from the larger inspected split's unique-media count unless
-   explicitly supplied. The video
-   LRU stores processed `fetch_video` outputs in rank-local memory and the
-   decoder cache stores rank-local native sessions; both populate during
+   that falls back inside spawned workers is an image defect. The validated
+   default disables the processed-output LRU (capacity 0) and retains four
+   rank-local native decoder sessions; explicit supported overrides remain
+   available. The video LRU, when enabled, stores processed `fetch_video`
+   outputs in rank-local memory and the decoder cache stores rank-local native
+   sessions; both populate during
    ordinary training, persist no video files, and require no prewarm.
+   Selecting a hardware decoder also requires a fingerprinted compatibility
+   artifact. Its source-baked builder scans every referenced stream against the
+   declared hardware macroblock budget and creates overrides only for streams
+   that exceed it (or for explicitly diagnosed sources); compatible media keep
+   the original zero-copy path. The native fast reader retains a narrow,
+   per-resolved-path safety route to the packaged sparse System PyAV reader only
+   for a permanent PyNv/NVDEC capability exception. It must attest that event,
+   remember the path within the rank, and re-raise ordinary I/O, decode, and
+   programming failures. This is part of the resolved hardware profile, not a
+   dataset selector or a broad Qwen fallback.
    The explicit `system-pyav` profile remains the sparse software route for
    codec-policy-constrained runs. Its packaged reader must register in the
    controller and every spawned worker; the image installs the checksum-pinned
    official PyAV wheel and proves that generic `h264` and `hevc` resolve to
    software decoders. A source-built wheel resolving those names to `*_cuvid`
-   is an image defect. Never combine the two runtime profiles or describe the
-   PyNv route as satisfying a software-codec policy without a separate review.
+   is an image defect. Never replace the selected profile through Qwen's broad
+   implicit fallback or describe the PyNv route as satisfying a software-codec
+   policy without a separate review; the capability-only route above is the
+   sole permitted exception and must remain source-baked and attested.
    The JSON plan emits exact `decoder_artifact.preparation_command` and
    `decoder_artifact.validation_command` values for the selected clean image;
    re-plan once with their map, manifest, and artifact fingerprint outputs,

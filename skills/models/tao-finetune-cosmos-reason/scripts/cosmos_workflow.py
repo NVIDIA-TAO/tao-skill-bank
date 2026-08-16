@@ -105,8 +105,22 @@ def resolve_model_profile(
 ) -> dict[str, Any]:
     """Resolve model-aware runtime policy without modifying checkpoint files."""
     defaults = {
-        "nano": {"frames": 8, "sequence_length": 40960, "attention_implementation": "cosmos"},
-        "edge": {"frames": 6, "sequence_length": 16000, "attention_implementation": "flash_attention_2"},
+        # Cosmos-RL's native video-conversation hook uses 81,920 as the Qwen
+        # video pixel budget. Resolve it in the shared frontend so Framework
+        # and RL produce the same visual-token geometry instead of allowing
+        # Framework to process the full source resolution.
+        "nano": {
+            "frames": 8,
+            "sequence_length": 40960,
+            "attention_implementation": "cosmos",
+            "video_max_pixels": 81920,
+        },
+        "edge": {
+            "frames": 6,
+            "sequence_length": 16000,
+            "attention_implementation": "flash_attention_2",
+            "video_max_pixels": None,
+        },
     }[tier]
     frames = args.frames or defaults["frames"]
     sequence_length = args.sequence_length or defaults["sequence_length"]
@@ -122,7 +136,9 @@ def resolve_model_profile(
         raise WorkflowError("video frame width and height must be positive")
     pixels_per_frame = min(frame_width * frame_height, 1280 * 720) if tier == "edge" else frame_width * frame_height
     max_pixels = args.video_max_pixels or (
-        frames * pixels_per_frame if tier == "edge" else 0
+        frames * pixels_per_frame
+        if tier == "edge"
+        else defaults["video_max_pixels"]
     )
     if max_pixels < 0:
         raise WorkflowError("video_max_pixels must be nonnegative")
@@ -562,9 +578,15 @@ def _training_contract(args: argparse.Namespace) -> dict[str, Any]:
 
 def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, contract: Mapping[str, Any]) -> dict[str, Any]:
     world = args.nodes * args.gpus_per_node
-    if args.effective_global_batch % world:
-        raise WorkflowError("Framework effective global batch must be divisible by total GPUs")
-    grad_accum = args.effective_global_batch // world
+    per_forward_batch = args.framework_per_forward_batch
+    if per_forward_batch < 1:
+        raise WorkflowError("Framework per-forward batch must be positive")
+    forward_global_batch = world * per_forward_batch
+    if args.effective_global_batch % forward_global_batch:
+        raise WorkflowError(
+            "Framework effective global batch must be divisible by total GPUs times per-forward batch"
+        )
+    grad_accum = args.effective_global_batch // forward_global_batch
     smoke_train = min(train_count, args.smoke_train_samples) if args.run_mode == "smoke" else train_count
     smoke_val = min(val_count, args.smoke_validation_samples) if args.run_mode == "smoke" else val_count
     exposed_train_samples = smoke_train * int(contract["train_sample_multiplier"])
@@ -597,7 +619,10 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
             "save_freq_in_epoch": 1,
             "dcp_async_mode_enabled": bool(args.async_checkpoint),
         },
-        "dataloader_train": {"max_samples_per_batch": 1, "max_sequence_length": args.sequence_length},
+        "dataloader_train": {
+            "max_samples_per_batch": per_forward_batch,
+            "max_sequence_length": args.sequence_length,
+        },
     }
     if args.training_mode == "peft":
         lora = contract["lora"]
@@ -654,22 +679,36 @@ def _rl_video_runtime(
         int(val_data["profile"]["unique_media_count"]),
         1,
     )
-    video_cache_override = getattr(args, "rl_video_cache_size", 0)
-    decoder_cache_override = getattr(args, "rl_video_decoder_cache_size", 0)
+    video_cache_override = getattr(args, "rl_video_cache_size", None)
+    decoder_cache_override = getattr(args, "rl_video_decoder_cache_size", None)
     batch_threads_override = getattr(args, "rl_sft_batch_threads", 0)
-    if min(video_cache_override, decoder_cache_override, batch_threads_override) < 0:
+    if video_cache_override is not None and video_cache_override < 0:
+        raise WorkflowError(
+            "Cosmos-RL video cache size must be nonnegative"
+        )
+    if decoder_cache_override is not None and decoder_cache_override < 1:
+        raise WorkflowError(
+            "Cosmos-RL decoder cache size must be positive"
+        )
+    if batch_threads_override < 0:
         raise WorkflowError(
             "Cosmos-RL video cache sizes and SFT batch threads must be nonnegative"
         )
-    if not fast and (video_cache_override or decoder_cache_override):
+    if not fast and (
+        video_cache_override is not None or decoder_cache_override is not None
+    ):
         raise WorkflowError(
             "Cosmos-RL PyNv cache overrides require --rl-video-profile pynv-device-rgbp"
         )
     video_cache_size = (
-        video_cache_override or unique_media_capacity if fast else 0
+        0
+        if fast and video_cache_override is None
+        else (video_cache_override if fast else 0)
     )
     decoder_cache_size = (
-        decoder_cache_override or unique_media_capacity if fast else 1
+        4
+        if fast and decoder_cache_override is None
+        else (decoder_cache_override if fast else 1)
     )
     batch_threads = batch_threads_override or (4 if fast else 1)
     if batch_threads < 1:
@@ -695,6 +734,12 @@ def _rl_video_runtime(
         "dataloader_prefetch_factor": prefetch if workers else None,
         "unique_media_capacity_basis": unique_media_capacity,
         "dataset_prewarm": False,
+        "capability_fallback": (
+            "tao_system_pyav_sparse" if fast else "not_applicable"
+        ),
+        "capability_fallback_scope": (
+            "nvdec_unsupported_stream_only" if fast else "not_applicable"
+        ),
     }
 
 
@@ -866,6 +911,7 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "val_dataset": {"annotation_path": val_manifest, "media_path": val_media[0], "media_root": val_media[0], "response_mode": "answer"},
         "vision": {
             "nframes": args.frames,
+            "max_pixels": args.video_max_pixels,
             "video_decoder": video_runtime["video_decoder"],
         },
         "video_decoder": video_runtime["video_decoder"],
@@ -1217,6 +1263,7 @@ def _preflight_contract(
                 "from cuda.bindings import driver as cuda_driver",
                 "from cosmos_rl.policy.worker.sft_worker import _dataloader_worker_kwargs",
                 "from cosmos_rl.utils.pynv_video_reader import register_pynv_video_reader",
+                "import cosmos_rl.utils.pynv_video_reader as pynv_reader",
                 "assert nvc.OutputColorType.RGBP is not None, 'TAO_PREFLIGHT_ASSERTION_FAILED:pynv_rgbp'",
                 "assert cuda_driver is not None, 'TAO_PREFLIGHT_ASSERTION_FAILED:cuda_driver_binding'",
                 "assert os.environ.get('FORCE_QWENVL_VIDEO_READER') == 'pynvvideocodec', 'TAO_PREFLIGHT_ASSERTION_FAILED:forced_pynv_reader'",
@@ -1232,6 +1279,9 @@ def _preflight_contract(
                     "strict=True)"
                 ),
                 "assert profile['frame_transfer'] == 'device_rgbp', 'TAO_PREFLIGHT_ASSERTION_FAILED:registered_frame_transfer'",
+                "assert profile['capability_fallback'] == 'tao_system_pyav_sparse', 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_fallback'",
+                "assert '_is_nvdec_capability_error' in inspect.getsource(pynv_reader), 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_classifier'",
+                "assert 'TAO_VIDEO_DECODER_CAPABILITY_FALLBACK_ATTESTATION' in inspect.getsource(pynv_reader), 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_attestation'",
                 "assert vp.get_video_reader_backend() == 'pynvvideocodec', 'TAO_PREFLIGHT_ASSERTION_FAILED:registered_qwen_backend'",
             ])
         else:
@@ -1303,8 +1353,13 @@ def _preflight_contract(
         "submission_host": host,
         "target_compute_node": allocation,
         "container_runtime": container,
+        # The same assertions are also available without the outer runtime
+        # wrapper so SLURM can execute them inside the one training container
+        # startup. This avoids a second Pyxis/Enroot launch and keeps the
+        # training command as the allocation's first container journey.
+        "container_startup": container_check,
         "checks": [
-            "host and scheduler tools", "credential presence without reading values", "repository clean state",
+            "host and scheduler tools", "credential presence without reading values", "build-source identity when an image build is required",
             "Pyxis/Enroot and SQSH readability", "container mounts/shared storage", "non-root Python imports",
             "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization",
             "explicit selected Cosmos-RL video profile", "checksum-pinned software System PyAV image capability", "backward-safe Qwen3-VL PatchEmbed",
@@ -1322,6 +1377,8 @@ def _decoder_artifact_plan(
     model_profile: Mapping[str, Any],
     train_data: Mapping[str, Any],
     val_data: Mapping[str, Any],
+    rl_video_runtime: Mapping[str, Any] | None,
+    framework_video_runtime: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if args.video_override_max_macroblocks < 1 or args.video_override_workers < 1:
         raise WorkflowError(
@@ -1368,10 +1425,28 @@ def _decoder_artifact_plan(
             "--annotation-media-root", _containerize(args, annotation),
             _containerize(args, media_root),
         ])
-    for annotation in args.validation_annotation:
-        preparation_arguments.extend([
-            "--force-annotation", _containerize(args, annotation)
-        ])
+    hardware_decoder_profile = (
+        (
+            backend == "cosmos-rl"
+            and rl_video_runtime is not None
+            and rl_video_runtime["selected_profile"] == "pynv-device-rgbp"
+        )
+        or (
+            backend == "cosmos-framework"
+            and framework_video_runtime is not None
+            and framework_video_runtime["selected_profile"]
+            == "torchcodec-cuda-on-demand"
+        )
+    )
+    force_all_validation_media = (
+        backend != "cosmos-rl"
+        and args.dataset_family == "task_aware_video_reasoning"
+    )
+    if force_all_validation_media:
+        for annotation in args.validation_annotation:
+            preparation_arguments.extend([
+                "--force-annotation", _containerize(args, annotation)
+            ])
     for video in args.video_override_force_video:
         preparation_arguments.extend(["--force-video", _containerize(args, video)])
     preparation_arguments.extend([
@@ -1394,10 +1469,11 @@ def _decoder_artifact_plan(
         "--processor-fingerprint", processor_fingerprint,
         "--integration-commit", args.tao_integration_commit,
     ]
-    for annotation in args.validation_annotation:
-        validation_arguments.extend([
-            "--require-covered-annotation", _containerize(args, annotation)
-        ])
+    if force_all_validation_media:
+        for annotation in args.validation_annotation:
+            validation_arguments.extend([
+                "--require-covered-annotation", _containerize(args, annotation)
+            ])
 
     python = (
         "/workspace/.venv/bin/python"
@@ -1406,8 +1482,11 @@ def _decoder_artifact_plan(
     )
 
     artifact_required = (
-        backend != "cosmos-rl"
-        and args.dataset_family == "task_aware_video_reasoning"
+        hardware_decoder_profile
+        or (
+            backend != "cosmos-rl"
+            and args.dataset_family == "task_aware_video_reasoning"
+        )
     )
     return {
         "required": artifact_required,
@@ -1422,9 +1501,14 @@ def _decoder_artifact_plan(
         },
         "policy": {
             "macroblock_scan": True,
-            "force_all_validation_media": True,
+            "force_all_validation_media": force_all_validation_media,
             "forced_runtime_sources": list(args.video_override_force_video),
             "gpu_random_access_validation_required": artifact_required,
+            "selection_basis": (
+                "resolved_hardware_decoder_profile"
+                if hardware_decoder_profile
+                else "resolved_backend_data_contract"
+            ),
         },
         "preparation_module": "cosmos_rl.utils.video_override_artifacts",
         "preparation_arguments": preparation_arguments,
@@ -1503,21 +1587,13 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     })
     commits = _source_commits(args, backend)
     image = _image_plan(args, backend, commits)
-    decoder_artifact = _decoder_artifact_plan(
-        args,
-        backend=backend,
-        model=model,
-        model_profile=model_profile,
-        train_data=train_data,
-        val_data=val_data,
-    )
     if backend == "cosmos-framework" and getattr(args, "rl_video_profile", "auto") != "auto":
         raise WorkflowError("--rl-video-profile applies only to the cosmos-rl backend")
     if backend == "cosmos-framework" and any(
         getattr(args, name, value) != value
         for name, value in (
-            ("rl_video_cache_size", 0),
-            ("rl_video_decoder_cache_size", 0),
+            ("rl_video_cache_size", None),
+            ("rl_video_decoder_cache_size", None),
             ("rl_sft_batch_threads", 0),
             ("rl_dataloader_num_workers", None),
             ("rl_dataloader_prefetch_factor", None),
@@ -1533,6 +1609,8 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         )
     ):
         raise WorkflowError("Framework video runtime overrides do not apply to cosmos-rl")
+    if backend == "cosmos-rl" and args.framework_per_forward_batch != 1:
+        raise WorkflowError("Framework per-forward batch applies only to cosmos-framework")
     rl_video_runtime = (
         _rl_video_runtime(args, train_data, val_data)
         if backend == "cosmos-rl"
@@ -1542,6 +1620,16 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         _framework_video_runtime(args, train_data, val_data)
         if backend == "cosmos-framework"
         else None
+    )
+    decoder_artifact = _decoder_artifact_plan(
+        args,
+        backend=backend,
+        model=model,
+        model_profile=model_profile,
+        train_data=train_data,
+        val_data=val_data,
+        rl_video_runtime=rl_video_runtime,
+        framework_video_runtime=framework_video_runtime,
     )
     processor_fingerprint = stable_hash({
         "revision": args.processor_revision,
@@ -1566,6 +1654,11 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     val_annotations_container = [_containerize(args, value) for value in val_annotations]
     val_media_container = [_containerize(args, value) for value in val_media]
     spec = _framework_spec(args, train_data["record_count"], val_data["record_count"], contract) if backend == "cosmos-framework" else _rl_spec(args, contract, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, cache_keys, rl_video_runtime)
+    if backend == "cosmos-framework":
+        contract.update({
+            "per_forward_batch": args.framework_per_forward_batch,
+            "gradient_accumulation": spec["trainer"]["grad_accum_iter"],
+        })
     environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, rl_video_runtime, framework_video_runtime)
     command = _command(args, backend)
     if decoder_artifact["enabled"]:
@@ -1879,7 +1972,8 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         raise WorkflowError("requeue is disabled by default and is not validated for Cosmos training")
     if plan["decoder_artifact"]["required"] and not plan["decoder_artifact"]["enabled"]:
         raise WorkflowError(
-            "task-aware Cosmos training requires a complete fingerprinted decoder artifact"
+            "Cosmos training requires a complete fingerprinted decoder compatibility "
+            "artifact for the resolved hardware video profile"
         )
     try:
         timeout_hours, timeout_minutes, timeout_seconds = (
@@ -1899,12 +1993,25 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     container_env_args = f"--container-env={','.join(sorted(plan['environment']))}"
     env_exports = "\n".join(f"export {key}={shlex.quote(value)}" for key, value in plan["environment"].items())
     native = plan["command"]
+    container_startup = str(plan.get("preflight", {}).get("container_startup") or "").strip()
+    startup_lines = []
+    if container_startup:
+        startup_lines = [
+            "runtime_preflight_rc=0",
+            f"{container_startup} || runtime_preflight_rc=$?",
+            'if [[ "$runtime_preflight_rc" -ne 0 ]]; then',
+            '  echo "Cosmos packaged runtime startup check failed with exit code $runtime_preflight_rc" >&2',
+            '  exit "$runtime_preflight_rc"',
+            "fi",
+            'echo "TAO_COSMOS_PACKAGED_RUNTIME_STARTUP_OK"',
+        ]
     wrapped = "\n".join([
         'export HOME="/tmp/tao-${TAO_JOB_ID:?TAO_JOB_ID must be set}-${SLURM_PROCID:-0}"',
         'mkdir -p -m 700 "$HOME"',
         "ulimit -n 65536",
         "ulimit -s unlimited",
         "ulimit -l unlimited 2>/dev/null || true",
+        *startup_lines,
         native,
     ])
     step_cpu_value = '"$step_cpus_per_task"' if args.exclusive and args.nodes == 1 else str(args.cpus_per_task)
@@ -1956,19 +2063,6 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
             "fi",
             'printf "TAO_SLURM_CPU_ALLOCATION requested=%s allocated=%s step=%s policy=allocated-exclusive-single-node\\n" "$requested_cpus_per_task" "$step_cpus_per_task" "$step_cpus_per_task"',
         ]
-    container_preflight = str(plan.get("preflight", {}).get("container_runtime") or "").strip()
-    preflight_lines = []
-    if container_preflight:
-        preflight_lines = [
-            "runtime_preflight_rc=0",
-            f"{container_preflight} || runtime_preflight_rc=$?",
-            'if [[ "$runtime_preflight_rc" -ne 0 ]]; then',
-            '  printf "%s\\n" "$runtime_preflight_rc" > "${TAO_CHILD_EXIT_FILE:?TAO_CHILD_EXIT_FILE must be set}"',
-            '  echo "Cosmos packaged runtime preflight failed with exit code $runtime_preflight_rc" >&2',
-            '  exit "$runtime_preflight_rc"',
-            "fi",
-            'echo "TAO_COSMOS_PACKAGED_RUNTIME_PREFLIGHT_OK"',
-        ]
     lines.extend([
         "", "set -Eeuo pipefail",
         "export SLURM_EXPORT_ENV=ALL",
@@ -1977,7 +2071,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         f"mkdir -p {shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id)))}",
         f"export TAO_CHILD_EXIT_FILE={shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id) / 'child_exit_code'))}",
         env_exports, 'export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)"',
-        f"export MASTER_PORT={args.master_port}", *preflight_lines,
+        f"export MASTER_PORT={args.master_port}",
         "child_rc=0", "set +e", srun, 'child_rc="$?"', "set -e",
         'printf "%s\\n" "$child_rc" > "${TAO_CHILD_EXIT_FILE:?TAO_CHILD_EXIT_FILE must be set}"',
         'if [[ "$child_rc" -ne 0 ]]; then echo "Cosmos child process failed with exit code $child_rc" >&2; fi',
@@ -2121,7 +2215,7 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
     decoder_artifact = plan["decoder_artifact"]
     if decoder_artifact["required"] and not decoder_artifact["enabled"]:
         errors.append(
-            "task-aware Cosmos training requires video_override_map, "
+            "the resolved hardware video profile requires video_override_map, "
             "video_override_manifest, and video_override_fingerprint"
         )
 
@@ -2142,6 +2236,20 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
         elif dirty.stdout.strip():
             errors.append(f"repository must be clean before image build: {name}")
 
+    # A launch through an existing SQSH consumes packaged code only. Host
+    # worktrees are neither mounted nor read by Pyxis, so their current state
+    # must not block that user journey. Source commit/tree/cleanliness remains
+    # mandatory when the planned SQSH is absent and an image build is needed.
+    sqsh_exists = False
+    if args.platform == "slurm" and args.sqsh_path.endswith(".sqsh"):
+        verified_host = str(plan.get("input_frame", {}).get("verified_host") or "")
+        if plan.get("input_frame", {}).get("kind") == "slurm_remote":
+            sqsh_exists = bool(verified_host) and _remote_file_exists(
+                args, path=args.sqsh_path, host=verified_host,
+            )
+        else:
+            sqsh_exists = Path(args.sqsh_path).expanduser().is_file()
+
     image = plan["image"]
     repository_identities = {
         ("cosmos-framework" if plan["backend"] == "cosmos-framework" else "cosmos-rl-github"): image["native_repository"],
@@ -2149,8 +2257,9 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
         "nvidia-tao-daft": image["daft_repository"],
         "tao-core": image["tao_core_repository"],
     }
-    for name, identity in repository_identities.items():
-        check_repository(name, identity, image["required_commits"][name], image["required_trees"][name])
+    if args.platform != "slurm" or not sqsh_exists:
+        for name, identity in repository_identities.items():
+            check_repository(name, identity, image["required_commits"][name], image["required_trees"][name])
     for key, value in plan["paths"].items():
         if key in {"sqsh_cache_dir", "ssh_key_path"} and args.platform != "slurm":
             continue
@@ -2171,16 +2280,8 @@ def local_preflight(args: argparse.Namespace, plan: Mapping[str, Any], env: Mapp
             errors.append("partition and account are required")
         if not args.sqsh_path.endswith(".sqsh"):
             errors.append("sqsh_path must name a .sqsh artifact")
-        else:
-            verified_host = str(plan.get("input_frame", {}).get("verified_host") or "")
-            if plan.get("input_frame", {}).get("kind") == "slurm_remote":
-                sqsh_exists = bool(verified_host) and _remote_file_exists(
-                    args, path=args.sqsh_path, host=verified_host,
-                )
-            else:
-                sqsh_exists = Path(args.sqsh_path).expanduser().is_file()
-            if not sqsh_exists:
-                errors.append("new SQSH has not been created from the planned image")
+        elif not sqsh_exists:
+            errors.append("new SQSH has not been created from the planned image")
         if not args.container_mount:
             errors.append("at least one explicit SLURM container mount is required")
     else:
@@ -2221,6 +2322,12 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--lora-bias", choices=("none", "all", "lora_only"), default="none"); parser.add_argument("--lora-use-rslora", action="store_true")
     parser.add_argument("--lora-modules-to-save", action="append", default=[]); parser.add_argument("--lora-precision", choices=("float32", "float16", "bfloat16"), default="bfloat16")
     parser.add_argument("--epochs", type=int, default=1); parser.add_argument("--effective-global-batch", type=int, default=8)
+    parser.add_argument(
+        "--framework-per-forward-batch",
+        type=int,
+        default=1,
+        help="Framework samples packed per rank and forward; effective batch and gradient accumulation remain exact.",
+    )
     parser.add_argument("--rl-mini-batch", type=int, default=1)
     parser.add_argument(
         "--rl-train-batch-per-replica",
@@ -2240,14 +2347,14 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument(
         "--rl-video-cache-size",
         type=int,
-        default=0,
-        help="Rank-local processed-video LRU entries; 0 derives the fast-profile capacity from unique media.",
+        default=None,
+        help="Rank-local processed-video LRU entries; omit for the validated on-demand default of 0.",
     )
     parser.add_argument(
         "--rl-video-decoder-cache-size",
         type=int,
-        default=0,
-        help="Rank-local PyNv native decoder-session entries; 0 derives the fast-profile capacity from unique media.",
+        default=None,
+        help="Rank-local PyNv native decoder-session entries; omit for the validated default of 4.",
     )
     parser.add_argument(
         "--rl-sft-batch-threads",
