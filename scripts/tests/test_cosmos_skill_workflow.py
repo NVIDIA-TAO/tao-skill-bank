@@ -703,6 +703,26 @@ def test_task_aware_constant_schedule_keeps_lr_factor_at_one(tmp_path):
     assert rl["spec"]["train"]["optm_min_lr_factor"] == 1.0
 
 
+def test_framework_warmup_epochs_translate_to_optimizer_steps(tmp_path):
+    args = args_for(
+        tmp_path,
+        backend="cosmos-framework",
+        dataset_family="task_aware_video_reasoning",
+    )
+    args.epochs = 3
+    args.warmup = 1
+    args.scheduler = "constant"
+
+    plan = workflow.build_plan(args)
+
+    assert plan["training"]["optimizer_updates"] == 18
+    assert plan["spec"]["trainer"]["steps_per_epoch"] == 6
+    assert plan["spec"]["scheduler"]["cycle_lengths"] == [18]
+    assert plan["spec"]["scheduler"]["warm_up_steps"] == [6]
+    assert plan["spec"]["scheduler"]["f_start"] == [0.0]
+    assert plan["spec"]["scheduler"]["f_min"] == [1.0]
+
+
 def test_task_aware_smoke_limit_counts_logical_records_before_expansion(tmp_path):
     args = args_for(
         tmp_path, backend="cosmos-framework",

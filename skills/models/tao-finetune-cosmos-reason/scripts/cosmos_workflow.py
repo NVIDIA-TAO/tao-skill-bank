@@ -610,7 +610,19 @@ def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, 
             "activation_checkpointing": {"mode": "full", "save_ops_regex": ["fmha"], "preserve_rng_state": True, "determinism_check": "default"},
         },
         "optimizer": {"betas": [0.9, 0.999], "eps": args.optimizer_epsilon, "fused": True, "lr": args.learning_rate, "weight_decay": args.weight_decay, "keys_to_select": []},
-        "scheduler": {"cycle_lengths": [steps * epochs], "f_max": [1.0], "f_min": [1.0 if args.scheduler == "constant" else 0.0], "f_start": [1.0], "verbosity_interval": 0, "warm_up_steps": [args.warmup]},
+        # The common Cosmos contract expresses warmup in epochs. Framework's
+        # native scheduler expresses it in optimizer steps, so translate it
+        # using the same steps-per-epoch value that drives max_iter. A real
+        # warmup starts at zero, matching Cosmos-RL's native default; with no
+        # warmup, start at the requested peak LR immediately.
+        "scheduler": {
+            "cycle_lengths": [steps * epochs],
+            "f_max": [1.0],
+            "f_min": [1.0 if args.scheduler == "constant" else 0.0],
+            "f_start": [0.0 if args.warmup else 1.0],
+            "verbosity_interval": 0,
+            "warm_up_steps": [steps * args.warmup],
+        },
         "trainer": {
             "distributed_parallelism": "fsdp", "grad_accum_iter": grad_accum, "logging_iter": 1,
             "max_iter": steps * epochs, "num_epochs": epochs, "steps_per_epoch": steps,
