@@ -628,6 +628,8 @@ def selected_environment(environment: Mapping[str, str]) -> dict[str, str]:
         "FORCE_QWENVL_VIDEO_READER", "TAO_SFT_BATCH_THREADS",
         "TAO_PYNV_FRAME_TRANSFER", "TAO_PYNV_VIDEO_CACHE_SIZE",
         "TAO_PYNV_DECODER_CACHE_SIZE", "COSMOS_CACHE",
+        "TAO_VIDEO_CACHE_SIZE", "TAO_FRAMEWORK_SFT_PROCESS_THREADS",
+        "TAO_VIDEO_DECODER_DEVICE", "TAO_VIDEO_DECODER_THREADS",
     }
     return {key: environment[key] for key in sorted(allow & set(environment))}
 

@@ -9,22 +9,22 @@ container_image:
   no_historical_default: true
 build:
   stages:
-  - owner: cosmos-framework
-    dockerfile: Dockerfile
-    purpose: native trainer, callbacks, exporter, model and dataset support
-    required_build_args: [SOURCE_COMMIT, SOURCE_TREE, SOURCE_DIRTY, BUILD_TIMESTAMP]
   - owner: cosmos-rl
-    dockerfile: Dockerfile.cosmos_framework
-    purpose: TAO evaluate/inference adapter and DAFT/TAO packages
+    dockerfile: Dockerfile
+    purpose: unified clean Framework trainer and TAO action image
     required_build_args:
+    - COSMOS_BACKEND
     - COSMOS_FRAMEWORK_BASE_IMAGE
+    - COSMOS_FRAMEWORK_REPO
+    - COSMOS_FRAMEWORK_BRANCH
+    - EXPECTED_FRAMEWORK_COMMIT
+    - EXPECTED_FRAMEWORK_TREE
     - ACTIONS_COMMIT
     - ACTIONS_TREE
     - DAFT_COMMIT
     - DAFT_TREE
     - TAO_CORE_COMMIT
     - TAO_CORE_TREE
-    - EXPECTED_FRAMEWORK_COMMIT
     - SOURCE_DIRTY
     - BUILD_TIMESTAMP
   clean_source_required: true
@@ -36,6 +36,19 @@ runtime:
   working_directory: /workspace
   non_root_executable_required: true
   video_decoder: torchcodec_cuda
+  video_profile:
+    name: torchcodec-cuda-on-demand
+    selector: source_baked_framework_default
+    device: cuda
+    frame_transfer: cuda_uint8_to_host_pil
+    decoded_frame_cache: rank_local_memory_populated_on_demand
+    capacity_default: max_train_validation_unique_media
+    sft_process_threads: 4
+    decoder_threads: 1
+    dataloader: {workers: 0, prefetch_factor: omitted}
+    actual_device_attestation: first_successful_decode_per_rank
+    prewarm: false
+    disk_cache: false
 configuration:
   format: toml
   schema: cosmos_framework.configs.toml_config.sft_config

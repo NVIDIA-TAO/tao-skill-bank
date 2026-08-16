@@ -109,7 +109,9 @@ def args_for(tmp_path: Path, *, backend: str = "cosmos-framework", dataset_famil
         "--sqsh-path", str(sqsh), "--cosmos-framework-commit", "f" * 40,
         "--cosmos-rl-commit", "r" * 40, "--tao-integration-commit", "i" * 40,
         "--daft-commit", "d" * 40, "--tao-core-commit", "c" * 40,
-        "--cosmos-framework-base-tag", "example/framework-base:test",
+        "--cosmos-framework-base-image", "nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04",
+        "--cosmos-framework-source-repository", "https://github.com/example/cosmos-framework.git",
+        "--cosmos-framework-source-branch", "dev/test-framework",
         "--cosmos-rl-base-image", "example/cosmos-rl-runtime:test",
         "--cosmos-rl-source-repository", "ssh://git@gitlab.example.com:12051/group/cosmos-reason",
         "--cosmos-rl-source-branch", "feature/enhanced-hooks-and-custom-loggers",
@@ -327,6 +329,29 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
     assert plan["training"]["optimizer_epsilon"] == 1e-6
     assert plan["spec"]["optimizer"]["eps"] == 1e-6
     assert "lora_enabled" not in plan["spec"]["model"]
+    assert plan["framework_video_runtime"] == {
+        "selected_profile": "torchcodec-cuda-on-demand",
+        "selection_reason": "Framework video supervision uses its source-baked CUDA TorchCodec profile",
+        "video_decoder": "torchcodec",
+        "implementation": "torchcodec_cuda_indexed",
+        "decoder_device": "cuda",
+        "frame_transfer": "cuda_uint8_to_host_pil",
+        "video_cache_size": 16,
+        "video_cache_scope": "rank_local_decoded_pil_frames",
+        "video_cache_population": "on_demand_during_training",
+        "video_cache_persists_to_disk": False,
+        "sft_process_threads": 4,
+        "decoder_threads": 1,
+        "dataloader_num_workers": 0,
+        "dataloader_prefetch_factor": None,
+        "unique_media_capacity_basis": 16,
+        "dataset_prewarm": False,
+        "actual_device_attestation": "first_successful_decode_per_rank",
+    }
+    assert plan["environment"]["TAO_VIDEO_CACHE_SIZE"] == "16"
+    assert plan["environment"]["TAO_FRAMEWORK_SFT_PROCESS_THREADS"] == "4"
+    assert plan["environment"]["TAO_VIDEO_DECODER_DEVICE"] == "cuda"
+    assert plan["environment"]["TAO_VIDEO_DECODER_THREADS"] == "1"
     assert plan["datasets"]["train"]["annotations"][0]["original"] == args.train_annotation[0]
     source = Path(workflow.__file__).read_text(encoding="utf-8")
     assert "/lustre/" not in source and "rarunachalam" not in source
@@ -954,6 +979,12 @@ def test_framework_expands_one_shared_media_root_per_annotation(tmp_path):
         ["/train-media"],
         ["/val-a.json", "/val-b.json"],
         ["/val-media"],
+        framework_video_runtime={
+            "video_cache_size": 16,
+            "sft_process_threads": 4,
+            "decoder_device": "cuda",
+            "decoder_threads": 1,
+        },
     )
     assert len(json.loads(environment["TAO_VIDEO_TRAIN_MEDIA_ROOTS"])) == 2
     assert len(json.loads(environment["TAO_VIDEO_VAL_MEDIA_ROOTS"])) == 2
@@ -983,7 +1014,14 @@ def test_image_provenance_source_equivalence_and_dirty_rejected():
 
 def test_clean_build_plan_requires_new_sqsh_and_provenance(tmp_path):
     plan = workflow.build_plan(args_for(tmp_path))
-    assert plan["image"]["dockerfile"] == "Dockerfile.cosmos_framework"
+    assert plan["image"]["dockerfile"] == "Dockerfile"
+    assert plan["image"]["build_arguments"]["COSMOS_BACKEND"] == "cosmos-framework"
+    assert plan["image"]["build_arguments"]["COSMOS_FRAMEWORK_BASE_IMAGE"] == "nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04"
+    assert plan["image"]["build_arguments"]["COSMOS_FRAMEWORK_REPO"] == "https://github.com/example/cosmos-framework.git"
+    assert plan["image"]["build_arguments"]["COSMOS_FRAMEWORK_BRANCH"] == "dev/test-framework"
+    assert plan["image"]["build_arguments"]["EXPECTED_FRAMEWORK_COMMIT"] == "f" * 40
+    assert plan["image"]["build_arguments"]["EXPECTED_FRAMEWORK_TREE"] == "n" * 40
+    assert len(plan["image"]["clean_build_commands"]) == 1
     assert plan["image"]["must_rebuild_after_source_change"] is True
     assert plan["image"]["sqsh"]["reuse_allowed"] is False
     assert plan["image"]["provenance_path"] == "/opt/tao/image-provenance.json"

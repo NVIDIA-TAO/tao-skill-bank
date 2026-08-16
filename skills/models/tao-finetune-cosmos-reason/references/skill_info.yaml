@@ -107,6 +107,19 @@ workflow_contract:
       capacity_default: max_train_validation_unique_media
       prewarm: false
       disk_cache: false
+  cosmos_framework_video_runtime:
+    profile: torchcodec-cuda-on-demand
+    decoder: torchcodec
+    device: cuda
+    frame_transfer: cuda_uint8_to_host_pil
+    dataloader: {workers: 0, prefetch_factor: omitted}
+    sft_process_threads: 4
+    decoder_threads: 1
+    decoded_frame_cache: rank_local_memory_populated_on_demand
+    capacity_default: max_train_validation_unique_media
+    actual_device_attestation: first_successful_decode_per_rank
+    prewarm: false
+    disk_cache: false
     system-pyav:
       decoder: torchvision
       implementation: sparse_software_system_PyAV

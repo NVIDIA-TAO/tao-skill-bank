@@ -92,6 +92,17 @@ Cosmos-RL version.
 
 ## Evaluation intake and inheritance
 
+Treat a user request such as “evaluate this completed training job” as enough
+to start evaluation intake. User-facing prompts should state only deliberate
+experiment choices: the parent job, a different evaluation corpus if desired,
+an exact checkpoint/epoch when the user cares which one is evaluated, and any
+explicit evaluator override. Do not require the prompt to restate inheritance,
+checkpoint preparation, LoRA recovery, full-coverage materialization, scoring,
+provenance, or reporting mechanics; those are this skill's contract. If the
+request omits a value that cannot be inherited or resolved safely, collect the
+helper's complete `required_user_inputs` list in one concise follow-up instead
+of expecting the user to know evaluator field names in advance.
+
 For every `evaluate` action, run `scripts/evaluation_workflow.py` before
 materializing action TOML. Never submit
 `references/spec_template_evaluate.yaml` directly; it is a dataset-neutral
@@ -207,6 +218,13 @@ Execute these stages in order and persist their outputs.
    `decoder_artifact.validation_command` values for the selected clean image;
    re-plan once with their map, manifest, and artifact fingerprint outputs,
    seal that plan, and never reuse another run's cache or override artifact.
+   Cosmos Framework independently resolves its native
+   `torchcodec-cuda-on-demand` profile. It uses CUDA indexed decode, derives a
+   rank-local decoded-frame LRU capacity from the larger split's unique-media
+   count, runs four bounded order-preserving preprocessing threads with no
+   DataLoader subprocess, and attests the actual CUDA output device on the
+   first successful decode in every rank. The cache populates only while
+   training and is never prewarmed or persisted to disk.
 8. Generate backend-native TOML, environment, topology, preflight commands,
    parity data, resolved video-runtime profile, and machine-readable job
    metadata. Full specs must contain no

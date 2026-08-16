@@ -698,6 +698,48 @@ def _rl_video_runtime(
     }
 
 
+def _framework_video_runtime(
+    args: argparse.Namespace,
+    train_data: Mapping[str, Any],
+    val_data: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve the native Framework on-demand TorchCodec throughput profile."""
+    unique_media_capacity = max(
+        int(train_data["profile"]["unique_media_count"]),
+        int(val_data["profile"]["unique_media_count"]),
+        1,
+    )
+    cache_override = getattr(args, "framework_video_cache_size", 0)
+    process_threads_override = getattr(args, "framework_sft_process_threads", 0)
+    decoder_threads_override = getattr(args, "framework_video_decoder_threads", 0)
+    if min(cache_override, process_threads_override, decoder_threads_override) < 0:
+        raise WorkflowError(
+            "Framework video cache and thread overrides must be nonnegative"
+        )
+    return {
+        "selected_profile": "torchcodec-cuda-on-demand",
+        "selection_reason": (
+            "Framework video supervision uses its source-baked CUDA TorchCodec "
+            "profile"
+        ),
+        "video_decoder": "torchcodec",
+        "implementation": "torchcodec_cuda_indexed",
+        "decoder_device": "cuda",
+        "frame_transfer": "cuda_uint8_to_host_pil",
+        "video_cache_size": cache_override or unique_media_capacity,
+        "video_cache_scope": "rank_local_decoded_pil_frames",
+        "video_cache_population": "on_demand_during_training",
+        "video_cache_persists_to_disk": False,
+        "sft_process_threads": process_threads_override or 4,
+        "decoder_threads": decoder_threads_override or 1,
+        "dataloader_num_workers": 0,
+        "dataloader_prefetch_factor": None,
+        "unique_media_capacity_basis": unique_media_capacity,
+        "dataset_prewarm": False,
+        "actual_device_attestation": "first_successful_decode_per_rank",
+    }
+
+
 def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_model: str, train_annotations: Sequence[str], train_media: Sequence[str], val_annotations: Sequence[str], val_media: Sequence[str], cache_keys: Mapping[str, str], video_runtime: Mapping[str, Any]) -> dict[str, Any]:
     if len(train_media) != 1 or len(val_media) != 1:
         raise WorkflowError("Cosmos-RL requires one explicit shared media root per split when annotations are merged")
@@ -836,7 +878,7 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
     return spec
 
 
-def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_annotations: Sequence[str], train_media: Sequence[str], val_annotations: Sequence[str], val_media: Sequence[str], rl_video_runtime: Mapping[str, Any] | None = None) -> dict[str, str]:
+def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_annotations: Sequence[str], train_media: Sequence[str], val_annotations: Sequence[str], val_media: Sequence[str], rl_video_runtime: Mapping[str, Any] | None = None, framework_video_runtime: Mapping[str, Any] | None = None) -> dict[str, str]:
     tao_job_id = args.tao_job_id or args.experiment_id
     status_path = str(Path(args.container_results_dir) / tao_job_id / "status.json")
     common = {
@@ -853,6 +895,8 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
     if args.video_override_map:
         common["TAO_VIDEO_OVERRIDE_MAP"] = _containerize(args, args.video_override_map)
     if backend == "cosmos-framework":
+        if not framework_video_runtime:
+            raise WorkflowError("Cosmos Framework video runtime was not resolved")
         framework_train_media = list(train_media) * len(train_annotations) if len(train_media) == 1 else list(train_media)
         framework_val_media = list(val_media) * len(val_annotations) if len(val_media) == 1 else list(val_media)
         common.update({
@@ -872,6 +916,10 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
             "TAO_VIDEO_VAL_MEDIA": val_media[0],
             "TAO_VIDEO_VAL_MEDIA_ROOTS": json.dumps(framework_val_media),
             "TAO_VIDEO_NUM_FRAMES": str(args.frames), "TAO_VIDEO_SYSTEM_PROMPT": args.system_prompt,
+            "TAO_VIDEO_CACHE_SIZE": str(framework_video_runtime["video_cache_size"]),
+            "TAO_FRAMEWORK_SFT_PROCESS_THREADS": str(framework_video_runtime["sft_process_threads"]),
+            "TAO_VIDEO_DECODER_DEVICE": str(framework_video_runtime["decoder_device"]),
+            "TAO_VIDEO_DECODER_THREADS": str(framework_video_runtime["decoder_threads"]),
         })
         if args.video_max_pixels:
             common["TAO_VIDEO_MAX_PIXELS"] = str(args.video_max_pixels)
@@ -951,7 +999,7 @@ def _source_commits(args: argparse.Namespace, backend: str) -> dict[str, str]:
 
 
 def _image_plan(args: argparse.Namespace, backend: str, commits: Mapping[str, str]) -> dict[str, Any]:
-    dockerfile = "Dockerfile.cosmos_framework" if backend == "cosmos-framework" else "Dockerfile"
+    dockerfile = "Dockerfile"
     integration = path_identity(args.tao_integration_repo)
     native_name = "cosmos-framework" if backend == "cosmos-framework" else "cosmos-rl-github"
     native_repo = path_identity(args.cosmos_framework_repo if backend == "cosmos-framework" else args.cosmos_rl_repo)
@@ -971,28 +1019,29 @@ def _image_plan(args: argparse.Namespace, backend: str, commits: Mapping[str, st
     if missing_trees:
         raise WorkflowError(f"repository tree inputs are required for clean image provenance: {missing_trees}")
     if backend == "cosmos-framework":
-        if not args.cosmos_framework_base_tag:
-            raise WorkflowError("cosmos_framework_base_tag is required for the clean two-stage Framework build")
-        native_build_args = {
-            "SOURCE_COMMIT": commits[native_name], "SOURCE_TREE": args.native_tree,
-            "SOURCE_DIRTY": "0", "BUILD_TIMESTAMP": args.build_timestamp,
-        }
-        native_command = ["docker", "build", "--pull", "-f", str(Path(native_repo["expanded"]) / "Dockerfile"), "-t", args.cosmos_framework_base_tag]
-        for key, value in native_build_args.items():
-            native_command.extend(["--build-arg", f"{key}={value}"])
-        native_command.append(native_repo["expanded"])
+        if not args.cosmos_framework_base_image:
+            raise WorkflowError(
+                "cosmos_framework_base_image is required for the unified clean Framework build"
+            )
+        if not args.cosmos_framework_source_repository or not args.cosmos_framework_source_branch:
+            raise WorkflowError(
+                "cosmos_framework_source_repository and cosmos_framework_source_branch "
+                "are required for the unified clean Framework build"
+            )
         build_args = {
-            "COSMOS_FRAMEWORK_BASE_IMAGE": args.cosmos_framework_base_tag,
+            "COSMOS_BACKEND": "cosmos-framework",
+            "COSMOS_FRAMEWORK_BASE_IMAGE": args.cosmos_framework_base_image,
+            "COSMOS_FRAMEWORK_REPO": args.cosmos_framework_source_repository,
+            "COSMOS_FRAMEWORK_BRANCH": args.cosmos_framework_source_branch,
+            "EXPECTED_FRAMEWORK_COMMIT": commits[native_name],
+            "EXPECTED_FRAMEWORK_TREE": args.native_tree,
             "ACTIONS_COMMIT": commits["cosmos-rl"], "ACTIONS_TREE": args.integration_tree,
             "DAFT_COMMIT": commits["nvidia-tao-daft"], "DAFT_TREE": args.daft_tree,
             "TAO_CORE_COMMIT": commits["tao-core"], "TAO_CORE_TREE": args.tao_core_tree,
-            "EXPECTED_FRAMEWORK_COMMIT": commits[native_name], "SOURCE_DIRTY": "0",
+            "SOURCE_DIRTY": "0",
             "BUILD_TIMESTAMP": args.build_timestamp,
-            "LOCAL_COSMOS_ACTIONS_PATH": args.integration_context_path,
-            "LOCAL_TAO_DAFT_PATH": args.daft_context_path,
-            "LOCAL_TAO_CORE_PATH": args.tao_core_context_path,
         }
-        commands = [shlex.join(native_command)]
+        commands = []
     else:
         if not args.cosmos_rl_base_image:
             raise WorkflowError("cosmos_rl_base_image is required for the clean Cosmos-RL build")
@@ -1015,9 +1064,14 @@ def _image_plan(args: argparse.Namespace, backend: str, commits: Mapping[str, st
         }
         commands = []
     command = ["docker", "build", "--pull", "-f", str(Path(integration["expanded"]) / dockerfile), "-t", image]
-    if backend == "cosmos-rl" and args.cosmos_rl_source_repository.startswith(("ssh://", "git@")):
+    source_repository = (
+        args.cosmos_framework_source_repository
+        if backend == "cosmos-framework"
+        else args.cosmos_rl_source_repository
+    )
+    if source_repository.startswith(("ssh://", "git@")):
         if not args.ssh_key_path:
-            raise WorkflowError("ssh_key_path is required for an SSH Cosmos-RL source repository")
+            raise WorkflowError("ssh_key_path is required for an SSH source repository")
         command[2:2] = ["--ssh", f"default={args.ssh_key_path}"]
     for key, value in build_args.items():
         command.extend(["--build-arg", f"{key}={value}"])
@@ -1072,7 +1126,7 @@ def _model_preparation(args: argparse.Namespace, model: Mapping[str, Any]) -> tu
             f"-e HF_MODEL_REVISION={shlex.quote(args.base_model_revision)}",
             f"-v {shlex.quote(str(Path(args.checkpoint_dir).expanduser().resolve()))}:/output",
             f"-v {shlex.quote(str(Path(args.cache_dir).expanduser().resolve()))}:/cache",
-            shlex.quote(args.cosmos_framework_base_tag), "-c",
+            shlex.quote(args.image_tag), "-c",
             shlex.quote(
                 "import os; from huggingface_hub import snapshot_download; "
                 "snapshot_download(os.environ['HF_MODEL_ID'], revision=os.environ['HF_MODEL_REVISION'], "
@@ -1094,7 +1148,7 @@ def _model_preparation(args: argparse.Namespace, model: Mapping[str, Any]) -> tu
         "python", str(script), "--base-model-path-or-uri", args.base_model_path_or_uri,
         "--vlm-architecture-model-path-or-uri", args.vlm_architecture_model_path_or_uri,
         "--output-path", output, "--cache-dir", args.cache_dir,
-        "--framework-image", args.cosmos_framework_base_tag,
+        "--framework-image", args.image_tag,
         "--framework-image-digest", "<RESOLVE_AFTER_CLEAN_BUILD>",
     ]
     if args.base_model_revision:
@@ -1115,16 +1169,23 @@ def _preflight_contract(
     representative_media: str,
     decoder_artifact: Mapping[str, Any] | None = None,
     rl_video_runtime: Mapping[str, Any] | None = None,
+    framework_video_runtime: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     decoder_artifact = decoder_artifact or {"enabled": False}
     python = "/workspace/.venv/bin/python" if backend == "cosmos-framework" else "/opt/venv/cosmos_rl/bin/python"
     imports = ["import torch", "assert torch.cuda.is_available()", f"assert torch.cuda.device_count() == {args.gpus_per_node}"]
     if backend == "cosmos-framework":
+        if not framework_video_runtime:
+            raise WorkflowError("Cosmos Framework preflight has no resolved video runtime")
         imports.extend([
-            "import cosmos_framework", "from cosmos_framework.callbacks.tao_status import TAOStatusCallback",
+            "import cosmos_framework", "import os", "from cosmos_framework.callbacks.tao_status import TAOStatusCallback",
             "from cosmos_framework.scripts.export_vlm_dcp import export_vlm_dcp",
             "import torchcodec",
-            f"from torchcodec.decoders import VideoDecoder; d=VideoDecoder({representative_media!r}, device='cuda'); assert len(d)>0",
+            "assert os.environ.get('TAO_VIDEO_DECODER_DEVICE') == 'cuda'",
+            f"assert os.environ.get('TAO_VIDEO_CACHE_SIZE') == {str(framework_video_runtime['video_cache_size'])!r}",
+            f"assert os.environ.get('TAO_FRAMEWORK_SFT_PROCESS_THREADS') == {str(framework_video_runtime['sft_process_threads'])!r}",
+            f"assert os.environ.get('TAO_VIDEO_DECODER_THREADS') == {str(framework_video_runtime['decoder_threads'])!r}",
+            f"from torchcodec.decoders import VideoDecoder; d=VideoDecoder({representative_media!r}, device='cuda'); frame=d.get_frames_at([0]).data; assert str(frame.device).startswith('cuda'), frame.device; assert len(d)>0",
         ])
     else:
         imports.extend([
@@ -1419,9 +1480,34 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     )
     if backend == "cosmos-framework" and getattr(args, "rl_video_profile", "auto") != "auto":
         raise WorkflowError("--rl-video-profile applies only to the cosmos-rl backend")
+    if backend == "cosmos-framework" and any(
+        getattr(args, name, value) != value
+        for name, value in (
+            ("rl_video_cache_size", 0),
+            ("rl_video_decoder_cache_size", 0),
+            ("rl_sft_batch_threads", 0),
+            ("rl_dataloader_num_workers", None),
+            ("rl_dataloader_prefetch_factor", None),
+        )
+    ):
+        raise WorkflowError("Cosmos-RL video runtime overrides do not apply to cosmos-framework")
+    if backend == "cosmos-rl" and any(
+        getattr(args, name, 0)
+        for name in (
+            "framework_video_cache_size",
+            "framework_sft_process_threads",
+            "framework_video_decoder_threads",
+        )
+    ):
+        raise WorkflowError("Framework video runtime overrides do not apply to cosmos-rl")
     rl_video_runtime = (
         _rl_video_runtime(args, train_data, val_data)
         if backend == "cosmos-rl"
+        else None
+    )
+    framework_video_runtime = (
+        _framework_video_runtime(args, train_data, val_data)
+        if backend == "cosmos-framework"
         else None
     )
     processor_fingerprint = stable_hash({
@@ -1429,6 +1515,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "profile": model_profile,
         "decoder_artifact": decoder_artifact,
         "rl_video_runtime": rl_video_runtime,
+        "framework_video_runtime": framework_video_runtime,
     })
     cache_keys = {
         split: hashlib.sha256(
@@ -1446,7 +1533,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     val_annotations_container = [_containerize(args, value) for value in val_annotations]
     val_media_container = [_containerize(args, value) for value in val_media]
     spec = _framework_spec(args, train_data["record_count"], val_data["record_count"], contract) if backend == "cosmos-framework" else _rl_spec(args, contract, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, cache_keys, rl_video_runtime)
-    environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, rl_video_runtime)
+    environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, rl_video_runtime, framework_video_runtime)
     command = _command(args, backend)
     if decoder_artifact["enabled"]:
         python = "/workspace/.venv/bin/python" if backend == "cosmos-framework" else "/opt/venv/cosmos_rl/bin/python"
@@ -1481,6 +1568,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "run_mode": args.run_mode, "training": contract, "processor_profile": model_profile,
         "decoder_artifact": decoder_artifact,
         "rl_video_runtime": rl_video_runtime,
+        "framework_video_runtime": framework_video_runtime,
         "datasets": {"train": train_data, "validation": val_data},
         "input_frame": {
             "kind": "slurm_remote" if remote_inspection else "submission_host",
@@ -1535,7 +1623,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     representative_media = _containerize(args, train_data["media_manifest"][0]["path"])
     plan["preflight"] = _preflight_contract(
         args, backend, image, prepared_model, representative_media,
-        decoder_artifact, rl_video_runtime
+        decoder_artifact, rl_video_runtime, framework_video_runtime
     )
     return plan
 
@@ -2107,6 +2195,24 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
         help="Process samples on demand (direct) or require deterministic prewarmed dataset caches (prewarm).",
     )
     parser.add_argument("--rl-validation-freq-steps", type=int, default=0)
+    parser.add_argument(
+        "--framework-video-cache-size",
+        type=int,
+        default=0,
+        help="Rank-local decoded-frame LRU entries; 0 derives capacity from unique media.",
+    )
+    parser.add_argument(
+        "--framework-sft-process-threads",
+        type=int,
+        default=0,
+        help="Ordered in-process Framework SFT preprocessing threads; 0 selects 4.",
+    )
+    parser.add_argument(
+        "--framework-video-decoder-threads",
+        type=int,
+        default=0,
+        help="TorchCodec decoder threads per on-demand decode; 0 selects 1.",
+    )
     parser.add_argument("--validation-batch-size", type=int, default=1)
     parser.add_argument("--optimizer", default="AdamW"); parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--optimizer-epsilon", type=float, default=1e-8)
@@ -2138,7 +2244,9 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--image-tag", default=""); parser.add_argument("--sqsh-path", default="")
     parser.add_argument("--cosmos-rl-source-repository", default="")
     parser.add_argument("--cosmos-rl-source-branch", default="")
-    parser.add_argument("--cosmos-framework-base-tag", default=""); parser.add_argument("--cosmos-rl-base-image", default="")
+    parser.add_argument("--cosmos-framework-source-repository", default="")
+    parser.add_argument("--cosmos-framework-source-branch", default="")
+    parser.add_argument("--cosmos-framework-base-image", default=""); parser.add_argument("--cosmos-rl-base-image", default="")
     parser.add_argument("--cosmos-framework-commit", default=""); parser.add_argument("--cosmos-rl-commit", default="")
     parser.add_argument("--tao-integration-commit", default=""); parser.add_argument("--native-tree", default="")
     parser.add_argument("--daft-commit", default=""); parser.add_argument("--tao-core-commit", default="")
