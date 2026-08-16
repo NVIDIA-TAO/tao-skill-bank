@@ -224,7 +224,7 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
                 "user_input": False,
             }
         )
-    elif len(annotations) == 1:
+    elif len(annotations) == 1 and not resolved_annotation:
         resolved_annotation = annotations[0]
     elif not annotations:
         required_user_inputs.append(
@@ -249,7 +249,7 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         provenance["dataset.media_dir"] = _source(media_roots, "sealed_training_plan.validation")
     unique_media_roots = list(dict.fromkeys(media_roots))
     resolved_media_root = args.action_validation_media_root
-    if len(unique_media_roots) == 1:
+    if len(unique_media_roots) == 1 and not resolved_media_root:
         resolved_media_root = unique_media_roots[0]
     elif len(unique_media_roots) > 1 and not resolved_media_root:
         automated_actions.append(

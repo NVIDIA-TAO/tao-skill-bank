@@ -199,6 +199,32 @@ def test_dense_evaluation_inherits_training_parity_fields(tmp_path: Path) -> Non
     assert resolved["config_sha256"] == hashlib.sha256(config_path.read_bytes()).hexdigest()
 
 
+def test_materialized_validation_paths_override_single_recorded_inputs(tmp_path: Path) -> None:
+    result, plan_path, config_path = _run(
+        tmp_path,
+        extra=[
+            "--action-validation-annotation",
+            "/runtime/evaluation-results/validation-smoke-8.json",
+            "--action-validation-media-root",
+            "/runtime/evaluation-results/materialized-media",
+        ],
+    )
+    assert result.returncode == 0, result.stderr
+    resolved = json.loads(plan_path.read_text(encoding="utf-8"))
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+
+    assert config["dataset"]["annotation_path"] == "/runtime/evaluation-results/validation-smoke-8.json"
+    assert config["dataset"]["media_dir"] == "/runtime/evaluation-results/materialized-media"
+    assert resolved["provenance"]["dataset.annotation_path"] == {
+        "source": "materialize_exact_validation_manifest",
+        "value": "/runtime/evaluation-results/validation-smoke-8.json",
+    }
+    assert resolved["provenance"]["dataset.media_dir"] == {
+        "source": "materialize_validation_manifest_with_absolute_media",
+        "value": "/runtime/evaluation-results/materialized-media",
+    }
+
+
 def test_missing_pixel_budget_accepts_explicit_evaluation_input(tmp_path: Path) -> None:
     unresolved, plan_path, config_path = _run(tmp_path, max_video_pixels=None)
     assert unresolved.returncode == 3, unresolved.stderr
