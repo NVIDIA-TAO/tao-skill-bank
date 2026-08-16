@@ -2456,13 +2456,16 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
         "--framework-video-cache-size",
         type=int,
         default=None,
-        help="Rank-local decoded-frame LRU entries; omit for the validated on-demand default of 8.",
+        help=(
+            "Rank-local decoded-frame LRU entries; omit to size the validated "
+            "on-demand cache from the inspected unique-media working set."
+        ),
     )
     parser.add_argument(
         "--framework-sft-process-threads",
         type=int,
         default=0,
-        help="Ordered in-process Framework SFT preprocessing threads; 0 selects 4.",
+        help="Ordered in-process Framework SFT preprocessing threads; 0 selects 8.",
     )
     parser.add_argument(
         "--framework-video-decoder-threads",
