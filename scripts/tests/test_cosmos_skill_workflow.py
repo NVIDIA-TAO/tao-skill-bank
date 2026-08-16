@@ -432,6 +432,8 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert "inspect.getsource" in preflight
     assert "TAO_PYNV_DECODER_CACHE_SIZE" in preflight
     assert "persistent_workers" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:worker_decoder_cache_forwarding" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers" in preflight
 
 
 def test_cosmos_rl_system_pyav_profile_is_explicit_and_worker_zero_safe(tmp_path):

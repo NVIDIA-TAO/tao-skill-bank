@@ -1175,7 +1175,14 @@ def _preflight_contract(
 ) -> dict[str, Any]:
     decoder_artifact = decoder_artifact or {"enabled": False}
     python = "/workspace/.venv/bin/python" if backend == "cosmos-framework" else "/opt/venv/cosmos_rl/bin/python"
-    imports = ["import torch", "assert torch.cuda.is_available()", f"assert torch.cuda.device_count() == {args.gpus_per_node}"]
+    imports = [
+        "import torch",
+        "assert torch.cuda.is_available(), 'TAO_PREFLIGHT_ASSERTION_FAILED:cuda_available'",
+        (
+            f"assert torch.cuda.device_count() == {args.gpus_per_node}, "
+            "'TAO_PREFLIGHT_ASSERTION_FAILED:cuda_device_count'"
+        ),
+    ]
     if backend == "cosmos-framework":
         if not framework_video_runtime:
             raise WorkflowError("Cosmos Framework preflight has no resolved video runtime")
@@ -1194,9 +1201,9 @@ def _preflight_contract(
             "import cosmos_rl", "import av", "import os",
             "from nvidia_tao_core.microservices.handlers import huggingface_inference_microservice_server",
             "from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionPatchEmbed",
-            "assert (getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False) or getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_channels_last_3d', False))",
-            "assert av.codec.Codec('h264', 'r').name == 'h264'",
-            "assert av.codec.Codec('hevc', 'r').name == 'hevc'",
+            "assert (getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False) or getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_channels_last_3d', False)), 'TAO_PREFLIGHT_ASSERTION_FAILED:qwen_patch_embed'",
+            "assert av.codec.Codec('h264', 'r').name == 'h264', 'TAO_PREFLIGHT_ASSERTION_FAILED:h264_software_name'",
+            "assert av.codec.Codec('hevc', 'r').name == 'hevc', 'TAO_PREFLIGHT_ASSERTION_FAILED:hevc_software_name'",
             "from cosmos_rl.utils.runtime_dependency_contract import verify_deepep, verify_vllm_conv3d",
             "verify_deepep()", "verify_vllm_conv3d()",
             "import qwen_vl_utils.vision_process as vp",
@@ -1210,22 +1217,22 @@ def _preflight_contract(
                 "from cuda.bindings import driver as cuda_driver",
                 "from cosmos_rl.policy.worker.sft_worker import _dataloader_worker_kwargs",
                 "from cosmos_rl.utils.pynv_video_reader import register_pynv_video_reader",
-                "assert nvc.OutputColorType.RGBP is not None",
-                "assert cuda_driver is not None",
-                "assert os.environ.get('FORCE_QWENVL_VIDEO_READER') == 'pynvvideocodec'",
-                "assert os.environ.get('TAO_PYNV_FRAME_TRANSFER') == 'device_rgbp'",
+                "assert nvc.OutputColorType.RGBP is not None, 'TAO_PREFLIGHT_ASSERTION_FAILED:pynv_rgbp'",
+                "assert cuda_driver is not None, 'TAO_PREFLIGHT_ASSERTION_FAILED:cuda_driver_binding'",
+                "assert os.environ.get('FORCE_QWENVL_VIDEO_READER') == 'pynvvideocodec', 'TAO_PREFLIGHT_ASSERTION_FAILED:forced_pynv_reader'",
+                "assert os.environ.get('TAO_PYNV_FRAME_TRANSFER') == 'device_rgbp', 'TAO_PREFLIGHT_ASSERTION_FAILED:device_rgbp_env'",
                 "worker_source=inspect.getsource(vp._ensure_forced_video_reader)",
-                "assert 'TAO_PYNV_DECODER_CACHE_SIZE' in worker_source",
+                "assert 'TAO_PYNV_DECODER_CACHE_SIZE' in worker_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:worker_decoder_cache_forwarding'",
                 "worker_kwargs=_dataloader_worker_kwargs(1, 2)",
-                "assert worker_kwargs['persistent_workers'] is True",
+                "assert worker_kwargs['persistent_workers'] is True, 'TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers'",
                 (
                     "profile=register_pynv_video_reader("
                     f"cache_size={int(rl_video_runtime['video_cache_size'])},"
                     f"decoder_cache_size={int(rl_video_runtime['decoder_cache_size'])},"
                     "strict=True)"
                 ),
-                "assert profile['frame_transfer'] == 'device_rgbp'",
-                "assert vp.get_video_reader_backend() == 'pynvvideocodec'",
+                "assert profile['frame_transfer'] == 'device_rgbp', 'TAO_PREFLIGHT_ASSERTION_FAILED:registered_frame_transfer'",
+                "assert vp.get_video_reader_backend() == 'pynvvideocodec', 'TAO_PREFLIGHT_ASSERTION_FAILED:registered_qwen_backend'",
             ])
         else:
             imports.extend([
@@ -1240,7 +1247,7 @@ def _preflight_contract(
         imports.append("import nvidia_tao_daft")
     imports.extend([
         "p=torch.cuda.get_device_properties(0)",
-        "assert p.total_memory >= 30 * 1024**3, p.total_memory",
+        "assert p.total_memory >= 30 * 1024**3, 'TAO_PREFLIGHT_ASSERTION_FAILED:gpu_memory'",
         "import tempfile; f=tempfile.NamedTemporaryFile(delete=False); f.close(); torch.distributed.init_process_group('nccl', init_method='file://'+f.name, rank=0, world_size=1); torch.distributed.destroy_process_group()",
         "print({'gpu': p.name, 'capability': (p.major,p.minor), 'memory':p.total_memory, 'torch':torch.__version__, 'cuda':torch.version.cuda})",
     ])
