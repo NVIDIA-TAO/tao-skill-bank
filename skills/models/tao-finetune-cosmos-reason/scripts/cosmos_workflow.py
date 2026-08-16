@@ -1134,6 +1134,8 @@ def _image_plan(args: argparse.Namespace, backend: str, commits: Mapping[str, st
             "VLLM_BASE_IMAGE": args.cosmos_rl_base_image,
             "COSMOS_RL_GITHUB_REPO": args.cosmos_rl_source_repository,
             "COSMOS_RL_GITHUB_BRANCH": args.cosmos_rl_source_branch,
+            "COSMOS_RL_COMMIT": commits[native_name],
+            "COSMOS_RL_TREE": args.native_tree,
             "ACTIONS_COMMIT": commits["cosmos-rl"], "ACTIONS_TREE": args.integration_tree,
             "DAFT_COMMIT": commits["nvidia-tao-daft"], "DAFT_TREE": args.daft_tree,
             "TAO_CORE_COMMIT": commits["tao-core"], "TAO_CORE_TREE": args.tao_core_tree,

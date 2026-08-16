@@ -1186,6 +1186,8 @@ def test_clean_build_plan_requires_new_sqsh_and_provenance(tmp_path):
     assert rl_plan["image"]["build_arguments"]["COSMOS_BACKEND"] == "cosmos-rl"
     assert rl_plan["image"]["build_arguments"]["COSMOS_RL_GITHUB_REPO"] == "ssh://git@gitlab.example.com:12051/group/cosmos-reason"
     assert rl_plan["image"]["build_arguments"]["COSMOS_RL_GITHUB_BRANCH"] == "feature/enhanced-hooks-and-custom-loggers"
+    assert rl_plan["image"]["build_arguments"]["COSMOS_RL_COMMIT"] == "r" * 40
+    assert rl_plan["image"]["build_arguments"]["COSMOS_RL_TREE"] == "n" * 40
     assert "USE_LOCAL_COSMOS_RL_GITHUB" not in rl_plan["image"]["build_arguments"]
     assert "--ssh" in rl_plan["image"]["clean_build_commands"][0]
     assert rl_plan["image"]["build_arguments"]["PYAV_WHEEL_SHA256"] == "f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f"
