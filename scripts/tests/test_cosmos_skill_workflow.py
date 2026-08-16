@@ -910,6 +910,7 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert "timeout --signal=TERM --kill-after=30s 13680s srun" in script
     assert "TAO_COSMOS_PACKAGED_RUNTIME_PREFLIGHT_OK" in script
     assert plan["preflight"]["container_runtime"] in script
+    assert "export SLURM_EXPORT_ENV=ALL" in script
     assert 'exit "$child_rc"' in script
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
     child_argv = shlex.split(script.split("set +e\n", 1)[1].split("\nchild_rc=", 1)[0])

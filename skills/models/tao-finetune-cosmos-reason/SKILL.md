@@ -330,7 +330,10 @@ the `SBATCH` contract but passes every CPU actually granted by SLURM to the
 training step and records requested, allocated, and step counts. Before the
 training child, the same allocation runs the planner-owned packaged-runtime
 gate as the smoke job's first Pyxis step; a failed gate writes the independent
-child exit artifact and blocks training. Framework topology is
+child exit artifact and blocks training. Generated jobs set
+`SLURM_EXPORT_ENV=ALL`, and the platform consumer still submits with
+`sbatch --export=ALL`, so runtime profile variables reach every `srun` step.
+Framework topology is
 shard=`gpus_per_node`, replica=`nodes`.
 Cosmos-RL uses one controller on node zero and its policy-worker topology.
 Asynchronous distributed checkpointing is rejected for multi-node runs.

@@ -1951,6 +1951,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         ]
     lines.extend([
         "", "set -Eeuo pipefail",
+        "export SLURM_EXPORT_ENV=ALL",
         *cpu_step_setup,
         *runtime_dir_setup,
         f"mkdir -p {shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id)))}",
