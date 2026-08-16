@@ -238,8 +238,9 @@ Execute these stages in order and persist their outputs.
    manifest, and fingerprint outputs, seal that plan, and never reuse another
    run's cache or override artifact.
    Cosmos Framework independently resolves its native
-   `torchcodec-cuda-on-demand` profile. It uses CUDA indexed decode, an
-   eight-entry rank-local decoded-frame LRU, and four bounded order-preserving
+   `torchcodec-cuda-on-demand` profile. It uses CUDA indexed decode, a
+   rank-local decoded-frame LRU sized from the inspected unique-media working
+   set, and eight bounded order-preserving
    preprocessing threads inside one persistent spawned DataLoader worker with
    prefetch two. The worker populates only rank-local memory caches during
    ordinary iteration; it does not add a prewarm phase or a disk cache. Nano

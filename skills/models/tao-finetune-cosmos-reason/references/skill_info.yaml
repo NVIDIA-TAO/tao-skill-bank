@@ -125,11 +125,11 @@ workflow_contract:
     device: cuda
     device_binding: explicit_local_rank
     frame_transfer: cuda_uint8_to_host_pil
-    dataloader: {workers: 0, prefetch_factor: omitted}
-    sft_process_threads: 4
+    dataloader: {workers: 1, prefetch_factor: 2, multiprocessing_context: spawn, persistent_workers: true}
+    sft_process_threads: 8
     decoder_threads: 1
     decoded_frame_cache: rank_local_memory_populated_on_demand
-    capacity_default: 8
+    capacity_default: inspected_unique_media_count
     nano_per_forward_batch_default: effective_global_batch_divided_by_total_gpus
     nano_gradient_accumulation_default: 1
     batcher: resume_safe_contiguous

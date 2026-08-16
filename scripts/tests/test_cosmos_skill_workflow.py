@@ -349,11 +349,11 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
         "decoder_device": "cuda",
         "decoder_device_binding": "explicit_local_rank",
         "frame_transfer": "cuda_uint8_to_host_pil",
-        "video_cache_size": 8,
+        "video_cache_size": 16,
         "video_cache_scope": "rank_local_decoded_pil_frames",
         "video_cache_population": "on_demand_during_training",
         "video_cache_persists_to_disk": False,
-        "sft_process_threads": 4,
+        "sft_process_threads": 8,
         "decoder_threads": 1,
         "dataloader_num_workers": 1,
         "dataloader_prefetch_factor": 2,
@@ -364,8 +364,8 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
         "actual_device_attestation": "first_successful_decode_per_rank",
         "actual_device_requirement": "resolved_device_equals_cuda_local_rank",
     }
-    assert plan["environment"]["TAO_VIDEO_CACHE_SIZE"] == "8"
-    assert plan["environment"]["TAO_FRAMEWORK_SFT_PROCESS_THREADS"] == "4"
+    assert plan["environment"]["TAO_VIDEO_CACHE_SIZE"] == "16"
+    assert plan["environment"]["TAO_FRAMEWORK_SFT_PROCESS_THREADS"] == "8"
     assert plan["environment"]["TAO_FRAMEWORK_DATALOADER_NUM_WORKERS"] == "1"
     assert plan["environment"]["TAO_FRAMEWORK_DATALOADER_PREFETCH_FACTOR"] == "2"
     assert plan["environment"]["TAO_VIDEO_DECODER_DEVICE"] == "cuda"
