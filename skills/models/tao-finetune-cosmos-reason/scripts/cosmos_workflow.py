@@ -846,7 +846,10 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         # this value times dp_shard_size (replicate size is fixed at one).
         "train_batch_per_replica": train_batch_per_replica, "output_dir": args.container_checkpoint_dir,
         "optm_lr": args.learning_rate,
-        "optm_impl": "fused" if args.dataset_family == "task_aware_video_reasoning" else "foreach",
+        # Optimizer implementation is a training-mode contract, not a dataset
+        # property: full dense SFT uses fused AdamW while PEFT keeps the native
+        # foreach implementation.
+        "optm_impl": "fused" if args.training_mode == "dense" else "foreach",
         "optm_weight_decay": args.weight_decay,
         "optm_min_lr_factor": (
             args.minimum_lr_factor

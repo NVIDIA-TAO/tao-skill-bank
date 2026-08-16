@@ -397,6 +397,7 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     plan = workflow.build_plan(args)
     assert plan["training"]["optimizer_epsilon"] == 1e-6
     assert plan["spec"]["train"]["epsilon"] == 1e-6
+    assert plan["spec"]["train"]["optm_impl"] == "foreach"
     lora = plan["spec"]["policy"]["lora"]
     assert lora == {
         "r": 16,
@@ -479,6 +480,18 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_visibility" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_type" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:all_child_failures_propagate" in preflight
+
+
+def test_cosmos_rl_dense_optimizer_is_dataset_independent(tmp_path):
+    for dataset_family in ("video_conversation", "task_aware_video_reasoning"):
+        args = args_for(
+            tmp_path / dataset_family,
+            backend="cosmos-rl",
+            dataset_family=dataset_family,
+            training_mode="dense",
+        )
+        plan = workflow.build_plan(args)
+        assert plan["spec"]["train"]["optm_impl"] == "fused"
 
 
 def test_cosmos_rl_system_pyav_profile_is_explicit_and_worker_zero_safe(tmp_path):
