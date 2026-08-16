@@ -203,8 +203,10 @@ Execute these stages in order and persist their outputs.
    The fast profile uses the source-baked PyNvVideoCodec device-RGBP/DLPack
    path, one persistent spawned DataLoader worker, prefetch two, and the
    measured serial logical-batch preprocessing path. Preflight must prove the installed
-   Qwen worker forwards `TAO_PYNV_DECODER_CACHE_SIZE`; a configured capacity
-   that falls back inside spawned workers is an image defect. The validated
+   Qwen worker forwards `TAO_PYNV_DECODER_CACHE_SIZE` and that its original
+   `fetch_video` function normalizes explicit pixel bounds using the caller's
+   actual image patch size. A configured capacity or pixel contract that falls
+   back inside spawned workers is an image defect. The validated
    default sizes the processed-output LRU and rank-local native decoder-session
    cache to the inspected unique-media working set; explicit supported
    overrides remain available. The video LRU stores processed `fetch_video`

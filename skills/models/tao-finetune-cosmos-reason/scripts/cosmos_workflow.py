@@ -1307,6 +1307,8 @@ def _preflight_contract(
                 "assert os.environ.get('TAO_PYNV_FRAME_TRANSFER') == 'device_rgbp', 'TAO_PREFLIGHT_ASSERTION_FAILED:device_rgbp_env'",
                 "worker_source=inspect.getsource(vp._ensure_forced_video_reader)",
                 "assert 'TAO_PYNV_DECODER_CACHE_SIZE' in worker_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:worker_decoder_cache_forwarding'",
+                "fetch_source=inspect.getsource(vp.fetch_video)",
+                "assert 'normalize_video_pixel_bounds(ele, image_patch_size' in fetch_source and 'sys.modules[__name__]' in fetch_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:worker_pixel_bound_normalization'",
                 "worker_kwargs=_dataloader_worker_kwargs(1, 2)",
                 "assert worker_kwargs['persistent_workers'] is True, 'TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers'",
                 (

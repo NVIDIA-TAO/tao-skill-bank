@@ -474,6 +474,7 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert "TAO_PYNV_DECODER_CACHE_SIZE" in preflight
     assert "persistent_workers" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:worker_decoder_cache_forwarding" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:worker_pixel_bound_normalization" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_visibility" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_type" in preflight
