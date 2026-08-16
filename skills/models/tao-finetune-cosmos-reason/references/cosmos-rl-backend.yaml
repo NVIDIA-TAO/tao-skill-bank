@@ -3,7 +3,7 @@ backend: cosmos-rl
 display_name: Cosmos-RL
 native_source_repository: cosmos-reason-gitlab
 tao_integration_repository: cosmos-rl
-container_image: nvcr.io/nvstaging/tao/cosmos-rl:enhanced-hooks-custom-loggers-20260816-nvdec-capability-v1  # versions-key: images.tao_toolkit.cosmos_rl
+container_image: nvcr.io/nvstaging/tao/cosmos-rl:enhanced-hooks-custom-loggers-20260816-direct-cache-fast-v7  # versions-key: images.tao_toolkit.cosmos_rl
 build:
   owner: cosmos-rl
   dockerfile: Dockerfile
