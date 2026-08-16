@@ -100,10 +100,11 @@ workflow_contract:
     pynv-device-rgbp:
       decoder: pynvvideocodec
       transfer: device_rgbp_dlpack
-      dataloader: {workers: 1, prefetch_factor: 2}
+      dataloader: {workers: 1, prefetch_factor: 2, persistent_workers: true}
       sft_batch_threads: 4
       processed_video_cache: rank_local_memory_populated_on_demand
       decoder_session_cache: rank_local_native_populated_on_demand
+      worker_decoder_cache_forwarding: TAO_PYNV_DECODER_CACHE_SIZE_required
       capacity_default: max_train_validation_unique_media
       prewarm: false
       disk_cache: false

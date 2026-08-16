@@ -41,6 +41,8 @@ runtime:
       decoder_session_cache: rank_local_native_on_demand
       dataloader_workers: 1
       dataloader_prefetch_factor: 2
+      dataloader_persistent_workers: true
+      worker_decoder_cache_forwarding: TAO_PYNV_DECODER_CACHE_SIZE_required
       sft_batch_threads: 4
       capacity_default: max_train_validation_unique_media
       disk_cache: false
@@ -131,6 +133,7 @@ compatibility:
   software_video_workers: spawn_context_registered_reader_and_no_cuda_context
   pynv_device_rgbp: dlpack_transfer_exact_batch_gate_and_scanned_retry
   pynv_decoder_sessions: explicit_capacity_only_with_conservative_default_one
+  pynv_spawned_worker_decoder_capacity: environment_forwarded_and_preflight_verified
   sft_batch_threads: order_preserving_thread_pool
   worker_zero_prefetch: num_workers_zero_and_prefetch_omitted
   host_source_mount: forbidden
