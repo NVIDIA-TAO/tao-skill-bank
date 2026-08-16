@@ -325,7 +325,13 @@ child exit code is nonzero or the terminal TAO state is not successful.
 Generated jobs use `#!/usr/bin/env bash` and are syntax-checked by Bash. They
 use SQSH via Pyxis, disable requeue by default, run one launcher task per node,
 write stdout/stderr to runtime-supplied paths, and exit with the training child
-code. Framework topology is shard=`gpus_per_node`, replica=`nodes`.
+code. A single-node exclusive allocation preserves the requested CPU count in
+the `SBATCH` contract but passes every CPU actually granted by SLURM to the
+training step and records requested, allocated, and step counts. Before the
+training child, the same allocation runs the planner-owned packaged-runtime
+gate as the smoke job's first Pyxis step; a failed gate writes the independent
+child exit artifact and blocks training. Framework topology is
+shard=`gpus_per_node`, replica=`nodes`.
 Cosmos-RL uses one controller on node zero and its policy-worker topology.
 Asynchronous distributed checkpointing is rejected for multi-node runs.
 

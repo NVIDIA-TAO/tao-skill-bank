@@ -906,6 +906,8 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     assert 'export HOME="/tmp/tao-${TAO_JOB_ID:?TAO_JOB_ID must be set}-${SLURM_PROCID:-0}"' in script
     assert 'mkdir -p -m 700 "$HOME"' in script
     assert "timeout --signal=TERM --kill-after=30s 13680s srun" in script
+    assert "TAO_COSMOS_PACKAGED_RUNTIME_PREFLIGHT_OK" in script
+    assert plan["preflight"]["container_runtime"] in script
     assert 'exit "$child_rc"' in script
     assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
     child_argv = shlex.split(script.split("set +e\n", 1)[1].split("\nchild_rc=", 1)[0])
@@ -917,6 +919,26 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     result = subprocess.run(["bash", "-c", "set -Eeuo pipefail; rc=0; set +e; bash -c 'exit 17'; rc=$?; set -e; exit $rc"])
     assert result.returncode == 17
     assert subprocess.run(["sh", "-n"], input=script, text=True).returncode != 0 or "#!/usr/bin/env bash" in script
+
+
+def test_single_node_exclusive_slurm_step_uses_allocated_cpus(tmp_path):
+    args = args_for(tmp_path)
+    args.platform = "slurm"; args.partition = "compute"; args.account = "project"
+    args.slurm_user = "user"; args.slurm_host = ["login.example"]
+    args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
+    args.container_mount = [f"{tmp_path}:{tmp_path}"]
+    args.cpus_per_task = 16
+    args.exclusive = True
+    plan = workflow.build_plan(args); workflow.write_spec(args, plan)
+
+    script = workflow.render_slurm(args, plan)
+
+    assert "#SBATCH --cpus-per-task=16" in script
+    assert 'slurm_job_record="$(scontrol show job -o "${SLURM_JOB_ID:?SLURM_JOB_ID must be set}")"' in script
+    assert 'step_cpus_per_task="${BASH_REMATCH[1]}"' in script
+    assert 'policy=allocated-exclusive-single-node' in script
+    assert '--cpus-per-task="$step_cpus_per_task"' in script
+    assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
 
 
 def test_slurm_script_rejects_invalid_child_timeout(tmp_path):

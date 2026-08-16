@@ -351,6 +351,13 @@ When `num_gpus` is greater than or equal to `max_num_gpus_per_node`, the
 handler treats the request as exclusive per node and computes additional nodes
 from total GPU count when necessary.
 
+For a single-node exclusive Cosmos job, keep `--cpus-per-task` equal to the
+user's requested value in the allocation request, then resolve `NumCPUs` from
+`scontrol show job` inside that allocation and pass the granted count to the
+training `srun`. Record all three values (requested, allocated, step). Do not
+apply this single-node optimization by dividing or guessing a per-node CPU
+count for multi-node jobs.
+
 ## Multi-node and retries
 
 For multi-node jobs (`num_nodes > 1`), the rendered

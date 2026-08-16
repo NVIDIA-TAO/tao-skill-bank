@@ -1881,10 +1881,11 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         "ulimit -l unlimited 2>/dev/null || true",
         native,
     ])
+    step_cpu_value = '"$step_cpus_per_task"' if args.exclusive and args.nodes == 1 else str(args.cpus_per_task)
     srun = " ".join(filter(None, [
         "timeout", "--signal=TERM", "--kill-after=30s", f"{child_timeout_seconds}s",
         "srun", f"--nodes={args.nodes}", f"--ntasks={args.nodes}", "--ntasks-per-node=1",
-        f"--gpus-per-node={args.gpus_per_node}", f"--cpus-per-task={args.cpus_per_task}",
+        f"--gpus-per-node={args.gpus_per_node}", f"--cpus-per-task={step_cpu_value}",
         "--no-container-remap-root", "--no-container-mount-home",
         f"--container-image={shlex.quote(str(sqsh))}",
         mount_args, "bash -lc", shlex.quote(wrapped),
@@ -1911,13 +1912,45 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         lines.append(f"#SBATCH --reservation={args.reservation}")
     if args.exclusive:
         lines.append("#SBATCH --exclusive")
+    cpu_step_setup = []
+    if args.exclusive and args.nodes == 1:
+        cpu_step_setup = [
+            f"requested_cpus_per_task={args.cpus_per_task}",
+            'slurm_job_record="$(scontrol show job -o "${SLURM_JOB_ID:?SLURM_JOB_ID must be set}")"',
+            'if [[ "$slurm_job_record" =~ NumCPUs=([0-9]+) ]]; then',
+            '  step_cpus_per_task="${BASH_REMATCH[1]}"',
+            "else",
+            '  echo "Unable to resolve NumCPUs for exclusive SLURM allocation $SLURM_JOB_ID" >&2',
+            "  exit 2",
+            "fi",
+            'if (( step_cpus_per_task < requested_cpus_per_task )); then',
+            '  echo "Exclusive allocation exposes fewer CPUs than requested: requested=$requested_cpus_per_task allocated=$step_cpus_per_task" >&2',
+            "  exit 2",
+            "fi",
+            'printf "TAO_SLURM_CPU_ALLOCATION requested=%s allocated=%s step=%s policy=allocated-exclusive-single-node\\n" "$requested_cpus_per_task" "$step_cpus_per_task" "$step_cpus_per_task"',
+        ]
+    container_preflight = str(plan.get("preflight", {}).get("container_runtime") or "").strip()
+    preflight_lines = []
+    if container_preflight:
+        preflight_lines = [
+            "runtime_preflight_rc=0",
+            f"{container_preflight} || runtime_preflight_rc=$?",
+            'if [[ "$runtime_preflight_rc" -ne 0 ]]; then',
+            '  printf "%s\\n" "$runtime_preflight_rc" > "${TAO_CHILD_EXIT_FILE:?TAO_CHILD_EXIT_FILE must be set}"',
+            '  echo "Cosmos packaged runtime preflight failed with exit code $runtime_preflight_rc" >&2',
+            '  exit "$runtime_preflight_rc"',
+            "fi",
+            'echo "TAO_COSMOS_PACKAGED_RUNTIME_PREFLIGHT_OK"',
+        ]
     lines.extend([
         "", "set -Eeuo pipefail",
+        *cpu_step_setup,
         *runtime_dir_setup,
         f"mkdir -p {shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id)))}",
         f"export TAO_CHILD_EXIT_FILE={shlex.quote(str(Path(args.results_dir).expanduser() / (args.tao_job_id or args.experiment_id) / 'child_exit_code'))}",
         env_exports, 'export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)"',
-        f"export MASTER_PORT={args.master_port}", "child_rc=0", "set +e", srun, 'child_rc="$?"', "set -e",
+        f"export MASTER_PORT={args.master_port}", *preflight_lines,
+        "child_rc=0", "set +e", srun, 'child_rc="$?"', "set -e",
         'printf "%s\\n" "$child_rc" > "${TAO_CHILD_EXIT_FILE:?TAO_CHILD_EXIT_FILE must be set}"',
         'if [[ "$child_rc" -ne 0 ]]; then echo "Cosmos child process failed with exit code $child_rc" >&2; fi',
         'exit "$child_rc"', "",
