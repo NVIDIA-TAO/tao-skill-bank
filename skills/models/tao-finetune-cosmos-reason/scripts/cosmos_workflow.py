@@ -725,6 +725,7 @@ def _framework_video_runtime(
         "video_decoder": "torchcodec",
         "implementation": "torchcodec_cuda_indexed",
         "decoder_device": "cuda",
+        "decoder_device_binding": "explicit_local_rank",
         "frame_transfer": "cuda_uint8_to_host_pil",
         "video_cache_size": cache_override or unique_media_capacity,
         "video_cache_scope": "rank_local_decoded_pil_frames",
@@ -737,6 +738,7 @@ def _framework_video_runtime(
         "unique_media_capacity_basis": unique_media_capacity,
         "dataset_prewarm": False,
         "actual_device_attestation": "first_successful_decode_per_rank",
+        "actual_device_requirement": "resolved_device_equals_cuda_local_rank",
     }
 
 

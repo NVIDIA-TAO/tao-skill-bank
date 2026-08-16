@@ -335,6 +335,7 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
         "video_decoder": "torchcodec",
         "implementation": "torchcodec_cuda_indexed",
         "decoder_device": "cuda",
+        "decoder_device_binding": "explicit_local_rank",
         "frame_transfer": "cuda_uint8_to_host_pil",
         "video_cache_size": 16,
         "video_cache_scope": "rank_local_decoded_pil_frames",
@@ -347,6 +348,7 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
         "unique_media_capacity_basis": 16,
         "dataset_prewarm": False,
         "actual_device_attestation": "first_successful_decode_per_rank",
+        "actual_device_requirement": "resolved_device_equals_cuda_local_rank",
     }
     assert plan["environment"]["TAO_VIDEO_CACHE_SIZE"] == "16"
     assert plan["environment"]["TAO_FRAMEWORK_SFT_PROCESS_THREADS"] == "4"
