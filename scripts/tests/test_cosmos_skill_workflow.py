@@ -355,8 +355,10 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
         "video_cache_persists_to_disk": False,
         "sft_process_threads": 4,
         "decoder_threads": 1,
-        "dataloader_num_workers": 0,
-        "dataloader_prefetch_factor": None,
+        "dataloader_num_workers": 1,
+        "dataloader_prefetch_factor": 2,
+        "dataloader_multiprocessing_context": "spawn",
+        "dataloader_persistent_workers": True,
         "unique_media_capacity_basis": 16,
         "dataset_prewarm": False,
         "actual_device_attestation": "first_successful_decode_per_rank",
@@ -364,12 +366,16 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
     }
     assert plan["environment"]["TAO_VIDEO_CACHE_SIZE"] == "8"
     assert plan["environment"]["TAO_FRAMEWORK_SFT_PROCESS_THREADS"] == "4"
+    assert plan["environment"]["TAO_FRAMEWORK_DATALOADER_NUM_WORKERS"] == "1"
+    assert plan["environment"]["TAO_FRAMEWORK_DATALOADER_PREFETCH_FACTOR"] == "2"
     assert plan["environment"]["TAO_VIDEO_DECODER_DEVICE"] == "cuda"
     assert plan["environment"]["TAO_VIDEO_DECODER_THREADS"] == "1"
     preflight = plan["preflight"]["container_runtime"]
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:contiguous_batcher_max_tokens" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:contiguous_batcher_source_order" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:cross_epoch_resume_cursor" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:framework_spawn_prefetch" in preflight
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:framework_spawn_pickle" in preflight
     assert plan["datasets"]["train"]["annotations"][0]["original"] == args.train_annotation[0]
     source = Path(workflow.__file__).read_text(encoding="utf-8")
     assert "/lustre/" not in source and "rarunachalam" not in source
@@ -476,6 +482,7 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert "persistent_workers" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:worker_decoder_cache_forwarding" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:worker_pixel_bound_normalization" in preflight
+    assert "packer_module.qwen_vl_process_vision_info" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_visibility" in preflight
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_type" in preflight

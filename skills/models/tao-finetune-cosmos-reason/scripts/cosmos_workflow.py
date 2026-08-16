@@ -783,6 +783,8 @@ def _framework_video_runtime(
     cache_override = getattr(args, "framework_video_cache_size", None)
     process_threads_override = getattr(args, "framework_sft_process_threads", 0)
     decoder_threads_override = getattr(args, "framework_video_decoder_threads", 0)
+    worker_override = getattr(args, "framework_dataloader_num_workers", None)
+    prefetch_override = getattr(args, "framework_dataloader_prefetch_factor", None)
     if cache_override is not None and cache_override < 0:
         raise WorkflowError(
             "Framework video cache override must be nonnegative"
@@ -790,6 +792,12 @@ def _framework_video_runtime(
     if min(process_threads_override, decoder_threads_override) < 0:
         raise WorkflowError(
             "Framework video cache and thread overrides must be nonnegative"
+        )
+    workers = 1 if worker_override is None else worker_override
+    prefetch = 2 if prefetch_override is None else prefetch_override
+    if workers < 0 or prefetch < 1:
+        raise WorkflowError(
+            "Framework DataLoader workers must be nonnegative and prefetch must be positive"
         )
     return {
         "selected_profile": "torchcodec-cuda-on-demand",
@@ -808,8 +816,10 @@ def _framework_video_runtime(
         "video_cache_persists_to_disk": False,
         "sft_process_threads": process_threads_override or 4,
         "decoder_threads": decoder_threads_override or 1,
-        "dataloader_num_workers": 0,
-        "dataloader_prefetch_factor": None,
+        "dataloader_num_workers": workers,
+        "dataloader_prefetch_factor": prefetch if workers else None,
+        "dataloader_multiprocessing_context": "spawn" if workers else None,
+        "dataloader_persistent_workers": bool(workers),
         "unique_media_capacity_basis": unique_media_capacity,
         "dataset_prewarm": False,
         "actual_device_attestation": "first_successful_decode_per_rank",
@@ -999,9 +1009,14 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
             "TAO_VIDEO_NUM_FRAMES": str(args.frames), "TAO_VIDEO_SYSTEM_PROMPT": args.system_prompt,
             "TAO_VIDEO_CACHE_SIZE": str(framework_video_runtime["video_cache_size"]),
             "TAO_FRAMEWORK_SFT_PROCESS_THREADS": str(framework_video_runtime["sft_process_threads"]),
+            "TAO_FRAMEWORK_DATALOADER_NUM_WORKERS": str(framework_video_runtime["dataloader_num_workers"]),
             "TAO_VIDEO_DECODER_DEVICE": str(framework_video_runtime["decoder_device"]),
             "TAO_VIDEO_DECODER_THREADS": str(framework_video_runtime["decoder_threads"]),
         })
+        if framework_video_runtime["dataloader_prefetch_factor"] is not None:
+            common["TAO_FRAMEWORK_DATALOADER_PREFETCH_FACTOR"] = str(
+                framework_video_runtime["dataloader_prefetch_factor"]
+            )
         if args.video_max_pixels:
             common["TAO_VIDEO_MAX_PIXELS"] = str(args.video_max_pixels)
         if args.run_mode == "smoke":
@@ -1270,6 +1285,8 @@ def _preflight_contract(
         imports.extend([
             "import cosmos_framework", "import inspect", "import os", "from cosmos_framework.callbacks.tao_status import TAOStatusCallback",
             "from cosmos_framework.data.generator.dataflow import ContiguousBatcher",
+            "from cosmos_framework.data.generator.dataflow import CosmosDataLoader",
+            "from cosmos_framework.configs.base.reasoner.experiment.wts_vlm import VideoSFTProcessor",
             "import cosmos_framework.data.generator.dataflow.loader as framework_dataflow_loader",
             "from cosmos_framework.scripts.export_vlm_dcp import export_vlm_dcp",
             "import torchcodec",
@@ -1279,7 +1296,10 @@ def _preflight_contract(
             "assert os.environ.get('TAO_VIDEO_DECODER_DEVICE') == 'cuda'",
             f"assert os.environ.get('TAO_VIDEO_CACHE_SIZE') == {str(framework_video_runtime['video_cache_size'])!r}",
             f"assert os.environ.get('TAO_FRAMEWORK_SFT_PROCESS_THREADS') == {str(framework_video_runtime['sft_process_threads'])!r}",
+            f"assert os.environ.get('TAO_FRAMEWORK_DATALOADER_NUM_WORKERS') == {str(framework_video_runtime['dataloader_num_workers'])!r}",
             f"assert os.environ.get('TAO_VIDEO_DECODER_THREADS') == {str(framework_video_runtime['decoder_threads'])!r}",
+            "framework_loader_source=inspect.getsource(CosmosDataLoader.__init__); assert 'multiprocessing_context' in framework_loader_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:framework_spawn_prefetch'",
+            "assert '__getstate__' in VideoSFTProcessor.__dict__ and '__setstate__' in VideoSFTProcessor.__dict__, 'TAO_PREFLIGHT_ASSERTION_FAILED:framework_spawn_pickle'",
             f"from torchcodec.decoders import VideoDecoder; d=VideoDecoder({representative_media!r}, device='cuda'); frame=d.get_frames_at([0]).data; assert str(frame.device).startswith('cuda'), frame.device; assert len(d)>0",
         ])
     else:
@@ -1302,6 +1322,7 @@ def _preflight_contract(
                 "import PyNvVideoCodec as nvc",
                 "from cuda.bindings import driver as cuda_driver",
                 "from cosmos_rl.policy.worker.sft_worker import _dataloader_worker_kwargs",
+                "from cosmos_rl.dispatcher.data.packer import hf_vlm_data_packer as packer_module",
                 "import cosmos_rl.launcher.launch_all as launch_all_module",
                 "from cosmos_rl.utils.pynv_video_reader import register_pynv_video_reader",
                 "from cosmos_rl.utils.video_pixel_bounds import normalize_video_pixel_bounds",
@@ -1312,8 +1333,8 @@ def _preflight_contract(
                 "assert os.environ.get('TAO_PYNV_FRAME_TRANSFER') == 'device_rgbp', 'TAO_PREFLIGHT_ASSERTION_FAILED:device_rgbp_env'",
                 "worker_source=inspect.getsource(vp._ensure_forced_video_reader)",
                 "assert 'TAO_PYNV_DECODER_CACHE_SIZE' in worker_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:worker_decoder_cache_forwarding'",
-                "fetch_source=inspect.getsource(vp.fetch_video)",
-                "assert 'normalize_video_pixel_bounds(ele, image_patch_size' in fetch_source and 'sys.modules[__name__]' in fetch_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:worker_pixel_bound_normalization'",
+                "packer_source=inspect.getsource(packer_module.qwen_vl_process_vision_info)",
+                "assert 'normalize_video_pixel_bounds(' in packer_source and 'vision_process' in packer_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:worker_pixel_bound_normalization'",
                 "worker_kwargs=_dataloader_worker_kwargs(1, 2)",
                 "assert worker_kwargs['persistent_workers'] is True, 'TAO_PREFLIGHT_ASSERTION_FAILED:persistent_workers'",
                 (
@@ -1326,7 +1347,7 @@ def _preflight_contract(
                 "assert profile['capability_fallback'] == 'tao_system_pyav_sparse', 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_fallback'",
                 "assert '_is_nvdec_capability_error' in inspect.getsource(pynv_reader), 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_classifier'",
                 "assert 'TAO_VIDEO_DECODER_CAPABILITY_FALLBACK_ATTESTATION' in inspect.getsource(pynv_reader), 'TAO_PREFLIGHT_ASSERTION_FAILED:capability_attestation'",
-                "pixel_probe={'video':'/tmp/tao-pixel-bound-probe.mp4','max_pixels':'81920'}",
+                "pixel_probe={'video':'/tmp/tao-pixel-bound-probe.mp4','max_pixels':81920}",
                 "pixel_probe=normalize_video_pixel_bounds(pixel_probe,16,vp)",
                 "assert pixel_probe.get('min_pixels') == pixel_probe['max_pixels'] == 81920, 'TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_visibility'",
                 "assert isinstance(pixel_probe['min_pixels'],int) and isinstance(pixel_probe['max_pixels'],int), 'TAO_PREFLIGHT_ASSERTION_FAILED:pixel_bound_type'",
@@ -1376,6 +1397,8 @@ def _preflight_contract(
                 "TAO_VIDEO_DECODER_DEVICE",
                 "TAO_VIDEO_CACHE_SIZE",
                 "TAO_FRAMEWORK_SFT_PROCESS_THREADS",
+                "TAO_FRAMEWORK_DATALOADER_NUM_WORKERS",
+                "TAO_FRAMEWORK_DATALOADER_PREFETCH_FACTOR",
                 "TAO_VIDEO_DECODER_THREADS",
             ]
         elif rl_video_runtime["selected_profile"] == "pynv-device-rgbp":
@@ -1647,6 +1670,8 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "framework_video_cache_size",
             "framework_sft_process_threads",
             "framework_video_decoder_threads",
+            "framework_dataloader_num_workers",
+            "framework_dataloader_prefetch_factor",
         )
     ):
         raise WorkflowError("Framework video runtime overrides do not apply to cosmos-rl")
@@ -2443,6 +2468,18 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
         type=int,
         default=0,
         help="TorchCodec decoder threads per on-demand decode; 0 selects 1.",
+    )
+    parser.add_argument(
+        "--framework-dataloader-num-workers",
+        type=int,
+        default=None,
+        help="Persistent spawned Framework DataLoader workers per rank; omit to select 1.",
+    )
+    parser.add_argument(
+        "--framework-dataloader-prefetch-factor",
+        type=int,
+        default=None,
+        help="Prefetched batches per Framework worker; omit to select 2 and ignore when workers are zero.",
     )
     parser.add_argument("--validation-batch-size", type=int, default=1)
     parser.add_argument("--optimizer", default="AdamW"); parser.add_argument("--learning-rate", type=float, default=1e-5)
