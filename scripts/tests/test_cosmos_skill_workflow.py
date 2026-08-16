@@ -349,7 +349,7 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
         "decoder_device": "cuda",
         "decoder_device_binding": "explicit_local_rank",
         "frame_transfer": "cuda_uint8_to_host_pil",
-        "video_cache_size": 16,
+        "video_cache_size": 8,
         "video_cache_scope": "rank_local_decoded_pil_frames",
         "video_cache_population": "on_demand_during_training",
         "video_cache_persists_to_disk": False,
@@ -362,7 +362,7 @@ def test_video_conversation_framework_dense_spec_and_no_historical_paths(tmp_pat
         "actual_device_attestation": "first_successful_decode_per_rank",
         "actual_device_requirement": "resolved_device_equals_cuda_local_rank",
     }
-    assert plan["environment"]["TAO_VIDEO_CACHE_SIZE"] == "16"
+    assert plan["environment"]["TAO_VIDEO_CACHE_SIZE"] == "8"
     assert plan["environment"]["TAO_FRAMEWORK_SFT_PROCESS_THREADS"] == "4"
     assert plan["environment"]["TAO_VIDEO_DECODER_DEVICE"] == "cuda"
     assert plan["environment"]["TAO_VIDEO_DECODER_THREADS"] == "1"
@@ -430,13 +430,13 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
         "video_decoder": "pynvvideocodec",
         "implementation": "pynv_device_rgbp_dlpack",
         "frame_transfer": "device_rgbp",
-        "video_cache_size": 0,
+        "video_cache_size": 16,
         "video_cache_scope": "rank_local_processed_fetch_video_memory",
         "video_cache_population": "on_demand_during_training",
         "video_cache_persists_to_disk": False,
-        "decoder_cache_size": 4,
+        "decoder_cache_size": 16,
         "decoder_cache_scope": "rank_local_pynv_native_sessions",
-        "sft_batch_threads": 4,
+        "sft_batch_threads": 1,
         "dataloader_num_workers": 1,
         "dataloader_prefetch_factor": 2,
         "unique_media_capacity_basis": 16,
@@ -444,27 +444,27 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
         "capability_fallback": "tao_system_pyav_sparse",
         "capability_fallback_scope": "nvdec_unsupported_stream_only",
     }
-    assert plan["decoder_artifact"]["required"] is True
+    assert plan["decoder_artifact"]["required"] is False
     assert plan["decoder_artifact"]["enabled"] is False
     assert plan["decoder_artifact"]["policy"]["force_all_validation_media"] is False
     assert plan["decoder_artifact"]["policy"]["selection_basis"] == (
-        "resolved_hardware_decoder_profile"
+        "optional_resolved_hardware_decoder_compatibility"
     )
     assert plan["decoder_artifact"]["preparation_arguments"].count(
         "--force-annotation"
     ) == 0
     assert plan["spec"]["custom"]["video_decoder"] == "pynvvideocodec"
-    assert plan["spec"]["custom"]["video_cache_size"] == 0
-    assert plan["spec"]["custom"]["video_decoder_cache_size"] == 4
+    assert plan["spec"]["custom"]["video_cache_size"] == 16
+    assert plan["spec"]["custom"]["video_decoder_cache_size"] == 16
     assert train_policy["dataloader_num_workers"] == 1
     assert train_policy["dataloader_prefetch_factor"] == 2
     assert plan["spec"]["validation"]["dataloader_num_workers"] == 1
     assert plan["spec"]["validation"]["dataloader_prefetch_factor"] == 2
     assert plan["environment"]["FORCE_QWENVL_VIDEO_READER"] == "pynvvideocodec"
     assert plan["environment"]["TAO_PYNV_FRAME_TRANSFER"] == "device_rgbp"
-    assert plan["environment"]["TAO_SFT_BATCH_THREADS"] == "4"
-    assert plan["environment"]["TAO_PYNV_VIDEO_CACHE_SIZE"] == "0"
-    assert plan["environment"]["TAO_PYNV_DECODER_CACHE_SIZE"] == "4"
+    assert plan["environment"]["TAO_SFT_BATCH_THREADS"] == "1"
+    assert plan["environment"]["TAO_PYNV_VIDEO_CACHE_SIZE"] == "16"
+    assert plan["environment"]["TAO_PYNV_DECODER_CACHE_SIZE"] == "16"
     preflight = plan["preflight"]["container_runtime"]
     assert "inspect.getsource" in preflight
     assert "TAO_PYNV_DECODER_CACHE_SIZE" in preflight
@@ -1089,7 +1089,7 @@ def test_framework_expands_one_shared_media_root_per_annotation(tmp_path):
         ["/val-a.json", "/val-b.json"],
         ["/val-media"],
         framework_video_runtime={
-            "video_cache_size": 16,
+            "video_cache_size": 8,
             "sft_process_threads": 4,
             "decoder_device": "cuda",
             "decoder_threads": 1,

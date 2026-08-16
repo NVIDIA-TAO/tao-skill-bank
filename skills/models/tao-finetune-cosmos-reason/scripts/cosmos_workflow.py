@@ -578,9 +578,15 @@ def _training_contract(args: argparse.Namespace) -> dict[str, Any]:
 
 def _framework_spec(args: argparse.Namespace, train_count: int, val_count: int, contract: Mapping[str, Any]) -> dict[str, Any]:
     world = args.nodes * args.gpus_per_node
-    per_forward_batch = args.framework_per_forward_batch
-    if per_forward_batch < 1:
-        raise WorkflowError("Framework per-forward batch must be positive")
+    if args.effective_global_batch % world:
+        raise WorkflowError("Framework effective global batch must be divisible by total GPUs")
+    per_rank_effective_batch = args.effective_global_batch // world
+    requested_per_forward_batch = args.framework_per_forward_batch
+    if requested_per_forward_batch < 0:
+        raise WorkflowError("Framework per-forward batch must be nonnegative")
+    per_forward_batch = requested_per_forward_batch or (
+        per_rank_effective_batch if model_tier(args.model) == "nano" else 1
+    )
     forward_global_batch = world * per_forward_batch
     if args.effective_global_batch % forward_global_batch:
         raise WorkflowError(
@@ -700,17 +706,25 @@ def _rl_video_runtime(
         raise WorkflowError(
             "Cosmos-RL PyNv cache overrides require --rl-video-profile pynv-device-rgbp"
         )
+    # The verified repeated-video fast profile keeps one epoch's rank-local media working
+    # set resident after each entry is first encountered.  Capacity is derived
+    # from inspected data rather than a benchmark/path name, and population
+    # remains strictly on demand inside training.
     video_cache_size = (
-        0
+        unique_media_capacity
         if fast and video_cache_override is None
         else (video_cache_override if fast else 0)
     )
     decoder_cache_size = (
-        4
+        unique_media_capacity
         if fast and decoder_cache_override is None
         else (decoder_cache_override if fast else 1)
     )
-    batch_threads = batch_threads_override or (4 if fast else 1)
+    # Serial logical-batch preprocessing is the measured fast path for the
+    # rank-local PyNv reader/cache.  The reader already overlaps one persistent
+    # DataLoader worker with GPU training; additional in-process threads cause
+    # cache churn and decoder-lock contention for this profile.
+    batch_threads = batch_threads_override or 1
     if batch_threads < 1:
         raise WorkflowError("resolved Cosmos-RL SFT batch threads must be positive")
 
@@ -754,10 +768,14 @@ def _framework_video_runtime(
         int(val_data["profile"]["unique_media_count"]),
         1,
     )
-    cache_override = getattr(args, "framework_video_cache_size", 0)
+    cache_override = getattr(args, "framework_video_cache_size", None)
     process_threads_override = getattr(args, "framework_sft_process_threads", 0)
     decoder_threads_override = getattr(args, "framework_video_decoder_threads", 0)
-    if min(cache_override, process_threads_override, decoder_threads_override) < 0:
+    if cache_override is not None and cache_override < 0:
+        raise WorkflowError(
+            "Framework video cache override must be nonnegative"
+        )
+    if min(process_threads_override, decoder_threads_override) < 0:
         raise WorkflowError(
             "Framework video cache and thread overrides must be nonnegative"
         )
@@ -772,7 +790,7 @@ def _framework_video_runtime(
         "decoder_device": "cuda",
         "decoder_device_binding": "explicit_local_rank",
         "frame_transfer": "cuda_uint8_to_host_pil",
-        "video_cache_size": cache_override or unique_media_capacity,
+        "video_cache_size": 8 if cache_override is None else cache_override,
         "video_cache_scope": "rank_local_decoded_pil_frames",
         "video_cache_population": "on_demand_during_training",
         "video_cache_persists_to_disk": False,
@@ -1472,20 +1490,17 @@ def _decoder_artifact_plan(
         else "/opt/venv/cosmos_rl/bin/python"
     )
 
-    # A resolved RL hardware profile requires a stream-capability artifact so
-    # incompatible media are redirected before the timed training path. The
-    # source-baked capability-only software fallback remains a last resort for
-    # permanent limitations not represented by the structural scan.
+    # RL starts directly from the selected manifests. Its source-baked reader
+    # handles the narrow permanent NVDEC-capability exception on demand, so a
+    # separately prepared compatibility artifact is optional. Framework
+    # task-aware validation still requires complete prepared coverage.
     artifact_required = (
-        hardware_decoder_profile
-        or (
-            backend != "cosmos-rl"
-            and args.dataset_family == "task_aware_video_reasoning"
-        )
+        backend != "cosmos-rl"
+        and args.dataset_family == "task_aware_video_reasoning"
     )
     return {
         "required": artifact_required,
-        "enabled": artifact_required and all(supplied),
+        "enabled": all(supplied),
         "path": args.video_override_map or None,
         "manifest": args.video_override_manifest or None,
         "sha256": args.video_override_fingerprint or None,
@@ -1500,7 +1515,7 @@ def _decoder_artifact_plan(
             "forced_runtime_sources": list(args.video_override_force_video),
             "gpu_random_access_validation_required": artifact_required,
             "selection_basis": (
-                "resolved_hardware_decoder_profile"
+                "optional_resolved_hardware_decoder_compatibility"
                 if hardware_decoder_profile
                 else "resolved_backend_data_contract"
             ),
@@ -1604,7 +1619,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         )
     ):
         raise WorkflowError("Framework video runtime overrides do not apply to cosmos-rl")
-    if backend == "cosmos-rl" and args.framework_per_forward_batch != 1:
+    if backend == "cosmos-rl" and args.framework_per_forward_batch != 0:
         raise WorkflowError("Framework per-forward batch applies only to cosmos-framework")
     rl_video_runtime = (
         _rl_video_runtime(args, train_data, val_data)
@@ -1650,7 +1665,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     spec = _framework_spec(args, train_data["record_count"], val_data["record_count"], contract) if backend == "cosmos-framework" else _rl_spec(args, contract, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, cache_keys, rl_video_runtime)
     if backend == "cosmos-framework":
         contract.update({
-            "per_forward_batch": args.framework_per_forward_batch,
+            "per_forward_batch": spec["dataloader_train"]["max_samples_per_batch"],
             "gradient_accumulation": spec["trainer"]["grad_accum_iter"],
         })
     environment = _env(args, backend, prepared_model_container, train_annotations_container, train_media_container, val_annotations_container, val_media_container, rl_video_runtime, framework_video_runtime)
@@ -2334,8 +2349,8 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument(
         "--framework-per-forward-batch",
         type=int,
-        default=1,
-        help="Framework samples packed per rank and forward; effective batch and gradient accumulation remain exact.",
+        default=0,
+        help="Framework samples packed per rank and forward; 0 selects the Nano per-rank effective batch and keeps Edge at 1.",
     )
     parser.add_argument("--rl-mini-batch", type=int, default=1)
     parser.add_argument(
@@ -2357,19 +2372,19 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
         "--rl-video-cache-size",
         type=int,
         default=None,
-        help="Rank-local processed-video LRU entries; omit for the validated on-demand default of 0.",
+        help="Rank-local processed-video LRU entries; omit to use the inspected unique-media capacity.",
     )
     parser.add_argument(
         "--rl-video-decoder-cache-size",
         type=int,
         default=None,
-        help="Rank-local PyNv native decoder-session entries; omit for the validated default of 4.",
+        help="Rank-local PyNv native decoder-session entries; omit to use the inspected unique-media capacity.",
     )
     parser.add_argument(
         "--rl-sft-batch-threads",
         type=int,
         default=0,
-        help="In-process logical-batch preprocessing threads; 0 selects the profile default.",
+        help="In-process logical-batch preprocessing threads; 0 selects the validated serial fast path.",
     )
     parser.add_argument("--rl-dataloader-num-workers", type=int, default=None)
     parser.add_argument("--rl-dataloader-prefetch-factor", type=int, default=None)
@@ -2383,8 +2398,8 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument(
         "--framework-video-cache-size",
         type=int,
-        default=0,
-        help="Rank-local decoded-frame LRU entries; 0 derives capacity from unique media.",
+        default=None,
+        help="Rank-local decoded-frame LRU entries; omit for the validated on-demand default of 8.",
     )
     parser.add_argument(
         "--framework-sft-process-threads",

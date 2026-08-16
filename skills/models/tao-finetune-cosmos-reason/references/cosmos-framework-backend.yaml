@@ -43,7 +43,10 @@ runtime:
     device_binding: explicit_local_rank
     frame_transfer: cuda_uint8_to_host_pil
     decoded_frame_cache: rank_local_memory_populated_on_demand
-    capacity_default: max_train_validation_unique_media
+    capacity_default: 8
+    nano_per_forward_batch_default: effective_global_batch_divided_by_total_gpus
+    nano_gradient_accumulation_default: 1
+    batcher: resume_safe_contiguous
     sft_process_threads: 4
     decoder_threads: 1
     dataloader: {workers: 0, prefetch_factor: omitted}

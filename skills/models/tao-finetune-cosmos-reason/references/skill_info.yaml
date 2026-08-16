@@ -101,15 +101,15 @@ workflow_contract:
       decoder: pynvvideocodec
       transfer: device_rgbp_dlpack
       dataloader: {workers: 1, prefetch_factor: 2, persistent_workers: true}
-      sft_batch_threads: 4
+      sft_batch_threads: 1
       processed_video_cache: rank_local_memory_populated_on_demand
       decoder_session_cache: rank_local_native_populated_on_demand
       worker_decoder_cache_forwarding: TAO_PYNV_DECODER_CACHE_SIZE_required
-      processed_video_cache_capacity_default: 0
-      decoder_session_cache_capacity_default: 4
+      processed_video_cache_capacity_default: inspected_unique_media_capacity
+      decoder_session_cache_capacity_default: inspected_unique_media_capacity
       prewarm: false
       disk_cache: false
-      compatibility_artifact: required_for_resolved_hardware_profile
+      compatibility_artifact: optional_and_never_a_direct_launch_gate
       capability_fallback: tao_system_pyav_sparse
       capability_fallback_scope: nvdec_unsupported_stream_only
     system-pyav:
@@ -129,7 +129,10 @@ workflow_contract:
     sft_process_threads: 4
     decoder_threads: 1
     decoded_frame_cache: rank_local_memory_populated_on_demand
-    capacity_default: max_train_validation_unique_media
+    capacity_default: 8
+    nano_per_forward_batch_default: effective_global_batch_divided_by_total_gpus
+    nano_gradient_accumulation_default: 1
+    batcher: resume_safe_contiguous
     actual_device_attestation: first_successful_decode_per_rank
     actual_device_requirement: resolved_device_equals_cuda_local_rank
     prewarm: false

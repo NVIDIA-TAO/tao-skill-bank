@@ -58,7 +58,11 @@
             "rl_video_decoder_cache_size": {"type": "integer", "minimum": 1},
             "rl_sft_batch_threads": {"type": "integer", "minimum": 0},
             "rl_dataloader_num_workers": {"type": "integer", "minimum": 0},
-            "rl_dataloader_prefetch_factor": {"type": "integer", "minimum": 1}
+            "rl_dataloader_prefetch_factor": {"type": "integer", "minimum": 1},
+            "framework_per_forward_batch": {"type": "integer", "minimum": 0},
+            "framework_video_cache_size": {"type": "integer", "minimum": 0},
+            "framework_sft_process_threads": {"type": "integer", "minimum": 0},
+            "framework_video_decoder_threads": {"type": "integer", "minimum": 0}
           }
         },
         "lora": {

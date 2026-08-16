@@ -201,18 +201,18 @@ Execute these stages in order and persist their outputs.
    `video_conversation` and `system-pyav` for
    `task_aware_video_reasoning`; record the resolved profile and rationale.
    The fast profile uses the source-baked PyNvVideoCodec device-RGBP/DLPack
-   path, one persistent spawned DataLoader worker, prefetch two, and four
-   order-preserving in-process batch threads. Preflight must prove the installed
+   path, one persistent spawned DataLoader worker, prefetch two, and the
+   measured serial logical-batch preprocessing path. Preflight must prove the installed
    Qwen worker forwards `TAO_PYNV_DECODER_CACHE_SIZE`; a configured capacity
    that falls back inside spawned workers is an image defect. The validated
-   default disables the processed-output LRU (capacity 0) and retains four
-   rank-local native decoder sessions; explicit supported overrides remain
-   available. The video LRU, when enabled, stores processed `fetch_video`
+   default sizes the processed-output LRU and rank-local native decoder-session
+   cache to the inspected unique-media working set; explicit supported
+   overrides remain available. The video LRU stores processed `fetch_video`
    outputs in rank-local memory and the decoder cache stores rank-local native
    sessions; both populate during
    ordinary training, persist no video files, and require no prewarm.
-   Selecting a hardware decoder also requires a fingerprinted compatibility
-   artifact. Its source-baked builder scans every referenced stream against the
+   A fingerprinted compatibility artifact is optional for Cosmos-RL and must
+   never delay a direct training launch. Its source-baked builder can scan every referenced stream against the
    declared hardware macroblock budget and creates overrides only for streams
    that exceed it (or for explicitly diagnosed sources); compatible media keep
    the original zero-copy path. The native fast reader retains a narrow,
@@ -231,16 +231,20 @@ Execute these stages in order and persist their outputs.
    policy without a separate review; the capability-only route above is the
    sole permitted exception and must remain source-baked and attested.
    The JSON plan emits exact `decoder_artifact.preparation_command` and
-   `decoder_artifact.validation_command` values for the selected clean image;
-   re-plan once with their map, manifest, and artifact fingerprint outputs,
-   seal that plan, and never reuse another run's cache or override artifact.
+   `decoder_artifact.validation_command` values for the selected clean image.
+   When the user explicitly supplies an artifact, re-plan with its map,
+   manifest, and fingerprint outputs, seal that plan, and never reuse another
+   run's cache or override artifact.
    Cosmos Framework independently resolves its native
-   `torchcodec-cuda-on-demand` profile. It uses CUDA indexed decode, derives a
-   rank-local decoded-frame LRU capacity from the larger split's unique-media
-   count, runs four bounded order-preserving preprocessing threads with no
-   DataLoader subprocess, and attests the actual CUDA output device on the
-   first successful decode in every rank. The cache populates only while
-   training and is never prewarmed or persisted to disk.
+   `torchcodec-cuda-on-demand` profile. It uses CUDA indexed decode, an
+   eight-entry rank-local decoded-frame LRU, and four bounded order-preserving
+   preprocessing threads with no DataLoader subprocess. Nano automatically
+   packs each rank's exact share of the effective global batch into a
+   resume-safe contiguous forward, reducing gradient accumulation without
+   changing the requested global batch or optimizer-update count. It attests
+   the actual CUDA output device on the first successful decode in every rank.
+   The cache populates only while training and is never prewarmed or persisted
+   to disk.
 8. Generate backend-native TOML, environment, topology, preflight commands,
    parity data, resolved video-runtime profile, and machine-readable job
    metadata. Full specs must contain no
