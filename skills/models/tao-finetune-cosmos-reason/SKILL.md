@@ -201,9 +201,12 @@ Execute these stages in order and persist their outputs.
    `video_conversation` and `system-pyav` for
    `task_aware_video_reasoning`; record the resolved profile and rationale.
    The fast profile uses the source-baked PyNvVideoCodec device-RGBP/DLPack
-   path, one spawned DataLoader worker, prefetch two, and four order-preserving
-   in-process batch threads. Its two capacities are derived from the larger
-   inspected split's unique-media count unless explicitly supplied. The video
+   path, one persistent spawned DataLoader worker, prefetch two, and four
+   order-preserving in-process batch threads. Preflight must prove the installed
+   Qwen worker forwards `TAO_PYNV_DECODER_CACHE_SIZE`; a configured capacity
+   that falls back inside spawned workers is an image defect. Its two capacities
+   are derived from the larger inspected split's unique-media count unless
+   explicitly supplied. The video
    LRU stores processed `fetch_video` outputs in rank-local memory and the
    decoder cache stores rank-local native sessions; both populate during
    ordinary training, persist no video files, and require no prewarm.

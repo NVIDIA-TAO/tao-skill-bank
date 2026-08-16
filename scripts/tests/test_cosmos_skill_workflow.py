@@ -428,6 +428,10 @@ def test_cosmos_rl_peft_spec_defaults_to_direct_processing(tmp_path):
     assert plan["environment"]["TAO_SFT_BATCH_THREADS"] == "4"
     assert plan["environment"]["TAO_PYNV_VIDEO_CACHE_SIZE"] == "16"
     assert plan["environment"]["TAO_PYNV_DECODER_CACHE_SIZE"] == "16"
+    preflight = plan["preflight"]["container_runtime"]
+    assert "inspect.getsource" in preflight
+    assert "TAO_PYNV_DECODER_CACHE_SIZE" in preflight
+    assert "persistent_workers" in preflight
 
 
 def test_cosmos_rl_system_pyav_profile_is_explicit_and_worker_zero_safe(tmp_path):

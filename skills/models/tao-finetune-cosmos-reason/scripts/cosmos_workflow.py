@@ -1205,13 +1205,19 @@ def _preflight_contract(
             raise WorkflowError("Cosmos-RL preflight has no resolved video runtime")
         if rl_video_runtime["selected_profile"] == "pynv-device-rgbp":
             imports.extend([
+                "import inspect",
                 "import PyNvVideoCodec as nvc",
                 "from cuda.bindings import driver as cuda_driver",
+                "from cosmos_rl.policy.worker.sft_worker import _dataloader_worker_kwargs",
                 "from cosmos_rl.utils.pynv_video_reader import register_pynv_video_reader",
                 "assert nvc.OutputColorType.RGBP is not None",
                 "assert cuda_driver is not None",
                 "assert os.environ.get('FORCE_QWENVL_VIDEO_READER') == 'pynvvideocodec'",
                 "assert os.environ.get('TAO_PYNV_FRAME_TRANSFER') == 'device_rgbp'",
+                "worker_source=inspect.getsource(vp._ensure_forced_video_reader)",
+                "assert 'TAO_PYNV_DECODER_CACHE_SIZE' in worker_source",
+                "worker_kwargs=_dataloader_worker_kwargs(1, 2)",
+                "assert worker_kwargs['persistent_workers'] is True",
                 (
                     "profile=register_pynv_video_reader("
                     f"cache_size={int(rl_video_runtime['video_cache_size'])},"
