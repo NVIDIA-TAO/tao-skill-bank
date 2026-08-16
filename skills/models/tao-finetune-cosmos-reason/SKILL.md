@@ -240,8 +240,10 @@ Execute these stages in order and persist their outputs.
    Cosmos Framework independently resolves its native
    `torchcodec-cuda-on-demand` profile. It uses CUDA indexed decode, an
    eight-entry rank-local decoded-frame LRU, and four bounded order-preserving
-   preprocessing threads with no DataLoader subprocess. Nano automatically
-   packs each rank's exact share of the effective global batch into a
+   preprocessing threads inside one persistent spawned DataLoader worker with
+   prefetch two. The worker populates only rank-local memory caches during
+   ordinary iteration; it does not add a prewarm phase or a disk cache. Nano
+   automatically packs each rank's exact share of the effective global batch into a
    resume-safe contiguous forward, reducing gradient accumulation without
    changing the requested global batch or optimizer-update count. It attests
    the actual CUDA output device on the first successful decode in every rank.

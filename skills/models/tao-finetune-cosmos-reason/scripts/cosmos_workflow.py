@@ -1009,13 +1009,14 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
             "TAO_VIDEO_NUM_FRAMES": str(args.frames), "TAO_VIDEO_SYSTEM_PROMPT": args.system_prompt,
             "TAO_VIDEO_CACHE_SIZE": str(framework_video_runtime["video_cache_size"]),
             "TAO_FRAMEWORK_SFT_PROCESS_THREADS": str(framework_video_runtime["sft_process_threads"]),
-            "TAO_FRAMEWORK_DATALOADER_NUM_WORKERS": str(framework_video_runtime["dataloader_num_workers"]),
+            "TAO_FRAMEWORK_DATALOADER_NUM_WORKERS": str(framework_video_runtime.get("dataloader_num_workers", 1)),
             "TAO_VIDEO_DECODER_DEVICE": str(framework_video_runtime["decoder_device"]),
             "TAO_VIDEO_DECODER_THREADS": str(framework_video_runtime["decoder_threads"]),
         })
-        if framework_video_runtime["dataloader_prefetch_factor"] is not None:
+        framework_prefetch = framework_video_runtime.get("dataloader_prefetch_factor", 2)
+        if framework_prefetch is not None:
             common["TAO_FRAMEWORK_DATALOADER_PREFETCH_FACTOR"] = str(
-                framework_video_runtime["dataloader_prefetch_factor"]
+                framework_prefetch
             )
         if args.video_max_pixels:
             common["TAO_VIDEO_MAX_PIXELS"] = str(args.video_max_pixels)
@@ -1286,7 +1287,7 @@ def _preflight_contract(
             "import cosmos_framework", "import inspect", "import os", "from cosmos_framework.callbacks.tao_status import TAOStatusCallback",
             "from cosmos_framework.data.generator.dataflow import ContiguousBatcher",
             "from cosmos_framework.data.generator.dataflow import CosmosDataLoader",
-            "from cosmos_framework.configs.base.reasoner.experiment.wts_vlm import VideoSFTProcessor",
+            "from cosmos_framework.configs.base.reasoner.experiment.tao_video_sft import VideoSFTProcessor",
             "import cosmos_framework.data.generator.dataflow.loader as framework_dataflow_loader",
             "from cosmos_framework.scripts.export_vlm_dcp import export_vlm_dcp",
             "import torchcodec",

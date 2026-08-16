@@ -49,7 +49,7 @@ runtime:
     batcher: resume_safe_contiguous
     sft_process_threads: 4
     decoder_threads: 1
-    dataloader: {workers: 0, prefetch_factor: omitted}
+    dataloader: {workers: 1, prefetch_factor: 2, multiprocessing_context: spawn, persistent_workers: true}
     actual_device_attestation: first_successful_decode_per_rank
     actual_device_requirement: resolved_device_equals_cuda_local_rank
     prewarm: false
