@@ -32,6 +32,7 @@ def _sealed_plan(
     max_video_pixels: int | None = 4096,
     seed: int = 17,
     model_tier: str = "edge",
+    annotation_sha256: str | None = None,
 ) -> Path:
     plan = {
         "schema_version": 2,
@@ -104,6 +105,13 @@ def _sealed_plan(
             "checkpoint_selection": None,
         },
     }
+    if annotation_sha256 is not None:
+        plan["datasets"]["validation"]["annotation_manifest"] = [
+            {
+                "original": "/runtime/validation.json",
+                "sha256": annotation_sha256,
+            }
+        ]
     plan["plan_artifact"] = {
         "schema_version": 1,
         "path": str(tmp_path / "training-plan.json"),
@@ -284,6 +292,51 @@ def test_zero_seed_is_a_valid_sealed_evaluation_seed(tmp_path: Path) -> None:
         "value": 0,
     }
     assert config["evaluation"]["seed"] == 0
+
+
+def test_fingerprint_locked_wts_peft_evaluator_profile_is_automatic(tmp_path: Path) -> None:
+    training_plan = _sealed_plan(
+        tmp_path,
+        mode="peft",
+        prompt="",
+        max_video_pixels=81920,
+        seed=0,
+        model_tier="nano",
+        annotation_sha256="f120ca66f28e3e5b5a01a3ace93d16c856cf13098faf61b44263a4afc449c709",
+    )
+    plan_output = tmp_path / "evaluation-plan.json"
+    config_output = tmp_path / "evaluation.toml"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--training-plan",
+            str(training_plan),
+            "--training-status",
+            str(_status(tmp_path)),
+            "--results-dir",
+            "/runtime/evaluation-results",
+            "--plan-output",
+            str(plan_output),
+            "--config-output",
+            str(config_output),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    resolved = json.loads(plan_output.read_text(encoding="utf-8"))
+    config = tomllib.loads(config_output.read_text(encoding="utf-8"))
+    assert resolved["verified_evaluator_profile"]["name"] == "PEFT_HPO_VALIDATION_F120CA66"
+    assert config["evaluation"]["answer_type"] == "freeform"
+    assert config["evaluation"]["batch_size"] == 8
+    assert config["evaluation"]["seed"] == 1
+    assert config["generation"]["max_tokens"] == 1024
+    assert resolved["provenance"]["evaluation.batch_size"]["source"].startswith(
+        "verified_evaluator_profile.PEFT_HPO_VALIDATION_F120CA66:"
+    )
 
 
 def test_cosmos_rl_peft_recovers_base_model_without_user_reentry(tmp_path: Path) -> None:

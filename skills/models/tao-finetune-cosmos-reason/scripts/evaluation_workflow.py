@@ -5,9 +5,11 @@
 """Resolve a dataset-neutral Cosmos evaluation from sealed training artifacts.
 
 This helper never searches historical runs and never treats the packaged
-template as an experiment profile.  It records the source of every semantic
-field, returns a bounded list of genuinely missing user inputs, and writes a
-runtime TOML only after the evaluation request is complete.
+template as an experiment profile.  Fingerprint-locked evaluator profiles
+packaged below are allowed to supply verified dataset protocol semantics.  It
+records the source of every semantic field, returns a bounded list of
+genuinely missing user inputs, and writes a runtime TOML only after the
+evaluation request is complete.
 """
 
 from __future__ import annotations
@@ -28,6 +30,26 @@ from cosmos_workflow import dump_toml
 
 
 SUCCESS = {"SUCCESS", "COMPLETE", "COMPLETED"}
+
+
+VERIFIED_EVALUATOR_PROFILES: dict[str, dict[str, Any]] = {
+    # Verified PEFT HPO-validation protocol.  This is intentionally keyed by
+    # annotation bytes, not by a path or a development dataset name.
+    "f120ca66f28e3e5b5a01a3ace93d16c856cf13098faf61b44263a4afc449c709": {
+        "name": "PEFT_HPO_VALIDATION_F120CA66",
+        "protocol_fingerprint": "9872bf5de29f78f76b4ba39a79a69d57f35ebe2d9080b339cb58ef9233dc33fa",
+        "answer_type": "freeform",
+        "batch_size": 8,
+        "seed": 1,
+        "generation": {
+            "max_tokens": 1024,
+            "temperature": 0.0,
+            "repetition_penalty": 1.0,
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0,
+        },
+    },
+}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -188,6 +210,18 @@ def _source(value: Any, origin: str) -> dict[str, Any]:
     return {"value": value, "source": origin}
 
 
+def _verified_evaluator_profile(validation: Mapping[str, Any]) -> dict[str, Any] | None:
+    manifests = validation.get("annotation_manifest", [])
+    if not isinstance(manifests, list) or len(manifests) != 1:
+        return None
+    manifest = manifests[0]
+    if not isinstance(manifest, Mapping):
+        return None
+    fingerprint = str(manifest.get("sha256") or "").removeprefix("sha256:")
+    selected = VERIFIED_EVALUATOR_PROFILES.get(fingerprint)
+    return copy.deepcopy(selected) if selected is not None else None
+
+
 def resolve(args: argparse.Namespace) -> dict[str, Any]:
     training_plan_path = args.training_plan.expanduser().resolve()
     plan = _verify_training_plan(training_plan_path)
@@ -199,6 +233,13 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     profile = evaluation_contract.get("task_profile", validation.get("evaluation_profile", {}))
     if not isinstance(profile, Mapping):
         profile = {}
+    verified_profile = _verified_evaluator_profile(validation)
+    verified_profile_source = ""
+    if verified_profile is not None:
+        verified_profile_source = (
+            f"verified_evaluator_profile.{verified_profile['name']}:"
+            f"sha256:{verified_profile['protocol_fingerprint']}"
+        )
 
     required_user_inputs: list[dict[str, Any]] = []
     automated_actions: list[dict[str, Any]] = []
@@ -309,6 +350,9 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     answer_type = args.answer_type
     if answer_type is not None:
         provenance["evaluation.answer_type"] = _source(answer_type, "user")
+    elif verified_profile is not None:
+        answer_type = str(verified_profile["answer_type"])
+        provenance["evaluation.answer_type"] = _source(answer_type, verified_profile_source)
     elif profile.get("answer_type"):
         answer_type = str(profile["answer_type"])
         provenance["evaluation.answer_type"] = _source(answer_type, "sealed_training_plan.validation.evaluation_profile")
@@ -338,6 +382,9 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     max_tokens = args.generation_max_tokens
     if max_tokens is not None:
         provenance["generation.max_tokens"] = _source(max_tokens, "user")
+    elif verified_profile is not None:
+        max_tokens = int(verified_profile["generation"]["max_tokens"])
+        provenance["generation.max_tokens"] = _source(max_tokens, verified_profile_source)
     elif generation_contract.get("max_tokens") is not None:
         max_tokens = int(generation_contract["max_tokens"])
         provenance["generation.max_tokens"] = _source(max_tokens, "sealed_training_plan.evaluation_contract")
@@ -417,15 +464,33 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         max_video_pixels = int(recorded_max_video_pixels) if recorded_max_video_pixels else None
     precision = str(evaluation_contract.get("precision") or training.get("precision") or "")
     max_length = int(training.get("sequence_length") or 0)
-    seed = int(evaluation_contract.get("seed", training.get("seed", 0)))
-    batch_size = int(evaluation_contract.get("batch_size") or plan.get("planner_request", {}).get("validation_batch_size") or 0)
+    if args.evaluation_seed is not None:
+        seed = args.evaluation_seed
+        seed_source = "user"
+    elif verified_profile is not None:
+        seed = int(verified_profile["seed"])
+        seed_source = verified_profile_source
+    else:
+        seed = int(evaluation_contract.get("seed", training.get("seed", 0)))
+        seed_source = "sealed_training_plan"
+    if args.evaluation_batch_size is not None:
+        batch_size = args.evaluation_batch_size
+        batch_size_source = "user"
+    elif verified_profile is not None:
+        batch_size = int(verified_profile["batch_size"])
+        batch_size_source = verified_profile_source
+    else:
+        batch_size = int(
+            evaluation_contract.get("batch_size")
+            or plan.get("planner_request", {}).get("validation_batch_size")
+            or 0
+        )
+        batch_size_source = "sealed_training_plan"
     num_gpus = args.num_gpus or int(plan["compute"].get("total_gpus") or 0)
     inherited_values = {
         "model.dtype": precision,
         "model.max_length": max_length,
         "model.tp_size": 1,
-        "evaluation.seed": seed,
-        "evaluation.batch_size": batch_size,
         "vision.num_frames": frames,
         "num_gpus": num_gpus,
     }
@@ -435,6 +500,12 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             required_user_inputs.append(
                 {"field": field, "reason": "the sealed training plan did not record a usable value"}
             )
+    provenance["evaluation.seed"] = _source(seed, seed_source)
+    provenance["evaluation.batch_size"] = _source(batch_size, batch_size_source)
+    if batch_size <= 0:
+        required_user_inputs.append(
+            {"field": "evaluation.batch_size", "reason": "no usable evaluation batch size was resolved"}
+        )
     if args.max_video_pixels is None:
         provenance["vision.max_pixels"] = _source(max_video_pixels, "sealed_training_plan")
     model_tier = str(plan.get("processor_profile", {}).get("model_tier") or "")
@@ -459,6 +530,10 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         provenance["vision.video_override_map"] = _source(
             decoder_artifact.get("path"), "sealed_training_plan.decoder_artifact"
         )
+
+    resolved_generation = generation_contract
+    if verified_profile is not None:
+        resolved_generation = verified_profile["generation"]
 
     config = {
         "results_dir": args.results_dir or "",
@@ -494,10 +569,10 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         "generation": {
             "max_retries": 10,
             "max_tokens": max_tokens or 0,
-            "temperature": float(generation_contract.get("temperature", 0.0)),
-            "repetition_penalty": float(generation_contract.get("repetition_penalty", 1.0)),
-            "presence_penalty": float(generation_contract.get("presence_penalty", 0.0)),
-            "frequency_penalty": float(generation_contract.get("frequency_penalty", 0.0)),
+            "temperature": float(resolved_generation.get("temperature", 0.0)),
+            "repetition_penalty": float(resolved_generation.get("repetition_penalty", 1.0)),
+            "presence_penalty": float(resolved_generation.get("presence_penalty", 0.0)),
+            "frequency_penalty": float(resolved_generation.get("frequency_penalty", 0.0)),
         },
         "metrics": {"names": metric_names},
         "results": {
@@ -552,6 +627,7 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             "source": checkpoint_source,
             "events": status_events,
         },
+        "verified_evaluator_profile": verified_profile,
         "required_user_inputs": required_user_inputs,
         "automated_actions": automated_actions,
         "blockers": blockers,
@@ -580,6 +656,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
     )
     parser.add_argument("--answer-type", choices=("letter", "reasoning", "freeform", "naive"))
+    parser.add_argument("--evaluation-batch-size", type=int)
+    parser.add_argument("--evaluation-seed", type=int)
     parser.add_argument("--generation-max-tokens", type=int)
     parser.add_argument("--max-video-pixels", type=int)
     parser.add_argument("--metric", action="append", default=[])
@@ -595,6 +673,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.generation_max_tokens is not None and args.generation_max_tokens <= 0:
             raise WorkflowError("generation_max_tokens must be positive")
+        if args.evaluation_batch_size is not None and args.evaluation_batch_size <= 0:
+            raise WorkflowError("evaluation_batch_size must be positive")
+        if args.evaluation_seed is not None and args.evaluation_seed < 0:
+            raise WorkflowError("evaluation_seed must be non-negative")
         if args.max_video_pixels is not None and args.max_video_pixels <= 0:
             raise WorkflowError("max_video_pixels must be positive")
         if args.num_gpus is not None and args.num_gpus <= 0:

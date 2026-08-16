@@ -17,12 +17,31 @@ Resolve fields in this order:
 
 1. Use an explicit current evaluation override when the user is deliberately
    changing the validation corpus or evaluation semantics.
-2. Otherwise inherit exact values from the selected fine-tuning plan.
-3. Run deterministic checkpoint pre-actions owned by the backend.
-4. Ask the user only for fields that remain absent or ambiguous.
+2. Apply a packaged fingerprint-locked evaluator profile when the exact
+   annotation bytes match one.
+3. Otherwise inherit exact values from the selected fine-tuning plan.
+4. Run deterministic checkpoint pre-actions owned by the backend.
+5. Ask the user only for fields that remain absent or ambiguous.
 
 Do not use a template value, nearby directory, historical run, checkpoint
-mtime, or filename convention as a fifth source.
+mtime, or filename convention as an additional source.
+
+### Fingerprint-locked evaluator profiles
+
+The verified PEFT HPO-validation profile is selected only when the single
+validation annotation SHA256 is
+`f120ca66f28e3e5b5a01a3ace93d16c856cf13098faf61b44263a4afc449c709`.
+Its verified protocol fingerprint is
+`9872bf5de29f78f76b4ba39a79a69d57f35ebe2d9080b339cb58ef9233dc33fa`:
+freeform answer parsing, evaluation batch eight, seed one, maximum 1,024
+generated tokens, temperature zero, ten retries, repetition penalty one, and
+zero presence/frequency penalties. The runtime still uses the current shared
+evaluator and strict `pynvvideocodec` implementation; report those
+implementation identities separately from the historical protocol anchor.
+
+Never activate this profile from a filename, directory, record count, or only
+part of its metadata. Explicit current-run overrides remain authoritative and
+their provenance must replace the packaged value in the evaluation plan.
 
 ### Inherit from fine-tuning
 
@@ -84,6 +103,7 @@ manifests/media roots are an automated deterministic materialization step, not
 a reason to ask the user to select a subset; preserve the sealed fingerprint
 and full record coverage. Rerun with user inputs such as
 `--checkpoint-epoch`, `--checkpoint`, `--generation-max-tokens`,
+`--evaluation-batch-size`, `--evaluation-seed`,
 `--max-video-pixels`,
 `--task-type`, `--answer-type`, `--metric`, `--validation-annotation`, or
 `--validation-media-root`.
