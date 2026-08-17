@@ -157,6 +157,8 @@ def _ready_plan(
             "dataloader_prefetch_factor": 2,
             "dataloader_multiprocessing_context": "spawn",
             "dataloader_persistent_workers": True,
+            "min_pixels": 81920,
+            "max_pixels": 81920,
         }
     plan_path = tmp_path / f"{job_id}.json"
     plan_path.write_text(json.dumps(plan), encoding="utf-8")

@@ -347,4 +347,9 @@ map before proposing a workaround in a fresh session.
 
 For infrastructure retries, `cosmos_retry_plan.py` seals `--retry-of`, current
 node inventory, verified prior inspection, refreshed identities, and explicit
-or scheduler-quarantined exclusions. Render its plan; never patch SBATCH.
+or scheduler-quarantined exclusions. Give it the new job record's
+`<action-root>/config/train.toml`; it rebases results, checkpoints, cache,
+container output roots, and stdout/stderr under that fresh action root. Its
+automatic exclusions consider only GPU nodes eligible for the requested
+partition and recognized unhealthy states or diagnostic comments. Render its
+plan; never patch SBATCH.

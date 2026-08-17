@@ -35,6 +35,18 @@ def _identity(value: str, kind: str) -> dict[str, object]:
     }
 
 
+def _attempt_root(spec_path: Path, *, label: str) -> Path:
+    """Resolve the record-owned action root from ``<root>/config/<spec>``."""
+
+    expanded = spec_path.expanduser().resolve()
+    if expanded.parent.name != "config":
+        raise WorkflowError(
+            f"{label} must use the record-owned <action-root>/config/<spec> layout; "
+            f"found {expanded}"
+        )
+    return expanded.parent.parent
+
+
 def build_retry(args: argparse.Namespace) -> dict[str, object]:
     prior_path = args.prior_plan.expanduser().resolve()
     prior = json.loads(prior_path.read_text(encoding="utf-8"))
@@ -56,6 +68,12 @@ def build_retry(args: argparse.Namespace) -> dict[str, object]:
     request = copy.deepcopy(prior.get("planner_request"))
     if not isinstance(request, dict) or not request:
         raise WorkflowError("prior plan has no sealed planner_request")
+    write_spec = args.write_spec.expanduser().resolve()
+    action_root = _attempt_root(write_spec, label="--write-spec")
+    container_spec = Path(args.container_spec_path or write_spec)
+    container_action_root = _attempt_root(
+        container_spec, label="--container-spec-path"
+    )
     inherited_exclusions = (
         []
         if args.replace_node_exclusions
@@ -68,8 +86,16 @@ def build_retry(args: argparse.Namespace) -> dict[str, object]:
         {
             "experiment_id": args.job_id,
             "tao_job_id": args.job_id,
-            "write_spec": str(args.write_spec),
-            "container_spec_path": str(args.container_spec_path or args.write_spec),
+            "write_spec": str(write_spec),
+            "container_spec_path": str(container_spec.expanduser().resolve()),
+            "results_dir": str(action_root / "results"),
+            "checkpoint_dir": str(action_root / "checkpoints"),
+            "cache_dir": str(action_root / "cache"),
+            "stdout_path": str(action_root / "logs" / "%x-%j.out"),
+            "stderr_path": str(action_root / "logs" / "%x-%j.err"),
+            "container_results_dir": str(container_action_root / "results"),
+            "container_checkpoint_dir": str(container_action_root / "checkpoints"),
+            "container_cache_dir": str(container_action_root / "cache"),
             "exclude_node": requested_exclusions,
             "exclude_unhealthy_inventory_nodes": True,
             "slurm_node_inventory_file": str(args.slurm_node_inventory.expanduser().resolve()),
@@ -107,6 +133,8 @@ def build_retry(args: argparse.Namespace) -> dict[str, object]:
         "retry_of_plan": str(prior_path),
         "retry_of_plan_sha256": expected,
         "inspection_reused": True,
+        "attempt_root": str(action_root),
+        "container_attempt_root": str(container_action_root),
         "node_exclusions": plan["slurm_node_exclusions"],
         "inherited_node_exclusions": inherited_exclusions,
     }
@@ -125,8 +153,23 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prior-plan", type=Path, required=True)
     parser.add_argument("--job-id", required=True)
-    parser.add_argument("--write-spec", type=Path, required=True)
-    parser.add_argument("--container-spec-path", default="")
+    parser.add_argument(
+        "--write-spec",
+        type=Path,
+        required=True,
+        help=(
+            "Fresh record-owned <action-root>/config/<spec> path. The retry "
+            "rebases results, checkpoints, cache, and logs under action-root."
+        ),
+    )
+    parser.add_argument(
+        "--container-spec-path",
+        default="",
+        help=(
+            "Container-visible <action-root>/config/<spec> path; defaults to "
+            "--write-spec and owns the rebased container output roots."
+        ),
+    )
     parser.add_argument("--exclude-node", action="append", default=[])
     parser.add_argument(
         "--replace-node-exclusions",

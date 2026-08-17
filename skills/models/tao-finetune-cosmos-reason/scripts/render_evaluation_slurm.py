@@ -156,10 +156,19 @@ def render(args: argparse.Namespace) -> str:
             for key, value in expected_runtime.items()
             if vision.get(key) != value
         }
-        if mismatches or int(vision.get("video_cache_size") or 0) <= 0:
+        maximum_pixels = int(vision.get("max_pixels") or 0)
+        minimum_pixels = int(vision.get("min_pixels") or 0)
+        if (
+            mismatches
+            or int(vision.get("video_cache_size") or 0) <= 0
+            or maximum_pixels <= 0
+            or minimum_pixels != maximum_pixels
+        ):
             raise RenderError(
-                "Framework evaluation config does not preserve the sealed TorchCodec runtime: "
-                f"{json.dumps(mismatches, sort_keys=True)}"
+                "Framework evaluation config does not preserve the sealed TorchCodec runtime "
+                "and compatible Qwen pixel bounds: "
+                f"runtime={json.dumps(mismatches, sort_keys=True)} "
+                f"min_pixels={minimum_pixels} max_pixels={maximum_pixels}"
             )
         evaluator = "cosmos-framework-evaluate"
         # This is a read-only capability attestation against the code baked in

@@ -172,6 +172,11 @@ def test_framework_evaluation_inherits_native_torchcodec_profile(tmp_path: Path)
         "dataloader_multiprocessing_context": "spawn",
         "dataloader_persistent_workers": True,
         "max_pixels": 81920,
+        "min_pixels": 81920,
+    }
+    assert result["provenance"]["vision.min_pixels"] == {
+        "source": "framework_preserve_explicit_max_pixels",
+        "value": 81920,
     }
 
 

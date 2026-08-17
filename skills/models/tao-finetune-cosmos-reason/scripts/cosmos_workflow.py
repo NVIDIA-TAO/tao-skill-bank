@@ -1636,7 +1636,9 @@ _SLURM_UNHEALTHY_STATE = re.compile(
 )
 _SLURM_UNHEALTHY_COMMENT = re.compile(
     r"(?:network\s+diagnostics?|quarantin|do\s+not\s+schedule|unhealthy|"
-    r"hardware\s+diagnostics?|pyxis|enroot|mount\s+failure|consult\s+https?://)",
+    r"hardware\s+diagnostics?|pyxis|enroot|mount\s+failure|"
+    r"(?:i/?o|io)[-_\s]*error|lustre[-_\s]*error|node[-_\s]*failure|"
+    r"gpu[^\s]*(?:fail|xid)|xid\s*\d+)",
     re.IGNORECASE,
 )
 
@@ -1682,8 +1684,21 @@ def _slurm_node_exclusion_contract(args: argparse.Namespace) -> dict[str, Any]:
         raise WorkflowError(f"SLURM node inventory contains no node names: {path}")
     auto_excluded: list[str] = []
     auto_exclusion_reasons: dict[str, list[str]] = {}
+    target_partitions = {
+        value.strip()
+        for value in str(getattr(args, "partition", "") or "").split(",")
+        if value.strip()
+    }
     if auto_filter:
         for node, line in inventory_lines.items():
+            partitions_match = re.search(r"(?:^|\s)Partitions=([^\s]+)", line)
+            if target_partitions and partitions_match:
+                node_partitions = set(partitions_match.group(1).split(","))
+                if target_partitions.isdisjoint(node_partitions):
+                    continue
+            gres_match = re.search(r"(?:^|\s)Gres=([^\s]+)", line)
+            if gres_match and "gpu:" not in gres_match.group(1).lower():
+                continue
             reasons: list[str] = []
             state_match = re.search(r"(?:^|\s)State=([^\s]+)", line)
             if state_match and _SLURM_UNHEALTHY_STATE.search(state_match.group(1)):
@@ -1691,12 +1706,12 @@ def _slurm_node_exclusion_contract(args: argparse.Namespace) -> dict[str, Any]:
             comment_match = re.search(r"(?:^|\s)Comment=(.*)$", line)
             if comment_match:
                 comment = comment_match.group(1).strip()
-                if comment and comment.lower() not in {"(null)", "none", "n/a"}:
-                    reasons.append(
-                        "scheduler_diagnostic_comment"
-                        if _SLURM_UNHEALTHY_COMMENT.search(comment)
-                        else "scheduler_comment"
-                    )
+                if (
+                    comment
+                    and comment.lower() not in {"(null)", "none", "n/a"}
+                    and _SLURM_UNHEALTHY_COMMENT.search(comment)
+                ):
+                    reasons.append("scheduler_diagnostic_comment")
             if reasons:
                 auto_excluded.append(node)
                 auto_exclusion_reasons[node] = reasons

@@ -72,6 +72,7 @@
     },
     "vision": {
       "max_pixels": 0,
+      "min_pixels": 0,
       "num_frames": 0,
       "decoder_device": "cuda",
       "decoder_threads": 1,
@@ -303,6 +304,7 @@
       "automl_enabled": false,
       "default": {
         "max_pixels": 0,
+        "min_pixels": 0,
         "num_frames": 0,
         "decoder_device": "cuda",
         "decoder_threads": 1,
@@ -322,6 +324,7 @@
         "dataloader_persistent_workers": {"default": true, "type": "bool"},
         "dataloader_prefetch_factor": {"default": 2, "minimum": 1, "type": "int"},
         "max_pixels": {"default": 0, "minimum": 1, "type": "int"},
+        "min_pixels": {"default": 0, "minimum": 1, "type": "int"},
         "num_frames": {"automl_enabled": true, "default": 0, "minimum": 1, "type": "int"},
         "process_threads": {"default": 8, "minimum": 1, "type": "int"},
         "video_cache_size": {"default": 0, "minimum": 0, "type": "int"},

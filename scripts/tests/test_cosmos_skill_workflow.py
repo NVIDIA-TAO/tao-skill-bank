@@ -235,21 +235,18 @@ def test_node_exclusions_are_live_filtered_and_rendered_without_hand_patch(
         "batch-block5-00003",
         "batch-block5-00004",
         "batch-block5-00005",
-        "batch-block5-00006",
     ]
     assert plan["slurm_node_exclusions"]["auto_excluded"] == [
         "batch-block5-00002",
         "batch-block5-00003",
         "batch-block5-00004",
         "batch-block5-00005",
-        "batch-block5-00006",
     ]
     assert plan["slurm_node_exclusions"]["auto_exclusion_reasons"] == {
         "batch-block5-00002": ["scheduler_state=DOWN"],
         "batch-block5-00003": ["scheduler_diagnostic_comment"],
         "batch-block5-00004": ["scheduler_diagnostic_comment"],
         "batch-block5-00005": ["scheduler_diagnostic_comment"],
-        "batch-block5-00006": ["scheduler_comment"],
     }
     assert plan["slurm_node_exclusions"]["retired_or_missing"] == [
         "retired-node-99999"
@@ -266,9 +263,10 @@ def test_node_exclusions_are_live_filtered_and_rendered_without_hand_patch(
     args.exclusive = True
     script = workflow.render_slurm(args, plan)
     assert (
-        "#SBATCH --exclude=batch-block5-00002,batch-block5-00003,batch-block5-00004,batch-block5-00005,batch-block5-00006"
+        "#SBATCH --exclude=batch-block5-00002,batch-block5-00003,batch-block5-00004,batch-block5-00005"
         in script
     )
+    assert "batch-block5-00006" not in script
     assert "retired-node-99999" not in script
 
     workflow.write_spec(args, plan)
@@ -295,6 +293,24 @@ def test_node_exclusions_are_live_filtered_and_rendered_without_hand_patch(
     assert "#SBATCH --exclude=batch-block5-00002" in rendered_path.read_text()
 
 
+def test_node_auto_exclusions_ignore_non_target_and_non_gpu_inventory(
+    tmp_path: Path,
+) -> None:
+    args = args_for(tmp_path)
+    inventory = tmp_path / "partitioned-nodes.txt"
+    inventory.write_text(
+        "NodeName=polar-node State=IDLE Gres=gpu:8 Partitions=polar3 Comment=Run network diagnostics\n"
+        "NodeName=other-gpu State=DOWN Gres=gpu:8 Partitions=grizzly\n"
+        "NodeName=cpu-node State=DOWN Gres=(null) Partitions=cpu_long\n",
+        encoding="utf-8",
+    )
+    args.partition = "polar3,polar4"
+    args.exclude_unhealthy_inventory_nodes = True
+    args.slurm_node_inventory_file = str(inventory)
+    plan = workflow.build_plan(args)
+    assert plan["slurm_node_exclusions"]["auto_excluded"] == ["polar-node"]
+
+
 def test_retry_helper_reuses_sealed_inspection_and_refreshes_job_identity(
     tmp_path: Path,
 ) -> None:
@@ -314,7 +330,9 @@ def test_retry_helper_reuses_sealed_inspection_and_refreshes_job_identity(
     inventory = tmp_path / "nodes.txt"
     inventory.write_text("batch-block5-00002\nbatch-block5-00003\n", encoding="utf-8")
     retry_output = tmp_path / "retry-plan.json"
-    retry_spec = tmp_path / "train-retry.toml"
+    retry_root = tmp_path / "training" / "cosmos-reason-train-retry01"
+    retry_spec = retry_root / "config" / "train.toml"
+    retry_spec.parent.mkdir(parents=True)
     completed = subprocess.run(
         [
             sys.executable,
@@ -347,6 +365,38 @@ def test_retry_helper_reuses_sealed_inspection_and_refreshes_job_identity(
         "retired-node-99999"
     ]
     assert retry["config"]["original"] == str(retry_spec)
+    request = retry["planner_request"]
+    assert request["results_dir"] == str(retry_root / "results")
+    assert request["checkpoint_dir"] == str(retry_root / "checkpoints")
+    assert request["cache_dir"] == str(retry_root / "cache")
+    assert request["container_results_dir"] == str(retry_root / "results")
+    assert request["container_checkpoint_dir"] == str(retry_root / "checkpoints")
+    assert request["container_cache_dir"] == str(retry_root / "cache")
+    assert request["stdout_path"] == str(retry_root / "logs" / "%x-%j.out")
+    assert request["stderr_path"] == str(retry_root / "logs" / "%x-%j.err")
+    assert retry["retry_preparation"]["attempt_root"] == str(retry_root)
+    assert retry["model"] == plan["model"]
+    assert retry["datasets"] == plan["datasets"]
+
+    render_request = deepcopy(request)
+    render_request.update(
+        {
+            "platform": "slurm",
+            "partition": "polar3,polar4",
+            "account": "account",
+            "container_mount": [f"{tmp_path}:{tmp_path}"],
+            "timeout": "03:48:00",
+            "time_limit": "04:00:00",
+            "exclusive": True,
+        }
+    )
+    rendered = workflow.render_slurm(SimpleNamespace(**render_request), retry)
+    assert str(retry_root / "results") in rendered
+    assert str(retry_root / "checkpoints") in rendered
+    assert str(retry_root / "cache") in rendered
+    assert plan["planner_request"]["results_dir"] not in rendered
+    assert plan["planner_request"]["checkpoint_dir"] not in rendered
+    assert plan["planner_request"]["cache_dir"] not in rendered
 
 
 def test_model_backend_resolution_and_comparative_explicitness():

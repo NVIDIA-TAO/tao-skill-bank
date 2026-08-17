@@ -25,7 +25,7 @@ not an implementation.
 | Clean image and SQSH provenance | Integration Dockerfiles and Makefile build the two action images from explicit clean commits and embed `/opt/tao/image-provenance.json`; the skill verifies commits/trees and forbids host source mounts, startup patches, and reused SQSH after source changes. |
 | Fast immutable input identity | Skill: `cosmos_workflow.py --fast-model-fingerprint --fast-media-fingerprint` validates every referenced model shard and media path, content-hashes small model metadata/index files, and records weight/media path+size without reading payload bytes. Use both flags when a prompt forbids hashing every model/media byte; the sealed plan records the selected modes. |
 | Non-root Pyxis runtime | SLURM plans disable host-home mounting, create an isolated per-job container home, preserve explicit mounts, and run packaged imports as the invoking user. |
-| Deterministic SLURM recovery | The TAO job-record id is the exact job name. Ambiguous submission is reconciled through `squeue` and `sacct` before retry; real retries use a new `--retry-of` record and validated node exclusions. Cosmos emits `--no-requeue`. |
+| Deterministic SLURM recovery | The TAO job-record id is the exact job name. Ambiguous submission is reconciled through `squeue` and `sacct` before retry; real retries use a new `--retry-of` record, fresh record-owned config/results/checkpoint/cache/log roots, and validated node exclusions limited to eligible GPU nodes in the requested partitions. Cosmos emits `--no-requeue`. |
 
 TAO Core's Qwen3-VL microservice handler is a separate inference-service
 surface. A fork-only TAO Core fix is not a valid integration submodule target:

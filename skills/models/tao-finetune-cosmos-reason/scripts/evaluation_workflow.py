@@ -762,6 +762,19 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         }
     if max_video_pixels is not None:
         vision["max_pixels"] = max_video_pixels
+        if backend == "cosmos-framework":
+            # Framework evaluation passes already-decoded PIL frames back
+            # through qwen-vl-utils.  Qwen otherwise supplies its larger
+            # runtime default minimum and rejects a deliberately lower sealed
+            # maximum before resizing.  Preserve the requested maximum by
+            # making the compatible lower bound explicit.  Keep this scoped
+            # to the Framework branch: Cosmos-RL owns the equivalent
+            # normalization in its registered video reader.
+            vision["min_pixels"] = max_video_pixels
+            provenance["vision.min_pixels"] = _source(
+                max_video_pixels,
+                "framework_preserve_explicit_max_pixels",
+            )
     decoder_artifact = plan.get("decoder_artifact", {})
     if backend == "cosmos-rl" and isinstance(decoder_artifact, Mapping) and decoder_artifact.get("enabled"):
         vision["video_override_map"] = decoder_artifact.get("path")

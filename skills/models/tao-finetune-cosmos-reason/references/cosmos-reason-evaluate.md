@@ -182,6 +182,11 @@ excluded tasks and reasons.
 Keep decoder contracts isolated by backend. Cosmos-RL retains its strict
 `pynvvideocodec` path and any validated override artifact. Framework inherits
 the sealed `torchcodec-cuda-on-demand` cache/thread/device profile and requires
+an explicit `min_pixels=max_pixels` bound when the sealed maximum is present,
+so Qwen preserves that lower Framework pixel budget for predecoded frames
+instead of rejecting it against its larger runtime default minimum. This
+normalization is Framework-only; it does not change Cosmos-RL's registered
+reader normalization. Framework also requires
 the selected SQSH to attest the Framework preprocessing implementation before
 the evaluator child starts. Never copy one backend's decoder settings into the
 other, invent FPS metadata, rewrite annotations, or silently fall back to CPU
