@@ -136,20 +136,11 @@ validates sibling `safetensors/epoch_N` and writes a binding manifest. Rerun
 with `--action-model-path` and `--action-model-manifest`; never pass
 `checkpoints/epoch_N[/policy]` to the evaluator or ask the user to convert it.
 
-For SLURM evaluation on either backend, only
-`scripts/render_evaluation_slurm.py` is valid. It accepts a checksum-consistent
-`ready=true` plan and verified checkpoint manifest, selects only the resolved
-backend CLI, derives distributed topology, persists `/results` and structured
-status, preserves the child exit, and disables requeue. Its Framework branch
-attests the required evaluator implementation from the selected SQSH and never
-overlays source. Stage its inputs and output under the job record's
-`results_dir` before `sbatch`.
-Before rendering a Framework evaluation, run
-`scripts/framework_evaluation_image_preflight.py --sqsh <selected.sqsh>` on a
-host that can read the image. Exit code 4 means the immutable image predates
-the required baked evaluator implementation; stop before allocating GPUs and
-request a compatible image/SQSH identity. Do not work around it with a source
-mount, patch, overlay, or Cosmos-RL fallback.
+SLURM evaluation must use `render_evaluation_slurm.py` with a consistent READY
+plan/manifest; it owns backend, topology, results, status, exit, and requeue.
+Framework first runs `framework_evaluation_image_preflight.py`; exit 4 means
+stop without allocating or overlaying source. Stage all artifacts under the
+job record's `results_dir`.
 
 ## Framework checkpoint pre-action
 
@@ -353,16 +344,6 @@ change, or rely on a temporary launch script as the implementation.
 Use `references/cosmos-reproducibility-gates.md` as the source-owner and test
 map before proposing a workaround in a fresh session.
 
-## Infrastructure retry preparation
-
-For an evidence-classified SLURM infrastructure retry, open the new job record
-with `--retry-of`, capture the current `scontrol show nodes -o` inventory, and
-run `scripts/cosmos_retry_plan.py`. Supply every evidence-backed failed node
-with `--exclude-node`. The helper reuses only the checksum-verified prior
-model/dataset inspection, refreshes job/config identities, drops retired node
-names that SLURM would reject, automatically excludes nodes whose scheduler
-state is DOWN/DRAIN/FAIL/NOT_RESPONDING or which carry any nonempty scheduler
-comment, and seals the validated exclusions into the new plan. On supported
-clusters those comments are operational quarantine/runbook markers, even when
-the node remains schedulable as IDLE+PLANNED. Materialize and render from that
-plan; never patch an SBATCH file or use an ad-hoc replanning script.
+For infrastructure retries, `cosmos_retry_plan.py` seals `--retry-of`, current
+node inventory, verified prior inspection, refreshed identities, and explicit
+or scheduler-quarantined exclusions. Render its plan; never patch SBATCH.

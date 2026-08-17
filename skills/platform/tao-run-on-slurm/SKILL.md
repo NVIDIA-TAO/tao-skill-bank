@@ -96,9 +96,8 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    empty, `EXTRA_ENV=` any cluster NCCL knobs) → `<job_dir>/sbatch/job_$JOB_ID.sbatch`.
    **Lint + syntax-check before submit:** `redact_secrets.py lint <sbatch>` must
    pass and `bash -n <sbatch>` must succeed.
-   **Cosmos evaluation exception:** use the model skill's checked-in
-   backend-aware evaluation renderer; generic templates and hand-authored
-   sbatch files are invalid for Framework and Cosmos-RL evaluation.
+   **Cosmos evaluation:** use its model skill's backend-aware renderer; generic
+   or hand-authored sbatch files are invalid.
 5. **Submit + record RUNNING:**
    ```bash
    SLURM_ID=$(ssh $LOGIN "sbatch --parsable <job_dir>/sbatch/job_$JOB_ID.sbatch")
@@ -382,12 +381,8 @@ may require `--no-requeue`.
 Treat an empty `sbatch --parsable` response or SSH disconnect as ambiguous:
 reconcile by exact job name, never submit blindly, and validate inherited node
 exclusions. The referenced execution guide defines the full decision table.
-For Cosmos, capture `scontrol show nodes -o` and run the model skill's
-`scripts/cosmos_retry_plan.py`; its sealed plan owns `#SBATCH --exclude` and
-automatically includes scheduler-state failures plus nodes carrying diagnostic
-or runbook comments even when they remain IDLE+PLANNED. On the supported
-clusters, treat any nonempty node comment as an operational quarantine marker.
-Never insert or edit that directive by hand.
+For Cosmos retries, its sealed model plan owns failed/comment-quarantined
+`#SBATCH --exclude` nodes; never edit the directive.
 
 See `references/slurm-container-execution.md` for the full multi-node
 env-var/sbatch directive detail and table, cluster requirements, the
