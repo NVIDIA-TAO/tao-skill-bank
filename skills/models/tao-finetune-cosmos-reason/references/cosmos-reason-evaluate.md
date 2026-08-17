@@ -28,16 +28,22 @@ mtime, or filename convention as an additional source.
 
 ### Fingerprint-locked evaluator profiles
 
-The verified PEFT HPO-validation profile is selected only when the single
-validation annotation SHA256 is
-`f120ca66f28e3e5b5a01a3ace93d16c856cf13098faf61b44263a4afc449c709`.
-Its verified protocol fingerprint is
-`9872bf5de29f78f76b4ba39a79a69d57f35ebe2d9080b339cb58ef9233dc33fa`:
-freeform answer parsing, evaluation batch eight, seed one, maximum 1,024
-generated tokens, temperature zero, ten retries, repetition penalty one, and
-zero presence/frequency penalties. The runtime still uses the current shared
-evaluator and strict `pynvvideocodec` implementation; report those
-implementation identities separately from the historical protocol anchor.
+The packaged profiles below were verified by full-split evaluation and are
+selected only when the single validation annotation SHA256 matches exactly.
+All use maximum 1,024 generated tokens, temperature zero, repetition penalty
+one, and zero presence/frequency penalties.
+
+| Annotation SHA256 | Profile | Answer/batch/seed |
+|---|---|---|
+| `c33afc26f979cbdb488b8f1aefdc65604992cd7552d5e75ea782e4565fdc21e1` | `VALIDATION_C33AFC26` | letter / 1 / 42 |
+| `6a30babb1921af59155dfe45cf766465597b57cafa1e0e83663a159d89289b6a` | `VALIDATION_6A30BABB` | freeform / 1 / 42 |
+| `f828a63f1bbdd45197e1f3393fb94f76ebfdfc785402617aa8c1397b0b47c555` | `VALIDATION_F828A63F` | letter / 1 / 42 |
+| `f120ca66f28e3e5b5a01a3ace93d16c856cf13098faf61b44263a4afc449c709` | `PEFT_HPO_VALIDATION_F120CA66` | freeform / 8 / 1 |
+
+The runtime implementation is backend-owned: Cosmos-RL retains strict
+`pynvvideocodec`; Framework uses its sealed
+`torchcodec-cuda-on-demand` profile. Report that identity separately from the
+protocol anchor.
 
 Never activate this profile from a filename, directory, record count, or only
 part of its metadata. Explicit current-run overrides remain authoritative and
@@ -120,8 +126,16 @@ an exact epoch, or a checkpoint selection already sealed in the training plan.
 Never choose “latest” by directory order or mtime. Require terminal successful
 training status before consuming a checkpoint.
 
-For Cosmos-RL dense training, the selected checkpoint becomes
-`model.model_name`. For Cosmos-RL PEFT, the selected adapter becomes
+For Cosmos-RL, a status event normally names the native
+`checkpoints/epoch_N/policy` artifact. That path is never evaluator-loadable.
+Run `scripts/cosmos_rl_checkpoint_action.py` on the target compute frame; it
+derives and validates the exact sibling `safetensors/epoch_N` export and emits
+a binding manifest. Rerun the resolver with both `--action-model-path` and
+`--action-model-manifest`. A missing, truncated, wrong-epoch, or wrong-kind
+export blocks launch automatically and is not a user question.
+
+For Cosmos-RL dense training, the verified HF export becomes
+`model.model_name`. For Cosmos-RL PEFT, the verified adapter becomes
 `model.model_name`, `model.enable_lora=true`, and
 `model.base_model_path` is inherited from the fine-tuning model-preparation
 record. Do not ask the user to repeat that base-model path.
@@ -135,8 +149,8 @@ evaluator and never ask the user to export it. `evaluation_workflow.py` emits a
 repository-derived Framework action image. The helper validates the saved
 Framework config, DCP metadata, base-model identity/revision, exact exported
 keys, indexed weights, and export manifest. Run `verify` from the target
-compute frame and pass its `action_model_path` back to
-`evaluation_workflow.py --action-model-path`.
+compute frame and pass its `action_model_path` and terminal action JSON back to
+`evaluation_workflow.py --action-model-path ... --action-model-manifest ...`.
 
 Framework PEFT is reconstructed and merged by the native exporter, so the
 shared evaluation config keeps `model.enable_lora=false`. Export failure or
@@ -165,18 +179,33 @@ excluded tasks and reasons.
 
 ## Decoder and execution
 
-The packaged shared evaluator currently requires its strict
-`pynvvideocodec` path. The template records that repository-owned runtime
-contract, not a dataset choice. If fine-tuning recorded a validated video
-override artifact, inherit its exact path/fingerprint. Otherwise validate GPU
-random-access decoding for every evaluation media encoding on the allocated
-GPU before launch. Never invent FPS metadata, rewrite annotations, or silently
-fall back to CPU decoding.
+Keep decoder contracts isolated by backend. Cosmos-RL retains its strict
+`pynvvideocodec` path and any validated override artifact. Framework inherits
+the sealed `torchcodec-cuda-on-demand` cache/thread/device profile and requires
+the selected SQSH to attest the Framework preprocessing implementation before
+the evaluator child starts. Never copy one backend's decoder settings into the
+other, invent FPS metadata, rewrite annotations, or silently fall back to CPU
+decoding.
 
 Use `torchrun` data parallelism according to the resolved GPU count. Keep one
 model replica per rank unless the selected backend contract explicitly
 requires another topology. Full evaluation uses `limit=-1`, exact record
 coverage, rank-aware result files, and global deduplication before scoring.
+
+On SLURM, render both backends only with
+`scripts/render_evaluation_slurm.py`. It rejects non-READY plans, TOML checksum
+mismatches, unverified checkpoint manifests, GPU shapes not divisible by the
+per-node GPU count, conflicting `/results` mounts, and result directories that
+do not end in the TAO job id. It owns the persistent parent-results to
+`/results` mount, `TAO_API_JOB_ID`, `TAO_API_RESULTS_DIR=/results`, structured
+status path, distributed rendezvous, no-requeue/exclusive contract, child
+timeout, backend CLI selection, Framework in-image capability attestation, and
+child-exit propagation. Do not reconstruct those details in a prompt-authored
+sbatch file.
+Run `scripts/framework_evaluation_image_preflight.py` against a selected
+Framework SQSH before opening/submitting the evaluation record. A missing
+baked Framework preprocessor is an immutable-image incompatibility, not a
+reason to stage source or select Cosmos-RL.
 
 ## Completion and results
 

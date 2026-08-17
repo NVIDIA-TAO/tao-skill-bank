@@ -96,6 +96,9 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    empty, `EXTRA_ENV=` any cluster NCCL knobs) → `<job_dir>/sbatch/job_$JOB_ID.sbatch`.
    **Lint + syntax-check before submit:** `redact_secrets.py lint <sbatch>` must
    pass and `bash -n <sbatch>` must succeed.
+   **Cosmos evaluation exception:** use the model skill's checked-in
+   backend-aware evaluation renderer; generic templates and hand-authored
+   sbatch files are invalid for Framework and Cosmos-RL evaluation.
 5. **Submit + record RUNNING:**
    ```bash
    SLURM_ID=$(ssh $LOGIN "sbatch --parsable <job_dir>/sbatch/job_$JOB_ID.sbatch")
@@ -333,30 +336,19 @@ Defaults from `tao-core`:
 - `use_requeue`: true
 - `use_sqsh`: true
 
-When generating launchers or wrapper scripts for SLURM, set the wall-time
-defaults explicitly from the packaged platform resource defaults:
-
-```bash
-export SLURM_TIME_HOURS="${SLURM_TIME_HOURS:-4}"
-export SLURM_TIMEOUT_HOURS="${SLURM_TIMEOUT_HOURS:-3.8}"
-```
-
-Do not default to 12 hours on SLURM. If the user supplies a longer
+Launchers must use the packaged 4-hour wall and 3.8-hour child-timeout
+defaults, never 12 hours. If the user supplies a longer
 `SLURM_TIME_HOURS`, verify that the selected partition supports it before
 submitting. For the packaged default partition list
 `polar,polar3,polar4,grizzly`, reject requests above 4 hours and ask for a
 different partition only if the user actually wants a longer wall time.
 
-When `num_gpus` is greater than or equal to `max_num_gpus_per_node`, the
-handler treats the request as exclusive per node and computes additional nodes
-from total GPU count when necessary.
+At or above `max_num_gpus_per_node`, allocate exclusive nodes and derive their
+count from total GPUs.
 
-For a single-node exclusive Cosmos job, keep `--cpus-per-task` equal to the
-user's requested value in the allocation request, then resolve `NumCPUs` from
-`scontrol show job` inside that allocation and pass the granted count to the
-training `srun`. Record all three values (requested, allocated, step). Do not
-apply this single-node optimization by dividing or guessing a per-node CPU
-count for multi-node jobs.
+For single-node exclusive Cosmos, request the user's CPU count, resolve granted
+`NumCPUs` in-allocation, and pass it to training `srun`. Record requested,
+allocated, and step values. Never infer multi-node CPUs this way.
 
 ## Multi-node and retries
 
@@ -390,6 +382,12 @@ may require `--no-requeue`.
 Treat an empty `sbatch --parsable` response or SSH disconnect as ambiguous:
 reconcile by exact job name, never submit blindly, and validate inherited node
 exclusions. The referenced execution guide defines the full decision table.
+For Cosmos, capture `scontrol show nodes -o` and run the model skill's
+`scripts/cosmos_retry_plan.py`; its sealed plan owns `#SBATCH --exclude` and
+automatically includes scheduler-state failures plus nodes carrying diagnostic
+or runbook comments even when they remain IDLE+PLANNED. On the supported
+clusters, treat any nonempty node comment as an operational quarantine marker.
+Never insert or edit that directive by hand.
 
 See `references/slurm-container-execution.md` for the full multi-node
 env-var/sbatch directive detail and table, cluster requirements, the

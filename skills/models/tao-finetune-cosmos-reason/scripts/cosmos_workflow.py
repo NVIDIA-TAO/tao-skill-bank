@@ -18,22 +18,22 @@ import shutil
 import socket
 import subprocess
 import sys
-import tomllib
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
+import tomllib
 import yaml
-
 from cosmos_common import (
     WorkflowError,
     assert_no_overlap,
+    dataset_parity,
     inspect_dataset,
     inspect_model,
-    dataset_parity,
-    model_parity,
     materialize_dataset,
+    model_parity,
     optimization_parity,
     path_identity,
     planned_path_identity,
@@ -43,7 +43,6 @@ from cosmos_common import (
     validate_metadata,
     validate_provenance,
 )
-
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 REFERENCES = SKILL_DIR / "references"
@@ -60,7 +59,7 @@ SUPPORTED_ACTIONS = {
     "train", "export", "evaluate", "inference", "inference_microservice", "quantize",
 }
 PLAN_ARTIFACT_SCHEMA_VERSION = 1
-_PLAN_ARTIFACT_TRANSIENT_ARGS = {"verb", "format", "plan_artifact"}
+_PLAN_ARTIFACT_TRANSIENT_ARGS = {"verb", "format", "plan_artifact", "render_output"}
 
 
 def resolve_model_name(
@@ -233,8 +232,19 @@ def _toml_scalar(value: Any) -> str:
 def dump_toml(data: Mapping[str, Any]) -> str:
     lines: list[str] = []
     def emit(table: Mapping[str, Any], prefix: tuple[str, ...]) -> None:
-        scalars = [(k, v) for k, v in table.items() if not isinstance(v, Mapping) and v is not None]
-        children = [(k, v) for k, v in table.items() if isinstance(v, Mapping)]
+        # Canonical ordering is part of the sealed-plan contract. Plan JSON is
+        # persisted with sort_keys=True, so insertion-order TOML would change
+        # bytes/checksums after a fresh session reload.
+        scalars = [
+            (key, table[key])
+            for key in sorted(table)
+            if not isinstance(table[key], Mapping) and table[key] is not None
+        ]
+        children = [
+            (key, table[key])
+            for key in sorted(table)
+            if isinstance(table[key], Mapping)
+        ]
         if prefix:
             if lines and lines[-1]:
                 lines.append("")
@@ -1481,6 +1491,37 @@ def _decoder_artifact_plan(
         "revision": args.processor_revision,
         "profile": model_profile,
     })
+    if backend == "cosmos-framework":
+        if any(supplied):
+            raise WorkflowError(
+                "video override artifacts are owned by the Cosmos-RL backend and "
+                "must not be supplied to cosmos-framework"
+            )
+        return {
+            "required": False,
+            "enabled": False,
+            "path": None,
+            "manifest": None,
+            "sha256": None,
+            "input_fingerprints": {
+                "dataset": dataset_fingerprint,
+                "model": model["fingerprint"],
+                "processor": processor_fingerprint,
+            },
+            "policy": {
+                "macroblock_scan": False,
+                "force_all_validation_media": False,
+                "forced_runtime_sources": [],
+                "gpu_random_access_validation_required": False,
+                "selection_basis": "framework_native_torchcodec_cuda_on_demand",
+            },
+            "preparation_module": None,
+            "preparation_arguments": [],
+            "preparation_command": None,
+            "validation_module": None,
+            "validation_arguments": [],
+            "validation_command": None,
+        }
     artifact_root = (
         Path(args.cache_dir).expanduser()
         / "video-overrides"
@@ -1504,10 +1545,7 @@ def _decoder_artifact_plan(
         and rl_video_runtime is not None
         and rl_video_runtime["selected_profile"] == "pynv-device-rgbp"
     )
-    force_all_validation_media = (
-        backend != "cosmos-rl"
-        and args.dataset_family == "task_aware_video_reasoning"
-    )
+    force_all_validation_media = False
     if force_all_validation_media:
         for annotation in args.validation_annotation:
             preparation_arguments.extend([
@@ -1541,20 +1579,13 @@ def _decoder_artifact_plan(
                 "--require-covered-annotation", _containerize(args, annotation)
             ])
 
-    python = (
-        "/workspace/.venv/bin/python"
-        if backend == "cosmos-framework"
-        else "/opt/venv/cosmos_rl/bin/python"
-    )
+    python = "/opt/venv/cosmos_rl/bin/python"
 
     # RL starts directly from the selected manifests. Its source-baked reader
     # handles the narrow permanent NVDEC-capability exception on demand, so a
-    # separately prepared compatibility artifact is optional. Framework
-    # task-aware validation still requires complete prepared coverage.
-    artifact_required = (
-        backend != "cosmos-rl"
-        and args.dataset_family == "task_aware_video_reasoning"
-    )
+    # separately prepared compatibility artifact is optional. Framework was
+    # returned above because it owns a separate native TorchCodec contract.
+    artifact_required = False
     return {
         "required": artifact_required,
         "enabled": all(supplied),
@@ -1596,8 +1627,112 @@ def _decoder_artifact_plan(
     }
 
 
-def build_plan(args: argparse.Namespace) -> dict[str, Any]:
-    remote_inspection = _remote_inspection(args) if _needs_remote_inspection(args) else None
+_SLURM_NODE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_SLURM_UNHEALTHY_STATE = re.compile(
+    r"(?:^|[+,_])(DOWN|DRAIN(?:ED|ING)?|FAIL(?:ED|ING)?|NOT_RESPONDING|POWER_DOWN)(?:$|[+,_])",
+    re.IGNORECASE,
+)
+_SLURM_UNHEALTHY_COMMENT = re.compile(
+    r"(?:network\s+diagnostics?|quarantin|do\s+not\s+schedule|unhealthy|"
+    r"hardware\s+diagnostics?|pyxis|enroot|mount\s+failure|consult\s+https?://)",
+    re.IGNORECASE,
+)
+
+
+def _slurm_node_exclusion_contract(args: argparse.Namespace) -> dict[str, Any]:
+    requested = list(dict.fromkeys(getattr(args, "exclude_node", []) or []))
+    auto_filter = bool(getattr(args, "exclude_unhealthy_inventory_nodes", False))
+    if not requested and not auto_filter:
+        return {
+            "requested": [],
+            "validated": [],
+            "retired_or_missing": [],
+            "auto_excluded": [],
+            "auto_exclusion_reasons": {},
+            "inventory": None,
+        }
+    invalid = [value for value in requested if not _SLURM_NODE_NAME.fullmatch(value)]
+    if invalid:
+        raise WorkflowError(f"invalid SLURM node exclusion names: {invalid}")
+    inventory_path = str(getattr(args, "slurm_node_inventory_file", "") or "")
+    if not inventory_path:
+        raise WorkflowError(
+            "--slurm-node-inventory-file is required when explicit or automatic node exclusions are used; "
+            "capture the live `scontrol show nodes -o` output immediately before planning"
+        )
+    path = Path(inventory_path).expanduser().resolve()
+    if not path.is_file():
+        raise WorkflowError(f"SLURM node inventory is inaccessible: {path}")
+    text = path.read_text(encoding="utf-8")
+    inventory_lines: dict[str, str] = {}
+    for line in text.splitlines():
+        match = re.search(r"(?:^|\s)NodeName=([A-Za-z0-9_.-]+)", line)
+        if match:
+            inventory_lines[match.group(1)] = line
+    inventory = set(inventory_lines)
+    if not inventory:
+        inventory = {
+            token
+            for token in re.split(r"\s+", text.strip())
+            if token and _SLURM_NODE_NAME.fullmatch(token)
+        }
+    if not inventory:
+        raise WorkflowError(f"SLURM node inventory contains no node names: {path}")
+    auto_excluded: list[str] = []
+    auto_exclusion_reasons: dict[str, list[str]] = {}
+    if auto_filter:
+        for node, line in inventory_lines.items():
+            reasons: list[str] = []
+            state_match = re.search(r"(?:^|\s)State=([^\s]+)", line)
+            if state_match and _SLURM_UNHEALTHY_STATE.search(state_match.group(1)):
+                reasons.append(f"scheduler_state={state_match.group(1)}")
+            comment_match = re.search(r"(?:^|\s)Comment=(.*)$", line)
+            if comment_match:
+                comment = comment_match.group(1).strip()
+                if comment and comment.lower() not in {"(null)", "none", "n/a"}:
+                    reasons.append(
+                        "scheduler_diagnostic_comment"
+                        if _SLURM_UNHEALTHY_COMMENT.search(comment)
+                        else "scheduler_comment"
+                    )
+            if reasons:
+                auto_excluded.append(node)
+                auto_exclusion_reasons[node] = reasons
+    validated = list(
+        dict.fromkeys(
+            [value for value in requested if value in inventory]
+            + sorted(auto_excluded)
+        )
+    )
+    retired = [value for value in requested if value not in inventory]
+    return {
+        "requested": requested,
+        "validated": validated,
+        "retired_or_missing": retired,
+        "auto_excluded": sorted(auto_excluded),
+        "auto_exclusion_reasons": auto_exclusion_reasons,
+        "inventory": {"path": str(path), "sha256": sha256_file(path), "node_count": len(inventory)},
+    }
+
+
+def build_plan(
+    args: argparse.Namespace,
+    *,
+    remote_inspection_override: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a training plan, optionally reusing a sealed prior inspection.
+
+    ``remote_inspection_override`` exists only for the checked-in retry helper.
+    It lets an infrastructure retry retain the original model/dataset evidence
+    without repeating a multi-hour media inspection.  Ordinary callers never
+    supply it and keep the existing inspection behavior.
+    """
+    remote_inspection = (
+        copy.deepcopy(dict(remote_inspection_override))
+        if remote_inspection_override is not None
+        else (_remote_inspection(args) if _needs_remote_inspection(args) else None)
+    )
+    node_exclusions = _slurm_node_exclusion_contract(args)
     inspected_model = remote_inspection["model"] if remote_inspection else None
     args.model = resolve_model_name(args.model, args.base_model_path_or_uri, inspected_model)
     backend, reason = select_backend(model=args.model, action=args.action, backend=args.backend, workload=args.workload, comparative=args.comparative)
@@ -1776,6 +1911,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         },
         "image": image, "sqsh": runtime_path("sqsh_path", args.sqsh_path, required=args.platform == "slurm"),
         "compute": {"platform": args.platform, "nodes": args.nodes, "gpus_per_node": args.gpus_per_node, "total_gpus": total_gpus, "cpus_per_task": args.cpus_per_task},
+        "slurm_node_exclusions": node_exclusions,
         "cache_prewarm": {"mode": cache_mode, "required": cache_prewarm_required, "keys": cache_keys if cache_prewarm_required else {}, "path": args.cache_dir if cache_prewarm_required else "", "dataset_fingerprints": {"train": train_data["dataset_fingerprint"], "validation": val_data["dataset_fingerprint"]}, "model_fingerprint": model["fingerprint"], "processor_fingerprint": processor_fingerprint, "completeness_required": cache_prewarm_required, "resumable": cache_prewarm_required, "selection_basis": {"media_reuse": train_data["profile"]["media_reuse_class"], "record_count": train_data["record_count"], "resolution_class": train_data["profile"]["resolution"]["class"]}},
         "spec": spec, "environment": environment, "command": command,
         "config_container_path": args.container_spec_path,
@@ -1999,6 +2135,18 @@ def save_plan_artifact(
     return path
 
 
+def _atomic_write_text(path: Path, content: str) -> Path:
+    path = path.expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
+
+
 def load_plan_artifact(
     current_args: argparse.Namespace,
     artifact_path: str,
@@ -2028,6 +2176,7 @@ def load_plan_artifact(
     args.verb = current_args.verb
     args.format = current_args.format
     args.plan_artifact = str(path)
+    args.render_output = getattr(current_args, "render_output", "")
     return args, plan
 
 
@@ -2108,6 +2257,9 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         f"#SBATCH --cpus-per-task={args.cpus_per_task}", f"#SBATCH --time={args.time_limit}", "#SBATCH --no-requeue",
         f"#SBATCH --output={args.stdout_path}", f"#SBATCH --error={args.stderr_path}",
     ]
+    validated_exclusions = plan.get("slurm_node_exclusions", {}).get("validated", [])
+    if validated_exclusions:
+        lines.append(f"#SBATCH --exclude={','.join(validated_exclusions)}")
     if args.qos:
         lines.append(f"#SBATCH --qos={args.qos}")
     if args.reservation:
@@ -2411,6 +2563,11 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
         default=0,
         help="Framework samples packed per rank and forward; 0 selects the Nano per-rank effective batch and keeps Edge at 1.",
     )
+    parser.add_argument(
+        "--render-output",
+        default="",
+        help="Atomically write render-slurm output to this local controller path.",
+    )
     parser.add_argument("--rl-mini-batch", type=int, default=1)
     parser.add_argument(
         "--rl-train-batch-per-replica",
@@ -2535,6 +2692,16 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--partition", default=""); parser.add_argument("--account", default=""); parser.add_argument("--qos", default="")
     parser.add_argument("--reservation", default=""); parser.add_argument("--time-limit", default="04:00:00"); parser.add_argument("--timeout", default="04:15:00")
     parser.add_argument("--exclusive", action="store_true"); parser.add_argument("--use-requeue", action="store_true")
+    parser.add_argument("--exclude-node", action="append", default=[])
+    parser.add_argument(
+        "--exclude-unhealthy-inventory-nodes",
+        action="store_true",
+        help=(
+            "Exclude nodes whose live scontrol record is DOWN/DRAIN/FAIL/NOT_RESPONDING "
+            "or carries a diagnostic/quarantine scheduler comment."
+        ),
+    )
+    parser.add_argument("--slurm-node-inventory-file", default="")
     parser.add_argument("--container-mount", action="append", default=[]); parser.add_argument("--cluster", default="")
     parser.add_argument("--master-port", type=int, default=29500); parser.add_argument("--stdout-path", default="")
     parser.add_argument("--stderr-path", default=""); parser.add_argument("--tao-job-id", default="")
@@ -2631,7 +2798,18 @@ def main(argv: list[str] | None = None) -> int:
                 }
             elif args.verb == "render-slurm":
                 verify_materialized_spec(args, plan)
-                result = render_slurm(args, plan)
+                script = render_slurm(args, plan)
+                if args.render_output:
+                    rendered = _atomic_write_text(Path(args.render_output), script)
+                    result = {
+                        "ok": True,
+                        "output": str(rendered),
+                        "sha256": sha256_file(rendered),
+                        "approved_plan": plan.get("plan_artifact"),
+                        "node_exclusions": plan.get("slurm_node_exclusions", {}),
+                    }
+                else:
+                    result = script
             else:
                 metadata = initial_metadata(args, plan); validate_metadata(metadata); plan["initial_metadata"] = metadata; result = plan
                 if args.plan_artifact:

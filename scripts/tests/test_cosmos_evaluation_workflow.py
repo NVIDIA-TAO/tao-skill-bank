@@ -105,6 +105,19 @@ def _sealed_plan(
             "checkpoint_selection": None,
         },
     }
+    if backend == "cosmos-framework":
+        plan["framework_video_runtime"] = {
+            "selected_profile": "torchcodec-cuda-on-demand",
+            "decoder_device_binding": "explicit_local_rank",
+            "decoder_device": "cuda",
+            "decoder_threads": 1,
+            "sft_process_threads": 8,
+            "video_cache_size": 341,
+            "dataloader_num_workers": 1,
+            "dataloader_prefetch_factor": 2,
+            "dataloader_multiprocessing_context": "spawn",
+            "dataloader_persistent_workers": True,
+        }
     if annotation_sha256 is not None:
         plan["datasets"]["validation"]["annotation_manifest"] = [
             {
@@ -146,6 +159,62 @@ def _status(tmp_path: Path, *, multiple: bool = False) -> Path:
     return path
 
 
+def _checkpoint_manifest(
+    tmp_path: Path,
+    *,
+    epoch: int,
+    mode: str,
+) -> tuple[str, Path]:
+    source = f"/runtime/checkpoints/epoch_{epoch}"
+    action = f"/runtime/safetensors/epoch_{epoch}"
+    path = tmp_path / f"checkpoint-epoch-{epoch}-{mode}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "VERIFIED",
+                "backend": "cosmos-rl",
+                "source_checkpoint": source,
+                "action_model_path": action,
+                "epoch": epoch,
+                "training_mode": mode,
+                "checkpoint_kind": (
+                    "hf_peft_adapter_safetensors"
+                    if mode == "peft"
+                    else "hf_dense_safetensors"
+                ),
+                "files": [{"path": "config.json", "size": 1}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return action, path
+
+
+def _framework_checkpoint_manifest(
+    tmp_path: Path, *, source: str, action: str
+) -> Path:
+    path = tmp_path / "framework-checkpoint-action.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "VERIFIED",
+                "backend": "cosmos-framework",
+                "source_checkpoint": source,
+                "action_model_path": action,
+                "verification": {
+                    "ok": True,
+                    "action_model_path": action,
+                    "weight_files": ["model-00001-of-00001.safetensors"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def _run(
     tmp_path: Path,
     *,
@@ -160,6 +229,7 @@ def _run(
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     plan_output = tmp_path / "evaluation-plan.json"
     config_output = tmp_path / "evaluation.toml"
+    extra = list(extra or [])
     command = [
         sys.executable,
         str(SCRIPT),
@@ -185,8 +255,30 @@ def _run(
         str(plan_output),
         "--config-output",
         str(config_output),
-        *(extra or []),
+        *extra,
     ]
+    selected_epoch = 2 if extra[-2:] == ["--checkpoint-epoch", "2"] else 1
+    selection_known = not multiple or "--checkpoint-epoch" in extra
+    if backend == "cosmos-rl" and selection_known:
+        action_model_path, manifest_path = _checkpoint_manifest(
+            tmp_path, epoch=selected_epoch, mode=mode
+        )
+        command.extend(
+            [
+                "--action-model-path",
+                action_model_path,
+                "--action-model-manifest",
+                str(manifest_path),
+            ]
+        )
+    elif backend == "cosmos-framework" and "--action-model-path" in extra:
+        index = extra.index("--action-model-path")
+        action_model_path = extra[index + 1]
+        source = f"/runtime/checkpoints/epoch_{selected_epoch}"
+        manifest_path = _framework_checkpoint_manifest(
+            tmp_path, source=source, action=action_model_path
+        )
+        command.extend(["--action-model-manifest", str(manifest_path)])
     return subprocess.run(command, text=True, capture_output=True, check=False), plan_output, config_output
 
 
@@ -208,7 +300,7 @@ def test_dense_evaluation_inherits_training_parity_fields(tmp_path: Path) -> Non
     assert config["vision"]["num_frames"] == 8
     assert config["vision"]["max_pixels"] == 4096
     assert "nframes" not in config["vision"]
-    assert config["model"]["model_name"] == "/runtime/checkpoints/epoch_1"
+    assert config["model"]["model_name"] == "/runtime/safetensors/epoch_1"
     assert config["model"]["max_length"] == 40960
     assert config["model"]["tp_size"] == 1
     assert config["model"]["enable_lora"] is False
@@ -306,6 +398,9 @@ def test_fingerprint_locked_wts_peft_evaluator_profile_is_automatic(tmp_path: Pa
     )
     plan_output = tmp_path / "evaluation-plan.json"
     config_output = tmp_path / "evaluation.toml"
+    action_model_path, manifest_path = _checkpoint_manifest(
+        tmp_path, epoch=1, mode="peft"
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -320,6 +415,10 @@ def test_fingerprint_locked_wts_peft_evaluator_profile_is_automatic(tmp_path: Pa
             str(plan_output),
             "--config-output",
             str(config_output),
+            "--action-model-path",
+            action_model_path,
+            "--action-model-manifest",
+            str(manifest_path),
         ],
         text=True,
         capture_output=True,
@@ -337,6 +436,62 @@ def test_fingerprint_locked_wts_peft_evaluator_profile_is_automatic(tmp_path: Pa
     assert resolved["provenance"]["evaluation.batch_size"]["source"].startswith(
         "verified_evaluator_profile.PEFT_HPO_VALIDATION_F120CA66:"
     )
+
+
+def test_verified_full_validation_profiles_need_no_generation_input(tmp_path: Path) -> None:
+    profiles = {
+        "c33afc26f979cbdb488b8f1aefdc65604992cd7552d5e75ea782e4565fdc21e1": (
+            "VALIDATION_C33AFC26",
+            "letter",
+        ),
+        "6a30babb1921af59155dfe45cf766465597b57cafa1e0e83663a159d89289b6a": (
+            "VALIDATION_6A30BABB",
+            "freeform",
+        ),
+        "f828a63f1bbdd45197e1f3393fb94f76ebfdfc785402617aa8c1397b0b47c555": (
+            "VALIDATION_F828A63F",
+            "letter",
+        ),
+    }
+    for index, (annotation_sha, (profile_name, answer_type)) in enumerate(profiles.items()):
+        case = tmp_path / str(index)
+        case.mkdir()
+        training_plan = _sealed_plan(case, annotation_sha256=annotation_sha)
+        action_model_path, manifest_path = _checkpoint_manifest(
+            case, epoch=1, mode="dense"
+        )
+        plan_output = case / "evaluation-plan.json"
+        config_output = case / "evaluation.toml"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--training-plan",
+                str(training_plan),
+                "--training-status",
+                str(_status(case)),
+                "--results-dir",
+                "/runtime/evaluation-results",
+                "--action-model-path",
+                action_model_path,
+                "--action-model-manifest",
+                str(manifest_path),
+                "--plan-output",
+                str(plan_output),
+                "--config-output",
+                str(config_output),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        resolved = json.loads(plan_output.read_text(encoding="utf-8"))
+        config = tomllib.loads(config_output.read_text(encoding="utf-8"))
+        assert resolved["required_user_inputs"] == []
+        assert resolved["verified_evaluator_profile"]["name"] == profile_name
+        assert config["generation"]["max_tokens"] == 1024
+        assert config["evaluation"]["answer_type"] == answer_type
 
 
 def test_cosmos_rl_peft_recovers_base_model_without_user_reentry(tmp_path: Path) -> None:
@@ -393,7 +548,59 @@ def test_multiple_checkpoints_require_exact_selection(tmp_path: Path) -> None:
     selected, _, selected_config = _run(tmp_path, multiple=True, extra=["--checkpoint-epoch", "2"])
     assert selected.returncode == 0, selected.stderr
     config = tomllib.loads(selected_config.read_text(encoding="utf-8"))
-    assert config["model"]["model_name"] == "/runtime/checkpoints/epoch_2"
+    assert config["model"]["model_name"] == "/runtime/safetensors/epoch_2"
+
+
+def test_cosmos_rl_native_checkpoint_is_an_automatic_pre_action(tmp_path: Path) -> None:
+    training_plan = _sealed_plan(tmp_path)
+    status = tmp_path / "status-no-epoch-field.json"
+    status.write_text(
+        json.dumps(
+            [
+                {
+                    "status": "RUNNING",
+                    "phase": "checkpoint_complete",
+                    "checkpoint_path": "/runtime/run/checkpoints/epoch_1/policy",
+                },
+                {"status": "SUCCESS", "message": "training complete"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    plan_output = tmp_path / "evaluation-plan.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--training-plan",
+            str(training_plan),
+            "--training-status",
+            str(status),
+            "--checkpoint-epoch",
+            "1",
+            "--results-dir",
+            "/runtime/evaluation-results",
+            "--generation-max-tokens",
+            "1024",
+            "--plan-output",
+            str(plan_output),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 3, result.stderr
+    plan = json.loads(plan_output.read_text(encoding="utf-8"))
+    assert plan["required_user_inputs"] == []
+    assert plan["checkpoint"]["events"][0]["epoch"] == 1
+    action = next(
+        item
+        for item in plan["automated_actions"]
+        if item["action"] == "cosmos_rl_checkpoint_pre_action"
+    )
+    assert action["input_checkpoint"].endswith("checkpoints/epoch_1/policy")
+    assert action["checkpoint_epoch"] == 1
+    assert action["user_input"] is False
 
 
 def test_multiple_recorded_validation_manifests_are_automated_not_user_selection(tmp_path: Path) -> None:

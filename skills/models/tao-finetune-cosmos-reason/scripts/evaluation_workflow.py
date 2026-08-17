@@ -19,20 +19,65 @@ import copy
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
-import tomllib
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
+import tomllib
 from cosmos_common import WorkflowError, sha256_file, stable_hash
 from cosmos_workflow import dump_toml
-
 
 SUCCESS = {"SUCCESS", "COMPLETE", "COMPLETED"}
 
 
 VERIFIED_EVALUATOR_PROFILES: dict[str, dict[str, Any]] = {
+    # Full-validation protocols verified on 2026-08-16. Every entry is keyed
+    # by annotation bytes, never by a mutable path or dataset nickname.
+    "c33afc26f979cbdb488b8f1aefdc65604992cd7552d5e75ea782e4565fdc21e1": {
+        "name": "VALIDATION_C33AFC26",
+        "protocol_fingerprint": "3585a053ec6665b8aa81e95f48c45d86887a388eb2e63e38b84f54aa1ded5a47",
+        "answer_type": "letter",
+        "batch_size": 1,
+        "seed": 42,
+        "generation": {
+            "max_tokens": 1024,
+            "temperature": 0.0,
+            "repetition_penalty": 1.0,
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0,
+        },
+    },
+    "6a30babb1921af59155dfe45cf766465597b57cafa1e0e83663a159d89289b6a": {
+        "name": "VALIDATION_6A30BABB",
+        "protocol_fingerprint": "92f3c918fc1f14e49251a603eb303f95672a580ff69b8860c0a131d99b24c267",
+        "answer_type": "freeform",
+        "batch_size": 1,
+        "seed": 42,
+        "generation": {
+            "max_tokens": 1024,
+            "temperature": 0.0,
+            "repetition_penalty": 1.0,
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0,
+        },
+    },
+    "f828a63f1bbdd45197e1f3393fb94f76ebfdfc785402617aa8c1397b0b47c555": {
+        "name": "VALIDATION_F828A63F",
+        "protocol_fingerprint": "69a99bd671fecaf0156975916e93e74955614a5d4eda739101fb4ca48918bb70",
+        "answer_type": "letter",
+        "batch_size": 1,
+        "seed": 42,
+        "generation": {
+            "max_tokens": 1024,
+            "temperature": 0.0,
+            "repetition_penalty": 1.0,
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0,
+        },
+    },
     # Verified PEFT HPO-validation protocol.  This is intentionally keyed by
     # annotation bytes, not by a path or a development dataset name.
     "f120ca66f28e3e5b5a01a3ace93d16c856cf13098faf61b44263a4afc449c709": {
@@ -136,6 +181,10 @@ def _checkpoint_events(records: Sequence[Mapping[str, Any]]) -> list[dict[str, A
         if not path:
             continue
         epoch = values.get("epoch", record.get("epoch"))
+        if epoch is None:
+            match = re.search(r"(?:^|/)epoch_(\d+)(?:/|$)", str(path))
+            if match:
+                epoch = int(match.group(1))
         key = (str(path), str(epoch))
         if key in seen:
             continue
@@ -210,6 +259,94 @@ def _source(value: Any, origin: str) -> dict[str, Any]:
     return {"value": value, "source": origin}
 
 
+def _verify_cosmos_rl_checkpoint_manifest(
+    manifest_path: Path,
+    *,
+    source_checkpoint: str,
+    action_model_path: str,
+    training_mode: str,
+) -> dict[str, Any]:
+    manifest = _load_json(manifest_path.expanduser().resolve())
+    if manifest.get("schema_version") != 1 or manifest.get("status") != "VERIFIED":
+        raise WorkflowError(
+            "Cosmos-RL checkpoint manifest is not terminal VERIFIED schema version 1"
+        )
+    if manifest.get("backend") != "cosmos-rl":
+        raise WorkflowError("Cosmos-RL checkpoint manifest has the wrong backend")
+    expected = {
+        "source_checkpoint": source_checkpoint,
+        "action_model_path": action_model_path,
+        "training_mode": training_mode,
+    }
+    mismatches = {
+        key: {"expected": value, "actual": manifest.get(key)}
+        for key, value in expected.items()
+        if manifest.get(key) != value
+    }
+    if mismatches:
+        raise WorkflowError(
+            "Cosmos-RL checkpoint manifest does not bind the selected training artifact: "
+            f"{json.dumps(mismatches, sort_keys=True)}"
+        )
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files:
+        raise WorkflowError(
+            "Cosmos-RL checkpoint manifest has no verified file inventory"
+        )
+    for item in files:
+        if (
+            not isinstance(item, Mapping)
+            or not isinstance(item.get("path"), str)
+            or not item["path"]
+            or Path(item["path"]).is_absolute()
+            or ".." in Path(item["path"]).parts
+            or not isinstance(item.get("size"), int)
+            or item["size"] <= 0
+        ):
+            raise WorkflowError("Cosmos-RL checkpoint manifest has an invalid file inventory")
+    return manifest
+
+
+def _verify_framework_checkpoint_manifest(
+    manifest_path: Path,
+    *,
+    source_checkpoint: str,
+    action_model_path: str,
+) -> dict[str, Any]:
+    manifest = _load_json(manifest_path.expanduser().resolve())
+    if (
+        manifest.get("schema_version") != 1
+        or manifest.get("status") != "VERIFIED"
+        or manifest.get("backend") != "cosmos-framework"
+    ):
+        raise WorkflowError(
+            "Framework checkpoint action manifest is not terminal VERIFIED schema version 1"
+        )
+    expected = {
+        "source_checkpoint": source_checkpoint,
+        "action_model_path": action_model_path,
+    }
+    mismatches = {
+        key: {"expected": value, "actual": manifest.get(key)}
+        for key, value in expected.items()
+        if manifest.get(key) != value
+    }
+    if mismatches:
+        raise WorkflowError(
+            "Framework checkpoint action manifest does not bind the selected DCP/export: "
+            f"{json.dumps(mismatches, sort_keys=True)}"
+        )
+    verification = manifest.get("verification")
+    if not isinstance(verification, Mapping) or verification.get("ok") is not True:
+        raise WorkflowError("Framework checkpoint action manifest lacks export verification")
+    if verification.get("action_model_path") != action_model_path:
+        raise WorkflowError("Framework export verification path does not match action_model_path")
+    weights = verification.get("weight_files")
+    if not isinstance(weights, list) or not weights:
+        raise WorkflowError("Framework checkpoint action manifest has no verified weight inventory")
+    return manifest
+
+
 def _verified_evaluator_profile(validation: Mapping[str, Any]) -> dict[str, Any] | None:
     manifests = validation.get("annotation_manifest", [])
     if not isinstance(manifests, list) or len(manifests) != 1:
@@ -225,6 +362,7 @@ def _verified_evaluator_profile(validation: Mapping[str, Any]) -> dict[str, Any]
 def resolve(args: argparse.Namespace) -> dict[str, Any]:
     training_plan_path = args.training_plan.expanduser().resolve()
     plan = _verify_training_plan(training_plan_path)
+    backend = str(plan["backend"])
     training = plan["training"]
     validation = plan["datasets"]["validation"]
     evaluation_contract = plan.get("evaluation_contract", {})
@@ -388,6 +526,17 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     elif generation_contract.get("max_tokens") is not None:
         max_tokens = int(generation_contract["max_tokens"])
         provenance["generation.max_tokens"] = _source(max_tokens, "sealed_training_plan.evaluation_contract")
+    elif backend == "cosmos-framework" and (
+        answer_type == "letter" or task_type in {"binary", "mcq"}
+    ):
+        # The Framework evaluator extracts a bounded classification label and
+        # already clamps letter generation to ten tokens at runtime. Resolve
+        # that same bound during planning instead of asking the user for an
+        # irrelevant free-form generation length. Keep Cosmos-RL unchanged.
+        max_tokens = 10
+        provenance["generation.max_tokens"] = _source(
+            max_tokens, "framework_bounded_classification_protocol"
+        )
     else:
         required_user_inputs.append(
             {"field": "generation.max_tokens", "reason": "generation length is not a fine-tuning parameter"}
@@ -420,8 +569,9 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     else:
         provenance["results_dir"] = _source(args.results_dir, "user")
 
-    backend = str(plan["backend"])
+    training_mode = str(training.get("training_mode", ""))
     action_model_path = args.action_model_path
+    action_checkpoint_manifest: dict[str, Any] | None = None
     if backend == "cosmos-framework" and checkpoint and not action_model_path:
         automated_actions.append(
             {
@@ -432,13 +582,60 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
                 "user_input": False,
             }
         )
-    model_name = action_model_path if backend == "cosmos-framework" else checkpoint
+    if backend == "cosmos-rl" and checkpoint and not action_model_path:
+        automated_actions.append(
+            {
+                "action": "cosmos_rl_checkpoint_pre_action",
+                "owner": "scripts/cosmos_rl_checkpoint_action.py",
+                "input_checkpoint": checkpoint,
+                "checkpoint_epoch": next(
+                    (
+                        event.get("epoch")
+                        for event in status_events
+                        if event.get("path") == checkpoint
+                    ),
+                    None,
+                ),
+                "training_mode": training_mode,
+                "required_outputs": ["action_model_path", "action_model_manifest"],
+                "user_input": False,
+            }
+        )
+    if backend == "cosmos-rl" and action_model_path and checkpoint:
+        action_model_manifest_path = getattr(args, "action_model_manifest", None)
+        if not action_model_manifest_path:
+            raise WorkflowError(
+                "Cosmos-RL action_model_path requires --action-model-manifest from "
+                "cosmos_rl_checkpoint_action.py"
+            )
+        action_checkpoint_manifest = _verify_cosmos_rl_checkpoint_manifest(
+            action_model_manifest_path,
+            source_checkpoint=checkpoint,
+            action_model_path=action_model_path,
+            training_mode=training_mode,
+        )
+    if backend == "cosmos-framework" and action_model_path and checkpoint:
+        action_model_manifest_path = getattr(args, "action_model_manifest", None)
+        if not action_model_manifest_path:
+            raise WorkflowError(
+                "Framework action_model_path requires --action-model-manifest from "
+                "framework_checkpoint_action.py prepare/verify"
+            )
+        action_checkpoint_manifest = _verify_framework_checkpoint_manifest(
+            action_model_manifest_path,
+            source_checkpoint=checkpoint,
+            action_model_path=action_model_path,
+        )
+    model_name = action_model_path if action_model_path and checkpoint else (
+        checkpoint if backend == "cosmos-framework" else None
+    )
     if backend == "cosmos-framework" and action_model_path:
         provenance["model.model_name"] = _source(action_model_path, "framework_checkpoint_pre_action")
+    elif backend == "cosmos-rl" and action_model_path and checkpoint:
+        provenance["model.model_name"] = _source(action_model_path, "cosmos_rl_checkpoint_pre_action")
     elif model_name:
         provenance["model.model_name"] = _source(model_name, "selected_checkpoint")
 
-    training_mode = str(training.get("training_mode", ""))
     enable_lora = backend == "cosmos-rl" and training_mode == "peft"
     base_model_path = _prepared_base_model(plan) if enable_lora else ""
     if enable_lora and not base_model_path:
@@ -517,15 +714,56 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             }
         )
 
-    vision: dict[str, Any] = {
-        "num_frames": frames,
-        "video_decoder": "pynvvideocodec",
-        "video_cache_size": 0,
-    }
+    if backend == "cosmos-framework":
+        framework_runtime = plan.get("framework_video_runtime")
+        if not isinstance(framework_runtime, Mapping) or framework_runtime.get(
+            "selected_profile"
+        ) != "torchcodec-cuda-on-demand":
+            raise WorkflowError(
+                "Framework evaluation requires the sealed torchcodec-cuda-on-demand runtime profile"
+            )
+        if framework_runtime.get("decoder_device_binding") != "explicit_local_rank":
+            raise WorkflowError(
+                "Framework evaluation requires explicit local-rank CUDA decoder binding"
+            )
+        vision: dict[str, Any] = {
+            "num_frames": frames,
+            "video_decoder": "torchcodec-cuda-on-demand",
+            "video_cache_size": int(framework_runtime["video_cache_size"]),
+            "process_threads": int(framework_runtime["sft_process_threads"]),
+            "decoder_threads": int(framework_runtime["decoder_threads"]),
+            "decoder_device": str(framework_runtime["decoder_device"]),
+            "dataloader_num_workers": int(
+                framework_runtime["dataloader_num_workers"]
+            ),
+            "dataloader_prefetch_factor": int(
+                framework_runtime["dataloader_prefetch_factor"]
+            ),
+            "dataloader_multiprocessing_context": str(
+                framework_runtime["dataloader_multiprocessing_context"]
+            ),
+            "dataloader_persistent_workers": bool(
+                framework_runtime["dataloader_persistent_workers"]
+            ),
+        }
+        provenance["vision.video_decoder"] = _source(
+            vision["video_decoder"], "sealed_training_plan.framework_video_runtime"
+        )
+        provenance["vision.video_cache_size"] = _source(
+            vision["video_cache_size"], "sealed_training_plan.framework_video_runtime"
+        )
+    else:
+        # Preserve the Cosmos-RL evaluator contract exactly. Framework runtime
+        # fields and decoder artifacts must never bleed into this branch.
+        vision = {
+            "num_frames": frames,
+            "video_decoder": "pynvvideocodec",
+            "video_cache_size": 0,
+        }
     if max_video_pixels is not None:
         vision["max_pixels"] = max_video_pixels
     decoder_artifact = plan.get("decoder_artifact", {})
-    if isinstance(decoder_artifact, Mapping) and decoder_artifact.get("enabled"):
+    if backend == "cosmos-rl" and isinstance(decoder_artifact, Mapping) and decoder_artifact.get("enabled"):
         vision["video_override_map"] = decoder_artifact.get("path")
         provenance["vision.video_override_map"] = _source(
             decoder_artifact.get("path"), "sealed_training_plan.decoder_artifact"
@@ -592,6 +830,14 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
                 "user_input": False,
             }
         )
+    if backend == "cosmos-rl" and checkpoint and not action_model_path:
+        blockers.append(
+            {
+                "field": "model.model_name",
+                "reason": "awaiting mandatory Cosmos-RL HF safetensors checkpoint verification",
+                "user_input": False,
+            }
+        )
     if enable_lora and not base_model_path:
         blockers.append(
             {
@@ -626,6 +872,8 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             "selected": checkpoint,
             "source": checkpoint_source,
             "events": status_events,
+            "action_model_path": action_model_path,
+            "action_model_manifest": action_checkpoint_manifest,
         },
         "verified_evaluator_profile": verified_profile,
         "required_user_inputs": required_user_inputs,
@@ -645,6 +893,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--checkpoint")
     parser.add_argument("--checkpoint-epoch", type=int)
     parser.add_argument("--action-model-path")
+    parser.add_argument("--action-model-manifest", type=Path)
     parser.add_argument("--action-validation-annotation")
     parser.add_argument("--action-validation-media-root")
     parser.add_argument("--validation-annotation", action="append", default=[])

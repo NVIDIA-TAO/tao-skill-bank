@@ -233,3 +233,71 @@ def test_slurm_renderer_creates_writable_mount_roots_before_pyxis() -> None:
         "--container-mounts=/inputs:/data:ro,/runs/results:/results,"
         "/runs/checkpoints:/checkpoints,/runs/cache:/cache"
     ) in script
+
+
+def _decoder_args(**overrides: object) -> SimpleNamespace:
+    values = {
+        "video_override_max_macroblocks": 8192,
+        "video_override_workers": 16,
+        "video_override_map": "",
+        "video_override_manifest": "",
+        "video_override_fingerprint": "",
+        "video_override_force_video": [],
+        "processor_revision": "packaged",
+        "cache_dir": "/cache",
+        "tao_integration_commit": "a" * 40,
+        "train_annotation": ["/data/train.json"],
+        "train_media_root": ["/data/train"],
+        "validation_annotation": ["/data/val.json"],
+        "validation_media_root": ["/data/val"],
+        "dataset_family": "task_aware_video_reasoning",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_framework_task_aware_data_uses_native_runtime_without_rl_artifact() -> None:
+    artifact = MODULE._decoder_artifact_plan(
+        _decoder_args(),
+        backend="cosmos-framework",
+        model={"fingerprint": "b" * 64},
+        model_profile={"frames": 8},
+        train_data={"dataset_fingerprint": "c" * 64},
+        val_data={"dataset_fingerprint": "d" * 64},
+        rl_video_runtime=None,
+    )
+
+    assert artifact["required"] is False
+    assert artifact["enabled"] is False
+    assert artifact["preparation_module"] is None
+    assert artifact["validation_module"] is None
+    assert artifact["policy"] == {
+        "macroblock_scan": False,
+        "force_all_validation_media": False,
+        "forced_runtime_sources": [],
+        "gpu_random_access_validation_required": False,
+        "selection_basis": "framework_native_torchcodec_cuda_on_demand",
+    }
+
+
+def test_framework_rejects_cosmos_rl_video_override_artifact() -> None:
+    args = _decoder_args(
+        video_override_map="/cache/map.json",
+        video_override_manifest="/cache/manifest.json",
+        video_override_fingerprint="e" * 64,
+    )
+
+    try:
+        MODULE._decoder_artifact_plan(
+            args,
+            backend="cosmos-framework",
+            model={"fingerprint": "b" * 64},
+            model_profile={"frames": 8},
+            train_data={"dataset_fingerprint": "c" * 64},
+            val_data={"dataset_fingerprint": "d" * 64},
+            rl_video_runtime=None,
+        )
+    except MODULE.WorkflowError as exc:
+        assert "owned by the Cosmos-RL backend" in str(exc)
+    else:
+        raise AssertionError("Framework accepted a Cosmos-RL video override artifact")

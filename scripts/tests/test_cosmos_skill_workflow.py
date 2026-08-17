@@ -40,6 +40,13 @@ metric = load_module("cosmos_metrics_test", SKILL / "scripts" / "extract_cosmos_
 framework_action = load_module(
     "framework_checkpoint_action_test", SKILL / "scripts" / "framework_checkpoint_action.py"
 )
+action_bundle = load_module(
+    "stage_action_bundle_test", SKILL / "scripts" / "stage_action_bundle.py"
+)
+framework_image_preflight = load_module(
+    "framework_evaluation_image_preflight_test",
+    SKILL / "scripts" / "framework_evaluation_image_preflight.py",
+)
 
 
 def make_model(tmp_path: Path, model_type: str = "qwen3_vl") -> Path:
@@ -141,6 +148,207 @@ def attach_decoder_artifact(args, tmp_path: Path) -> None:
     Path(args.video_override_manifest).write_text("{}")
 
 
+def test_framework_action_bundle_is_import_closed_and_idempotent(tmp_path: Path) -> None:
+    destination = tmp_path / "framework-checkpoint-input"
+    first = action_bundle.stage("framework-checkpoint", destination)
+    second = action_bundle.stage("framework-checkpoint", destination)
+    assert first["state"] == "staged"
+    assert second["state"] == "reused"
+    assert {item["path"] for item in first["files"]} == {
+        "framework_checkpoint_action.py",
+        "cosmos_common.py",
+    }
+    imported = subprocess.run(
+        [sys.executable, str(destination / "framework_checkpoint_action.py"), "--help"],
+        cwd=destination,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert imported.returncode == 0, imported.stderr
+
+
+def test_framework_image_preflight_rejects_old_sqsh_and_accepts_baked_runtime() -> None:
+    old = framework_image_preflight.check_listing(
+        "squashfs-root/workspace/.venv/lib/python3.13/site-packages/cosmos_rl/evaluation/base.py\n"
+        "squashfs-root/workspace/.venv/lib/python3.13/site-packages/cosmos_rl/framework/runtime.py\n",
+        "/lustre/old.sqsh",
+    )
+    assert old["compatible"] is False
+    assert old["missing_baked_paths"] == [
+        "/cosmos_rl/utils/framework_torchcodec_video.py"
+    ]
+    current = framework_image_preflight.check_listing(
+        "\n".join(
+            f"squashfs-root/workspace/.venv/lib/python3.13/site-packages{suffix}"
+            for suffix in framework_image_preflight.REQUIRED_SUFFIXES
+        ),
+        "/lustre/current.sqsh",
+    )
+    assert current["compatible"] is True
+    listing = "\n".join(
+        f"squashfs-root/workspace/.venv/lib/python3.13/site-packages{suffix}"
+        for suffix in framework_image_preflight.REQUIRED_SUFFIXES
+    )
+    stale = framework_image_preflight.check_listing(
+        listing,
+        "/lustre/stale.sqsh",
+        sources={suffix: "# old implementation" for suffix in framework_image_preflight.REQUIRED_SUFFIXES},
+    )
+    assert stale["compatible"] is False
+    assert stale["source_attestation_performed"] is True
+    assert set(stale["missing_source_capabilities"]) == set(
+        framework_image_preflight.REQUIRED_SUFFIXES
+    )
+    baked = framework_image_preflight.check_listing(
+        listing,
+        "/lustre/baked.sqsh",
+        sources={
+            suffix: "\n".join(framework_image_preflight.REQUIRED_SOURCE_TOKENS[suffix])
+            for suffix in framework_image_preflight.REQUIRED_SUFFIXES
+        },
+    )
+    assert baked["compatible"] is True
+    assert baked["missing_source_capabilities"] == {}
+
+
+def test_node_exclusions_are_live_filtered_and_rendered_without_hand_patch(
+    tmp_path: Path,
+) -> None:
+    args = args_for(tmp_path)
+    inventory = tmp_path / "nodes.txt"
+    inventory.write_text(
+        "NodeName=batch-block5-00001 State=IDLE\n"
+        "NodeName=batch-block5-00002 State=DOWN\n"
+        "NodeName=batch-block5-00003 State=IDLE+PLANNED Comment=Run network diagnostics\n"
+        "NodeName=batch-block5-00004 State=IDLE Comment=Consult runbook for pyxis-enroot mount failure\n"
+        "NodeName=batch-block5-00005 State=IDLE Comment=Consult https://scheduler/runbook#io-error\n"
+        "NodeName=batch-block5-00006 State=IDLE Comment=Check FACT dashboard for this node\n",
+        encoding="utf-8",
+    )
+    args.exclude_node = ["batch-block5-00002", "retired-node-99999"]
+    args.exclude_unhealthy_inventory_nodes = True
+    args.slurm_node_inventory_file = str(inventory)
+    plan = workflow.build_plan(args)
+    assert plan["slurm_node_exclusions"]["validated"] == [
+        "batch-block5-00002",
+        "batch-block5-00003",
+        "batch-block5-00004",
+        "batch-block5-00005",
+        "batch-block5-00006",
+    ]
+    assert plan["slurm_node_exclusions"]["auto_excluded"] == [
+        "batch-block5-00002",
+        "batch-block5-00003",
+        "batch-block5-00004",
+        "batch-block5-00005",
+        "batch-block5-00006",
+    ]
+    assert plan["slurm_node_exclusions"]["auto_exclusion_reasons"] == {
+        "batch-block5-00002": ["scheduler_state=DOWN"],
+        "batch-block5-00003": ["scheduler_diagnostic_comment"],
+        "batch-block5-00004": ["scheduler_diagnostic_comment"],
+        "batch-block5-00005": ["scheduler_diagnostic_comment"],
+        "batch-block5-00006": ["scheduler_comment"],
+    }
+    assert plan["slurm_node_exclusions"]["retired_or_missing"] == [
+        "retired-node-99999"
+    ]
+
+    args.platform = "slurm"
+    args.partition = "polar3,polar4"
+    args.account = "account"
+    args.container_mount = [f"{tmp_path}:{tmp_path}"]
+    args.stdout_path = str(tmp_path / "%x-%j.out")
+    args.stderr_path = str(tmp_path / "%x-%j.err")
+    args.timeout = "03:48:00"
+    args.time_limit = "04:00:00"
+    args.exclusive = True
+    script = workflow.render_slurm(args, plan)
+    assert (
+        "#SBATCH --exclude=batch-block5-00002,batch-block5-00003,batch-block5-00004,batch-block5-00005,batch-block5-00006"
+        in script
+    )
+    assert "retired-node-99999" not in script
+
+    workflow.write_spec(args, plan)
+    artifact = tmp_path / "sealed-plan.json"
+    args.plan_artifact = str(artifact)
+    plan["initial_metadata"] = workflow.initial_metadata(args, plan)
+    workflow.save_plan_artifact(args, plan, str(artifact))
+    rendered_path = tmp_path / "job.sbatch"
+    rendered = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "scripts" / "cosmos_workflow.py"),
+            "render-slurm",
+            "--plan-artifact",
+            str(artifact),
+            "--render-output",
+            str(rendered_path),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    assert "#SBATCH --exclude=batch-block5-00002" in rendered_path.read_text()
+
+
+def test_retry_helper_reuses_sealed_inspection_and_refreshes_job_identity(
+    tmp_path: Path,
+) -> None:
+    args = args_for(tmp_path)
+    prior_output = tmp_path / "prior-plan.json"
+    args.plan_artifact = str(prior_output)
+    plan = workflow.build_plan(args)
+    workflow.write_spec(args, plan)
+    plan["input_frame"] = {
+        "kind": "slurm_remote",
+        "verified_host": "login.example.invalid",
+        "inspection_transport": "repository_helper_streamed_over_ssh",
+    }
+    plan["initial_metadata"] = workflow.initial_metadata(args, plan)
+    workflow.save_plan_artifact(args, plan, str(prior_output))
+
+    inventory = tmp_path / "nodes.txt"
+    inventory.write_text("batch-block5-00002\nbatch-block5-00003\n", encoding="utf-8")
+    retry_output = tmp_path / "retry-plan.json"
+    retry_spec = tmp_path / "train-retry.toml"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "scripts" / "cosmos_retry_plan.py"),
+            "--prior-plan",
+            str(prior_output),
+            "--job-id",
+            "cosmos-reason-train-retry01",
+            "--write-spec",
+            str(retry_spec),
+            "--exclude-node",
+            "batch-block5-00002",
+            "--exclude-node",
+            "retired-node-99999",
+            "--slurm-node-inventory",
+            str(inventory),
+            "--output",
+            str(retry_output),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    retry = json.loads(retry_output.read_text(encoding="utf-8"))
+    assert retry["experiment_id"] == "cosmos-reason-train-retry01"
+    assert retry["retry_preparation"]["inspection_reused"] is True
+    assert retry["slurm_node_exclusions"]["validated"] == ["batch-block5-00002"]
+    assert retry["slurm_node_exclusions"]["retired_or_missing"] == [
+        "retired-node-99999"
+    ]
+    assert retry["config"]["original"] == str(retry_spec)
+
+
 def test_model_backend_resolution_and_comparative_explicitness():
     assert workflow.select_backend(model="Cosmos3-Nano", action="train", workload="training")[0] == "cosmos-rl"
     assert workflow.select_backend(model="Cosmos3-Nano", action="evaluate", workload="training")[0] == "cosmos-rl"
@@ -149,6 +357,18 @@ def test_model_backend_resolution_and_comparative_explicitness():
     assert workflow.select_backend(model="Cosmos3-Edge", action="inference_microservice", workload="training")[0] == "cosmos-framework"
     with pytest.raises(common.WorkflowError, match="backend selection"):
         workflow.select_backend(model="Cosmos3-Nano", action="train", backend="auto", comparative=True)
+
+
+def test_toml_bytes_survive_sorted_sealed_plan_round_trip() -> None:
+    spec = {
+        "z_table": {"b": 2, "a": 1},
+        "root_b": "b",
+        "a_table": {"nested": {"z": False, "a": True}, "value": 3},
+        "root_a": "a",
+    }
+    before = workflow.dump_toml(spec)
+    after = workflow.dump_toml(json.loads(json.dumps(spec, sort_keys=True)))
+    assert before == after
 
 
 def make_framework_dcp(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -653,9 +873,10 @@ def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
     assert "require_complete_dataset_cache" not in rl["spec"]["train"]["train_policy"]
     assert "cache_dir" not in rl["spec"]["custom"]["vision"]
     assert rl["spec"]["train"]["optm_impl"] == "fused"
-    assert framework["decoder_artifact"]["required"] is True
+    assert framework["decoder_artifact"]["required"] is False
     assert framework["decoder_artifact"]["enabled"] is False
-    assert framework["decoder_artifact"]["policy"]["gpu_random_access_validation_required"] is True
+    assert framework["decoder_artifact"]["policy"]["gpu_random_access_validation_required"] is False
+    assert framework["decoder_artifact"]["policy"]["selection_basis"] == "framework_native_torchcodec_cuda_on_demand"
     assert rl["decoder_artifact"]["required"] is False
     assert rl["decoder_artifact"]["enabled"] is False
     assert rl["decoder_artifact"]["policy"]["gpu_random_access_validation_required"] is False
@@ -663,7 +884,7 @@ def test_task_aware_hybrid_expansion_has_paired_optimizer_updates(tmp_path):
     assert rl["environment"]["FORCE_QWENVL_VIDEO_READER"] == "torchvision"
 
 
-def test_task_aware_decoder_artifact_is_validated_before_training(tmp_path):
+def test_framework_rejects_cosmos_rl_decoder_artifact(tmp_path):
     args = args_for(
         tmp_path, backend="cosmos-framework",
         dataset_family="task_aware_video_reasoning",
@@ -675,20 +896,8 @@ def test_task_aware_decoder_artifact_is_validated_before_training(tmp_path):
         str(tmp_path / "train" / "media" / "train-bcq-0.mp4")
     ]
 
-    plan = workflow.build_plan(args)
-
-    artifact = plan["decoder_artifact"]
-    assert artifact["enabled"] is True
-    assert artifact["preparation_arguments"].count("--annotation-media-root") == 6
-    assert artifact["preparation_arguments"].count("--force-annotation") == 3
-    assert artifact["preparation_arguments"].count("--force-video") == 1
-    assert "cosmos_rl.utils.video_override_artifacts" in artifact["preparation_command"]
-    assert "cosmos_rl.utils.validate_video_override_artifacts" in artifact["validation_command"]
-    assert "cosmos_rl.utils.validate_video_override_artifacts" in plan["command"]
-    assert "--skip-file-hashes &&\n" in plan["command"]
-    assert "--skip-file-hashes" in plan["command"]
-    assert "cosmos_rl.utils.validate_video_override_artifacts" in plan["preflight"]["container_runtime"]
-    assert "--skip-file-hashes" not in plan["preflight"]["container_runtime"]
+    with pytest.raises(common.WorkflowError, match="owned by the Cosmos-RL backend"):
+        workflow.build_plan(args)
 
 
 def test_decoder_artifact_requires_map_manifest_and_fingerprint(tmp_path):
@@ -699,7 +908,7 @@ def test_decoder_artifact_requires_map_manifest_and_fingerprint(tmp_path):
         workflow.build_plan(args)
 
 
-def test_task_aware_slurm_render_blocks_missing_decoder_artifact(tmp_path):
+def test_framework_task_aware_slurm_uses_native_runtime_without_decoder_artifact(tmp_path):
     args = args_for(
         tmp_path, dataset_family="task_aware_video_reasoning"
     )
@@ -709,8 +918,9 @@ def test_task_aware_slurm_render_blocks_missing_decoder_artifact(tmp_path):
     args.container_mount = [f"{tmp_path}:{tmp_path}"]
     plan = workflow.build_plan(args)
 
-    with pytest.raises(common.WorkflowError, match="requires a complete fingerprinted"):
-        workflow.render_slurm(args, plan)
+    script = workflow.render_slurm(args, plan)
+    assert "--container-image=" in script
+    assert subprocess.run(["bash", "-n"], input=script, text=True).returncode == 0
 
 
 def test_task_aware_constant_schedule_keeps_lr_factor_at_one(tmp_path):
@@ -1028,7 +1238,6 @@ def test_smoke_limit_never_leaks_to_full(tmp_path):
 
 def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     args = args_for(tmp_path)
-    attach_decoder_artifact(args, tmp_path)
     args.platform = "slurm"; args.partition = "compute"; args.account = "project"
     args.slurm_user = "user"; args.slurm_host = ["login.example"]
     args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
@@ -1069,7 +1278,6 @@ def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
 
 def test_single_node_exclusive_slurm_step_uses_allocated_cpus(tmp_path):
     args = args_for(tmp_path)
-    attach_decoder_artifact(args, tmp_path)
     args.platform = "slurm"; args.partition = "compute"; args.account = "project"
     args.slurm_user = "user"; args.slurm_host = ["login.example"]
     args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")
@@ -1090,7 +1298,6 @@ def test_single_node_exclusive_slurm_step_uses_allocated_cpus(tmp_path):
 
 def test_slurm_script_rejects_invalid_child_timeout(tmp_path):
     args = args_for(tmp_path)
-    attach_decoder_artifact(args, tmp_path)
     args.platform = "slurm"; args.partition = "compute"; args.account = "project"
     args.slurm_user = "user"; args.slurm_host = ["login.example"]
     args.stdout_path = str(tmp_path / "stdout.log"); args.stderr_path = str(tmp_path / "stderr.log")

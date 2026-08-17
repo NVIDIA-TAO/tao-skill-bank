@@ -117,25 +117,39 @@ prepared base model, and GPU count. It records field-level provenance and
 blocks a checksum-invalid plan. Do not ask the user to repeat an inherited
 value and do not replace it with a template value.
 
-The helper writes all genuinely missing fields to `required_user_inputs` in
-one pass. Ask once for only those entries: normally the new results directory,
-an exact checkpoint/epoch when checkpoint events are ambiguous, generation
-maximum tokens when the training plan did not record an evaluation contract,
-or task/metric semantics that annotation inspection could not prove. If the
-user selects a different evaluation corpus, also require its exact annotation
-and media paths and re-run structural/fingerprint inspection; do not carry the
-old dataset's prompt or scorer semantics into it.
+The helper writes genuinely missing fields to `required_user_inputs` in one
+pass. Ask once for only those entries. A different evaluation corpus requires
+new annotation/media paths and structural inspection; never carry over the
+old corpus's prompt or scorer semantics.
 
-Entries in `automated_actions` are not questions for the user. In particular,
-the skill owns Framework DCP export/verification and deterministic recovery of
-a Cosmos-RL PEFT base model from training provenance. It also owns
-deterministic full-coverage materialization when the sealed validation split
-contains multiple manifests or media roots; never ask the user to choose a
-subset. Rerun the helper with the
-Framework pre-action's verified `action_model_path`; only a `ready=true` plan
-may write or launch the evaluation TOML. Preserve the plan/config SHA256 values
-in the evaluation job record. See `references/cosmos-reason-evaluate.md` for
-the complete action flow.
+`automated_actions` are not user questions. The skill owns checkpoint
+export/verification, PEFT base recovery, and full-coverage materialization for
+multi-manifest validation. Rerun with the verified `action_model_path`; only a
+`ready=true` plan may write or launch TOML. Preserve plan/config SHA256 values
+in the job record. The complete flow is in
+`references/cosmos-reason-evaluate.md`.
+
+For Cosmos-RL, `checkpoint_complete` identifies a native policy checkpoint,
+not evaluator input. Run the emitted `cosmos_rl_checkpoint_pre_action` with
+`scripts/cosmos_rl_checkpoint_action.py` on target compute. It resolves and
+validates sibling `safetensors/epoch_N` and writes a binding manifest. Rerun
+with `--action-model-path` and `--action-model-manifest`; never pass
+`checkpoints/epoch_N[/policy]` to the evaluator or ask the user to convert it.
+
+For SLURM evaluation on either backend, only
+`scripts/render_evaluation_slurm.py` is valid. It accepts a checksum-consistent
+`ready=true` plan and verified checkpoint manifest, selects only the resolved
+backend CLI, derives distributed topology, persists `/results` and structured
+status, preserves the child exit, and disables requeue. Its Framework branch
+attests the required evaluator implementation from the selected SQSH and never
+overlays source. Stage its inputs and output under the job record's
+`results_dir` before `sbatch`.
+Before rendering a Framework evaluation, run
+`scripts/framework_evaluation_image_preflight.py --sqsh <selected.sqsh>` on a
+host that can read the image. Exit code 4 means the immutable image predates
+the required baked evaluator implementation; stop before allocating GPUs and
+request a compatible image/SQSH identity. Do not work around it with a source
+mount, patch, overlay, or Cosmos-RL fallback.
 
 ## Framework checkpoint pre-action
 
@@ -149,8 +163,10 @@ standard run layout, and otherwise requires an explicit `config_file`.
 For DCP input, run the helper's `prepare` verb in the newly built Framework
 TAO action image before starting the requested action. Its runner may be local
 Docker or an `srun` Pyxis command supplied through `--command-prefix`. On
-SLURM, stage this checked-in helper and `cosmos_common.py` with checksums in the
-job input directory; mount only that job directory, not a source checkout.
+SLURM, run `scripts/stage_action_bundle.py --bundle framework-checkpoint` so
+this helper and `cosmos_common.py` are always staged together with a closed
+checksum manifest in the job input directory; mount only that job directory,
+not a source checkout.
 The helper invokes the repository-owned exact-key exporter, verifies the DCP
 metadata/config/base-model/revision/exported weights and manifest, writes
 `.tao_export_complete`, and returns `action_model_path`. Put that verified path
@@ -192,64 +208,18 @@ Execute these stages in order and persist their outputs.
    inspection exactly once with the `plan` verb and pass a local
    `--plan-artifact <path>` so the resolved request and inspection results are
    sealed for the remaining launch verbs.
-7. Prepare the decoder input selected by the structural dataset contract.
-   Cosmos-RL defaults to direct on-demand sample processing so training starts
-   without a dataset-cache prewarm phase. Conversation-style runs prewarm only
-   when the user explicitly selects `--rl-dataset-cache-mode prewarm`; that
-   opt-in uses separate deterministic train and validation keys.
-   `--rl-video-profile auto` selects `pynv-device-rgbp` for
-   `video_conversation` and `system-pyav` for
-   `task_aware_video_reasoning`; record the resolved profile and rationale.
-   The fast profile uses the source-baked PyNvVideoCodec device-RGBP/DLPack
-   path, one persistent spawned DataLoader worker, prefetch two, and the
-   measured serial logical-batch preprocessing path. Preflight must prove the installed
-   Qwen worker forwards `TAO_PYNV_DECODER_CACHE_SIZE` and that its original
-   `fetch_video` function normalizes explicit pixel bounds using the caller's
-   actual image patch size. A configured capacity or pixel contract that falls
-   back inside spawned workers is an image defect. The validated
-   default sizes the processed-output LRU and rank-local native decoder-session
-   cache to the inspected unique-media working set; explicit supported
-   overrides remain available. The video LRU stores processed `fetch_video`
-   outputs in rank-local memory and the decoder cache stores rank-local native
-   sessions; both populate during
-   ordinary training, persist no video files, and require no prewarm.
-   A fingerprinted compatibility artifact is optional for Cosmos-RL and must
-   never delay a direct training launch. Its source-baked builder can scan every referenced stream against the
-   declared hardware macroblock budget and creates overrides only for streams
-   that exceed it (or for explicitly diagnosed sources); compatible media keep
-   the original zero-copy path. The native fast reader retains a narrow,
-   per-resolved-path safety route to the packaged sparse System PyAV reader only
-   for a permanent PyNv/NVDEC capability exception. It must attest that event,
-   remember the path within the rank, and re-raise ordinary I/O, decode, and
-   programming failures. This is part of the resolved hardware profile, not a
-   dataset selector or a broad Qwen fallback.
-   The explicit `system-pyav` profile remains the sparse software route for
-   codec-policy-constrained runs. Its packaged reader must register in the
-   controller and every spawned worker; the image installs the checksum-pinned
-   official PyAV wheel and proves that generic `h264` and `hevc` resolve to
-   software decoders. A source-built wheel resolving those names to `*_cuvid`
-   is an image defect. Never replace the selected profile through Qwen's broad
-   implicit fallback or describe the PyNv route as satisfying a software-codec
-   policy without a separate review; the capability-only route above is the
-   sole permitted exception and must remain source-baked and attested.
-   The JSON plan emits exact `decoder_artifact.preparation_command` and
-   `decoder_artifact.validation_command` values for the selected clean image.
-   When the user explicitly supplies an artifact, re-plan with its map,
-   manifest, and fingerprint outputs, seal that plan, and never reuse another
-   run's cache or override artifact.
-   Cosmos Framework independently resolves its native
-   `torchcodec-cuda-on-demand` profile. It uses CUDA indexed decode, a
-   rank-local decoded-frame LRU sized from the inspected unique-media working
-   set, and eight bounded order-preserving
-   preprocessing threads inside one persistent spawned DataLoader worker with
-   prefetch two. The worker populates only rank-local memory caches during
-   ordinary iteration; it does not add a prewarm phase or a disk cache. Nano
-   automatically packs each rank's exact share of the effective global batch into a
-   resume-safe contiguous forward, reducing gradient accumulation without
-   changing the requested global batch or optimizer-update count. It attests
-   the actual CUDA output device on the first successful decode in every rank.
-   The cache populates only while training and is never prewarmed or persisted
-   to disk.
+7. Resolve the video runtime from the structural dataset contract and enforce
+   every profile gate in `references/cosmos-reproducibility-gates.md`.
+   Cosmos-RL `auto` selects source-baked `pynv-device-rgbp` for
+   `video_conversation` and `system-pyav` for `task_aware_video_reasoning`;
+   Framework independently selects `torchcodec-cuda-on-demand`. Record the
+   profile and rationale. All defaults populate rank-local memory on demand,
+   use no disk cache or prewarm, and fail when their decoder, cache, pixel,
+   worker, device-attestation, or fallback contract cannot be honored. An RL
+   compatibility artifact is optional and must not delay a direct launch;
+   explicit artifacts must be validated and sealed into a newly generated
+   plan. Never substitute Qwen's broad implicit fallback or a different
+   implementation.
 8. Generate backend-native TOML, environment, topology, preflight commands,
    parity data, resolved video-runtime profile, and machine-readable job
    metadata. Full specs must contain no
@@ -281,6 +251,10 @@ Execute these stages in order and persist their outputs.
 12. Resolve evaluation with `scripts/evaluation_workflow.py`. Inherit exact
     fine-tuning artifacts, collect only its remaining user inputs, run its
     backend-owned automated checkpoint pre-actions, and require `ready=true`.
+    On Cosmos-RL, verify the selected HF export with
+    `cosmos_rl_checkpoint_action.py`, rerun resolution with its manifest, and
+    render SLURM only with `render_evaluation_slurm.py`; never select the
+    native policy directory or improvise `/results` and TAO status variables.
     Evaluate the selected checkpoint with identical prompt, preprocessing,
     generation, normalization, and task scoring. Extract final metrics with
     `scripts/extract_cosmos_metrics.py`.
@@ -378,3 +352,17 @@ change, or rely on a temporary launch script as the implementation.
 
 Use `references/cosmos-reproducibility-gates.md` as the source-owner and test
 map before proposing a workaround in a fresh session.
+
+## Infrastructure retry preparation
+
+For an evidence-classified SLURM infrastructure retry, open the new job record
+with `--retry-of`, capture the current `scontrol show nodes -o` inventory, and
+run `scripts/cosmos_retry_plan.py`. Supply every evidence-backed failed node
+with `--exclude-node`. The helper reuses only the checksum-verified prior
+model/dataset inspection, refreshes job/config identities, drops retired node
+names that SLURM would reject, automatically excludes nodes whose scheduler
+state is DOWN/DRAIN/FAIL/NOT_RESPONDING or which carry any nonempty scheduler
+comment, and seals the validated exclusions into the new plan. On supported
+clusters those comments are operational quarantine/runbook markers, even when
+the node remains schedulable as IDLE+PLANNED. Materialize and render from that
+plan; never patch an SBATCH file or use an ad-hoc replanning script.

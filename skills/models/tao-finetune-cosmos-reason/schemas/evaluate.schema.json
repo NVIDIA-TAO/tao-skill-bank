@@ -73,6 +73,13 @@
     "vision": {
       "max_pixels": 0,
       "num_frames": 0,
+      "decoder_device": "cuda",
+      "decoder_threads": 1,
+      "dataloader_multiprocessing_context": "spawn",
+      "dataloader_num_workers": 1,
+      "dataloader_persistent_workers": true,
+      "dataloader_prefetch_factor": 2,
+      "process_threads": 8,
       "video_cache_size": 0,
       "video_decoder": "pynvvideocodec"
     }
@@ -297,14 +304,28 @@
       "default": {
         "max_pixels": 0,
         "num_frames": 0,
+        "decoder_device": "cuda",
+        "decoder_threads": 1,
+        "dataloader_multiprocessing_context": "spawn",
+        "dataloader_num_workers": 1,
+        "dataloader_persistent_workers": true,
+        "dataloader_prefetch_factor": 2,
+        "process_threads": 8,
         "video_cache_size": 0,
         "video_decoder": "pynvvideocodec"
       },
       "properties": {
+        "decoder_device": {"default": "cuda", "enum": ["cuda"], "type": "categorical"},
+        "decoder_threads": {"default": 1, "minimum": 1, "type": "int"},
+        "dataloader_multiprocessing_context": {"default": "spawn", "enum": ["spawn"], "type": "categorical"},
+        "dataloader_num_workers": {"default": 1, "minimum": 1, "type": "int"},
+        "dataloader_persistent_workers": {"default": true, "type": "bool"},
+        "dataloader_prefetch_factor": {"default": 2, "minimum": 1, "type": "int"},
         "max_pixels": {"default": 0, "minimum": 1, "type": "int"},
         "num_frames": {"automl_enabled": true, "default": 0, "minimum": 1, "type": "int"},
+        "process_threads": {"default": 8, "minimum": 1, "type": "int"},
         "video_cache_size": {"default": 0, "minimum": 0, "type": "int"},
-        "video_decoder": {"default": "pynvvideocodec", "enum": ["pynvvideocodec"], "type": "categorical"},
+        "video_decoder": {"default": "pynvvideocodec", "enum": ["pynvvideocodec", "torchcodec-cuda-on-demand"], "type": "categorical"},
         "video_override_map": {"type": "string"}
       },
       "type": "collection"
