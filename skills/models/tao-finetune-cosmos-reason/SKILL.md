@@ -188,8 +188,9 @@ Execute these stages in order and persist their outputs.
 5. If needed, prepare the model with the converter packaged in the clean
    Framework image. URI downloads require immutable revisions. Validate exact
    tensor/config keys and fingerprint model, tokenizer, and processor files.
-6. Validate every annotation and referenced media file, record counts,
-   duplicates, train/validation overlap, task selection, and fingerprints.
+6. Validate inputs, counts, duplicates, overlap, tasks, and identities. A
+   no-byte-hashing request selects both fast fingerprint flags; metadata stays
+   hashed while weight/media payloads use path+size.
    Verify the resolved inputs again from an allocated compute node.
    When SLURM storage is not mounted on the launch host, let
    `cosmos_workflow.py` stream its checked-in `cosmos_common.py` inspector to a

@@ -535,6 +535,23 @@ def test_indexed_model_weights_are_validated_and_fingerprinted(tmp_path):
         common.inspect_model(str(model))
 
 
+def test_fast_model_fingerprint_does_not_read_weight_bytes(tmp_path, monkeypatch):
+    model = make_model(tmp_path)
+    weight = model / "model.safetensors"
+    original_sha256_file = common.sha256_file
+
+    def guarded_sha256_file(path):
+        if Path(path) == weight:
+            raise AssertionError("weight bytes were hashed")
+        return original_sha256_file(path)
+
+    monkeypatch.setattr(common, "sha256_file", guarded_sha256_file)
+    inspected = common.inspect_model(str(model), fast_weight_fingerprint=True)
+    weight_entry = next(item for item in inspected["files"] if item["path"] == weight.name)
+    assert weight_entry == {"path": weight.name, "size": weight.stat().st_size}
+    assert inspected["fingerprint_mode"] == "metadata_content_and_weight_sizes"
+
+
 def test_runtime_paths_are_preserved_and_resolved(tmp_path):
     path = tmp_path / "somewhere"
     path.mkdir()
@@ -1064,6 +1081,7 @@ def test_streamable_input_inspector_preserves_paths_and_planned_outputs(tmp_path
             "--validation-media-root", str(val_media),
             "--runtime-path", f"results_dir={planned}",
             "--fast-media-fingerprint",
+            "--fast-model-fingerprint",
         ],
         text=True,
         capture_output=True,
@@ -1073,6 +1091,7 @@ def test_streamable_input_inspector_preserves_paths_and_planned_outputs(tmp_path
     payload = json.loads(result.stdout)
     assert payload["frame"] == "target_compute"
     assert payload["model"]["supplied"]["original"] == str(model)
+    assert payload["model"]["fingerprint_mode"] == "metadata_content_and_weight_sizes"
     assert payload["runtime_paths"]["results_dir"]["original"] == str(planned)
     assert payload["runtime_paths"]["results_dir"]["exists"] is False
     assert payload["runtime_paths"]["results_dir"]["parent_writable"] is True

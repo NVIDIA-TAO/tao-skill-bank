@@ -337,6 +337,8 @@ def _remote_inspection(args: argparse.Namespace) -> dict[str, Any]:
         remote_args.extend(["--runtime-path", f"{label}={value}"])
     if args.fast_media_fingerprint:
         remote_args.append("--fast-media-fingerprint")
+    if getattr(args, "fast_model_fingerprint", False):
+        remote_args.append("--fast-model-fingerprint")
 
     source = Path(__file__).with_name("cosmos_common.py").read_text(encoding="utf-8")
     failures: list[str] = []
@@ -2665,6 +2667,14 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--skip-smoke", action="store_true"); parser.add_argument("--smoke-train-samples", type=int, default=16)
     parser.add_argument("--smoke-validation-samples", type=int, default=8); parser.add_argument("--train-sample-limit", type=int, default=0)
     parser.add_argument("--validation-sample-limit", type=int, default=0); parser.add_argument("--fast-media-fingerprint", action="store_true")
+    parser.add_argument(
+        "--fast-model-fingerprint",
+        action="store_true",
+        help=(
+            "Hash model metadata/index files but identify weight shards by path and size; "
+            "use when the request forbids reading every model byte"
+        ),
+    )
     parser.add_argument("--async-checkpoint", action="store_true"); parser.add_argument("--max-checkpoints", type=int, default=2)
     parser.add_argument("--results-dir", default=""); parser.add_argument("--checkpoint-dir", default=""); parser.add_argument("--cache-dir", default="")
     parser.add_argument("--sqsh-cache-dir", default=""); parser.add_argument("--ssh-key-path", default="")

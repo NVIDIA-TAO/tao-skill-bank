@@ -79,16 +79,27 @@ def is_model_uri(value: str) -> bool:
     return bool(URI_RE.match(value) or MODEL_ID_RE.fullmatch(value))
 
 
-def _file_inventory(root: Path, names: Iterable[str]) -> list[dict[str, Any]]:
+def _file_inventory(
+    root: Path, names: Iterable[str], *, hash_content: bool = True
+) -> list[dict[str, Any]]:
     inventory = []
     for name in names:
         path = root / name
         if path.is_file():
-            inventory.append({"path": name, "size": path.stat().st_size, "sha256": sha256_file(path)})
+            entry = {"path": name, "size": path.stat().st_size}
+            if hash_content:
+                entry["sha256"] = sha256_file(path)
+            inventory.append(entry)
     return inventory
 
 
-def inspect_model(value: str, revision: str = "", prepared: str = "") -> dict[str, Any]:
+def inspect_model(
+    value: str,
+    revision: str = "",
+    prepared: str = "",
+    *,
+    fast_weight_fingerprint: bool = False,
+) -> dict[str, Any]:
     if not value:
         raise WorkflowError("base_model_path_or_uri is required for every Cosmos training request")
     supplied = path_identity(value)
@@ -127,12 +138,15 @@ def inspect_model(value: str, revision: str = "", prepared: str = "") -> dict[st
                     raise WorkflowError(f"model safetensors index contains an unsafe weight path: {relative!r}")
                 if not (root / relative).is_file():
                     raise WorkflowError(f"model safetensors index references a missing weight file: {relative}")
-        important = [
+        metadata_files = [
             "config.json", "generation_config.json", "model.safetensors.index.json",
             "tokenizer.json", "tokenizer_config.json", "processor_config.json",
             "preprocessor_config.json", "chat_template.json",
-        ] + weight_files + indexed_weight_files
-        inventory = _file_inventory(root, important)
+        ]
+        weight_names = list(dict.fromkeys([*weight_files, *indexed_weight_files]))
+        inventory = _file_inventory(root, metadata_files) + _file_inventory(
+            root, weight_names, hash_content=not fast_weight_fingerprint
+        )
         result.update(
             {
                 "source_type": "local",
@@ -140,6 +154,11 @@ def inspect_model(value: str, revision: str = "", prepared: str = "") -> dict[st
                 "config": {"model_type": config.get("model_type"), "architectures": config.get("architectures")},
                 "files": inventory,
                 "fingerprint": stable_hash(inventory),
+                "fingerprint_mode": (
+                    "metadata_content_and_weight_sizes"
+                    if fast_weight_fingerprint
+                    else "full_content"
+                ),
             }
         )
     elif is_model_uri(value):
@@ -161,7 +180,9 @@ def inspect_model(value: str, revision: str = "", prepared: str = "") -> dict[st
         prepared_id = result["prepared_checkpoint"]
         if not prepared_id["exists"] or prepared_id["kind"] != "directory":
             raise WorkflowError(f"prepared checkpoint is inaccessible: {prepared}")
-        prepared_result = inspect_model(prepared)
+        prepared_result = inspect_model(
+            prepared, fast_weight_fingerprint=fast_weight_fingerprint
+        )
         result["prepared_checkpoint"].update(
             {
                 "format": prepared_result["format"],
@@ -694,12 +715,14 @@ def _inspect_inputs_cli(argv: Sequence[str]) -> dict[str, Any]:
     parser.add_argument("--task", action="append", default=[])
     parser.add_argument("--runtime-path", action="append", default=[])
     parser.add_argument("--fast-media-fingerprint", action="store_true")
+    parser.add_argument("--fast-model-fingerprint", action="store_true")
     args = parser.parse_args(list(argv))
 
     model = inspect_model(
         args.base_model_path_or_uri,
         args.base_model_revision,
         args.prepared_checkpoint_path,
+        fast_weight_fingerprint=args.fast_model_fingerprint,
     )
     train = inspect_dataset(
         dataset_family=args.dataset_family,
