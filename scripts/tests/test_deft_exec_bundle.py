@@ -126,3 +126,51 @@ def test_bundle_is_linted_before_rendering(mod, tmp_path):
     bad.write_text('{"action": "x"}')
     with pytest.raises(ValueError, match="not a valid spec-bundle"):
         mod.load_bundle(bad)
+
+
+# ── Air-gap policy on the bundle ────────────────────────────────────────────
+# The argv gate reasons about a local docker/podman command line, which is why
+# it refuses launchers it cannot inspect. Asking the same question of the
+# bundle's data answers it for platforms whose argv this module never sees.
+
+AIRGAP = {"network_mode": "airgap"}
+NETWORKED = {"network_mode": "network-enabled"}
+
+
+@pytest.mark.parametrize(
+    "uri",
+    ["s3://b/k", "hf://org/m", "ngc://nvidia/tao/x:1",
+     "https://example/x.tar", "gs://b/k", "azure://c/k"],
+)
+def test_airgap_refuses_a_fetchable_input(mod, uri):
+    bundle = copy.deepcopy(GLUE)
+    bundle["declared_inputs"][0]["uri"] = uri
+    with pytest.raises(ValueError, match="air-gap"):
+        mod.reject_airgap_bundle(bundle, AIRGAP)
+
+
+def test_airgap_allows_pre_staged_paths(mod):
+    """Air-gap restricts fetching, not running — tier A must still work."""
+    mod.reject_airgap_bundle(GLUE, AIRGAP)
+
+
+def test_networked_mode_allows_fetchable_inputs(mod):
+    """network-enabled is the default; the fetch is tao-data-io's job to do."""
+    bundle = copy.deepcopy(GLUE)
+    bundle["declared_inputs"][0]["uri"] = "s3://b/k"
+    mod.reject_airgap_bundle(bundle, NETWORKED)
+
+
+def test_policy_and_rendering_refuse_for_different_reasons(mod):
+    """Two layers, two questions: may you fetch, and can docker mount it.
+
+    Both reject an s3:// input, but only the policy layer is about the network.
+    Collapsing them would make the air-gap refusal disappear the moment a
+    platform that *can* consume a URI is added.
+    """
+    bundle = copy.deepcopy(GLUE)
+    bundle["declared_inputs"][0]["uri"] = "s3://b/k"
+    with pytest.raises(ValueError, match="air-gap"):
+        mod.reject_airgap_bundle(bundle, AIRGAP)
+    with pytest.raises(ValueError, match="tao-data-io"):
+        mod.render_docker(bundle, RESULTS)

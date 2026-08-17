@@ -286,14 +286,42 @@ def _bank_module(name: str):
     return module
 
 
-def load_bundle(path: pathlib.Path) -> dict[str, Any]:
-    """Read and lint a spec-bundle before anything renders it."""
+# Schemes whose resolution is a network fetch. A bundle naming one is asking
+# tao-data-io to reach out, which an air-gapped run cannot do.
+FETCH_SCHEMES = ("s3://", "hf://", "ngc://", "http://", "https://", "gs://", "azure://")
+
+
+def reject_airgap_bundle(bundle: dict[str, Any], policy: dict[str, Any]) -> None:
+    """Apply the air-gap policy to the bundle's DATA, not to a rendered argv.
+
+    `_reject_airgap` reasons about a local docker/podman command line, which is
+    why it refuses launchers it cannot inspect. A bundle is platform-agnostic,
+    so the same policy question — does running this reach the network? — is
+    answerable before any platform renders it, and stays answerable for
+    platforms whose argv this module will never see (srun, kubectl, brev).
+    """
+    if policy.get("network_mode") != "airgap":
+        return
+    for item in bundle.get("declared_inputs") or []:
+        uri = str(item.get("uri", ""))
+        if uri.startswith(FETCH_SCHEMES):
+            raise ValueError(
+                f"declared_input {item.get('spec_key')} is {uri!r}: resolving it "
+                "is a network fetch, forbidden by air-gap policy. Pre-stage the "
+                "asset and declare its compute-frame path instead."
+            )
+
+
+def load_bundle(path: pathlib.Path, policy: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Read and lint a spec-bundle, then apply execution policy, before rendering."""
     bundle = json.loads(path.expanduser().read_text(encoding="utf-8"))
     problems = _bank_module("tao_spec_bundle").validate(bundle)
     if problems:
         raise ValueError(
             f"{path} is not a valid spec-bundle:\n  - " + "\n  - ".join(problems)
         )
+    if policy is not None:
+        reject_airgap_bundle(bundle, policy)
     return bundle
 
 
@@ -463,7 +491,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.bundle:
                 if command:
                     raise ValueError("--bundle carries the command; drop the trailing -- argv")
-                bundle = load_bundle(args.bundle)
+                bundle = load_bundle(args.bundle, _policy(args.state))
                 state = json.loads(args.state.expanduser().read_text())
                 results_dir = state.get("results_dir")
                 if not results_dir:
