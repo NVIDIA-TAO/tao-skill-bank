@@ -33,6 +33,7 @@ def _sealed_plan(
     seed: int = 17,
     model_tier: str = "edge",
     annotation_sha256: str | None = None,
+    vision: dict | None = None,
 ) -> Path:
     plan = {
         "schema_version": 2,
@@ -46,6 +47,7 @@ def _sealed_plan(
             "frames": 8,
             "sequence_length": 40960,
             "system_prompt": prompt,
+            "vision": vision or {"nframes": 8, "max_pixels": max_video_pixels},
         },
         "datasets": {
             "train": {"dataset_fingerprint": "train-fingerprint"},
@@ -84,6 +86,7 @@ def _sealed_plan(
             "validation_media_roots": ["/runtime/validation-media"],
             "system_prompt": prompt,
             "frames": 8,
+            "vision": vision or {"nframes": 8, "max_pixels": max_video_pixels},
             "max_video_pixels": max_video_pixels,
             "precision": "bfloat16",
             "seed": seed,
@@ -225,6 +228,7 @@ def _run(
     max_video_pixels: int | None = 4096,
     seed: int = 17,
     model_tier: str = "edge",
+    vision: dict | None = None,
     extra: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     plan_output = tmp_path / "evaluation-plan.json"
@@ -243,6 +247,7 @@ def _run(
                 max_video_pixels=max_video_pixels,
                 seed=seed,
                 model_tier=model_tier,
+                vision=vision,
             )
         ),
         "--training-status",
@@ -333,6 +338,40 @@ def test_materialized_validation_paths_override_single_recorded_inputs(tmp_path:
         "source": "materialize_validation_manifest_with_absolute_media",
         "value": "/runtime/evaluation-results/materialized-media",
     }
+
+
+def test_evaluation_inherits_fps_sampling_and_frame_bounds(tmp_path: Path) -> None:
+    vision = {
+        "fps": 1.0,
+        "max_frames": 120,
+        "video_start": 1.5,
+        "video_end": 31.5,
+        "resized_height": 448,
+        "resized_width": 672,
+        "min_pixels": 4096,
+        "max_pixels": 81920,
+        "total_pixels": 3136000,
+    }
+    result, plan_path, config_path = _run(
+        tmp_path,
+        max_video_pixels=81920,
+        vision=vision,
+    )
+    assert result.returncode == 0, result.stderr
+    resolved = json.loads(plan_path.read_text(encoding="utf-8"))
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+
+    assert resolved["ready"] is True
+    assert config["vision"]["fps"] == 1.0
+    assert config["vision"]["max_frames"] == 120
+    assert config["vision"]["video_start"] == 1.5
+    assert config["vision"]["video_end"] == 31.5
+    assert config["vision"]["resized_height"] == 448
+    assert config["vision"]["resized_width"] == 672
+    assert config["vision"]["min_pixels"] == 4096
+    assert config["vision"]["max_pixels"] == 81920
+    assert config["vision"]["total_pixels"] == 3136000
+    assert "num_frames" not in config["vision"]
 
 
 def test_missing_pixel_budget_accepts_explicit_evaluation_input(tmp_path: Path) -> None:

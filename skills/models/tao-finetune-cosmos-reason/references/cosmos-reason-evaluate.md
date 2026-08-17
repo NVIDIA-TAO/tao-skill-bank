@@ -55,7 +55,8 @@ For the original validation split, inherit these without asking again:
 
 - annotation manifest, media root, and dataset fingerprint;
 - system prompt, including an explicitly empty prompt;
-- frame count, pixel budget, precision, seed, and validation batch size;
+- complete frame-sampling, clip-time, resize, and pixel-budget configuration,
+  plus precision, seed, and validation batch size;
 - training sequence limit and evaluator tensor-parallel degree (one model replica per rank);
 - task/answer/metric semantics when validation inspection proved them;
 - backend, training mode, base-model identity/fingerprint, and GPU count;

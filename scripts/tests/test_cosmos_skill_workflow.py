@@ -17,6 +17,7 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
+import jsonschema
 import pytest
 
 
@@ -842,6 +843,63 @@ def test_cosmos_nano_video_pixel_budget_is_shared_by_framework_and_rl(tmp_path):
     assert rl_plan["spec"]["custom"]["vision"]["max_pixels"] == 81920
 
 
+def test_cosmos_rl_fps_sampling_and_daft_vision_options_are_native(tmp_path):
+    args = args_for(tmp_path, backend="cosmos-rl")
+    args.fps = 1.0
+    args.max_frames = 120
+    args.video_start = 2.5
+    args.video_end = 42.5
+    args.video_resized_height = 448
+    args.video_resized_width = 672
+    args.video_min_pixels = 4096
+    args.video_max_pixels = 81920
+    args.video_total_pixels = 3136000
+
+    plan = workflow.build_plan(args)
+
+    expected = {
+        "fps": 1.0,
+        "max_frames": 120,
+        "video_start": 2.5,
+        "video_end": 42.5,
+        "resized_height": 448,
+        "resized_width": 672,
+        "min_pixels": 4096,
+        "max_pixels": 81920,
+        "total_pixels": 3136000,
+    }
+    vision = plan["spec"]["custom"]["vision"]
+    assert {key: vision[key] for key in expected} == expected
+    assert "nframes" not in vision
+    assert plan["training"]["vision"] == expected
+    assert plan["evaluation_contract"]["vision"] == expected
+    assert plan["processor_profile"]["sampling_mode"] == "fps"
+    assert plan["processor_profile"]["capacity_frames"] == 120
+    native_contract = workflow.load_yaml(workflow.BACKEND_FILES["cosmos-rl"])
+    schema = native_contract["configuration"]["vision_schema"]
+    assert set(expected) <= set(schema["fields"])
+    assert schema["mutually_exclusive"] == ["nframes", "fps"]
+    assert schema["fps_only"] == ["min_frames", "max_frames"]
+
+
+@pytest.mark.parametrize(
+    "updates,match",
+    [
+        ({"frames": 8, "fps": 1.0}, "mutually exclusive"),
+        ({"max_frames": 120}, "require fps"),
+        ({"fps": 1.0, "min_frames": 128, "max_frames": 120}, "must not exceed"),
+        ({"video_resized_height": 448}, "must be set together"),
+        ({"video_start": 10.0, "video_end": 5.0}, "must be less"),
+    ],
+)
+def test_invalid_daft_vision_combinations_are_rejected(tmp_path, updates, match):
+    args = args_for(tmp_path, backend="cosmos-rl")
+    for name, value in updates.items():
+        setattr(args, name, value)
+    with pytest.raises(common.WorkflowError, match=match):
+        workflow.build_plan(args)
+
+
 def test_cosmos_rl_prewarm_remains_an_explicit_opt_in(tmp_path):
     args = args_for(tmp_path, backend="cosmos-rl")
     args.rl_dataset_cache_mode = "prewarm"
@@ -1184,6 +1242,9 @@ def test_public_edge_checkpoint_uses_skill_runtime_profile(tmp_path, dataset_fam
         "model_tier": "edge",
         "source": "dataset_metadata" if dataset_family == "video_conversation" else "model_safe_default",
         "frames": 6,
+        "capacity_frames": 6,
+        "sampling_mode": "nframes",
+        "vision": {"nframes": 6},
         "sequence_length": 16000,
         "attention_implementation": "flash_attention_2",
         "frame_width": 960 if dataset_family == "video_conversation" else 1280,
@@ -1840,7 +1901,20 @@ def test_metadata_finalization_requires_child_and_tao_terminal_status(tmp_path):
 
 
 def test_request_and_metadata_schemas_and_no_environment_history():
-    json.loads((SKILL / "schemas" / "train.schema.json").read_text())
+    train_schema = json.loads((SKILL / "schemas" / "train.schema.json").read_text())
+    profile_schema = train_schema["properties"]["training"]["properties"]["video_profile"]
+    assert profile_schema["x_tao_native_mapping"]["max_frames"] == "custom.vision.max_frames"
+    jsonschema.validate({"fps": 1.0, "max_frames": 120}, profile_schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"frames": 8, "fps": 1.0}, profile_schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"max_frames": 120}, profile_schema)
+    evaluate_schema = json.loads((SKILL / "schemas" / "evaluate.schema.json").read_text())
+    assert {"fps", "min_frames", "max_frames", "video_start", "video_end"} <= set(
+        evaluate_schema["properties"]["vision"]["properties"]
+    )
+    inference_schema = json.loads((SKILL / "schemas" / "inference.schema.json").read_text())
+    assert "num_frames" in inference_schema["properties"]
     json.loads((SKILL / "schemas" / "cosmos-job-metadata.schema.json").read_text())
     forbidden = ("/lustre", "/localhome", "rarunachalam")
     for path in SKILL.rglob("*"):

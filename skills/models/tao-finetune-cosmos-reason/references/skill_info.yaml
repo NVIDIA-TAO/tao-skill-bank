@@ -277,6 +277,8 @@ actions:
           args.extend(["--num_gpus", str(cfg["num_gpus"])])
       if cfg.get("fps") not in (None, ""):
           args.extend(["--fps", str(cfg["fps"])])
+      if cfg.get("num_frames") not in (None, ""):
+          args.extend(["--num_frames", str(cfg["num_frames"])])
       if cfg.get("total_pixels") not in (None, ""):
           args.extend(["--total_pixels", str(cfg["total_pixels"])])
       if cfg.get("base_model_path"):

@@ -56,7 +56,10 @@ For platform-side multi-node setup (sbatch flags on SLURM, Indexed Job + Service
   - `fps`: extract frames at this rate. High motion: 3. Low motion/static: 1–2. Select this only when the selected videos, `policy.model_max_length`, and GPU memory can absorb the expanded token count.
   - Setting both makes qwen-vl-utils' decord backend error out (`Only accept either fps or nframes`) and silently fall back to torchvision, which deadlocks under multi-worker dataloading (`BlockingIOError [Errno 11]` swscaler errors). If you switch from `fps` to `nframes`, also delete `fps` from your spec.
   - Default Cosmos AutoML search must not tune `custom.vision.fps` while the packaged template uses `custom.vision.nframes`. Only include `custom.vision.fps` when the user explicitly requests FPS tuning and the assembled spec deletes `custom.vision.nframes`.
-- **custom.vision.total_pixels**: Resolution constraint. Increase if the object of focus is small relative to the frame. Default 3136000.
+- **custom.vision.min_frames** / **custom.vision.max_frames** — optional lower and upper sampled-frame bounds used only with `fps`. Qwen rounds the resolved count to its frame factor and clamps it to the selected clip length.
+- **custom.vision.video_start** / **custom.vision.video_end** — optional nonnegative clip boundaries in seconds; when both are present, start must be less than end.
+- **custom.vision.resized_height** / **custom.vision.resized_width** — explicit frame dimensions. Set both together; they replace automatic pixel-budget resizing.
+- **custom.vision.min_pixels** / **custom.vision.max_pixels** / **custom.vision.total_pixels** — per-frame minimum, per-frame maximum, and aggregate video pixel budgets forwarded to qwen-vl-utils.
 - **custom.system_prompt**: Instructions prepended to every prompt.
 
 ### Checkpointing

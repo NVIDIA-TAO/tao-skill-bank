@@ -99,6 +99,7 @@ def resolve_model_name(
 def resolve_model_profile(
     args: argparse.Namespace,
     tier: str,
+    backend: str,
     train_dataset: Mapping[str, Any],
     validation_dataset: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -121,21 +122,80 @@ def resolve_model_profile(
             "video_max_pixels": None,
         },
     }[tier]
-    frames = args.frames or defaults["frames"]
+    daft_only_values = {
+        "fps": args.fps,
+        "min_frames": args.min_frames,
+        "max_frames": args.max_frames,
+        "video_start": args.video_start,
+        "video_end": args.video_end,
+        "video_resized_height": args.video_resized_height,
+        "video_resized_width": args.video_resized_width,
+        "video_min_pixels": args.video_min_pixels,
+        "video_total_pixels": args.video_total_pixels,
+    }
+    selected_daft_only = sorted(
+        name for name, value in daft_only_values.items() if value is not None
+    )
+    if backend != "cosmos-rl" and selected_daft_only:
+        raise WorkflowError(
+            "DAFT vision options apply only to the cosmos-rl backend: "
+            f"{selected_daft_only}"
+        )
+    if args.fps is not None and args.frames:
+        raise WorkflowError("fps and frames/nframes are mutually exclusive")
+    if args.fps is not None and args.fps <= 0:
+        raise WorkflowError("fps must be positive")
+    if (args.min_frames is not None or args.max_frames is not None) and args.fps is None:
+        raise WorkflowError("min_frames and max_frames require fps sampling")
+    if args.min_frames is not None and args.min_frames < 1:
+        raise WorkflowError("min_frames must be positive")
+    if args.max_frames is not None and args.max_frames < 1:
+        raise WorkflowError("max_frames must be positive")
+    if (
+        args.min_frames is not None
+        and args.max_frames is not None
+        and args.min_frames > args.max_frames
+    ):
+        raise WorkflowError("min_frames must not exceed max_frames")
+    if (args.video_start is not None and args.video_start < 0) or (
+        args.video_end is not None and args.video_end < 0
+    ):
+        raise WorkflowError("video_start and video_end must be nonnegative")
+    if (
+        args.video_start is not None
+        and args.video_end is not None
+        and args.video_start >= args.video_end
+    ):
+        raise WorkflowError("video_start must be less than video_end")
+    if (args.video_resized_height is None) != (args.video_resized_width is None):
+        raise WorkflowError("video_resized_height and video_resized_width must be set together")
+    for name in ("video_resized_height", "video_resized_width", "video_min_pixels", "video_total_pixels"):
+        value = getattr(args, name)
+        if value is not None and value < 1:
+            raise WorkflowError(f"{name} must be positive")
+    if (
+        args.video_min_pixels is not None
+        and args.video_max_pixels
+        and args.video_min_pixels > args.video_max_pixels
+    ):
+        raise WorkflowError("video_min_pixels must not exceed video_max_pixels")
+
+    frames = 0 if args.fps is not None else (args.frames or defaults["frames"])
+    capacity_frames = args.max_frames or (768 if args.fps is not None else frames)
     sequence_length = args.sequence_length or defaults["sequence_length"]
     attention = args.attention_implementation if args.attention_implementation != "auto" else defaults["attention_implementation"]
-    if frames < 1 or sequence_length < 1:
+    if (args.fps is None and frames < 1) or sequence_length < 1:
         raise WorkflowError("frames and sequence_length must be positive")
     resolution_profiles = [train_dataset["profile"]["resolution"], validation_dataset["profile"]["resolution"]]
     measured_widths = [item["median_width"] for item in resolution_profiles if item["median_width"]]
     measured_heights = [item["median_height"] for item in resolution_profiles if item["median_height"]]
-    frame_width = args.video_frame_width or int(max(measured_widths, default=1280))
-    frame_height = args.video_frame_height or int(max(measured_heights, default=720))
+    frame_width = args.video_resized_width or args.video_frame_width or int(max(measured_widths, default=1280))
+    frame_height = args.video_resized_height or args.video_frame_height or int(max(measured_heights, default=720))
     if frame_width < 1 or frame_height < 1:
         raise WorkflowError("video frame width and height must be positive")
     pixels_per_frame = min(frame_width * frame_height, 1280 * 720) if tier == "edge" else frame_width * frame_height
     max_pixels = args.video_max_pixels or (
-        frames * pixels_per_frame
+        capacity_frames * pixels_per_frame
         if tier == "edge"
         else defaults["video_max_pixels"]
     )
@@ -143,8 +203,11 @@ def resolve_model_profile(
         raise WorkflowError("video_max_pixels must be nonnegative")
     profile = {
         "model_tier": tier,
-        "source": "user" if any((args.frames, args.sequence_length, args.video_max_pixels, args.video_frame_width, args.video_frame_height)) or args.attention_implementation != "auto" else "dataset_metadata" if measured_widths and measured_heights else "model_safe_default",
+        "source": "user" if any((args.frames, args.fps, args.sequence_length, args.video_max_pixels, args.video_frame_width, args.video_frame_height, *daft_only_values.values())) or args.attention_implementation != "auto" else "dataset_metadata" if measured_widths and measured_heights else "model_safe_default",
         "frames": frames,
+        "capacity_frames": capacity_frames,
+        "sampling_mode": "fps" if args.fps is not None else "nframes",
+        "vision": _vision_config(args, resolved_frames=frames),
         "sequence_length": sequence_length,
         "attention_implementation": attention,
         "frame_width": frame_width,
@@ -162,6 +225,36 @@ def resolve_model_profile(
     args.attention_implementation = attention
     args.video_max_pixels = max_pixels
     return profile
+
+
+def _vision_config(
+    args: argparse.Namespace,
+    *,
+    resolved_frames: int | None = None,
+) -> dict[str, int | float]:
+    """Return the native DAFT/Qwen video-element options for one plan."""
+    vision: dict[str, int | float] = {}
+    if args.fps is not None:
+        vision["fps"] = args.fps
+        for argument, field in (("min_frames", "min_frames"), ("max_frames", "max_frames")):
+            value = getattr(args, argument)
+            if value is not None:
+                vision[field] = value
+    else:
+        vision["nframes"] = resolved_frames if resolved_frames is not None else args.frames
+    for argument, field in (
+        ("video_start", "video_start"),
+        ("video_end", "video_end"),
+        ("video_resized_height", "resized_height"),
+        ("video_resized_width", "resized_width"),
+        ("video_min_pixels", "min_pixels"),
+        ("video_max_pixels", "max_pixels"),
+        ("video_total_pixels", "total_pixels"),
+    ):
+        value = getattr(args, argument)
+        if value not in (None, 0):
+            vision[field] = value
+    return vision
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -575,6 +668,7 @@ def _training_contract(args: argparse.Namespace) -> dict[str, Any]:
         "seed": args.seed,
         "sequence_length": args.sequence_length,
         "frames": args.frames,
+        "vision": _vision_config(args),
         "system_prompt": args.system_prompt,
         "train_response_mode": (
             "hybrid" if args.dataset_family == "task_aware_video_reasoning" else "answer"
@@ -966,8 +1060,7 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "train_dataset": {"annotation_path": train_manifest, "media_path": train_media[0], "media_root": train_media[0], "response_mode": "hybrid" if args.dataset_family == "task_aware_video_reasoning" else "answer"},
         "val_dataset": {"annotation_path": val_manifest, "media_path": val_media[0], "media_root": val_media[0], "response_mode": "answer"},
         "vision": {
-            "nframes": args.frames,
-            "max_pixels": args.video_max_pixels,
+            **_vision_config(args),
             "video_decoder": video_runtime["video_decoder"],
         },
         "video_decoder": video_runtime["video_decoder"],
@@ -1784,7 +1877,9 @@ def build_plan(
     args.dataset_family = train_data["dataset_family"]
     if args.dataset_family == "video_conversation" and (len(train_annotations) != 1 or len(val_annotations) != 1):
         raise WorkflowError("video_conversation requires exactly one annotation file per split")
-    model_profile = resolve_model_profile(args, tier, train_data, val_data)
+    model_profile = resolve_model_profile(args, tier, backend, train_data, val_data)
+    args.frames = model_profile["frames"]
+    args.sequence_length = model_profile["sequence_length"]
     assert_no_overlap(train_data, val_data)
     total_gpus = args.nodes * args.gpus_per_node
     if min(train_data["record_count"], val_data["record_count"]) < total_gpus:
@@ -1944,6 +2039,7 @@ def build_plan(
             ],
             "system_prompt": contract["system_prompt"],
             "frames": model_profile["frames"],
+            "vision": contract["vision"],
             "max_video_pixels": model_profile["max_video_pixels"],
             "precision": contract["precision"],
             "seed": contract["seed"],
@@ -2669,6 +2765,11 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--weight-decay", type=float, default=0.01); parser.add_argument("--gradient-clip", type=float, default=1.0)
     parser.add_argument("--precision", default="bfloat16"); parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--sequence-length", type=int, default=0); parser.add_argument("--frames", type=int, default=0)
+    parser.add_argument("--fps", type=float, default=None)
+    parser.add_argument("--min-frames", type=int, default=None); parser.add_argument("--max-frames", type=int, default=None)
+    parser.add_argument("--video-start", type=float, default=None); parser.add_argument("--video-end", type=float, default=None)
+    parser.add_argument("--video-resized-height", type=int, default=None); parser.add_argument("--video-resized-width", type=int, default=None)
+    parser.add_argument("--video-min-pixels", type=int, default=None); parser.add_argument("--video-total-pixels", type=int, default=None)
     parser.add_argument("--video-max-pixels", type=int, default=0); parser.add_argument("--video-frame-width", type=int, default=0)
     parser.add_argument("--video-frame-height", type=int, default=0)
     parser.add_argument("--video-override-map", default="")

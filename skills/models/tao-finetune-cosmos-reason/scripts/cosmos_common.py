@@ -583,7 +583,7 @@ def optimization_parity(left: Mapping[str, Any], right: Mapping[str, Any]) -> di
     keys = (
         "training_mode", "epochs", "effective_global_batch", "optimizer", "learning_rate",
         "scheduler", "warmup", "weight_decay", "gradient_clip", "precision", "seed",
-        "sequence_length", "frames", "system_prompt", "validation_frequency_epochs",
+        "sequence_length", "frames", "vision", "system_prompt", "validation_frequency_epochs",
         "checkpoint_frequency_epochs", "lora",
     )
     differences = {key: {"left": left.get(key), "right": right.get(key)} for key in keys if left.get(key) != right.get(key)}

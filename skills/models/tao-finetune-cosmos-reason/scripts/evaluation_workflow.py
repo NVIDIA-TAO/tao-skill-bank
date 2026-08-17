@@ -649,7 +649,17 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     provenance["model.enable_lora"] = _source(enable_lora, "sealed_training_plan.training_mode_and_backend")
     provenance["model.base_model_path"] = _source(base_model_path, "sealed_training_plan.model_preparation")
 
-    frames = int(evaluation_contract.get("frames") or training.get("frames") or 0)
+    inherited_vision = evaluation_contract.get("vision")
+    if not isinstance(inherited_vision, Mapping):
+        inherited_vision = {}
+    inherited_vision = dict(inherited_vision)
+    frames = int(
+        inherited_vision.get("nframes")
+        or evaluation_contract.get("frames")
+        or training.get("frames")
+        or 0
+    )
+    fps = inherited_vision.get("fps")
     if args.max_video_pixels is not None:
         max_video_pixels = args.max_video_pixels
         provenance["vision.max_pixels"] = _source(max_video_pixels, "user")
@@ -688,9 +698,14 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         "model.dtype": precision,
         "model.max_length": max_length,
         "model.tp_size": 1,
-        "vision.num_frames": frames,
+        "evaluation.seed": seed,
+        "evaluation.batch_size": batch_size,
         "num_gpus": num_gpus,
     }
+    if fps is not None:
+        inherited_values["vision.fps"] = fps
+    else:
+        inherited_values["vision.num_frames"] = frames
     for field, value in inherited_values.items():
         provenance[field] = _source(value, "sealed_training_plan")
         if value in {"", None} or (value == 0 and field != "evaluation.seed"):
@@ -816,13 +831,16 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             raise WorkflowError(
                 "Cosmos-RL evaluation frame_transfer must be host_rgb or device_rgbp"
             )
-        vision = {
-            "num_frames": frames,
+        vision: dict[str, Any] = {
             "video_decoder": "pynvvideocodec",
             "video_cache_size": cache_size,
             "decoder_cache_size": decoder_cache_size,
             "frame_transfer": frame_transfer,
         }
+        if fps is not None:
+            vision["fps"] = fps
+        else:
+            vision["num_frames"] = frames
         runtime_source = (
             "sealed_training_plan.rl_video_runtime" if rl_runtime else "evaluator_default"
         )
@@ -837,6 +855,20 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             frame_transfer,
             "user" if frame_transfer_override is not None else runtime_source,
         )
+    for field in (
+        "min_frames",
+        "max_frames",
+        "video_start",
+        "video_end",
+        "resized_height",
+        "resized_width",
+        "min_pixels",
+        "total_pixels",
+    ):
+        value = inherited_vision.get(field)
+        if value is not None:
+            vision[field] = value
+            provenance[f"vision.{field}"] = _source(value, "sealed_training_plan")
     if max_video_pixels is not None:
         vision["max_pixels"] = max_video_pixels
         if backend == "cosmos-framework":

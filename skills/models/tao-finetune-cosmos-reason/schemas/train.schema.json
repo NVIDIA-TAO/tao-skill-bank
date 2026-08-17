@@ -47,10 +47,27 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "frames": {"type": "integer", "minimum": 1},
+            "frames": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Uniform frame count forwarded as custom.vision.nframes. Mutually exclusive with fps."
+            },
+            "fps": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "Frames sampled per second. Mutually exclusive with frames; enables min_frames and max_frames."
+            },
+            "min_frames": {"type": "integer", "minimum": 1},
+            "max_frames": {"type": "integer", "minimum": 1},
+            "video_start": {"type": "number", "minimum": 0},
+            "video_end": {"type": "number", "exclusiveMinimum": 0},
+            "resized_height": {"type": "integer", "minimum": 1},
+            "resized_width": {"type": "integer", "minimum": 1},
+            "min_pixels": {"type": "integer", "minimum": 1},
             "frame_width": {"type": "integer", "minimum": 1},
             "frame_height": {"type": "integer", "minimum": 1},
             "max_video_pixels": {"type": "integer", "minimum": 1},
+            "total_pixels": {"type": "integer", "minimum": 1},
             "sequence_length": {"type": "integer", "minimum": 1},
             "attention_implementation": {"type": "string", "minLength": 1},
             "rl_video_profile": {"enum": ["auto", "system-pyav", "pynv-device-rgbp"]},
@@ -63,6 +80,28 @@
             "framework_video_cache_size": {"type": "integer", "minimum": 0},
             "framework_sft_process_threads": {"type": "integer", "minimum": 0},
             "framework_video_decoder_threads": {"type": "integer", "minimum": 0}
+          },
+          "allOf": [
+            {"not": {"required": ["frames", "fps"]}},
+            {
+              "if": {"anyOf": [{"required": ["min_frames"]}, {"required": ["max_frames"]}]},
+              "then": {"required": ["fps"]}
+            },
+            {"if": {"required": ["resized_height"]}, "then": {"required": ["resized_width"]}},
+            {"if": {"required": ["resized_width"]}, "then": {"required": ["resized_height"]}}
+          ],
+          "x_tao_native_mapping": {
+            "frames": "custom.vision.nframes",
+            "fps": "custom.vision.fps",
+            "min_frames": "custom.vision.min_frames",
+            "max_frames": "custom.vision.max_frames",
+            "video_start": "custom.vision.video_start",
+            "video_end": "custom.vision.video_end",
+            "resized_height": "custom.vision.resized_height",
+            "resized_width": "custom.vision.resized_width",
+            "min_pixels": "custom.vision.min_pixels",
+            "max_video_pixels": "custom.vision.max_pixels",
+            "total_pixels": "custom.vision.total_pixels"
           }
         },
         "lora": {

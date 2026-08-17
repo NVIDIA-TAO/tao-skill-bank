@@ -32,6 +32,9 @@ from history, another user, a prior job, an image, or a developer checkout.
   Cosmos3-Edge is inferred as `cosmos3_edge` from the resolved model ID.
 - optional `prepared_checkpoint_path`; validate it instead of silently
   replacing it.
+- explicit video sampling mode: either uniform `nframes` or `fps`. FPS mode
+  may also set `min_frames` and `max_frames`; both modes may set clip-time,
+  resize, and pixel-budget fields supported by the selected backend.
 - training/validation annotation paths and media roots for conversation-style
   or task-aware video supervision, plus optional task selection.
 - explicit `backend` for a comparison; `cosmos-framework` or `cosmos-rl`.
@@ -111,7 +114,8 @@ shape template with intentionally unresolved semantic fields.
 When evaluating a selected fine-tuning job, give the helper that job's sealed
 training plan and structured terminal status. It automatically inherits the
 exact validation annotation/media paths and fingerprint, system prompt
-(including recorded empty), frame count, pixel budget, precision, seed,
+(including recorded empty), complete vision sampling and pixel configuration,
+precision, seed,
 validation batch size, task/answer/metric profile, backend, training mode,
 prepared base model, and GPU count. It records field-level provenance and
 blocks a checksum-invalid plan. Do not ask the user to repeat an inherited

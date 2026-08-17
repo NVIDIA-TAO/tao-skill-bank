@@ -146,18 +146,15 @@ For platform-side multi-node setup (sbatch flags on SLURM, Indexed Job + Service
   - `nframes` (default in template): extract this many frames evenly across the clip. This is the safest default for 1-GPU AutoML smoke runs.
   - `fps`: extract frames at this rate. High motion: 3. Low motion/static: 1–2. Use when the selected videos, `policy.model_max_length`, and GPU memory can absorb the expanded token count.
   - Setting both makes qwen-vl-utils' decord backend error out (`Only accept either fps or nframes`) and silently fall back to torchvision, which deadlocks under multi-worker dataloading (`BlockingIOError [Errno 11]` swscaler errors). If you switch from `fps` to `nframes`, also delete `fps` from your spec.
-- Do not require per-record `video_fps` for the packaged `nframes` template.
-  If a run switches to `custom.vision.fps` or a selected dataset/image profile
-  requires per-record timing, validate annotations before any download or job
-  launch:
-  ```bash
-  scripts/check_tao_launch_preflight.py --platform <platform> \
-    --path train_annotation=/path/to/train.json \
-    --path val_annotation=/path/to/val.json \
-    --json-required-field train_annotation=video_fps \
-    --json-required-field val_annotation=video_fps
-  ```
-- **custom.vision.total_pixels**: Resolution constraint. Increase if the object of focus is small relative to the frame. Default 3136000.
+- Neither `nframes` nor `fps` sampling requires a per-record `video_fps`
+  field. The selected decoder reads the source frame rate from each media
+  stream and qwen-vl-utils uses it to resolve FPS sampling. Annotation-level
+  `fps` or `video_fps` is optional descriptive metadata; validate it when
+  present, but never invent or require it.
+- **custom.vision.min_frames** / **custom.vision.max_frames** — optional lower and upper sampled-frame bounds used only with `fps`. Qwen rounds the resolved count to its frame factor and clamps it to the selected clip length.
+- **custom.vision.video_start** / **custom.vision.video_end** — optional nonnegative clip boundaries in seconds; when both are present, start must be less than end.
+- **custom.vision.resized_height** / **custom.vision.resized_width** — explicit frame dimensions. Set both together; they replace automatic pixel-budget resizing.
+- **custom.vision.min_pixels** / **custom.vision.max_pixels** / **custom.vision.total_pixels** — per-frame minimum, per-frame maximum, and aggregate video pixel budgets forwarded to qwen-vl-utils.
 - **custom.system_prompt**: Instructions prepended to every prompt.
 
 ### Checkpointing

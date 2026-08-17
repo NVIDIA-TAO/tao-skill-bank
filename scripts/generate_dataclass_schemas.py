@@ -310,7 +310,10 @@ def apply_cosmos_evaluate_resolution_metadata(schema: dict[str, Any]) -> dict[st
             "evaluation.answer_type", "evaluation.batch_size", "evaluation.seed",
             "metrics.names", "model.base_model_path", "model.dtype",
             "model.enable_lora", "num_gpus", "task.type", "vision.max_pixels",
-            "vision.num_frames",
+            "vision.num_frames", "vision.fps", "vision.min_frames",
+            "vision.max_frames", "vision.video_start", "vision.video_end",
+            "vision.resized_height", "vision.resized_width", "vision.min_pixels",
+            "vision.total_pixels",
         ],
         "required_current_run_intake_when_not_recorded": [
             "checkpoint_selection", "dataset.annotation_path", "dataset.media_dir",

@@ -336,14 +336,22 @@
         "dataloader_num_workers": {"default": 1, "minimum": 1, "type": "int"},
         "dataloader_persistent_workers": {"default": true, "type": "bool"},
         "dataloader_prefetch_factor": {"default": 2, "minimum": 1, "type": "int"},
+        "fps": {"automl_enabled": false, "exclusiveMinimum": 0, "type": "float"},
+        "max_frames": {"automl_enabled": false, "minimum": 1, "type": "int"},
         "max_pixels": {"default": 0, "minimum": 1, "type": "int"},
+        "min_frames": {"automl_enabled": false, "minimum": 1, "type": "int"},
         "min_pixels": {"default": 0, "minimum": 1, "type": "int"},
         "num_frames": {"automl_enabled": true, "default": 0, "minimum": 1, "type": "int"},
         "process_threads": {"default": 8, "minimum": 1, "type": "int"},
         "frame_transfer": {"default": "host_rgb", "enum": ["host_rgb", "device_rgbp"], "type": "categorical"},
+        "resized_height": {"automl_enabled": false, "minimum": 1, "type": "int"},
+        "resized_width": {"automl_enabled": false, "minimum": 1, "type": "int"},
+        "total_pixels": {"automl_enabled": false, "minimum": 1, "type": "int"},
         "video_cache_size": {"default": 0, "minimum": 0, "type": "int"},
         "video_decoder": {"default": "pynvvideocodec", "enum": ["pynvvideocodec", "torchcodec-cuda-on-demand"], "type": "categorical"},
-        "video_override_map": {"type": "string"}
+        "video_end": {"automl_enabled": false, "exclusiveMinimum": 0, "type": "float"},
+        "video_override_map": {"type": "string"},
+        "video_start": {"automl_enabled": false, "minimum": 0, "type": "float"}
       },
       "type": "collection"
     }
@@ -364,7 +372,16 @@
       "num_gpus",
       "task.type",
       "vision.max_pixels",
-      "vision.num_frames"
+      "vision.num_frames",
+      "vision.fps",
+      "vision.min_frames",
+      "vision.max_frames",
+      "vision.video_start",
+      "vision.video_end",
+      "vision.resized_height",
+      "vision.resized_width",
+      "vision.min_pixels",
+      "vision.total_pixels"
     ],
     "materializer": "scripts/evaluation_workflow.py",
     "never_infer_from_history": [
