@@ -33,6 +33,13 @@ RENDERER = _module(
 )
 
 
+def test_checkpoint_action_supports_pre_is_relative_to_python():
+    source = (SKILL / "scripts" / "cosmos_rl_checkpoint_action.py").read_text(
+        encoding="utf-8"
+    )
+    assert ".is_relative_to(" not in source
+
+
 def _safetensors(path: Path) -> None:
     header = json.dumps(
         {"weight": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}},

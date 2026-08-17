@@ -118,7 +118,9 @@ def _validate_safetensors(path: Path) -> None:
 
 
 def _require_contained_file(checkpoint: Path, path: Path) -> None:
-    if not path.resolve().is_relative_to(checkpoint.resolve()):
+    try:
+        path.resolve().relative_to(checkpoint.resolve())
+    except ValueError:
         raise CheckpointError(f"checkpoint file escapes its epoch directory: {path}")
 
 
