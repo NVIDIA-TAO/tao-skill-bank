@@ -57,12 +57,12 @@
     "question": "Plan a full dense-SFT parity run on SLURM for Cosmos3-Nano using customer-supplied video-conversation annotations and media. The validation loss must be reported after completion. Do not execute anything.",
     "expected_skill": "tao-finetune-cosmos-reason",
     "expected_script": "scripts/cosmos_workflow.py",
-    "ground_truth": "Preflight host/SSH/Pyxis/Enroot/shared storage/checkpoint/datasets, build a clean repository-derived image and new SQSH, fingerprint train and validation manifests and prompt, omit LoRA configuration, run a runtime-sized smoke first, then the full job after success. Monitor structured status and extract validation-complete loss rather than train loss or validation batch progress.",
+    "ground_truth": "Preflight host/SSH/Pyxis/Enroot/shared storage/checkpoint/datasets, build a clean repository-derived image and new SQSH, fingerprint train and validation manifests and prompt, omit LoRA configuration, and launch the requested full job directly. The Cosmos-RL child must verify the padding-aware attention mask and visual gradient flow before its first optimizer update. Monitor structured status and extract validation-complete loss rather than train loss or validation batch progress.",
     "expected_behavior": [
       "Requires a newly built SQSH and compute-node-visible runtime inputs before allocating full training GPUs",
       "Requires qwen3_vl safetensors for Nano",
       "Omits policy.lora for dense SFT",
-      "Runs the subset smoke before the full job",
+      "Uses the in-process first-update visual-gradient gate instead of a separate smoke job",
       "Reports structured train loss and epoch validation-complete loss"
     ]
   },

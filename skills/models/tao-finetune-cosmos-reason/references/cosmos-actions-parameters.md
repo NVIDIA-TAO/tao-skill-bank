@@ -102,10 +102,10 @@ explicitly asks for that dataset mutation.
 
 ### Training Loop
 - **train.epoch**: Number of training epochs. Default 10. Use at least 2 for
-  local smoke or AutoML runs that need a host-visible best checkpoint for
+  explicitly requested diagnostic subsets or AutoML runs that need a host-visible best checkpoint for
   evaluate/inference; one-epoch runs can leave only a broken `best` symlink
   after checkpoint cleanup.
-- **train.train_batch_per_replica**: Global batch size per training step. Ideally >= 32 for stability. CRITICAL: must be divisible by `train.train_policy.mini_batch` (default 1 in the packaged smoke-safe template). Recommended production value: 32.
+- **train.train_batch_per_replica**: Global batch size per training step. Ideally >= 32 for stability. CRITICAL: must be divisible by `train.train_policy.mini_batch` (default 1 in the packaged template). Recommended production value: 32.
 - **train.compile**: Set to true for potential speedup on newer GPUs (H100), else false.
 - **train.output_dir**: Output directory for checkpoints and logs.
 
@@ -143,7 +143,7 @@ For platform-side multi-node setup (sbatch flags on SLURM, Indexed Job + Service
 
 ### Vision Encoders
 - **custom.vision.fps** *or* **custom.vision.nframes** — **mutually exclusive**, set exactly one.
-  - `nframes` (default in template): extract this many frames evenly across the clip. This is the safest default for 1-GPU AutoML smoke runs.
+  - `nframes` (default in template): extract this many frames evenly across the clip. This is the safest default for 1-GPU AutoML diagnostic runs.
   - `fps`: extract frames at this rate. High motion: 3. Low motion/static: 1–2. Use when the selected videos, `policy.model_max_length`, and GPU memory can absorb the expanded token count.
   - Setting both makes qwen-vl-utils' decord backend error out (`Only accept either fps or nframes`) and silently fall back to torchvision, which deadlocks under multi-worker dataloading (`BlockingIOError [Errno 11]` swscaler errors). If you switch from `fps` to `nframes`, also delete `fps` from your spec.
 - Neither `nframes` nor `fps` sampling requires a per-record `video_fps`
@@ -206,7 +206,7 @@ fine-tuned checkpoints for handoff.
 
 ## Hardware
 
-Cosmos-RL models are 8B parameters and use FSDP sharding. SFT requires at least 256 GB of cumulative visible GPU memory, with no fixed device count or per-device capacity. Set `dp_shard_size` to the actual visible GPU count and `dp_replicate_size=1` for a single node. Every visible architecture must be supported by the selected image and pass the runtime CUDA-stack smoke test.
+Cosmos-RL models are 8B parameters and use FSDP sharding. SFT requires at least 256 GB of cumulative visible GPU memory, with no fixed device count or per-device capacity. Set `dp_shard_size` to the actual visible GPU count and `dp_replicate_size=1` for a single node. Every visible architecture must be supported by the selected image and pass the allocated-node CUDA-stack gate.
 
 Apply `runtime_requirements.gpu_host` from `references/skill_info.yaml` as
 minimum-version overrides to the shared host setup check.
@@ -223,7 +223,7 @@ minimum-version overrides to the shared host setup check.
 
 **Quantize image/video token mismatch**: `Mismatch in image token count between
 text and input_ids` during calibration means `quantize.max_sequence_length` is
-too small for the sampled media tokens. The packaged smoke template uses 4096;
+too small for the sampled media tokens. The packaged template uses 4096;
 do not lower it to tiny values such as 128 for video calibration.
 
 **train_batch_per_replica not divisible by mini_batch**: The default `train_batch_per_replica=1` from the TAO Core schema is invalid because `mini_batch` defaults to 4. Immediate AssertionError on all ranks. Fix: set `train_batch_per_replica` to a multiple of `mini_batch` (recommended: 32 for large datasets, 4 for small datasets).

@@ -150,10 +150,18 @@ def test_cosmos_rl_preflight_rejects_dependency_abi_and_dispatch_regressions() -
     assert "torchvision" in runtime
     assert "_tao_linear_patch_embed" in runtime
     assert "_tao_channels_last_3d" in runtime
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:vlm_attention_mask" in runtime
+    assert "HFVLMDataPacker._collate_fn" in runtime
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:visual_gradient_contract" in runtime
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:visual_gradient_env" in runtime
+    assert "COSMOS_SFT_REQUIRE_VISUAL_GRADIENTS" in runtime
+    assert "SFTTrainer.step_training" in runtime
     assert "DeepEP Python/extension ABI" in contract["checks"]
     assert "vLLM Qwen3-VL Conv3D dispatch guard" in contract["checks"]
     assert "checksum-pinned software System PyAV image capability" in contract["checks"]
     assert "backward-safe Qwen3-VL PatchEmbed" in contract["checks"]
+    assert "padding-aware VLM attention mask" in contract["checks"]
+    assert "first-update visual-gradient contract" in contract["checks"]
     assert "384 GiB free result/checkpoint space" in contract["checks"]
 
 

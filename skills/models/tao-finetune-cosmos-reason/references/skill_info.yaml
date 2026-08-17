@@ -52,13 +52,18 @@ workflow_contract:
   planner: scripts/cosmos_workflow.py
   framework_checkpoint_action: scripts/framework_checkpoint_action.py
   metric_extractor: scripts/extract_cosmos_metrics.py
-  smoke_gate:
-    default_for:
-    - video_conversation
-    - task_aware_video_reasoning
+  diagnostic_subset:
+    policy: opt-in only; never submit a separate smoke job unless the user explicitly requests it
     train_samples: max(16, total_gpus)
     validation_samples: max(8, total_gpus)
-    success_condition: finite globally weighted train/validation losses, completed checkpoint event, repository-evaluator accuracy coverage, child exit zero, and terminal structured SUCCESS
+  first_update_gate:
+    execution: inside the requested Cosmos-RL training job after backward and before the first optimizer update
+    requires:
+    - padding-aware attention_mask emitted by the HF VLM collator
+    - component total and trainable parameter counts
+    - finite nonzero gradient norm for each trainable visual component
+    status_output: vision encoder, visual projector, language model, and language-head counts and gradient norms
+    failure_behavior: terminate the training child before the first optimizer update
   parity_fingerprint:
   - train record and media fingerprints
   - validation record and media fingerprints

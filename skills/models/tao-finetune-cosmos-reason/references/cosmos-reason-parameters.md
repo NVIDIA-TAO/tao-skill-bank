@@ -10,7 +10,7 @@ Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `
   Use at least 2 for local AutoML or validation runs that need a host-visible best checkpoint for
   evaluate/inference; one-epoch runs can leave only a broken `best` symlink
   after checkpoint cleanup.
-- **train.train_batch_per_replica**: Global batch size per training step. Ideally >= 32 for stability. CRITICAL: must be divisible by `train.train_policy.mini_batch` (default 1 in the packaged smoke-safe template). Recommended production value: 32.
+- **train.train_batch_per_replica**: Global batch size per training step. Ideally >= 32 for stability. CRITICAL: must be divisible by `train.train_policy.mini_batch` (default 1 in the packaged template). Recommended production value: 32.
 - **train.compile**: Set to true for potential speedup on newer GPUs (H100), else false.
 - **train.output_dir**: Output directory for checkpoints and logs.
 
@@ -120,7 +120,7 @@ per-device capacity. Set `dp_shard_size` to the actual visible GPU count and
 8x A100 or H100 (80 GB each). A single high-memory GB300 is also viable with a
 compatible image, `dp_shard_size=1`, and the single-GPU video guards documented in
 `cosmos-reason-single-gpu-video.md`. Every visible architecture must be supported by
-the selected image and pass the runtime CUDA-stack smoke test.
+the selected image and pass the allocated-node CUDA-stack gate.
 
 Read `runtime_requirements.gpu_host` from `references/skill_info.yaml` and pass
 it as minimum-version overrides to `tao-setup-nvidia-gpu-host`; do not copy the
@@ -138,7 +138,7 @@ values into a platform-wide rule or convert them into exact pins.
 
 **Quantize image/video token mismatch**: `Mismatch in image token count between
 text and input_ids` during calibration means `quantize.max_sequence_length` is
-too small for the sampled media tokens. The packaged smoke template uses 4096;
+too small for the sampled media tokens. The packaged template uses 4096;
 do not lower it to tiny values such as 128 for video calibration.
 
 **train_batch_per_replica not divisible by mini_batch**: The default `train_batch_per_replica=1` from the TAO Core schema is invalid because `mini_batch` defaults to 4. Immediate AssertionError on all ranks. Fix: set `train_batch_per_replica` to a multiple of `mini_batch` (recommended: 32 for large datasets, 4 for small datasets).

@@ -3,15 +3,13 @@ name: tao-finetune-cosmos-reason
 description: >-
   Shared Cosmos3 frontend that explicitly routes Cosmos Framework and
   Cosmos-RL, validates runtime model/video-dataset/SLURM inputs, builds clean
-  repository-derived images, prepares checkpoints, gates full training on a
-  smoke run, and returns token-weighted losses and task-aware accuracy.
+  repository-derived images, prepares checkpoints, validates the first update
+  in-process, and returns token-weighted losses and task-aware accuracy.
 license: Apache-2.0
-compatibility: Docker with NVIDIA Container Toolkit, or SLURM with Pyxis/Enroot and a user-supplied shared-storage configuration.
 metadata:
   author: NVIDIA Corporation
   version: "0.3.3"
 allowed-tools: Read Bash
-tags: [cosmos, vlm, sft, peft, video, reasoning, slurm]
 ---
 
 # Cosmos3 TAO training
@@ -69,7 +67,7 @@ frames, a 1280 x 720 per-frame reference budget (5,529,600 aggregate video
 pixels), sequence length 16,000, and `flash_attention_2`. These are runtime
 settings, not checkpoint contents. Record whether each value came from the
 skill profile or an explicit user override, include it in parity and cache
-keys, and require the normal compute-node smoke gate before full training.
+keys, and require the normal allocated-node runtime gate before training.
 Framework receives the pixel budget through `TAO_VIDEO_MAX_PIXELS`; Nano keeps its native processor limit unless the user
 explicitly overrides it.
 
@@ -223,8 +221,10 @@ Execute these stages in order and persist their outputs.
    target compute frame; the explicitly requested controller-side plan artifact
    is their handoff. Invoke `preflight`, post-review `materialize`, and
    `render-slurm` with that same `--plan-artifact` and no repeated original
-   input arguments. `materialize` atomically creates the TOML and any
-   merged/smoke manifest in the verified compute frame. For SSH-based
+   input arguments. `materialize` atomically creates the TOML and any required
+   merged manifest in the verified compute frame. An explicitly requested
+   diagnostic subset may use a limited generated manifest, but it is never an
+   automatic prerequisite for the requested training job. For SSH-based
    SLURM, the checked-in helper is streamed to the verified login host and the
    generated files are written directly to user-supplied shared storage; do
    not read a remote annotation through the launch host or copy a temporary
@@ -234,16 +234,21 @@ Execute these stages in order and persist their outputs.
    image ID/digest and SQSH SHA256; verify Pyxis/Enroot, mounts, non-root Python,
    packages, decoder, GPU memory/type, CUDA/PyTorch, NCCL, and storage on the
    allocated node.
-10. Run a smoke job for every distinct backend × structural dataset family × training
-    mode × checkpoint/evaluator path. Continue only on child exit zero,
-    structured `SUCCESS`, finite global train/validation loss, checkpoint
-    completion, and evaluator accuracy coverage.
-11. Create one fresh sealed full plan after the smoke gate, with all smoke
-    limits removed. Materialize its full spec once and verify its SHA256 in the
-    compute frame before rendering the job from the same plan artifact. Launch with
-    `afterok` only after the smoke gate, monitor scheduler and structured TAO
-    state to a terminal result, and preserve the child exit code independently
-    of scheduler state.
+10. Launch the requested training job directly; do not submit a separate smoke
+    job unless the user explicitly requests one. For Cosmos-RL VLM training,
+    require packaged source that emits a padding-aware `attention_mask` and
+    runs the visual-gradient contract after the first backward pass and before
+    the first optimizer update. Persist total/trainable/frozen counts and
+    gradient norms for the vision encoder, visual projector, language model,
+    and language head. Fail immediately when a trainable visual component has
+    no gradient, a non-finite norm, or a zero norm. Report an explicitly frozen
+    visual component as not applicable rather than as a failure.
+11. Materialize the full spec once and verify its SHA256 in the compute frame
+    before rendering the job from the same plan artifact. Monitor scheduler and
+    structured TAO state to a terminal result, and preserve the child exit code
+    independently of scheduler state. Require child exit zero, structured
+    `SUCCESS`, finite global train/validation loss, checkpoint completion, and
+    evaluator metric coverage before reporting completion.
 12. Resolve evaluation with `scripts/evaluation_workflow.py`. Inherit exact
     fine-tuning artifacts, collect only its remaining user inputs, run its
     backend-owned automated checkpoint pre-actions, and require `ready=true`.
@@ -269,7 +274,7 @@ Default `dataset_family` to `auto`, inspect every annotation, and require train
 and validation to resolve to the same family. Capture record count, unique
 media count, media reuse, extensions, byte-size distribution, task/metric
 metadata, and any declared width, height, FPS, and duration. Select processor,
-cache, smoke-size, and resource profiles from those characteristics and the
+cache and resource profiles from those characteristics and the
 model tier. Never branch on a customer dataset name.
 
 Tasks declaring accuracy participate in deterministic accuracy; common binary
@@ -321,7 +326,7 @@ code. A single-node exclusive allocation preserves the requested CPU count in
 the `SBATCH` contract but passes every CPU actually granted by SLURM to the
 training step and records requested, allocated, and step counts. Before the
 training child, the same allocation runs the planner-owned packaged-runtime
-gate as the smoke job's first Pyxis step; a failed gate writes the independent
+gate as the training job's first Pyxis step; a failed gate writes the independent
 child exit artifact and blocks training. Generated jobs set
 `SLURM_EXPORT_ENV=ALL`, and the platform consumer still submits with
 `sbatch --export=ALL`. Every Pyxis step also receives the planner-owned
@@ -342,9 +347,10 @@ timestamps, and terminal TAO status without credentials.
 
 If a run exposes a code or image defect, stop the affected path, change the
 owning repository, add a test, commit it, rebuild both image and SQSH from a
-clean checkout, rerun smoke, and rerun every affected full job. Never edit a
-running container, patch an existing image, reuse an old SQSH after a source
-change, or rely on a temporary launch script as the implementation.
+clean checkout, then restart every affected training job from its clean sealed
+plan. Never edit a running container, patch an existing image, reuse an old
+SQSH after a source change, or rely on a temporary launch script as the
+implementation.
 
 Use `references/cosmos-reproducibility-gates.md` as the source-owner and test
 map before proposing a workaround in a fresh session.

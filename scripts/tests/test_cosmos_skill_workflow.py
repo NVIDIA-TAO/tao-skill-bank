@@ -1366,6 +1366,29 @@ def test_smoke_limit_never_leaks_to_full(tmp_path):
     assert not any(key.endswith("_LIMIT") for key in full["environment"])
 
 
+def test_full_cosmos_rl_uses_in_process_first_update_gate(tmp_path):
+    plan = workflow.build_plan(
+        args_for(tmp_path, backend="cosmos-rl", run_mode="full")
+    )
+
+    assert plan["diagnostic_subset"] == {
+        "required": False,
+        "policy": "opt_in_only",
+        "requested": False,
+        "train_samples": 16,
+        "validation_samples": 8,
+    }
+    gate = plan["first_update_gate"]
+    assert gate["required"] is True
+    assert gate["execution"] == "in_process_before_first_optimizer_update"
+    assert "padding_aware_attention_mask" in gate["criteria"]
+    assert "trainable_visual_gradients_present" in gate["criteria"]
+    assert (
+        "model/components/visual_gradient_contract" in gate["status_keys"]
+    )
+    assert plan["environment"]["COSMOS_SFT_REQUIRE_VISUAL_GRADIENTS"] == "1"
+
+
 def test_slurm_script_is_bash_sqsh_no_requeue_and_preserves_failure(tmp_path):
     args = args_for(tmp_path)
     args.platform = "slurm"; args.partition = "compute"; args.account = "project"
@@ -1853,6 +1876,40 @@ def test_metric_extraction_accepts_pretty_json_array_and_nested_phase(tmp_path):
     evaluation = {"average_validation_accuracy": 0.9, "numerator": 90, "denominator": 100}
     summary = metric.summarize_records(loaded, evaluation)
     assert summary["average_validation_loss"]["average"] == 0.1
+
+
+def test_metric_extraction_reports_first_update_visual_gradient_contract():
+    records = _status_records()
+    records.insert(
+        1,
+        {
+            "status": "RUNNING",
+            "step": 0,
+            "kpi": {
+                "model/components/visual_gradient_contract": "passed",
+                "model/components/vision_encoder/total_parameters": 100,
+                "model/components/vision_encoder/trainable_parameters": 100,
+                "model/components/vision_encoder/frozen_parameters": 0,
+                "model/components/vision_encoder/parameter_tensors_with_grad": 4,
+                "model/components/vision_encoder/grad_norm": 0.25,
+                "model/components/vision_projector/trainable_parameters": 10,
+                "model/components/vision_projector/grad_norm": 0.5,
+            },
+        },
+    )
+    evaluation = {
+        "average_validation_accuracy": 0.9,
+        "numerator": 90,
+        "denominator": 100,
+    }
+
+    summary = metric.summarize_records(records, evaluation, backend="cosmos-rl")
+    gradient = summary["first_update_visual_gradient_contract"]
+
+    assert gradient["status"] == "passed"
+    assert gradient["step"] == 0
+    assert gradient["components"]["vision_encoder"]["grad_norm"] == 0.25
+    assert gradient["components"]["vision_projector"]["grad_norm"] == 0.5
 
 
 def test_metadata_schema_and_child_failure_guard(tmp_path):

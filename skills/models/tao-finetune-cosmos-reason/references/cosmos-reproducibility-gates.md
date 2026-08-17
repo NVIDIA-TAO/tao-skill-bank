@@ -9,6 +9,7 @@ not an implementation.
 | Behavior | Owning repository and proof |
 |---|---|
 | A100 Qwen3-VL trainable PatchEmbed fallback | Framework: `cosmos_framework/model/generator/qwen3_vl_compat.py` and its test. Native RL: `cosmos_rl/policy/model/hf_models/patch.py` and `tests/test_qwen3_vl_patch_embed_compat.py`. The Framework model invokes its own compatibility function; do not depend on TAO Core microservice import side effects for training. |
+| Cosmos-RL visual-gradient integrity | Native RL: `HFVLMDataPacker._collate_fn` emits a length-derived padding `attention_mask`; `SFTTrainer` records non-overlapping vision-encoder, visual-projector, language-model, and language-head parameter/gradient statistics after the first backward pass and fails before the first optimizer update if a trainable visual component has no finite nonzero gradient. `tests/test_hf_vlm_attention_and_gradients.py` covers internal pad-token values, mask forwarding, live visual gradients, effective freezing, and explicit freezing. The skill preflight rejects an image that lacks either source capability and never substitutes a Transformers pin or attention-backend choice for the explicit mask. |
 | Dataset-neutral conversation and task-aware adapters | Framework: `cosmos_framework/data/generator/local_datasets/tao_vl_reason.py` plus TAO video recipe tests. Native RL: packaged `tao_sft_example.py` and `tao_vl_reason_daft_sft_example.py`; never stage a modified hook. |
 | Dense/PEFT semantic parity | Framework LoRA utilities/config tests and native RL `LoraConfig`/`tests/test_lora.py`; the shared planner blocks rank, alpha, dropout, target, bias, RS-LoRA, modules-to-save, precision, or trainable-scope mismatches. |
 | Dataset-neutral evaluation resolution | Skill: `scripts/evaluation_workflow.py` and its tests. It verifies the sealed training plan, inherits exact validation/prompt/preprocessing/model/LoRA/resource fields, classifies only genuinely missing values as user intake, and leaves Framework export as an automated action. The raw template contains no dataset prompt, path, task profile, checkpoint, or text-metric assumption. |
@@ -34,7 +35,8 @@ the submodule and rebuild. Framework and native RL training must continue to
 use their repository-owned fallbacks regardless.
 
 After any owning-source change, rerun the repository unit tests, rebuild the
-action image and SQSH from clean commits, prove packaged imports/provenance, run
-the affected smoke through validation/checkpoint/export/evaluation, and then
-rerun every affected full cell. Infrastructure retries do not justify a source
-change unless the evidence identifies a code defect.
+action image and SQSH from clean commits, prove packaged imports/provenance,
+then restart every affected requested run from its sealed full plan. The
+Cosmos-RL first-update gradient gate runs inside that job. Infrastructure
+retries do not justify a source change unless the evidence identifies a code
+defect.

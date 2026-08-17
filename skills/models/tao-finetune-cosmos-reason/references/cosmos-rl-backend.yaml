@@ -90,6 +90,18 @@ configuration:
     type: cosmos_rl.policy.config.LoraConfig
     fields: [r, lora_alpha, lora_dropout, target_modules, bias, use_rslora, modules_to_save, adapter_dtype]
     forbidden_legacy_fields: [dim, alpha, dropout]
+training_integrity:
+  attention_mask:
+    producer: cosmos_rl.dispatcher.data.packer.hf_vlm_data_packer.HFVLMDataPacker._collate_fn
+    construction: unpadded sequence length after truncation; never infer from pad-token values or multimodal position ids
+    consumer: Hugging Face VLM forward attention_mask
+  first_update_gradient_gate:
+    execution: after the first backward pass and before clipping or optimizer update
+    components: [vision_encoder, vision_projector, language_model, lm_head]
+    required_visual_result: every trainable visual component has at least one gradient tensor and a finite nonzero global norm
+    explicitly_frozen_result: not_applicable_frozen
+    structured_status_prefix: model/components
+    separate_smoke_job: false
 dataset_families:
   video_conversation:
     hook: package://cosmos_rl/tools/custom_hooks/tao_sft_example.py

@@ -1132,6 +1132,7 @@ def _env(args: argparse.Namespace, backend: str, prepared_model: str, train_anno
                 train_limit *= 2
             common.update({"TAO_VIDEO_TRAIN_LIMIT": str(train_limit), "TAO_VIDEO_VAL_LIMIT": str(args.smoke_validation_samples)})
     else:
+        common["COSMOS_SFT_REQUIRE_VISUAL_GRADIENTS"] = "1"
         if (
             args.dataset_family == "video_conversation"
             and getattr(args, "rl_dataset_cache_mode", "direct") == "prewarm"
@@ -1411,10 +1412,17 @@ def _preflight_contract(
         ])
     else:
         imports.extend([
-            "import cosmos_rl", "import av", "import os",
+            "import cosmos_rl", "import av", "import inspect", "import os",
             "from nvidia_tao_core.microservices.handlers import huggingface_inference_microservice_server",
             "from transformers.models.qwen3_vl.modeling_qwen3_vl import Qwen3VLVisionPatchEmbed",
+            "from cosmos_rl.dispatcher.data.packer.hf_vlm_data_packer import HFVLMDataPacker",
+            "from cosmos_rl.policy.trainer.llm_trainer import sft_trainer as sft_trainer_module",
             "assert (getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False) or getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_channels_last_3d', False)), 'TAO_PREFLIGHT_ASSERTION_FAILED:qwen_patch_embed'",
+            "assert os.environ.get('COSMOS_SFT_REQUIRE_VISUAL_GRADIENTS') == '1', 'TAO_PREFLIGHT_ASSERTION_FAILED:visual_gradient_env'",
+            "vlm_collate_source=inspect.getsource(HFVLMDataPacker._collate_fn)",
+            "assert 'batch[\"attention_mask\"]' in vlm_collate_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:vlm_attention_mask'",
+            "sft_source=inspect.getsource(sft_trainer_module.SFTTrainer.step_training)",
+            "assert '_enforce_visual_gradient_contract' in sft_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:visual_gradient_contract'",
             "assert av.codec.Codec('h264', 'r').name == 'h264', 'TAO_PREFLIGHT_ASSERTION_FAILED:h264_software_name'",
             "assert av.codec.Codec('hevc', 'r').name == 'hevc', 'TAO_PREFLIGHT_ASSERTION_FAILED:hevc_software_name'",
             "from cosmos_rl.utils.runtime_dependency_contract import verify_deepep, verify_vllm_conv3d",
@@ -1511,6 +1519,7 @@ def _preflight_contract(
             ]
         elif rl_video_runtime["selected_profile"] == "pynv-device-rgbp":
             container_env_names = [
+                "COSMOS_SFT_REQUIRE_VISUAL_GRADIENTS",
                 "FORCE_QWENVL_VIDEO_READER",
                 "TAO_PYNV_FRAME_TRANSFER",
                 "TAO_PYNV_VIDEO_CACHE_SIZE",
@@ -1518,7 +1527,10 @@ def _preflight_contract(
                 "TAO_SFT_BATCH_THREADS",
             ]
         else:
-            container_env_names = ["FORCE_QWENVL_VIDEO_READER"]
+            container_env_names = [
+                "COSMOS_SFT_REQUIRE_VISUAL_GRADIENTS",
+                "FORCE_QWENVL_VIDEO_READER",
+            ]
         container = " ".join([
             "srun", "--nodes=1", "--ntasks=1", f"--gpus={args.gpus_per_node}",
             "--no-container-remap-root", "--no-container-mount-home",
@@ -1543,6 +1555,7 @@ def _preflight_contract(
             "Pyxis/Enroot and SQSH readability", "container mounts/shared storage", "non-root Python imports",
             "GPU count/type/memory", "driver/CUDA/PyTorch", "NCCL initialization",
             "explicit selected Cosmos-RL video profile", "checksum-pinned software System PyAV image capability", "backward-safe Qwen3-VL PatchEmbed",
+            "padding-aware VLM attention mask", "first-update visual-gradient contract",
             "DeepEP Python/extension ABI", "vLLM Qwen3-VL Conv3D dispatch guard",
             "fingerprinted decoder-artifact coverage", "384 GiB free result/checkpoint space",
         ],
@@ -2060,7 +2073,31 @@ def build_plan(
                 *val_data["evaluation_profile"]["requires_user_input"],
             ],
         },
-        "smoke_gate": {"required": not args.skip_smoke and args.run_mode == "full", "train_samples": args.smoke_train_samples, "validation_samples": args.smoke_validation_samples, "criteria": ["child_exit_code=0", "terminal_status=SUCCESS", "finite_train_avg_loss", "finite_val_avg_loss", "checkpoint_event", "validation_accuracy_present"]},
+        "diagnostic_subset": {
+            "required": False,
+            "policy": "opt_in_only",
+            "requested": args.run_mode == "smoke",
+            "train_samples": args.smoke_train_samples,
+            "validation_samples": args.smoke_validation_samples,
+        },
+        "first_update_gate": {
+            "backend": backend,
+            "required": backend == "cosmos-rl",
+            "execution": "in_process_before_first_optimizer_update",
+            "criteria": [
+                "padding_aware_attention_mask",
+                "component_parameter_counts_present",
+                "trainable_visual_gradients_present",
+                "trainable_visual_gradient_norms_finite_and_nonzero",
+            ],
+            "status_keys": [
+                "model/components/vision_encoder/grad_norm",
+                "model/components/vision_projector/grad_norm",
+                "model/components/language_model/grad_norm",
+                "model/components/lm_head/grad_norm",
+                "model/components/visual_gradient_contract",
+            ],
+        },
         "metric_contract": {"train": {"key": "train/avg_loss", "weight": "valid_labels", "requires": ["train/loss_numerator", "train/valid_label_count"]}, "validation": {"key": "val/avg_loss", "weight": "valid_labels", "requires": ["val/loss_numerator", "val/valid_label_count"]}, "accuracy": {"route": "shared repository evaluator", "aggregation": val_data["metric_coverage"]["aggregate"], "coverage": val_data["metric_coverage"]}},
     }
     representative_media = _containerize(args, train_data["media_manifest"][0]["path"])
