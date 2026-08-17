@@ -226,6 +226,27 @@ def render(args: argparse.Namespace) -> str:
         "TAO_STATUS_PATH": f"/results/{job_id}/status.json",
         "TORCH_NCCL_ASYNC_ERROR_HANDLING": "1",
     }
+    if backend == "cosmos-rl":
+        vision = config.get("vision") if isinstance(config.get("vision"), dict) else {}
+        frame_transfer = str(vision.get("frame_transfer", "host_rgb"))
+        if frame_transfer not in {"host_rgb", "device_rgbp"}:
+            raise RenderError(
+                "Cosmos-RL evaluation frame_transfer must be host_rgb or device_rgbp"
+            )
+        video_cache_size = int(vision.get("video_cache_size", 0))
+        decoder_cache_size = int(vision.get("decoder_cache_size", 4))
+        if video_cache_size < 0 or decoder_cache_size <= 0:
+            raise RenderError(
+                "Cosmos-RL evaluation cache sizes must be non-negative/positive"
+            )
+        environment.update(
+            {
+                "FORCE_QWENVL_VIDEO_READER": "pynvvideocodec",
+                "TAO_PYNV_DECODER_CACHE_SIZE": str(decoder_cache_size),
+                "TAO_PYNV_FRAME_TRANSFER": frame_transfer,
+                "TAO_PYNV_VIDEO_CACHE_SIZE": str(video_cache_size),
+            }
+        )
     container_env = sorted(environment)
     if nodes > 1:
         container_env.extend(["MASTER_ADDR", "MASTER_PORT"])

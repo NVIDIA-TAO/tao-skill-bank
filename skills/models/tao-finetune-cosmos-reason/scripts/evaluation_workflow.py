@@ -699,6 +699,23 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             )
     provenance["evaluation.seed"] = _source(seed, seed_source)
     provenance["evaluation.batch_size"] = _source(batch_size, batch_size_source)
+    requested_shard_strategy = getattr(args, "evaluation_shard_strategy", None)
+    validation_profile = validation.get("profile", {})
+    validation_family = (
+        str(validation_profile.get("family", ""))
+        if isinstance(validation_profile, Mapping)
+        else ""
+    )
+    shard_strategy = requested_shard_strategy or (
+        "media_balanced"
+        if backend == "cosmos-rl"
+        and validation_family in {"video_conversation", "task_aware_video_reasoning"}
+        else "stride"
+    )
+    provenance["evaluation.shard_strategy"] = _source(
+        shard_strategy,
+        "user" if requested_shard_strategy is not None else "dataset_profile",
+    )
     if batch_size <= 0:
         required_user_inputs.append(
             {"field": "evaluation.batch_size", "reason": "no usable evaluation batch size was resolved"}
@@ -753,13 +770,73 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             vision["video_cache_size"], "sealed_training_plan.framework_video_runtime"
         )
     else:
-        # Preserve the Cosmos-RL evaluator contract exactly. Framework runtime
-        # fields and decoder artifacts must never bleed into this branch.
+        # Cosmos-RL evaluation owns a distinct PyNvVideoCodec runtime.  Reuse
+        # the sealed training runtime when present so a fresh evaluation does
+        # not silently fall back to host-RGB transfer or disable the rank-local
+        # on-demand processed-video cache.  Explicit evaluation overrides are
+        # useful for bounded throughput experiments and remain recorded in the
+        # plan provenance.
+        rl_runtime = plan.get("rl_video_runtime")
+        if not isinstance(rl_runtime, Mapping):
+            rl_runtime = {}
+        recorded_cache_size = int(rl_runtime.get("video_cache_size", 0))
+        recorded_decoder_cache_size = int(rl_runtime.get("decoder_cache_size", 4))
+        recorded_frame_transfer = str(rl_runtime.get("frame_transfer", "host_rgb"))
+        cache_override = getattr(args, "rl_video_cache_size", None)
+        decoder_cache_override = getattr(args, "rl_video_decoder_cache_size", None)
+        frame_transfer_override = getattr(args, "rl_video_frame_transfer", None)
+        if cache_override is not None:
+            cache_size = int(cache_override)
+            cache_source = "user"
+        elif shard_strategy == "media_balanced" and recorded_cache_size > 0:
+            # Media-balanced sharding restores source order after assigning a
+            # complete media group to one rank. A single on-demand processed
+            # entry therefore captures every adjacent reuse without retaining
+            # the full training-era working set in evaluation memory.
+            cache_size = 1
+            cache_source = "media_balanced_on_demand_cache"
+        else:
+            cache_size = recorded_cache_size
+            cache_source = "sealed_training_plan.rl_video_runtime"
+        decoder_cache_size = (
+            min(recorded_decoder_cache_size, 4)
+            if decoder_cache_override is None
+            else int(decoder_cache_override)
+        )
+        frame_transfer = (
+            recorded_frame_transfer
+            if frame_transfer_override is None
+            else str(frame_transfer_override)
+        )
+        if cache_size < 0:
+            raise WorkflowError("Cosmos-RL evaluation video_cache_size must be non-negative")
+        if decoder_cache_size <= 0:
+            raise WorkflowError("Cosmos-RL evaluation decoder_cache_size must be positive")
+        if frame_transfer not in {"host_rgb", "device_rgbp"}:
+            raise WorkflowError(
+                "Cosmos-RL evaluation frame_transfer must be host_rgb or device_rgbp"
+            )
         vision = {
             "num_frames": frames,
             "video_decoder": "pynvvideocodec",
-            "video_cache_size": 0,
+            "video_cache_size": cache_size,
+            "decoder_cache_size": decoder_cache_size,
+            "frame_transfer": frame_transfer,
         }
+        runtime_source = (
+            "sealed_training_plan.rl_video_runtime" if rl_runtime else "evaluator_default"
+        )
+        provenance["vision.video_cache_size"] = _source(
+            cache_size, cache_source
+        )
+        provenance["vision.decoder_cache_size"] = _source(
+            decoder_cache_size,
+            "user" if decoder_cache_override is not None else runtime_source,
+        )
+        provenance["vision.frame_transfer"] = _source(
+            frame_transfer,
+            "user" if frame_transfer_override is not None else runtime_source,
+        )
     if max_video_pixels is not None:
         vision["max_pixels"] = max_video_pixels
         if backend == "cosmos-framework":
@@ -813,6 +890,7 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             "limit": -1,
             "shard_id": 0,
             "batch_size": batch_size,
+            "shard_strategy": shard_strategy,
             "barrier_timeout_seconds": 14400,
             "soft_accuracy": {"enabled": True, "f1_threshold": 0.8},
         },
@@ -920,6 +998,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--answer-type", choices=("letter", "reasoning", "freeform", "naive"))
     parser.add_argument("--evaluation-batch-size", type=int)
     parser.add_argument("--evaluation-seed", type=int)
+    parser.add_argument(
+        "--evaluation-shard-strategy", choices=("stride", "media_balanced")
+    )
+    parser.add_argument("--rl-video-cache-size", type=int)
+    parser.add_argument("--rl-video-decoder-cache-size", type=int)
+    parser.add_argument(
+        "--rl-video-frame-transfer", choices=("host_rgb", "device_rgbp")
+    )
     parser.add_argument("--generation-max-tokens", type=int)
     parser.add_argument("--max-video-pixels", type=int)
     parser.add_argument("--metric", action="append", default=[])
@@ -939,6 +1025,13 @@ def main(argv: list[str] | None = None) -> int:
             raise WorkflowError("evaluation_batch_size must be positive")
         if args.evaluation_seed is not None and args.evaluation_seed < 0:
             raise WorkflowError("evaluation_seed must be non-negative")
+        if args.rl_video_cache_size is not None and args.rl_video_cache_size < 0:
+            raise WorkflowError("rl_video_cache_size must be non-negative")
+        if (
+            args.rl_video_decoder_cache_size is not None
+            and args.rl_video_decoder_cache_size <= 0
+        ):
+            raise WorkflowError("rl_video_decoder_cache_size must be positive")
         if args.max_video_pixels is not None and args.max_video_pixels <= 0:
             raise WorkflowError("max_video_pixels must be positive")
         if args.num_gpus is not None and args.num_gpus <= 0:

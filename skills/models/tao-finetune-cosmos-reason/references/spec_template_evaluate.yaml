@@ -24,6 +24,7 @@ evaluation:
   skip_saved: false
   seed: 0
   limit: -1
+  shard_strategy: stride
   shard_id: 0
   batch_size: 0
   barrier_timeout_seconds: 14400
@@ -36,7 +37,9 @@ vision:
   max_pixels: 0
   video_decoder: pynvvideocodec
   video_cache_size: 0
+  frame_transfer: host_rgb
   process_threads: 8
+  decoder_cache_size: 4
   decoder_threads: 1
   decoder_device: cuda
   dataloader_num_workers: 1

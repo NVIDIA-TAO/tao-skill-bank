@@ -74,6 +74,15 @@ def _plan(backend: str) -> dict:
             "dataloader_persistent_workers": True,
         }
     else:
+        plan["datasets"]["validation"]["profile"] = {
+            "family": "video_conversation"
+        }
+        plan["rl_video_runtime"] = {
+            "selected_profile": "pynv-device-rgbp",
+            "frame_transfer": "device_rgbp",
+            "video_cache_size": 341,
+            "decoder_cache_size": 341,
+        }
         plan["decoder_artifact"] = {
             "enabled": True,
             "path": "/data/video_override_map.json",
@@ -137,6 +146,7 @@ def _args(tmp_path: Path, plan_path: Path, backend: str) -> argparse.Namespace:
         answer_type=None,
         evaluation_batch_size=None,
         evaluation_seed=None,
+        evaluation_shard_strategy=None,
         generation_max_tokens=None,
         max_video_pixels=None,
         metric=[],
@@ -180,7 +190,7 @@ def test_framework_evaluation_inherits_native_torchcodec_profile(tmp_path: Path)
     }
 
 
-def test_cosmos_rl_evaluation_decoder_contract_is_unchanged(tmp_path: Path) -> None:
+def test_cosmos_rl_evaluation_inherits_its_sealed_pynv_profile(tmp_path: Path) -> None:
     result = _resolve(tmp_path, "cosmos-rl")
     assert result["ready"] is False
     assert result["required_user_inputs"] == [
@@ -192,7 +202,10 @@ def test_cosmos_rl_evaluation_decoder_contract_is_unchanged(tmp_path: Path) -> N
     assert result["config"]["vision"] == {
         "num_frames": 8,
         "video_decoder": "pynvvideocodec",
-        "video_cache_size": 0,
+        "video_cache_size": 1,
+        "decoder_cache_size": 4,
+        "frame_transfer": "device_rgbp",
         "max_pixels": 81920,
         "video_override_map": "/data/video_override_map.json",
     }
+    assert result["config"]["evaluation"]["shard_strategy"] == "media_balanced"
