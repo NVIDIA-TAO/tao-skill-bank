@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import pathlib
@@ -265,6 +266,71 @@ def _with_detach(command: list[str], job_id: str) -> list[str]:
     return [*command[: index + 1], "--name", job_id, "-d", *command[index + 1 :]]
 
 
+def _bank_module(name: str):
+    """Load a bank helper by path, preferring the checkout this file lives in.
+
+    `_bank()` honours TAO_SKILL_BANK_PATH, which points at the *installed* bank
+    and may be a different checkout entirely — running from a clone with the env
+    var set elsewhere would silently load that other copy of the helper, or fail
+    when it does not have it. For a helper this skill is calling directly, the
+    code shipped alongside it is the correct one. Loading by path also avoids
+    mutating sys.path as a side effect of a library call.
+    """
+    own = pathlib.Path(__file__).resolve().parents[4] / "scripts" / f"{name}.py"
+    candidate = own if own.is_file() else _bank() / "scripts" / f"{name}.py"
+    if not candidate.is_file():
+        raise ValueError(f"bank helper {name}.py not found (looked in {candidate.parent})")
+    spec = importlib.util.spec_from_file_location(name, candidate)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_bundle(path: pathlib.Path) -> dict[str, Any]:
+    """Read and lint a spec-bundle before anything renders it."""
+    bundle = json.loads(path.expanduser().read_text(encoding="utf-8"))
+    problems = _bank_module("tao_spec_bundle").validate(bundle)
+    if problems:
+        raise ValueError(
+            f"{path} is not a valid spec-bundle:\n  - " + "\n  - ".join(problems)
+        )
+    return bundle
+
+
+def render_docker(bundle: dict[str, Any], results_dir: str) -> list[str]:
+    """Turn a platform-agnostic bundle into a local `docker run` argv.
+
+    Mounts follow the workspace invariant this skill already documents: an
+    absolute-path input is bound at the SAME absolute path inside the container,
+    so a path written into a CSV or spec resolves identically on both sides.
+    Non-local URIs (s3://, hf://, ngc://) are tao-data-io's job to stage first;
+    they are refused here rather than silently ignored.
+    """
+    mounts: list[str] = []
+    seen: set[str] = set()
+    for item in bundle.get("declared_inputs") or []:
+        uri = item["uri"]
+        if "://" in uri:
+            raise ValueError(
+                f"declared_input {item['spec_key']} is {uri!r}; stage it with "
+                "tao-data-io first and declare the compute-frame path"
+            )
+        if not uri.startswith("/"):
+            raise ValueError(f"declared_input {item['spec_key']} must be absolute, got {uri!r}")
+        if uri not in seen:
+            mounts += ["-v", f"{uri}:{uri}:ro"]
+            seen.add(uri)
+    mounts += ["-v", f"{results_dir}:{results_dir}"]
+
+    gpus = int(bundle["compute_shape"]["gpus"])
+    resources = ["--gpus", "all"] if gpus > 0 else []
+
+    argv = ["docker", "run", *resources, *mounts, bundle["image"]]
+    argv += shlex.split(bundle["command"])
+    argv += list(bundle.get("args") or [])
+    return argv
+
+
 def submit(
     state_path: pathlib.Path,
     command: list[str],
@@ -367,6 +433,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--await-job", metavar="JOB_ID",
                         help="Poll JOB_ID to a terminal state and close its record.")
+    parser.add_argument("--bundle", type=pathlib.Path,
+                        help="Submit a spec-bundle instead of raw argv. Its "
+                             "action/image/network_arch describe the job, so "
+                             "those flags are not needed.")
     parser.add_argument("--action", help="Stage label recorded on the job, e.g. iter2.train")
     parser.add_argument("--image", help="Container image recorded on the job")
     parser.add_argument("--network-arch", help="Network architecture recorded on the job")
@@ -390,6 +460,22 @@ def main(argv: list[str] | None = None) -> int:
                 timeout_seconds=args.timeout_seconds,
             )
         if args.submit:
+            if args.bundle:
+                if command:
+                    raise ValueError("--bundle carries the command; drop the trailing -- argv")
+                bundle = load_bundle(args.bundle)
+                state = json.loads(args.state.expanduser().read_text())
+                results_dir = state.get("results_dir")
+                if not results_dir:
+                    raise ValueError(f"{args.state} has no results_dir")
+                print(submit(
+                    args.state, render_docker(bundle, results_dir),
+                    action=bundle["action"], image=bundle["image"],
+                    network_arch=bundle["network_arch"],
+                    storage_tier=args.storage_tier,
+                    parent_job=args.parent_job, platform=args.platform,
+                ))
+                return 0
             missing = [
                 name for name in ("action", "image", "network_arch")
                 if not getattr(args, name)
