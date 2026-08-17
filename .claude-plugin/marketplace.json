@@ -28,6 +28,7 @@
         "./skills/applications/tao-run-deft-cr-its-mining",
         "./skills/applications/tao-validate-recipe-transfer",
         "./skills/applications/tao-run-deft-object-detection",
+        "./skills/applications/tao-prepare-airgap-bundle",
         "./skills/data/tao-mine-nearest-neighbors",
         "./skills/data/tao-mine-aoi-images",
         "./skills/data/tao-analyze-gaps-visual-changenet",

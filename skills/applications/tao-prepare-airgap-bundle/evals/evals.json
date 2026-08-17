@@ -1,0 +1,58 @@
+[
+  {
+    "id": "tao-prepare-airgap-bundle-basic",
+    "question": "A user request: \"Prepare and pack an air-gapped delivery of TAO workloads for a site with no internet, on an ordinary machine with no GPU, covering which skills serve the goal, which execution paths can run offline, and every asset those skills need.\" Identify which TAO skill applies and, reading only that skill's documentation, outline the steps it prescribes. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
+    "expected_skill": "tao-prepare-airgap-bundle",
+    "expected_script": null,
+    "ground_truth": "Identify tao-prepare-airgap-bundle as the applicable skill and summarize its documented workflow from SKILL.md without executing anything, including that the deliverable is an assembled bundle and that verifying it by running it offline is an optional last phase needing a GPU machine.",
+    "expected_behavior": [
+      "Identifies tao-prepare-airgap-bundle as the relevant skill",
+      "Outlines the documented phases in order: intake, resolve, prepare, author, pack, then optional verify",
+      "States that packing completes the delivery and that verification is optional and last",
+      "States that the packaging host needs no GPU",
+      "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-prepare-airgap-bundle-eligibility-verdicts",
+    "question": "A user request: \"A customer wants to run TAO offline. Which of our skills can actually be packaged for an air-gapped site, and how would you decide?\" Identify which TAO skill applies and, reading only that skill's documentation, explain how it establishes whether a skill can be packaged. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
+    "expected_skill": "tao-prepare-airgap-bundle",
+    "expected_script": "scripts/probe_airgap_eligibility.py",
+    "ground_truth": "Explain that eligibility is a property of a skill and execution path pair, that a mechanical screen and the agent's own reading are combined, and that the screen reports eligible, ineligible or undetermined rather than a binary answer.",
+    "expected_behavior": [
+      "States that eligibility is per execution path, not per skill",
+      "Names both sources: the mechanical screen and the agent reading the skill's documentation",
+      "States that ineligible requires positive evidence and that an absent declaration yields undetermined",
+      "States that a disagreement between the two sources is a hard stop for a human",
+      "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-prepare-airgap-bundle-platform-artifacts",
+    "question": "A user request: \"We are packaging a TAO workload for a customer who runs a SLURM cluster, and another who runs plain docker. Does the delivery differ?\" Identify which TAO skill applies and, reading only that skill's documentation, explain what differs between the two deliveries and why the target platform is settled before anything is downloaded. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
+    "expected_skill": "tao-prepare-airgap-bundle",
+    "expected_script": null,
+    "ground_truth": "Explain that the container image takes a different on-disk form per platform, that a SLURM site consumes a squashfs image rather than a docker export, and that the platform choice is asked during intake because it decides the form of every staged asset.",
+    "expected_behavior": [
+      "States that the execution artifact differs per platform while weights, specs and code are shared",
+      "Identifies that a SLURM target needs a squashfs image rather than a docker export",
+      "Explains that the platform is asked rather than derived, because it is a fact about the destination",
+      "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-prepare-airgap-bundle-verification-order",
+    "question": "A user request: \"How do we know an air-gapped TAO bundle actually works before we send it?\" Identify which TAO skill applies and, reading only that skill's documentation, explain the order in which the bundle's instructions are written and verified, and why that order matters. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
+    "expected_skill": "tao-prepare-airgap-bundle",
+    "expected_script": null,
+    "ground_truth": "Explain that the bundle's own instructions are authored before verification and that verification executes those shipped instructions with the network off, so no separate procedure can drift friendlier than the delivery.",
+    "expected_behavior": [
+      "States that authoring the bundle's instructions precedes verifying them",
+      "States that verification runs the shipped instructions rather than a separately written procedure",
+      "States that every action the bundle claims is exercised, not only the first",
+      "States that a fix belongs in the bundle's instructions and the run restarts",
+      "States that verification is optional and that a bundle which skipped it is assembled rather than verified",
+      "Does not run commands, scripts, or web searches"
+    ]
+  }
+]
