@@ -1,4 +1,4 @@
-# NVIDIA [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skills-bank)
+# NVIDIA [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank)
 
 Portable agent skills for training, evaluating, and running inference on NVIDIA TAO models. Works with Claude Code, Codex, Gemini CLI, or any coding agent that speaks the [Agent Skills open standard](https://agentskills.io). Most local Docker model/data actions need only Docker plus NVIDIA Container Toolkit; application workflows may declare small host-Python requirements for deterministic state and analysis adapters. Advanced features—job tracking, multi-node, S3 I/O—are built in, not bolted on: platform skills implement a four-verb execution contract over their native CLI with no `nvidia-tao-sdk`. See [Execution: no SDK required](#execution-no-sdk-required).
 
@@ -6,12 +6,19 @@ Portable agent skills for training, evaluating, and running inference on NVIDIA 
 
 The skill bank works with both Claude Code and Codex. Pick the runtime you use.
 
+**The commands below install the latest release build, `7.1.0`.** Every install
+path pins the marketplace to that tag, so a fresh install gets the same
+validated build every time instead of whatever `main` happens to hold. Newer
+tags appear on the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/releases);
+substitute the tag you want, or use `@main` if you specifically need unreleased
+work.
+
 ### Claude Code
 
-In a Claude Code session, add the marketplace and install the plugin:
+In a Claude Code session, add the marketplace at the release tag and install the plugin:
 
 ```
-/plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
+/plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.1.0
 /plugin install tao-skills@tao-skill-bank
 ```
 
@@ -24,16 +31,23 @@ Codex setup has **two independent pieces** — the plugin (which surfaces the sk
 #### One command (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA-TAO/tao-skills-bank/main/scripts/install-codex-agents.sh | bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA-TAO/tao-skill-bank/main/scripts/install-codex-agents.sh | bash
 ```
+
+The installer is fetched from `main` on purpose — it is the copy that knows
+which tag is current, and it registers the marketplace at that release tag. A
+copy fetched from a release tag only knows about refs that existed when the tag
+was cut.
 
 …or, if you've already cloned or extracted the repo from a zip, run
 `scripts/install-codex-agents.sh` from that directory. The script registers the
-marketplace, installs the TAO Skill Bank plugin, and copies `AGENTS.md` to
-`~/.codex/AGENTS.md` so the TAO identity loads in every Codex session. It's
-idempotent and backs up any existing `~/.codex/AGENTS.md` before overwriting.
-Override the source with `TAO_SKILL_BANK_MARKETPLACE=…` and
-`TAO_SKILL_BANK_REF=…` to use a fork, pinned ref, or local absolute path:
+marketplace **at the latest release tag** (`7.1.0`), installs the TAO Skill Bank
+plugin, and copies `AGENTS.md` to `~/.codex/AGENTS.md` so the TAO identity loads
+in every Codex session. It's idempotent and backs up any existing
+`~/.codex/AGENTS.md` before overwriting. Override the source with
+`TAO_SKILL_BANK_MARKETPLACE=…` and `TAO_SKILL_BANK_REF=…` to use a fork, a
+different tag or branch (`TAO_SKILL_BANK_REF=main` for unreleased work), or a
+local absolute path:
 
 ```bash
 cd /absolute/path/to/tao-skills-external
@@ -48,7 +62,7 @@ If you'd rather drive each step yourself:
 **1. Install the plugin.** Either use the VS Code Codex extension's plugin UI (select **TAO Skill Bank**), or from the CLI:
 
 ```bash
-codex plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
+codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.1.0
 codex plugin add tao-skill-bank@tao-local-plugins
 ```
 
@@ -110,7 +124,28 @@ special SDK exception: its Preflight lazily installs the
 
 ### Updating
 
-**Claude Code:**
+Because the install pins a release tag, `update` / `upgrade` re-fetch **that same
+tag** — they do not move you to a newer release. To move to a new release, check
+the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/releases) and
+re-add the marketplace at the new tag; the existing entry is replaced in place.
+
+**Claude Code:** re-point the marketplace, then update the plugin — `/plugin
+install` is a no-op on an already-installed plugin, so it will leave you on the
+old build even after the marketplace moves.
+
+```
+/plugin marketplace add NVIDIA-TAO/tao-skill-bank@<new-tag>
+```
+
+Then update the installed plugin, either from `/plugin manage` in-session or
+from a shell:
+
+```bash
+claude plugin update tao-skills@tao-skill-bank
+```
+
+Restart, or run `/reload-plugins`, to apply. To re-fetch the currently pinned
+tag (e.g. after a cache wipe):
 
 ```
 /plugin marketplace update tao-skill-bank
@@ -128,8 +163,19 @@ then re-run `/plugin install`.
 **Codex:**
 
 ```bash
-codex plugin marketplace upgrade tao-skill-bank
+# Move to a new release. Codex refuses to re-add a marketplace that is already
+# registered at a different ref, so drop the old registration first.
+codex plugin marketplace remove tao-local-plugins
+codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@<new-tag>
+codex plugin add tao-skill-bank@tao-local-plugins
+
+# Or, to re-fetch the tag you are already pinned to:
+codex plugin marketplace upgrade tao-local-plugins
 ```
+
+Note the marketplace is named `tao-local-plugins` (the `name` field in
+`.agents/plugins/marketplace.json`); `tao-skill-bank` is the plugin name.
+Re-running `scripts/install-codex-agents.sh` does all three steps for you.
 
 If you copied `AGENTS.md` to `~/.codex/AGENTS.md`, re-copy from the upgraded plugin cache to pick up identity changes.
 
