@@ -31,6 +31,8 @@ SLURM_VALS = {
     "LOG_DIR": "/lustre/fsw/users/me/results/dino-train-a1b2c3/slurm-logs",
     "SBATCH_EXTRA": "#SBATCH --account=edgeai\n#SBATCH --partition=batch",
     "ENV_FILE": "", "EXTRA_ENV": "export NCCL_P2P_DISABLE=1",
+    "TIMEOUT_MINUTES": "228", "RESULTS_DIR": "/lustre/results/dino-train-a1b2c3",
+    "RESUME_KEY": "train.resume_training_checkpoint_path",
     "IMAGE": "/lustre/sqsh/tao.sqsh", "CONTAINER_MOUNTS": "/lustre",
     "COMMAND": "dino train -e /lustre/specs/spec.yaml",
 }

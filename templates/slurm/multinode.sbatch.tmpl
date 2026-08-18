@@ -46,6 +46,39 @@ export MASTER_PORT=29500
 export MASTER_ADDR=$(scontrol show hostname "$SLURM_JOB_NODELIST" | head -1)
 export NODE_RANK=$SLURM_NODEID
 
-srun --container-image=@@IMAGE@@ \
+# Auto-resume across a requeue. A requeued attempt re-runs THIS script with the
+# spec frozen at submit time, so a resumable job would otherwise restart from
+# epoch 0. Search only the declared results dir — a staged PTM or downloaded
+# input must never masquerade as training state, which is why ptm/ and inputs/
+# are pruned. Newest non-empty checkpoint wins. TAO_AUTO_RESUME=0 disables.
+# @@RESUME_KEY@@ is the spec key for this network (e.g.
+# train.resume_training_checkpoint_path); empty disables the block entirely.
+RESUME_OVERRIDE=""
+if [ -n "@@RESUME_KEY@@" ] && [ "${TAO_AUTO_RESUME:-1}" != "0" ]; then
+  RESUME_CKPT=$(find "@@RESULTS_DIR@@" \
+      \( -type d \( -name ptm -o -name inputs \) -prune \) -o \
+      \( -type f \( -name '*.pth' -o -name '*.ckpt' -o -name '*.tlt' \) \
+         -size +0c -printf '%T@ %p\n' \) 2>/dev/null \
+    | sort -rn | head -1 | cut -d' ' -f2-)
+  if [ -n "$RESUME_CKPT" ]; then
+    RESUME_OVERRIDE="@@RESUME_KEY@@=$RESUME_CKPT"
+    echo "auto-resume: continuing from $RESUME_CKPT" >&2
+  fi
+fi
+
+# Wall-time self-requeue. `timeout` fires BEFORE SLURM's own --time, so the job
+# exits cleanly and re-queues itself instead of dying in TIMEOUT state (which
+# --requeue does not cover: it handles NODE_FAIL and pre-emption only). Paired
+# with --open-mode=append so logs accumulate across attempts.
+# `|| rc=$?` is required: `set -e` above would otherwise abort before the check.
+rc=0
+timeout "@@TIMEOUT_MINUTES@@m" srun --container-image=@@IMAGE@@ \
      --container-mounts=@@CONTAINER_MOUNTS@@ \
-     @@COMMAND@@
+     @@COMMAND@@ $RESUME_OVERRIDE || rc=$?
+
+if [ "$rc" -eq 124 ]; then
+  echo "wall-time limit reached; requeueing $SLURM_JOB_ID" >&2
+  scontrol requeue "$SLURM_JOB_ID"
+  exit 0
+fi
+exit "$rc"

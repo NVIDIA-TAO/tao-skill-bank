@@ -147,6 +147,18 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     return {"image": target, "notes": [note]}
 
 
+def _limit_minutes(time_limit: str) -> int:
+    """SLURM wall limit -> minutes. Accepts D-HH:MM:SS and HH:MM:SS."""
+    days, _, clock = time_limit.partition("-")
+    if not clock:
+        days, clock = "0", time_limit
+    parts = [int(x) for x in clock.split(":")]
+    while len(parts) < 3:
+        parts.append(0)
+    hours, minutes, seconds = parts
+    return int(days) * 1440 + hours * 60 + minutes + (1 if seconds else 0)
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> a rendered sbatch script plus the ssh sbatch command."""
     job_id = ctx["job_id"]
@@ -166,11 +178,26 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         for token in [*shlex.split(bundle["command"]), *(bundle.get("args") or [])]
     )
     job_dir = ctx.get("job_dir") or results_dir
+    time_limit = str(ctx.get("time_limit", "04:00:00"))
+    # `timeout` must fire before SLURM's own --time or the job dies in TIMEOUT,
+    # which --requeue does not cover. The SDK used 3.8h against a 4h limit; 95%
+    # generalises that to any wall limit.
+    timeout_minutes = int(ctx.get("timeout_minutes") or max(1, int(_limit_minutes(time_limit) * 0.95)))
+    if timeout_minutes >= _limit_minutes(time_limit):
+        raise ValueError(
+            f"timeout_minutes={timeout_minutes} is not under the wall limit "
+            f"{time_limit}; the job would die in TIMEOUT instead of requeueing"
+        )
     substitutions = {
         "JOB_NAME": job_id,
         "NUM_GPUS": str(int(shape["gpus"])),
         "CPUS_PER_TASK": str(ctx.get("cpus_per_task", 8)),
-        "TIME": str(ctx.get("time_limit", "04:00:00")),
+        "TIME": time_limit,
+        "TIMEOUT_MINUTES": str(timeout_minutes),
+        "RESULTS_DIR": results_dir,
+        # Empty disables auto-resume. The key is network-specific, so the
+        # producer supplies it; a bundle that cannot resume simply omits it.
+        "RESUME_KEY": str(ctx.get("resume_key", "")),
         "LOG_DIR": f"{job_dir}/logs",
         "IMAGE": bundle["image"],
         "CONTAINER_MOUNTS": _mounts(bundle, results_dir),
