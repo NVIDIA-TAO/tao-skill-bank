@@ -22,6 +22,7 @@ REPO = Path(__file__).resolve().parents[2]
 IAA_SCRIPTS = REPO / "skills" / "applications" / "tao-run-deft-iaa" / "scripts"
 sys.path.insert(0, str(IAA_SCRIPTS))
 import run_deft_action as action  # noqa: E402
+import run_deft_container as docker_action  # noqa: E402
 import run_deft_cli as virtualenv_cli  # noqa: E402
 import prepare_deft_config as prepare_config  # noqa: E402
 import init_deft_state  # noqa: E402
@@ -60,6 +61,7 @@ def _managed_sdg_args() -> list[str]:
 
 SPEC_NAMES = (
     "deft_config.yaml",
+    "sdg_config.yaml",
     "tao_spec.yaml",
     "text_embed_spec.yaml",
     "image_embed_spec.yaml",
@@ -84,6 +86,14 @@ DATASET_ACTIONS = {
     "viz_mined_embed",
     "viz_previous_embed",
 }
+
+
+def test_all_action_consumers_bind_the_initializer_run_specs():
+    expected = init_deft_state.RUN_SPEC_NAMES
+
+    assert action_contract.RUN_SPEC_NAMES == expected
+    assert docker_action.RUN_SPEC_NAMES == expected
+    assert audit_deft_run.RUN_SPEC_NAMES == expected
 
 
 @pytest.fixture(autouse=True)
@@ -169,6 +179,7 @@ def _write_fixture(tmp_path: Path, platform: str, *, docker_remote: bool = False
     config_dir.mkdir(parents=True)
     payloads = {
         "deft_config.yaml": "experiment:\n  results_path: /results\n",
+        "sdg_config.yaml": "schema_version: '1'\n",
         "tao_spec.yaml": "train:\n  num_gpus: 1\n",
         "text_embed_spec.yaml": "model: /results/model\n",
         "image_embed_spec.yaml": "model: /results/model\n",
@@ -206,6 +217,7 @@ def _write_fixture(tmp_path: Path, platform: str, *, docker_remote: bool = False
             "dataset_root": str(dataset),
             "config_dir": str(config_dir),
             "deft_config": str(config_dir / "deft_config.yaml"),
+            "sdg_config": str(config_dir / "sdg_config.yaml"),
             "tao_spec": str(config_dir / "tao_spec.yaml"),
             "spec_sha256": hashes,
             "platform": platform,

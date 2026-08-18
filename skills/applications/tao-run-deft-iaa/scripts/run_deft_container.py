@@ -38,6 +38,7 @@ from command_contract import (
 
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
+    "sdg_config.yaml",
     "tao_spec.yaml",
     "text_embed_spec.yaml",
     "image_embed_spec.yaml",
@@ -165,6 +166,8 @@ def _validated_runtime_paths(
             raise ValueError(f"run spec changed after approval: {path}")
     if pathlib.Path(str(config.get("deft_config", ""))).resolve() != config_dir / "deft_config.yaml":
         raise ValueError("state deft_config path does not match the immutable run config")
+    if pathlib.Path(str(config.get("sdg_config", ""))).resolve() != config_dir / "sdg_config.yaml":
+        raise ValueError("state sdg_config path does not match the immutable run config")
     if pathlib.Path(str(config.get("tao_spec", ""))).resolve() != config_dir / "tao_spec.yaml":
         raise ValueError("state tao_spec path does not match the immutable run config")
     if config.get("platform") != "docker":

@@ -87,6 +87,7 @@ def test_interrupted_wrapper_reconciles_completed_auto_removed_container(
         "dataset_root": str(dataset),
         "config_dir": str(config_dir),
         "deft_config": str(config_dir / "deft_config.yaml"),
+        "sdg_config": str(config_dir / "sdg_config.yaml"),
         "tao_spec": str(config_dir / "tao_spec.yaml"),
         "spec_sha256": hashes,
         "platform": "docker",
