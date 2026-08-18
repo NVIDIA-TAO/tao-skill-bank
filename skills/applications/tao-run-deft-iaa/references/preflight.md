@@ -48,7 +48,7 @@ questions:
      search over `$HOME`. Missing roots are reported as checked/missing.
      Permission errors and unsafe symlinks are reported and never cause the
      search to widen.
-   - Do not add the current repository, tutorial/notebook checkouts, or
+   - Do not add the current repository, development checkouts, or
      `<workspace>/data` as implicit search roots. If the user explicitly names
      one of those locations, its bounded subtree is user-authorized and may be
      checked.
@@ -185,6 +185,12 @@ Run this section only after required intake is resolved.
    or tier-C storage variables. `NGC_KEY` is required only if the selected
    platform must acquire an image. The default SigLIP2 model is public, so
    `HF_TOKEN` is optional unless authenticated access is required.
+   Include every pinned prebuilt component and serving image from
+   `sdg_config.yaml` in the selected platform's availability plan; follow
+   `local-sdg.md` for per-role VRAM, ports, disk, endpoint ownership, and API
+   compatibility. Missing images are planned acquisitions. Customers never
+   build workflow component images. Do not acquire images or run a CUDA probe
+   before approval.
    Do not inspect credential-file metadata when neither variable is required.
    If the user explicitly asks for a permissions check, `stat` only that named
    file and warn about group/other readability.
@@ -194,6 +200,10 @@ Run this section only after required intake is resolved.
    roughly 30–45 GB free per selected GPU at the bundled batch size. Treat this
    as a planning estimate, not a capability guarantee. Surface occupied GPUs;
    do not silently reshape `gpu_ids`.
+   For managed generation, also require explicit non-empty GPU lists for image
+   edit, VLM, and LLM. Account for aggregate VRAM when roles share a GPU. For
+   external endpoints, validate the three explicit URLs and do not claim,
+   inspect, or control their GPU allocation.
 7. Resolve all run values and their sources. Validate the metric contract
    vocabulary against `references/metric-contract.md`. Do not create a config
    to discover defaults; read the bundled templates.
@@ -231,6 +241,11 @@ hardware, pool size, and accumulated data can change this substantially.
 | Hugging Face token forwarding | disabled; enable only when the approved model/environment requires it |
 | PyTorch image | `nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt` | <!-- versions-key: images.tao_toolkit.pyt -->
 | data-services image | `nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services` | <!-- versions-key: images.tao_toolkit.data_services -->
+| endpoint mode | managed local containers; external compatible endpoints are supported |
+| generation models | pinned role defaults from `sdg_config.yaml` |
+| generation budget | `1000` source people per iteration |
+| verification attempts | `2` per source; approved range `1..5` |
+| generated caption policy | `all` (`easy`, `medium`, and `hard`) |
 | monitoring | attached, poll every `5 minutes` |
 
 An ungated run evaluates every allowed iteration and completes with
@@ -297,11 +312,26 @@ Inputs
   GPUs: <selected IDs or platform allocation> (source=<user | default>);
         memory=<free/total or platform inventory>
 
+Generation
+  execution frame: control-host Docker (source=fixed by workflow);
+                   distinct from selected TAO platform=<true | false>
+  endpoint mode: <managed | external> (source=<user | default>)
+  image edit: <model@revision>; endpoint=<port | URL>; gpu_ids=<list | user-managed>
+  VLM: <model@revision>; endpoint=<port | URL>; gpu_ids=<list | user-managed>
+  LLM: <model@revision>; endpoint=<port | URL>; gpu_ids=<list | user-managed>
+  budget: <sources/iteration>; verification attempts=<1..5>;
+          caption policy=<all | easy | medium | hard>
+  component images: <pinned prebuilt images with local/pull status>
+  serving images: <pinned images with local/pull status>
+  lifecycle: reuse matching run-owned containers; preserve on failure;
+             never mutate user-managed endpoints; cleanup only when explicit
+
 Planned writes/actions
   <platform image/venv preparation>; image-specific CUDA framework/CLI probes;
   <runtime venv install if needed>;
-  config/state creation; archive extraction/rebuild; staged action submits;
-  baseline and at most N iterations
+  config/state creation; archive extraction/rebuild; approved endpoint startup
+  or validation; generated-data mutation; staged action submits; baseline and
+  at most N iterations
 
 Estimate: <baseline + bounded-loop estimate and assumptions>
 ```
@@ -428,6 +458,20 @@ For a new run, perform the following in order.
    if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
      PREP_OPTIONAL_ARGS+=(--requires-hf-token)
    fi
+   SDG_ENDPOINT_ARGS=(--sdg-endpoint-mode "$SDG_ENDPOINT_MODE")
+   if [ "$SDG_ENDPOINT_MODE" = managed ]; then
+     SDG_ENDPOINT_ARGS+=(
+       --image-edit-gpu-ids "$IMAGE_EDIT_GPU_IDS"
+       --vlm-gpu-ids "$VLM_GPU_IDS" --llm-gpu-ids "$LLM_GPU_IDS" \
+       --image-edit-port "$IMAGE_EDIT_PORT" \
+       --vlm-port "$VLM_PORT" --llm-port "$LLM_PORT"
+     )
+   else
+     SDG_ENDPOINT_ARGS+=(
+       --image-edit-url "$IMAGE_EDIT_URL"
+       --vlm-url "$VLM_URL" --llm-url "$LLM_URL"
+     )
+   fi
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
      "$SKILL_ROOT/scripts/prepare_deft_config.py" \
@@ -437,6 +481,10 @@ For a new run, perform the following in order.
        --metadata-archive "$METADATA_ARCHIVE" \
        "${PLATFORM_ARGS[@]}" \
        "${PREP_OPTIONAL_ARGS[@]}" \
+       "${SDG_ENDPOINT_ARGS[@]}" \
+       --sdg-max-samples "$SDG_MAX_SAMPLES" \
+       --sdg-verification-attempts "$SDG_VERIFICATION_ATTEMPTS" \
+       --sdg-caption-policy "$SDG_CAPTION_POLICY" \
        --max-iterations "$MAX_ITERATIONS" \
        --training-epochs "$TRAINING_EPOCHS" \
        --num-gpus "$NUM_GPUS" --gpu-ids "$GPU_IDS" \
@@ -494,6 +542,7 @@ For a new run, perform the following in order.
        --pyt-image "$IAA_PYT_IMAGE" \
        --ds-image "$IAA_DS_IMAGE" \
        --deft-config "$RESULTS_DIR/config/deft_config.yaml" \
+       --sdg-config "$RESULTS_DIR/config/sdg_config.yaml" \
        --tao-spec "$RESULTS_DIR/config/tao_spec.yaml"
    ```
 

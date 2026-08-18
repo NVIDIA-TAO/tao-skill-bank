@@ -26,6 +26,10 @@ def create_clip_train_config(
     val_image_dir: str = "",
     val_caption_dir: str = "",
     continual_dataset: bool = False,
+    sdg_image_dir: str = "",
+    sdg_caption_dir: str = "",
+    sdg_image_list_file: str = "",
+    sdg_pairs_file: str = "",
 ) -> str:
     """Create a TAO CLIP training config YAML by patching a source config.
 
@@ -130,6 +134,17 @@ def create_clip_train_config(
         if mined_pairs_file:
             mined_entry["train_pairs_file"] = mined_pairs_file
         _add_dataset(mined_entry)
+
+    if sdg_image_list_file:
+        if not all((sdg_image_dir, sdg_caption_dir, sdg_pairs_file)):
+            raise ValueError("SDG dataset requires image, caption, image-list, and pairs paths")
+        _add_dataset({
+            "image_dir": sdg_image_dir,
+            "caption_dir": sdg_caption_dir,
+            "image_list_file": sdg_image_list_file,
+            "caption_file_suffix": ".txt",
+            "train_pairs_file": sdg_pairs_file,
+        })
 
     train_data_cfg["datasets"] = datasets
 

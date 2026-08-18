@@ -12,7 +12,7 @@ Stage machine (per iteration label):
 
     baseline: dataset_setup -> pool_embed -> evaluate -> gap_analysis (optional
         terminal; feeds iter1)
-    iterN:    data_mining -> history_select -> visualize (or --skip) -> train
+    iterN:    data_mining -> history_select -> sdg -> visualize (or --skip) -> train
         -> evaluate -> gap_analysis (optional terminal; feeds iterN+1)
     loop_stop: committed once at run level with --reason
         (kpi_met | max_iterations | hard_stop)
@@ -29,6 +29,8 @@ import subprocess
 import sys
 import tempfile
 from typing import Any
+
+import yaml
 
 from checkpoint_contract import validate_best_checkpoint
 from command_contract import (
@@ -52,6 +54,7 @@ STAGES = (
     "gap_analysis",
     "data_mining",
     "history_select",
+    "sdg",
     "visualize",
     "train",
     "loop_stop",
@@ -421,6 +424,8 @@ def _expected_next(
     if stage == "data_mining":
         return {(label, "history_select")}
     if stage == "history_select":
+        return {(label, "sdg")}
+    if stage == "sdg":
         return {(label, "visualize")}
     if stage == "visualize":
         return {(label, "train")}
@@ -894,6 +899,87 @@ def _apply_success(
             phase_root / "mining" / "history-select.host.status.json",
             "--history-select-status",
         )
+    elif stage == "sdg":
+        datagen = phase_root / "datagen"
+        dataset = datagen / "dataset"
+        manifest_path, manifest = _required_json(
+            args.sdg_manifest, "--sdg-manifest", root_type=dict
+        )
+        phase["sdg_manifest"] = _require_exact(
+            manifest_path, dataset / "sdg_manifest.json", "--sdg-manifest"
+        )
+        if manifest.get("schema_version") != "1" or manifest.get("dataset_format_version") != 3:
+            raise ValueError("--sdg-manifest must use schema_version=1 and dataset_format_version=3")
+        if manifest.get("rejected_samples_included") != 0:
+            raise ValueError("--sdg-manifest includes rejected samples")
+        if not isinstance(manifest.get("accepted_provenance"), list) or not manifest["accepted_provenance"]:
+            raise ValueError("--sdg-manifest lacks accepted provenance")
+        phase["sdg_pairs"] = _require_exact(
+            _required_json(args.sdg_pairs, "--sdg-pairs", root_type=list)[0],
+            dataset / "sdg_pairs.json", "--sdg-pairs",
+        )
+        phase["sdg_image_list"] = _require_exact(
+            _required_file(args.sdg_image_list, "--sdg-image-list"),
+            dataset / "sdg_image_list.txt", "--sdg-image-list",
+        )
+        execution_path, execution = _required_json(
+            args.sdg_execution_manifest, "--sdg-execution-manifest", root_type=dict
+        )
+        phase["sdg_execution_manifest"] = _require_exact(
+            execution_path, datagen / "sdg_execution_manifest.json", "--sdg-execution-manifest"
+        )
+        if execution.get("accepted_crops", 0) < 1 or execution.get("accepted_sources", 0) < 1:
+            raise ValueError("--sdg-execution-manifest records no accepted generated data")
+        endpoint_path, endpoint_payload = _required_json(
+            args.endpoint_manifest, "--endpoint-manifest", root_type=dict
+        )
+        phase["endpoint_manifest"] = _require_exact(
+            endpoint_path, results_dir / "endpoints" / "manifest.json", "--endpoint-manifest"
+        )
+        if endpoint_payload.get("ownership") not in {"managed", "external"}:
+            raise ValueError("--endpoint-manifest has invalid ownership")
+        sdg_config_path = pathlib.Path(str(config.get("sdg_config", "")))
+        sdg_config = yaml.safe_load(_required_file(sdg_config_path, "state.config.sdg_config").read_text())
+        expected_ownership = sdg_config["endpoints"]["ownership"]
+        if endpoint_payload["ownership"] != expected_ownership:
+            raise ValueError("--endpoint-manifest ownership disagrees with immutable config")
+        component_evidence = endpoint_payload.get("component_images")
+        if not isinstance(component_evidence, dict):
+            raise ValueError("--endpoint-manifest lacks workflow-component provenance")
+        for component in ("augmentation", "auto_labeling"):
+            record = component_evidence.get(component)
+            expected = sdg_config["images"][component]
+            if not isinstance(record, dict) or record.get("present") is not True:
+                raise ValueError(f"--endpoint-manifest lacks local {component} image evidence")
+            if record.get("image") != expected:
+                raise ValueError(f"--endpoint-manifest {component} image disagrees with immutable config")
+        evidence = (
+            endpoint_payload.get("containers")
+            if expected_ownership == "managed"
+            else endpoint_payload.get("probes")
+        )
+        if not isinstance(evidence, dict):
+            raise ValueError("--endpoint-manifest lacks per-role evidence")
+        for role in ("image_edit", "vlm", "llm"):
+            record = evidence.get(role)
+            if not isinstance(record, dict):
+                raise ValueError(f"--endpoint-manifest lacks {role} evidence")
+            if record.get("model") != sdg_config["models"][role]["id"]:
+                raise ValueError(f"--endpoint-manifest {role} model disagrees with immutable config")
+            if expected_ownership == "managed" and record.get("owned") is not True:
+                raise ValueError(f"--endpoint-manifest {role} is not run-owned")
+        status = _required_command_status(
+            args.sdg_status, "--sdg-status", scope=phase_root,
+            required_outputs=[
+                pathlib.Path(phase["sdg_manifest"]),
+                pathlib.Path(phase["sdg_pairs"]),
+                pathlib.Path(phase["sdg_image_list"]),
+            ],
+            required_name="sdg-normalize",
+        )
+        phase["sdg_status"] = _require_exact(
+            status, datagen / "status" / "sdg-normalize.host.status.json", "--sdg-status"
+        )
     elif stage == "visualize":
         if args.skip:
             # Documented branch skip: the loop config disabled visualization,
@@ -1361,6 +1447,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--cumulative-names", type=pathlib.Path)
     parser.add_argument("--mining-history", type=pathlib.Path)
     parser.add_argument("--history-select-status", type=pathlib.Path)
+    parser.add_argument("--sdg-manifest", type=pathlib.Path)
+    parser.add_argument("--sdg-pairs", type=pathlib.Path)
+    parser.add_argument("--sdg-image-list", type=pathlib.Path)
+    parser.add_argument("--sdg-execution-manifest", type=pathlib.Path)
+    parser.add_argument("--endpoint-manifest", type=pathlib.Path)
+    parser.add_argument("--sdg-status", type=pathlib.Path)
     parser.add_argument("--samples-dir", type=pathlib.Path)
     parser.add_argument("--tsne-plot", type=pathlib.Path)
     parser.add_argument("--visualize-prepare-status", type=pathlib.Path)

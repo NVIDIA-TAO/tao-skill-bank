@@ -28,7 +28,9 @@ through deterministic scripts.
 | `run_deft_cli.py` | verified TAO CLI/path adapter used only by the virtualenv platform | action-selected `pyt` or `ds` profile |
 | `run_deft_container.py` | legacy Docker-only compatibility adapter for schema-v1 runs | control Python |
 | `run_iaa_stage.py` | expose bundled IAA host operations as named subcommands | IAA runtime |
-| `iaa_deft/` | bundled IAA gap, mining, selection, visualization, config, and checkpoint implementation | imported only through `run_iaa_stage.py` |
+| `manage_sdg_endpoints.py` | inspect prebuilt workflow images; plan, start/validate, inspect, and stop only run-owned local model endpoints | control Python |
+| `run_sdg_stage.py` | bounded generation preparation, component execution, validation, resume, and normalization | IAA runtime |
+| `iaa_deft/` | bundled IAA gap, mining, selection, generation, visualization, config, and checkpoint implementation | imported only through stage adapters |
 | `commit_stage.py` | validate and atomically commit one stage | IAA runtime for parquet checks |
 | `recover_commit.py` | roll back a journaled state/log commit interrupted by process death | IAA runtime (runs the audit) |
 | `parse_iaa_metrics.py` | parse one exact CSV row/column into iteration-bound JSON | control Python |
@@ -66,6 +68,7 @@ or logs.
 | `gap_analysis` | bundled IAA gap analysis | `run_iaa_stage.py gap-analysis` | `gap-analysis.md` |
 | `data_mining` | TAO text embedding/k-NN plus bundled IAA data utilities | two platform actions, then `mining-postprocess` | `mining.md`, `platform-execution.md` |
 | `history_select` | bundled IAA history selection | `run_iaa_stage.py history-select` | `mining.md` |
+| `sdg` | pinned compatible endpoints plus prebuilt augmentation and labeling components | endpoint and generation helpers | `local-sdg.md` |
 | `visualize` | bundled IAA visualization plus optional TAO image embedding | `visualize-prepare`, platform actions, `visualize-finish` | `visualization.md`, `platform-execution.md` |
 | `train` | bundled config/checkpoint helpers plus TAO CLIP | `train-config`, platform action, `publish-checkpoint` | `clip-train-eval.md`, `platform-execution.md` |
 | `loop_stop` / report | bundled control scripts | commit, audit, renderer | `pipeline-and-state.md` |
@@ -124,6 +127,7 @@ dataset-materialize  create eval/val/pool splits and source_pool.parquet
 gap-analysis         analyze the prior evaluation into iter_N/gaps
 mining-postprocess   summarize k-NN and create uncapped/capped candidates
 history-select       apply novel/replay budget and leakage check
+sdg prepare/execute  select, augment, verify, split, label, and normalize generated data
 visualize-prepare    contact sheets and image-embedding input parquets
 visualize-finish     t-SNE from completed image embeddings
 train-config         generate an iteration train YAML
@@ -191,6 +195,15 @@ outputs exist. Run:
 Then run the audit and commit normally. The adapter verifies the saved
 selection and leakage. If resume rejects the history or artifacts, hard-stop;
 never remove/edit a history entry.
+
+### Generation interrupted before commit
+
+When `sdg` is still the audited next action, rerun the same `prepare` and
+`execute` commands from `local-sdg.md`. Their stable statuses and atomic
+`sdg_progress.json` reuse only inputs and operations whose artifacts still
+validate. Completed samples, accepted attempts, split crops, and open-QA files
+are not regenerated. A partial normalized dataset without a complete manifest
+is a hard stop; preserve it for diagnosis instead of deleting it.
 
 ### GPU contention
 

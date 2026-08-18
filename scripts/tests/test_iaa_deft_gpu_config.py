@@ -41,6 +41,8 @@ def _base_args(tmp_path: Path, selected: str, visible: str):
         str(images),
         "--metadata-archive",
         str(metadata),
+        "--platform",
+        "docker",
         "--max-iterations",
         "1",
         "--num-gpus",
@@ -49,6 +51,12 @@ def _base_args(tmp_path: Path, selected: str, visible: str):
         selected,
         "--visible-gpu-ids",
         visible,
+        "--image-edit-gpu-ids",
+        selected.split(",")[0],
+        "--vlm-gpu-ids",
+        selected.split(",")[0],
+        "--llm-gpu-ids",
+        selected.split(",")[0],
     ]
     return args, workspace, results, dataset, images, metadata
 
@@ -98,6 +106,10 @@ def test_selected_gpu_shape_is_materialized_once_and_inventory_is_recorded(tmp_p
             str(results / "config/deft_config.yaml"),
             "--tao-spec",
             str(results / "config/tao_spec.yaml"),
+            "--sdg-config",
+            str(results / "config/sdg_config.yaml"),
+            "--platform",
+            "docker",
         ],
         check=True,
         capture_output=True,

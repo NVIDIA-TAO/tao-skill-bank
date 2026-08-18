@@ -8,8 +8,10 @@ description: >
   iteration budget is exhausted. Route iterative attribute-labelled
   image-retrieval improvement here even when the customer does not know the
   DEFT or Image Attribute Augmentation (IAA) names. The self-contained loop performs dataset
-  preparation, zero-shot evaluation, attribute gap analysis, caption-space
-  k-NN mining, history-aware selection, retraining, and re-evaluation. Treat
+  local model deployment or compatible endpoint validation, verified image
+  generation, auto-labeling, dataset preparation, zero-shot evaluation,
+  attribute gap analysis, caption-space k-NN mining, history-aware selection,
+  retraining, and re-evaluation. Treat
   `tao-deft-iaa` as shorthand for this canonical `tao-run-deft-iaa` workflow.
   Do not use for standalone CLIP training, one-off evaluation or embedding,
   generic k-NN mining, or AOI/ChangeNet DEFT workflows.
@@ -37,7 +39,7 @@ tags:
 
 Run the canonical IAA flow as one resumable, disk-backed workflow. All IAA
 workflow logic, templates, and host adapters ship with this skill; customers do
-not need a separate source checkout. The bundled scripts make stage calls
+not need a separate source checkout or remote generation service. The bundled scripts make stage calls
 deterministic without adding another orchestration layer.
 
 This skill supports every packaged TAO execution platform: Docker, SLURM,
@@ -46,6 +48,16 @@ schema-validated action bundle; the selected platform skill owns native
 `submit`/`status`/`logs`/`cancel` and the job-record.
 Virtualenv execution uses separate immutable `pyt` and `ds` runtime profiles;
 the workspace control `.venv` is not an execution runtime.
+
+The selected TAO platform and the generation execution frame are distinct
+facts. Mining, train, evaluate, and TAO embedding actions use the selected
+platform. The current SDG component and managed-endpoint helpers use the
+control host's Docker daemon and local GPU/ports; their accepted outputs are
+then covered by the normal remote staging contract for SLURM, Kubernetes, or
+Brev. Show this control-host requirement during platform intake. Do not imply
+that a remote platform consumer starts the SDG services, and block before
+approval if the control host cannot provide Docker or the approved endpoint
+URLs and component-image execution.
 
 ## Entry Contract
 
@@ -65,7 +77,7 @@ Use two intake phases:
    and directories at most two levels below it. This AOI-style bounded-subtree
    lookup supports nested export/drop directories without turning into a home
    or repository scan. Never follow symlinks or add the current checkout,
-   source repositories, tutorial/notebook trees, or workspace dataset-output
+   source repositories, development trees, or workspace dataset-output
    trees as implicit search roots.
 
    An archive candidate contains direct regular-file children
@@ -97,6 +109,8 @@ After required intake is resolved, discover and validate:
 - metric name, query type, operator, and optional target;
 - whether the deployment requires authenticated Hugging Face model access;
 - selected TAO execution platform and its platform-specific prerequisites;
+- managed local endpoints with explicit GPU IDs for image edit, VLM, and LLM,
+  or three already-running compatible local endpoint URLs;
 - any explicit epoch, GPU, mining, continual-learning, or visualization
   overrides.
 
@@ -165,7 +179,12 @@ already-approved stages.
    exact request-owned job-record before native submit, dispatch the emitted
    bundle through the selected platform's four verbs, synchronize remote
    outputs, capture native logs, then use `run_deft_action.py finalize`. Follow
-   `references/platform-execution.md`; never assemble an untracked launch.
+   `references/platform-execution.md`; never assemble an untracked launch. For
+   `sdg`, use
+   `manage_sdg_endpoints.py` for prebuilt-image checks and endpoint lifecycle,
+   then `run_sdg_stage.py`, as documented in `references/local-sdg.md`. These
+   helpers reconstruct paths and images from immutable state; do not depend on
+   a previous `cd` or hidden environment mutation.
 4. A command succeeds only when its exit status is zero and its documented
    output checks pass. Capture verbose output at the action-owned log path;
    inspect the final error block or at most the last 40 lines.
@@ -193,7 +212,7 @@ pre-flight approval
   -> KPI met? yes: loop_stop
               no: baseline gap_analysis
   -> for N = 1..max_iterations:
-       data_mining -> history_select -> visualize -> train -> evaluate
+       data_mining -> history_select -> sdg -> visualize -> train -> evaluate
        -> KPI met? yes: loop_stop
                    no and N < max: gap_analysis -> next iteration
                    no and N = max: loop_stop
@@ -211,6 +230,7 @@ stage is next:
 | evaluate and train | `references/clip-train-eval.md`, `references/metric-contract.md` | successful TAO status, bound metric evidence; for train, a fresh best and normalized checkpoint |
 | gap analysis | `references/gap-analysis.md` | non-empty iteration-scoped gaps parquet |
 | history selection | `references/mining.md` | budgeted mined set, cumulative/history entry, zero eval leakage |
+| local generation | `references/local-sdg.md` | accepted provenance-bound crops, validated open QA, normalized image-text pairs, endpoint evidence |
 | visualization | `references/visualization.md` | enabled artifacts and command evidence, or a config-authorized skip |
 
 `visualize` is the only optional stage. Commit it with `--skip` only when both
@@ -243,6 +263,11 @@ failing visualization mid-run without revising and reapproving the config.
   scoped, and all stage validators pass. History selection has one supported
   recovery: rerun the deterministic adapter with `--resume`; never delete or
   edit a history entry by hand.
+- The `sdg` stage has two generation attempts per source by default and permits
+  only an approved bound from `1..5`. A failed verification rejects that
+  attempt; exhaustion rejects the source. At least one accepted source is
+  required. Its operation journal resumes completed preprocessing, accepted
+  samples, splitting, and labeling without repeating them.
 - Manual modification or truncation of `deft_state.json` or `loop_log.jsonl`
   invalidates the run. Preserve it for diagnosis and start a new results
   directory.
@@ -293,5 +318,6 @@ HTML file, or assistant statement alone is not completion evidence.
 | KPI parsing and evidence | `references/metric-contract.md` |
 | gap generation | `references/gap-analysis.md` |
 | embeddings, k-NN, selection | `references/mining.md` |
+| local endpoints, augmentation, labeling, normalization | `references/local-sdg.md` |
 | contact sheets and t-SNE | `references/visualization.md` |
 | train/evaluate/checkpoints | `references/clip-train-eval.md` |

@@ -1,0 +1,53 @@
+schema_version: "1"
+enabled: true
+
+images:
+  augmentation: "nvcr.io/nvstaging/tao/paidf-augmentation:1.0.1-40d081d@sha256:bdd15f5b1e572419c8563ceebbccc9794564a5203134eaa375e7ca27a9908922"
+  auto_labeling: "nvcr.io/nvstaging/tao/paidf-auto-labeling:1.0.0-4e96482@sha256:468739d76b55a2b577ffacb87467b4eb4ff4d3656c038b605fe0781996411ef6"
+  text_serving: "vllm/vllm-openai:v0.11.0"
+  image_edit_serving: "vllm/vllm-omni:v0.24.0"
+
+models:
+  image_edit:
+    id: "Qwen/Qwen-Image-Edit-2511"
+    revision: "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
+    backend: "vllm-omni"
+    port: 8002
+    min_vram_mib: 76000
+  vlm:
+    id: "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"
+    revision: "d9748a51ae66354c4dad665aab2c71f26cf2c8cd"
+    backend: "vllm"
+    port: 8000
+    min_vram_mib: 52000
+  llm:
+    id: "Qwen/Qwen2.5-14B-Instruct"
+    revision: "cf98f3b3bbb457ad9e2bb7baf9a0125b6b88caa8"
+    backend: "vllm"
+    port: 8001
+    min_vram_mib: 28000
+
+endpoints:
+  ownership: managed
+  startup_timeout_s: 1800
+  request_timeout_s: 180
+  retry_interval_s: 15
+  cache_dir: ""
+  # Materialized run configuration must replace every list with explicit IDs.
+  gpu_ids:
+    image_edit: []
+    vlm: []
+    llm: []
+  external_urls:
+    image_edit: ""
+    vlm: ""
+    llm: ""
+
+generation:
+  scale_factor: 1.0
+  max_samples_per_iteration: 1000
+  augmentations_per_source: 1
+  verification_max_attempts: 2
+  caption_policy: all
+  query_levels: [easy, medium, hard]
+  queries_per_level: 3

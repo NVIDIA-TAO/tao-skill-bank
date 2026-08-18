@@ -64,6 +64,7 @@ VALID_STAGES = {
     "gap_analysis",
     "data_mining",
     "history_select",
+    "sdg",
     "visualize",
     "train",
     "loop_stop",
@@ -77,6 +78,7 @@ EVAL_SUCCESS_MARKER = "Evaluate finished successfully"
 TRAIN_SUCCESS_MARKER = "Train finished successfully."
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
+    "sdg_config.yaml",
     "tao_spec.yaml",
     "text_embed_spec.yaml",
     "image_embed_spec.yaml",
@@ -107,6 +109,7 @@ RESULTS_SCOPED_FILE_FIELDS = {
     "checksum_verify_log",
     "dataset_materialize_status",
     "gap_analysis_status",
+    "endpoint_manifest",
 }
 PHASE_SCOPED_FILE_FIELDS = {
     "metrics_aggregate_csv",
@@ -129,6 +132,11 @@ PHASE_SCOPED_FILE_FIELDS = {
     "iteration_summary_status",
     "mining_postprocess_status",
     "history_select_status",
+    "sdg_manifest",
+    "sdg_pairs",
+    "sdg_image_list",
+    "sdg_execution_manifest",
+    "sdg_status",
     "train_config_status",
     "publish_checkpoint_status",
 }
@@ -177,6 +185,12 @@ FIELD_STAGE = {
     "cumulative_names": "history_select",
     "mining_history": "history_select",
     "history_select_status": "history_select",
+    "endpoint_manifest": "sdg",
+    "sdg_manifest": "sdg",
+    "sdg_pairs": "sdg",
+    "sdg_image_list": "sdg",
+    "sdg_execution_manifest": "sdg",
+    "sdg_status": "sdg",
     "samples_dir": "visualize",
     "tsne_plot": "visualize",
     "visualize_skipped": "visualize",
@@ -227,6 +241,14 @@ STAGE_REQUIRED_FIELDS = {
         "cumulative_names",
         "history_select_status",
     ),
+    "sdg": (
+        "endpoint_manifest",
+        "sdg_manifest",
+        "sdg_pairs",
+        "sdg_image_list",
+        "sdg_execution_manifest",
+        "sdg_status",
+    ),
     "visualize": (),
     "train": (
         "best_ckpt_path",
@@ -250,6 +272,7 @@ STAGE_REFERENCES = {
     "gap_analysis": ("references/gap-analysis.md",),
     "data_mining": ("references/mining.md",),
     "history_select": ("references/mining.md",),
+    "sdg": ("references/local-sdg.md",),
     "visualize": ("references/visualization.md",),
     "train": ("references/clip-train-eval.md",),
     "loop_stop": ("references/pipeline-and-state.md",),
@@ -385,6 +408,8 @@ def _expected_next(
     if stage == "data_mining":
         return {(label, "history_select")}
     if stage == "history_select":
+        return {(label, "sdg")}
+    if stage == "sdg":
         return {(label, "visualize")}
     if stage == "visualize":
         return {(label, "train")}
@@ -475,6 +500,12 @@ def _expected_artifact_path(
         "train_config": phase / "specs" / "train_config.yaml",
         "mining_postprocess_status": phase / "mining" / "mining-postprocess.host.status.json",
         "history_select_status": phase / "mining" / "history-select.host.status.json",
+        "endpoint_manifest": results_dir / "endpoints" / "manifest.json",
+        "sdg_manifest": phase / "datagen" / "dataset" / "sdg_manifest.json",
+        "sdg_pairs": phase / "datagen" / "dataset" / "sdg_pairs.json",
+        "sdg_image_list": phase / "datagen" / "dataset" / "sdg_image_list.txt",
+        "sdg_execution_manifest": phase / "datagen" / "sdg_execution_manifest.json",
+        "sdg_status": phase / "datagen" / "status" / "sdg-normalize.host.status.json",
         "train_config_status": phase / "specs" / "train-config.host.status.json",
         "publish_checkpoint_status": phase / "train" / "publish-checkpoint.host.status.json",
     }
@@ -817,6 +848,8 @@ def _next_action(
     elif stage == "data_mining":
         nxt = (label, "history_select")
     elif stage == "history_select":
+        nxt = (label, "sdg")
+    elif stage == "sdg":
         nxt = (label, "visualize")
     elif stage == "visualize":
         nxt = (label, "train")
@@ -1061,6 +1094,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     )
             for field, name in (
                 ("deft_config", "deft_config.yaml"),
+                ("sdg_config", "sdg_config.yaml"),
                 ("tao_spec", "tao_spec.yaml"),
             ):
                 value = config.get(field)
@@ -1112,6 +1146,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         "metric_contract": gate,
                         "pyt_image": config.get("pyt_image"),
                         "ds_image": config.get("ds_image"),
+                        "sdg": config.get("sdg"),
                     }
                     if "visible_gpu_ids" in config:
                         expected_approval["visible_gpu_ids"] = config.get(
@@ -1150,15 +1185,17 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
 
             deft_path = config_dir_path / "deft_config.yaml"
             tao_path = config_dir_path / "tao_spec.yaml"
-            if deft_path.is_file() and tao_path.is_file():
+            sdg_path = config_dir_path / "sdg_config.yaml"
+            if deft_path.is_file() and tao_path.is_file() and sdg_path.is_file():
                 try:
                     deft_payload = yaml.safe_load(deft_path.read_text())
                     tao_payload = yaml.safe_load(tao_path.read_text())
+                    sdg_payload = yaml.safe_load(sdg_path.read_text())
                 except (OSError, yaml.YAMLError) as exc:
                     errors.append(f"approved run config is not readable YAML: {exc}")
                 else:
-                    if not isinstance(deft_payload, dict) or not isinstance(tao_payload, dict):
-                        errors.append("approved DEFT and TAO config roots must be objects")
+                    if not all(isinstance(item, dict) for item in (deft_payload, tao_payload, sdg_payload)):
+                        errors.append("approved DEFT, SDG, and TAO config roots must be objects")
                     else:
                         experiment = _config_section(
                             deft_payload, "experiment", "deft_config", errors
@@ -1698,6 +1735,10 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             "mined_manifest": dict,
             "cumulative_names": list,
             "iteration_summary": dict,
+            "endpoint_manifest": dict,
+            "sdg_manifest": dict,
+            "sdg_pairs": list,
+            "sdg_execution_manifest": dict,
         }
         for field, expected_type in json_contracts.items():
             value = info.get(field)
@@ -1708,6 +1749,63 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     errors,
                     expected_type,
                 )
+
+        if (label, "sdg") in successful_keys:
+            try:
+                manifest = json.loads(pathlib.Path(str(info.get("sdg_manifest", ""))).read_text())
+                pairs = json.loads(pathlib.Path(str(info.get("sdg_pairs", ""))).read_text())
+                endpoint = json.loads(pathlib.Path(str(info.get("endpoint_manifest", ""))).read_text())
+                immutable_sdg = yaml.safe_load(pathlib.Path(str(config.get("sdg_config", ""))).read_text())
+                image_names = [
+                    line.strip()
+                    for line in pathlib.Path(str(info.get("sdg_image_list", ""))).read_text().splitlines()
+                    if line.strip()
+                ]
+            except (OSError, AttributeError, TypeError, json.JSONDecodeError, yaml.YAMLError) as exc:
+                errors.append(f"state.iterations.{label} SDG evidence is unreadable: {exc}")
+            else:
+                if manifest.get("dataset_format_version") != 3:
+                    errors.append(f"state.iterations.{label}.sdg_manifest has the wrong format version")
+                if manifest.get("rejected_samples_included") != 0:
+                    errors.append(f"state.iterations.{label}.sdg_manifest includes rejected samples")
+                if not pairs or len(pairs) != len(image_names) or manifest.get("num_pairs") != len(pairs):
+                    errors.append(f"state.iterations.{label} SDG pair/image counts disagree")
+                required_pair_fields = {
+                    "unique_name", "caption", "image_path", "query_type",
+                    "source_split", "is_augmented", "source_unique_name",
+                    "verification_metadata_sha256", "image_attr_values", "text_attr_values",
+                }
+                malformed = [index for index, row in enumerate(pairs) if not isinstance(row, dict) or not required_pair_fields.issubset(row)]
+                if malformed:
+                    errors.append(f"state.iterations.{label}.sdg_pairs has malformed rows at {malformed[:3]}")
+                if any(row.get("source_split") != "train" or row.get("is_augmented") is not True for row in pairs if isinstance(row, dict)):
+                    errors.append(f"state.iterations.{label}.sdg_pairs contains non-training or non-generated rows")
+                expected_ownership = immutable_sdg.get("endpoints", {}).get("ownership")
+                if endpoint.get("ownership") != expected_ownership:
+                    errors.append(f"state.iterations.{label}.endpoint_manifest ownership changed")
+                endpoint_records = endpoint.get("containers") if expected_ownership == "managed" else endpoint.get("probes")
+                if not isinstance(endpoint_records, dict):
+                    errors.append(f"state.iterations.{label}.endpoint_manifest lacks role evidence")
+                else:
+                    for role in ("image_edit", "vlm", "llm"):
+                        record = endpoint_records.get(role)
+                        expected_model = immutable_sdg.get("models", {}).get(role, {}).get("id")
+                        if not isinstance(record, dict) or record.get("model") != expected_model:
+                            errors.append(f"state.iterations.{label}.endpoint_manifest {role} model changed")
+                        elif expected_ownership == "managed" and record.get("owned") is not True:
+                            errors.append(f"state.iterations.{label}.endpoint_manifest {role} is not run-owned")
+
+        if (label, "train") in successful_keys and phase_root is not None:
+            try:
+                train_spec = yaml.safe_load(pathlib.Path(str(info.get("train_config", ""))).read_text())
+                datasets = train_spec["dataset"]["train"]["datasets"]
+            except (OSError, KeyError, TypeError, yaml.YAMLError) as exc:
+                errors.append(f"state.iterations.{label}.train_config dataset contract is invalid: {exc}")
+            else:
+                expected_sdg_list = f"/results/iter_{label[4:]}/datagen/dataset/sdg_image_list.txt"
+                sdg_entries = [entry for entry in datasets if isinstance(entry, dict) and entry.get("image_list_file") == expected_sdg_list]
+                if len(sdg_entries) != 1:
+                    errors.append(f"state.iterations.{label}.train_config must contain exactly one current SDG dataset entry")
 
         samples_value = info.get("samples_dir")
         if samples_value and pathlib.Path(str(samples_value)).is_dir():
@@ -1755,6 +1853,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     "iteration_summary_status": phase_root,
                     "mining_postprocess_status": phase_root,
                     "history_select_status": phase_root,
+                    "sdg_status": phase_root,
                     "train_config_status": phase_root,
                     "publish_checkpoint_status": phase_root,
                 }
@@ -1777,6 +1876,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 "cumulative_names",
                 "mining_history",
             ),
+            "sdg_status": ("sdg_manifest", "sdg_pairs", "sdg_image_list"),
             "train_config_status": ("train_config",),
             "publish_checkpoint_status": (
                 "pretrained_state",
@@ -1795,6 +1895,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             "iteration_summary_status": "iteration-summary",
             "mining_postprocess_status": "mining-postprocess",
             "history_select_status": "history-select",
+            "sdg_status": "sdg-normalize",
             "train_config_status": "train-config",
             "publish_checkpoint_status": "publish-checkpoint",
         }
@@ -2572,6 +2673,22 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     f"(e.g. {sample}); mined lists must have zero basename "
                     f"overlap with {eval_list_path}"
                 )
+            if (label, "sdg") in successful_keys and info.get("sdg_pairs"):
+                try:
+                    generated_pairs = json.loads(pathlib.Path(str(info["sdg_pairs"])).read_text())
+                except (OSError, json.JSONDecodeError):
+                    pass  # reported by the JSON evidence checks above
+                else:
+                    generated_sources = {
+                        pathlib.Path(str(row.get("source_unique_name", ""))).name
+                        for row in generated_pairs if isinstance(row, dict)
+                    }
+                    generated_overlap = sorted(generated_sources & eval_names)
+                    if generated_overlap:
+                        errors.append(
+                            f"state.iterations.{label}.sdg_pairs leaks {len(generated_overlap)} "
+                            f"evaluation source image(s) into generated training data"
+                        )
     elif any(key[1] == "history_select" for key in successful_keys):
         errors.append(
             "history_select is committed but iaa_splits/eval_list.txt is "

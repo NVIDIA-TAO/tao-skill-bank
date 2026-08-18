@@ -487,6 +487,10 @@ def train_config(args: argparse.Namespace) -> dict[str, Any]:
         val_image_dir=cfg.iaa_eval_image_dir,
         val_caption_dir=cfg.iaa_eval_caption_dir,
         continual_dataset=cfg.continual_dataset,
+        sdg_image_dir=f"/results/iter_{args.iter_num}/datagen/dataset/images",
+        sdg_caption_dir=f"/results/iter_{args.iter_num}/datagen/dataset/captions",
+        sdg_image_list_file=f"/results/iter_{args.iter_num}/datagen/dataset/sdg_image_list.txt",
+        sdg_pairs_file=f"/results/iter_{args.iter_num}/datagen/dataset/sdg_pairs.json",
     )
     _require([output])
     return {"train_config": str(output), "checkpoint_input": _training_checkpoint(cfg, args.iter_num)}

@@ -23,6 +23,7 @@ baseline/dataset_setup
 
 iterN/data_mining
   -> iterN/history_select
+  -> iterN/sdg                                bounded local generation
   -> iterN/visualize                          real or config-approved skip
   -> iterN/train
   -> iterN/evaluate
@@ -46,7 +47,9 @@ rejects duplicate, skipped-ahead, post-KPI, and out-of-range transitions.
 `deft_state.json` is a schema-v3 resume snapshot. It records:
 
 - immutable workspace, archives, intended dataset root, bundled-runtime hash,
-  selected TAO platform, pinned images/runtime, config paths and hashes;
+  selected TAO platform, pinned execution and component images/runtime, model
+  roles/revisions, endpoint ownership/GPU allocation, generation limits, config
+  paths and hashes;
 - immutable loop/config values and metric contract;
 - current iteration, gate flag, per-label stage proofs, and stop reason.
 
@@ -58,6 +61,9 @@ bundled state scripts.
 Artifact files are additional evidence, not alternate state. The audit checks
 their exact paths, structure, row counts, provenance, freshness, and
 cross-file invariants. It also reopens metric CSVs and selection history.
+The uncommitted `sdg_progress.json` is operation evidence for the current SDG
+stage only. It cannot advance state; `commit_stage.py` requires the final
+endpoint, execution, provenance, pairs, list, and normalization statuses.
 
 Do not display the full state or log in conversation. The audit's compact
 fields are sufficient:

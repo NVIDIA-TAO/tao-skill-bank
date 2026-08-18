@@ -43,6 +43,21 @@ from command_contract import (  # noqa: E402
 PLATFORMS = ("docker", "slurm", "kubernetes", "brev", "virtualenv")
 PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"
 DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"
+
+
+def _managed_sdg_args() -> list[str]:
+    return [
+        "--visible-gpu-ids",
+        "0",
+        "--image-edit-gpu-ids",
+        "0",
+        "--vlm-gpu-ids",
+        "0",
+        "--llm-gpu-ids",
+        "0",
+    ]
+
+
 SPEC_NAMES = (
     "deft_config.yaml",
     "tao_spec.yaml",
@@ -126,6 +141,8 @@ def test_state_initializer_accepts_every_tao_platform(platform):
         "/workspace/results/run/config/deft_config.yaml",
         "--tao-spec",
         "/workspace/results/run/config/tao_spec.yaml",
+        "--sdg-config",
+        "/workspace/results/run/config/sdg_config.yaml",
     ]
     if platform == "virtualenv":
         argv.extend(
@@ -1060,6 +1077,7 @@ def test_config_materialization_rejects_existing_config_symlink(tmp_path):
             "docker",
             "--max-iterations",
             "1",
+            *_managed_sdg_args(),
         ]
     )
 
@@ -1516,6 +1534,7 @@ def test_config_approval_immutably_binds_selected_platform(tmp_path, platform):
             platform,
             "--max-iterations",
             "1",
+            *_managed_sdg_args(),
             *(
                 [
                     "--pyt-virtualenv",
@@ -1566,6 +1585,7 @@ def test_config_approval_immutably_binds_remote_docker_mode(tmp_path):
             "--docker-remote",
             "--max-iterations",
             "1",
+            *_managed_sdg_args(),
         ]
     )
     report = prepare_config.materialize(args)
@@ -1595,6 +1615,7 @@ def test_virtualenv_selection_requires_a_real_virtualenv(tmp_path):
             "virtualenv",
             "--max-iterations",
             "1",
+            *_managed_sdg_args(),
         ]
     )
     with pytest.raises(ValueError, match="--pyt-virtualenv and --ds-virtualenv"):
@@ -1623,6 +1644,7 @@ def test_virtualenv_execution_profiles_cannot_reuse_workspace_control_env(tmp_pa
             str(tmp_path / "tao-ds-venv"),
             "--max-iterations",
             "1",
+            *_managed_sdg_args(),
         ]
     )
     with pytest.raises(ValueError, match="separate from the workspace control"):

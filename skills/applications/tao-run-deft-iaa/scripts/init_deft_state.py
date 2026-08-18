@@ -61,6 +61,7 @@ PINNED_PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"  # versions-key: i
 PINNED_DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"  # versions-key: images.tao_toolkit.data_services
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
+    "sdg_config.yaml",
     "tao_spec.yaml",
     "text_embed_spec.yaml",
     "image_embed_spec.yaml",
@@ -75,6 +76,7 @@ _COMPLETED_STEP_VALUES = [
     "gap_analysis",
     "data_mining",
     "history_select",
+    "sdg",
     "visualize",
     "train",
     "loop_stop",
@@ -222,8 +224,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         raise ValueError(
             f"prepared config directory must be {expected_config_dir}, got {config_dir}"
         )
-    if args.tao_spec.parent.resolve() != config_dir:
-        raise ValueError("--deft-config and --tao-spec must share the run config directory")
+    if args.tao_spec.parent.resolve() != config_dir or args.sdg_config.parent.resolve() != config_dir:
+        raise ValueError("--deft-config, --sdg-config, and --tao-spec must share the run config directory")
     spec_sha256: dict[str, str] = {}
     for name in RUN_SPEC_NAMES:
         spec_path = _required_input_file(config_dir / name, f"run config {name}")
@@ -241,6 +243,28 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         or len(set(visible_gpu_ids)) != len(visible_gpu_ids)
     ):
         raise ValueError("approval.json visible_gpu_ids must be unique non-negative integers")
+    deft = yaml.safe_load(args.deft_config.read_text())
+    tao = yaml.safe_load(args.tao_spec.read_text())
+    sdg = yaml.safe_load(args.sdg_config.read_text())
+    if not isinstance(deft, dict) or not isinstance(tao, dict) or not isinstance(sdg, dict):
+        raise ValueError("prepared run configs must have object roots")
+    endpoints = _mapping(sdg, "endpoints", "sdg_config")
+    generation = _mapping(sdg, "generation", "sdg_config")
+    ownership = endpoints.get("ownership")
+    if ownership not in {"managed", "external"}:
+        raise ValueError("prepared sdg_config endpoints.ownership is invalid")
+    args.approved_sdg = {
+        "endpoint_mode": ownership,
+        "images": sdg.get("images"),
+        "models": sdg.get("models"),
+        "gpu_ids": endpoints.get("gpu_ids"),
+        "external_urls": endpoints.get("external_urls"),
+        "ports": {role: sdg.get("models", {}).get(role, {}).get("port") for role in ("image_edit", "vlm", "llm")},
+        "cache_dir": endpoints.get("cache_dir"),
+        "max_samples_per_iteration": generation.get("max_samples_per_iteration"),
+        "verification_max_attempts": generation.get("verification_max_attempts"),
+        "caption_policy": generation.get("caption_policy"),
+    }
     expected_approval = {
         "schema_version": "3",
         "workflow": WORKFLOW,
@@ -263,6 +287,7 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "metric_contract": args.metric_contract,
         "pyt_image": args.pyt_image,
         "ds_image": args.ds_image,
+        "sdg": args.approved_sdg,
     }
     if "virtualenvs" in approval:
         expected_approval["virtualenvs"] = (
@@ -279,10 +304,6 @@ def _load_run_config(args: argparse.Namespace) -> dict:
             "approval.json does not match the approved initialization inputs; "
             "rerun config preparation in a fresh results directory"
         )
-    deft = yaml.safe_load(args.deft_config.read_text())
-    tao = yaml.safe_load(args.tao_spec.read_text())
-    if not isinstance(deft, dict) or not isinstance(tao, dict):
-        raise ValueError("--deft-config and --tao-spec must have object roots")
     iteration = _mapping(deft, "iteration", "deft_config")
     experiment = _mapping(deft, "experiment", "deft_config")
     mining = _mapping(deft, "mining", "deft_config")
@@ -355,6 +376,7 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "approval_manifest": str(approval_path),
         "spec_sha256": spec_sha256,
         "deft_config_sha256": _sha256(args.deft_config),
+        "sdg_config_sha256": _sha256(args.sdg_config),
         "tao_spec_sha256": _sha256(args.tao_spec),
         "training_epochs": training_epochs,
         "num_gpus": num_gpus,
@@ -370,6 +392,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "continual_model": training.get("continual_model"),
         "visualize": experiment.get("visualize"),
         "visualize_embeddings": experiment.get("visualize_embeddings"),
+        "sdg_config": str(args.sdg_config),
+        "sdg": args.approved_sdg,
     }
 
 
@@ -430,6 +454,7 @@ def build_state(args: argparse.Namespace) -> dict:
                 "mining_selection_history": str(
                     rd / "mining_selection_history.json"
                 ),
+                "endpoint_manifest": str(rd / "endpoints" / "manifest.json"),
             },
         },
         "iterations": {"baseline": {"status": "pending"}},
@@ -557,6 +582,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help="The run's TAO experiment spec file.",
     )
+    parser.add_argument(
+        "--sdg-config",
+        required=True,
+        type=pathlib.Path,
+        help="The run's immutable local generation and endpoint configuration.",
+    )
     return parser
 
 
@@ -617,6 +648,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         args.deft_config = _required_input_file(args.deft_config, "--deft-config")
         args.tao_spec = _required_input_file(args.tao_spec, "--tao-spec")
+        args.sdg_config = _required_input_file(args.sdg_config, "--sdg-config")
         args.run_config = _load_run_config(args)
     except (
         OSError,

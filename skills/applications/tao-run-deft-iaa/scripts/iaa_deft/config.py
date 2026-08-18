@@ -141,7 +141,7 @@ def _validate_config(root, config_path: str) -> None:
             "mining",
             "gap_analysis",
             "iaa",
-            "lepton_e2e",
+            "visualization",
             "kratos_namespace",
         },
         "",
@@ -279,15 +279,15 @@ def _validate_config(root, config_path: str) -> None:
     ):
         _error(config_path, count_key, "must be auto, true, false, or a boolean")
 
-    visualization = _mapping(root, "lepton_e2e", "", config_path, required=False)
+    visualization = _mapping(root, "visualization", "", config_path, required=False)
     viz_keys = {
         "viz_max_samples_per_group",
         "viz_max_total_samples",
         "viz_tile_size",
     }
-    _known(visualization, viz_keys, "lepton_e2e", config_path)
+    _known(visualization, viz_keys, "visualization", config_path)
     for key in viz_keys:
-        _integer(visualization, key, "lepton_e2e", config_path, minimum=1)
+        _integer(visualization, key, "visualization", config_path, minimum=1)
 
     iaa = _mapping(root, "iaa", "", config_path)
     iaa_keys = {
@@ -524,7 +524,7 @@ class IaaDeftConfig:
         ).lower()
 
         # ── Visualization (contact sheets / t-SNE) ─────────────────────────
-        _viz = _cfg.get("lepton_e2e", {}) or {}
+        _viz = _cfg.get("visualization", {}) or {}
         self.viz_max_samples_per_group: int = int(_viz.get("viz_max_samples_per_group", 12) or 12)
         self.viz_max_total_samples: int = int(_viz.get("viz_max_total_samples", 96) or 96)
         self.viz_tile_size: int = int(_viz.get("viz_tile_size", 192) or 192)
