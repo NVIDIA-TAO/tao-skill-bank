@@ -670,7 +670,12 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         )
         max_video_pixels = int(recorded_max_video_pixels) if recorded_max_video_pixels else None
     precision = str(evaluation_contract.get("precision") or training.get("precision") or "")
-    max_length = int(training.get("sequence_length") or 0)
+    requested_model_max_length = getattr(args, "model_max_length", None)
+    max_length = int(
+        requested_model_max_length
+        if requested_model_max_length is not None
+        else training.get("sequence_length") or 0
+    )
     if args.evaluation_seed is not None:
         seed = args.evaluation_seed
         seed_source = "user"
@@ -714,6 +719,10 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             )
     provenance["evaluation.seed"] = _source(seed, seed_source)
     provenance["evaluation.batch_size"] = _source(batch_size, batch_size_source)
+    provenance["model.max_length"] = _source(
+        max_length,
+        "user" if requested_model_max_length is not None else "sealed_training_plan",
+    )
     requested_shard_strategy = getattr(args, "evaluation_shard_strategy", None)
     validation_profile = validation.get("profile", {})
     validation_family = (
@@ -1039,6 +1048,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--rl-video-frame-transfer", choices=("host_rgb", "device_rgbp")
     )
     parser.add_argument("--generation-max-tokens", type=int)
+    parser.add_argument("--model-max-length", type=int)
     parser.add_argument("--max-video-pixels", type=int)
     parser.add_argument("--metric", action="append", default=[])
     parser.add_argument("--results-dir", default="")
