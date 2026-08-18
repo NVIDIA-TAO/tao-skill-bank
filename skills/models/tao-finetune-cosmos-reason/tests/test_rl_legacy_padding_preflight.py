@@ -56,3 +56,7 @@ def test_cosmos_rl_preflight_accepts_safe_legacy_right_padding_contract() -> Non
     assert 'batch["attention_mask"]' in command
     assert 'computed_max_len - len(x["input_ids"])' in command
     assert 'computed_max_len - len(x["logprob_masks"])' in command
+    assert "_enforce_visual_gradient_contract" in command
+    assert "self.data_packer.sft_collate_fn(" in command
+    assert "output = self.forward_model(**batch)" in command
+    assert "loss.backward()" in command
