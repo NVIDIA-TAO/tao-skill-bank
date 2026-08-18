@@ -16,6 +16,7 @@ from workflow_common import absolute_path
 
 
 INITIAL_STAGES = (
+    "prepare_cosmos_reason_model",
     "baseline_evaluate",
     "prepare_cosmos_embed_inference",
     "cosmos_embed",

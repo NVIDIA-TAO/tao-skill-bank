@@ -20,6 +20,7 @@ from workflow_common import (
     load_toml,
     load_yaml,
     path_in_workspace,
+    prepared_baseline_checkpoint,
     require_mapping,
     require_string,
     write_json_array,
@@ -176,12 +177,7 @@ def training_checkpoint(
     if not isinstance(continual_model, bool):
         raise ValueError("cosmos_reason.continual_model must be true or false")
     if iteration == 1 or not continual_model:
-        return existing_absolute_path(
-            require_string(cosmos_reason, "cosmos_reason.baseline_model_path"),
-            workspace,
-            "cosmos_reason.baseline_model_path",
-            "path",
-        )
+        return prepared_baseline_checkpoint(run_dir, workspace)
 
     previous_evaluate_toml = run_dir / f"iter_{iteration - 1}" / "evaluate" / "specs" / "evaluate.toml"
     if not previous_evaluate_toml.is_file():

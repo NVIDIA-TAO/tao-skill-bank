@@ -16,12 +16,14 @@ from typing import Any
 from workflow_common import (
     MODALITY_CHOICES,
     absolute_path,
+    checkpoint_model_type,
     existing_absolute_path,
     load_yaml,
     optional_embedding_parquets,
     optional_bool,
     require_mapping,
     require_string,
+    validate_qwen3_vl_checkpoint,
 )
 
 
@@ -184,8 +186,16 @@ def validate_workflow_config(config: dict[str, Any], workspace: Path) -> dict[st
         require_string(cosmos_reason, "cosmos_reason.baseline_model_path"),
         workspace,
         "cosmos_reason.baseline_model_path",
-        "path",
+        "dir",
     )
+    baseline_model_type = checkpoint_model_type(baseline_model)
+    if baseline_model_type == "qwen3_vl":
+        validate_qwen3_vl_checkpoint(baseline_model)
+    elif baseline_model_type != "cosmos3_omni":
+        raise ValueError(
+            "cosmos_reason.baseline_model_path has unsupported model_type "
+            f"{baseline_model_type!r}; expected 'qwen3_vl' or 'cosmos3_omni'"
+        )
     base_evaluate_toml = existing_absolute_path(
         require_string(cosmos_reason, "cosmos_reason.base_evaluate_toml"),
         workspace,
@@ -233,6 +243,7 @@ def validate_workflow_config(config: dict[str, Any], workspace: Path) -> dict[st
         "train_media_dir": str(train_media_dir),
         "train_annotation_count": train_annotation_count,
         "baseline_model": str(baseline_model),
+        "baseline_model_type": baseline_model_type,
         "base_evaluate_toml": str(base_evaluate_toml),
         "base_train_toml": str(base_train_toml),
         "continual_model": continual_model,

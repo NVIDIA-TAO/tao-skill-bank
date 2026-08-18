@@ -63,6 +63,7 @@ The run directory layout is:
 ├── bcq_accuracy_report.md
 ├── bcq_accuracy_summary.json
 ├── baseline/
+│   ├── model_preparation.json
 │   └── evaluate/
 │       └── bcq_accuracy_metrics.json
 ├── cosmos_embed_output/
@@ -80,7 +81,7 @@ The run directory layout is:
 └── ...
 ```
 
-`workflow.yaml` is a copy of the high-level config that produced the run. `loop_log.jsonl` is the append-only event source for resume, and every stage-log append atomically refreshes `deft_state.json` as its current snapshot. `baseline/evaluate/` stores the initial evaluation of the baseline model. Each completed evaluation also stores `bcq_accuracy_metrics.json`. The run-level `bcq_accuracy_report.md` and `bcq_accuracy_summary.json` compare the baseline with every completed iteration. `cosmos_embed_output/kpi/` and `cosmos_embed_output/train/` store raw Cosmos Embed preparation and inference outputs. `embedding_parquets/kpi/` and `embedding_parquets/train/` store the fixed mining-ready parquet artifacts computed once from the KPI and train datasets. Each `iter_<N>/` directory stores the artifacts for one DEFT improvement iteration.
+`workflow.yaml` snapshots the run config. `loop_log.jsonl` is the append-only resume source, and every append refreshes `deft_state.json`. `baseline/model_preparation.json` records the prepared model and its provenance. Baseline and iteration evaluation directories contain metrics; the run-level reports compare them. `cosmos_embed_output/` contains raw inference outputs, `embedding_parquets/` contains fixed mining inputs, and each `iter_<N>/` contains one loop iteration.
 
 ### Workflow Configuration
 
@@ -116,7 +117,7 @@ mining:
   mine_unique_only: true
 ```
 
-`run`, `kpi_dataset`, `train_dataset`, `cosmos_reason`, and `mining` are required. All configured paths should be absolute and inside `<deft_workspace>`. `cosmos_reason.continual_model` is optional and defaults to `false`; when false, every iteration trains from the baseline checkpoint. `mining.embeddings_modality` selects KPI target modalities; train/source embeddings always contain both text and video. `mining.mine_unique_only` is optional and defaults to `true`; when true, previously mined train/source filepaths are filtered out before later mining runs.
+`run`, `kpi_dataset`, `train_dataset`, `cosmos_reason`, and `mining` are required. All configured paths should be absolute and inside `<deft_workspace>`. `cosmos_reason.baseline_model_path` is a local checkpoint directory whose `config.json` declares either `qwen3_vl` or `cosmos3_omni`; model preparation validates or converts it before any Cosmos-RL action. `cosmos_reason.continual_model` is optional and defaults to `false`; when false, every iteration trains from the prepared baseline checkpoint. `mining.embeddings_modality` selects KPI target modalities; train/source embeddings always contain both text and video. `mining.mine_unique_only` is optional and defaults to `true`; when true, previously mined train/source filepaths are filtered out before later mining runs.
 
 All workflow outputs go under `<deft_workspace>/results`; do not add a separate output root to `workflow.yaml`. `run.name` is not just a display label: if it is set, use `<deft_workspace>/results/<run.name>` as the run directory and explain that all stage outputs, including `baseline/`, `cosmos_embed_output/`, `embedding_parquets/`, and `iter_<N>/`, are nested under that run directory. If `run.name` is `null`, create `<deft_workspace>/results/run_<YYYYMMDD_HHMMSS>` and record the resolved run directory in `deft_state.json` so resume never recomputes it.
 
@@ -128,7 +129,7 @@ python3 "$DEFT_SKILL_ROOT/scripts/verify_workflow_yaml.py" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml"
 ```
 
-The validator checks that required fields are present, configured paths are absolute and inside `<deft_workspace>`, `embeddings_modality` is `text`, `video`, or `both`, every configured path exists, and the KPI/train LLaVA annotations are compatible with their configured `media_dir`. Every annotation must have a unique non-empty `id`; its `video` field must resolve to an existing file against that dataset's `media_dir`. The Cosmos Embed template must declare a positive `inference.num_gpus`; preflight prints that count so the agent can verify available hardware before launch. `mining.cosmos_embed_checkpoint_path` may be `null`, an absolute local path inside `<deft_workspace>`, or a Hugging Face model id such as `nvidia/Cosmos-Embed1-224p` or `hf_model://nvidia/Cosmos-Embed1-224p`. Optional `mining.embedding_parquets.kpi` and `.train` values must be absolute existing mining-ready Parquet files inside the workspace with `filepath`, `embedding`, and `modality` columns. The KPI file must contain exactly the selected modality or modalities; the train file must contain both text and video. The removed `text_embeddings` and `video_embeddings` fields are invalid. This validates the workflow input contract; each stage still follows the mount behavior of the underlying skill, container, or platform runner.
+The validator requires all configured paths to exist inside `<deft_workspace>`, checks `embeddings_modality`, and verifies KPI/train LLaVA ids and media references. It reports the baseline `model_type`, rejects unsupported formats, and fully validates an existing Qwen3-VL baseline. It also requires positive Cosmos Embed GPU count. The optional Embed checkpoint may be `null`, a local workspace path, or an HF model id. Supplied KPI/train embedding Parquets must contain `filepath`, `embedding`, and `modality`; KPI must contain the selected modalities and train must contain both. Removed per-modality embedding fields are invalid. Each invoked skill still owns its mount behavior.
 
 If the user does not provide custom Cosmos Reason or Cosmos Embed templates, copy `$DEFT_SKILL_ROOT/assets/cr_base_evaluate.toml`, `$DEFT_SKILL_ROOT/assets/cr_base_train.toml`, and `$DEFT_SKILL_ROOT/assets/default_cosmos_embed_inference.yaml` into `<deft_workspace>/specs/`. Use `tao-mine-nearest-neighbors` to copy its bundled `assets/default_nearest_neighbors.yaml` when the user does not provide a mining template. Point `workflow.yaml` at the workspace copies. The bundled Cosmos Embed template requests 8 GPUs; do not launch until preflight confirms the selected platform can satisfy that request, or the user approves a modified template.
 
@@ -146,7 +147,9 @@ Do not use `--force` for an ordinary resume. It rewrites the state/config snapsh
 
 ## Baseline Evaluation
 
-Run baseline evaluation once before the DEFT iteration loop. This evaluates `cosmos_reason.baseline_model_path` on the KPI dataset and produces the first `results.json` used by gap analysis. Immediately run `scripts/compute_bcq_accuracy_metrics.py` on that file and store `baseline/evaluate/bcq_accuracy_metrics.json`. Its parser recognizes `yes` and `no` in short or free-form responses, including capitalization and punctuation. It reports false positives, false negatives, accuracy, balanced accuracy, and unparseable predictions. Use `references/mining-loop.md` for the exact commands, completion check, and logging rule.
+Prepare the baseline once before evaluation. Reuse a complete Qwen3-VL checkpoint or convert Cosmos3 Omni through the current model-skill contract, cache it under `<deft_workspace>/model/prepared/`, and validate it with the pinned runtime. Read `references/cosmos-reason-model-preparation.md` for this stage.
+
+After its manifest records `status: ready`, evaluate the prepared path on KPI data and compute `baseline/evaluate/bcq_accuracy_metrics.json`. Use `references/mining-loop.md` for evaluation commands and logging.
 
 ## Initialize Mining Embeddings
 
@@ -192,6 +195,7 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 | --- | --- |
 | `validate_workflow` | `verify_workflow_yaml.py` exits successfully. |
 | `initialize_workflow` | `$RUN_DIR/workflow.yaml` and `$RUN_DIR/deft_state.json` exist. |
+| `prepare_cosmos_reason_model` | `baseline/model_preparation.json` records `status=ready`, a complete Qwen3-VL checkpoint, and successful pinned-runtime validation. |
 | `baseline_evaluate` | The evaluate job exits successfully, exactly one baseline `results.json` is found, and `baseline/evaluate/bcq_accuracy_metrics.json` exists. |
 | `prepare_cosmos_embed_inference` | Each dataset has a lookup parquet and either all required Cosmos Embed specs or a staged combined embedding Parquet. |
 | `cosmos_embed` | Every generated Cosmos Embed inference spec has completed successfully through the underlying skill. |
@@ -209,6 +213,8 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 ## Troubleshooting
 
 **Prediction id does not match an annotation**: Confirm the evaluation used the same KPI annotations configured by `kpi_dataset.annotations_path`. Every Cosmos Reason result `video_id` must match a LLaVA annotation `id` or an already-resolved annotation `video` path.
+
+**Baseline model format is unsupported**: Accept only complete `qwen3_vl` or local `cosmos3_omni`. For Omni, follow `references/cosmos-reason-model-preparation.md`; never pass the source directly to evaluation.
 
 **No target embeddings matched**: Check that `gaps/predictions.json` and gap-analysis `video_id` paths match the KPI LLaVA media paths used during embedding preparation. Text mode also requires the question text to match after removing `<video>` and trailing “Answer with yes or no.”
 

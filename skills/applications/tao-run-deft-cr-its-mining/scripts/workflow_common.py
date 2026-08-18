@@ -57,6 +57,15 @@ def load_json_array(path: Path) -> list[dict[str, Any]]:
     return payload
 
 
+def load_json_object(path: Path) -> dict[str, Any]:
+    """Read a JSON file and require an object at the document root."""
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path}: expected a JSON object")
+    return payload
+
+
 def write_json_array(path: Path, records: list[dict[str, Any]]) -> None:
     """Write a list of JSON objects with stable formatting."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -349,3 +358,92 @@ def find_results_json(output_dir: Path) -> Path:
         joined = ", ".join(str(path) for path in matches[:5])
         raise ValueError(f"multiple results.json files found under {output_dir}: {joined}")
     return matches[0]
+
+
+def checkpoint_model_type(path: Path) -> str:
+    """Return the model type declared by a local checkpoint."""
+    if not path.is_dir():
+        raise NotADirectoryError(f"checkpoint directory does not exist: {path}")
+    config_path = path / "config.json"
+    if not config_path.is_file():
+        raise FileNotFoundError(f"checkpoint is missing config.json: {path}")
+    model_type = load_json_object(config_path).get("model_type")
+    if not isinstance(model_type, str) or not model_type:
+        raise ValueError(f"checkpoint config has no model_type: {config_path}")
+    return model_type
+
+
+def validate_qwen3_vl_checkpoint(path: Path) -> dict[str, Any]:
+    """Validate a complete indexed Qwen3-VL checkpoint for Cosmos-RL."""
+    model_type = checkpoint_model_type(path)
+    if model_type != "qwen3_vl":
+        raise ValueError(
+            f"checkpoint model_type must be 'qwen3_vl', found {model_type!r}: {path / 'config.json'}"
+        )
+
+    missing_tokenizer = [
+        name
+        for name in ("tokenizer_config.json", "tokenizer.json")
+        if not (path / name).is_file()
+    ]
+    if missing_tokenizer:
+        raise FileNotFoundError(
+            f"checkpoint is missing tokenizer files {missing_tokenizer}: {path}"
+        )
+
+    processor_files = ("preprocessor_config.json", "processor_config.json")
+    processor_file = next((name for name in processor_files if (path / name).is_file()), None)
+    if processor_file is None:
+        raise FileNotFoundError(
+            "checkpoint is missing a processor configuration; expected one of "
+            f"{list(processor_files)} under {path}"
+        )
+
+    index_path = path / "model.safetensors.index.json"
+    if not index_path.is_file():
+        raise FileNotFoundError(
+            f"checkpoint is missing model.safetensors.index.json: {path}"
+        )
+    weight_map = load_json_object(index_path).get("weight_map")
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise ValueError(f"checkpoint safetensors index has no weight_map: {index_path}")
+    shard_names = set(weight_map.values())
+    if not all(isinstance(name, str) and name for name in shard_names):
+        raise ValueError(f"checkpoint safetensors index has invalid shard names: {index_path}")
+
+    weight_files = sorted(path / name for name in shard_names)
+    missing_weights = [str(weight) for weight in weight_files if not weight.is_file()]
+    if missing_weights:
+        raise FileNotFoundError(
+            f"checkpoint index references missing safetensors weights: {missing_weights[:10]}"
+        )
+    truncated = [str(weight) for weight in weight_files if weight.stat().st_size <= 8]
+    if truncated:
+        raise ValueError(f"checkpoint has truncated safetensors weights: {truncated[:10]}")
+
+    return {
+        "model_type": model_type,
+        "index_file": str(index_path),
+        "weight_files": [str(weight) for weight in weight_files],
+        "tokenizer_files": ["tokenizer_config.json", "tokenizer.json"],
+        "processor_file": processor_file,
+    }
+
+
+def prepared_baseline_checkpoint(run_dir: Path, workspace: Path) -> Path:
+    """Return the validated baseline checkpoint recorded by model preparation."""
+    manifest_path = run_dir / "baseline" / "model_preparation.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"baseline model preparation manifest does not exist: {manifest_path}"
+        )
+    manifest = load_json_object(manifest_path)
+    if manifest.get("status") != "ready":
+        raise ValueError(f"baseline model preparation did not complete: {manifest_path}")
+    value = manifest.get("prepared_model_path")
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{manifest_path}: missing prepared_model_path")
+    checkpoint = absolute_path(value)
+    path_in_workspace(checkpoint, workspace, "prepared baseline checkpoint")
+    validate_qwen3_vl_checkpoint(checkpoint)
+    return checkpoint
