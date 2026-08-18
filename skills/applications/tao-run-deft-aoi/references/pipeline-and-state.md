@@ -58,15 +58,23 @@ iteration executes:
      before committing so every iteration grows monotonically.
    - **`images_dir` for the iteration training spec** must be set to the workspace root (e.g. `/data/workspace/`), not the real-image directory. SDG rows already carry workspace-root-relative paths. Resolve `state.config.images_dir` relative to the workspace (`images/` for the canonical layout; `kpi/images/` only for a legacy layout), then prepend that relative prefix exactly once to every iter1 base row's relative `input_path` and `golden_path`; do not merely change the spec. For iter N>1, the previous combined CSV is already in workspace coordinates and must not be prefixed again. If validation shows base files exist only after adding the resolved image-root prefix, fix the CSV and rerun validation; never bypass the FATAL.
    - **Normalize `label` case on every source before concatenation — base_train, previous_iter_train, SDG rows, and mined rows.** Preserve `PASS` uppercase and lowercase+strip everything else; write the normalized combined CSV before running `validate_training_csv.py`. See `references/visual-changenet.md` for the dataloader rule and the failure mode if you violate it.
+   - **Stable-deduplicate before writing the combined CSV.** The logical sample
+     identity is `(input_path, golden_path, object_name)` after normalizing the
+     base `kpi/images/` prefix and trailing slashes. Preserve the earliest row,
+     reject any later row with a conflicting label, and exclude a mined or SDG
+     row that already exists in the previous combined CSV. Never express class
+     weighting by repeating CSV rows; use `fpratio_sampling` or loss weights.
+     Record the input row count, unique output row count, and rejected duplicate
+     count in provenance so every iteration demonstrates actual data novelty.
 
 6. **[INLINE] Pre-train CSV validation** — run **both** checks below; hard stop on either failure. Both must pass before launching the training container; an invalid CSV burns a full GPU run before the container surfaces the root cause.
 
-   a. **Existence check.** Run `scripts/validate_training_csv.py --csv ${RESULTS_DIR}/iter${ITER}/dataset/train_combined_iter${ITER}.csv --workspace-root <workspace> --validation-csv <workspace>/train/base/validation_set.csv --report-json ${RESULTS_DIR}/iter${ITER}/dataset/merge_validation.json`. It hard-stops if any `input_path` / `golden_path` refers to a file missing on disk or if a required column is missing.
+   a. **Existence and uniqueness check.** Run `scripts/validate_training_csv.py --csv ${RESULTS_DIR}/iter${ITER}/dataset/train_combined_iter${ITER}.csv --workspace-root <workspace> --validation-csv <workspace>/train/base/validation_set.csv --report-json ${RESULTS_DIR}/iter${ITER}/dataset/merge_validation.json`. It hard-stops if any `input_path` / `golden_path` refers to a file missing on disk, if a required column is missing, or if a normalized sample identity is duplicated or carries conflicting labels.
 
    b. **Train/validation leakage check.** `scripts/validate_training_csv.py` accepts `--validation-csv`; pass `train/base/validation_set.csv` so the diff on `(input_path, golden_path, label, object_name, boardname)` runs as part of the single validation pass. Hard stop on any validation row appearing in training. (Step 4 already runs the mid-iteration variant on `mining_filter/mining_pool.csv`; this check is the defence-in-depth backstop against leakage introduced by base-CSV reassembly.)
 
    The same successful invocation must write `dataset/merge_validation.json`
-   with `rows_checked`, `missing_file_count=0`, and
+   with `rows_checked`, `missing_file_count=0`, `duplicate_row_count=0`, and
    `train_val_leakage_overlap_count=0`; this artifact is mandatory proof of the
    merge checks, not a summary string substitute.
 

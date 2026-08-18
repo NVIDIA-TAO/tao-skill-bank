@@ -20,7 +20,7 @@ Usage:
   python automl_vcn_slurm_v2.py --far-only   # just score the bayesian winner
 """
 
-import os, sys, argparse, logging, json
+import os, sys, argparse, logging, json, math
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -33,7 +33,11 @@ SKILL_DIR  = SB / "skills" / "models" / "tao-train-visual-changenet"
 WORKSPACE  = Path(os.environ.get("AOI_WORKSPACE", "./workspace"))
 LOCAL_KPI  = WORKSPACE / "kpi" / "testing_set.csv"
 
-IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"
+# Allow SLURM campaigns to bind a pre-validated SquashFS image directly.  The
+# registry URI remains the portable default for Docker and uncached launches.
+IMAGE = os.environ.get(
+    "TAO_VCN_IMAGE", "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"
+)
 
 # ── Lustre paths (from env set by the v1 run) ─────────────────────────────────
 LUSTRE_AOI_ROOT = (
@@ -68,8 +72,14 @@ BASE_SPEC = {
     "encryption_key": "tlt_encode",
     "task": "classify",
     "train": {
+        # SLURM polar3 allocates full 8-GPU nodes.  Keep the effective batch
+        # equal to the prior 1-GPU champion (16) by using batch_size=2 below.
+        "num_gpus": 8,
+        "gpu_ids": list(range(8)),
         "num_epochs": 100,
         "num_nodes": 1,
+        "use_distributed_sampler": True,
+        "sync_batchnorm": True,
         "validation_interval": 10,
         "checkpoint_interval": 10,  # clamped per-rec to min(10, rung epochs) by on_recommendation
         # In-training FAR selection: the patched nvidia_tao_pytorch (PYTHONPATH
@@ -102,7 +112,7 @@ BASE_SPEC = {
             "validation_dataset": {"csv_path": LUSTRE_VAL_CSV,    "images_dir": LUSTRE_IMAGES_DIR},
             "test_dataset":       {"csv_path": LUSTRE_VAL_CSV,    "images_dir": LUSTRE_IMAGES_DIR},
             "infer_dataset":      {"csv_path": LUSTRE_KPI_CSV,    "images_dir": LUSTRE_IMAGES_DIR},
-            "batch_size": 16, "workers": 2, "fpratio_sampling": 0.2,
+            "batch_size": 2, "workers": 2, "fpratio_sampling": 0.2,
             "num_input": 1, "input_map": {"SolderLight": 0},
             "concat_type": "linear", "image_width": 224, "image_height": 224,
             "image_ext": ".jpg", "grid_map": {"x": 2, "y": 2}, "num_classes": 2,
@@ -252,7 +262,8 @@ ALGO_CONFIGS = {
     # defect-class CE weight (schema-gated as automl_enabled=false on the list;
     # exposed via a scalar cls_weight[1] property added to the model skill schema
     # — verified end-to-end via generate_hyperparams_to_search dry-run).
-    # batch_size needed no schema edit (only explicit false blocks a param).
+    # Batch size is deliberately fixed at 2/GPU for the 8-GPU campaign so
+    # every arm retains the prior champion's global batch size of 16.
     "bfbo_llm_40_unblocked": {
         "algorithm": "bfbo",
         "settings": _bayesian_settings(
@@ -261,7 +272,6 @@ ALGO_CONFIGS = {
         "metric": "far_pct", "direction": "minimize", "use_far_eval_fn": True,
         "hyperparameters": [
             "train.classify.cls_weight[1]",
-            "dataset.classify.batch_size",
             "dataset.classify.fpratio_sampling",
             "train.optim.lr",
             "train.optim.weight_decay",
@@ -278,8 +288,6 @@ ALGO_CONFIGS = {
         "ranges": {
             # Defect-class CE weight — the direct loss-level imbalance lever.
             "train.classify.cls_weight[1]": {"valid_min": 2.0, "valid_max": 60.0},
-            # Schema max is inf — bound it. Small data, sampler interaction.
-            "dataset.classify.batch_size": {"valid_min": 8, "valid_max": 32},
             "dataset.classify.fpratio_sampling": {"valid_min": 0.3, "valid_max": 0.98},
             "train.optim.lr": {"valid_min": 5e-6, "valid_max": 1e-4},
             "train.optim.weight_decay": {"valid_min": 0.05, "valid_max": 1.0},
@@ -412,7 +420,28 @@ def make_sdk():
     from tao_sdk.platforms.slurm import SlurmSDK
     # SlurmSDK reads all credentials from env (SLURM_USER, SLURM_HOSTNAME,
     # SSH_KEY_PATH, SLURM_BASE_RESULTS_DIR, SLURM_PARTITION, SLURM_ACCOUNT, NGC_KEY …)
-    return SlurmSDK()
+    sdk = SlurmSDK()
+
+    # The SDK's remote-command timeout is intentionally generous, but it also
+    # uses that value as OpenSSH's ConnectTimeout.  A dead login node would
+    # therefore block for five minutes before the SDK tried the next hostname
+    # from SLURM_HOSTNAME.  Keep the remote-command timeout untouched and only
+    # shorten connection establishment.  Patch the option factory as well so
+    # hostname failover does not restore the long connect timeout.
+    handler = getattr(sdk, "_handler", None)
+    if handler is not None and hasattr(handler, "_get_ssh_options"):
+        original_get_ssh_options = handler._get_ssh_options
+
+        def _responsive_ssh_options():
+            options = original_get_ssh_options()
+            return [
+                "ConnectTimeout=15" if option.startswith("ConnectTimeout=") else option
+                for option in options
+            ]
+
+        handler._get_ssh_options = _responsive_ssh_options
+        handler.ssh_options = _responsive_ssh_options()
+    return sdk
 
 
 def far_eval_fn(rec, train_job_id, sdk, results_dir):
@@ -596,12 +625,81 @@ def score_bayesian_winner():
     return far
 
 
+def select_incumbent_or_challenger(
+    incumbent,
+    challenger,
+    *,
+    direction="minimize",
+    max_regression=0.0,
+):
+    """Return a promotion decision that always keeps an eligible incumbent.
+
+    ``metric_value`` is required on the incumbent. A missing/non-finite
+    challenger metric is an automatic rollback. With the default zero
+    tolerance, a challenger is promoted only when it is no worse under the
+    exact same final-evaluation protocol.
+    """
+    if direction not in {"minimize", "maximize"}:
+        raise ValueError(f"unsupported direction: {direction}")
+    if max_regression < 0:
+        raise ValueError("max_regression must be >= 0")
+
+    incumbent_metric = float(incumbent["metric_value"])
+    if not math.isfinite(incumbent_metric):
+        raise ValueError("incumbent metric_value must be finite")
+    raw_challenger_metric = challenger.get("metric_value")
+    try:
+        challenger_metric = float(raw_challenger_metric)
+    except (TypeError, ValueError):
+        challenger_metric = math.nan
+
+    if not math.isfinite(challenger_metric):
+        promoted = False
+        regression = None
+        reason = "challenger final evaluation is missing or non-finite"
+    else:
+        regression = (
+            challenger_metric - incumbent_metric
+            if direction == "minimize"
+            else incumbent_metric - challenger_metric
+        )
+        promoted = regression <= max_regression
+        reason = (
+            "challenger passed promotion gate"
+            if promoted
+            else "challenger regressed beyond promotion tolerance"
+        )
+
+    selected = challenger if promoted else incumbent
+    return {
+        "selected": "challenger" if promoted else "incumbent",
+        "promoted": promoted,
+        "reason": reason,
+        "direction": direction,
+        "max_regression": max_regression,
+        "incumbent_metric": incumbent_metric,
+        "challenger_metric": (
+            challenger_metric if math.isfinite(challenger_metric) else None
+        ),
+        "regression": regression,
+        "selected_artifact": dict(selected),
+    }
+
+
 def launch_one(algo_name, cfg, log_dir):
     from tao_automl.runner import AutoMLRunner
     sdk = make_sdk()
     import datetime
-    run_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    workspace_dir = str(WORKSPACE / f"automl_{algo_name}_{run_ts}")
+    resume_workspace = cfg.get("resume_workspace")
+    if resume_workspace:
+        workspace_dir = str(resume_workspace)
+        resume = True
+        log.info("[%s] resuming durable AutoML workspace %s",
+                 algo_name, workspace_dir)
+    else:
+        run_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        workspace_dir = str(WORKSPACE / f"automl_{algo_name}_{run_ts}")
+        resume = False
     runner = AutoMLRunner(sdk=sdk, skill_dir=str(SKILL_DIR), action="train")
 
     log.info("Launching AutoML [%s] — algo=%s recs=%s metric=%s",
@@ -610,6 +708,14 @@ def launch_one(algo_name, cfg, log_dir):
              cfg["metric"])
 
     settings = {"algorithm": cfg["algorithm"], **cfg["settings"]}
+    # A durable resume must reopen the original AutoML session. Without the
+    # persisted ID the SDK creates a new controller/brain namespace, then
+    # refuses to attach an old job whose recommendation is absent there.
+    if cfg.get("resume_session_id"):
+        settings["session_id"] = cfg["resume_session_id"]
+        settings["experiment_id"] = cfg["resume_session_id"]
+        log.info("[%s] reopening AutoML session %s",
+                 algo_name, cfg["resume_session_id"])
     # CRITICAL: direction must live inside automl_settings. Without it, the
     # runner's implicit rule maximizes any metric whose name lacks 'loss' —
     # which would make the brain actively maximize far_pct.
@@ -617,22 +723,46 @@ def launch_one(algo_name, cfg, log_dir):
 
     merged_overrides = dict(BASE_SPEC)
 
+    first_recommendation = {"seen": False}
+    interval_cap = int(cfg.get("interval_cap", 10))
+    if interval_cap < 1:
+        raise ValueError(f"[{algo_name}] interval_cap must be >= 1")
+
     def _clamp_intervals(rec):
         """Per-rec safety: BOHB rung overrides set train.num_epochs but never
         touch intervals (brain passes interval=None). TAO asserts
         checkpoint_interval <= num_epochs, so clamp both intervals to the
         rec's actual epoch budget. Full-fidelity recs keep interval 10."""
+        # A fresh run's first callback is the reviewed initial batch even when
+        # an AutoML backend uses a non-zero or opaque recommendation id.  Do
+        # not replay it on resume, where the first callback can be a later rec.
+        if not first_recommendation["seen"] and forced_initial and not resume:
+            rec.specs.update(forced_initial)
+            log.info(
+                "[%s] first recommendation (id=%s) pinned to reviewed initial config",
+                algo_name,
+                getattr(rec, "id", "unknown"),
+            )
+        first_recommendation["seen"] = True
         n_ep = rec.specs.get("train.num_epochs")
         n_ep = int(n_ep) if n_ep else BASE_SPEC["train"]["num_epochs"]
-        rec.specs["train.checkpoint_interval"] = min(10, n_ep)
-        rec.specs["train.validation_interval"] = min(10, n_ep)
+        rec.specs["train.checkpoint_interval"] = min(interval_cap, n_ep)
+        rec.specs["train.validation_interval"] = min(interval_cap, n_ep)
 
     # Attach FAR eval_fn when requested (bayesian_far config)
     eval_fn = None
+    final_eval_fn = None
     if cfg.get("use_val_far_eval_fn"):
         eval_fn = make_val_far_eval_fn(sdk)
+        final_eval_fn = make_far_eval_fn(
+            sdk,
+            IMAGE,
+            ACCOUNT,
+            f"{LUSTRE_AOI_ROOT}/far_eval_automl/{algo_name}/final",
+        )
         log.info("[%s] STRICT protocol: brain sees validation FAR only; "
-                 "KPI reserved for one final scoring", algo_name)
+                 "KPI reserved for one final scoring of the selected winner",
+                 algo_name)
     elif cfg.get("use_far_eval_fn"):
         lustre_far_root = f"{LUSTRE_AOI_ROOT}/far_eval_automl/{algo_name}"
         eval_fn = make_far_eval_fn(sdk, IMAGE, ACCOUNT, lustre_far_root)
@@ -641,6 +771,16 @@ def launch_one(algo_name, cfg, log_dir):
     # Per-config HP space; None ranges → schema-default bounds.
     hp_list = cfg.get("hyperparameters", AUTOML_HPS)
     hp_ranges = cfg.get("ranges", CUSTOM_RANGES) if "ranges" in cfg else CUSTOM_RANGES
+    forced_initial = cfg.get("forced_initial_overrides") or {}
+    unknown_initial = sorted(set(forced_initial) - set(hp_list))
+    if unknown_initial:
+        raise ValueError(
+            f"[{algo_name}] forced initial overrides are not searched params: "
+            f"{unknown_initial}"
+        )
+    if forced_initial:
+        log.info("[%s] recommendation 0 reuses %d reviewed overrides",
+                 algo_name, len(forced_initial))
     log.info("[%s] search space: %d params, custom ranges: %s",
              algo_name, len(hp_list), "yes" if hp_ranges else "schema defaults")
 
@@ -651,29 +791,70 @@ def launch_one(algo_name, cfg, log_dir):
         automl_hyperparameters=hp_list,
         custom_param_ranges=hp_ranges,
         workspace_path=workspace_dir,
+        resume=resume,
         eval_fn=eval_fn,
+        final_eval_fn=final_eval_fn,
         on_recommendation=_clamp_intervals,
         account=ACCOUNT or None,
+        gpu_count=8,
         num_nodes=1,
         env_vars={"PYTHONPATH": f"{LUSTRE_AOI_ROOT}/patches/valfar"},
     )
 
     best = result.get("best", {})
+    # AutoMLRunner returns the recommendation record shape (``result`` /
+    # ``objective_score`` and ``specs``), while older runners returned
+    # ``metric`` and ``spec_overrides``.  Normalize both shapes here so the
+    # durable summary never silently drops the winning metric or parameters.
+    best_metric = best.get("metric")
+    if best_metric is None:
+        best_metric = best.get("objective_score", best.get("result"))
+    best_specs = best.get("spec_overrides") or best.get("specs") or {}
     log.info("[%s] DONE — best metric=%s HPs=%s",
-             algo_name, best.get("metric"), best.get("spec_overrides"))
+             algo_name, best_metric, best_specs)
+
+    promotion = None
+    if cfg.get("incumbent"):
+        final_evaluation = result.get("final_evaluation") or {}
+        challenger = {
+            "metric_value": final_evaluation.get("metric_value"),
+            "job_id": best.get("job_id"),
+            "specs": best_specs,
+            "workspace": workspace_dir,
+            "record_path": final_evaluation.get("record_path"),
+        }
+        promotion = select_incumbent_or_challenger(
+            cfg["incumbent"],
+            challenger,
+            direction=cfg.get("direction", "minimize"),
+            max_regression=float(cfg.get("max_regression", 0.0)),
+        )
+        result["promotion"] = promotion
+        log.info(
+            "[%s] promotion: selected=%s incumbent=%s challenger=%s reason=%s",
+            algo_name,
+            promotion["selected"],
+            promotion["incumbent_metric"],
+            promotion["challenger_metric"],
+            promotion["reason"],
+        )
 
     # Write summary
     summary = {
         "algorithm": algo_name,
         "best_metric_name": cfg["metric"],
-        "best_metric_value": best.get("metric"),
-        "best_spec_overrides": best.get("spec_overrides", {}),
+        "best_metric_value": best_metric,
+        "best_spec_overrides": best_specs,
         "best_job_id": best.get("job_id"),
+        "final_evaluation": result.get("final_evaluation"),
+        "promotion": promotion,
         "workspace": workspace_dir,
     }
-    out = Path(log_dir) / f"summary_{algo_name}.json"
+    summary_dir = Path(log_dir)
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    out = summary_dir / f"summary_{algo_name}.json"
     out.write_text(json.dumps(summary, indent=2))
-    print(f"\n[{algo_name}] Best {cfg['metric']}: {best.get('metric')} | "
+    print(f"\n[{algo_name}] Best {cfg['metric']}: {best_metric} | "
           f"Summary: {out}")
     return result
 
@@ -830,9 +1011,22 @@ def make_val_far_eval_fn(sdk):
         except Exception as e:
             log.warning("[val_eval] rec=%s: cannot read status.json: %s", rec_id, e)
             return None
+        # AOI validation has 211 PASS and 38 defect rows.  Requiring the
+        # provenance written by the global DDP implementation prevents an old
+        # rank-0-only status.json from silently re-entering the search.
+        global_markers = len(_re.findall(r'"val_far_global":\s*true', status))
+        pass_markers = len(_re.findall(r'"val_far_num_pass":\s*211\b', status))
+        defect_markers = len(_re.findall(r'"val_far_num_defect":\s*38\b', status))
         vals = [float(v) for v in _re.findall(r'"val_far":\s*([0-9.]+)', status)]
         if not vals:
             log.warning("[val_eval] rec=%s: no val_far entries in status.json", rec_id)
+            return None
+        if min(global_markers, pass_markers, defect_markers) < len(vals):
+            log.error(
+                "[val_eval] rec=%s: rejecting non-global FAR provenance "
+                "(far=%d global=%d pass211=%d defect38=%d)",
+                rec_id, len(vals), global_markers, pass_markers, defect_markers,
+            )
             return None
         best = min(vals)
         log.info("[val_eval] rec=%s: val FAR@100%%R = %.2f%% "
@@ -846,19 +1040,19 @@ def make_far_eval_fn(sdk, image, account, lustre_far_root):
     """
     Returns an eval_fn(rec, train_job_id) that:
       1. Finds the best checkpoint from the training job on Lustre
-      2. Submits a SLURM inference job on the KPI test set (7.0.1-pyt, cached SQSH)
-      3. Polls for completion
-      4. Runs the FAR script on Lustre and reads metric_result.json
+      2. Runs validation inference and calibrates the 100%-recall threshold
+      3. Runs KPI inference and applies that threshold unchanged
+      4. Reads the calibrated metric_result.json
       Returns FAR value (lower = better) or None on failure.
     """
     import subprocess as _sp, time as _time, yaml as _yaml, pathlib as _pl
 
-    FAR_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt"
-    FAR_SCRIPT_LOCAL = str(SB / "far_eval_inline.py")
-
-    # Write FAR computation script once
-    from far_eval import _FAR_INLINE_PY
-    _pl.Path(FAR_SCRIPT_LOCAL).write_text(_FAR_INLINE_PY)
+    FAR_IMAGE = os.environ.get(
+        "TAO_VCN_FAR_IMAGE", "nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt"
+    )
+    FAR_SCRIPT_LOCAL = str(SB / "far_eval_calibrated.py")
+    if not _pl.Path(FAR_SCRIPT_LOCAL).is_file():
+        raise FileNotFoundError(FAR_SCRIPT_LOCAL)
 
     def _ssh(cmd):
         key  = os.environ.get("SSH_KEY_PATH", "")
@@ -934,25 +1128,46 @@ def make_far_eval_fn(sdk, image, account, lustre_far_root):
         m = _re.search(r"model_best_(\d+)", ckpt)
         best_epoch = int(m.group(1)) if m else None
 
+        import copy as _copy
         lustre_out = f"{lustre_far_root}/rec_{rec_id}"
+        val_out    = f"{lustre_out}/validation"
         infer_out  = f"{lustre_out}/inference"
         far_out    = f"{lustre_out}/far"
-        spec["dataset"]["classify"]["infer_dataset"] = {
+        val_spec = _copy.deepcopy(spec)
+        val_spec["dataset"]["classify"]["infer_dataset"] = {
+            "csv_path": LUSTRE_VAL_CSV, "images_dir": LUSTRE_IMAGES_DIR,
+        }
+        val_spec["inference"] = {
+            "checkpoint": ckpt, "batch_size": 16,
+            "results_dir": val_out, "num_gpus": 1, "gpu_ids": [0], "num_nodes": 1,
+        }
+        val_spec["results_dir"] = val_out
+
+        kpi_spec = _copy.deepcopy(spec)
+        kpi_spec["dataset"]["classify"]["infer_dataset"] = {
             "csv_path": LUSTRE_KPI_CSV, "images_dir": LUSTRE_IMAGES_DIR,
         }
-        spec["inference"] = {
+        kpi_spec["inference"] = {
             "checkpoint": ckpt, "batch_size": 16,
             "results_dir": infer_out, "num_gpus": 1, "gpu_ids": [0], "num_nodes": 1,
         }
-        spec["results_dir"] = infer_out
+        kpi_spec["results_dir"] = infer_out
 
-        local_spec = f"/tmp/far_eval_rec_{rec_id}.yaml"
-        lustre_spec   = f"{lustre_out}/infer_spec.yaml"
+        local_val_spec = f"/tmp/far_eval_val_rec_{rec_id}.yaml"
+        local_kpi_spec = f"/tmp/far_eval_kpi_rec_{rec_id}.yaml"
+        lustre_val_spec = f"{lustre_out}/validation_spec.yaml"
+        lustre_kpi_spec = f"{lustre_out}/kpi_spec.yaml"
         lustre_script = f"{lustre_out}/far_compute.py"
-        _pl.Path(local_spec).write_text(_yaml.dump(spec, default_flow_style=False))
+        _pl.Path(local_val_spec).write_text(
+            _yaml.dump(val_spec, default_flow_style=False)
+        )
+        _pl.Path(local_kpi_spec).write_text(
+            _yaml.dump(kpi_spec, default_flow_style=False)
+        )
         try:
-            _ssh(f"mkdir -p {lustre_out} {infer_out} {far_out}")
-            _scp(local_spec, lustre_spec)
+            _ssh(f"mkdir -p {lustre_out} {val_out} {infer_out} {far_out}")
+            _scp(local_val_spec, lustre_val_spec)
+            _scp(local_kpi_spec, lustre_kpi_spec)
             _scp(FAR_SCRIPT_LOCAL, lustre_script)
         except Exception as e:
             log.warning("[eval_fn] rec=%s: scp failed: %s", rec_id, e)
@@ -962,8 +1177,10 @@ def make_far_eval_fn(sdk, image, account, lustre_far_root):
         log.info("[eval_fn] rec=%s: scoring best-val_far checkpoint (epoch %s)",
                  rec_id, best_epoch)
         command = (
-            f"visual_changenet inference -e {lustre_spec} && "
-            f"python3 {lustre_script} {infer_out}/inference.csv {far_json}"
+            f"visual_changenet inference -e {lustre_val_spec} && "
+            f"visual_changenet inference -e {lustre_kpi_spec} && "
+            f"python3 {lustre_script} {val_out}/inference.csv "
+            f"{infer_out}/inference.csv {far_json}"
         )
 
         try:
@@ -1009,11 +1226,15 @@ def make_far_eval_fn(sdk, image, account, lustre_far_root):
             d = _json.loads(raw_result)
             far = d["value"]
             diag = d.get("diagnostics", {})
-            log.info("[eval_fn] rec=%s: FAR@100%%R = %.2f%% (best_epoch=%s, "
-                     "val_far=%.2f%%, curve=%s)",
-                     rec_id, far, diag.get("best_epoch"),
-                     diag.get("val_far_selected", float("nan")),
-                     diag.get("val_far_curve"))
+            log.info(
+                "[eval_fn] rec=%s: calibrated FAR = %.2f%% "
+                "(threshold=%.8f, KPI recall=%.2f%%, best_epoch=%s)",
+                rec_id,
+                far,
+                d.get("threshold", float("nan")),
+                d.get("constraints", {}).get("recall_pct", float("nan")),
+                best_epoch,
+            )
             return far
         except Exception as e:
             log.warning("[eval_fn] rec=%s: cannot read FAR result: %s", rec_id, e)
@@ -1066,7 +1287,7 @@ def launch_llm_narrowed(algo_name, cfg, log_dir, warmup_recs=12):
             automl_settings=settings,
             automl_hyperparameters=hp_list, custom_param_ranges=ranges,
             workspace_path=ws, eval_fn=eval_fn, on_recommendation=_clamp,
-            account=ACCOUNT or None, num_nodes=1,
+            account=ACCOUNT or None, gpu_count=8, num_nodes=1,
             env_vars={"PYTHONPATH": f"{LUSTRE_AOI_ROOT}/patches/valfar"},
         )
         return res, ws
@@ -1164,8 +1385,14 @@ def launch_fixed_train(tag, pinned_values, spec_extra=None, num_epochs=10,
     if train_csv:
         spec["dataset"]["classify"]["train_dataset"] = {
             "csv_path": train_csv, "images_dir": images_dir or LUSTRE_IMAGES_DIR}
-    for k, v in (spec_extra or {}).items():
-        spec[k] = v
+    def _deep_merge(dst, src):
+        for key, value in src.items():
+            if isinstance(value, dict) and isinstance(dst.get(key), dict):
+                _deep_merge(dst[key], value)
+            else:
+                dst[key] = value
+
+    _deep_merge(spec, spec_extra or {})
 
     # Epsilon-width ranges (not zero-width): the value generator's boundary
     # clamp rewrites values sitting exactly on valid_min/valid_max (x1.1/x0.9),
@@ -1193,7 +1420,7 @@ def launch_fixed_train(tag, pinned_values, spec_extra=None, num_epochs=10,
         image=IMAGE, spec_overrides=spec, automl_settings=settings,
         automl_hyperparameters=list(pinned_values), custom_param_ranges=ranges,
         workspace_path=ws, eval_fn=eval_fn, on_recommendation=_clamp,
-        account=ACCOUNT or None, num_nodes=1,
+        account=ACCOUNT or None, gpu_count=8, num_nodes=1,
         env_vars={"PYTHONPATH": f"{LUSTRE_AOI_ROOT}/patches/valfar"},
     )
     import glob as _glob, json as _json
@@ -1224,7 +1451,8 @@ DEFT2_BASELINE_PINS = {
 
 def launch_deft_iter_automl(iter_label, train_csv_lustre, images_dir_lustre,
                             prev_ckpt_lustre, num_recs=6, num_epochs=10,
-                            log_dir=None, search_params=None, search_ranges=None):
+                            log_dir=None, search_params=None, search_ranges=None,
+                            incumbent=None, max_regression=0.0):
     """One DEFT iteration's retrain implemented as a small BFBO search.
 
     Each recommendation trains num_epochs from prev_ckpt (pretrained_model_path
@@ -1270,7 +1498,7 @@ def launch_deft_iter_automl(iter_label, train_csv_lustre, images_dir_lustre,
         automl_hyperparameters=search_params or AUTOML_HPS,
         custom_param_ranges=search_ranges or DEFT_ITER_RANGES,
         workspace_path=ws, eval_fn=eval_fn, on_recommendation=_clamp,
-        account=ACCOUNT or None, num_nodes=1,
+        account=ACCOUNT or None, gpu_count=8, num_nodes=1,
         env_vars={"PYTHONPATH": f"{LUSTRE_AOI_ROOT}/patches/valfar"},
     )
     best = (result or {}).get("best", {})
@@ -1286,6 +1514,18 @@ def launch_deft_iter_automl(iter_label, train_csv_lustre, images_dir_lustre,
     if cands:
         w = min(cands, key=lambda r: r["result"])
         out.update(job_id=w["job_id"], far=w["result"], specs=w["specs"])
+    if incumbent:
+        out["promotion"] = select_incumbent_or_challenger(
+            incumbent,
+            {
+                "metric_value": out["far"],
+                "job_id": out["job_id"],
+                "specs": out["specs"],
+                "workspace": out["workspace"],
+            },
+            direction="minimize",
+            max_regression=max_regression,
+        )
     log.info("[%s] iteration winner: FAR=%.4f%% job=%s", algo_name,
              out["far"], out["job_id"])
     return out
