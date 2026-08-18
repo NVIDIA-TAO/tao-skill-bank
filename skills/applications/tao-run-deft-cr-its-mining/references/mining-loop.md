@@ -2,7 +2,7 @@
 
 Use this reference when running the iteration loop after the DEFT workspace and `workflow.yaml` have been validated.
 
-Resolve `DEFT_SKILL_ROOT` to the absolute directory containing the installed `tao-run-deft-cr-its-mining/SKILL.md`. The plugin runtime or agent resolves it; never ask the user for this path. Use `run_script()` for bundled helpers when available, otherwise use the direct `python3 "$DEFT_SKILL_ROOT/scripts/<name>.py"` commands below. The user's working directory does not need to be the plugin or repository root.
+Resolve `DEFT_SKILL_ROOT` to the absolute directory containing the installed `tao-run-deft-cr-its-mining/SKILL.md`; never ask the user for it. Export `WORKSPACE_DIR="$WORKSPACE"`, select `DEFT_PYTHON` with `scripts/deft_python.sh`, and invoke every bundled helper with that interpreter. The user's working directory does not need to be the plugin or repository root.
 
 ## Stage Skills
 
@@ -23,7 +23,7 @@ If the user does not provide custom Cosmos Reason or Cosmos Embed templates, cop
 Initialize a run once:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/initialize_workflow.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/initialize_workflow.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml"
 ```
@@ -36,7 +36,7 @@ An orchestrator that resolves the run directory before initialization may also p
 Append one stage event after each completed, skipped, or failed stage:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/log_stage.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/log_stage.py" \
   --log-path "$RUN_DIR/loop_log.jsonl" \
   --iter-label "iter_${ITER}" \
   --stage mine_nearest_neighbors \
@@ -49,7 +49,7 @@ python3 "$DEFT_SKILL_ROOT/scripts/log_stage.py" \
 Each append rebuilds `deft_state.json` atomically from valid log events. A truncated or otherwise malformed log line is ignored without blocking later appends. Before resuming, refresh state and ask the helper for the next unfinished stage:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/resume_position.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/resume_position.py" \
   --run-dir "$RUN_DIR"
 ```
 
@@ -66,7 +66,7 @@ Run every Cosmos Reason train/evaluate action through `tao-finetune-cosmos-reaso
 Generate the baseline evaluate TOML:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_evaluate.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_evaluate.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml" \
   --run-dir "$RUN_DIR"
@@ -75,10 +75,10 @@ python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_evaluate.py" \
 Use `tao-finetune-cosmos-reason` evaluate with `$RUN_DIR/baseline/evaluate/specs/evaluate.toml`. After the job exits successfully, locate its one result and compute the authoritative binary metrics:
 
 ```bash
-BASELINE_RESULTS_JSON="$(python3 "$DEFT_SKILL_ROOT/scripts/find_cosmos_reason_results.py" \
+BASELINE_RESULTS_JSON="$("$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/find_cosmos_reason_results.py" \
   --evaluate-dir "$RUN_DIR/baseline/evaluate")"
 
-python3 "$DEFT_SKILL_ROOT/scripts/compute_bcq_accuracy_metrics.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/compute_bcq_accuracy_metrics.py" \
   --results-json "$BASELINE_RESULTS_JSON" \
   --output-json "$RUN_DIR/baseline/evaluate/bcq_accuracy_metrics.json"
 ```
@@ -90,7 +90,7 @@ The metrics script reads `response`/`gt` and also accepts `answer`/`ground_truth
 Prepare fixed KPI/train Cosmos Embed inputs once:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_embed_inference.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_embed_inference.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml" \
   --run-dir "$RUN_DIR"
@@ -110,7 +110,7 @@ Read `inference.num_gpus` from each generated spec and request exactly that many
 Keep the exact container image selected by `tao-finetune-cosmos-embed` as `COSMOS_EMBED_IMAGE`. After each Cosmos Embed container exits, restore host write access if needed with that same image:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/restore_docker_mount_permissions.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/restore_docker_mount_permissions.py" \
   --path "$RUN_DIR/cosmos_embed_output/kpi" \
   --docker-image "$COSMOS_EMBED_IMAGE"
 ```
@@ -118,12 +118,12 @@ python3 "$DEFT_SKILL_ROOT/scripts/restore_docker_mount_permissions.py" \
 Convert completed outputs only for datasets that generated inference specs:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/cosmos_embed_outputs_to_parquet.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/cosmos_embed_outputs_to_parquet.py" \
   --output-dir "$RUN_DIR/cosmos_embed_output/kpi" \
   --parquet-dir "$RUN_DIR/embedding_parquets/kpi" \
   --embedding-modality "$EMBEDDING_MODALITY"
 
-python3 "$DEFT_SKILL_ROOT/scripts/cosmos_embed_outputs_to_parquet.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/cosmos_embed_outputs_to_parquet.py" \
   --output-dir "$RUN_DIR/cosmos_embed_output/train" \
   --parquet-dir "$RUN_DIR/embedding_parquets/train" \
   --embedding-modality both
@@ -142,7 +142,7 @@ Run iterations `1..run.max_iterations`. Before each stage, run `resume_position.
 ```bash
 PREDICTIONS_JSON="$RUN_DIR/iter_${ITER}/gaps/predictions.json"
 
-python3 "$DEFT_SKILL_ROOT/scripts/prepare_gap_analysis_predictions.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/prepare_gap_analysis_predictions.py" \
   --results-json "$PREVIOUS_RESULTS_JSON" \
   --annotations-json "$KPI_ANNOTATIONS_JSON" \
   --media-dir "$KPI_MEDIA_DIR" \
@@ -156,7 +156,7 @@ Invoke `tao-analyze-gaps-vlm-bcq` with `predictions_json=$PREDICTIONS_JSON`, no 
 2. **Prepare nearest-neighbor mining**:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/prepare_nearest_neighbor_mining.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/prepare_nearest_neighbor_mining.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml" \
   --run-dir "$RUN_DIR" \
@@ -171,7 +171,7 @@ The command writes one `$RUN_DIR/iter_<N>/mining/target.parquet`. Gap-analysis `
 4. **Record mined paths**: when `mining.mine_unique_only` is true or omitted, update the cumulative mined-path log after the nearest-neighbor run completes.
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/record_mined_paths.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/record_mined_paths.py" \
   --mined-neighbors-parquet "$RUN_DIR/iter_${ITER}/mining/mined_neighbors.parquet" \
   --mined-log-parquet "$RUN_DIR/mining/mined_paths_log.parquet"
 ```
@@ -183,7 +183,7 @@ When `mining.mine_unique_only` is false, do not run the command; append a `recor
 5. **Prepare Cosmos Reason training**:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_train.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_train.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml" \
   --run-dir "$RUN_DIR" \
@@ -199,7 +199,7 @@ Iteration 1 trains on mined annotations only; `train_dataset.annotations_path` r
 7. **Prepare and run evaluation**: after the training job reaches terminal success, prepare evaluation:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_evaluate.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_evaluate.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml" \
   --run-dir "$RUN_DIR" \
@@ -209,10 +209,10 @@ python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_evaluate.py" \
 The preparation command finds the latest `epoch_<N>` safetensors checkpoint under this iteration's completed train directory, prints the selected path, and writes it into `$RUN_DIR/iter_<N>/evaluate/specs/evaluate.toml`. If no checkpoint exists, stop before launching evaluation. Use `tao-finetune-cosmos-reason` evaluate with that TOML. After the job exits successfully, locate the result and compute that iteration's metrics:
 
 ```bash
-ITERATION_RESULTS_JSON="$(python3 "$DEFT_SKILL_ROOT/scripts/find_cosmos_reason_results.py" \
+ITERATION_RESULTS_JSON="$("$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/find_cosmos_reason_results.py" \
   --evaluate-dir "$RUN_DIR/iter_${ITER}/evaluate")"
 
-python3 "$DEFT_SKILL_ROOT/scripts/compute_bcq_accuracy_metrics.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/compute_bcq_accuracy_metrics.py" \
   --results-json "$ITERATION_RESULTS_JSON" \
   --output-json "$RUN_DIR/iter_${ITER}/evaluate/bcq_accuracy_metrics.json"
 ```
@@ -222,7 +222,7 @@ Report the printed accuracy, balanced accuracy, false-positive count, false-nega
 8. **Clean Cosmos Reason training checkpoints**: after evaluation and metric computation complete, remove the large resumable Cosmos-RL checkpoints while retaining the exported safetensors used by later iterations:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/cleanup_cosmos_reason_training.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/cleanup_cosmos_reason_training.py" \
   --train-dir "$RUN_DIR/iter_${ITER}/train"
 ```
 
@@ -233,7 +233,7 @@ The command removes only `<timestamp>/checkpoints/` and its `best/checkpoints` l
 After the loop stops because it reached `max_iterations` or found no weak samples, generate the baseline/iteration report. Also generate it after a failed run when baseline metrics are available, so completed evaluations are not lost from the final account.
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/summarize_bcq_accuracy_metrics.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/summarize_bcq_accuracy_metrics.py" \
   --run-dir "$RUN_DIR"
 ```
 

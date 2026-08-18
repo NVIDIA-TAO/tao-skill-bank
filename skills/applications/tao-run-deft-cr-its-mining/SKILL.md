@@ -5,7 +5,7 @@ description: >-
   focused on the non-reasoning classification/evaluation path. Use when the user asks for a
   DEFT CR ITS mining workflow, traffic-camera Cosmos Reason improvement loop, collision-identification workflow with data mining, or iterative Cosmos-RL refinement driven by gap analysis.
 license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
+compatibility: Requires Docker with NVIDIA Container Toolkit, Python 3.11 with pandas, pyarrow, PyYAML, and huggingface_hub, plus the selected platform CLI.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -22,9 +22,14 @@ tags:
 
 # Skill: TAO Run DEFT CR ITS Mining
 
+## Prerequisites
+
+Before preflight, read `references/host-prerequisites.md` and use its selected
+`DEFT_PYTHON` for every bundled helper. Stop if its dependency probe fails.
+
 ## Bundled Resources
 
-Resolve `DEFT_SKILL_ROOT` to the absolute directory containing this installed `SKILL.md`. The agent or plugin runtime resolves this path; it is not a user input. Run bundled helpers with `run_script("scripts/<name>.py", ...)` when the runtime provides it. Otherwise invoke them directly with `python3 "$DEFT_SKILL_ROOT/scripts/<name>.py"`. Never require a `tao-skills-external` checkout or change the user's working directory to a repository root.
+`DEFT_SKILL_ROOT` is this installed skill directory; the agent or plugin resolves it, never the user. Invoke helpers with `"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/<name>.py" ...`. The user's working directory need not be a skill-bank checkout.
 
 This workflow invokes `tao-finetune-cosmos-reason`, `tao-finetune-cosmos-embed`, `tao-analyze-gaps-vlm-bcq`, `tao-mine-nearest-neighbors`, and the selected platform skill by registered skill name. Those skills own their commands, credentials, and bundled assets. This workflow overrides only the Cosmos Reason runtime image: resolve `images.tao_toolkit.deft_cosmos_reason` from `versions.yaml` and pass that image as the planner `image_tag` and submitted action image for every Cosmos Reason train and evaluate launch instead of the image declared by `tao-finetune-cosmos-reason`. This workflow owns only the helpers under its own `scripts/` and `assets/` directories.
 
@@ -123,7 +128,7 @@ All workflow outputs go under `<deft_workspace>/results`; do not add a separate 
 Before running any workflow stage, validate the config:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/verify_workflow_yaml.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/verify_workflow_yaml.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml"
 ```
@@ -135,14 +140,14 @@ If the user does not provide custom Cosmos Reason or Cosmos Embed templates, cop
 Initialize a run once after validation:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/initialize_workflow.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/initialize_workflow.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml"
 ```
 
 Use the printed `run_dir` as `RUN_DIR` for every later command. If `run.name` is `null`, never ask another preparation script to derive the run directory again; pass `--run-dir "$RUN_DIR"` so all stages write into the initialized run.
 
-Do not use `--force` for an ordinary resume. It rewrites the state/config snapshot but intentionally leaves `loop_log.jsonl` and all stage artifacts in place. Use it only to repair the snapshot for the same run; choose a new `run.name` for a clean restart. Before resuming, run `$DEFT_SKILL_ROOT/scripts/resume_position.py --run-dir "$RUN_DIR"` and continue from the reported stage.
+Do not use `--force` for an ordinary resume. It rewrites the state/config snapshot but intentionally leaves `loop_log.jsonl` and all stage artifacts in place. Use it only to repair the snapshot for the same run; choose a new `run.name` for a clean restart. Before resuming, run `"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/resume_position.py" --run-dir "$RUN_DIR"` and continue from the reported stage.
 
 ## Baseline Evaluation
 
@@ -159,7 +164,7 @@ The script downloads remote HF checkpoints before Cosmos Embed runs because Cosm
 Use `scripts/prepare_cosmos_embed_inference.py` once. It prepares both the KPI dataset and the train dataset:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_embed_inference.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_embed_inference.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml" \
   --run-dir "$RUN_DIR"
@@ -217,6 +222,8 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 **Run directory looks nested under `results/<run.name>`**: This is expected. `run.name` is the run directory name under `<deft_workspace>/results`; all baseline, embedding, and iteration artifacts are nested there.
 
 **Docker-created output is not writable**: Use `restore_docker_mount_permissions.py` on the affected run subdirectory after informing the user which container produced root-owned files.
+
+**No dependency-complete Python**: Follow `references/host-prerequisites.md`; do not bypass the selector with an arbitrary system Python.
 
 **Unparseable prediction count is nonzero**: Report the count to the user and inspect the corresponding raw `results.json` responses. These predictions count as incorrect in accuracy and class recall; the metrics script does not silently drop them. An unparseable ground truth stops metric computation because the expected class is undefined.
 
