@@ -18,6 +18,73 @@ from pathlib import Path
 from typing import Any
 
 
+AGGREGATE_RESULTS_PROGRAM = r'''import json
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+expected_shards = int(sys.argv[2])
+with config_path.open("rb") as stream:
+    config = tomllib.load(stream)
+results_root = Path(config["results_dir"])
+annotation_path = Path(config["dataset"]["annotation_path"])
+annotations = json.loads(annotation_path.read_text(encoding="utf-8"))
+if not isinstance(annotations, list):
+    raise SystemExit(f"evaluation annotation is not a JSON array: {annotation_path}")
+expected_records = len(annotations)
+
+shards = list(results_root.rglob("results_shard*.json"))
+if shards:
+    if len(shards) != expected_shards:
+        raise SystemExit(
+            f"expected {expected_shards} evaluation result shards, found {len(shards)}"
+        )
+    rank_pattern = re.compile(r"results_shard(\d+)\.json$")
+    if any(rank_pattern.fullmatch(path.name) is None for path in shards):
+        raise SystemExit("evaluation result shard has an invalid rank suffix")
+    shards.sort(key=lambda path: int(rank_pattern.fullmatch(path.name).group(1)))
+    ranks = [int(rank_pattern.fullmatch(path.name).group(1)) for path in shards]
+    if ranks != list(range(expected_shards)):
+        raise SystemExit(f"evaluation shard ranks are incomplete: {ranks}")
+    parents = {path.parent for path in shards}
+    if len(parents) != 1:
+        raise SystemExit(
+            f"evaluation result shards span multiple directories: {sorted(map(str, parents))}"
+        )
+    records = []
+    for path in shards:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise SystemExit(f"evaluation result shard is not a JSON array: {path}")
+        records.extend(payload)
+    output = next(iter(parents)) / "results.json"
+    temporary = output.with_name(f".{output.name}.tmp")
+    temporary.write_text(
+        json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    temporary.replace(output)
+else:
+    matches = list(results_root.rglob("results.json"))
+    if len(matches) != 1:
+        raise SystemExit(
+            f"expected one aggregated results.json or {expected_shards} shards; "
+            f"found results={len(matches)} shards=0"
+        )
+    output = matches[0]
+    records = json.loads(output.read_text(encoding="utf-8"))
+    if not isinstance(records, list):
+        raise SystemExit(f"evaluation results are not a JSON array: {output}")
+
+if len(records) != expected_records:
+    raise SystemExit(
+        f"evaluation coverage mismatch: expected {expected_records}, found {len(records)}"
+    )
+print(f"TAO_EVALUATION_RESULTS_AGGREGATED path={output} records={len(records)}")
+'''
+
+
 class RenderError(ValueError):
     """A deterministic evaluation-launch contract failure."""
 
@@ -273,6 +340,11 @@ def render(args: argparse.Namespace) -> str:
             "ulimit -s unlimited",
             *([framework_runtime_gate] if framework_runtime_gate else []),
             torchrun,
+            (
+                'if [[ "${SLURM_PROCID:-0}" == 0 ]]; then '
+                f"python -c {shlex.quote(AGGREGATE_RESULTS_PROGRAM)} "
+                f"{shlex.quote(str(runtime_config))} {total_gpus}; fi"
+            ),
         ]
     )
     cpu_value = '"$step_cpus_per_task"' if nodes == 1 else str(args.cpus_per_task)

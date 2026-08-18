@@ -206,8 +206,11 @@ do not end in the TAO job id. It owns the persistent parent-results to
 `/results` mount, `TAO_API_JOB_ID`, `TAO_API_RESULTS_DIR=/results`, structured
 status path, distributed rendezvous, no-requeue/exclusive contract, child
 timeout, backend CLI selection, Framework in-image capability attestation, and
-child-exit propagation. Do not reconstruct those details in a prompt-authored
-sbatch file.
+child-exit propagation. It also requires a complete contiguous rank-shard set,
+atomically writes the aggregated `results.json`, and compares its total with
+the annotation-array length before the job can succeed. Do not reconstruct
+those details in a prompt-authored sbatch file or treat per-rank shards as a
+complete evaluation.
 Run `scripts/framework_evaluation_image_preflight.py` against a selected
 Framework SQSH before opening/submitting the evaluation record. A missing
 baked Framework preprocessor is an immutable-image incompatibility, not a

@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -238,7 +239,43 @@ def test_single_node_renderer_owns_persistent_results_and_child_status(tmp_path:
     assert "export TAO_API_JOB_ID=Cosmos3-Nano-evaluate-a1" in script
     assert "/results/Cosmos3-Nano-evaluate-a1/status.json" in script
     assert "child_exit_code" in script
+    assert "results_shard" in script
+    assert "TAO_EVALUATION_RESULTS_AGGREGATED" in script
+    assert 'SLURM_PROCID:-0' in script
     assert "exit \"$child_rc\"" in script
+
+
+def test_evaluation_result_aggregation_merges_all_ranks_and_proves_coverage(
+    tmp_path: Path,
+) -> None:
+    annotations = tmp_path / "annotations.json"
+    annotations.write_text(json.dumps([{"id": index} for index in range(168)]))
+    results = tmp_path / "results"
+    shard_dir = results / "epoch_8" / "freeform" / "general"
+    shard_dir.mkdir(parents=True)
+    for rank in range(8):
+        payload = [
+            {"video_id": f"{rank}-{index}", "response": "Yes", "gt": "Yes"}
+            for index in range(21)
+        ]
+        (shard_dir / f"results_shard{rank}.json").write_text(json.dumps(payload))
+    config = tmp_path / "eval.toml"
+    config.write_text(
+        f'results_dir = "{results}"\n[dataset]\nannotation_path = "{annotations}"\n'
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", RENDERER.AGGREGATE_RESULTS_PROGRAM, str(config), "8"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "records=168" in completed.stdout
+    merged = json.loads((shard_dir / "results.json").read_text())
+    assert len(merged) == 168
+    assert [row["video_id"] for row in merged[:2]] == ["0-0", "0-1"]
 
 
 def test_multinode_renderer_derives_torchrun_world_and_rendezvous(tmp_path: Path) -> None:

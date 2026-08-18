@@ -140,6 +140,11 @@ with `--action-model-path` and `--action-model-manifest`; never pass
 
 SLURM evaluation must use `render_evaluation_slurm.py` with a consistent READY
 plan/manifest; it owns backend, topology, results, status, exit, and requeue.
+After distributed evaluation, the rendered job deterministically aggregates
+the complete contiguous `results_shardN.json` rank set into one atomic
+`results.json` and proves its record count against the selected annotation
+array before returning child exit zero. Never score rank shards independently
+or assume the evaluator image has already materialized the aggregate.
 Framework first runs `framework_evaluation_image_preflight.py`; exit 4 means
 stop without allocating or overlaying source. Stage all artifacts under the
 job record's `results_dir`.
