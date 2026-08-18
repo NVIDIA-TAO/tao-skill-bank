@@ -41,9 +41,9 @@ ships a bundle that cannot run. Both were observed while building this:
   one line in a reproducibility note.
 - Requiring a declared `container_image` disqualified every skill that names its
   image some other way. Only 54 of 77 skills carry a `skill_info.yaml` at all.
-  Of the 23 that do not, 4 name a single image URI in their body and 3 cite a
-  `versions.yaml` key — 7 workloads a declaration-only rule reports as
-  unpackageable, plus 5 more that name several images and need a person to say
+  Of the 23 that do not, 3 name a single image URI in their body and 3 cite a
+  `versions.yaml` key — 6 workloads a declaration-only rule reports as
+  unpackageable, plus 6 more that name several images and need a person to say
   which one their actions run.
 
 So the script reports three verdicts, never two:
@@ -117,7 +117,7 @@ paths:
     adjudicated: { verdict: eligible, by: agent, reason: "Quick Start runs one docker command; no fetch in any action" }
     agreed: true
   brev:
-    screen:     { verdict: ineligible, basis: declared, source: "<SKILL.md line>" }
+    screen:     { verdict: ineligible, basis: presumed, source: "skills/platform/tao-run-on-brev/SKILL.md" }
     adjudicated: { verdict: ineligible, by: agent, reason: "provisioning calls the control plane" }
     agreed: true
 selected_platforms: [docker]
