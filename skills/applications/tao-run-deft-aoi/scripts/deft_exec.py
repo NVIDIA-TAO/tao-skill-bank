@@ -325,38 +325,28 @@ def load_bundle(path: pathlib.Path, policy: dict[str, Any] | None = None) -> dic
     return bundle
 
 
-def render_docker(bundle: dict[str, Any], results_dir: str) -> list[str]:
-    """Turn a platform-agnostic bundle into a local `docker run` argv.
+def platform_renderer(platform: str):
+    """Load the chosen platform skill's renderer, by convention not by table.
 
-    Mounts follow the workspace invariant this skill already documents: an
-    absolute-path input is bound at the SAME absolute path inside the container,
-    so a path written into a CSV or spec resolves identically on both sides.
-    Non-local URIs (s3://, hf://, ngc://) are tao-data-io's job to stage first;
-    they are refused here rather than silently ignored.
+    A `render_docker`/`render_slurm`/... table here would have to be edited
+    before any new platform could run a bundle, which is the registry the
+    four-verb contract avoids. `--platform` is an open validated slug, so this
+    resolves the slug to the skill that owns it and loads the module it ships.
+    An external platform skill conforms by shipping the same file; nothing in
+    this workflow changes. Contract:
+    skills/core/tao-launch-workflow/references/bundle-rendering.md
     """
-    mounts: list[str] = []
-    seen: set[str] = set()
-    for item in bundle.get("declared_inputs") or []:
-        uri = item["uri"]
-        if "://" in uri:
-            raise ValueError(
-                f"declared_input {item['spec_key']} is {uri!r}; stage it with "
-                "tao-data-io first and declare the compute-frame path"
-            )
-        if not uri.startswith("/"):
-            raise ValueError(f"declared_input {item['spec_key']} must be absolute, got {uri!r}")
-        if uri not in seen:
-            mounts += ["-v", f"{uri}:{uri}:ro"]
-            seen.add(uri)
-    mounts += ["-v", f"{results_dir}:{results_dir}"]
-
-    gpus = int(bundle["compute_shape"]["gpus"])
-    resources = ["--gpus", "all"] if gpus > 0 else []
-
-    argv = ["docker", "run", *resources, *mounts, bundle["image"]]
-    argv += shlex.split(bundle["command"])
-    argv += list(bundle.get("args") or [])
-    return argv
+    bank = pathlib.Path(__file__).resolve().parents[4]
+    path = bank / "skills/platform" / f"tao-run-on-{platform}" / "references/render.py"
+    if not path.is_file():
+        raise ValueError(
+            f"platform {platform!r} ships no renderer at {path}; see "
+            "tao-launch-workflow/references/bundle-rendering.md"
+        )
+    spec = importlib.util.spec_from_file_location(f"tao_render_{platform}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def submit(
@@ -399,6 +389,76 @@ def submit(
 
     _record("mark", job_id, "--state", "RUNNING",
             "--backend-ref", launched.stdout.strip())
+    return job_id
+
+
+def submit_bundle(
+    state_path: pathlib.Path,
+    bundle: dict[str, Any],
+    *,
+    storage_tier: str,
+    parent_job: str | None,
+    platform: str,
+    ctx_extra: dict[str, Any] | None = None,
+) -> str:
+    """Open a record, let the platform render the bundle, launch, record the handle.
+
+    The rendered argv is NOT re-checked by `_reject_airgap`. That gate reasons
+    about a local docker/podman command line and refuses launchers it cannot
+    inspect, so re-running it here would reject a legitimate `ssh … sbatch` or
+    `kubectl apply` that this module generated itself. Policy for a bundle is
+    applied to the bundle, in `reject_airgap_bundle`, before anything renders —
+    which is the whole reason that check moved to the data.
+    """
+    policy = _policy(state_path)
+    state = json.loads(state_path.expanduser().read_text())
+    results_dir = state.get("results_dir")
+    if not results_dir:
+        raise ValueError(f"{state_path} has no results_dir")
+
+    open_args = [
+        "open", "--platform", platform, "--image", bundle["image"],
+        "--network-arch", bundle["network_arch"], "--action", bundle["action"],
+        "--storage-tier", storage_tier, "--results-root", str(results_dir),
+    ]
+    if parent_job:
+        open_args += ["--parent-job", parent_job]
+    job_id = _record(*open_args)
+
+    ctx: dict[str, Any] = {
+        "job_id": job_id,
+        "results_dir": os.path.join(str(results_dir), job_id),
+        "bank": str(pathlib.Path(__file__).resolve().parents[4]),
+        "airgap": policy.get("network_mode") == "airgap",
+    }
+    ctx.update(ctx_extra or {})
+
+    try:
+        rendered = platform_renderer(platform).render(bundle, ctx)
+    except Exception:
+        _record("mark", job_id, "--state", "ERROR", "--err-class", "ERR_INFRA",
+                "--message", "render failed")
+        raise
+
+    for path, content in (rendered.get("files") or {}).items():
+        target = pathlib.Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    environment = os.environ.copy()
+    if ctx["airgap"]:
+        environment.update(OFFLINE_ENV)
+    launched = subprocess.run(
+        rendered["argv"], env=environment,
+        capture_output=True, text=True, check=False,
+    )
+    if launched.returncode != 0:
+        _record("mark", job_id, "--state", "ERROR", "--err-class", "ERR_INFRA",
+                "--message", "launch failed")
+        raise ValueError(f"launch failed: {launched.stderr.strip()}")
+
+    backend_ref = rendered.get("backend_ref") or launched.stdout.strip()
+    _record("mark", job_id, "--state", "RUNNING", "--backend-ref", backend_ref)
     return job_id
 
 
@@ -496,10 +556,8 @@ def main(argv: list[str] | None = None) -> int:
                 results_dir = state.get("results_dir")
                 if not results_dir:
                     raise ValueError(f"{args.state} has no results_dir")
-                print(submit(
-                    args.state, render_docker(bundle, results_dir),
-                    action=bundle["action"], image=bundle["image"],
-                    network_arch=bundle["network_arch"],
+                print(submit_bundle(
+                    args.state, bundle,
                     storage_tier=args.storage_tier,
                     parent_job=args.parent_job, platform=args.platform,
                 ))

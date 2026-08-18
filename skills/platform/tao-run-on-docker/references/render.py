@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Render a spec-bundle into a local `docker run`, and map docker state.
+
+The contract this implements is documented in
+`skills/core/tao-launch-workflow/references/bundle-rendering.md`; the docker
+conventions it encodes (GPU flags, mounts, naming) are the ones in this skill's
+SKILL.md. Keeping the code here means a new platform never requires an edit to
+whatever workflow is calling it.
+"""
+
+from __future__ import annotations
+
+import shlex
+import subprocess
+from typing import Any
+
+PLATFORM = "docker"
+
+OFFLINE_ENV = {
+    "AIR_GAPPED": "1",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "PIP_NO_INDEX": "1",
+}
+
+# Native docker states that are not terminal. `exited` and `dead` are resolved
+# by exit code at call time, so they are deliberately absent.
+STATE_VOCAB = {
+    "created": "PENDING",
+    "restarting": "PENDING",
+    "running": "RUNNING",
+    "paused": "RUNNING",
+}
+
+
+def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """Bundle -> `docker run` argv. No files needed; the handle is stdout."""
+    job_id = ctx["job_id"]
+    results_dir = ctx["results_dir"]
+
+    mounts: list[str] = []
+    seen: set[str] = set()
+    for item in bundle.get("declared_inputs") or []:
+        uri = str(item["uri"])
+        if "://" in uri:
+            raise ValueError(
+                f"declared_input {item['spec_key']} is {uri!r}; stage it with "
+                "tao-data-io first and declare the compute-frame path"
+            )
+        if not uri.startswith("/"):
+            raise ValueError(
+                f"declared_input {item['spec_key']} must be absolute, got {uri!r}"
+            )
+        if uri not in seen:
+            # Same absolute path on both sides: a path written into a CSV or a
+            # spec must resolve identically inside and outside the container.
+            mounts += ["-v", f"{uri}:{uri}:ro"]
+            seen.add(uri)
+    mounts += ["-v", f"{results_dir}:{results_dir}"]
+
+    gpus = int(bundle["compute_shape"]["gpus"])
+    resources = ["--gpus", "all"] if gpus > 0 else []
+    # Air-gap is a docker convention here: no implicit pull, and the offline
+    # env the workload libraries read. It belongs with the other docker flags
+    # rather than in whatever workflow happens to be calling render().
+    if ctx.get("airgap"):
+        resources += ["--pull=never"]
+        resources += [f"--env={name}={value}" for name, value in OFFLINE_ENV.items()]
+    # The bundle is authored before the job id exists, but results_dir contains
+    # it. TAO_RESULTS_ROOT is how the bank already tells a workload where to
+    # write (k8s templates set it, virtualenv_runner sets it, tao-data-io keys
+    # its upload decision on it), so a bundle never has to name the path.
+    env = ["-e", f"TAO_RESULTS_ROOT={results_dir}"]
+    env += [arg for name in ctx.get("env_passthrough") or [] for arg in ("-e", name)]
+
+    argv = ["docker", "run", "--name", job_id, "-d",
+            *resources, *env, *mounts, bundle["image"]]
+    argv += shlex.split(bundle["command"])
+    argv += list(bundle.get("args") or [])
+    return {"files": {}, "argv": argv, "backend_ref": None}
+
+
+def status(backend_ref: str, ctx: dict[str, Any]) -> tuple[str, int]:
+    """Map the container's native state into the fixed vocabulary."""
+    probe = subprocess.run(
+        ["docker", "inspect", "--format",
+         "{{.State.Status}} {{.State.ExitCode}}", backend_ref],
+        capture_output=True, text=True, check=False,
+    )
+    if probe.returncode != 0 or not probe.stdout.strip():
+        return "UNKNOWN", 0
+    native, _, code = probe.stdout.strip().partition(" ")
+    exit_code = int(code or 0)
+    if native in STATE_VOCAB:
+        return STATE_VOCAB[native], exit_code
+    if native == "exited":
+        return ("COMPLETE" if exit_code == 0 else "ERROR"), exit_code
+    return "UNKNOWN", exit_code
