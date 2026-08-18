@@ -979,6 +979,9 @@ def _rl_spec(args: argparse.Namespace, contract: Mapping[str, Any], prepared_mod
         "optm_warmup_epochs": args.warmup,
         "optm_decay_type": "none" if args.scheduler == "constant" else args.scheduler,
         "optm_grad_norm_clip": args.gradient_clip, "param_dtype": args.precision,
+        # Preserve Cosmos-RL's full reproducibility contract in addition to
+        # the DataLoader-specific seed below.
+        "seed": args.seed, "deterministic": True,
     })
     spec["train"]["ckpt"].update({"enable_checkpoint": True, "save_freq_in_epoch": 1, "save_mode": "async" if args.async_checkpoint else "sync", "max_keep": args.max_checkpoints})
     dataloader_num_workers = int(video_runtime["dataloader_num_workers"])
