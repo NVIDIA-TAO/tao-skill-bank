@@ -1958,14 +1958,27 @@ def test_metadata_finalization_requires_child_and_tao_terminal_status(tmp_path):
 
 
 def test_request_and_metadata_schemas_and_no_environment_history():
-    train_schema = json.loads((SKILL / "schemas" / "train.schema.json").read_text())
-    profile_schema = train_schema["properties"]["training"]["properties"]["video_profile"]
+    request_schema = json.loads((SKILL / "schemas" / "train_request.schema.json").read_text())
+    profile_schema = request_schema["properties"]["training"]["properties"]["video_profile"]
     assert profile_schema["x_tao_native_mapping"]["max_frames"] == "custom.vision.max_frames"
     jsonschema.validate({"fps": 1.0, "max_frames": 120}, profile_schema)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({"frames": 8, "fps": 1.0}, profile_schema)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({"max_frames": 120}, profile_schema)
+    train_schema = json.loads((SKILL / "schemas" / "train.schema.json").read_text())
+    assert {
+        "train.epoch",
+        "train.optm_lr",
+        "train.optm_decay_type",
+        "custom.vision.fps",
+    } <= set(train_schema["automl_default_parameters"])
+    assert train_schema["properties"]["train"]["properties"]["epoch"]["maximum"] == 20
+    assert train_schema["properties"]["train"]["properties"]["optm_lr"]["automl_enabled"] is True
+    vision_schema = train_schema["properties"]["custom"]["properties"]["vision"]["properties"]
+    assert {"fps", "max_frames", "max_pixels", "nframes", "total_pixels"} <= set(
+        vision_schema
+    )
     evaluate_schema = json.loads((SKILL / "schemas" / "evaluate.schema.json").read_text())
     assert {"fps", "min_frames", "max_frames", "video_start", "video_end"} <= set(
         evaluate_schema["properties"]["vision"]["properties"]

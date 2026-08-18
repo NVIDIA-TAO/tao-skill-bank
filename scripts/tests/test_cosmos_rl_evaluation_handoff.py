@@ -80,6 +80,39 @@ def test_native_policy_resolves_to_verified_dense_export(tmp_path: Path) -> None
     }
 
 
+def test_dense_hf_base_model_is_verified_for_automl_baseline(tmp_path: Path) -> None:
+    model = tmp_path / "base-model"
+    model.mkdir()
+    (model / "config.json").write_text(
+        json.dumps({"model_type": "qwen3_vl"}), encoding="utf-8"
+    )
+    _safetensors(model / "model.safetensors")
+
+    result = CHECKPOINT.verify(str(model), "dense", None, base_model=True)
+
+    assert result["status"] == "VERIFIED"
+    assert result["source_checkpoint"] == str(model)
+    assert result["action_model_path"] == str(model)
+    assert result["epoch"] is None
+    assert result["base_model"] is True
+    assert result["checkpoint_kind"] == "hf_dense_base_model_safetensors"
+
+
+def test_base_model_rejects_epoch_and_peft(tmp_path: Path) -> None:
+    model = tmp_path / "base-model"
+    model.mkdir()
+    for mode, epoch, message in (
+        ("dense", 1, "cannot be combined"),
+        ("peft", None, "must use dense"),
+    ):
+        try:
+            CHECKPOINT.verify(str(model), mode, epoch, base_model=True)
+        except CHECKPOINT.CheckpointError as exc:
+            assert message in str(exc)
+        else:
+            raise AssertionError("invalid baseline model verification was accepted")
+
+
 def test_native_policy_resolves_to_verified_peft_export(tmp_path: Path) -> None:
     source, export = _native_and_export(tmp_path, "peft", epoch=3)
     result = CHECKPOINT.verify(str(source), "peft", 3)

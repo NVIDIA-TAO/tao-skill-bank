@@ -168,18 +168,35 @@ def _validate_peft(checkpoint: Path) -> list[Path]:
     return [config_path, weights_path] + ([model_config] if model_config.is_file() else [])
 
 
-def verify(source_checkpoint: str, training_mode: str, epoch: int | None) -> dict[str, Any]:
+def verify(
+    source_checkpoint: str,
+    training_mode: str,
+    epoch: int | None,
+    *,
+    base_model: bool = False,
+) -> dict[str, Any]:
     source = Path(source_checkpoint).expanduser()
     if not source.exists():
         raise CheckpointError(f"source checkpoint is inaccessible from the compute frame: {source}")
-    action_checkpoint, selected_epoch = resolve_action_checkpoint(source, epoch)
+    if base_model:
+        if epoch is not None:
+            raise CheckpointError("--base-model cannot be combined with --epoch")
+        if training_mode != "dense":
+            raise CheckpointError("a Cosmos-RL baseline model must use dense training mode")
+        action_checkpoint, selected_epoch = source, None
+    else:
+        action_checkpoint, selected_epoch = resolve_action_checkpoint(source, epoch)
     if not action_checkpoint.is_dir():
         raise CheckpointError(
             f"evaluator-loadable epoch export is missing: {action_checkpoint}"
         )
     if training_mode == "dense":
         files = _validate_dense(action_checkpoint)
-        checkpoint_kind = "hf_dense_safetensors"
+        checkpoint_kind = (
+            "hf_dense_base_model_safetensors"
+            if base_model
+            else "hf_dense_safetensors"
+        )
     elif training_mode == "peft":
         files = _validate_peft(action_checkpoint)
         checkpoint_kind = "hf_peft_adapter_safetensors"
@@ -201,6 +218,7 @@ def verify(source_checkpoint: str, training_mode: str, epoch: int | None) -> dic
         "epoch": selected_epoch,
         "training_mode": training_mode,
         "checkpoint_kind": checkpoint_kind,
+        "base_model": base_model,
         "files": inventory,
     }
 
@@ -210,6 +228,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--training-mode", choices=("dense", "peft"), required=True)
     parser.add_argument("--epoch", type=int)
+    parser.add_argument(
+        "--base-model",
+        action="store_true",
+        help="Verify an existing dense Hugging Face model directory for AutoML baseline evaluation.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -219,7 +242,12 @@ def main() -> int:
     try:
         if args.epoch is not None and args.epoch <= 0:
             raise CheckpointError("epoch must be positive")
-        result = verify(args.checkpoint, args.training_mode, args.epoch)
+        result = verify(
+            args.checkpoint,
+            args.training_mode,
+            args.epoch,
+            base_model=args.base_model,
+        )
         _atomic_json(args.output, result)
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
