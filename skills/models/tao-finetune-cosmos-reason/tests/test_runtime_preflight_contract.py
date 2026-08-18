@@ -150,7 +150,7 @@ def test_cosmos_rl_preflight_rejects_dependency_abi_and_dispatch_regressions() -
     assert "torchvision" in runtime
     assert "_tao_linear_patch_embed" in runtime
     assert "_tao_channels_last_3d" in runtime
-    assert "TAO_PREFLIGHT_ASSERTION_FAILED:vlm_attention_mask" in runtime
+    assert "TAO_PREFLIGHT_ASSERTION_FAILED:vlm_padding_contract" in runtime
     assert "HFVLMDataPacker._collate_fn" in runtime
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:visual_gradient_contract" in runtime
     assert "TAO_PREFLIGHT_ASSERTION_FAILED:visual_gradient_env" in runtime

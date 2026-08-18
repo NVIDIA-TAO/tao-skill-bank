@@ -1423,7 +1423,7 @@ def _preflight_contract(
             "assert (getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_linear_patch_embed', False) or getattr(Qwen3VLVisionPatchEmbed.forward, '_tao_channels_last_3d', False)), 'TAO_PREFLIGHT_ASSERTION_FAILED:qwen_patch_embed'",
             "assert os.environ.get('COSMOS_SFT_REQUIRE_VISUAL_GRADIENTS') == '1', 'TAO_PREFLIGHT_ASSERTION_FAILED:visual_gradient_env'",
             "vlm_collate_source=inspect.getsource(HFVLMDataPacker._collate_fn)",
-            "assert 'batch[\"attention_mask\"]' in vlm_collate_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:vlm_attention_mask'",
+            "assert ('batch[\"attention_mask\"]' in vlm_collate_source or ('batch[\"input_ids\"] = torch.tensor' in vlm_collate_source and 'computed_max_len - len(x[\"input_ids\"])' in vlm_collate_source and 'batch[\"logprob_masks\"] = torch.tensor' in vlm_collate_source and 'computed_max_len - len(x[\"logprob_masks\"])' in vlm_collate_source)), 'TAO_PREFLIGHT_ASSERTION_FAILED:vlm_padding_contract'",
             "sft_source=inspect.getsource(sft_trainer_module.SFTTrainer.step_training)",
             "assert '_enforce_visual_gradient_contract' in sft_source, 'TAO_PREFLIGHT_ASSERTION_FAILED:visual_gradient_contract'",
             "assert av.codec.Codec('h264', 'r').name == 'h264', 'TAO_PREFLIGHT_ASSERTION_FAILED:h264_software_name'",
