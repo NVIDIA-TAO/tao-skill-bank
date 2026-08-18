@@ -1,6 +1,6 @@
 {
   "name": "tao-skill-bank",
-  "version": "0.1.12+codex.20260818030819",
+  "version": "0.1.12+codex.20260818031907",
   "description": "NVIDIA TAO skill bank with generated capability discovery for model training, data processing, application workflows, AutoML, and platform execution.",
   "skills": "./skills/core/",
   "interface": {
