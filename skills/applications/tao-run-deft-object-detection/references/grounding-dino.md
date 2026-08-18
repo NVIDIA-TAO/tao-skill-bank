@@ -224,8 +224,7 @@ docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
 ```
 
 **Wait on the artifact, never on a process name.** `pgrep -f "grounding_dino train"` matches
-the waiting shell's own command line, so the wait never ends — that cost 10h11m on a run whose
-training had already finished correctly in 14m20s:
+the waiting shell's own command line, so the wait never ends.
 
 Take a launch marker first, and pass it as `--newer-than`. Without it a retry of a
 failed job is satisfied instantly by the checkpoint and success line the previous

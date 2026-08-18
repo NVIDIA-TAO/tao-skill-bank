@@ -70,11 +70,6 @@ and `ignore_sqwidth: 40`, so delegating to it and applying this overlay agree. A
 overlay anyway: the agreement is a fact about the current versions, not a guarantee, and
 a spec that states its own scoring settings is auditable after the fact.
 
-`conf_threshold: 0.0` is safe on the pinned image. An undetected ground-truth box used to
-be carried as `(t=1, p=0.0)` against a `p >= conf_threshold` check, so zero scored every
-missed box as a true positive; unmatched ground truth now uses a `-1.0` sentinel and lands
-in FN at any threshold. On a build predating that fix, use a small positive value.
-
 ## Scoring at more than one confidence threshold
 
 Inference runs at `0.0`, so the labels carry every detection and this stage can score them
