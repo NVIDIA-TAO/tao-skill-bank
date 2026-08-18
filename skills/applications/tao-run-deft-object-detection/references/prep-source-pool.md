@@ -97,13 +97,9 @@ Both consumers do exact-string lookups — Co-DETR checks `orig_name not in name
 
 Copy source names verbatim from the detector's classmap. `validate_pool_coco.py` (step 4) names case-only mismatches explicitly, because this is the most likely way a fold goes wrong and the least visible.
 
-> **Improvement to make to `annotations convert`:** `construct_category_map` /
-> `labels2cat` in `kitti_to_coco.py` should match class names case-insensitively, or
-> at minimum warn when a label class differs from a mapping alias only by case. Today
-> the reference mapping works around it by hand-enumerating variants — `Bicycle`,
-> `bicycle`, `AutoMobile`, `Automobile` — which is fragile and silently incomplete for
-> any spelling nobody thought of. The same function is imported by
-> `analytics kpi_analyze`, so a fix there covers both.
+Matching is case-sensitive in both `annotations convert` and `analytics kpi_analyze`,
+which share the same lookup, so a mapping must enumerate every spelling it expects to
+see — `Bicycle` and `bicycle`, `AutoMobile` and `Automobile`.
 
 ### Target names must be single tokens
 

@@ -19,7 +19,7 @@ architecture it was **trained** with. There is no "just use the pinned image" an
 the pairing in Pre-Flight, because the failure lands after the container has started and
 looks like a checkpoint problem rather than a config one.
 
-### `class_embed_bias` — the trap that actually bites
+### `class_embed_bias` must match the checkpoint
 
 `ContrastiveEmbed` (the `class_embed` head) takes a `bias` argument that defaults to
 **`False`**, sourced from the spec as `model.class_embed_bias`. A checkpoint trained with
@@ -44,7 +44,7 @@ kernel runs, so drivers cannot add or remove a `bias`. Genuine CUDA faults look 
 The field is easy to lose because it is absent from the shipped `infer.yaml` template and
 defaults to the value the checkpoint does *not* use.
 
-### `log_scale` — the second trap, and it fails silently
+### `log_scale` must be set, and a wrong value fails silently
 
 `ContrastiveEmbed.forward` scales the visual·text similarity before the sigmoid:
 
@@ -187,8 +187,8 @@ Also copy the user's train-spec template to `${RESULTS_DIR}/train_grounding_dino
 
 ## Iteration train
 
-Build the spec first. Every flag below is load-bearing — the script refuses to emit a spec
-that cannot train, because each of these failed silently or expensively at least once:
+Build the spec first. Every flag below is load-bearing: the script refuses to emit a spec
+that cannot train.
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_val_split_for_train.py \

@@ -31,7 +31,6 @@ instead of calling the miner with nothing left to give
 - **Iteration 1**: emit `exclude_path: null`.
 - **Iteration N > 1**: emit the absolute path to `${RESULTS_DIR}/iter$((N-1))/mined_cumulative.parquet`, and confirm the file exists before writing the spec.
 
-> The reference pipeline's miner silently skipped a missing exclude file; TAO DS raises instead. Its KFP wrapper only worked because it pre-guarded with `os.path.exists`. Reproduce that guard, not the bare path.
 
 ## `detection_format` is never inferred
 

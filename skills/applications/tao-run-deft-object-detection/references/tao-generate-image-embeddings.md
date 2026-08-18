@@ -10,7 +10,6 @@ Iteration stage 2, immediately after `gap_analysis`. Skipped only when `gap_anal
 
 `weak_images.parquet` already carries a `filepath` column, so it is fed to the embedder directly. No projection step is needed.
 
-> The reference pipeline had an extra task here purely to rename `gt_image_path` → `filepath`, because its bespoke gap-analysis container emitted the former. The TAO DS `gap_analysis object_detection` action emits `filepath`, so that glue disappears.
 
 ## Encoder consistency is the whole ballgame
 
@@ -50,7 +49,6 @@ Columns: `filepath`, `embedding` (list-like), plus every extra column carried th
 
 The embedding column is named **`embedding`**, which is what `tmm unique_neighbor_matching` expects by default — no column override is needed anywhere in this loop.
 
-> Worth knowing if you ever compare against the reference pipeline: its embedding image emitted `embedding` while three of its four miner variants hardcoded `image_embed`, so those combinations silently failed to find the vectors. The TAO DS pair agrees on `embedding` end to end.
 
 ## Commit
 
