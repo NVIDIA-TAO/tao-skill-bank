@@ -26,9 +26,34 @@ Each execution platform ships `references/render.py` exposing:
 ```python
 PLATFORM: str                       # matches the --platform slug
 
+def prepare(bundle: dict, ctx: dict) -> dict: ...
 def render(bundle: dict, ctx: dict) -> dict: ...
 def status(backend_ref: str, ctx: dict) -> tuple[str, int]: ...
 ```
+
+### `prepare(bundle, ctx) -> {"image": str, "notes": [str]}`
+
+Put the image into the platform's native form, **off** the metered resource,
+and return the reference `render` should use. An implicit fetch inside the run
+is billed as idle GPU time and hides an auth failure inside a training log.
+
+**Idempotent by design — the common path does no work:**
+
+| platform | behaviour |
+|---|---|
+| docker / brev | `image inspect` → pull only when missing (remotely, for brev) |
+| slurm | reuse the cached Lustre `.sqsh`; convert only when missing or corrupt |
+| kubernetes | none possible — the kubelet pulls on the node; optionally verify the reference resolves |
+| virtualenv | no image; verify the interpreter exists |
+
+Existence is not enough where a fetch can be interrupted. A conversion killed by
+a wall-time cap leaves a **truncated** file that `test -e` accepts, so SLURM
+reads the 4-byte `hsqs` squashfs magic and reconverts when it does not match. A
+conversion that still fails verification is fatal: never fall back to the
+registry reference, because that puts the pull back inside the GPU allocation
+precisely when something is already wrong.
+
+In air-gap mode `prepare` must refuse rather than fetch.
 
 ### `render(bundle, ctx) -> dict`
 

@@ -40,6 +40,32 @@ def _docker_renderer():
     return module
 
 
+def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """Pull on the instance before the run — the instance bills from boot.
+
+    Same reason docker hoists the pull, only sharper: a Brev instance is metered
+    from boot, so a multi-GB first-time pull inside `docker run` is billed
+    GPU-idle time. This runs the docker skill's pull-if-missing idiom remotely.
+    """
+    image = bundle["image"]
+    instance = ctx["instance"]
+    present = subprocess.run(
+        ["brev", "exec", instance, f"docker image inspect {shlex.quote(image)}"],
+        capture_output=True, text=True, check=False,
+    ).returncode == 0
+    if present:
+        return {"image": image, "notes": ["image already on the instance"]}
+    if ctx.get("airgap"):
+        raise ValueError(f"{image} is not on {instance} and air-gap forbids a pull")
+    pulled = subprocess.run(
+        ["brev", "exec", instance, f"docker pull {shlex.quote(image)}"],
+        capture_output=True, text=True, check=False,
+    )
+    if pulled.returncode != 0:
+        raise ValueError(f"pull on {instance} failed: {pulled.stderr.strip()}")
+    return {"image": image, "notes": ["pulled on the instance"]}
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> `brev exec <instance> '<docker run ...>'`."""
     instance = ctx["instance"]

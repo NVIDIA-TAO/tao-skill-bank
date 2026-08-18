@@ -27,6 +27,38 @@ PLATFORM = "kubernetes"
 TEMPLATE = "templates/k8s/single-pod-job.yaml.tmpl"
 
 
+def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """No agent-side pull is possible here — the kubelet pulls on the node.
+
+    Docker and SLURM can hoist the image fetch off the metered resource. On
+    kubernetes there is no equivalent: a pod reserves `nvidia.com/gpu` for its
+    whole lifetime, so a first-time multi-GB pull is billed GPU-idle time and
+    the only real mitigations are cluster-side (pre-warmed nodes, a local
+    registry mirror). Pretending to "prepare" here would be theatre.
+
+    What is checkable from the agent is that the reference is well-formed and,
+    when a registry is reachable, that it resolves — which turns a typo or a
+    missing pull secret into a submit-time error instead of ImagePullBackOff
+    discovered after the pod has been scheduled onto a GPU.
+    """
+    image = bundle["image"]
+    notes = ["kubelet pulls on the node; no agent-side pull is possible"]
+    if ctx.get("airgap"):
+        notes.append("air-gap: the image must already be on the nodes or a local mirror")
+        return {"image": image, "notes": notes}
+    if ctx.get("verify_image_resolves"):
+        probe = subprocess.run(
+            ["docker", "manifest", "inspect", image],
+            capture_output=True, text=True, check=False,
+        )
+        if probe.returncode != 0:
+            raise ValueError(
+                f"{image} does not resolve in the registry: {probe.stderr.strip()}"
+            )
+        notes.append("manifest resolves")
+    return {"image": image, "notes": notes}
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> a rendered Job manifest plus `kubectl apply`."""
     job_id = ctx["job_id"]

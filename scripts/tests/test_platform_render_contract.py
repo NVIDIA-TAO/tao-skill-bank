@@ -157,6 +157,56 @@ def test_refuses_an_unstaged_uri(name, tmp_path):
 
 
 @pytest.mark.parametrize("name", PLATFORMS)
+def test_ships_prepare(name):
+    """Getting the image into native form is the platform's job too."""
+    module = _load(name)
+    assert callable(getattr(module, "prepare", None)), (
+        f"{name} ships no prepare(); the image fetch would land inside the "
+        "metered allocation. See bundle-rendering.md"
+    )
+
+
+@pytest.mark.parametrize("name", PLATFORMS)
+def test_prepare_is_idempotent_when_the_image_is_present(name, tmp_path, monkeypatch):
+    """The common path must do NO work: conversion and pulls are one-time."""
+    module = _load(name)
+    if module.PLATFORM == "virtualenv":
+        interpreter = tmp_path / "bin/python"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text("")
+        out = module.prepare({"image": str(interpreter)}, _ctx(tmp_path))
+        assert out["image"] == str(interpreter)
+        return
+    if module.PLATFORM == "slurm":
+        # An image already given as a .sqsh needs no conversion at all.
+        out = module.prepare({"image": "/lustre/images/tao.sqsh"},
+                             _ctx(tmp_path, sqsh_dir="/lustre/images"))
+        assert out["image"].endswith(".sqsh")
+        return
+    if module.PLATFORM == "kubernetes":
+        out = module.prepare(GPU_BUNDLE, _ctx(tmp_path))
+        assert out["image"] == GPU_BUNDLE["image"]
+        return
+    # docker / brev shell out; assert they report "already present" without pulling.
+    calls: list[list[str]] = []
+
+    class _Done:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake(cmd, *a, **k):
+        calls.append(cmd)
+        return _Done()
+
+    monkeypatch.setattr(module.subprocess, "run", _fake)
+    module.prepare(GPU_BUNDLE, _ctx(tmp_path))
+    assert not any("pull" in " ".join(c) for c in calls), (
+        f"{name} pulled an image that was already present"
+    )
+
+
+@pytest.mark.parametrize("name", PLATFORMS)
 def test_status_maps_into_the_fixed_vocabulary(name):
     """Native sub-states ride in the record message, never in the state."""
     module = _load(name)
@@ -176,3 +226,70 @@ def test_no_credential_value_is_rendered(name, tmp_path):
     blob = " ".join(out["argv"]) + " ".join(out["files"].values())
     for name_ in ("HF_TOKEN", "NGC_KEY"):
         assert f"{name_}=" not in blob, f"{name} put {name_} on the command line"
+
+
+# ── SLURM sqsh caching ──────────────────────────────────────────────────────
+# Conversion is one-time-per-image and expensive, so the decision logic is what
+# matters. `test -e` is not enough: a conversion killed by a wall-time cap
+# leaves a TRUNCATED file that exists. The SKILL.md claims the sqsh "is
+# validated by hsqs magic" -- this is that guard.
+
+class _Done:
+    def __init__(self, stdout="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, "", returncode
+
+
+def _slurm_with(monkeypatch, outputs):
+    module = _load("tao-run-on-slurm")
+    seq, calls = list(outputs), []
+
+    def fake(cmd, *a, **k):
+        calls.append(" ".join(cmd))
+        return _Done(seq.pop(0) if seq else "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake)
+    ctx = {"login": "me@login", "sqsh_dir": "/lustre/img"}
+    return module, ctx, calls
+
+
+def test_sqsh_valid_cache_is_reused_without_converting(monkeypatch):
+    module, ctx, calls = _slurm_with(monkeypatch, ["hsqs"])
+    out = module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
+    assert out["image"].endswith(".sqsh")
+    assert not any("enroot import" in c for c in calls), "reconverted a valid sqsh"
+
+
+def test_sqsh_missing_is_converted(monkeypatch):
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "", "hsqs"])
+    module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
+    assert any("enroot import" in c for c in calls)
+
+
+def test_truncated_sqsh_is_reconverted(monkeypatch):
+    """The failure mode the shipped cpu/30min defaults actually produce."""
+    module, ctx, calls = _slurm_with(monkeypatch, ["hsq", "", "hsqs"])
+    out = module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
+    assert "corrupt or truncated" in out["notes"][0]
+    assert any("enroot import" in c for c in calls)
+
+
+def test_failed_conversion_never_falls_back_to_the_registry(monkeypatch):
+    """Falling back puts the pull inside the GPU allocation, exactly when
+    something is already wrong."""
+    module, ctx, _ = _slurm_with(monkeypatch, ["", "", "hsq"])
+    with pytest.raises(ValueError, match="no valid squashfs"):
+        module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
+
+
+def test_airgap_refuses_to_convert(monkeypatch):
+    module, ctx, _ = _slurm_with(monkeypatch, [""])
+    with pytest.raises(ValueError, match="air-gap"):
+        module.prepare({"image": "nvcr.io/nvidia/tao:1"}, {**ctx, "airgap": True})
+
+
+def test_conversion_uses_a_long_enough_partition(monkeypatch):
+    """cpu/30min truncates a TAO image; the default here must not reproduce it."""
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "", "hsqs"])
+    module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
+    convert = next(c for c in calls if "enroot import" in c)
+    assert "cpu_long" in convert and "-t 120" in convert

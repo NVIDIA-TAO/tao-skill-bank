@@ -38,6 +38,23 @@ STATE_VOCAB = {
 }
 
 
+def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """There is no image to fetch; check the interpreter exists.
+
+    The failure this prevents is a job that reaches RUNNING and dies instantly
+    because the venv was never provisioned. This platform never installs
+    anything — see this skill's SKILL.md — so a missing interpreter is fatal,
+    not something to fix here.
+    """
+    interpreter = pathlib.Path(bundle["image"])
+    if not interpreter.is_file():
+        raise ValueError(
+            f"venv interpreter {interpreter} does not exist; provision the "
+            "environment first — this platform never installs packages"
+        )
+    return {"image": str(interpreter), "notes": ["interpreter present"]}
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> `virtualenv_runner.py submit ...`."""
     job_id = ctx["job_id"]

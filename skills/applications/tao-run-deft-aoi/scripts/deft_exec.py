@@ -392,6 +392,43 @@ def submit(
     return job_id
 
 
+def verify_inputs_staged(bundle: dict[str, Any], platform: str) -> None:
+    """Every declared_input must be readable from the compute frame already.
+
+    `tao-data-io` owns getting data there — it picks the storage tier and, for
+    tier A, the answer is usually "it is already on the Lustre/PVC mount, do
+    nothing". It has no general staging CLI (its packaged script is the narrow
+    annotation-selective downloader), so staging is driven by the agent reading
+    that skill. What this does is refuse to launch against inputs that are not
+    there yet, and say which ones — the alternative is a container that starts,
+    finds nothing, and fails deep inside the workload.
+
+    Only locally-checkable paths are verified: on a remote platform the compute
+    frame is another machine, so presence is that platform's problem and the
+    renderer's URI refusal is the backstop.
+    """
+    remote = platform in {"slurm", "kubernetes", "brev"}
+    missing: list[str] = []
+    unstaged: list[str] = []
+    for item in bundle.get("declared_inputs") or []:
+        uri = str(item.get("uri", ""))
+        if "://" in uri:
+            unstaged.append(f"{item.get('spec_key')} -> {uri}")
+        elif not remote and not pathlib.Path(uri).exists():
+            missing.append(f"{item.get('spec_key')} -> {uri}")
+    if unstaged:
+        raise ValueError(
+            "these inputs are not staged into the compute frame: "
+            + "; ".join(unstaged)
+            + ". Stage them with the tao-data-io skill (it picks the storage "
+            "tier), then declare the compute-frame path in the bundle."
+        )
+    if missing:
+        raise ValueError(
+            "these declared inputs do not exist: " + "; ".join(missing)
+        )
+
+
 def submit_bundle(
     state_path: pathlib.Path,
     bundle: dict[str, Any],
@@ -433,8 +470,31 @@ def submit_bundle(
     }
     ctx.update(ctx_extra or {})
 
+    renderer = platform_renderer(platform)
+
+    # Inputs must exist in the COMPUTE frame before anything renders. Staging is
+    # tao-data-io's job and it is agent-driven (the skill has no general CLI), so
+    # this verifies and names the exact gap rather than guessing a fetch.
     try:
-        rendered = platform_renderer(platform).render(bundle, ctx)
+        verify_inputs_staged(bundle, platform)
+    except Exception:
+        _record("mark", job_id, "--state", "ERROR", "--err-class", "ERR_INFRA",
+                "--message", "inputs not staged")
+        raise
+
+    # Make the image available in the platform's native form: pull-if-missing on
+    # docker/brev, reuse-or-convert the Lustre .sqsh on slurm, nothing on k8s.
+    # Idempotent by design — the common path does no work.
+    try:
+        prepared = renderer.prepare(bundle, ctx)
+        bundle = {**bundle, "image": prepared["image"]}
+    except Exception:
+        _record("mark", job_id, "--state", "ERROR", "--err-class", "ERR_INFRA",
+                "--message", "image prepare failed")
+        raise
+
+    try:
+        rendered = renderer.render(bundle, ctx)
     except Exception:
         _record("mark", job_id, "--state", "ERROR", "--err-class", "ERR_INFRA",
                 "--message", "render failed")

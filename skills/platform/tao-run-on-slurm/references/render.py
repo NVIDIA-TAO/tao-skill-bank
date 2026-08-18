@@ -68,6 +68,81 @@ def _mounts(bundle: dict[str, Any], results_dir: str) -> str:
     return ",".join(pairs)
 
 
+SQSH_MAGIC = "hsqs"
+
+
+def sqsh_path(image: str, ctx: dict[str, Any]) -> str:
+    """Deterministic Lustre path for an image's converted squashfs.
+
+    Pure, so the caching decision is testable without a cluster.
+    """
+    slug = image.replace("://", "_").replace("/", "_").replace(":", "_").replace("#", "_")
+    return f"{ctx['sqsh_dir'].rstrip('/')}/{slug}.sqsh"
+
+
+def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """Reuse the cached .sqsh; convert only when it is missing or corrupt.
+
+    Conversion is expensive and one-time-per-image, so the default path does
+    nothing. Two things make "already there" untrustworthy on its own:
+
+    * A conversion killed by a wall-time cap leaves a TRUNCATED file that
+      `test -e` happily accepts. This skill's SKILL.md says the SQSH "is
+      validated by `hsqs` magic" -- that guard was documented but implemented
+      nowhere in the repo, so this is it: read the 4-byte squashfs magic.
+    * Conversion must run on a CPU partition with a long enough limit; the
+      30-minute default truncates a TAO image. `ctx["conversion_partition"]`
+      and `ctx["conversion_minutes"]` carry it.
+
+    Conversion is submitted as its own recorded job when `ctx["record_child"]`
+    is supplied, so a 2-hour queue wait is observable instead of a silent hang.
+    """
+    image = bundle["image"]
+    if image.endswith(".sqsh"):
+        return {"image": image, "notes": ["image is already a squashfs path"]}
+    target = sqsh_path(image, ctx)
+    login = ctx["login"]
+
+    magic = subprocess.run(
+        ["ssh", login, f"head -c4 {shlex.quote(target)} 2>/dev/null || true"],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    if magic == SQSH_MAGIC:
+        return {"image": target, "notes": ["reused cached sqsh"]}
+
+    if ctx.get("airgap"):
+        raise ValueError(
+            f"{target} is missing or truncated and air-gap forbids the registry "
+            "import that would rebuild it; pre-stage the .sqsh on Lustre"
+        )
+
+    note = "converted" if not magic else "reconverted (corrupt or truncated sqsh)"
+    partition = ctx.get("conversion_partition", "cpu_long")
+    minutes = int(ctx.get("conversion_minutes", 120))
+    convert = (
+        f"srun -n1 -p {shlex.quote(partition)} -t {minutes} "
+        f"enroot import -o {shlex.quote(target)} docker://{image}"
+    )
+    result = subprocess.run(
+        ["ssh", login, convert], capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        raise ValueError(f"enroot import failed: {result.stderr.strip()}")
+
+    verify = subprocess.run(
+        ["ssh", login, f"head -c4 {shlex.quote(target)} 2>/dev/null || true"],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    if verify != SQSH_MAGIC:
+        # Never fall back to the registry URI: that puts the pull back inside
+        # the GPU allocation, exactly when something is already wrong.
+        raise ValueError(
+            f"conversion produced no valid squashfs at {target} "
+            f"(magic {verify!r}); raise --conversion-minutes or use a longer partition"
+        )
+    return {"image": target, "notes": [note]}
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> a rendered sbatch script plus the ssh sbatch command."""
     job_id = ctx["job_id"]

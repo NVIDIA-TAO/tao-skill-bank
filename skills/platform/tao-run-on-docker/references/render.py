@@ -36,6 +36,34 @@ STATE_VOCAB = {
 }
 
 
+def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """Make the image locally available. Pull only when it is missing.
+
+    This is the `docker image inspect … || docker pull` idiom from this skill's
+    SKILL.md, hoisted out of the run: an implicit first-time pull inside
+    `docker run` is billed as idle GPU time on a metered host, and it hides an
+    auth failure inside a training log.
+    """
+    image = bundle["image"]
+    present = subprocess.run(
+        ["docker", "image", "inspect", image],
+        capture_output=True, text=True, check=False,
+    ).returncode == 0
+    if present:
+        return {"image": image, "notes": ["image already present"]}
+    if ctx.get("airgap"):
+        raise ValueError(
+            f"{image} is not present locally and air-gap forbids a pull; "
+            "pre-stage the image on this host"
+        )
+    pulled = subprocess.run(
+        ["docker", "pull", image], capture_output=True, text=True, check=False
+    )
+    if pulled.returncode != 0:
+        raise ValueError(f"docker pull {image} failed: {pulled.stderr.strip()}")
+    return {"image": image, "notes": ["pulled"]}
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> `docker run` argv. No files needed; the handle is stdout."""
     job_id = ctx["job_id"]
