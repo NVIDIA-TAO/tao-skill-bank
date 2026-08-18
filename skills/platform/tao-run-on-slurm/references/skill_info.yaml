@@ -39,8 +39,11 @@ resource_defaults:
   partition: polar,polar3,polar4,grizzly
   container_mounts: runtime-supplied
   use_sqsh: true
+  # Every partition on CS-OCI-ORD has DefaultTime=00:31:00, so a conversion
+  # without an explicit -t is capped at 31 minutes regardless of partition.
+  # The timeout below is a CEILING, not an estimate; cpu's MaxTime is 1 day.
   sqsh_conversion_partition: cpu
-  sqsh_conversion_timeout_minutes: 30
+  sqsh_conversion_timeout_minutes: 120
   sqsh_conversion_memory_gb: 32
 cloud_storage:
   protocol: lustre

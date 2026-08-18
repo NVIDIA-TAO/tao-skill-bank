@@ -287,9 +287,33 @@ def test_airgap_refuses_to_convert(monkeypatch):
         module.prepare({"image": "nvcr.io/nvidia/tao:1"}, {**ctx, "airgap": True})
 
 
-def test_conversion_uses_a_long_enough_partition(monkeypatch):
-    """cpu/30min truncates a TAO image; the default here must not reproduce it."""
+def test_conversion_always_passes_an_explicit_time_limit(monkeypatch):
+    """The trap is the partition DEFAULT, not its maximum.
+
+    On CS-OCI-ORD every partition has DefaultTime=00:31:00 while cpu allows a
+    full day, so a conversion submitted without an explicit -t is capped at 31
+    minutes whichever partition it lands on. Changing partition alone fixes
+    nothing; the explicit -t is the fix.
+    """
     module, ctx, calls = _slurm_with(monkeypatch, ["", "", "hsqs"])
     module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
     convert = next(c for c in calls if "enroot import" in c)
-    assert "cpu_long" in convert and "-t 120" in convert
+    assert "-t " in convert, "no explicit time limit: the 31-minute default applies"
+    minutes = int(convert.split("-t ")[1].split()[0])
+    assert minutes > 31, f"-t {minutes} is under the 31-minute default; it caps tighter"
+
+
+def test_shipped_conversion_defaults_clear_the_partition_default():
+    """skill_info.yaml must not ship a timeout below DefaultTime."""
+    import yaml
+
+    info = yaml.safe_load(
+        (REPO / "skills/platform/tao-run-on-slurm/references/skill_info.yaml")
+        .read_text(encoding="utf-8")
+    )
+    minutes = info["resource_defaults"]["sqsh_conversion_timeout_minutes"]
+    assert minutes > 31, (
+        f"sqsh_conversion_timeout_minutes={minutes} is at or under the cluster "
+        "DefaultTime of 31 minutes, so it caps the job tighter than passing "
+        "nothing would — the truncated-sqsh failure mode"
+    )

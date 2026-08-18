@@ -186,3 +186,17 @@ different platform.
 **Bad node or transient GPU failure**: The handler retries infrastructure-like
 failures such as CUDA driver errors, missing GPUs, NCCL/RDMA failures, Xid
 errors, and node failures up to the configured retry limit.
+
+## Enroot temp paths (CS-OCI-ORD)
+
+Set both `ENROOT_TEMP_PATH` and `SLURM_ENROOT_TEMP_PATH` to a job-unique
+`/tmp/enroot-tao-${SLURM_JOB_ID}` and force `TMPDIR=/tmp`. Direct Enroot reads
+the first variable and Pyxis may read the second, so setting only one leaves the
+other on its default.
+
+The directory must be **node-local and unique**. Lustre rejects the
+`enroot-aufs2ovlfs` xattr whiteouts with `Operation not permitted`, and a shared
+path can also fail on cleanup races between concurrent jobs. Note that
+`/lustre/fsw/...` user directories may themselves be symlinks onto another
+Lustre filesystem, so pointing the temp path at "a different Lustre path" is a
+no-op — it has to be node-local.

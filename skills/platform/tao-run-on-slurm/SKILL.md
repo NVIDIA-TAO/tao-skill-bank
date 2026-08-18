@@ -244,18 +244,18 @@ than fetching inside the allocation.
 **Cluster-specific values — CS-OCI-ORD.** The general rule above is portable;
 these numbers are not, and are recorded because each cost real allocations:
 
-- Conversion partition `cpu_long`, **not** the default `cpu` — `cpu` has a
-  ~30-minute wall-time cap, shorter than a TAO conversion, so the conversion job
-  is killed partway and leaves a truncated file.
-- Set both `ENROOT_TEMP_PATH` and `SLURM_ENROOT_TEMP_PATH` to a job-unique
-  `/tmp/enroot-tao-${SLURM_JOB_ID}` and force `TMPDIR=/tmp`. Direct
-  Enroot uses the first variable and Pyxis may use the second. The directory
-  must be node-local and unique; shared paths can fail on cleanup races or
-  unsupported overlay whiteouts.
-- Conversion timeout ≥ 120 minutes.
+- **Always pass an explicit `-t`** — every partition sets
+  `DefaultTime=00:31:00`, so a conversion without one is capped at 31 min and
+  truncated. That, not the partition, is what killed conversions: `cpu` allows
+  `MaxTime=1-00:00:00`, and `cpu`/`cpu_short`/`cpu_long`/`cpu_interactive` share
+  one node pool. Check with `scontrol show partition <name>`.
+- Enroot temp paths must be node-local and job-unique — see the reference.
+- Conversion `-t` ≥ 120 minutes — a ceiling, not an estimate; anything ≤ 31
+  caps tighter than the default would.
 
-Partial conversions are self-detecting: the SQSH is validated by `hsqs` magic,
-so a truncated file is rejected rather than silently used. Conversion runs once
+Partial conversions are self-detecting: `references/render.py` `prepare()` reads
+the 4-byte `hsqs` magic, reconverts on mismatch, and treats a still-bad
+conversion as fatal — never falling back to the registry reference. Conversion runs once
 and is then cached by image name.
 
 **A failed conversion must not fall back to the registry image.** The tempting

@@ -90,9 +90,13 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
       `test -e` happily accepts. This skill's SKILL.md says the SQSH "is
       validated by `hsqs` magic" -- that guard was documented but implemented
       nowhere in the repo, so this is it: read the 4-byte squashfs magic.
-    * Conversion must run on a CPU partition with a long enough limit; the
-      30-minute default truncates a TAO image. `ctx["conversion_partition"]`
-      and `ctx["conversion_minutes"]` carry it.
+    * The wall limit must exceed the conversion time, and the trap is the
+      partition DEFAULT rather than its maximum. On CS-OCI-ORD every partition
+      has DefaultTime=00:31:00 while `cpu` allows a full day, so a conversion
+      submitted without an explicit `-t` is capped at 31 minutes no matter which
+      partition it lands on -- changing partition alone fixes nothing. Hence the
+      explicit `-t` below; `ctx["conversion_minutes"]` is a ceiling, not an
+      estimate, and costs nothing when the work finishes sooner.
 
     Conversion is submitted as its own recorded job when `ctx["record_child"]`
     is supplied, so a 2-hour queue wait is observable instead of a silent hang.
@@ -117,7 +121,7 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         )
 
     note = "converted" if not magic else "reconverted (corrupt or truncated sqsh)"
-    partition = ctx.get("conversion_partition", "cpu_long")
+    partition = ctx.get("conversion_partition", "cpu")
     minutes = int(ctx.get("conversion_minutes", 120))
     convert = (
         f"srun -n1 -p {shlex.quote(partition)} -t {minutes} "
