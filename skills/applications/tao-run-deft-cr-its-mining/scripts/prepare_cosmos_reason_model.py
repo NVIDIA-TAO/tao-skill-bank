@@ -53,18 +53,32 @@ def default_model_preparation_script() -> Path:
 
 
 def source_fingerprint(path: Path) -> str:
-    """Fingerprint checkpoint metadata and safetensors by content."""
+    """Fingerprint checkpoint metadata and safetensors by content.
+
+    The walk is recursive because a native Cosmos3 Omni checkpoint keeps its
+    shards in per-component subdirectories (``transformer/``,
+    ``vision_encoder/``, ``vae/``, ``sound_tokenizer/``) rather than at the top
+    level; its own config.json declares this as ``allow_patterns_overrides:
+    ["*/*.safetensors"]``. Files are keyed by their checkpoint-relative path,
+    not their basename, because that layout repeats basenames across
+    components (``diffusion_pytorch_model.safetensors`` appears in both
+    ``vae/`` and ``sound_tokenizer/``, ``config.json`` five times).
+    """
     digest = hashlib.sha256()
     model_files = sorted(
         file
-        for file in path.iterdir()
-        if file.is_file() and file.suffix in {".json", ".jinja", ".safetensors", ".txt"}
+        for file in path.rglob("*")
+        # ``.cache`` is Hugging Face download bookkeeping, not model content;
+        # excluding it keeps the fingerprint stable across fetch methods.
+        if file.is_file()
+        and file.suffix in {".json", ".jinja", ".safetensors", ".txt"}
+        and ".cache" not in file.relative_to(path).parts
     )
     weights = [file for file in model_files if file.suffix == ".safetensors"]
     if not weights:
         raise FileNotFoundError(f"baseline checkpoint has no safetensors weights: {path}")
     for model_file in model_files:
-        digest.update(model_file.name.encode("utf-8"))
+        digest.update(str(model_file.relative_to(path)).encode("utf-8"))
         with model_file.open("rb") as handle:
             for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
                 digest.update(block)

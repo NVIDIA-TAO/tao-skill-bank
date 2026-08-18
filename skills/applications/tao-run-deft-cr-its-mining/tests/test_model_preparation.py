@@ -93,6 +93,32 @@ def write_conversion_provenance(path: pathlib.Path, source: pathlib.Path) -> Non
 
 
 class ModelPreparationTests(unittest.TestCase):
+    def test_source_fingerprint_covers_nested_omni_components(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = pathlib.Path(temporary) / "omni"
+            write_json(checkpoint / "config.json", {"model_type": "cosmos3_omni"})
+            write_json(checkpoint / "vae/config.json", {"component": "vae"})
+            write_json(
+                checkpoint / "sound_tokenizer/config.json",
+                {"component": "sound_tokenizer"},
+            )
+            vae_weight = checkpoint / "vae/diffusion_pytorch_model.safetensors"
+            sound_weight = (
+                checkpoint / "sound_tokenizer/diffusion_pytorch_model.safetensors"
+            )
+            vae_weight.write_bytes(b"vae-weights")
+            sound_weight.write_bytes(b"sound-weights")
+            cache_weight = checkpoint / ".cache/download/ignored.safetensors"
+            cache_weight.parent.mkdir(parents=True)
+            cache_weight.write_bytes(b"download-bookkeeping-v1")
+
+            first = prepare_model.source_fingerprint(checkpoint)
+            cache_weight.write_bytes(b"download-bookkeeping-v2")
+            self.assertEqual(prepare_model.source_fingerprint(checkpoint), first)
+
+            sound_weight.write_bytes(b"updated-sound-weights")
+            self.assertNotEqual(prepare_model.source_fingerprint(checkpoint), first)
+
     def test_reuses_complete_qwen_checkpoint_and_writes_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = pathlib.Path(temporary)
