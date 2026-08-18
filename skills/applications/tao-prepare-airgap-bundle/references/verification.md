@@ -159,14 +159,26 @@ removing a parent directory takes the directory the customer's own run writes
 into, which the bundle's instructions told them would be there.
 
 **Then prove the bundle is exactly what was packed.** The manifest already
-exists from packing, so this is a check, not a regeneration:
+exists from packing, so this is a check, not a regeneration — but it takes two
+commands, not one:
 
 ```bash
 cd "${BUNDLE:?set BUNDLE to the bundle root}"
 sha256sum -c MANIFEST.sha256
+diff <(find . -path ./.delivery -prune -o -name MANIFEST.sha256 -prune -o -type f -print | sort) \
+     <(cut -c 67- MANIFEST.sha256 | sort)
 ```
 
-A mismatch means the procedure left something behind, or removed something it
+**`sha256sum -c` alone is not enough, and the reason is the failure this step
+exists for.** It walks the manifest's lines, so it catches a file that changed
+and a file that vanished — but it is structurally blind to a file that was
+*added*, which is exactly what a smoke run leaves behind. Verified: drop a
+stray checkpoint into the tree and the check still exits 0, every line `OK`.
+
+The `diff` compares the file *list* against the manifest's, so an addition shows
+up as a line present on one side only. Both commands must be clean.
+
+A difference means the procedure left something behind, or removed something it
 should not have. Fix the cleanup and re-check; do not regenerate the manifest to
 make the difference disappear, which would silently ship whatever the run left.
 

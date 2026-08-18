@@ -118,6 +118,9 @@ RUNTIME_FETCH_MARKERS = (
     r"\bhf\s+download\b",
     r"\bwget\b|\bcurl\b",
     r"git\s+clone",
+    r"pip3?\s+install",
+    r"docker\s+pull\b",
+    r"\baws\s+s3\b",
 )
 
 # An image URI written into the body rather than declared in skill_info.yaml.
@@ -237,61 +240,86 @@ def find_image(skill_dir: Path, bank: Path, info: dict[str, Any]) -> dict[str, A
     Skills name an image three ways: declared in ``skill_info.yaml``, written as
     a literal URI in the body, or cited as a ``versions.yaml`` key. Only the
     first is a contract, and only forty-three of seventy-seven skills declare a
-    usable image. Five name a single URI in the body and three cite a key;
-    treating those eight as "no image" marked them unpackageable. Six more name
-    several distinct images and are reported ambiguous rather than guessed at.
+    usable image. Four name a single URI in the body and three cite a key;
+    treating those seven as "no image" marked them unpackageable. Seven more
+    name several distinct images and are reported ambiguous rather than guessed
+    at, and six declare an extra image on one action that the top-level lookup
+    never sees -- those are additional assets, not rival candidates.
     """
+    info_path = skill_dir / "references" / "skill_info.yaml"
+    files = evidence_files(skill_dir)
+
+    # Collect every image the skill names, from all four sources, before
+    # deciding anything. Returning on the first source that yields one is how an
+    # earlier version reported a three-image workload as a one-image workload:
+    # tao-run-deft-aoi writes a single URI in its body and cites three
+    # versions.yaml keys, and the body branch returned before the keys were
+    # read. Six skills additionally declare an action-level image the top-level
+    # lookup never sees. A bundle short one image fails at the customer.
+    # A top-level declaration is authoritative: the skill has said which image
+    # its actions run, and another URI appearing in its prose is a reference,
+    # not a rival candidate.
     declared = info.get("container_image")
-    if isinstance(declared, str) and declared.strip():
+    primary = declared.strip() if isinstance(declared, str) and declared.strip() else None
+
+    # Action-level images are different: they are *additional* images the bundle
+    # must carry, not competing answers. Six skills declare one, and a bundle
+    # missing it fails on whichever action needs it.
+    extra: dict[str, str] = {}
+    actions = info.get("actions")
+    if isinstance(actions, dict):
+        for name, action in actions.items():
+            uri = action.get("container_image") if isinstance(action, dict) else None
+            if isinstance(uri, str) and uri.strip() and uri.strip() != primary:
+                extra.setdefault(
+                    uri.strip(),
+                    cite(info_path, bank, re.escape(uri.strip()))
+                    or f"{info_path.relative_to(bank)} (action '{name}')",
+                )
+
+    if primary:
         return {
-            "image": declared.strip(),
-            "source": cite(skill_dir / "references" / "skill_info.yaml", bank, r"^container_image:"),
+            "image": primary,
+            "source": cite(info_path, bank, r"^container_image:"),
             "form": "declared",
+            "additional_images": sorted(extra),
+            "additional_sources": extra,
         }
 
-    # Same rule as the versions-key branch below, and for the same reason: a
-    # skill that writes several distinct URIs into its body has not told us
-    # which one its actions run. Returning the first match found is a confident
-    # wrong answer, and three skills name four, four and two URIs respectively.
-    files = evidence_files(skill_dir)
-    body: dict[str, str] = {}
+    # Nothing declared. Now the undeclared sources are candidates rather than
+    # extras, and several distinct ones mean the skill has not said which its
+    # actions run -- so say so instead of picking. Collect from both sources
+    # before deciding: tao-run-deft-aoi writes one URI in its body and cites
+    # three versions.yaml keys, and returning on the body alone reported a
+    # three-image workload as a one-image workload.
+    found: dict[str, str] = dict(extra)
+    forms: set[str] = {"action-declared"} if extra else set()
+    keys = version_keys(bank)
     for path in files:
         text = path.read_text(encoding="utf-8", errors="replace")
         for uri in re.findall(IMAGE_IN_BODY, text):
-            body.setdefault(uri, cite(path, bank, re.escape(uri)) or str(path.relative_to(bank)))
-    if len(body) == 1:
-        uri, source = next(iter(body.items()))
-        return {"image": uri, "source": source, "form": "body-uri"}
-    if len(body) > 1:
-        return {
-            "image": None,
-            "source": None,
-            "form": "ambiguous",
-            "candidates": sorted(body),
-        }
-
-    # A versions.yaml key is only the skill's own image when the skill mentions
-    # exactly one. An orchestrating skill names the key of every image it
-    # coordinates; picking one of those is a confident wrong answer, and it is
-    # worse than no answer because nothing downstream questions it.
-    keys = version_keys(bank)
-    matched: dict[str, str] = {}
-    for path in files:
-        text = path.read_text(encoding="utf-8", errors="replace")
+            if uri not in found:
+                forms.add("body-uri")
+                found[uri] = cite(path, bank, re.escape(uri)) or str(path.relative_to(bank))
         for key, uri in keys.items():
-            if key in text and uri not in matched:
-                matched[uri] = cite(path, bank, re.escape(key)) or str(path.relative_to(bank))
-    if len(matched) == 1:
-        uri, source = next(iter(matched.items()))
-        return {"image": uri, "source": source, "form": "versions-key"}
-    if len(matched) > 1:
+            if key in text and uri not in found:
+                forms.add("versions-key")
+                found[uri] = cite(path, bank, re.escape(key)) or str(path.relative_to(bank))
+
+    if not found:
+        return {"image": None, "source": None, "form": "none", "additional_images": []}
+    if len(found) > 1:
         return {
             "image": None,
             "source": None,
             "form": "ambiguous",
-            "candidates": sorted(matched),
+            "candidates": sorted(found),
+            "ambiguous_from": sorted(forms),
+            "additional_images": [],
         }
-    return {"image": None, "source": None, "form": "none"}
+    uri, source = next(iter(found.items()))
+    form = next(f for f in ("action-declared", "versions-key", "body-uri") if f in forms)
+    return {"image": uri, "source": source, "form": form, "additional_images": []}
 
 
 def frontmatter_description(skill_md: Path) -> tuple[str, int]:
@@ -379,13 +407,13 @@ def scan_runtime_fetches(skill_dir: Path, bank: Path) -> list[str]:
     """Return provenance for run-time asset fetches found under a skill."""
     files = evidence_files(skill_dir)
     found: list[str] = []
-    for pattern in RUNTIME_FETCH_MARKERS:
-        for path in files:
+    for path in files:
+        for pattern in RUNTIME_FETCH_MARKERS:
             source = cite(path, bank, pattern)
             if source:
                 found.append(source)
                 break
-    return found
+    return sorted(set(found))
 
 
 def probe_skill(bank: Path, name: str) -> dict[str, Any]:
@@ -546,6 +574,11 @@ def probe_skill(bank: Path, name: str) -> dict[str, Any]:
             f"({hit['source']}): confirm the skill's deliverable really is a "
             f"live service before dropping the workload"
         )
+    for extra in image.get("additional_images", []):
+        review.append(
+            f"an action declares a second image ({extra}) -- the bundle must "
+            f"stage it too, or the action that needs it fails offline"
+        )
     if image["form"] == "ambiguous":
         review.append(
             "several versions.yaml images are named and none is declared as this "
@@ -566,6 +599,7 @@ def probe_skill(bank: Path, name: str) -> dict[str, Any]:
         "container_image": image["image"],
         "container_image_source": image["source"],
         "container_image_form": image["form"],
+        "additional_images": image.get("additional_images", []),
         "paths": paths,
         "eligible_platforms": sorted(
             p for p, v in paths.items() if v["verdict"] == ELIGIBLE
