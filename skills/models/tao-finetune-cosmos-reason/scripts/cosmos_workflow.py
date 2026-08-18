@@ -2797,7 +2797,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--validation-batch-size", type=int, default=1)
     parser.add_argument("--optimizer", default="AdamW"); parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--optimizer-epsilon", type=float, default=1e-8)
-    parser.add_argument("--scheduler", default="linear"); parser.add_argument("--warmup", type=int, default=0)
+    parser.add_argument("--scheduler", default="linear"); parser.add_argument("--warmup", type=float, default=0)
     parser.add_argument("--minimum-lr-factor", type=float, default=None)
     parser.add_argument("--weight-decay", type=float, default=0.01); parser.add_argument("--gradient-clip", type=float, default=1.0)
     parser.add_argument("--precision", default="bfloat16"); parser.add_argument("--seed", type=int, default=42)
