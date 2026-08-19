@@ -317,16 +317,38 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     minutes = conversion_minutes(
         partitions, partition, int(ctx.get("conversion_minutes", 120))
     )
-    scheduling = " ".join(shlex.quote(f) for f in scheduling_srun_flags(ctx))
+    # enroot unpacks layers through a temp dir before writing the .sqsh. Left
+    # at its default that is the submit CWD -- here a Lustre/home path under
+    # quota -- and the write fails mid-layer as `curl: (23) Failed writing
+    # body`, which reads as a network fault rather than a placement one. The
+    # dir must also be job-unique: a fixed name is deleted by cleanup from
+    # another allocation, and enroot then fails whiteout conversion after
+    # fetching every layer. Both requirements are this skill's documented ones.
+    script = "\n".join([
+        "set -Eeuo pipefail",
+        "export TMPDIR=/tmp",
+        'export ENROOT_TEMP_PATH="/tmp/enroot-tao-${SLURM_JOB_ID:-$$}"',
+        'export SLURM_ENROOT_TEMP_PATH="${ENROOT_TEMP_PATH}"',
+        'mkdir -p "${ENROOT_TEMP_PATH}"',
+        # Node-local scratch is not reclaimed for us; a failed import would
+        # otherwise leave a partial layer tree behind on every retry.
+        "trap 'rm -rf \"${ENROOT_TEMP_PATH}\"' EXIT",
+        "cd /tmp",
+        f"enroot import -o {shlex.quote(target)} docker://{enroot_uri(image)}",
+    ])
+    # Built as a token list rather than an f-string: the previous form ended in
+    # `.replace("  ", " ")` to tidy an empty flag slot, which would corrupt any
+    # embedded script that contained a double space.
+    argv = ["srun", "--chdir=/tmp", "-n1"]
+    if partition:
+        argv += ["-p", partition]
     # An explicit -t always, even when the partition was not chosen here: the
     # trap is the partition DEFAULT, not its maximum, so omitting -t silently
     # caps the conversion at DefaultTime no matter where it lands.
-    select = f"-p {shlex.quote(partition)} " if partition else ""
-    convert = (
-        f"srun -n1 {select}-t {minutes} "
-        f"{scheduling} enroot import -o {shlex.quote(target)} "
-        f"docker://{enroot_uri(image)}"
-    ).replace("  ", " ")
+    argv += ["-t", str(minutes)]
+    argv += scheduling_srun_flags(ctx)
+    argv += ["bash", "-c", script]
+    convert = " ".join(shlex.quote(token) for token in argv)
     result = subprocess.run(
         ["ssh", login, convert], capture_output=True, text=True, check=False
     )
@@ -341,6 +363,18 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
                 " — no scheduling identity was supplied; if this cluster "
                 "requires one, pass it in ctx (account / qos / reservation) so "
                 "it reaches the conversion allocation as well as the job"
+            )
+        if "Failed writing body" in detail or "Could not process JSON input" in detail:
+            # Both messages name the transport, so they read as registry or
+            # network faults. They are usually neither: enroot could not WRITE
+            # what it fetched, or could not parse an auth response.
+            hint += (
+                " — enroot fetched but could not write or parse the layer. "
+                "Check free space on the conversion node's /tmp, and for a "
+                "private registry check that ~/.config/enroot/.credentials "
+                "exists and is well-formed on the compute nodes (it is read "
+                "there, not on the login node, and NGC_KEY in the job env is "
+                "not consulted)"
             )
         raise ValueError(f"enroot import failed{hint}: {detail}")
 

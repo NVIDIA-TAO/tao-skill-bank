@@ -539,6 +539,66 @@ def test_explicit_time_survives_an_unknown_partition(monkeypatch):
     module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"], sinfo="")
     module.prepare({"image": "alpine:3.20"}, ctx)
     convert = next(c for c in calls if "enroot import" in c)
-    assert " -p " not in convert, "invented a partition discovery never found"
-    convert = next(c for c in calls if "enroot import" in c)
+    # Only the srun flags: the script body legitimately contains `mkdir -p`.
+    flags = convert.split(" bash -c ")[0]
+    assert " -p " not in flags, "invented a partition discovery never found"
     assert re.search(r"-t \d+", convert), f"no explicit wall limit in {convert!r}"
+
+
+# ── The rendered command must satisfy the documented requirements ───────────
+# Third instance of one pattern: SKILL.md stated a requirement, render.py did
+# not implement it, and the only test looked at the PROSE. Documentation tests
+# prove the skill says the right thing; they prove nothing about what runs.
+#
+# Left unset, enroot unpacks layers into the submit CWD -- a quota'd Lustre or
+# home path -- and dies mid-layer with `curl: (23) Failed writing body`, which
+# reads as a network fault rather than a placement one.
+
+def _conversion_command(monkeypatch) -> str:
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
+    module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
+    return next(c for c in calls if "enroot import" in c)
+
+
+@pytest.mark.parametrize("required", [
+    "TMPDIR=/tmp",                              # not the quota'd submit CWD
+    "ENROOT_TEMP_PATH",                         # what direct enroot reads
+    "SLURM_ENROOT_TEMP_PATH",                   # what Pyxis may read instead
+    "--chdir=/tmp",                             # srun's own CWD
+])
+def test_conversion_command_places_scratch_on_node_local_disk(monkeypatch, required):
+    assert required in _conversion_command(monkeypatch), (
+        f"the rendered conversion command omits {required}, which this skill "
+        "documents as required; enroot then writes layers to the submit CWD"
+    )
+
+
+def test_conversion_scratch_is_job_unique(monkeypatch):
+    """A fixed path is deleted by cleanup from another allocation mid-import."""
+    convert = _conversion_command(monkeypatch)
+    assert "SLURM_JOB_ID" in convert, (
+        "scratch dir is not job-unique; a concurrent allocation's cleanup "
+        "removes it and enroot fails whiteout conversion after fetching every "
+        "layer -- the expensive way to fail"
+    )
+
+
+def test_conversion_scratch_is_cleaned_up(monkeypatch):
+    """Node-local scratch is not reclaimed for us; retries would accumulate."""
+    assert "trap" in _conversion_command(monkeypatch)
+
+
+def test_documented_temp_path_requirements_are_all_rendered(monkeypatch):
+    """Couple the two directly: whatever the docs mandate must be emitted.
+
+    This is the guard that was missing. The prose test and the render test
+    existed independently, so the skill could document a requirement the
+    renderer ignored and both would stay green.
+    """
+    docs = _slurm_docs()
+    convert = _conversion_command(monkeypatch)
+    for var in ("ENROOT_TEMP_PATH", "SLURM_ENROOT_TEMP_PATH", "TMPDIR"):
+        if var in docs:
+            assert var in convert, (
+                f"{var} is documented as required but never rendered"
+            )
