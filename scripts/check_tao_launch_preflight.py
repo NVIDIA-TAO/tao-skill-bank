@@ -1538,7 +1538,16 @@ def check_slurm(
                 f"host={working_host}: {reason}"
             )
             return False
-        print(f"Remote SLURM/Pyxis/Enroot tools OK: {working_host}")
+        # Record the enroot version: image import failures are version-shaped
+        # (an enroot too old for the registry's manifest format fails with
+        # "Could not process JSON input", naming nothing useful), and this is
+        # the only place the version is cheap to obtain.
+        version = run(ssh_command(working_host, "enroot version"), timeout=20)
+        detail = version.stdout.strip().splitlines()
+        print(
+            f"Remote SLURM/Pyxis/Enroot tools OK: {working_host}"
+            + (f" (enroot {detail[0]})" if version.returncode == 0 and detail else "")
+        )
 
         if not check_slurm_scheduler(working_host):
             return False

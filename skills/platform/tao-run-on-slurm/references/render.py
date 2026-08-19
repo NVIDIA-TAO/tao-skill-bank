@@ -364,17 +364,33 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
                 "requires one, pass it in ctx (account / qos / reservation) so "
                 "it reaches the conversion allocation as well as the job"
             )
-        if "Failed writing body" in detail or "Could not process JSON input" in detail:
-            # Both messages name the transport, so they read as registry or
-            # network faults. They are usually neither: enroot could not WRITE
-            # what it fetched, or could not parse an auth response.
+        if "Could not process JSON input" in detail:
+            # Measured on enroot 3.4.1 against Docker Hub: auth succeeds, the
+            # manifest fetch returns 200 with valid JSON, and enroot still
+            # fails here. The document is an OCI image index
+            # (application/vnd.oci.image.index.v1+json), which older enroot
+            # cannot parse -- and Docker Hub now serves it even to a client
+            # whose Accept header offers ONLY the Docker manifest-list type,
+            # so there is no request-side workaround. jq then exits and curl
+            # reports `Failed writing body`, which is a broken pipe, not a
+            # transport fault. Neither message names the real cause.
             hint += (
-                " — enroot fetched but could not write or parse the layer. "
-                "Check free space on the conversion node's /tmp, and for a "
-                "private registry check that ~/.config/enroot/.credentials "
-                "exists and is well-formed on the compute nodes (it is read "
-                "there, not on the login node, and NGC_KEY in the job env is "
-                "not consulted)"
+                " — the registry served a manifest this enroot cannot parse, "
+                "most often an OCI image index. Docker Hub returns one for "
+                "official images regardless of the Accept header, so this is "
+                "not fixable by retrying or by changing the request. Use an "
+                "image published with Docker manifest-list media types "
+                "(nvcr.io does) or upgrade enroot on the compute nodes. "
+                "Confirm with: curl -o /dev/null -w '%{content_type}' "
+                "<registry manifest URL>"
+            )
+        elif "Failed writing body" in detail:
+            hint += (
+                " — enroot fetched but could not write the layer. Check free "
+                "space on the conversion node's TMPDIR, and for a private "
+                "registry that ~/.config/enroot/.credentials exists and is "
+                "well-formed on the COMPUTE nodes (it is read there, not on "
+                "the login node; NGC_KEY in the job env is not consulted)"
             )
         raise ValueError(f"enroot import failed{hint}: {detail}")
 

@@ -602,3 +602,52 @@ def test_documented_temp_path_requirements_are_all_rendered(monkeypatch):
             assert var in convert, (
                 f"{var} is documented as required but never rendered"
             )
+
+
+# ── Failure messages must name the measured cause ───────────────────────────
+# Measured on enroot 3.4.1 against Docker Hub: auth succeeds, the manifest
+# returns 200 with valid JSON, /tmp has 83G free -- and the import still fails
+# with "Could not process JSON input". The document is an OCI image index,
+# which older enroot cannot parse, and Docker Hub serves it even when the
+# client's Accept header offers ONLY the Docker manifest-list type. So there is
+# no request-side workaround, and a message that sends the reader to check disk
+# space or credentials costs a cluster round trip to disprove.
+
+def _conversion_failure(monkeypatch, stderr: str) -> str:
+    module, ctx, _ = _slurm_with(monkeypatch, [""], convert_rc=1)
+
+    def failing(cmd, *a, **k):
+        joined = " ".join(cmd)
+        if "sinfo" in joined:
+            return _Done(FIXTURE_SINFO)
+        if "enroot import" in joined:
+            done = _Done("")
+            done.returncode, done.stderr = 1, stderr
+            return done
+        return _Done("")
+
+    monkeypatch.setattr(module.subprocess, "run", failing)
+    with pytest.raises(ValueError) as excinfo:
+        module.prepare({"image": "docker.io/library/alpine:3.20"}, ctx)
+    return str(excinfo.value)
+
+
+@pytest.mark.parametrize("phrase", ["OCI image index", "Accept header", "upgrade enroot"])
+def test_manifest_failure_explains_itself(monkeypatch, phrase):
+    message = _conversion_failure(monkeypatch, "[ERROR] Could not process JSON input")
+    assert phrase in message, f"the diagnosis omits {phrase!r}"
+
+
+def test_manifest_failure_does_not_blame_disk_space(monkeypatch):
+    """It did, and /tmp had 83G free; the advice cost a round trip."""
+    message = _conversion_failure(monkeypatch, "[ERROR] Could not process JSON input")
+    assert "free space" not in message, (
+        "a manifest parse failure is not a disk problem; sending the reader to "
+        "check space is a wrong lead they must disprove on the cluster"
+    )
+
+
+def test_write_failure_still_points_at_space_and_credentials(monkeypatch):
+    """The genuinely write-shaped error keeps its own diagnosis."""
+    message = _conversion_failure(monkeypatch, "curl: (23) Failed writing body")
+    assert "free space" in message and "credentials" in message
