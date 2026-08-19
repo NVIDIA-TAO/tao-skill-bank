@@ -51,6 +51,14 @@ resource_defaults:
   # MaxTime. It must exceed the partition's DefaultTime: the default -- not the
   # maximum -- is what silently truncates a conversion when no -t is passed.
   sqsh_conversion_timeout_minutes: 120
+  # enroot runs mksquashfs with `-processors 8` at the final stage; an
+  # allocation with fewer cores time-slices those threads and simply takes
+  # longer. Measured on a ~15GB TAO image, whose squashfs build dominates the
+  # conversion once layers are cached.
+  sqsh_conversion_cpus: 8
+  # Peak RSS is set by parallel layer extraction, not image size. The partition
+  # default (observed: 1800M) is OOM-killed at the extract stage, AFTER every
+  # layer has been downloaded.
   sqsh_conversion_memory_gb: 32
 cloud_storage:
   protocol: lustre

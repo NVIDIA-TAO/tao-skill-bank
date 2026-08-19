@@ -703,3 +703,18 @@ def test_successful_conversion_reports_where_the_log_is(monkeypatch):
 def test_failed_conversion_names_the_log(monkeypatch):
     """The path is most needed exactly when the summary is too short."""
     assert ".import.log" in _conversion_failure(monkeypatch, "boom")
+
+
+def test_conversion_allocates_cpus_for_enrootss_own_concurrency(monkeypatch):
+    """enroot runs mksquashfs with `-processors 8`; -n1 grants one core.
+
+    The conversion still succeeds, so nothing fails and nothing reports the
+    mismatch -- it just takes far longer than the tool was asking to go.
+    """
+    assert "--cpus-per-task" in _conversion_command(monkeypatch)
+
+
+def test_conversion_cpus_are_caller_settable(monkeypatch):
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
+    module.prepare({"image": "nvcr.io/x:1"}, {**ctx, "conversion_cpus": 4})
+    assert "--cpus-per-task 4" in next(c for c in calls if "enroot import" in c)

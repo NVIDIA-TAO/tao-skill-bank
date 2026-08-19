@@ -50,6 +50,7 @@ CONVERSION_KNOB_MARKERS = {
     "sqsh_conversion_partition": "conversion_partition",
     "sqsh_conversion_timeout_minutes": "conversion_minutes",
     "sqsh_conversion_memory_gb": "conversion_memory_gb",
+    "sqsh_conversion_cpus": "conversion_cpus",
 }
 
 
