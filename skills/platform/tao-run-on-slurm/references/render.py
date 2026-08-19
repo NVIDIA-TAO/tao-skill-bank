@@ -70,6 +70,60 @@ def _mounts(bundle: dict[str, Any], results_dir: str) -> str:
 
 SQSH_MAGIC = "hsqs"
 
+# Scheduling identity a cluster may require on EVERY allocation. Held in one
+# place because this renderer issues more than one: the job itself, and the
+# image conversion. A conversion that silently omits the account fails with a
+# scheduler error deep inside prepare(), which reads as "conversion is broken"
+# rather than "this cluster wants an account". Values are supplied per cluster
+# via ctx; nothing here names a site.
+SCHEDULING_KEYS = ("account", "qos", "reservation")
+SRUN_FLAG = {"account": "-A", "qos": "--qos", "reservation": "--reservation"}
+
+
+def scheduling_srun_flags(ctx: dict[str, Any]) -> list[str]:
+    """Scheduler identity as srun flags, for any allocation this module makes."""
+    flags: list[str] = []
+    for key in SCHEDULING_KEYS:
+        value = str(ctx.get(key) or "").strip()
+        if value:
+            flags += [SRUN_FLAG[key], value]
+    return flags
+
+
+def scheduling_sbatch_directives(ctx: dict[str, Any]) -> str:
+    """The same identity as #SBATCH lines, so both paths cannot diverge."""
+    lines = []
+    for key in SCHEDULING_KEYS:
+        value = str(ctx.get(key) or "").strip()
+        if value:
+            lines.append(f"#SBATCH --{key}={value}")
+    partition = str(ctx.get("partition") or "").strip()
+    if partition:
+        lines.append(f"#SBATCH --partition={partition}")
+    return "\n".join(lines)
+
+
+def enroot_uri(image: str) -> str:
+    """Translate a canonical `registry/path:tag` into enroot's `registry#path:tag`.
+
+    The spec-bundle requires a fully-qualified image URI, and docker consumes
+    that form directly. Enroot does not: its syntax separates the registry with
+    `#`, so `docker://docker.io/library/alpine:3.20` is read as an image whose
+    PATH begins with "docker.io", and the registry request becomes
+    `/v2/docker.io/library/alpine/manifests/...` — which fails as a 401 rather
+    than a not-found, so it reads like a credentials problem.
+
+    A leading component is a registry when it looks like a host: it contains a
+    dot or a port, or is localhost. Otherwise the reference is already
+    registry-relative and is passed through.
+    """
+    if "#" in image:
+        return image
+    head, slash, rest = image.partition("/")
+    if slash and ("." in head or ":" in head or head == "localhost"):
+        return f"{head}#{rest}"
+    return image
+
 
 def sqsh_path(image: str, ctx: dict[str, Any]) -> str:
     """Deterministic Lustre path for an image's converted squashfs.
@@ -123,15 +177,28 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     note = "converted" if not magic else "reconverted (corrupt or truncated sqsh)"
     partition = ctx.get("conversion_partition", "cpu")
     minutes = int(ctx.get("conversion_minutes", 120))
+    scheduling = " ".join(shlex.quote(f) for f in scheduling_srun_flags(ctx))
     convert = (
         f"srun -n1 -p {shlex.quote(partition)} -t {minutes} "
-        f"enroot import -o {shlex.quote(target)} docker://{image}"
-    )
+        f"{scheduling} enroot import -o {shlex.quote(target)} "
+        f"docker://{enroot_uri(image)}"
+    ).replace("  ", " ")
     result = subprocess.run(
         ["ssh", login, convert], capture_output=True, text=True, check=False
     )
     if result.returncode != 0:
-        raise ValueError(f"enroot import failed: {result.stderr.strip()}")
+        detail = result.stderr.strip()
+        hint = ""
+        if not scheduling_srun_flags(ctx):
+            # The common first-run failure on a cluster that requires an
+            # account: the message names enroot, so it reads as a broken
+            # conversion rather than a missing scheduler setting.
+            hint = (
+                " — no scheduling identity was supplied; if this cluster "
+                "requires one, pass it in ctx (account / qos / reservation) so "
+                "it reaches the conversion allocation as well as the job"
+            )
+        raise ValueError(f"enroot import failed{hint}: {detail}")
 
     verify = subprocess.run(
         ["ssh", login, f"head -c4 {shlex.quote(target)} 2>/dev/null || true"],
@@ -202,7 +269,13 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         "IMAGE": bundle["image"],
         "CONTAINER_MOUNTS": _mounts(bundle, results_dir),
         "COMMAND": command,
-        "SBATCH_EXTRA": str(ctx.get("sbatch_extra", "")),
+        # Derived from the same ctx keys as the conversion flags above, so a
+        # cluster's scheduling identity is stated once and reaches every
+        # allocation. `sbatch_extra` remains for anything else.
+        "SBATCH_EXTRA": "\n".join(
+            filter(None, [scheduling_sbatch_directives(ctx),
+                          str(ctx.get("sbatch_extra", ""))])
+        ),
         "ENV_FILE": str(ctx.get("env_file", "")),
         # Same convention as the k8s templates and virtualenv_runner: the
         # workload finds its output path here, so the bundle never names it.

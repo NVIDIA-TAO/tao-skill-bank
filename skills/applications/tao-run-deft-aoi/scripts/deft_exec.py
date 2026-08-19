@@ -539,11 +539,31 @@ def _docker_status(job_id: str) -> tuple[str, int]:
     return "UNKNOWN", exit_code
 
 
-def await_job(job_id: str, *, poll_seconds: float, timeout_seconds: float) -> int:
-    """Poll to a terminal state, close the record, return the container's code."""
+def await_job(
+    job_id: str,
+    *,
+    poll_seconds: float,
+    timeout_seconds: float,
+    ctx_extra: dict[str, Any] | None = None,
+) -> int:
+    """Poll to a terminal state, close the record, return the backend's code.
+
+    Which backend to ask comes from the record, not from a flag: `open` wrote
+    the platform and `mark --backend-ref` wrote the handle, so a job can be
+    awaited from a session that never launched it. That is the point of the
+    record-then-launch invariant.
+    """
+    record = json.loads(_record("show", job_id)) or {}
+    platform = record.get("platform") or "docker"
+    backend_ref = record.get("backend_ref") or job_id
+    ctx = {"job_id": job_id, "results_dir": record.get("results_dir") or "",
+           "bank": str(pathlib.Path(__file__).resolve().parents[4])}
+    ctx.update(ctx_extra or {})
+    status = platform_renderer(platform).status
+
     waited = 0.0
     while True:
-        state, exit_code = _docker_status(job_id)
+        state, exit_code = status(backend_ref, ctx)
         if state in {"COMPLETE", "ERROR"}:
             break
         if timeout_seconds and waited >= timeout_seconds:
@@ -551,7 +571,7 @@ def await_job(job_id: str, *, poll_seconds: float, timeout_seconds: float) -> in
         time.sleep(poll_seconds)
         waited += poll_seconds
 
-    tier = (json.loads(_record("show", job_id)) or {}).get("storage_tier")
+    tier = record.get("storage_tier")
     if state == "ERROR":
         _record("mark", job_id, "--state", "ERROR", "--err-class", "ERR_PROGRAM",
                 "--message", f"container exited {exit_code}")
@@ -591,6 +611,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--storage-tier", default="A", choices=("A", "B", "C"))
     parser.add_argument("--parent-job", help="Job id of the enclosing DEFT loop")
     parser.add_argument("--platform", default="docker")
+    parser.add_argument("--ctx", action="append", metavar="KEY=VALUE",
+                        help="Platform context, e.g. --ctx login=user@host "
+                             "--ctx sqsh_dir=/lustre/images. Repeatable.")
     parser.add_argument("--poll-seconds", type=float, default=10.0)
     parser.add_argument("--timeout-seconds", type=float, default=0.0,
                         help="0 waits indefinitely.")
@@ -606,6 +629,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.await_job,
                 poll_seconds=args.poll_seconds,
                 timeout_seconds=args.timeout_seconds,
+                ctx_extra=dict(item.split("=", 1) for item in args.ctx or []),
             )
         if args.submit:
             if args.bundle:
@@ -620,6 +644,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.state, bundle,
                     storage_tier=args.storage_tier,
                     parent_job=args.parent_job, platform=args.platform,
+                    ctx_extra=dict(item.split("=", 1) for item in args.ctx or []),
                 ))
                 return 0
             missing = [

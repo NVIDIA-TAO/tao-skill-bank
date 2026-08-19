@@ -317,3 +317,122 @@ def test_shipped_conversion_defaults_clear_the_partition_default():
         "DefaultTime of 31 minutes, so it caps the job tighter than passing "
         "nothing would — the truncated-sqsh failure mode"
     )
+
+
+# ── Scheduling identity reaches every allocation ────────────────────────────
+# Found end-to-end on a real cluster: prepare()'s image conversion is a second,
+# separate SLURM allocation, and it carried no --account while the job's own
+# sbatch did. The scheduler rejected it with "You forgot to specify which
+# account you want to use", surfacing as "enroot import failed" — which reads
+# as a broken conversion rather than a missing cluster setting.
+#
+# The general defect is that this renderer emits MORE THAN ONE allocation, so
+# any per-cluster scheduling requirement has to reach all of them. These pin
+# that without naming a cluster: the values are fixtures, not defaults.
+
+SCHEDULED_CTX = {
+    "account": "some-account",
+    "qos": "some-qos",
+    "partition": "some-partition",
+    "login": "user@login",
+    "sqsh_dir": "/lustre/img",
+}
+
+
+def _slurm():
+    return _load("tao-run-on-slurm")
+
+
+def test_conversion_allocation_carries_scheduling_identity(monkeypatch):
+    """The conversion srun is an allocation like any other."""
+    module = _slurm()
+    seq, calls = ["", "", "hsqs"], []
+
+    def fake(cmd, *a, **k):
+        calls.append(" ".join(cmd))
+        return _Done(seq.pop(0) if seq else "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake)
+    module.prepare({"image": "nvcr.io/x/y:1"}, dict(SCHEDULED_CTX))
+    convert = next(c for c in calls if "enroot import" in c)
+    assert "-A some-account" in convert, (
+        "the conversion allocation omits the account; the scheduler rejects it "
+        "and the failure reads as a broken enroot import"
+    )
+    assert "--qos some-qos" in convert
+
+
+def test_job_allocation_carries_the_same_identity(tmp_path):
+    """One ctx, both allocations — they cannot drift apart."""
+    module = _slurm()
+    body = list(module.render(GLUE_BUNDLE, _ctx(tmp_path, **SCHEDULED_CTX))["files"].values())[0]
+    assert "#SBATCH --account=some-account" in body
+    assert "#SBATCH --qos=some-qos" in body
+    assert "#SBATCH --partition=some-partition" in body
+
+
+def test_no_cluster_values_are_baked_in(tmp_path):
+    """A renderer with no scheduling ctx must emit none — not a default site."""
+    module = _slurm()
+    ctx = _ctx(tmp_path, login="user@login", sqsh_dir="/lustre/img")
+    body = list(module.render(GLUE_BUNDLE, ctx)["files"].values())[0]
+    assert "--account=" not in body and "--qos=" not in body
+    assert module.scheduling_srun_flags({}) == []
+
+
+def test_free_form_sbatch_extra_still_works(tmp_path):
+    """Derived directives must not displace whatever else a caller passes."""
+    module = _slurm()
+    ctx = _ctx(tmp_path, sbatch_extra="#SBATCH --exclusive", **SCHEDULED_CTX)
+    body = list(module.render(GLUE_BUNDLE, ctx)["files"].values())[0]
+    assert "#SBATCH --exclusive" in body
+    assert "#SBATCH --account=some-account" in body
+
+
+# ── Image reference translation ─────────────────────────────────────────────
+# Found end-to-end: the spec-bundle mandates a fully-qualified registry/path:tag
+# and docker consumes that directly, but enroot separates the registry with '#'.
+# Passing the canonical form through unchanged made enroot treat the registry
+# host as the first path segment, requesting
+# /v2/docker.io/library/alpine/manifests/3.20 and failing 401 — which reads as
+# a credentials problem, not a syntax one.
+#
+# The general rule: a platform's native image reference is not necessarily the
+# bundle's canonical one, and the renderer owns that translation.
+
+@pytest.mark.parametrize("canonical,expected", [
+    ("docker.io/library/alpine:3.20", "docker.io#library/alpine:3.20"),
+    ("nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt", "nvcr.io#nvidia/tao/tao-toolkit:7.1.0-pyt"),
+    ("localhost:5000/team/img:1", "localhost:5000#team/img:1"),
+])
+def test_registry_is_separated_for_enroot(canonical, expected):
+    assert _slurm().enroot_uri(canonical) == expected
+
+
+def test_registry_relative_reference_passes_through():
+    """No registry component means nothing to separate."""
+    assert _slurm().enroot_uri("alpine:3.20") == "alpine:3.20"
+
+
+def test_already_translated_reference_is_untouched():
+    """Idempotent, so a caller that pre-translated is not double-mangled."""
+    assert _slurm().enroot_uri("myregistry.io#team/img:1") == "myregistry.io#team/img:1"
+
+
+def test_conversion_uses_the_translated_reference(monkeypatch):
+    """The bug was in the command, so assert on the command."""
+    module = _slurm()
+    seq, calls = ["", "", "hsqs"], []
+
+    def fake(cmd, *a, **k):
+        calls.append(" ".join(cmd))
+        return _Done(seq.pop(0) if seq else "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake)
+    module.prepare({"image": "docker.io/library/alpine:3.20"},
+                   {"login": "u@h", "sqsh_dir": "/lustre/img"})
+    convert = next(c for c in calls if "enroot import" in c)
+    assert "docker://docker.io#library/alpine:3.20" in convert
+    assert "docker://docker.io/library" not in convert, (
+        "registry left in the path; enroot requests /v2/<registry>/... and 401s"
+    )

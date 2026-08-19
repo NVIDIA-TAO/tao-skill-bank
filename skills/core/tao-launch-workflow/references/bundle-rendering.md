@@ -95,3 +95,20 @@ never in the returned state.
 platform ships the module, exports `PLATFORM` matching its directory, renders
 a GPU and a glue bundle, names the object after `job_id`, refuses unstaged
 URIs, and maps every native state into the fixed vocabulary.
+
+## Scheduling identity
+
+A platform whose scheduler requires per-allocation identity (account, QOS,
+reservation) must receive it from `ctx`, never from a default baked into the
+renderer — those values are per cluster and per user.
+
+The trap is that a renderer may issue **more than one allocation**. SLURM's
+`prepare()` converts the image in its own job before the workload's job runs,
+so identity supplied only to the workload leaves the conversion to be rejected
+by the scheduler. That surfaces as "image conversion failed", which sends you
+looking at enroot rather than at the missing setting.
+
+So: derive every allocation's identity from the same `ctx` keys, and when a
+platform-level command fails with none supplied, say so in the error rather
+than reporting only the tool's own message.
+
