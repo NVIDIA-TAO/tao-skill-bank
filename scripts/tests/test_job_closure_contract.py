@@ -92,3 +92,70 @@ def test_terminal_immutability_is_real(tmp_path):
         "a terminal record accepted a later transition; the documented "
         "upload-before-mark ordering would then be unnecessary"
     )
+
+
+# ── Cancelling a finished job is a no-op, not a failure ────────────────────
+# Found end-to-end. `--cancel` on a COMPLETE job printed
+#   tao_job_record.py mark failed: record ... is terminal (COMPLETE);
+#   refusing transition to CANCELED
+# and exited 2. The guard is right -- a COMPLETE run whose results exist must
+# never be relabelled CANCELED -- but the caller's intent, "make sure this is
+# not running", was already satisfied. Reporting that as an error trains people
+# to ignore cancel's exit code.
+
+def _deft_exec():
+    import importlib.util
+    path = REPO / "skills/applications/tao-run-deft-aoi/scripts/deft_exec.py"
+    spec = importlib.util.spec_from_file_location("deft_exec_cancel", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_cancelling_a_finished_job_succeeds_quietly(monkeypatch, capsys):
+    module = _deft_exec()
+    monkeypatch.setattr(module, "_record",
+                        lambda *a: '{"terminal_state": "COMPLETE"}')
+
+    def unreachable(*a, **k):
+        raise AssertionError("resolved a backend for an already-finished job")
+
+    monkeypatch.setattr(module, "_backend", unreachable)
+    assert module.cancel_job("job-1") == 0
+    assert "already finished (COMPLETE)" in capsys.readouterr().out
+
+
+def test_cancel_tolerates_a_job_finishing_mid_flight(monkeypatch, capsys):
+    """The check and the mark are not atomic; the race must not read as failure."""
+    module = _deft_exec()
+    seen = {"n": 0}
+
+    def fake_record(*args):
+        if args[0] == "show":
+            seen["n"] += 1
+            # Not terminal on the first look, terminal by the time we mark.
+            return '{"terminal_state": null}' if seen["n"] == 1 else '{"terminal_state": "COMPLETE"}'
+        raise ValueError("record is terminal (COMPLETE); refusing transition")
+
+    monkeypatch.setattr(module, "_record", fake_record)
+    monkeypatch.setattr(module, "_backend",
+                        lambda *a, **k: (type("R", (), {"cancel": staticmethod(lambda *a, **k: True)}), "ref", {}))
+    assert module.cancel_job("job-1") == 0
+    assert "finished as COMPLETE while being cancelled" in capsys.readouterr().out
+
+
+def test_cancelling_a_live_job_still_marks_the_record(monkeypatch):
+    module = _deft_exec()
+    marked = []
+
+    def fake_record(*args):
+        if args[0] == "show":
+            return '{"terminal_state": null}'
+        marked.append(args)
+        return ""
+
+    monkeypatch.setattr(module, "_record", fake_record)
+    monkeypatch.setattr(module, "_backend",
+                        lambda *a, **k: (type("R", (), {"cancel": staticmethod(lambda *a, **k: True)}), "ref", {}))
+    assert module.cancel_job("job-1") == 0
+    assert any("CANCELED" in a for a in marked[0]), "live job was not closed"

@@ -589,11 +589,33 @@ def cancel_job(job_id: str, ctx_extra: dict[str, Any] | None = None) -> int:
     The record has to be marked here rather than left to polling: on some
     platforms cancelling destroys the object status() reads, so a later poll
     returns UNKNOWN forever and the job never reaches a terminal state.
+
+    A job that has already finished is not an error. The caller's intent --
+    "make sure this is not running" -- is already satisfied, and the record
+    refuses transitions out of a terminal state (rightly: a COMPLETE run whose
+    results exist must not be relabelled CANCELED). So check first and say so,
+    rather than attempting the illegal transition and surfacing the guard as a
+    failure.
     """
+    record = json.loads(_record("show", job_id)) or {}
+    terminal = record.get("terminal_state")
+    if terminal:
+        print(f"{job_id} already finished ({terminal}); nothing to cancel")
+        return 0
+
     renderer, backend_ref, ctx = _backend(job_id, ctx_extra)
     stopped = renderer.cancel(backend_ref, ctx)
-    _record("mark", job_id, "--state", "CANCELED",
-            "--message", "canceled by request")
+    try:
+        _record("mark", job_id, "--state", "CANCELED",
+                "--message", "canceled by request")
+    except ValueError:
+        # It reached a terminal state between the check above and this mark.
+        # The record is already closed and correct; the cancel was just late,
+        # and re-raising would report a failure for a job that ended fine.
+        closed = json.loads(_record("show", job_id)) or {}
+        print(f"{job_id} finished as {closed.get('terminal_state')} while being "
+              "cancelled; leaving its record at that state")
+        return 0
     if not stopped:
         print(f"backend refused to cancel {backend_ref}; record marked CANCELED",
               file=sys.stderr)
