@@ -259,3 +259,45 @@ or truncated conversion as fatal: fix it on the CPU partition and resubmit.
 Diagnostic: if a job is slow to produce output, check what `--container-image=`
 received — a registry URI rather than a `.sqsh` path means the pull happened on
 the GPUs.
+
+## Registry manifest format vs. enroot version
+
+Enroot must be able to parse the registry's manifest, and older releases cannot
+read an **OCI image index** (`application/vnd.oci.image.index.v1+json`). When
+they meet one the import fails with:
+
+```
+[INFO] Fetching image manifest list
+[ERROR] Could not process JSON input
+curl: (23) Failed writing body (18 != 16375)
+```
+
+Neither line names the cause. `Failed writing body` is curl losing its pipe
+when the JSON parser exits — it is not a transport or disk fault, and the
+manifest fetch itself returned `200` with valid JSON.
+
+**There is no request-side workaround.** Measured against Docker Hub: it serves
+the OCI index even when the client's `Accept` header offers *only*
+`application/vnd.docker.distribution.manifest.list.v2+json`. Retrying, changing
+headers, or adding credentials cannot help.
+
+The two real options are a different image or a newer enroot. `nvcr.io`
+publishes Docker manifest lists, so TAO images import on enroot releases that
+reject Docker Hub official images — verified on enroot 3.4.1, where
+`nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt` reaches `Downloading ... layers`
+while `docker.io/library/alpine:3.20` fails at the manifest.
+
+To identify it in one call, without downloading layers:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' \
+  -H "Authorization: Bearer $TOKEN" <registry>/v2/<path>/manifests/<tag>
+```
+
+`vnd.oci.image.index` in the content type plus an old enroot is the whole
+diagnosis. `scripts/check_tao_launch_preflight.py` reports the enroot version
+next to its tool check so the version half is visible before it is needed.
+
+Registries are migrating to OCI generally, so treat an enroot too old to read
+it as a dependency with a clock on it, not a per-image workaround.
+
