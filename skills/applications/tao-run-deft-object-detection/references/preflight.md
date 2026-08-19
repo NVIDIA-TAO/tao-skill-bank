@@ -50,10 +50,10 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    )
    TAO_DS_IMAGE=$(
      <skill_root>/scripts/deft_python.sh \
-       <skill_bank>/scripts/resolve_versions_key.py images.tao_toolkit.data_services_od
+       <skill_bank>/scripts/resolve_versions_key.py images.tao_toolkit.data_services_nightly
    )
    : "${TAO_PYT_IMAGE:?versions key images.tao_toolkit.pyt did not resolve}"
-   : "${TAO_DS_IMAGE:?versions key images.tao_toolkit.data_services_od did not resolve}"
+   : "${TAO_DS_IMAGE:?versions key images.tao_toolkit.data_services_nightly did not resolve}"
    export TAO_PYT_IMAGE TAO_DS_IMAGE
    ```
 
@@ -62,9 +62,9 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    | Env var | versions-key | Used by |
    |---|---|---|
    | `TAO_PYT_IMAGE` | `images.tao_toolkit.pyt` | `train`, `inference` |
-   | `TAO_DS_IMAGE` | `images.tao_toolkit.data_services_od` | `gap_analysis`, `embed`, `mine`, `kpi_analyze` |
+   | `TAO_DS_IMAGE` | `images.tao_toolkit.data_services_nightly` | `gap_analysis`, `embed`, `mine`, `kpi_analyze` |
 
-   The data-services key is `data_services_od`, not `data_services`: the release
+   The data-services key is `data_services_nightly`, not `data_services`: the release
    data-services image carries neither `gap_analysis object_detection` nor
    `tmm unique_neighbor_matching`, so two of this loop's four data-services stages cannot
    run on it at all. Substituting the release image does not degrade the loop — it stops it.
