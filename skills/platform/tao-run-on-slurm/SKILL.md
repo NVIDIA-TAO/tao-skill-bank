@@ -234,3 +234,4 @@ When the SDK is in scope, read `tao-skill-bank:tao-run-platform` for the
 - `references/slurm-preflight-storage.md` — extended preflight/storage notes.
 - `references/slurm-execution-sdk.md` — extended execution/SDK notes.
 - `references/detailed-guide.md` — navigation map for the split references.
+

@@ -176,3 +176,4 @@ See `references/checkpoint-inference-mappings-foundation-stereo.md` for the chec
 ## Deployment
 
 - [tao-deploy-foundation-stereo](references/tao-deploy-foundation-stereo.md)
+

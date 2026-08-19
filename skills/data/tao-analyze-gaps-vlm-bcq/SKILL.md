@@ -89,3 +89,4 @@ If no gaps are found, no files are written and a message is logged.
 | `ValueError: must be a JSON array` | Predictions file is not a list | Wrap predictions in `[...]` |
 | `ValueError: missing 'gt'/'response'/'video_id'` | A prediction item is missing a required field | Inspect and fix the predictions JSON |
 | Samples silently skipped | `response` or `gt` contains both or neither 'yes'/'no' | Check logs for warnings; inspect those samples |
+

@@ -85,3 +85,4 @@ AutoML support for an action requires
 `skills/models/<model_skill>/schemas/<action>.schema.json` to be packaged with the plugin
 and parse successfully as JSON. If that dataclass schema is missing or invalid,
 do not describe the model/action as AutoML-supported.
+

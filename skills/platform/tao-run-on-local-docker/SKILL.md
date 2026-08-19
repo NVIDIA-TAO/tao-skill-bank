@@ -421,3 +421,4 @@ every writable mount from `docker inspect`, and have the host administrator
 repair existing ownership once. Future launches must use host UID:GID mapping
 and writable HOME/cache redirects. `docker rm` and `DOCKER_AUTO_REMOVE` do not
 repair or delete bind-mounted files.
+

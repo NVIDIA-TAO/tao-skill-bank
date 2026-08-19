@@ -269,3 +269,4 @@ match any module's expected canonicalization".)
 2. Run the Python recipe (Steps 1–4) to produce `mining_gaps.parquet`, `anomalygen_gaps.parquet`, and `routing_summary.txt`. Print summary stats to stdout so the script-check hook can verify it ran.
 3. Build the per-label decision table by reading both parquets and computing the routed-to verdict per label.
 4. Write `Routing_Report.md` last — writing it triggers the packaging hook, which copies session logs and skill config alongside.
+

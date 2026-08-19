@@ -247,3 +247,4 @@ systems where it is enabled.
 **Kubernetes still has no GPU capacity**: Confirm the driver works on each GPU
 node with `nvidia-smi`, then check the GPU Operator/device plugin pods and node
 labels.
+

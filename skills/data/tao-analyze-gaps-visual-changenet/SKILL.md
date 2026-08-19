@@ -211,3 +211,4 @@ Write `RCA_Report.md` as a tight (1000–1800 word) computational gap analysis �
 5. If `unreachable_kpi.txt` exists, skip Step 6 and write the abridged report. Otherwise continue.
 6. Pick 10 weak samples (5 weakest PASS + 5 weakest NO_PASS) from `kpi_gaps.parquet`, view each test image with Read, classify, and copy each into `rca_images/`.
 7. Write `RCA_Report.md` last — writing it triggers the packaging hook, which copies session logs and skill config alongside.
+

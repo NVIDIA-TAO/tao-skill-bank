@@ -299,3 +299,4 @@ results/
 | LoRA injection failure | Transformer Engine visual encoder is enabled. | Set `model.network.visual_encoder.transformer_engine=false`. |
 | ONNX/HF export complains about missing components | Export checkpoint is partial or adapter-only. | Use a full checkpoint or configure pretrained visual/text sources before export. |
 | CUDA OOM | Batch/resolution too high for the GPU. | Reduce batch size, use 224p, enable LoRA, or use more GPUs. |
+

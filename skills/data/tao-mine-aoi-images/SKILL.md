@@ -144,3 +144,4 @@ See `references/troubleshooting.md` for the full pitfall list with the exact err
 7. Run Step 3 (mine nearest neighbours) via `docker run … tmm nearest_neighbors -e mining_spec.yaml source_parquet=… target_parquet=… output_parquet=…`. Confirm `mining_summary.txt` was written next to `mined.parquet`.
 8. Compute the per-label breakdown (Section 5) by joining the target embeddings parquet with the mined output on filepath, if both carry `label`.
 9. Write `Mining_Report.md` last — writing it triggers the packaging hook, which copies session logs and skill config alongside.
+

@@ -182,3 +182,4 @@ Use `train.num_gpus`, `train.gpu_ids`, `train.num_nodes`, and `train.distributed
 - **Unexpected inference keys:** use a stripped `teacher_epoch_*_step_*.pth` checkpoint.
 - **Full-checkpoint export:** a selected `model_epoch_*_step_*.pth` is supported; export selects and logs its EMA `teacher.backbone`.
 - **Resume mismatch:** the SSL dataloader is not step-resumable, so resume from an epoch/checkpoint boundary when reproducibility matters.
+

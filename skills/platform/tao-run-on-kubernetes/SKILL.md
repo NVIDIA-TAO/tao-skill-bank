@@ -299,3 +299,4 @@ kubectl get secret ngc-pull-secret -n tao-jobs >/dev/null && echo SECRET_OK
 - **MPI / Horovod.** Use the MPI Operator. The Indexed Job path here is PyTorch-distributed-shaped (env-var rendezvous on `MASTER_ADDR:MASTER_PORT`).
 - **Persistent volumes for shared storage.** S3 only via the script_runner. PVC support is a follow-up.
 - **Auto-creating image-pull secrets from `$NGC_KEY`.** You pre-create the secret in the target namespace and pass the name. K8s namespace conventions vary widely, so we keep secret creation explicit.
+
