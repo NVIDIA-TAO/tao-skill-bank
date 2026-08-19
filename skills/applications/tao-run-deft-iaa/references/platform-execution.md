@@ -227,6 +227,13 @@ request `log_path`; a missing, empty, symlinked, or credential-bearing log is
 failure. Redact native logs before finalization when the repository credential
 linter reports literal secret material.
 
+On resume, a successful request-owned `<name>.status.json` means finalization
+already completed. Treat it as durable terminal stage evidence and proceed to
+commit/audit; never inspect a launcher process handle and never prepare or
+submit that action again. While no finalized action status exists, reconcile
+the request and poll only the bound platform backend. A shell PID or tool-call
+handle is neither a job identity nor completion evidence.
+
 For a remote `COMPLETE`, synchronize the workflow results tree back before
 finalization and verify all declared outputs arrived. Do not tear down tier-C
 storage or an ephemeral backend object before output synchronization and log
