@@ -80,7 +80,7 @@ CACHE_ROOT="${CODEX_ROOT}/plugins/cache/${MARKETPLACE_NAME}/${PLUGIN_NAME}"
 
 SRC_AGENTS=""
 MARKETPLACE_ROOT="$(codex plugin marketplace list 2>/dev/null \
-  | awk -v name="$MARKETPLACE_NAME" '$1 == name { print $2; exit }')"
+  | awk -v name="$MARKETPLACE_NAME" '$1 == name { print $2; exit }' || true)"
 if [[ -n "$MARKETPLACE_ROOT" && -f "${MARKETPLACE_ROOT}/AGENTS.md" ]]; then
   SRC_AGENTS="${MARKETPLACE_ROOT}/AGENTS.md"
 fi
