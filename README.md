@@ -1,4 +1,4 @@
-# NVIDIA [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skills-bank)
+# NVIDIA [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank)
 
 Portable agent skills for training, evaluating, and running inference on NVIDIA TAO models. Works with Claude Code, Codex, Gemini CLI, or any coding agent that speaks the [Agent Skills open standard](https://agentskills.io). Most local Docker model/data actions need only Docker plus NVIDIA Container Toolkit; application workflows may declare small host-Python requirements for deterministic state and analysis adapters. Advanced features—job tracking, multi-node, S3 I/O—are built in, not bolted on: platform skills implement a four-verb execution contract over their native CLI with no `nvidia-tao-sdk`. See [Execution: no SDK required](#execution-no-sdk-required).
 
@@ -11,7 +11,7 @@ The skill bank works with both Claude Code and Codex. Pick the runtime you use.
 In a Claude Code session, add the marketplace and install the plugin:
 
 ```
-/plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
+/plugin marketplace add https://github.com/NVIDIA-TAO/tao-skill-bank.git
 /plugin install tao-skills@tao-skill-bank
 ```
 
@@ -24,7 +24,7 @@ Codex setup has **two independent pieces** — the plugin (which surfaces the sk
 #### One command (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA-TAO/tao-skills-bank/main/scripts/install-codex-agents.sh | bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA-TAO/tao-skill-bank/main/scripts/install-codex-agents.sh | bash
 ```
 
 …or, if you've already cloned or extracted the repo from a zip, run
@@ -48,7 +48,7 @@ If you'd rather drive each step yourself:
 **1. Install the plugin.** Either use the VS Code Codex extension's plugin UI (select **TAO Skill Bank**), or from the CLI:
 
 ```bash
-codex plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
+codex plugin marketplace add https://github.com/NVIDIA-TAO/tao-skill-bank.git
 codex plugin add tao-skill-bank@tao-local-plugins
 ```
 

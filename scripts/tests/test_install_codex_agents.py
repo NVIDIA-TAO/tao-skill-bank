@@ -59,3 +59,11 @@ def test_installer_defaults_to_public_https_without_github_credentials(tmp_path)
 
 def test_packaged_installer_matches_top_level_installer():
     assert SKILL_INSTALLER.read_bytes() == INSTALLER.read_bytes()
+
+
+def test_readme_uses_canonical_public_marketplace_url():
+    readme = (REPO_ROOT / "README.md").read_text()
+
+    assert "git@github.com" not in readme
+    assert "NVIDIA-TAO/tao-skills-bank" not in readme
+    assert readme.count(PUBLIC_MARKETPLACE) >= 2
