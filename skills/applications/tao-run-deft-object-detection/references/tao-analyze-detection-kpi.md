@@ -30,12 +30,15 @@ Do not hand-write it. Emit `analytics default_specs`, then apply the overlay —
 cannot keep a TAO default just because nobody typed it:
 
 ```bash
+PHASE=<baseline|iter${N}>          # names the container and this phase's output tree
+KPI_SPEC="${RESULTS_DIR}/${PHASE}/kpi_spec.yaml"
+
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
   --stage kpi_analyze --ds-image "$TAO_DS_IMAGE" \
-  --out "${RESULTS_DIR}/<phase>/kpi_spec.yaml"
+  --out "$KPI_SPEC"
 
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
-  --spec "${RESULTS_DIR}/<phase>/kpi_spec.yaml" \
+  --spec "$KPI_SPEC" \
   --apply-workflow-defaults <skill_root>/assets/overlays/kpi_analyze.yaml \
   --set results_dir="${RESULTS_DIR}/<phase>/kpi" \
   --set kpi.conf_threshold=<state.config.kpi_conf_threshold> \

@@ -31,7 +31,13 @@ Everything else already matches: an image is weak if it fails on **any** class (
 
 ## Spec
 
-Write per-iteration under `${RESULTS_DIR}/iter${N}/gaps/od_gap_spec.yaml`:
+Write per-iteration under `${RESULTS_DIR}/iter${N}/gaps/od_gap_spec.yaml` — the invocation below reads it from
+`$OD_GAP_SPEC`, so bind the two:
+
+```bash
+OD_GAP_SPEC="${RESULTS_DIR}/iter${N}/gaps/od_gap_spec.yaml"
+```
+
 
 ```yaml
 ground_truth_ann_path: <config.ground_truth_labels_dir>

@@ -15,6 +15,17 @@ Every command below uses `${PREP_DIR}`. Export it before the first step:
 ```bash
 export PREP_DIR="${RESULTS_DIR}/prep"
 mkdir -p "$PREP_DIR"
+
+export CLASSES_YAML="<path to the run's classes.yaml>"
+export POOL_IMAGES="<config.pool_images>"   # the raw images this prep labels
+export CODETR_SPEC="${PREP_DIR}/codetr_inference.yaml"
+```
+
+Emit `$CODETR_SPEC` before step 3 overrides it:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
+  --stage codetr_inference --pyt-image "$TAO_PYT_IMAGE" --out "$CODETR_SPEC"
 ```
 
 `${RESULTS_DIR}/prep` is the layout the rest of the workflow expects: the output tree
@@ -232,16 +243,26 @@ Runtime scales with pool size, so on a large pool this is the longest stage in t
 workflow. Wait on its artifacts, not on the process:
 
 ```bash
+LAUNCH_MARKER="${PREP_DIR}/.codetr_launched"
+mkdir -p "$(dirname "$LAUNCH_MARKER")" && touch "$LAUNCH_MARKER"
+# ... launch the container ...
+
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
-  --artifact "${PREP_DIR}/inference/labels" \
+  --newer-than "$LAUNCH_MARKER" \
   --status-json "${PREP_DIR}/inference/status.json" \
   --status-contains "finished successfully"
 ```
 
 TAO appends the action name to `results_dir`, so passing `results_dir=${PREP_DIR}`
 puts every output under `${PREP_DIR}/inference/`. A wait pointed at
-`${PREP_DIR}/status.json` never matches and times out while the stage runs
-normally.
+`${PREP_DIR}/status.json` never matches and times out while the stage runs normally.
+
+Do not add `--artifact "${PREP_DIR}/inference/labels"` here. `await_stage.py` returns on
+the first condition that holds, and TAO creates the labels directory when it starts, so
+the wait would return within seconds and prep would convert a fraction of the pool as
+though it were complete. Wait on `status.json` alone for any stage whose outputs appear
+before it finishes, and use `--newer-than` so a previous attempt's status cannot satisfy
+it.
 
 `dataset.infer_data_sources.classmap` is the detector's **own** vocabulary — one class name per line in `category_id` order starting at 1, COCO-80 for a COCO-trained checkpoint. It is not the target list; `category_mapping` names are matched against it. `results_dir` auto-appends the action, so labels land in `${PREP_DIR}/inference/labels/` already carrying target class names.
 
