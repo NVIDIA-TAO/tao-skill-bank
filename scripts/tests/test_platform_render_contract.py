@@ -797,3 +797,56 @@ def test_failed_placement_is_reported_not_swallowed(monkeypatch):
                         lambda *a, **k: _Done("", 1))
     with pytest.raises(ValueError, match="could not write"):
         module.place_files({"/w/j.sbatch": "body"}, {"login": "h"})
+
+
+# ── Declared inputs must be findable without guessing the mount layout ─────
+# The end-to-end run went green while the container read NOTHING. The bundle's
+# command said `ls /in`; slurm mounts declared inputs at identity paths, so /in
+# did not exist. `ls` failed to stderr, `wc -l` counted zero, the stage wrote
+# `pairs=0`, exited 0, and the job recorded COMPLETE. A false pass.
+#
+# Outputs never had this failure mode because TAO_RESULTS_ROOT exists. Inputs
+# had no equivalent, so a bundle had to hardcode a path the platform chooses.
+
+INPUT_ENV_PLATFORMS = ["tao-run-on-slurm", "tao-run-on-docker"]
+
+
+@pytest.mark.parametrize("name", INPUT_ENV_PLATFORMS)
+def test_declared_inputs_are_exposed_by_spec_key(name):
+    module = _load(name)
+    env = module.input_env(
+        {"declared_inputs": [{"spec_key": "input_dir", "uri": "/lustre/run/in"}]}
+    )
+    assert env == {"TAO_INPUT_INPUT_DIR": "/lustre/run/in"}
+
+
+@pytest.mark.parametrize("name", INPUT_ENV_PLATFORMS)
+def test_input_env_names_are_shell_safe(name):
+    """A spec_key may contain dots or dashes; an env var may not."""
+    module = _load(name)
+    env = module.input_env(
+        {"declared_inputs": [{"spec_key": "train.pair-list", "uri": "/d"}]}
+    )
+    assert "TAO_INPUT_TRAIN_PAIR_LIST" in env
+
+
+@pytest.mark.parametrize("name", INPUT_ENV_PLATFORMS)
+def test_no_declared_inputs_means_no_input_env(name):
+    assert _load(name).input_env({}) == {}
+
+
+def test_slurm_exports_input_env_into_the_script(tmp_path):
+    module = _load("tao-run-on-slurm")
+    bundle = {**GPU_BUNDLE,
+              "declared_inputs": [{"spec_key": "input_dir", "uri": "/lustre/run/in"}]}
+    body = module.render(bundle, _ctx(tmp_path))["files"]
+    script = next(iter(body.values()))
+    assert "export TAO_INPUT_INPUT_DIR=/lustre/run/in" in script
+
+
+def test_docker_passes_input_env_to_the_container(tmp_path):
+    module = _load("tao-run-on-docker")
+    bundle = {**GPU_BUNDLE,
+              "declared_inputs": [{"spec_key": "input_dir", "uri": "/data/in"}]}
+    argv = module.render(bundle, _ctx(tmp_path))["argv"]
+    assert "TAO_INPUT_INPUT_DIR=/data/in" in argv

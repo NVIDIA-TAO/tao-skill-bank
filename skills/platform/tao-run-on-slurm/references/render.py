@@ -46,6 +46,27 @@ STATE_VOCAB = {
 }
 
 
+def input_env(bundle: dict[str, Any]) -> dict[str, str]:
+    """Declared inputs as TAO_INPUT_<SPEC_KEY>, mirroring TAO_RESULTS_ROOT.
+
+    A bundle declares its inputs by spec_key and URI, but the path the WORKLOAD
+    sees is chosen by the platform -- slurm mounts identity paths, docker and
+    k8s may not -- so a command that names a path directly is guessing at a
+    layout it cannot see. When it guesses wrong the input is simply absent, and
+    a command that does not check will happily produce empty output and exit 0:
+    a job that reports COMPLETE having read nothing.
+
+    Outputs never had this problem because TAO_RESULTS_ROOT already exists.
+    This is the same convention for the other direction.
+    """
+    env: dict[str, str] = {}
+    for item in bundle.get("declared_inputs") or []:
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(item["spec_key"])).strip("_").upper()
+        if key:
+            env[f"TAO_INPUT_{key}"] = str(item["uri"])
+    return env
+
+
 def _mounts(bundle: dict[str, Any], results_dir: str) -> str:
     """Pyxis --container-mounts: src:dst pairs, same path on both sides."""
     pairs: list[str] = []
@@ -533,6 +554,8 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         # workload finds its output path here, so the bundle never names it.
         "EXTRA_ENV": "\n".join(
             filter(None, [f"export TAO_RESULTS_ROOT={shlex.quote(results_dir)}",
+                          *(f"export {name}={shlex.quote(value)}"
+                            for name, value in input_env(bundle).items()),
                           str(ctx.get("extra_env", ""))])
         ),
     }

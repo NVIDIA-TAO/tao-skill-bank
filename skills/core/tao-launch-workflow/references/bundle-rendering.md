@@ -139,3 +139,40 @@ Two constraints on a remote implementation:
 This is the same rule as scheduling identity and image references: what the
 platform needs is derived by the platform, not assumed by the caller.
 
+## How a workload finds its paths
+
+A bundle is authored before the job exists, and the paths the workload sees are
+chosen by the platform — identity mounts on SLURM, `-v` targets on docker, a
+PVC subPath on kubernetes. A command that names a path directly is guessing at
+a layout it cannot see.
+
+Two environment variables close that, in both directions:
+
+| variable | meaning |
+|---|---|
+| `TAO_RESULTS_ROOT` | where to write; the bundle never names its output path |
+| `TAO_INPUT_<SPEC_KEY>` | where each `declared_inputs` entry landed |
+
+`<SPEC_KEY>` is the declared `spec_key` upper-cased with non-alphanumerics
+collapsed to `_`, so `train.pair-list` becomes `TAO_INPUT_TRAIN_PAIR_LIST`.
+
+**Why this matters more than it looks.** A wrong input path does not fail
+loudly. The directory is simply absent, and a command that does not check reads
+nothing, writes empty output, and exits 0 — so the job records COMPLETE having
+processed no data. That is worse than an error, because every downstream stage
+treats it as real. An end-to-end run in this repo went green exactly that way
+before these variables existed.
+
+Bundle commands should fail closed on a missing input rather than trusting the
+mount:
+
+```sh
+: "${TAO_INPUT_INPUT_DIR:?input env not exported by the platform}"
+n=$(ls "$TAO_INPUT_INPUT_DIR" | wc -l)
+[ "$n" -gt 0 ] || { echo "read 0 inputs" >&2; exit 3; }
+```
+
+Currently exported by the docker and SLURM renderers. Kubernetes and virtualenv
+set the results path by their own mechanisms and do not yet export
+`TAO_INPUT_*`; a bundle relying on it is not yet portable to them.
+

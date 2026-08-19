@@ -13,6 +13,7 @@ whatever workflow is calling it.
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 from typing import Any
@@ -64,6 +65,26 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     return {"image": image, "notes": ["pulled"]}
 
 
+def input_env(bundle: dict[str, Any]) -> dict[str, str]:
+    """Declared inputs as TAO_INPUT_<SPEC_KEY>, mirroring TAO_RESULTS_ROOT.
+
+    A bundle declares its inputs by spec_key and URI, but the path the WORKLOAD
+    sees is chosen by the platform, so a command naming a path directly is
+    guessing at a layout it cannot see. When it guesses wrong the input is
+    simply absent, and a command that does not check produces empty output and
+    exits 0 -- a job reporting COMPLETE having read nothing.
+
+    Outputs never had this problem because TAO_RESULTS_ROOT already exists.
+    This is the same convention for the other direction.
+    """
+    env: dict[str, str] = {}
+    for item in bundle.get("declared_inputs") or []:
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(item["spec_key"])).strip("_").upper()
+        if key:
+            env[f"TAO_INPUT_{key}"] = str(item["uri"])
+    return env
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> `docker run` argv. No files needed; the handle is stdout."""
     job_id = ctx["job_id"]
@@ -102,6 +123,10 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     # write (k8s templates set it, virtualenv_runner sets it, tao-data-io keys
     # its upload decision on it), so a bundle never has to name the path.
     env = ["-e", f"TAO_RESULTS_ROOT={results_dir}"]
+    # Same convention for the other direction: the workload finds its declared
+    # inputs by spec_key instead of guessing this platform's mount layout.
+    env += [arg for name, value in input_env(bundle).items()
+            for arg in ("-e", f"{name}={value}")]
     env += [arg for name in ctx.get("env_passthrough") or [] for arg in ("-e", name)]
 
     argv = ["docker", "run", "--name", job_id, "-d",
