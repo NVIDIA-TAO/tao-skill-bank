@@ -38,6 +38,61 @@ KNOBS = {
 
 SEARCH_ROOTS = ["skills", "templates", "scripts"]
 
+# The dict above is hand-maintained, so it only ever catches knobs somebody
+# remembered to add -- and `sqsh_conversion_memory_gb` was documented in
+# skill_info.yaml, never rendered, and missed here for exactly that reason. The
+# conversion step then ran with the partition's default memory and was
+# OOM-killed while extracting layers it had already downloaded.
+#
+# So discover these rather than enumerate them: every `sqsh_conversion_*` key a
+# platform ships is a promise that something reads it.
+CONVERSION_KNOB_MARKERS = {
+    "sqsh_conversion_partition": "conversion_partition",
+    "sqsh_conversion_timeout_minutes": "conversion_minutes",
+    "sqsh_conversion_memory_gb": "conversion_memory_gb",
+}
+
+
+def _shipped_conversion_knobs() -> list[tuple[str, str]]:
+    import yaml
+
+    found = []
+    for info in (REPO / "skills/platform").glob("*/references/skill_info.yaml"):
+        data = yaml.safe_load(info.read_text(encoding="utf-8")) or {}
+        for key in (data.get("resource_defaults") or {}):
+            if key.startswith("sqsh_conversion_"):
+                found.append((str(info.relative_to(REPO)), key))
+    return found
+
+
+def test_conversion_knobs_are_known_to_this_test():
+    """A new sqsh_conversion_* key must be given a consumer marker here.
+
+    Without this the discovery below would silently skip an unrecognised knob,
+    reintroducing the allowlist gap it exists to close.
+    """
+    unknown = sorted({k for _, k in _shipped_conversion_knobs()
+                      if k not in CONVERSION_KNOB_MARKERS})
+    assert not unknown, (
+        f"new conversion knob(s) {unknown} ship in skill_info.yaml; add the "
+        "marker proving a renderer consumes each one"
+    )
+
+
+def test_every_shipped_conversion_knob_is_consumed():
+    """Documented conversion resources must reach the rendered command."""
+    render = (REPO / "skills/platform/tao-run-on-slurm/references/render.py").read_text(
+        encoding="utf-8"
+    )
+    for source, key in _shipped_conversion_knobs():
+        marker = CONVERSION_KNOB_MARKERS.get(key)
+        if marker is None:
+            continue
+        assert marker in render, (
+            f"{source} ships {key} but no renderer reads it; the allocation "
+            "then silently takes the partition default"
+        )
+
 
 def _grep(pattern: str) -> list[str]:
     result = subprocess.run(

@@ -651,3 +651,21 @@ def test_write_failure_still_points_at_space_and_credentials(monkeypatch):
     """The genuinely write-shaped error keeps its own diagnosis."""
     message = _conversion_failure(monkeypatch, "curl: (23) Failed writing body")
     assert "free space" in message and "credentials" in message
+
+
+def test_conversion_requests_memory(monkeypatch):
+    """enroot extracts layers in parallel; peak memory tracks concurrency.
+
+    Without --mem the step takes the partition's per-CPU default and is
+    OOM-killed at the extract stage -- after every layer has been downloaded,
+    so it wastes the whole fetch. enroot's output stops at "Downloading N
+    missing layers...", which makes it read as a download failure.
+    """
+    assert "--mem" in _conversion_command(monkeypatch)
+
+
+def test_conversion_memory_is_caller_settable(monkeypatch):
+    """Not every site grants the same ceiling, so it must not be baked in."""
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
+    module.prepare({"image": "nvcr.io/x:1"}, {**ctx, "conversion_memory_gb": 64})
+    assert "--mem 64G" in next(c for c in calls if "enroot import" in c)

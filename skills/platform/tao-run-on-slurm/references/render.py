@@ -346,6 +346,14 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     # trap is the partition DEFAULT, not its maximum, so omitting -t silently
     # caps the conversion at DefaultTime no matter where it lands.
     argv += ["-t", str(minutes)]
+    # enroot downloads and extracts layers in PARALLEL (ENROOT_MAX_CONNECTIONS
+    # defaults to 10), so peak memory tracks concurrency, not image size. With
+    # no --mem the step gets the partition's per-CPU default -- which for a
+    # single task is small enough that a multi-layer image is OOM-killed at the
+    # extract stage, after every layer has already been fetched. The scheduler
+    # reports "Out Of Memory" against the step, but enroot's own output ends at
+    # "Downloading N missing layers...", so it reads as a download failure.
+    argv += ["--mem", f"{int(ctx.get('conversion_memory_gb', 32))}G"]
     argv += scheduling_srun_flags(ctx)
     argv += ["bash", "-c", script]
     convert = " ".join(shlex.quote(token) for token in argv)
