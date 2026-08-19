@@ -152,3 +152,29 @@ def status(backend_ref: str, ctx: dict[str, Any]) -> tuple[str, int]:
     if active and int(active or 0) > 0:
         return "RUNNING", 0
     return "PENDING", 0
+
+
+def logs(backend_ref: str, ctx: dict[str, Any], tail: int = 200) -> str:
+    """Tail the Job's pod logs."""
+    namespace, _, job = backend_ref.partition("/")
+    probe = subprocess.run(
+        ["kubectl", "logs", f"job/{job}", "-n", namespace,
+         "--tail", str(int(tail)), "--all-containers"],
+        capture_output=True, text=True, check=False,
+    )
+    return (probe.stdout + probe.stderr).strip()
+
+
+def cancel(backend_ref: str, ctx: dict[str, Any]) -> bool:
+    """Delete the Job, which is the only stop Kubernetes offers.
+
+    Unlike docker stop, this destroys the object status() reads, so afterwards
+    status() returns UNKNOWN rather than CANCELED. The caller must mark the
+    record CANCELED itself; polling will not converge on its own.
+    """
+    namespace, _, job = backend_ref.partition("/")
+    deleted = subprocess.run(
+        ["kubectl", "delete", "job", job, "-n", namespace],
+        capture_output=True, text=True, check=False,
+    )
+    return deleted.returncode == 0

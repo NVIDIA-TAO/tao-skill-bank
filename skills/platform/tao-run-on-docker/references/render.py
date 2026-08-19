@@ -152,3 +152,30 @@ def status(backend_ref: str, ctx: dict[str, Any]) -> tuple[str, int]:
     if native == "exited":
         return ("COMPLETE" if exit_code == 0 else "ERROR"), exit_code
     return "UNKNOWN", exit_code
+
+
+def logs(backend_ref: str, ctx: dict[str, Any], tail: int = 200) -> str:
+    """Bounded tail of the container's output.
+
+    Both streams: docker keeps the workload's stdout and stderr apart, and a
+    diagnosis almost always needs them interleaved -- a traceback on stderr is
+    meaningless without the progress line on stdout that preceded it.
+    """
+    probe = subprocess.run(
+        ["docker", "logs", "--tail", str(int(tail)), backend_ref],
+        capture_output=True, text=True, check=False,
+    )
+    return (probe.stdout + probe.stderr).strip()
+
+
+def cancel(backend_ref: str, ctx: dict[str, Any]) -> bool:
+    """Stop the container, leaving it inspectable.
+
+    `docker rm -f` would delete it and with it the exit code status() reads, so
+    the job would go permanently UNKNOWN instead of settling at CANCELED. The
+    caller marks the record; this only has to stop the work.
+    """
+    stopped = subprocess.run(
+        ["docker", "stop", backend_ref], capture_output=True, text=True, check=False,
+    )
+    return stopped.returncode == 0

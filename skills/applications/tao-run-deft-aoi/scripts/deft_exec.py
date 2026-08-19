@@ -555,6 +555,51 @@ def _docker_status(job_id: str) -> tuple[str, int]:
     return "UNKNOWN", exit_code
 
 
+def _backend(job_id: str, ctx_extra: dict[str, Any] | None = None):
+    """Resolve a job id to (renderer, backend_ref, ctx) from its record.
+
+    Same rule as await_job: which backend to ask comes from the record, not a
+    flag, so a job can be inspected or cancelled from a session that never
+    launched it.
+    """
+    record = json.loads(_record("show", job_id)) or {}
+    platform = record.get("platform") or "docker"
+    ctx = {"job_id": job_id, "results_dir": record.get("results_dir") or "",
+           "bank": str(pathlib.Path(__file__).resolve().parents[4])}
+    ctx.update(ctx_extra or {})
+    return platform_renderer(platform), record.get("backend_ref") or job_id, ctx
+
+
+def job_logs(job_id: str, tail: int, ctx_extra: dict[str, Any] | None = None) -> int:
+    """The `logs` verb. Diagnosing a failure should not need a hand-written ssh."""
+    renderer, backend_ref, ctx = _backend(job_id, ctx_extra)
+    output = renderer.logs(backend_ref, ctx, tail=tail)
+    if output:
+        print(output)
+        return 0
+    # Distinguish "ran and said nothing" from "we looked in the wrong place":
+    # an empty tail otherwise reads as a silent job.
+    print(f"no logs for {job_id} (backend_ref {backend_ref})", file=sys.stderr)
+    return 1
+
+
+def cancel_job(job_id: str, ctx_extra: dict[str, Any] | None = None) -> int:
+    """The `cancel` verb, then close the record.
+
+    The record has to be marked here rather than left to polling: on some
+    platforms cancelling destroys the object status() reads, so a later poll
+    returns UNKNOWN forever and the job never reaches a terminal state.
+    """
+    renderer, backend_ref, ctx = _backend(job_id, ctx_extra)
+    stopped = renderer.cancel(backend_ref, ctx)
+    _record("mark", job_id, "--state", "CANCELED",
+            "--message", "canceled by request")
+    if not stopped:
+        print(f"backend refused to cancel {backend_ref}; record marked CANCELED",
+              file=sys.stderr)
+    return 0 if stopped else 1
+
+
 def await_job(
     job_id: str,
     *,
@@ -630,6 +675,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ctx", action="append", metavar="KEY=VALUE",
                         help="Platform context, e.g. --ctx login=user@host "
                              "--ctx sqsh_dir=/lustre/images. Repeatable.")
+    parser.add_argument("--logs", metavar="JOB_ID",
+                        help="Tail the backend's logs for a recorded job")
+    parser.add_argument("--cancel", metavar="JOB_ID",
+                        help="Cancel a recorded job and close its record")
+    parser.add_argument("--tail", type=int, default=200,
+                        help="Lines of log to show with --logs")
     parser.add_argument("--poll-seconds", type=float, default=10.0)
     parser.add_argument("--timeout-seconds", type=float, default=0.0,
                         help="0 waits indefinitely.")
@@ -638,8 +689,15 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
 
     try:
-        if args.submit and args.await_job:
-            raise ValueError("--submit and --await-job are separate steps")
+        verbs = [name for name in ("submit", "await_job", "logs", "cancel")
+                 if getattr(args, name)]
+        if len(verbs) > 1:
+            raise ValueError(f"{', '.join('--' + v for v in verbs)} are separate steps")
+        ctx_extra = dict(item.split("=", 1) for item in args.ctx or [])
+        if args.logs:
+            return job_logs(args.logs, args.tail, ctx_extra)
+        if args.cancel:
+            return cancel_job(args.cancel, ctx_extra)
         if args.await_job:
             return await_job(
                 args.await_job,

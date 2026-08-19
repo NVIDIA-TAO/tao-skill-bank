@@ -850,3 +850,87 @@ def test_docker_passes_input_env_to_the_container(tmp_path):
               "declared_inputs": [{"spec_key": "input_dir", "uri": "/data/in"}]}
     argv = module.render(bundle, _ctx(tmp_path))["argv"]
     assert "TAO_INPUT_INPUT_DIR=/data/in" in argv
+
+
+# ── All four verbs, on every platform ──────────────────────────────────────
+# The contract is named for four verbs, but only `status` was ever implemented
+# programmatically -- logs and cancel existed solely as CLI recipes in each
+# SKILL.md. So diagnosing a failed job meant hand-writing an ssh probe, which
+# is exactly what the end-to-end debugging in this branch had to do three times.
+
+FOUR_VERBS = ("status", "logs", "cancel")
+
+
+@pytest.mark.parametrize("name", PLATFORMS)
+@pytest.mark.parametrize("verb", FOUR_VERBS)
+def test_every_platform_implements_every_verb(name, verb):
+    module = _load(name)
+    assert callable(getattr(module, verb, None)), (
+        f"{name} has no {verb}(); the four-verb contract is not optional, and "
+        "a consumer cannot special-case which platforms answer"
+    )
+
+
+@pytest.mark.parametrize("name", PLATFORMS)
+@pytest.mark.parametrize("verb", FOUR_VERBS)
+def test_verbs_share_one_signature(name, verb):
+    """A consumer dispatches by name; the shapes cannot differ per platform."""
+    params = list(inspect.signature(getattr(_load(name), verb)).parameters)
+    assert params[:2] == ["backend_ref", "ctx"], (
+        f"{name}.{verb}{tuple(params)} does not start with (backend_ref, ctx)"
+    )
+
+
+def test_docker_cancel_keeps_the_container_inspectable(monkeypatch):
+    """`docker rm -f` would destroy the exit code status() reads."""
+    module, calls = _load("tao-run-on-docker"), []
+    monkeypatch.setattr(module.subprocess, "run",
+                        lambda cmd, *a, **k: (calls.append(cmd), _Done(""))[1])
+    module.cancel("job-1", {})
+    assert calls[0][:2] == ["docker", "stop"], (
+        "cancel must stop, not remove: removing loses the exit code and the "
+        "job goes permanently UNKNOWN instead of settling at CANCELED"
+    )
+
+
+def test_slurm_logs_rejects_an_implausible_job_id(monkeypatch):
+    """The glob is deliberately unquoted, so the id must be validated."""
+    module = _load("tao-run-on-slurm")
+    with pytest.raises(ValueError, match="implausible"):
+        module.logs("; rm -rf /", {"login": "h", "job_dir": "/w"})
+
+
+def test_slurm_logs_matches_the_template_output_path(monkeypatch):
+    """The sbatch --output path and the log tail must agree."""
+    module, calls = _load("tao-run-on-slurm"), []
+    monkeypatch.setattr(module.subprocess, "run",
+                        lambda cmd, *a, **k: (calls.append(cmd), _Done(""))[1])
+    module.logs("32521559", {"login": "me@h", "job_dir": "/lustre/run/work"})
+    remote = calls[0][2]
+    assert "/lustre/run/work/logs/*-32521559/main.*" in remote, remote
+
+
+def test_slurm_log_glob_tracks_the_template_output_path(monkeypatch):
+    """Derive the expectation from the template, do not restate it.
+
+    The template owns `#SBATCH --output=@@LOG_DIR@@/%x-%j/main.out`; logs() has
+    to look exactly there. Restating the path in a test only proves the test
+    agrees with itself -- the enroot URI bug survived 66 green tests that way.
+    """
+    template = (REPO / "templates/slurm/singlenode.sbatch.tmpl").read_text(
+        encoding="utf-8"
+    )
+    output = re.search(r"#SBATCH --output=(\S+)", template).group(1)
+    # %x is the job name, %j the job id: unknown and known respectively.
+    expected = (output.replace("@@LOG_DIR@@", "/lustre/run/work/logs")
+                      .replace("%x", "*").replace("%j", "32521559"))
+    expected_dir = expected.rsplit("/", 1)[0]
+
+    module, calls = _load("tao-run-on-slurm"), []
+    monkeypatch.setattr(module.subprocess, "run",
+                        lambda cmd, *a, **k: (calls.append(cmd), _Done(""))[1])
+    module.logs("32521559", {"login": "me@h", "job_dir": "/lustre/run/work"})
+    assert expected_dir in calls[0][2], (
+        f"logs() looks somewhere other than the template's --output: "
+        f"template says {expected_dir}, logs() ran {calls[0][2]}"
+    )

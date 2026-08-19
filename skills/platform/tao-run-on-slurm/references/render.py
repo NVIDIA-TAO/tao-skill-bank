@@ -595,3 +595,30 @@ def status(backend_ref: str, ctx: dict[str, Any]) -> tuple[str, int]:
     if ":" in exit_field:
         code = int(exit_field.split(":")[0] or 0)
     return STATE_VOCAB.get(state, "UNKNOWN"), code
+
+
+def logs(backend_ref: str, ctx: dict[str, Any], tail: int = 200) -> str:
+    """Tail the sbatch --output/--error files for this job id.
+
+    The template writes them under <job_dir>/logs/<job-name>-<jobid>/, and the
+    job name is not derivable here, so match on the id and let the remote shell
+    expand the glob. backend_ref is validated first precisely because it is
+    NOT quoted -- an unquoted shell metacharacter would otherwise run.
+    """
+    if not re.fullmatch(r"[0-9][0-9_.+]*", backend_ref):
+        raise ValueError(f"implausible SLURM job id {backend_ref!r}")
+    pattern = f"{str(ctx['job_dir']).rstrip('/')}/logs/*-{backend_ref}/main.*"
+    probe = subprocess.run(
+        ["ssh", ctx["login"], f"tail -n {int(tail)} {pattern} 2>/dev/null"],
+        capture_output=True, text=True, check=False,
+    )
+    return probe.stdout.strip()
+
+
+def cancel(backend_ref: str, ctx: dict[str, Any]) -> bool:
+    """scancel the allocation. Idempotent: cancelling a finished job is fine."""
+    cancelled = subprocess.run(
+        ["ssh", ctx["login"], f"scancel {shlex.quote(backend_ref)}"],
+        capture_output=True, text=True, check=False,
+    )
+    return cancelled.returncode == 0

@@ -124,3 +124,28 @@ def status(backend_ref: str, ctx: dict[str, Any]) -> tuple[str, int]:
         return STATE_VOCAB.get(native.lower(), "UNKNOWN"), 0
     native = str(payload.get("state") or payload.get("status") or "").lower()
     return STATE_VOCAB.get(native, "UNKNOWN"), int(payload.get("exit_code") or 0)
+
+
+def logs(backend_ref: str, ctx: dict[str, Any], tail: int = 200) -> str:
+    """Ask the packaged runner, which owns the job log."""
+    import subprocess
+
+    runner = str(pathlib.Path(ctx["bank"]) / RUNNER)
+    probe = subprocess.run(
+        ["python3", runner, "logs", "--job-dir", ctx["results_dir"],
+         "--tail", str(int(tail))],
+        capture_output=True, text=True, check=False,
+    )
+    return (probe.stdout + probe.stderr).strip()
+
+
+def cancel(backend_ref: str, ctx: dict[str, Any]) -> bool:
+    """Cancel the whole process group; the runner owns the signalling."""
+    import subprocess
+
+    runner = str(pathlib.Path(ctx["bank"]) / RUNNER)
+    done = subprocess.run(
+        ["python3", runner, "cancel", "--job-dir", ctx["results_dir"]],
+        capture_output=True, text=True, check=False,
+    )
+    return done.returncode == 0

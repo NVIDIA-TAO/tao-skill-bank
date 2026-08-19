@@ -100,3 +100,23 @@ def status(backend_ref: str, ctx: dict[str, Any]) -> tuple[str, int]:
     if native == "exited":
         return ("COMPLETE" if exit_code == 0 else "ERROR"), exit_code
     return "UNKNOWN", exit_code
+
+
+def logs(backend_ref: str, ctx: dict[str, Any], tail: int = 200) -> str:
+    """Tail the container's output on the instance."""
+    probe = subprocess.run(
+        ["brev", "exec", ctx["instance"],
+         f"docker logs --tail {int(tail)} {shlex.quote(backend_ref)}"],
+        capture_output=True, text=True, check=False,
+    )
+    return (probe.stdout + probe.stderr).strip()
+
+
+def cancel(backend_ref: str, ctx: dict[str, Any]) -> bool:
+    """Stop the container, not remove it -- see the docker renderer's cancel."""
+    stopped = subprocess.run(
+        ["brev", "exec", ctx["instance"],
+         f"docker stop {shlex.quote(backend_ref)}"],
+        capture_output=True, text=True, check=False,
+    )
+    return stopped.returncode == 0

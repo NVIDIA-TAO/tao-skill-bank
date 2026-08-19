@@ -176,3 +176,31 @@ Currently exported by the docker and SLURM renderers. Kubernetes and virtualenv
 set the results path by their own mechanisms and do not yet export
 `TAO_INPUT_*`; a bundle relying on it is not yet portable to them.
 
+## The four verbs are a programmatic interface, not just a recipe
+
+Each platform renderer exports all four, with one signature:
+
+```python
+render(bundle, ctx) -> {"files": {...}, "argv": [...], "backend_ref": str | None}
+status(backend_ref, ctx) -> (STATE, exit_code)
+logs(backend_ref, ctx, tail=200) -> str
+cancel(backend_ref, ctx) -> bool
+```
+
+A consumer dispatches by name and must never special-case which platforms
+answer. For a long time only `status` existed in code — `logs` and `cancel`
+lived solely as CLI recipes in each SKILL.md — so diagnosing a failed job meant
+hand-writing an `ssh`/`kubectl` probe, and every consumer reinvented it
+slightly differently.
+
+Two rules the implementations must respect:
+
+- **`cancel` stops, it does not destroy.** `docker rm -f` or an equivalent
+  removes the exit code `status()` reads, so the job goes permanently `UNKNOWN`
+  rather than settling at `CANCELED`. Where a platform offers no stop —
+  Kubernetes only deletes — say so, because the caller then *must* mark the
+  record itself; polling will never converge.
+- **`logs` must look where the launcher writes.** Derive the location from the
+  same template that sets it rather than restating the path, or the two drift
+  silently and `logs` returns empty for a job that logged plenty.
+
