@@ -50,6 +50,7 @@ import tempfile
 
 import yaml
 
+from archive_contract import approved_sha256, verify_archive
 from metric_contract import validate_contract
 
 
@@ -262,7 +263,9 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "dataset_root": str(args.dataset_root.resolve()),
         "iaa_deft_bundle_sha256": args.iaa_deft_bundle_sha256,
         "images_archive": str(args.images_archive.resolve()),
+        "images_archive_sha256": args.images_archive_sha256,
         "metadata_archive": str(args.metadata_archive.resolve()),
+        "metadata_archive_sha256": args.metadata_archive_sha256,
         "checksums_file": (
             str(args.checksums_file.resolve())
             if args.checksums_file is not None
@@ -398,7 +401,9 @@ def build_state(args: argparse.Namespace) -> dict:
             "dataset_root": str(args.dataset_root),
             "iaa_deft_bundle_sha256": args.iaa_deft_bundle_sha256,
             "images_archive": str(args.images_archive),
+            "images_archive_sha256": args.images_archive_sha256,
             "metadata_archive": str(args.metadata_archive),
+            "metadata_archive_sha256": args.metadata_archive_sha256,
             "checksums_file": (
                 str(args.checksums_file) if args.checksums_file is not None else None
             ),
@@ -472,7 +477,9 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--images-archive", required=True, type=pathlib.Path)
+    parser.add_argument("--images-archive-sha256", required=True)
     parser.add_argument("--metadata-archive", required=True, type=pathlib.Path)
+    parser.add_argument("--metadata-archive-sha256", required=True)
     parser.add_argument("--checksums-file", type=pathlib.Path)
     parser.add_argument(
         "--requires-hf-token",
@@ -564,6 +571,24 @@ def main(argv: list[str] | None = None) -> int:
             )
         args.images_archive = _required_input_file(args.images_archive, "--images-archive")
         args.metadata_archive = _required_input_file(args.metadata_archive, "--metadata-archive")
+        args.images_archive_sha256 = approved_sha256(
+            args.images_archive_sha256, "--images-archive-sha256"
+        )
+        args.metadata_archive_sha256 = approved_sha256(
+            args.metadata_archive_sha256, "--metadata-archive-sha256"
+        )
+        verify_archive(
+            args.images_archive,
+            args.images_archive_sha256,
+            "--images-archive",
+            "--images-archive-sha256",
+        )
+        verify_archive(
+            args.metadata_archive,
+            args.metadata_archive_sha256,
+            "--metadata-archive",
+            "--metadata-archive-sha256",
+        )
         if args.checksums_file is not None:
             args.checksums_file = _required_input_file(args.checksums_file, "--checksums-file")
             _validate_checksum_manifest(

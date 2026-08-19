@@ -23,6 +23,7 @@ from typing import Any
 
 import yaml
 
+from archive_contract import verify_archive
 from metric_contract import validate_contract
 
 
@@ -168,6 +169,18 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     metadata_archive = _existing_path(
         args.metadata_archive, "--metadata-archive", directory=False
     )
+    images_archive, images_archive_sha256 = verify_archive(
+        images_archive,
+        args.images_archive_sha256,
+        "--images-archive",
+        "--images-archive-sha256",
+    )
+    metadata_archive, metadata_archive_sha256 = verify_archive(
+        metadata_archive,
+        args.metadata_archive_sha256,
+        "--metadata-archive",
+        "--metadata-archive-sha256",
+    )
     checksums_file = (
         _existing_path(args.checksums_file, "--checksums-file", directory=False)
         if args.checksums_file is not None
@@ -290,7 +303,9 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "dataset_root": str(dataset_root),
             "iaa_deft_bundle_sha256": runtime_sha256,
             "images_archive": str(images_archive),
+            "images_archive_sha256": images_archive_sha256,
             "metadata_archive": str(metadata_archive),
+            "metadata_archive_sha256": metadata_archive_sha256,
             "checksums_file": str(checksums_file) if checksums_file else None,
             "requires_hf_token": args.requires_hf_token,
             "max_iterations": args.max_iterations,
@@ -323,7 +338,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--results-dir", required=True, type=pathlib.Path)
     parser.add_argument("--dataset-root", required=True, type=pathlib.Path)
     parser.add_argument("--images-archive", required=True, type=pathlib.Path)
+    parser.add_argument("--images-archive-sha256", required=True)
     parser.add_argument("--metadata-archive", required=True, type=pathlib.Path)
+    parser.add_argument("--metadata-archive-sha256", required=True)
     parser.add_argument("--checksums-file", type=pathlib.Path)
     parser.add_argument(
         "--requires-hf-token",

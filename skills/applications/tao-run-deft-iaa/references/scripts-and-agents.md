@@ -17,6 +17,7 @@ through deterministic scripts.
 
 | Script | Role | Runtime |
 |---|---|---|
+| `archive_contract.py` | compute and verify immutable archive content identities | system Python for read-only preflight; imported by IAA runtime gates |
 | `deft_python.sh` | select a Python per call and cap BLAS/OpenMP threads | shell |
 | `prepare_deft_config.py` | copy templates into a run and apply approved values | IAA runtime |
 | `init_deft_state.py` | validate config/metric inputs and create schema-v3 state once | IAA runtime |
@@ -126,7 +127,7 @@ Required stable names are `pool_embed`, `target_embed`, `knn`,
 `run_iaa_stage.py` is the only supported entry to bundled IAA host operations:
 
 ```text
-dataset-materialize  create eval/val/pool splits and source_pool.parquet
+dataset-materialize  reverify approved archives; create eval/val/pool splits and source_pool.parquet
 gap-analysis         analyze the prior evaluation into iter_N/gaps
 mining-postprocess   summarize k-NN and create uncapped/capped candidates
 history-select       apply novel/replay budget and leakage check
@@ -142,6 +143,11 @@ Each command takes `--results-dir` and `--deft-config`; iteration commands also
 take `--iter-num`, except `eval-config`, which takes `--iter-label`. Gap
 analysis derives the iteration budget from immutable state. Do not recreate
 these calls with inline Python.
+
+The dataset adapter refuses to consume rebuilt data unless both source
+archives still match the SHA-256 identities approved for the run. The
+`dataset_setup` commit repeats that verification as a non-bypassable final
+gate.
 
 ## Path invariants
 

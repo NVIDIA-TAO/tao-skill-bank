@@ -14,7 +14,7 @@ license: Apache-2.0 AND CC-BY-4.0
 compatibility: Requires Docker, NVIDIA Container Toolkit, accessible NVIDIA GPUs, the two IAA dataset export archives, and Python 3.9+ with the documented runtime dependencies.
 metadata:
   author: NVIDIA Corporation
-  version: "0.3.3"
+  version: "0.3.4"
 allowed-tools: Read Bash Write
 tags:
 - application
@@ -83,7 +83,8 @@ Use two intake phases:
 After required intake is resolved, discover and validate:
 
 - workspace and either a new `${RESULTS_DIR}` or one existing run to resume;
-- `images_raw.tar` and `meta.tar.gz`; `SHA256SUMS` is optional;
+- `images_raw.tar` and `meta.tar.gz`, including the SHA-256 identity computed
+  during read-only discovery; publisher-provided `SHA256SUMS` is optional;
 - `max_iterations`, or a user-supplied time budget from which an iteration
   limit can be estimated;
 - metric name, query type, operator, and optional target;
@@ -121,9 +122,9 @@ warn about group/other readability, and still do not load it.
 
 Show the summary defined in `references/preflight.md`, including every
 parameter and source, planned file creation/extraction, image pulls, estimated
-runtime, and resume status. Wait for explicit approval before Docker login or
-pulls, package installation, archive extraction, config/state creation, or any
-write under the workspace.
+runtime, archive content digests, and resume status. Wait for explicit approval
+before Docker login or pulls, package installation, archive extraction,
+config/state creation, or any write under the workspace.
 
 If an approved parameter later changes, show the changed summary rows and get
 approval again before continuing. No confirmation is needed between unchanged,

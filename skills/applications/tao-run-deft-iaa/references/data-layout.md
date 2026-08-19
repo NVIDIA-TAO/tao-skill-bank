@@ -22,11 +22,15 @@ The IAA TAO-FT export contains:
 
 There is no download branch. Preserve the archives in place; extraction goes
 to the approved `DATASET_ROOT`. Do not copy multi-gigabyte archives into the
-dataset tree.
+dataset tree. The workflow always records its own approved SHA-256 identity
+for both required archives. `SHA256SUMS`, when supplied by the publisher, is
+an additional provenance check rather than the archive identity used by state.
 
 ## Approved extraction and rebuild
 
-Only after the pre-flight gate:
+Only after the pre-flight gate and a successful audit of the initialized run.
+That audit verifies the current archive bytes against their approved content
+identities before extraction:
 
 ```bash
 set -e
@@ -59,6 +63,12 @@ Omit the checksum command when no manifest was approved. A checksum mismatch,
 tar failure, missing `rebuild.py`, or nonzero rebuild is a hard stop. The
 rebuild log must contain `VERIFY: PASS`; `VERIFY: FAIL` or a missing pass line
 is not valid evidence. Do not continue using a partly rebuilt dataset.
+
+`dataset-materialize` verifies both archive content identities again after
+extraction/rebuild and before producing run splits. The `dataset_setup` commit
+performs the same check as its final acceptance gate. This means a same-path
+archive replacement cannot become committed dataset evidence, including when
+the optional publisher manifest is absent.
 
 The rebuild creates the canonical TAO-facing structure:
 
