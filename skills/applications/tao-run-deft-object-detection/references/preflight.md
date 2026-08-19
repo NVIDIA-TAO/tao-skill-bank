@@ -234,6 +234,12 @@ Echo it and read the result. A command substitution that fails leaves `EXTRA_MOU
 empty and every later launch still runs, mounting nothing extra — the same silent
 failure this block exists to prevent.
 
+`init_deft_state.py` derives this list from the run's own inputs — the checkpoints, the
+KPI images and labels, the class mapping, the encoder repo, the pool, and both COCO
+detection files. A path that none of those name is invisible to it: pass
+`--extra-mount PATH` (repeatable) at init and it joins the list. Files are mounted by
+their parent directory.
+
 Every `docker run` in this skill is written as
 `-v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE"`. With inputs inside the
 workspace it expands to nothing and the command is unchanged; with KPI data or

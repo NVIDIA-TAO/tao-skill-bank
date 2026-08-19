@@ -2405,6 +2405,79 @@ case "$RUN_OUT" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G26 — every path a container opens is mounted, including the ones it is handed
+#
+# The detection files are read by `tmm unique_neighbor_matching` from inside the
+# container. The target file is the KPI detections, which live with the read-only
+# dataset rather than in the per-run workspace. --extra-mount covers whatever the
+# derivation cannot know about.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G26 detection files and arbitrary mounts"
+
+G26_WS=$(new_workspace g26); make_pool "$G26_WS"
+G26_OUT="$WORK/g26_dataset"
+make_file "$G26_OUT/kpi/images/000001.png" "png"
+make_file "$G26_OUT/kpi/labels/000001.txt" "car 0.0 0 0.0 10 10 100 100 0 0 0 0 0 0 0"
+make_file "$G26_OUT/hl_coco_its_kpi.json" '{"images": [], "annotations": []}'
+make_file "$G26_WS/source_pool/coco.json" '{"images": [], "annotations": []}'
+make_file "$G26_WS/source_pool/pool_report.json" '{"annotations_by_class": {"car": 10}}'
+make_file "$WORK/g26_aux/notes.txt" "an input no config key names"
+G26_RUN="$G26_WS/results/run_g26"
+
+mounts_contain() {  # mounts_contain RESULTS_DIR NEEDLE
+  "$PY" -c 'import json,sys
+mounts = json.load(open(sys.argv[1]))["config"]["extra_container_mounts"]
+print(1 if any(sys.argv[2] in m for m in mounts) else 0)' "$1" "$2"
+}
+
+run "$PY" "$INIT" \
+  --results-dir "$G26_RUN" --workspace "$G26_WS" --max-iterations 1 \
+  --num-epochs 1 --learning-rate 0.0001 \
+  --zero-shot-checkpoint "$G26_WS/ckpt/gdino_zero_shot.pth" \
+  --train-spec-template "$G26_WS/specs/train_grounding_dino.yaml" \
+  --source-pool-embeddings "$G26_WS/source_pool/source_embeddings.parquet" \
+  --source-pool-annotations "$G26_WS/source_pool/odvg" \
+  --embedding-model-path "$G26_WS/encoder/siglip" \
+  --kpi-images-dir "$G26_OUT/kpi/images" \
+  --ground-truth-labels-dir "$G26_OUT/kpi/labels" \
+  --class-mapping "$G26_WS/classes/classes_its.yaml" \
+  --ap50-thresholds-json '{"car": 0.9}' \
+  --allocation-policy class_stratified --rare-class-list car \
+  --pool-report "$G26_WS/source_pool/pool_report.json" \
+  --source-detection-file "$G26_WS/source_pool/coco.json" \
+  --target-detection-file "$G26_OUT/hl_coco_its_kpi.json" \
+  --extra-mount "$WORK/g26_aux"
+assert_rc 0 "[G26] class_stratified init succeeds with detection files outside the workspace"
+assert_eq 1 "$(mounts_contain "$G26_RUN/deft_state.json" "$G26_OUT")" \
+  "[G26] the target detection file's directory is mounted"
+assert_eq 1 "$(mounts_contain "$G26_RUN/deft_state.json" "$WORK/g26_aux")" \
+  "[G26] --extra-mount admits a path no config key names"
+
+# A source detection file inside the workspace needs no mount of its own.
+assert_eq 0 "$(mounts_contain "$G26_RUN/deft_state.json" "$G26_WS/source_pool")" \
+  "[G26] a detection file inside the workspace adds no mount"
+
+# An --extra-mount that is not on disk is a configuration error, not a silent skip.
+run "$PY" "$INIT" \
+  --results-dir "$G26_RUN" --workspace "$G26_WS" --max-iterations 1 --force \
+  --num-epochs 1 --learning-rate 0.0001 \
+  --zero-shot-checkpoint "$G26_WS/ckpt/gdino_zero_shot.pth" \
+  --train-spec-template "$G26_WS/specs/train_grounding_dino.yaml" \
+  --source-pool-embeddings "$G26_WS/source_pool/source_embeddings.parquet" \
+  --source-pool-annotations "$G26_WS/source_pool/odvg" \
+  --embedding-model-path "$G26_WS/encoder/siglip" \
+  --kpi-images-dir "$G26_OUT/kpi/images" \
+  --ground-truth-labels-dir "$G26_OUT/kpi/labels" \
+  --class-mapping "$G26_WS/classes/classes_its.yaml" \
+  --ap50-thresholds-json '{"car": 0.9}' \
+  --extra-mount "$WORK/g26_absent"
+assert_rc 1 "[G26] an --extra-mount that is not on disk is refused"
+case "$RUN_OUT" in
+  *"--extra-mount"*) ok "[G26] the refusal names the flag" ;;
+  *) notok "[G26] the refusal names the flag" "output: $RUN_OUT" ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then

@@ -188,6 +188,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--iou-threshold", type=float, default=0.5)
     parser.add_argument("--kpi-conf-threshold", type=float, default=0.3)
 
+    parser.add_argument("--extra-mount", action="append", default=None, metavar="PATH",
+                        help="Extra host path a container must read, repeatable. The mount "
+                             "list is otherwise derived from the run's own inputs, so this is "
+                             "the way to admit anything they do not name -- a spec, an "
+                             "auxiliary dataset, a checkpoint a template points at. Files are "
+                             "mounted by their parent directory.")
+
     parser.add_argument("--force", action="store_true",
                         help="Reinitialize over an existing run. The current state and a non-empty "
                              "log are archived as *.bak.<UTC stamp> first.")
@@ -494,6 +501,12 @@ def main() -> int:
             warnings.append(
                 "--rare-class-list is set but --allocation-policy is global; rare classes are ignored")
 
+        # A mount may be either a file or a directory, so this is existence only --
+        # check_artifact would reject a directory as "not a file".
+        for extra in (args.extra_mount or []):
+            if not _abs(extra).exists():
+                errors.append(f"--extra-mount: does not exist: {_abs(extra)}")
+
         resolved_detection: dict[str, str | None] = {}
         for flag, raw in detection_files.items():
             if not raw:
@@ -558,6 +571,18 @@ def main() -> int:
         for extra in (args.pool_images, args.codetr_checkpoint, args.codetr_classmap):
             if extra:
                 mounted.append(_abs(extra))
+        # `tmm unique_neighbor_matching` opens both COCO detection files from inside the
+        # container under class_stratified allocation. The target file is the KPI
+        # detections, which live with the read-only dataset rather than in the per-run
+        # workspace, so without this the stage fails on a path the spec itself named.
+        for detection in resolved_detection.values():
+            if detection:
+                mounted.append(Path(detection))
+        # Whatever the derivation cannot know about. A run may legitimately reference a
+        # path none of its own config keys name, and without this the only remedy is
+        # editing the skill.
+        for extra in (args.extra_mount or []):
+            mounted.append(_abs(extra))
         # Anything outside the workspace needs its own -v or the container cannot read
         # it. Deriving the mounts here means the stages get a list to use rather than a
         # warning to act on, which is what left earlier runs to work it out mid-flight.
