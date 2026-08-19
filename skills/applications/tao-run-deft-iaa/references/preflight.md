@@ -136,10 +136,20 @@ Run this section only after required intake is resolved.
    set -e
    tar -tf "$IMAGES_ARCHIVE" >/dev/null
    tar -tzf "$METADATA_ARCHIVE" >/dev/null
+   IMAGES_ARCHIVE_SHA256=$(
+     python3 "$SKILL_ROOT/scripts/archive_contract.py" --archive "$IMAGES_ARCHIVE"
+   )
+   METADATA_ARCHIVE_SHA256=$(
+     python3 "$SKILL_ROOT/scripts/archive_contract.py" --archive "$METADATA_ARCHIVE"
+   )
    ```
 
-   Record the presence of adjacent `SHA256SUMS`. Its absence is a warning, not
-   a blocker; `rebuild.py` verification remains mandatory.
+   Record both computed digests as the archive identities in the approval
+   summary. Retain those exact approved values across config preparation and
+   initialization; never recompute and silently replace an approved value.
+   Also record the presence of adjacent publisher-provided `SHA256SUMS`. Its
+   absence is a warning, not a blocker because the workflow's own content
+   binding is mandatory; `rebuild.py` verification remains mandatory too.
 4. Inspect, but do not modify, Docker/GPU state:
 
    ```bash
@@ -244,8 +254,10 @@ Run
 Inputs
   archive root: <absolute path> (type=<archive-only | archive-with-extracted-data>;
                 source=<user | discovery: checked-root reason>)
-  images archive: <absolute path and size> (source=<user | discovery: checked-root reason>)
-  metadata archive: <absolute path and size> (source=<user | discovery: checked-root reason>)
+  images archive: <absolute path and size>; sha256=<64 lowercase hex>
+                  (source=<user | discovery: checked-root reason>)
+  metadata archive: <absolute path and size>; sha256=<64 lowercase hex>
+                    (source=<user | discovery: checked-root reason>)
   SHA256SUMS: <absolute path | absent> (source=<user | discovery>)
   dataset root: <absolute intended path> (source=<user | default>)
   IAA runtime: bundled with skill (source=fixed by workflow);
@@ -343,7 +355,9 @@ For a new run, perform the following in order.
        --workspace "$WORKSPACE" --results-dir "$RESULTS_DIR" \
        --dataset-root "$DATASET_ROOT" \
        --images-archive "$IMAGES_ARCHIVE" \
+       --images-archive-sha256 "$IMAGES_ARCHIVE_SHA256" \
        --metadata-archive "$METADATA_ARCHIVE" \
+       --metadata-archive-sha256 "$METADATA_ARCHIVE_SHA256" \
        "${PREP_OPTIONAL_ARGS[@]}" \
        --max-iterations "$MAX_ITERATIONS" \
        --training-epochs "$TRAINING_EPOCHS" \
@@ -382,7 +396,9 @@ For a new run, perform the following in order.
        --results-dir "$RESULTS_DIR" --workspace "$WORKSPACE" \
        --dataset-root "$DATASET_ROOT" \
        --images-archive "$IMAGES_ARCHIVE" \
+       --images-archive-sha256 "$IMAGES_ARCHIVE_SHA256" \
        --metadata-archive "$METADATA_ARCHIVE" \
+       --metadata-archive-sha256 "$METADATA_ARCHIVE_SHA256" \
        "${INIT_OPTIONAL_ARGS[@]}" \
        --max-iterations "$MAX_ITERATIONS" \
        --metric-name "$METRIC_NAME" --metric-query-type "$QUERY_TYPE" \

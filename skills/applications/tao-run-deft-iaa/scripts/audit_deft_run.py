@@ -31,6 +31,7 @@ from typing import Any
 
 import yaml
 
+from archive_contract import ARCHIVE_BINDINGS, verify_archive_bindings
 from checkpoint_contract import validate_best_checkpoint
 from command_contract import (
     command_sha256,
@@ -989,6 +990,32 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 errors.append(
                     f"state.config.{field} must be an existing absolute non-empty file: {value}"
                 )
+        archive_digest_fields = [digest for _, digest in ARCHIVE_BINDINGS]
+        present_archive_digests = [
+            field for field in archive_digest_fields if config.get(field) is not None
+        ]
+        if not present_archive_digests:
+            message = (
+                "legacy state does not content-bind the approved IAA archives"
+            )
+            if dataset_committed:
+                warnings.append(message + "; dataset_setup is already committed")
+            else:
+                errors.append(message + "; start a fresh run before dataset_setup")
+        elif len(present_archive_digests) != len(archive_digest_fields):
+            errors.append(
+                "state.config must bind both images_archive_sha256 and "
+                "metadata_archive_sha256"
+            )
+        else:
+            try:
+                # Archives are consumed only by dataset_setup. Avoid repeatedly
+                # hashing multi-gigabyte source archives after that stage commits.
+                verify_archive_bindings(
+                    config, verify_content=not dataset_committed
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(str(exc))
         checksum_value = config.get("checksums_file")
         if checksum_value is not None:
             checksum_path = pathlib.Path(str(checksum_value)).expanduser()
@@ -1085,14 +1112,18 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     errors.append(f"approval manifest is invalid JSON: {exc}")
                 else:
                     expected_approval = {
-                        "schema_version": "2",
+                        "schema_version": (
+                            "3" if present_archive_digests else "2"
+                        ),
                         "workflow": WORKFLOW,
                         "workspace": str(pathlib.Path(str(config.get("workspace", ""))).resolve()),
                         "results_dir": str(results_dir.resolve()),
                         "dataset_root": str(pathlib.Path(str(config.get("dataset_root", ""))).resolve()),
                         "iaa_deft_bundle_sha256": config.get("iaa_deft_bundle_sha256"),
                         "images_archive": str(pathlib.Path(str(config.get("images_archive", ""))).resolve()),
+                        "images_archive_sha256": config.get("images_archive_sha256"),
                         "metadata_archive": str(pathlib.Path(str(config.get("metadata_archive", ""))).resolve()),
+                        "metadata_archive_sha256": config.get("metadata_archive_sha256"),
                         "checksums_file": (
                             str(pathlib.Path(str(config.get("checksums_file"))).resolve())
                             if config.get("checksums_file") is not None
@@ -1104,6 +1135,12 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         "pyt_image": config.get("pyt_image"),
                         "ds_image": config.get("ds_image"),
                     }
+                    if not present_archive_digests:
+                        # Approval schema 2 predated archive content bindings.
+                        # Keep completed legacy runs auditable without allowing
+                        # an unbound legacy run to enter dataset_setup.
+                        expected_approval.pop("images_archive_sha256")
+                        expected_approval.pop("metadata_archive_sha256")
                     if approval != expected_approval:
                         errors.append(
                             "state immutable approval fields disagree with approval.json"

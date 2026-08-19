@@ -4,11 +4,12 @@
     "question": "A user says: \"Use the tao-run-deft-iaa skill to plan an IAA DEFT run.\" Identify the applicable skill and outline its documented workflow. This is a planning evaluation: do not run commands, scripts, containers, installs, web searches, audits, or any other tools.",
     "expected_skill": "tao-run-deft-iaa",
     "expected_script": null,
-    "ground_truth": "Identify tao-run-deft-iaa and describe its self-contained Docker-only, disk-backed workflow: read-only preflight and one approval boundary; deterministic config/state initialization; dataset setup and one-time pool embedding; zero-shot evaluation; a bounded gap, mining, history-selection, optional-visualization, train, and evaluate loop; validated commits; final audit and deterministic report. The customer supplies data archives, not an implementation checkout. Do not execute anything.",
+    "ground_truth": "Identify tao-run-deft-iaa and describe its self-contained Docker-only, disk-backed workflow: read-only preflight that computes both archive SHA-256 identities and one approval boundary; deterministic config/state initialization that freezes those identities; dataset setup and one-time pool embedding; zero-shot evaluation; a bounded gap, mining, history-selection, optional-visualization, train, and evaluate loop; validated commits; final audit and deterministic report. The customer supplies data archives, not an implementation checkout. Do not execute anything.",
     "expected_behavior": [
       "Identifies tao-run-deft-iaa as the relevant self-contained skill and does not request an implementation checkout",
       "Describes Docker as the sole execution path without asking the user to choose a platform",
       "Outlines read-only preflight, one approval boundary, deterministic initialization, dataset_setup, pool_embed, zero-shot evaluate, and the bounded per-iteration loop",
+      "Content-binds both approved archive files independently of optional publisher SHA256SUMS evidence",
       "Explains that each stage is artifact-validated before a canonical state commit and that completion requires a successful require-complete audit",
       "Does not run commands, scripts, containers, installs, web searches, audits, or other tools"
     ]

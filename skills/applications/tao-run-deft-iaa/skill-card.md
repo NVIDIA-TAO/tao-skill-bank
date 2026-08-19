@@ -17,7 +17,7 @@ Global <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: GPU/container cost, interrupted multi-stage runs, stale artifacts, data leakage, or incorrect metric evidence can make an iterative result unreliable. <br>
-Mitigation: The skill uses one explicit approval boundary before side effects, a bounded loop, deterministic config and container wrappers, exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. Credential files are never opened or sourced, and credential values are never printed or persisted. <br>
+Mitigation: The skill uses one explicit approval boundary before side effects, SHA-256 content identities for both required archives, a bounded loop, deterministic config and container wrappers, exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. Credential files are never opened or sourced, and credential values are never printed or persisted. <br>
 
 ## Reference(s): <br>
 - [Pipeline and State](references/pipeline-and-state.md) <br>
@@ -44,6 +44,7 @@ Mitigation: The skill uses one explicit approval boundary before side effects, a
 - Synthetic state-machine smoke: render and initialize immutable inputs, complete a two-iteration max-budget path, require the completion audit, and render the report twice deterministically. <br>
 - Branch/recovery checks: exercise disabled and enabled visualization, optional checksum evidence, nonterminal failure to terminal hard-stop, journaled state/log recovery, orphan-container overlap rejection, and persisted two-attempt limits. <br>
 - Negative-path checks: reject cross-iteration artifacts, zero-row mining, false KPI stops, duplicate metric rows, unsupported KPI query types, stale/unbound outputs, command tampering, stale or cross-iteration checkpoint targets, symlink chains/escapes, and malformed state/log labels. <br>
+- Archive-integrity checks: reject wrong approved digests, changes between config preparation and state initialization, and same-path/same-size replacements at audit, dataset materialization, and commit. <br>
 
 ## Evaluation Metrics Used: <br>
 - Python and shell syntax success. <br>
@@ -51,10 +52,10 @@ Mitigation: The skill uses one explicit approval boundary before side effects, a
 - Expected rejection of tested invalid inputs and transitions. <br>
 
 ## Evaluation Results: <br>
-Repository/static checks and the synthetic two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, and clean bundled-runtime import tests passed. The listed invalid evidence, transition, provenance, and path cases were rejected as expected. The checkpoint contract was also checked against a real IAA reference-run relative-symlink artifact shape. A live end-to-end run through the revised wrapper was not performed as part of this review. <br>
+Repository/static checks and the synthetic archive-binding, two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, and clean bundled-runtime import tests passed. The listed invalid evidence, transition, provenance, and path cases were rejected as expected. The checkpoint contract was also checked against a real IAA reference-run relative-symlink artifact shape. A live end-to-end run through the revised wrapper was not performed as part of this review. <br>
 
 ## Skill Version(s): <br>
-0.3.3 (source: frontmatter) <br>
+0.3.4 (source: frontmatter) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
