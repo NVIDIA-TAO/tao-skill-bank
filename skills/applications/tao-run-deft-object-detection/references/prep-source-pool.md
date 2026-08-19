@@ -228,9 +228,8 @@ docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
 Add `-v` for every path outside `$WORKSPACE` — the checkpoint and the classmap
 commonly live elsewhere, and a container cannot read what is not mounted.
 
-This is the longest stage in the workflow — it scales with pool size, and runs to
-tens of minutes on 5k images and hours on 100k. Wait on its artifacts, not on the
-process:
+Runtime scales with pool size, so on a large pool this is the longest stage in the
+workflow. Wait on its artifacts, not on the process:
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
