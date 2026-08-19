@@ -669,3 +669,37 @@ def test_conversion_memory_is_caller_settable(monkeypatch):
     module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
     module.prepare({"image": "nvcr.io/x:1"}, {**ctx, "conversion_memory_gb": 64})
     assert "--mem 64G" in next(c for c in calls if "enroot import" in c)
+
+
+# ── A long conversion must be observable while it runs ─────────────────────
+# A multi-GB image converts for tens of minutes. Its output streams back over
+# ssh into the caller's buffer and is printed only on failure, so from outside
+# a slow conversion and a hung one are indistinguishable -- the only recourse
+# was polling squeue by hand and guessing.
+
+def test_conversion_writes_a_log_beside_the_image(monkeypatch):
+    convert = _conversion_command(monkeypatch)
+    assert "tee" in convert and ".import.log" in convert, (
+        "the conversion leaves no on-disk trace, so progress cannot be tailed"
+    )
+
+
+def test_conversion_log_does_not_swallow_the_exit_code(monkeypatch):
+    """A plain pipeline reports tee's status, masking a failed import."""
+    convert = _conversion_command(monkeypatch)
+    assert "PIPESTATUS" in convert, (
+        "piping to tee makes the shell report tee's exit code; a failed enroot "
+        "import would then look like a success and a truncated sqsh would only "
+        "be caught later by the hsqs check"
+    )
+
+
+def test_successful_conversion_reports_where_the_log_is(monkeypatch):
+    module, ctx, _ = _slurm_with(monkeypatch, ["", "hsqs"])
+    out = module.prepare({"image": "nvcr.io/x:1"}, ctx)
+    assert out["import_log"].endswith(".import.log")
+
+
+def test_failed_conversion_names_the_log(monkeypatch):
+    """The path is most needed exactly when the summary is too short."""
+    assert ".import.log" in _conversion_failure(monkeypatch, "boom")

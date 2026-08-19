@@ -308,6 +308,11 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         )
 
     note = "converted" if not magic else "reconverted (corrupt or truncated sqsh)"
+    # A large image converts for tens of minutes with no output anywhere: the
+    # stream goes back over ssh into the caller's buffer and is printed only on
+    # failure, so a slow conversion and a hung one look identical while it runs.
+    # Land it next to the .sqsh instead, where it can be tailed from any shell.
+    log_path = f"{target[:-5]}.import.log"
     # Only now -- on the rare path that actually converts -- is discovery worth
     # an ssh round trip. The cached path stays a single `head -c4`.
     partitions = ctx.get("partitions")
@@ -334,7 +339,12 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         # otherwise leave a partial layer tree behind on every retry.
         "trap 'rm -rf \"${ENROOT_TEMP_PATH}\"' EXIT",
         "cd /tmp",
-        f"enroot import -o {shlex.quote(target)} docker://{enroot_uri(image)}",
+        # Tee, do not redirect: the caller still needs the output on failure,
+        # and PIPESTATUS preserves enroot's exit code past the pipe (a plain
+        # pipeline would report tee's success and mask a failed import).
+        f"enroot import -o {shlex.quote(target)} docker://{enroot_uri(image)}"
+        f" 2>&1 | tee -a {shlex.quote(log_path)}",
+        'exit "${PIPESTATUS[0]}"',
     ])
     # Built as a token list rather than an f-string: the previous form ended in
     # `.replace("  ", " ")` to tidy an empty flag slot, which would corrupt any
@@ -400,7 +410,9 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
                 "well-formed on the COMPUTE nodes (it is read there, not on "
                 "the login node; NGC_KEY in the job env is not consulted)"
             )
-        raise ValueError(f"enroot import failed{hint}: {detail}")
+        raise ValueError(
+            f"enroot import failed{hint}: {detail} (full output: {log_path})"
+        )
 
     verify = subprocess.run(
         ["ssh", login, f"head -c4 {shlex.quote(target)} 2>/dev/null || true"],
@@ -413,7 +425,7 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
             f"conversion produced no valid squashfs at {target} "
             f"(magic {verify!r}); raise --conversion-minutes or use a longer partition"
         )
-    return {"image": target, "notes": [note]}
+    return {"image": target, "notes": [note], "import_log": log_path}
 
 
 def _limit_minutes(time_limit: str) -> int:
