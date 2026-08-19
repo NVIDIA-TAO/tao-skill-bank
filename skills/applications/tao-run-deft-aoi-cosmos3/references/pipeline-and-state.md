@@ -17,7 +17,6 @@ baseline/evaluate_benchmark
   -> iter1/routing
 
 iterN/routing
-  -> anomalygen                          (or documented skip)
   -> data_mining
   -> assemble_data
   -> validate_data
@@ -60,44 +59,33 @@ count against `max_iterations`.
 
 1. Build `mining_targets.json` only from the preceding Proxy false-accept /
    false-reject artifacts. Never read Benchmark per-sample errors here.
-2. Run `paidf-anomalygen` in `inference_only` mode against the recorded
-   AnomalyGen project. Commit Phase 2's defect-to-count `allocation.json` as
-   the canonical AMP-allocation evidence, then run `emit_sdg_sharegpt.py` to turn each generated pair
-   into a bare `NG` record. When the driving Proxy RCCA recorded zero false
-   accepts, commit `--skip` instead of launching the generator after checking
-   the recorded `false_accepts_json` on disk. See
-   `references/paidf-anomalygen.md`.
-3. Invoke `tao-mine-aoi-images` on the recorded Mining pool. Persist raw mined
+2. Invoke `tao-mine-aoi-images` on the recorded Mining pool. Persist raw mined
    paths and source/target embeddings under the current iteration.
-4. Run `filter_mined_by_cosine.py` into `mined_candidates.parquet`; a zero-row
+3. Run `filter_mined_by_cosine.py` into `mined_candidates.parquet`; a zero-row
    result is a hard stop. Then run the mapped skill's
    `filter_mined_history.py` to remove filepaths selected by every prior
    iteration and write the final `mined_filtered.parquet`, per-iteration
    summary, and run-level ledger. A zero-row novel result is also a hard stop;
    surface the recommendation to increase top-K above the default 5 or expand the
    Mining pool.
-5. Run `emit_mined_sharegpt.py` to align every mined path to exactly one Mining
-   source record. It inherits the source prompt, golden reference, and exact
-   label.
-6. After RCA and Mining selection, run `assemble_training_json.py` without a
-   seed for `iter1`, passing the mined records and — when AnomalyGen ran — the
-   synthetic records as separate `--new-json` inputs; together they become
-   `train_iter_1.json`. Later iterations use `train_iter_<N-1>.json` as the
-   seed and write `train_iter_<N>.json`. Dedupe by the two-image pair and
+4. Run `emit_mined_sharegpt.py` to align every mined path to exactly one Mining
+   source record. It inherits the source prompt and exact label.
+5. After RCA and Mining selection, run `assemble_training_json.py` without a
+   seed for `iter1`, passing the mined records as the `--new-json` input to
+   produce `train_iter_1.json`. Later iterations use `train_iter_<N-1>.json`
+   as the seed and write `train_iter_<N>.json`. Dedupe by the single image and
    exclude Proxy and Benchmark targets.
-7. Run `validate_sharegpt.py --require-files` and
+6. Run `validate_sharegpt.py --require-files` and
    `validate_split_contract.py` against the assembled Train file, passing
-   `--synthetic` when AnomalyGen produced records this iteration and
    `--previous-train train_iter_<N-1>.json` for N>1. The latter makes historical
    records eligible while proving that the current Train retained all of them.
-8. Retrain, then Benchmark-evaluate/gate. Stop when the gate passes or
+7. Retrain, then Benchmark-evaluate/gate. Stop when the gate passes or
    `N = max_iterations`. Only when the loop continues, Proxy-evaluate and run
    RCCA to seed the next iteration's routing.
 
 Training data is monotonic after its creation: `train_iter_1.json` contains
-only newly mined and newly generated, validated records; `train_iter_<N>.json`
-for `N > 1` starts from the preceding Train artifact and adds only newly mined
-and newly generated, validated records.
+only newly mined, validated records; `train_iter_<N>.json` for `N > 1` starts
+from the preceding Train artifact and adds only newly mined, validated records.
 
 ## State
 

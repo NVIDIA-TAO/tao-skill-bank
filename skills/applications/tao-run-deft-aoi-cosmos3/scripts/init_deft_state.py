@@ -28,7 +28,6 @@ STAGES = [
     "evaluate_proxy",
     "proxy_rcca",
     "routing",
-    "anomalygen",
     "data_mining",
     "assemble_data",
     "validate_data",
@@ -75,11 +74,6 @@ DEFAULT_COSMOS_IMAGE = os.environ.get(
 DEFAULT_MINING_IMAGE = os.environ.get(
     "TAO_DS_IMAGE"
 ) or _resolve_image_from_versions_yaml("images", "tao_toolkit", "data_services")
-DEFAULT_ANOMALYGEN_IMAGE = os.environ.get(
-    "AG_IMAGE"
-) or _resolve_image_from_versions_yaml(
-    "images", "metropolis_sdg", "paidf_anomalygen"
-)
 BASE_MODEL_ALIASES = {
     "nano": "nvidia/Cosmos3-Nano",
     "cosmos3-nano": "nvidia/Cosmos3-Nano",
@@ -132,13 +126,6 @@ def _resolve_specs(
         "proxy": evaluate_for("proxy", args.proxy_spec),
         "benchmark": evaluate_for("benchmark", args.benchmark_spec),
     }
-
-
-def _anomalygen_path(
-    override: pathlib.Path | None, default: pathlib.Path
-) -> pathlib.Path:
-    """Prefer an explicit path; resolve symlinks so the record is mountable."""
-    return (override or default).expanduser().resolve()
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -299,7 +286,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "data_services": args.mining_container,
             },
             "training": {
-                "annotation_source": "generated_from_mining_and_anomalygen",
+                "annotation_source": "generated_from_mining",
                 "num_gpus": args.num_gpus,
                 "num_nodes": args.num_nodes,
                 "gpu_model": args.gpu_model,
@@ -321,45 +308,6 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     "identity": "filepath",
                     "history_file": str(results_dir / "mining_history.json"),
                 },
-            },
-            "anomalygen": {
-                "sub_skill": "paidf-anomalygen",
-                # The DEFT loop only needs Phases 2-3 (AMP routing + SDG
-                # diffusion); Phases 4-7 are SDG-quality optimization and
-                # contribute no training pairs.
-                "mode": "inference_only",
-                "num_search_run": 0,
-                "nn_threshold": 0,
-                "project": args.anomalygen_project,
-                "num_SDG": args.num_sdg,
-                "container": args.anomalygen_container,
-                # Explicit flags win; otherwise derive the workspace
-                # convention. Resolve through symlinks so the recorded path is
-                # the real one — a symlinked subtree under the workspace
-                # dangles inside the container when only $WS is mounted.
-                "checkpoint_dir": str(_anomalygen_path(
-                    args.anomalygen_checkpoint_dir,
-                    workspace
-                    / "augmentation/anomalygen/checkpoints"
-                    / args.anomalygen_project,
-                )),
-                "dataset_dir": str(_anomalygen_path(
-                    args.anomalygen_dataset_dir,
-                    workspace
-                    / "augmentation/anomalygen/datasets"
-                    / args.anomalygen_project,
-                )),
-                "defect_spec": str(_anomalygen_path(
-                    args.anomalygen_dataset_dir,
-                    workspace
-                    / "augmentation/anomalygen/datasets"
-                    / args.anomalygen_project,
-                ) / "defect_spec.jsonl"),
-                "cosmos_models_dir": str(_anomalygen_path(
-                    args.cosmos_models_dir,
-                    workspace / "augmentation/anomalygen/base_checkpoints",
-                )),
-                "label": "NG",
             },
         },
         "iterations": {},
@@ -455,35 +403,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-similarity", type=float, default=0.9)
     parser.add_argument("--cosmos-container", default=DEFAULT_COSMOS_IMAGE)
     parser.add_argument("--mining-container", default=DEFAULT_MINING_IMAGE)
-    parser.add_argument("--anomalygen-container", default=DEFAULT_ANOMALYGEN_IMAGE)
-    parser.add_argument(
-        "--anomalygen-project",
-        default="nvpcb",
-        help="Directory label for this AnomalyGen project's checkpoint + dataset.",
-    )
-    parser.add_argument(
-        "--num-sdg",
-        type=int,
-        default=20,
-        help="Per-iteration synthetic defect budget, allocated across defect types.",
-    )
-    # Without these, assets outside the workspace convention need either a
-    # symlink (which dangles inside the container) or a full copy.
-    parser.add_argument(
-        "--anomalygen-checkpoint-dir",
-        type=pathlib.Path,
-        help="Override the derived AnomalyGen checkpoint directory.",
-    )
-    parser.add_argument(
-        "--anomalygen-dataset-dir",
-        type=pathlib.Path,
-        help="Override the derived AnomalyGen dataset directory.",
-    )
-    parser.add_argument(
-        "--cosmos-models-dir",
-        type=pathlib.Path,
-        help="Override the derived Cosmos base-checkpoints cache directory.",
-    )
     return parser
 
 
@@ -524,7 +443,6 @@ def main(argv: list[str] | None = None) -> int:
         "lora_r": args.lora_r,
         "lora_alpha": args.lora_alpha,
         "top_k_per_target": args.top_k_per_target,
-        "num_sdg": args.num_sdg,
     }
     invalid = {name: value for name, value in positive.items() if value <= 0}
     if invalid:

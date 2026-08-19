@@ -6,14 +6,14 @@
 # case has a reviewed shape to start from.
 #
 # Everything AOI-specific is identical to the LoRA example — bare OK/NG system
-# prompt, single `annotation_path`, image-pair pixel budget, no val_dataset.
+# prompt, single `annotation_path`, single-image pixel budget, no val_dataset.
 # Only four things change:
 #   1. no [policy.lora] block;
 #   2. lr drops 1e-4 -> 1e-5 (full SFT on a small mined pool forgets fast);
 #   3. flat LR (`optm_decay_type = "none"`) + fused optimizer;
 #   4. parallelism shards across GPUs — the LoRA example's single-GPU shape
 #      will OOM on a full-parameter update.
-# Prefer LoRA on small mined/synthetic pools: less overfitting and less
+# Prefer LoRA on small mined pools: less overfitting and less
 # catastrophic forgetting of the base reasoner.
 #
 # Shown at iteration N, i.e. AFTER zero-shot Proxy evaluate + Proxy RCA +
@@ -36,7 +36,7 @@ media_root = "/tao-workspace"
 
 # No [custom.val_dataset]: Proxy is a separate evaluate job, never Train val data.
 
-# Two-image AOI pairs ([AOI, golden_reference]) — a pixel budget, not video fps.
+# Single-image AOI records — a pixel budget, not video fps.
 [custom.vision]
 max_pixels = 401408
 min_pixels = 50176

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Align mined AOI paths to source pairs and emit bare OK/NG ShareGPT JSON."""
+"""Align mined image paths to source records and emit bare OK/NG ShareGPT JSON."""
 
 from __future__ import annotations
 
@@ -44,10 +44,9 @@ def _source_index(
     index: dict[str, list[tuple[int, dict[str, Any]]]] = {}
     for record_index, record in enumerate(records):
         images = record.get("images")
-        if not isinstance(images, list) or len(images) != 2:
+        if not isinstance(images, list) or len(images) != 1:
             raise ValueError(
-                f"source record[{record_index}]: images must contain "
-                "[AOI, golden_reference]"
+                f"source record[{record_index}]: images must contain exactly one image"
             )
         prompt_and_label(record, context=f"source record[{record_index}]")
         for key in _path_keys(str(images[0]), media_root):
@@ -120,17 +119,11 @@ def emit_records(
         prompt, label = prompt_and_label(
             source, context=f"source record[{source_index}]"
         )
-        source_images = source["images"]
         record: dict[str, Any] = {
             "images": [
                 _format_path(
                     mined_path, media_root=media_root, relative=relative
-                ),
-                _format_path(
-                    str(source_images[1]),
-                    media_root=media_root,
-                    relative=relative,
-                ),
+                )
             ],
             "conversations": [
                 {"from": "human", "value": prompt},

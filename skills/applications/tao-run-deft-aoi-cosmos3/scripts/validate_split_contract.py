@@ -26,8 +26,8 @@ ROLE_PATHS = {
 
 def _target(record: dict, path: pathlib.Path, index: int, media_root: pathlib.Path) -> str:
     images = record.get("images")
-    if not isinstance(images, list) or len(images) != 2:
-        raise ValueError(f"{path}[{index}]: images must contain [target, golden_reference]")
+    if not isinstance(images, list) or len(images) != 1:
+        raise ValueError(f"{path}[{index}]: images must contain exactly one image")
     if not all(isinstance(image, str) and image for image in images):
         raise ValueError(f"{path}[{index}]: image paths must be non-empty strings")
     target = pathlib.Path(images[0])
@@ -91,22 +91,9 @@ def validate(
                 f"target leakage between {left} and {right}: {sorted(shared)[:5]}"
             )
 
-    # Synthetic AnomalyGen output is a training source alongside Mining, but it
-    # is still evaluation-isolated: generated boards must never appear in an
-    # evaluation split.
-    if "synthetic" in role_targets:
-        for evaluation_role in ("proxy", "benchmark"):
-            shared = role_targets["synthetic"] & role_targets[evaluation_role]
-            overlaps[f"synthetic:{evaluation_role}"] = len(shared)
-            if shared:
-                raise ValueError(
-                    f"target leakage between synthetic and {evaluation_role}: "
-                    f"{sorted(shared)[:5]}"
-                )
-
     # Iteration N>1 is seeded from the preceding committed Train artifact.
     # Treat that exact artifact as an eligible source and keep it isolated from
-    # both evaluation roles just like the current iteration's synthetic data.
+    # both evaluation roles.
     if "previous_train" in role_targets:
         for evaluation_role in ("proxy", "benchmark"):
             shared = (
@@ -132,7 +119,6 @@ def validate(
         eligible = (
             role_targets["mining"]
             | role_targets.get("previous_train", set())
-            | role_targets.get("synthetic", set())
         )
         outside_eligible = role_targets["train"] - eligible
         overlaps["train:mining"] = len(
@@ -150,16 +136,10 @@ def validate(
                     "generated Train must retain every record from "
                     f"--previous-train ({len(missing_previous)} missing)"
                 )
-        if "synthetic" in role_targets:
-            overlaps["train:synthetic"] = len(
-                role_targets["train"] & role_targets["synthetic"]
-            )
         if outside_eligible:
             sources = ["the Mining pool"]
             if "previous_train" in role_targets:
                 sources.append("--previous-train")
-            if "synthetic" in role_targets:
-                sources.append("the current iteration's --synthetic output")
             raise ValueError(
                 f"generated Train targets must come from {' or '.join(sources)}: "
                 f"{sorted(outside_eligible)[:5]}"
@@ -178,23 +158,12 @@ def validate(
             "benchmark": "benchmark_kpi_report_only",
             "mining": "mining_pool",
             **(
-                {"synthetic": "anomalygen_sdg"}
-                if "synthetic" in role_targets
-                else {}
-            ),
-            **(
                 {"previous_train": "previous_iteration_train"}
                 if "previous_train" in role_targets
                 else {}
             ),
             **(
-                {
-                    "train": (
-                        "generated_from_mining_and_anomalygen"
-                        if "synthetic" in role_targets
-                        else "generated_from_mining"
-                    )
-                }
+                {"train": "generated_from_mining"}
                 if "train" in role_targets
                 else {}
             ),
@@ -215,7 +184,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help=(
             "Optional generated training JSON; its targets must come from "
-            "Mining, --previous-train, or --synthetic."
+            "Mining or --previous-train."
         ),
     )
     parser.add_argument(
@@ -226,16 +195,6 @@ def _build_parser() -> argparse.ArgumentParser:
             "Immediate preceding iteration's generated Train JSON. Required "
             "for iteration N>1 so historical records remain eligible and "
             "their monotonic retention is verified."
-        ),
-    )
-    parser.add_argument(
-        "--synthetic",
-        default=None,
-        type=pathlib.Path,
-        help=(
-            "Optional AnomalyGen ShareGPT JSON for this iteration. Its targets "
-            "become an eligible Train source and must not appear in Proxy or "
-            "Benchmark."
         ),
     )
     for role in ROLE_PATHS:
@@ -257,8 +216,6 @@ def main(argv: list[str] | None = None) -> int:
         role: (getattr(args, role) or workspace.joinpath(*parts)).expanduser().resolve()
         for role, parts in ROLE_PATHS.items()
     }
-    if args.synthetic is not None:
-        role_paths["synthetic"] = args.synthetic.expanduser().resolve()
     if args.previous_train is not None:
         role_paths["previous_train"] = args.previous_train.expanduser().resolve()
     if args.train is not None:

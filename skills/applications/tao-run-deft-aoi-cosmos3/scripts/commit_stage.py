@@ -31,13 +31,11 @@ STAGES = (
     "evaluate_benchmark",
     "benchmark_metrics",
     "routing",
-    "anomalygen",
     "data_mining",
     "assemble_data",
     "validate_data",
     "loop_stop",
 )
-SKIPPABLE_STAGES = ("anomalygen",)
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -142,29 +140,6 @@ def _required_json_file(value: pathlib.Path | None, flag: str) -> str:
     return path
 
 
-def _required_allocation(
-    value: pathlib.Path | None, flag: str
-) -> tuple[str, int]:
-    path = _required_file(value, flag)
-    try:
-        payload = json.loads(pathlib.Path(path).read_text())
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{flag} must be a JSON object: {path} ({exc})") from exc
-    if not isinstance(payload, dict) or not payload:
-        raise ValueError(f"{flag} must be a non-empty defect-to-count JSON object")
-    invalid = {
-        str(defect): count
-        for defect, count in payload.items()
-        if not isinstance(count, int) or isinstance(count, bool) or count < 0
-    }
-    if invalid:
-        raise ValueError(f"{flag} contains invalid allocation counts: {invalid}")
-    allocated = sum(payload.values())
-    if allocated <= 0:
-        raise ValueError(f"{flag} must allocate at least one sample")
-    return path, allocated
-
-
 def _required_checkpoint(value: pathlib.Path | None, flag: str) -> str:
     if value is None:
         raise ValueError(f"{flag} is required")
@@ -223,7 +198,6 @@ def _apply_success(
     phase: dict[str, Any],
     args: argparse.Namespace,
     results_dir: pathlib.Path,
-    iterations: dict[str, Any],
 ) -> None:
     stage = args.stage
     phase_root = results_dir / args.iter_label
@@ -278,60 +252,6 @@ def _apply_success(
             phase_root,
             "--mining-targets",
         )
-    elif stage == "anomalygen":
-        if args.skip:
-            # Documented branch skip: the driving Proxy RCCA found no false
-            # accepts, so there is no under-detection gap for synthetic
-            # defects to close.
-            match = re.fullmatch(r"iter([1-9][0-9]*)", args.iter_label)
-            driving_label = (
-                "baseline"
-                if match and int(match.group(1)) == 1
-                else f"iter{int(match.group(1)) - 1}" if match else args.iter_label
-            )
-            driving_phase = iterations.get(driving_label, {})
-            false_accepts = (
-                driving_phase.get("false_accepts_json")
-                if isinstance(driving_phase, dict)
-                else None
-            )
-            if not isinstance(false_accepts, str):
-                raise ValueError(
-                    "anomalygen --skip requires proxy_rcca false_accepts_json evidence"
-                )
-            try:
-                false_accept_rows = json.loads(pathlib.Path(false_accepts).read_text())
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ValueError(
-                    f"cannot validate false_accepts_json: {false_accepts} ({exc})"
-                ) from exc
-            if not isinstance(false_accept_rows, list) or false_accept_rows:
-                raise ValueError(
-                    "anomalygen --skip requires false_accepts_json to be an empty JSON array"
-                )
-            phase["anomalygen_skipped"] = True
-        else:
-            phase["anomalygen_sdg_csv"] = _within(
-                _required_file(args.anomalygen_sdg, "--anomalygen-sdg"),
-                phase_root,
-                "--anomalygen-sdg",
-            )
-            allocation, allocated = _required_allocation(
-                args.anomalygen_allocation, "--anomalygen-allocation"
-            )
-            phase["anomalygen_allocation_json"] = _within(
-                allocation,
-                phase_root,
-                "--anomalygen-allocation",
-            )
-            phase["anomalygen_amp_allocated"] = allocated
-            phase["anomalygen_sharegpt_json"] = _within(
-                _required_json_file(
-                    args.anomalygen_sharegpt, "--anomalygen-sharegpt"
-                ),
-                phase_root,
-                "--anomalygen-sharegpt",
-            )
     elif stage == "data_mining":
         artifacts = {
             "mining_mined_parquet": (
@@ -423,10 +343,6 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(
             "--duration-sec is required and must be a positive measured duration"
         )
-    if getattr(args, "skip", False) and args.stage not in SKIPPABLE_STAGES:
-        raise ValueError(
-            f"--skip is valid only for: {', '.join(SKIPPABLE_STAGES)}"
-        )
     results_dir = args.results_dir.expanduser().resolve()
     state_path = results_dir / "deft_state.json"
     if not state_path.is_file():
@@ -478,9 +394,9 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 state = json.loads(state_path.read_text())
                 iterations = state["iterations"]
                 phase = iterations[args.iter_label]
-                _apply_success(phase, args, results_dir, iterations)
+                _apply_success(phase, args, results_dir)
             else:
-                _apply_success(phase, args, results_dir, iterations)
+                _apply_success(phase, args, results_dir)
             state["status"] = "in_progress"
             state.pop("completed_at", None)
         else:
@@ -579,17 +495,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--benchmark-metrics-summary", type=pathlib.Path)
     parser.add_argument("--metric-result", type=pathlib.Path)
     parser.add_argument("--mining-targets", type=pathlib.Path)
-    parser.add_argument("--anomalygen-sdg", type=pathlib.Path)
-    parser.add_argument("--anomalygen-allocation", type=pathlib.Path)
-    parser.add_argument("--anomalygen-sharegpt", type=pathlib.Path)
-    parser.add_argument(
-        "--skip",
-        action="store_true",
-        help=(
-            "Record a documented branch skip instead of artifacts. Valid only "
-            f"for: {', '.join(SKIPPABLE_STAGES)}."
-        ),
-    )
     parser.add_argument("--mining-parquet", type=pathlib.Path)
     parser.add_argument("--mining-candidates", type=pathlib.Path)
     parser.add_argument("--mining-summary", type=pathlib.Path)

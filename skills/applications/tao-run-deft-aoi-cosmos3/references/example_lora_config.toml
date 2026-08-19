@@ -1,6 +1,6 @@
 # EXAMPLE Cosmos3 AOI LoRA SFT config (cosmos-rl) — REFERENCE ONLY.
 #
-# This is the DEFT default adaptation: LoRA over bare OK/NG PCB image pairs.
+# This is the DEFT default adaptation: LoRA over bare OK/NG PCB images.
 # You do NOT hand-write the staged spec. Build it from the model skill's
 # packaged template
 # (skills/models/tao-finetune-cosmos-reason/references/spec_template_train.yaml),
@@ -37,8 +37,8 @@ media_root = "/tao-workspace"
 # No [custom.val_dataset], and validation stays disabled below: Proxy is scored
 # by a separate evaluate job and must never become Train validation data.
 
-# Parsed by cosmos_reason1_utils.VisionConfig. AOI records are two-image pairs
-# ([AOI, golden_reference]), so this is a pixel budget — not the video
+# Parsed by cosmos_reason1_utils.VisionConfig. AOI records contain one image,
+# so this is a pixel budget — not the video
 # template's fps / max_frames / nframes.
 [custom.vision]
 max_pixels = 401408

@@ -24,11 +24,10 @@ Required sections:
 
 1. **Run Configuration & Outcome** — platform, model, bare mode, KPI contract,
    GPU/node shape and exact GPU model, timestamps, current/terminal status; a
-   two-column DEFT experiment summary with baseline/end KPI, routing, total and
-   average measured runtime, and SDG throughput; then a Training Set Growth
-   table with `Iteration`, `KNN Raw Mined`, `SDG Generated`, `New Unique Images
-   (After Dedup)`, `Training Set Total`, and `Δ`. `SDG Generated` comes from
-   the committed CSV row count. `assemble_summary.json.output_records` owns the
+   two-column DEFT experiment summary with baseline/end KPI, routing, and total
+   and average measured runtime; then a Training Set Growth table with
+   `Iteration`, `KNN Raw Mined`, `New Unique Images (After Dedup)`, `Training
+   Set Total`, and `Δ`. `assemble_summary.json.output_records` owns the
    cumulative total; its difference from the preceding total owns both New
    Unique and `Δ`. The committed JSON length is a compatibility fallback, while
    `unique_target_images.new_after_dedup` remains a batch diagnostic in
@@ -36,9 +35,8 @@ Required sections:
 2. **Benchmark KPI Trend** — immediately follows Run Configuration & Outcome;
    only frozen Benchmark results carry a pass/fail verdict.
 3. **Dataset Isolation** — Proxy/Benchmark/Mining input paths, per-iteration
-   AnomalyGen output, generated Train artifacts by iteration, OK/NG counts,
-   Benchmark SHA-256, and role ownership. Attribute every Train record to its
-   producer: mined real pairs or synthetic AnomalyGen pairs.
+   generated Train artifacts by iteration, OK/NG counts, Benchmark SHA-256,
+   and role ownership. Attribute every Train record to real-image mining.
 4. **Prompt Examples** — up to three distinct first-user prompts read from the
    recorded Proxy, Benchmark, and Mining annotations. Group identical prompts
    across roles, show their record count and exact `OK`/`NG` response contract,
@@ -52,17 +50,13 @@ Required sections:
    measured durations from `deft_state.json.events`. Summary totals exclude the
    administrative `loop_stop` event and label partial historical logs instead
    of interpreting zero as elapsed time.
-7. **Augmentation Volume** — per iteration and per producer. Mining: raw
-   candidates, cosine-kept paths. AnomalyGen: requested `num_SDG`,
-   AMP-allocated (the sum of the committed `allocation.json`), generated, and
-   the per-defect-type breakdown, or the documented skip and its reason. Then
-   mining candidates, already-mined rejects, newly selected novel target
+7. **Mining Volume** — raw candidates, cosine-kept paths, already-mined rejects,
+   newly selected novel target
    images, and cumulative training records by iteration. Read the
    per-iteration history summary and run-level ledger; surface any
    recommendation to increase top-K or expand the pool.
 8. **Artifacts** — baseline base-model reference, iteration checkpoints,
-   Proxy/Benchmark results, RCCA, mining, AnomalyGen `SDG_result.csv`,
-   `allocation.json`, and generated ShareGPT, assembled JSON, and
+   Proxy/Benchmark results, RCCA, mining, generated ShareGPT, assembled JSON, and
    validation-report links/paths.
 9. **Hard Stops / Warnings** — committed error events, if present.
 

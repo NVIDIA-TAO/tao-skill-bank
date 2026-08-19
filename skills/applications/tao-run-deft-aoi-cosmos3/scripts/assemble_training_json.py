@@ -19,10 +19,8 @@ def _load_json_list(path: pathlib.Path) -> list[dict]:
     data = load_records(path)
     for index, record in enumerate(data):
         images = record.get("images")
-        if not isinstance(images, list) or len(images) != 2:
-            raise ValueError(
-                f"{path}[{index}]: images must contain [AOI, golden_reference]"
-            )
+        if not isinstance(images, list) or len(images) != 1:
+            raise ValueError(f"{path}[{index}]: images must contain exactly one image")
         prompt_and_label(record, context=f"{path}[{index}]")
     return data
 
@@ -31,7 +29,7 @@ def _assistant_label(record: dict) -> str:
     return prompt_and_label(record, context="record")[1]
 
 
-def _pair_key(record: dict) -> tuple[str, ...]:
+def _media_key(record: dict) -> tuple[str, ...]:
     images = record.get("images")
     return tuple(images) if isinstance(images, list) else tuple()
 
@@ -44,7 +42,7 @@ def _target_key(record: dict) -> str:
 
 
 def _unique_target_images(records: list[dict]) -> set[str]:
-    """Return distinct, non-empty target image paths (the first image in each pair)."""
+    """Return distinct, non-empty image paths."""
     return {target for record in records if (target := _target_key(record))}
 
 
@@ -84,7 +82,7 @@ def assemble(
 
     for source_path, records in sources:
         for index, record in enumerate(records):
-            key = _pair_key(record)
+            key = _media_key(record)
             if dedupe and key and key in seen:
                 duplicates += 1
                 continue

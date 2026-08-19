@@ -10,17 +10,15 @@ paths before invoking a script.
 | `init_deft_state.py` | Initialize version-5 Cosmos3 state once; freeze Benchmark hash, bare mode, media root, and immutable execution policy. |
 | `deft_context.py` | Re-read state and print the deterministic next stage plus network/Python policy; reject a requested-stage mismatch. |
 | `deft_exec.py` | Enforce state-backed offline/no-install/no-pull policy for external commands. |
-| `commit_stage.py` | Validate one stage's inputs and atomically update state. AnomalyGen skip requires an empty recorded false-accept array; terminal commits require reason/report evidence. |
+| `commit_stage.py` | Validate one stage's inputs and atomically update state; terminal commits require reason/report evidence. |
 | `metric_contract.py` | Validate/compare the Benchmark KPI contract. |
 | `record_metric_result.py` | Bind `benchmark_metrics/metric_result.json` to an iteration. |
-| `validate_sharegpt.py` | Enforce two-image, exact bare OK/NG ShareGPT records. |
+| `validate_sharegpt.py` | Enforce single-image, exact bare OK/NG ShareGPT records. |
 | `validate_split_contract.py` | Enforce split isolation, monotonic generated-Train lineage, and Benchmark hash. |
 | `check_annotations.py` | Per-role field-contract check over all three workspace annotation files. `ROLE_CONTRACT` is the authoritative field list. |
-| `patch_eval_image_cap.py` | Raises the pinned image's 1-image-per-prompt evaluation cap to what bare_okng needs, and returns the read-only mount. Retires itself once the image is fixed. |
 | `analyze_gaps.py` | Proxy RCCA artifacts or Benchmark aggregate metric evidence. |
-| `emit_sdg_sharegpt.py` | AnomalyGen SDG output as bare `NG` ShareGPT records. |
 | `filter_mined_by_cosine.py` | Recompute max cosine to Proxy targets and enforce the floor. |
-| `emit_mined_sharegpt.py` | Align filtered paths to Mining prompts, golden images, and labels. |
+| `emit_mined_sharegpt.py` | Align filtered paths to Mining prompts and labels. |
 | `assemble_training_json.py` | Monotonic bare training-data merge with dedupe/leakage checks. |
 | `align_token_usage.py` | Backfill stage token accounting after a run when a transcript is available. |
 | `render_report.py` | Deterministically render the self-contained NVIDIA-styled HTML report from state and recorded artifacts, including escaped annotation prompt examples; validate required sections/placeholders and replace atomically. |

@@ -64,8 +64,8 @@ file is the single source of truth, not this document. It wraps
 `validate_sharegpt.py`, which remains available per-file with `--require-id`.
 
 Any assistant response other than exact `OK` or `NG` is a hard stop. Each
-file root must be a non-empty JSON array, and each record must contain exactly
-`[AOI, golden_reference]`. JSONL input is invalid even when it contains the same
+file root must be a non-empty JSON array, and each record's `images` array must
+contain exactly one image. JSONL input is invalid even when it contains the same
 records. A missing `id` on Proxy or Benchmark is a hard stop here — see
 `references/aoi-annotation.md`. Adding ids changes the Benchmark SHA-256, so do
 it before `init_deft_state.py` freezes the hash.
@@ -77,8 +77,8 @@ it before `init_deft_state.py` freezes the hash.
   --workspace "$WORKSPACE"
 ```
 
-Target AOI images must be disjoint across Proxy, Benchmark, and Mining. Golden
-references may be shared. There is no input Train annotation. Record the
+Images must be disjoint across Proxy, Benchmark, and Mining. There is no input
+Train annotation. Record the
 printed Benchmark SHA-256 in the summary; `init_deft_state.py` freezes it after
 approval.
 
@@ -100,11 +100,6 @@ TAO_DS_IMAGE=$(
     --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.tao_toolkit.data_services
 )
-AG_IMAGE=$(
-  "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
-    --skill-bank "$TAO_SKILL_BANK_PATH" \
-    images.metropolis_sdg.paidf_anomalygen
-)
 ```
 
 Use image inspection through the chosen platform. If an image is absent and
@@ -113,31 +108,12 @@ pulling requires a credential, report the missing variable name only. A
 `~/.docker/config.json`, not a missing key — retry once with a throwaway empty
 `DOCKER_CONFIG` before reporting a credential problem.
 
-Known defects in `images.tao_toolkit.cosmos_rl` as pinned (verified
-2026-07-29). Both break evaluation only; training is unaffected. Check whether
-the pinned tag still carries them, and report them in the Pre-Flight Summary
-rather than discovering them on the first GPU job:
+Known defect in `images.tao_toolkit.cosmos_rl` as pinned (verified
+2026-07-29). It breaks evaluation only; training is unaffected. Check whether
+the pinned tag still carries it and report it in the Pre-Flight Summary:
 
 - `cosmos_rl/evaluation/evaluator.py` hard-indexes `item["id"]` on the
   conversations branch, so evaluation annotations need an `id` (step 3).
-- `cosmos_rl/evaluation/base.py` hardcodes
-  `limit_mm_per_prompt={"video": 1, "image": 1}`, which rejects the two-image
-  AOI record outright. There is no spec key or env override.
-  `scripts/patch_eval_image_cap.py` handles this: it reads `base.py` out of the
-  pinned image, raises only that literal, and returns the read-only mount for
-  the evaluate jobs. Report its `cap_in_image` here so the Summary states
-  whether the workaround is still needed — the script emits nothing once the
-  image is fixed. Use `--probe` at this point: it reports the cap without
-  writing anything, which is what this gate requires. Run it again with
-  `--output-dir` after approval to produce the mount.
-
-Probe the AnomalyGen assets read-only and report each as present or
-`WILL_AUTO_FETCH`: the fine-tuned checkpoint directory holding `ag_config.yaml`,
-the dataset directory with `defect_spec.jsonl` and
-`semantic_segmentation_labels.json`, and the Cosmos base-checkpoints cache.
-Probing only — the bootstrap that populates them is post-gate and is owned by
-`references/paidf-anomalygen.md`. In air-gapped runs every asset must be
-pre-staged; report a missing one instead of planning a download.
 
 ## 6. Model and evaluator contract
 
@@ -216,8 +192,8 @@ single approval gate and before the baseline frozen Benchmark evaluation.
 ## 8. Credentials
 
 Check only variables required for confirmed missing assets and the chosen
-platform. Neither token is required by default: the Cosmos-RL, data-services,
-and AnomalyGen images this workflow uses are public on `nvcr.io`, so `NGC_KEY`
+platform. Neither token is required by default: the Cosmos-RL and data-services
+images this workflow uses are public on `nvcr.io`, so `NGC_KEY`
 matters only for a registry that actually rejects an anonymous pull. Report
 `UNSET` as the normal case, not as a finding.
 
@@ -305,10 +281,8 @@ record-then-launch ordering must be explicit.
 | Iterations | <N> | user |
 | Train shape | <nodes x GPUs; exact GPU model/memory; epochs; batch; LR; LoRA> | user/spec/platform |
 | Mining | <top-K, default 5; cosine floor; history-aware filepath dedup> | user/default |
-| AnomalyGen | <project; num_SDG; asset status> | user/default |
 | Cosmos-RL image | <resolved URI> | versions.yaml |
 | Data-services image | <resolved URI> | versions.yaml |
-| AnomalyGen image | <resolved URI> | versions.yaml |
 | Credential status | <names with SET/UNSET only> | environment |
 | Job tracking | record before every native launch | workflow |
 | Monitoring | <yes/no and interval> | user/default |
@@ -326,12 +300,9 @@ lines below the table instead:
 
 - the variant-matched VLM base for the prepared PTM (Edge and Super never
   inherit Nano's default; see step 7);
-- which AnomalyGen assets are staged; `WILL_AUTO_FETCH` is legal only in
-  network-enabled mode, plus their commercial-training approval.
 
 Then stop. Remind the user that approval permits checkpoint preparation,
-post-gate spec/state creation, any network-enabled AnomalyGen bootstrap, and GPU
-submissions. After approval, prepare and
+post-gate spec/state creation, and GPU submissions. After approval, prepare and
 validate the Qwen3-VL checkpoint, write the staged specs with concrete nested
 values, initialize state once, re-read it, then begin baseline frozen
 Benchmark evaluation.

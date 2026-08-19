@@ -45,7 +45,7 @@ ROLE_CONTRACT = {
         "consumer": "emit_mined_sharegpt.py -> tao_sft_example.py",
     },
 }
-ALWAYS = "images is [AOI, golden_reference]; final assistant value is exactly OK or NG"
+ALWAYS = "images contains exactly one image; final assistant value is exactly OK or NG"
 
 
 def _print_contract() -> None:

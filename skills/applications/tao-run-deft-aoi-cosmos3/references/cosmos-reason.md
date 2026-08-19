@@ -78,8 +78,8 @@ been validated, hard-stop instead of applying Nano's Qwen3-VL 8B default.
 
 ## Run containers as the invoking user
 
-Every container that writes into the bound results directory — Train, both
-evaluate stages, AnomalyGen — must drop to the host user. Containers default to
+Every container that writes into the bound results directory — Train and both
+evaluate stages — must drop to the host user. Containers default to
 root, so their outputs land root-owned inside a directory the operator owns,
 and the run tree then cannot be deleted, re-rendered into, or cleaned up
 without `sudo`. On Docker:
@@ -210,35 +210,6 @@ Both stages must use the same checkpoint and generation settings; only the
 annotation, bound output directory, and save-folder label differ. For a LoRA
 export, set `model.enable_lora=true` and keep `model.base_model_path` aligned
 with Train's prepared Qwen3-VL PTM.
-
-### Lift the image's 1-image-per-prompt cap
-
-`cosmos_rl/evaluation/base.py` hardcodes
-`limit_mm_per_prompt={"video": 1, "image": 1}` when it builds the vLLM engine.
-Every AOI record carries two images, so both evaluation stages fail with
-`ValueError: At most 1 image(s) may be provided in one prompt` until that cap
-is raised. There is no spec key and no environment override; the rest of the
-file is already multi-image correct.
-
-Run this once per run, before the first evaluate job:
-
-```bash
-"$PYTHON" "$SKILL_ROOT/scripts/patch_eval_image_cap.py" \
-  --image "$COSMOS_RL_IMAGE" \
-  --output-dir "$RESULTS_DIR/patches/cosmos_rl_eval" \
-  --summary "$RESULTS_DIR/patches/cosmos_rl_eval/summary.json"
-```
-
-It reads `base.py` out of the image actually pinned, rewrites only that
-literal, and prints `MOUNT_ARG=<host>:<container>:ro`. Add that as a read-only
-mount to every `cosmos-rl-evaluate` job. Nothing is vendored into the skill, so
-the patch cannot mask a newer image.
-
-When the image already allows enough images the script writes no file and
-prints `no patch needed` — drop the mount in that case rather than overriding a
-file that no longer needs it. If it reports the cap was not found, the image
-changed shape: re-verify the defect instead of forcing a rewrite. Train jobs
-never need this mount; only evaluation builds the vLLM engine.
 
 The evaluator writes `results.json` with per-sample `video_id`, `response`,
 `question`, and `gt`. Run `analyze_gaps.py` afterward:

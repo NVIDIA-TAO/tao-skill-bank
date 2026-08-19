@@ -1,4 +1,4 @@
-# Cosmos3 AOI Real-Pair Mining
+# Cosmos3 AOI Real-Image Mining
 
 Read `skills/data/tao-mine-aoi-images/SKILL.md` before launch. Reuse its fixed
 three-step flow: embed Proxy targets, embed the Mining source pool with the
@@ -91,7 +91,7 @@ Mining pool; do not replay an earlier sample into the monotonic Train lineage.
 Commit `data_mining` with the final filtered parquet, pre-history candidate
 parquet, cosine summary, history ledger + per-iteration summary, both embedding
 parquets, and exact positive row count. The next stage uses
-`emit_mined_sharegpt.py` to recover the Mining source prompt, golden image, and
+`emit_mined_sharegpt.py` to recover the Mining source prompt and
 bare label.
 
 ```bash
@@ -106,5 +106,5 @@ bare label.
   --mining-target-embeddings "$MINING_DIR/target_embeddings.parquet" \
   --mining-source-embeddings "$MINING_DIR/source_embeddings.parquet" \
   --mining-count <positive-int> \
-  --summary "history-aware mining selected novel real pairs"
+  --summary "history-aware mining selected novel real images"
 ```

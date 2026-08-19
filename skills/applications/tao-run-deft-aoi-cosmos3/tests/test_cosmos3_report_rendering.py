@@ -53,7 +53,7 @@ def css_rules(template: pathlib.Path) -> dict[str, dict[str, str]]:
 
 def record(label: str, prompt: str = "Inspect.") -> dict:
     return {
-        "images": ["target.png", "golden.png"],
+        "images": ["target.png"],
         "conversations": [
             {"from": "human", "value": prompt},
             {"from": "gpt", "value": label},
@@ -244,7 +244,7 @@ class CosmosReportRenderingTests(unittest.TestCase):
             workspace = pathlib.Path(temporary) / "workspace"
             results.mkdir()
             annotations: dict[str, str] = {}
-            inspection_prompt = "Compare <script>alert('prompt')</script> with golden."
+            inspection_prompt = "Inspect <script>alert('prompt')</script>."
             for role, label in (("proxy", "NG"), ("benchmark", "NG"), ("mining", "OK")):
                 path = workspace / "annotations" / f"{role}.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -296,7 +296,6 @@ class CosmosReportRenderingTests(unittest.TestCase):
                         "num_gpus": 2,
                         "gpu_model": "NVIDIA H100 80GB HBM3",
                     },
-                    "anomalygen": {"num_SDG": 20},
                 },
                 "iterations": {
                     "iter1": {
@@ -341,18 +340,10 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            sdg_csv = results / "iter1/anomalygen/sdg/SDG_result.csv"
-            sdg_csv.parent.mkdir(parents=True, exist_ok=True)
-            sdg_csv.write_text("image,label\na.png,NG\nb.png,NG\n", encoding="utf-8")
-            allocation = results / "iter1/anomalygen/sdg/allocation.json"
-            allocation.write_text(json.dumps({"bridge": 20}), encoding="utf-8")
             state["iterations"]["iter1"].update(
                 {
                     "mining_summary": str(mining_summary),
                     "assemble_summary": str(assemble_summary),
-                    "anomalygen_sdg_csv": str(sdg_csv),
-                    "anomalygen_allocation_json": str(allocation),
-                    "anomalygen_amp_allocated": 20,
                 }
             )
             entries = [
@@ -387,7 +378,7 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 "Prompt Examples",
                 "Iteration Metrics",
                 "Pipeline Execution",
-                "Augmentation Volume",
+                "Mining Volume",
                 "Artifacts",
                 "Hard Stops / Warnings",
             ):
@@ -396,11 +387,9 @@ class CosmosReportRenderingTests(unittest.TestCase):
             self.assertIn("1 node(s) · 2 GPU(s) · NVIDIA H100 80GB HBM3", text)
             self.assertIn("1 iters × ~12s = 12s total time", text)
             self.assertIn("KNN Raw Mined", text)
-            self.assertIn("SDG Generated", text)
             self.assertIn("New Unique Images (After Dedup)", text)
             self.assertIn(">170</td>", text)
             self.assertIn(">+170</td>", text)
-            self.assertIn(">20</td><td class=\"num\">2</td>", text)
             self.assertLess(
                 text.index("Run Configuration &amp; Outcome"),
                 text.index("Benchmark KPI Trend"),
@@ -410,7 +399,7 @@ class CosmosReportRenderingTests(unittest.TestCase):
             )
             self.assertIn("Proxy · Benchmark · Mining", text)
             self.assertIn("3 RECORDS", text)
-            self.assertIn("Compare &lt;script&gt;alert(&#x27;prompt&#x27;)&lt;/script&gt; with golden.", text)
+            self.assertIn("Inspect &lt;script&gt;alert(&#x27;prompt&#x27;)&lt;/script&gt;.", text)
             self.assertNotIn(inspection_prompt, text)
             self.assertIn("Exact assistant output", text)
             self.assertNotIn("BEST RESULT RECORDED", text)
@@ -425,20 +414,14 @@ class CosmosReportRenderingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             results = pathlib.Path(temporary)
             iterations: dict[str, dict[str, str]] = {}
-            for number, raw, generated, total, batch_unique in (
-                (1, 13, 20, 33, 33),
-                (2, 10, 20, 36, 23),
+            for number, raw, total, batch_unique in (
+                (1, 13, 33, 33),
+                (2, 10, 36, 23),
             ):
                 root = results / f"iter{number}"
                 mining = root / "mining_summary.json"
                 mining.parent.mkdir(parents=True)
                 mining.write_text(json.dumps({"input_rows": raw}), encoding="utf-8")
-                sdg = root / "SDG_result.csv"
-                sdg.write_text(
-                    "image,label\n"
-                    + "".join(f"sdg-{index}.png,NG\n" for index in range(generated)),
-                    encoding="utf-8",
-                )
                 assemble = root / "assemble_summary.json"
                 assemble.write_text(
                     json.dumps(
@@ -453,21 +436,20 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 )
                 iterations[f"iter{number}"] = {
                     "mining_summary": str(mining),
-                    "anomalygen_sdg_csv": str(sdg),
                     "assemble_summary": str(assemble),
                 }
 
             rows = render_report._growth_rows({"iterations": iterations})
             self.assertIn(
                 '<strong>Iter1</strong></td><td class="num">13</td>'
-                '<td class="num">20</td><td class="num">33</td>'
-                '<td class="num">33</td><td class="num">+33</td>',
+                '<td class="num">33</td><td class="num">33</td>'
+                '<td class="num">+33</td>',
                 rows,
             )
             self.assertIn(
                 '<strong>Iter2</strong></td><td class="num">10</td>'
-                '<td class="num">20</td><td class="num">3</td>'
-                '<td class="num">36</td><td class="num">+3</td>',
+                '<td class="num">3</td><td class="num">36</td>'
+                '<td class="num">+3</td>',
                 rows,
             )
 

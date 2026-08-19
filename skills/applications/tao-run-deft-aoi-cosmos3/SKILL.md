@@ -4,7 +4,7 @@ description: >
   Run the disk-backed DEFT AOI improvement loop for NVIDIA Cosmos Reason 3 /
   Cosmos3 models, using Nano by default and Edge or Super when explicitly
   requested: evaluate the base model on Proxy and frozen Benchmark splits,
-  mine real image pairs from Proxy gaps, assemble a per-iteration Train JSON
+  mine real images from Proxy gaps, assemble a per-iteration Train JSON
   from selected Mining samples, train with cosmos-rl LoRA SFT, and repeat
   through the selected platform's submit/status/logs/cancel contract.
   This migration supports bare labels only: the assistant response must be
@@ -130,10 +130,6 @@ credential value.
 - Container key: `images.tao_toolkit.cosmos_rl` in `versions.yaml`.
 - Train action: `cosmos-rl --config <spec.toml>
   /opt/cosmos_rl/tao_sft_example.py`.
-- The pinned image caps vLLM evaluation at one image per prompt, which this
-  two-image contract cannot satisfy. Run `scripts/patch_eval_image_cap.py`
-  before the first evaluate job and mount its output read-only into every
-  evaluation container; see `references/cosmos-reason.md`.
 - Workflow override: `automl_policy: off`. DEFT owns iteration and checkpoint
   selection; this is a workflow argument, not a TOML key.
 - Default adaptation: LoRA over the language-side projections
@@ -162,8 +158,7 @@ Edge or Super.
 
 This migration supports one annotation mode: `bare_okng`.
 
-- Each record is ShareGPT JSON with exactly two images in
-  `[AOI, golden_reference]` order.
+- Each record is ShareGPT JSON whose `images` array contains exactly one image.
 - The first human/user turn contains the inspection prompt.
 - The final assistant/gpt response is exactly `OK` or `NG`; reasoning,
   prefixes, explanations, and final-answer wrappers are invalid training
@@ -180,9 +175,8 @@ generated iteration training file. There is no input Train annotation.
 Run `scripts/validate_split_contract.py` to prove that Proxy, Benchmark, and
 Mining targets are disjoint and that the frozen Benchmark annotation hash has
 not changed. When a generated Train file is supplied, the same validator
-requires its targets to come from Mining, the immediate `--previous-train`
-seed, or the current iteration's `--synthetic` AnomalyGen output, and to remain
-disjoint from Proxy and Benchmark. For iteration N>1, `--previous-train` is
+requires its targets to come from Mining or the immediate `--previous-train`
+seed, and to remain disjoint from Proxy and Benchmark. For iteration N>1, `--previous-train` is
 required and the validator proves that every preceding Train record was
 retained.
 
@@ -283,30 +277,25 @@ For each `iterN` when the frozen Benchmark gate is unmet:
    (`--mining-targets` takes the JSON) and a `filepath[,label]` parquet for the
    embedding container. Gap rows carry no image paths, so join back to Proxy by
    `id` — see `references/gap-analysis.md`.
-2. `anomalygen` — generate synthetic defects with `paidf-anomalygen` in
-   `inference_only` mode, then turn each generated pair into a bare `NG`
-   record with `scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
-   the driving Proxy RCCA recorded zero false accepts, and even then generating
-   is often still worthwhile — see `references/paidf-anomalygen.md`.
-3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
+2. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
    floor with `scripts/filter_mined_by_cosine.py`, then run the mapped skill's
    history-aware post-processing so a filepath selected by a prior iteration
    cannot enter Train again. The default top-K remains 5; preserve an explicit
    user value and increase it only when the history summary shows low novelty.
-4. `assemble_data` — align mined target paths to Mining source prompts,
-   golden references, and exact labels with `scripts/emit_mined_sharegpt.py`;
-   create `train_iter_1.json` from the mined and synthetic records only after
+3. `assemble_data` — align mined paths to Mining source prompts and exact
+   labels with `scripts/emit_mined_sharegpt.py`; create `train_iter_1.json`
+   from the mined records only after
    Proxy RCA and Mining selection, then append monotonically into
    `train_iter_N.json` in later iterations with
    `scripts/assemble_training_json.py`.
-5. `validate_data` — validate exact bare labels, files, duplicates, and
+4. `validate_data` — validate exact bare labels, files, duplicates, and
    generated-Train lineage plus Proxy/Benchmark leakage.
-6. `train`
-7. `evaluate_benchmark`
-8. `benchmark_metrics` — stop here when the gate passes or
+5. `train`
+6. `evaluate_benchmark`
+7. `benchmark_metrics` — stop here when the gate passes or
    `N = max_iterations`.
-9. `evaluate_proxy` — only when the loop continues.
-10. `proxy_rcca`
+8. `evaluate_proxy` — only when the loop continues.
+9. `proxy_rcca`
 
 `init_deft_state.py` writes the first `DEFT_Loop_Report.html`; every successful
 `commit_stage.py` call then refreshes it through the deterministic
@@ -327,7 +316,6 @@ report rendering.
 | Proxy / Benchmark evaluate | `tao-finetune-cosmos-reason` evaluate | `references/cosmos-reason.md` |
 | Proxy RCCA / Benchmark metric | bundled `analyze_gaps.py` | `references/gap-analysis.md` |
 | Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
-| AnomalyGen | `paidf-anomalygen`, `mode=inference_only` | `references/paidf-anomalygen.md` |
 | Assemble / validate | bundled bare ShareGPT scripts | `references/aoi-annotation.md` |
 | State/report | bundled state commit + deterministic report hook | `references/scripts-and-agents.md` |
 
@@ -339,12 +327,9 @@ an unconverted Cosmos Reason 3 checkpoint still in native Omni format at a
 Cosmos-RL boundary;
 missing/ambiguous mined-to-source alignment; missing/tampered mining history,
 cross-iteration mined filepath duplication; target overlap among
-Proxy/Benchmark/Mining; a generated Train target outside Mining and AnomalyGen
-output, or overlapping Proxy/Benchmark; a changed Benchmark hash; any Benchmark
-error used for routing; missing/empty mining output; a failed or empty
-AnomalyGen run while Proxy false accepts remain outstanding; an `anomalygen`
-skip not backed by zero false accepts in the driving RCCA; a synthetic record
-whose label is not `NG` or whose paired image is missing; a checkpoint outside
+Proxy/Benchmark/Mining; a generated Train target outside Mining or the previous
+Train set, or overlapping Proxy/Benchmark; a changed Benchmark hash; any
+Benchmark error used for routing; missing/empty mining output; a checkpoint outside
 the iteration result tree; an invalid nested TOML spec; unknown evaluator
 ground truth; or a program error.
 

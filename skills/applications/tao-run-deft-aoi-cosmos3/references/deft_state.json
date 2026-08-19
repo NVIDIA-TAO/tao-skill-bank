@@ -75,7 +75,7 @@
       "data_services": "resolved-from-versions.yaml"
     },
     "training": {
-      "annotation_source": "generated_from_mining_and_anomalygen",
+      "annotation_source": "generated_from_mining",
       "num_gpus": 1,
       "num_nodes": 1,
       "gpu_model": "NVIDIA H100 80GB HBM3",
@@ -105,20 +105,6 @@
         "identity": "filepath",
         "history_file": "/abs/results/mining_history.json"
       }
-    },
-    "anomalygen": {
-      "sub_skill": "paidf-anomalygen",
-      "mode": "inference_only",
-      "num_search_run": 0,
-      "nn_threshold": 0,
-      "project": "nvpcb",
-      "num_SDG": 20,
-      "container": "resolved-from-versions.yaml",
-      "checkpoint_dir": "/abs/workspace/augmentation/anomalygen/checkpoints/nvpcb",
-      "dataset_dir": "/abs/workspace/augmentation/anomalygen/datasets/nvpcb",
-      "defect_spec": "/abs/workspace/augmentation/anomalygen/datasets/nvpcb/defect_spec.jsonl",
-      "cosmos_models_dir": "/abs/workspace/augmentation/anomalygen/base_checkpoints",
-      "label": "NG"
     }
   },
   "iterations": {},
@@ -130,7 +116,6 @@
     "evaluate_proxy",
     "proxy_rcca",
     "routing",
-    "anomalygen",
     "data_mining",
     "assemble_data",
     "validate_data",

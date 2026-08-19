@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Validate bare OK/NG ShareGPT image-pair annotations for Cosmos3 AOI."""
+"""Validate bare OK/NG single-image ShareGPT annotations for Cosmos3 AOI."""
 
 from __future__ import annotations
 
@@ -88,18 +88,14 @@ def validate_records(
 ) -> dict[str, Any]:
     labels: Counter[str] = Counter()
     targets: set[str] = set()
-    pairs: set[tuple[str, str]] = set()
     duplicate_targets: list[str] = []
-    duplicate_pairs: list[list[str]] = []
     ids: set[str] = set()
 
     for index, record in enumerate(records):
         context = f"record[{index}]"
         images = record.get("images")
-        if not isinstance(images, list) or len(images) != 2:
-            raise ValueError(
-                f"{context}: images must contain exactly [AOI, golden_reference]"
-            )
+        if not isinstance(images, list) or len(images) != 1:
+            raise ValueError(f"{context}: images must contain exactly one image")
         if not all(isinstance(image, str) and image.strip() for image in images):
             raise ValueError(f"{context}: image paths must be non-empty strings")
         resolved = tuple(
@@ -112,9 +108,6 @@ def validate_records(
         if resolved[0] in targets:
             duplicate_targets.append(resolved[0])
         targets.add(resolved[0])
-        if resolved in pairs:
-            duplicate_pairs.append(list(resolved))
-        pairs.add(resolved)
         # cosmos-rl-evaluate hard-indexes item["id"] and reuses it as the
         # per-sample output filename, so evaluation splits need a unique,
         # filesystem-safe id. Training never reads it.
@@ -145,12 +138,8 @@ def validate_records(
 
     if duplicate_targets:
         raise ValueError(
-            "target AOI images must be unique; duplicates="
+            "images must be unique; duplicates="
             f"{sorted(set(duplicate_targets))[:5]}"
-        )
-    if duplicate_pairs:
-        raise ValueError(
-            f"image pairs must be unique; duplicates={duplicate_pairs[:5]}"
         )
     return {
         "mode": "bare_okng",

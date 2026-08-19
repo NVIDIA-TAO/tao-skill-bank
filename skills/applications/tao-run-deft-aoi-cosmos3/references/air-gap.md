@@ -11,10 +11,6 @@ visible from the compute frame:
 - Cosmos-RL and data-services images;
 - Cosmos3 base model / tokenizer cache;
 - Proxy, Benchmark, Mining JSON and all referenced images;
-- the AnomalyGen image, its fine-tuned checkpoint (`ag_config.yaml` plus the
-  iteration checkpoint), its dataset directory (`defect_spec.jsonl`,
-  `semantic_segmentation_labels.json`, clean images, cad masks), and the Cosmos
-  base-checkpoints cache — required only when the AnomalyGen stage will run;
 - selected platform native CLI and GPU runtime;
 - host Python with `pyarrow` and `yaml`.
 
@@ -27,12 +23,9 @@ In air-gap mode:
 - do not run image pulls, package installs, Hugging Face downloads, S3 staging,
   or credential login. This explicitly prohibits `pip`, `pip3`, `uv`, `conda`,
   `apt`, and package-manager commands from an existing virtual environment,
-  even as a probe or retry. This also includes the AnomalyGen post-gate
-  bootstrap, whose checkpoint/dataset/base-cache fetchers must all be
-  pre-staged instead;
+  even as a probe or retry;
 - use `scripts/deft_python.sh` to select an already-provisioned interpreter; if
   no candidate provides `pyarrow` and `yaml`, report those imports and stop;
-- keep `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` set for AnomalyGen runs;
 - leave both `HF_TOKEN` and its legacy alias `HUGGING_FACE_HUB_TOKEN` unset
   when local assets are sufficient; clearing only one still leaves a usable
   token in the environment for `huggingface_hub` to pick up;
