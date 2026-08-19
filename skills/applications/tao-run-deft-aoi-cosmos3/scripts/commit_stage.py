@@ -38,6 +38,7 @@ STAGES = (
     "loop_stop",
 )
 SKIPPABLE_STAGES = ("anomalygen",)
+ANOMALYGEN_POLICIES = ("auto", "disabled")
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -224,9 +225,15 @@ def _apply_success(
     args: argparse.Namespace,
     results_dir: pathlib.Path,
     iterations: dict[str, Any],
+    state: dict[str, Any],
 ) -> None:
     stage = args.stage
     phase_root = results_dir / args.iter_label
+    annotation_profile = state.get("config", {}).get(
+        "annotation_profile",
+        state.get("config", {}).get("annotation_mode", "bare_okng"),
+    )
+    rich = annotation_profile == "nvpaw_multitask_v1"
     if stage == "train":
         phase["best_ckpt_path"] = _within(
             _required_checkpoint(args.best_ckpt, "--best-ckpt"),
@@ -248,16 +255,29 @@ def _apply_success(
             phase_root,
             "--proxy-gaps-summary",
         )
-        phase["false_accepts_json"] = _within(
-            _required_file(args.false_accepts, "--false-accepts"),
-            phase_root,
-            "--false-accepts",
-        )
-        phase["false_rejects_json"] = _within(
-            _required_file(args.false_rejects, "--false-rejects"),
-            phase_root,
-            "--false-rejects",
-        )
+        if rich:
+            for field, value, flag in (
+                ("proxy_task_metrics", args.task_metrics, "--task-metrics"),
+                ("proxy_sample_metrics", args.sample_metrics, "--sample-metrics"),
+                ("proxy_prediction_coverage", args.prediction_coverage, "--prediction-coverage"),
+                ("gap_candidates_parquet", args.gap_candidates, "--gap-candidates"),
+                ("selected_gaps_parquet", args.selected_gaps, "--selected-gaps"),
+                ("gap_analysis_summary", args.gap_analysis_summary, "--gap-analysis-summary"),
+            ):
+                phase[field] = _within(
+                    _required_file(value, flag), phase_root, flag
+                )
+        else:
+            phase["false_accepts_json"] = _within(
+                _required_file(args.false_accepts, "--false-accepts"),
+                phase_root,
+                "--false-accepts",
+            )
+            phase["false_rejects_json"] = _within(
+                _required_file(args.false_rejects, "--false-rejects"),
+                phase_root,
+                "--false-rejects",
+            )
     elif stage == "evaluate_benchmark":
         phase["benchmark_results_json"] = _within(
             _required_file(args.benchmark_results, "--benchmark-results"),
@@ -272,45 +292,99 @@ def _apply_success(
             phase_root,
             "--benchmark-metrics-summary",
         )
+        if rich:
+            for field, value, flag in (
+                ("benchmark_task_metrics", args.task_metrics, "--task-metrics"),
+                ("benchmark_sample_metrics", args.sample_metrics, "--sample-metrics"),
+                ("benchmark_prediction_coverage", args.prediction_coverage, "--prediction-coverage"),
+            ):
+                phase[field] = _within(
+                    _required_file(value, flag), phase_root, flag
+                )
     elif stage == "routing":
         phase["mining_targets_json"] = _within(
             _required_json_file(args.mining_targets, "--mining-targets"),
             phase_root,
             "--mining-targets",
         )
+        if rich:
+            phase["mining_targets_parquet"] = _within(
+                _required_file(args.mining_targets_parquet, "--mining-targets-parquet"),
+                phase_root,
+                "--mining-targets-parquet",
+            )
+            phase["routing_summary"] = _within(
+                _required_file(args.routing_summary, "--routing-summary"),
+                phase_root,
+                "--routing-summary",
+            )
     elif stage == "anomalygen":
+        anomalygen_config = state.get("config", {}).get("anomalygen", {})
+        if not isinstance(anomalygen_config, dict):
+            raise ValueError("state.config.anomalygen must be an object")
+        # States created before the policy field was introduced retain the
+        # original gap-evidence behavior.
+        anomalygen_policy = anomalygen_config.get("policy", "auto")
+        if anomalygen_policy not in ANOMALYGEN_POLICIES:
+            raise ValueError(
+                "state.config.anomalygen.policy must be one of: "
+                + ", ".join(ANOMALYGEN_POLICIES)
+            )
+        phase["anomalygen_policy"] = anomalygen_policy
         if args.skip:
-            # Documented branch skip: the driving Proxy RCCA found no false
-            # accepts, so there is no under-detection gap for synthetic
-            # defects to close.
-            match = re.fullmatch(r"iter([1-9][0-9]*)", args.iter_label)
-            driving_label = (
-                "baseline"
-                if match and int(match.group(1)) == 1
-                else f"iter{int(match.group(1)) - 1}" if match else args.iter_label
-            )
-            driving_phase = iterations.get(driving_label, {})
-            false_accepts = (
-                driving_phase.get("false_accepts_json")
-                if isinstance(driving_phase, dict)
-                else None
-            )
-            if not isinstance(false_accepts, str):
-                raise ValueError(
-                    "anomalygen --skip requires proxy_rcca false_accepts_json evidence"
+            if anomalygen_policy == "disabled":
+                phase["anomalygen_skip_reason"] = "policy_disabled"
+            elif rich:
+                routing_summary = phase.get("routing_summary")
+                if not isinstance(routing_summary, str):
+                    raise ValueError(
+                        "rich anomalygen --skip requires routing_summary evidence"
+                    )
+                try:
+                    routing_payload = json.loads(pathlib.Path(routing_summary).read_text())
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise ValueError(
+                        f"cannot validate routing_summary: {routing_summary} ({exc})"
+                    ) from exc
+                if routing_payload.get("anomalygen_eligible_records") != 0:
+                    raise ValueError(
+                        "rich anomalygen --skip requires zero anomalygen_eligible_records"
+                    )
+                phase["anomalygen_skip_reason"] = "no_eligible_gaps"
+            else:
+                match = re.fullmatch(r"iter([1-9][0-9]*)", args.iter_label)
+                driving_label = (
+                    "baseline"
+                    if match and int(match.group(1)) == 1
+                    else f"iter{int(match.group(1)) - 1}" if match else args.iter_label
                 )
-            try:
-                false_accept_rows = json.loads(pathlib.Path(false_accepts).read_text())
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ValueError(
-                    f"cannot validate false_accepts_json: {false_accepts} ({exc})"
-                ) from exc
-            if not isinstance(false_accept_rows, list) or false_accept_rows:
-                raise ValueError(
-                    "anomalygen --skip requires false_accepts_json to be an empty JSON array"
+                driving_phase = iterations.get(driving_label, {})
+                false_accepts = (
+                    driving_phase.get("false_accepts_json")
+                    if isinstance(driving_phase, dict)
+                    else None
                 )
+                if not isinstance(false_accepts, str):
+                    raise ValueError(
+                        "anomalygen --skip requires proxy_rcca false_accepts_json evidence"
+                    )
+                try:
+                    false_accept_rows = json.loads(pathlib.Path(false_accepts).read_text())
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise ValueError(
+                        f"cannot validate false_accepts_json: {false_accepts} ({exc})"
+                    ) from exc
+                if not isinstance(false_accept_rows, list) or false_accept_rows:
+                    raise ValueError(
+                        "anomalygen --skip requires false_accepts_json to be an empty JSON array"
+                    )
+                phase["anomalygen_skip_reason"] = "no_eligible_gaps"
             phase["anomalygen_skipped"] = True
         else:
+            if anomalygen_policy == "disabled":
+                raise ValueError(
+                    "anomalygen policy is disabled; commit this stage with --skip"
+                )
             phase["anomalygen_sdg_csv"] = _within(
                 _required_file(args.anomalygen_sdg, "--anomalygen-sdg"),
                 phase_root,
@@ -438,7 +512,7 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
 
     try:
         _migrate_execution_policy(state)
-        state["version"] = 5
+        state["version"] = max(int(state.get("version", 5)), 5)
         iterations = state.get("iterations")
         if not isinstance(iterations, dict):
             raise ValueError("state.iterations must be an object")
@@ -478,9 +552,9 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 state = json.loads(state_path.read_text())
                 iterations = state["iterations"]
                 phase = iterations[args.iter_label]
-                _apply_success(phase, args, results_dir, iterations)
+                _apply_success(phase, args, results_dir, iterations, state)
             else:
-                _apply_success(phase, args, results_dir, iterations)
+                _apply_success(phase, args, results_dir, iterations, state)
             state["status"] = "in_progress"
             state.pop("completed_at", None)
         else:
@@ -578,7 +652,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--benchmark-results", type=pathlib.Path)
     parser.add_argument("--benchmark-metrics-summary", type=pathlib.Path)
     parser.add_argument("--metric-result", type=pathlib.Path)
+    parser.add_argument("--task-metrics", type=pathlib.Path)
+    parser.add_argument("--sample-metrics", type=pathlib.Path)
+    parser.add_argument("--prediction-coverage", type=pathlib.Path)
+    parser.add_argument("--gap-candidates", type=pathlib.Path)
+    parser.add_argument("--selected-gaps", type=pathlib.Path)
+    parser.add_argument("--gap-analysis-summary", type=pathlib.Path)
     parser.add_argument("--mining-targets", type=pathlib.Path)
+    parser.add_argument("--mining-targets-parquet", type=pathlib.Path)
+    parser.add_argument("--routing-summary", type=pathlib.Path)
     parser.add_argument("--anomalygen-sdg", type=pathlib.Path)
     parser.add_argument("--anomalygen-allocation", type=pathlib.Path)
     parser.add_argument("--anomalygen-sharegpt", type=pathlib.Path)

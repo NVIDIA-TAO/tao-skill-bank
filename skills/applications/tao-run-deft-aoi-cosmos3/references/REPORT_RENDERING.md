@@ -22,7 +22,7 @@ and metric tables already carry that evidence.
 
 Required sections:
 
-1. **Run Configuration & Outcome** — platform, model, bare mode, KPI contract,
+1. **Run Configuration & Outcome** — platform, model, annotation profile, KPI contract,
    GPU/node shape and exact GPU model, timestamps, current/terminal status; a
    two-column DEFT experiment summary with baseline/end KPI, routing, total and
    average measured runtime, and SDG throughput; then a Training Set Growth
@@ -36,18 +36,19 @@ Required sections:
 2. **Benchmark KPI Trend** — immediately follows Run Configuration & Outcome;
    only frozen Benchmark results carry a pass/fail verdict.
 3. **Dataset Isolation** — Proxy/Benchmark/Mining input paths, per-iteration
-   AnomalyGen output, generated Train artifacts by iteration, OK/NG counts,
+   AnomalyGen output, generated Train artifacts by iteration, bare label counts
+   or rich task counts,
    Benchmark SHA-256, and role ownership. Attribute every Train record to its
    producer: mined real pairs or synthetic AnomalyGen pairs.
 4. **Prompt Examples** — up to three distinct first-user prompts read from the
    recorded Proxy, Benchmark, and Mining annotations. Group identical prompts
-   across roles, show their record count and exact `OK`/`NG` response contract,
+   across roles, show their record count and canonical assistant response,
    escape file-derived text, and truncate only the displayed preview at 600
    characters. Do not embed the rest of an annotation record.
-5. **Iteration Metrics** — for baseline and every completed iteration:
-   accuracy, NG recall, NG precision, NG F1, false accepts, false rejects,
-   unknowns, KPI pass/fail. Label every figure with its source split; only
-   Benchmark figures carry the KPI verdict.
+5. **Iteration Metrics** — bare runs show accuracy, NG recall/precision/F1,
+   false accepts/rejects, unknowns, and KPI verdict. Rich runs show each task's
+   primary metric/attainment, task×dataset diagnostics, and all coverage
+   constraints. Only Benchmark figures carry a KPI verdict.
 6. **Pipeline Execution** — ordered committed stage events and positive,
    measured durations from `deft_state.json.events`. Summary totals exclude the
    administrative `loop_stop` event and label partial historical logs instead
@@ -66,7 +67,9 @@ Required sections:
    validation-report links/paths.
 9. **Hard Stops / Warnings** — committed error events, if present.
 
-Cosmos3 bare mode is a discrete OK/NG classifier.
+Cosmos3 bare mode is a discrete OK/NG classifier. Rich mode is explicitly
+identified as NVPaw multi-task classification/detection and must never inherit
+bare-only labels in its report.
 
 ## Terminal iterations have no Proxy artifacts
 

@@ -25,6 +25,7 @@
       }
     ]
   },
+  "metric_contract_sha256": "<sha256>",
   "results_dir": "/abs/results",
   "max_iterations": 3,
   "current_iteration": 0,
@@ -46,11 +47,42 @@
     "base_model": "nvidia/Cosmos3-Nano",
     "automl_policy": "off",
     "annotation_mode": "bare_okng",
+    "annotation_profile": "bare_okng",
+    "prompt_variant": "official_v1",
     "media_root": "/abs/workspace",
     "annotations": {
       "proxy": "/abs/workspace/annotations/proxy_kpi.json",
       "benchmark": "/abs/workspace/annotations/benchmark_kpi.json",
       "mining": "/abs/workspace/annotations/mining_pool.json"
+    },
+    "annotation_sha256": {
+      "proxy": "<sha256>",
+      "benchmark": "<sha256>",
+      "mining": "<sha256>"
+    },
+    "kpi": {
+      "profile": "bare_okng_v1",
+      "group_metric_target": 1.0,
+      "min_group_support": 1
+    },
+    "gap_analysis": {
+      "profile": "legacy_bare_okng",
+      "sha256": "<sha256>",
+      "resolved": {
+        "schema_version": "gap_analysis_v1",
+        "candidate_builder": "legacy_bare_okng",
+        "scorer": {"name": "binary_error"},
+        "allocator": {"name": "global_topk", "group_by": []},
+        "selector": {"name": "hardest"},
+        "budget": 600,
+        "fraction_per_group": 1.0,
+        "min_per_group": 0,
+        "max_per_group": null,
+        "max_per_dataset": null,
+        "expected_groups": {"source": "annotation_manifest"},
+        "missing_group_policy": "error",
+        "seed": 17
+      }
     },
     "evaluation": {
       "proxy": {
@@ -97,6 +129,8 @@
       }
     },
     "mining": {
+      "router_mode": "image_only",
+      "top_k_scope": "target",
       "top_k_per_target": 5,
       "metric": "cosine",
       "min_similarity": 0.9,
@@ -107,6 +141,7 @@
       }
     },
     "anomalygen": {
+      "policy": "auto",
       "sub_skill": "paidf-anomalygen",
       "mode": "inference_only",
       "num_search_run": 0,

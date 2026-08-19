@@ -4,8 +4,32 @@ Read this when the loop runs the `anomalygen` stage. The underlying skill
 `tao-skill-bank:paidf-anomalygen` owns the standalone pipeline, the parameter
 reference, the invariants that gate a run, and the AMP no-ROI failure mode —
 **read it before invoking**. This file is the Cosmos3 overlay: how synthetic
-defects become bare OK/NG records, when the stage is skipped, and what is
+defects become profile-compatible classification records, when the stage is skipped, and what is
 committed.
+
+## Policy gate
+
+Read `deft_state.json::config.anomalygen.policy` before doing any AnomalyGen
+work. A missing field in a legacy state means `auto`.
+
+- `auto` preserves the original behavior described below: generation is
+  allowed, while a skip requires recorded zero-gap evidence.
+- `disabled` is an operator-selected, immutable mining-only policy. Do not
+  resolve, inspect, pull, convert, or launch the AnomalyGen image and do not
+  probe or bootstrap its assets. Commit the stage unconditionally in every
+  iteration and continue to `data_mining`:
+
+```bash
+"$SKILL_ROOT/scripts/deft_python.sh" "$SKILL_ROOT/scripts/commit_stage.py" \
+  --results-dir "$RESULTS_DIR" --iter-label "iter${N}" --stage anomalygen \
+  --skip --duration-sec "$STAGE_DURATION_SEC" \
+  --summary "AnomalyGen disabled by immutable run policy"
+```
+
+For `disabled`, omit the synthetic `--new-json` assembly input and
+`--synthetic` validation input. The assembled training set still contains the
+newly mined records and the preceding iteration's retained records. The rest
+of this reference applies to `auto`.
 
 The generation mechanics are identical to the VCN loop; only the consumer
 differs. `skills/applications/tao-run-deft-aoi/references/paidf-anomalygen.md`
@@ -105,7 +129,7 @@ wrong, and Phase 3's GPU cost is fixed regardless of yield — abort and diagnos
 with the underlying skill's failure-mode section instead of generating four
 samples for the price of twenty.
 
-## Output to bare OK/NG records
+## Output records and task capability
 
 AnomalyGen writes one synthetic defect per row of `SDG_result.csv`:
 
@@ -140,9 +164,17 @@ deliberately.
 The emitter hard-stops on a missing or empty image on either side of a pair,
 and de-duplicates by generated image.
 
-## Skip condition
+For `nvpaw_multitask_v1`, add `--annotation-profile
+nvpaw_multitask_v1 --template-id <id>`. `--prompt-from` must resolve exactly
+one Defect Classification or Ref_based Defect Classification template. The
+emitter preserves explicit roles and resolves the synthetic defect response
+through that prompt's option map. Detection templates hard-stop: AnomalyGen
+does not provide a validated box or mask from which `[0,1000]` coordinates can
+be derived.
 
-When the driving Proxy RCCA recorded **zero false accepts**, skipping is
+## Auto-policy skip condition
+
+In bare mode, when the driving Proxy RCCA recorded **zero false accepts**, skipping is
 *permitted* — there is no under-detection gap. It is not recommended by
 default. Generating anyway is always legal, and on the one dataset measured so
 far it was the better call: see *Measured counter-evidence* below. Prefer the
@@ -157,10 +189,15 @@ To skip, commit a documented branch skip instead of launching the generator:
   --summary "no Proxy false accepts; synthetic defects not indicated"
 ```
 
+In rich mode the routing summary owns this decision: `--skip` is valid only
+when it records zero AnomalyGen-eligible selected records.
+
 The driving RCCA is `baseline` for `iter1` and `iter${N-1}` for later
-iterations. Read that phase's recorded `false_accepts_json` and use `--skip`
-only when it contains no entries. This is the only legal way to omit the
-stage: a failed generator with false accepts outstanding is a hard stop.
+iterations. In bare mode read that phase's recorded `false_accepts_json`; in
+rich mode read the current iteration's committed routing summary. Under
+`auto`, this is the only legal way to omit the stage: a failed generator with
+eligible gaps outstanding is a hard stop. The separate `disabled` policy above
+does not consult gap evidence.
 
 Note the asymmetry: zero false accepts *permits* the skip, it never forces it.
 Nothing blocks generating when the skip would also have been legal.

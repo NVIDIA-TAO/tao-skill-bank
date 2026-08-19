@@ -16,11 +16,17 @@ import sys
 import tempfile
 from typing import Any
 
+import yaml
+
+from gap_analysis.config import load_profile, validate_config
 from metric_contract import render_target, validate_contract
+from nvpaw_annotations import TASK_SPECS
 from render_report import render as render_html_report
+from task_mining_router import MINING_ROUTER_MODES
 
 
 WORKFLOW = "tao-run-deft-aoi-cosmos3"
+ANOMALYGEN_POLICIES = ("auto", "disabled")
 STAGES = [
     "train",
     "evaluate_benchmark",
@@ -75,11 +81,9 @@ DEFAULT_COSMOS_IMAGE = os.environ.get(
 DEFAULT_MINING_IMAGE = os.environ.get(
     "TAO_DS_IMAGE"
 ) or _resolve_image_from_versions_yaml("images", "tao_toolkit", "data_services")
-DEFAULT_ANOMALYGEN_IMAGE = os.environ.get(
-    "AG_IMAGE"
-) or _resolve_image_from_versions_yaml(
-    "images", "metropolis_sdg", "paidf_anomalygen"
-)
+# Keep this lazy: a policy-disabled run must not resolve an image it will never
+# inspect or launch.
+DEFAULT_ANOMALYGEN_IMAGE = os.environ.get("AG_IMAGE")
 BASE_MODEL_ALIASES = {
     "nano": "nvidia/Cosmos3-Nano",
     "cosmos3-nano": "nvidia/Cosmos3-Nano",
@@ -154,7 +158,67 @@ def _metric_contract(
     results_dir: pathlib.Path,
     metric: str,
     threshold: float,
+    kpi_profile: str = "bare_okng_v1",
+    required_groups: list[str] | None = None,
+    min_group_support: int = 1,
 ) -> dict[str, Any]:
+    if kpi_profile in {"task_balanced_v1", "task_dataset_balanced_v1"}:
+        return validate_contract(
+            {
+                "name": "balanced_score",
+                "display_name": "Worst group attainment",
+                "operator": ">=",
+                "target": 1.0,
+                "unit": "",
+                "kpi_profile": kpi_profile,
+                "group_metric_target": threshold,
+                "required_groups": required_groups or sorted(TASK_SPECS),
+                "min_group_support": min_group_support,
+                "evaluator": {
+                    "type": "artifact",
+                    "producer": "scripts/analyze_gaps.py",
+                    "path_template": str(
+                        results_dir
+                        / "{iter_label}"
+                        / "benchmark_metrics"
+                        / "metric_result.json"
+                    ),
+                },
+                "constraints": [
+                    {
+                        "name": name,
+                        "display_name": name.replace("_", " ").title(),
+                        "operator": "<=",
+                        "target": 0,
+                        "unit": "",
+                    }
+                    for name in (
+                        "missing_predictions",
+                        "duplicate_prediction_ids",
+                        "unknown_prediction_ids",
+                        "parse_failures",
+                    )
+                ]
+                + (
+                    [
+                        {
+                            "name": "insufficient_support_groups",
+                            "display_name": "Insufficient Support Groups",
+                            "operator": "<=",
+                            "target": 0,
+                            "unit": "",
+                        }
+                    ]
+                    if kpi_profile == "task_dataset_balanced_v1"
+                    else []
+                ),
+                "tie_breakers": [
+                    {"name": "macro_attainment", "direction": "max"},
+                    {"name": "attainment_spread", "direction": "min"},
+                    {"name": "coverage_failures", "direction": "min"},
+                ],
+            }
+        )
     display_names = {
         "recall_ng": "NG recall",
         "precision_ng": "NG precision",
@@ -189,6 +253,86 @@ def _metric_contract(
             ],
         }
     )
+
+
+def _dict_sha256(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _rich_required_groups(
+    path: pathlib.Path, kpi_profile: str
+) -> list[str]:
+    try:
+        records = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"rich Benchmark annotations must be one JSON array: {exc}") from exc
+    if not isinstance(records, list) or not records:
+        raise ValueError("rich Benchmark annotations must be a non-empty JSON array")
+    tasks = {
+        record.get("task_type")
+        for record in records
+        if isinstance(record, dict) and isinstance(record.get("task_type"), str)
+    }
+    missing = set(TASK_SPECS) - tasks
+    if missing:
+        raise ValueError(f"Benchmark is missing required task groups: {sorted(missing)}")
+    if kpi_profile == "task_balanced_v1":
+        return sorted(TASK_SPECS)
+    groups: set[str] = set()
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise ValueError(f"Benchmark record[{index}] must be an object")
+        task_type = record.get("task_type")
+        dataset = record.get("dataset")
+        if task_type not in TASK_SPECS or not isinstance(dataset, str) or not dataset:
+            raise ValueError(
+                f"Benchmark record[{index}] requires supported task_type and non-empty dataset"
+            )
+        groups.add(f"{task_type}|{dataset}")
+    return sorted(groups)
+
+
+def _resolve_gap_analysis(args: argparse.Namespace, annotation_profile: str) -> dict[str, Any]:
+    config_path = getattr(args, "gap_analysis_config", None)
+    profile = getattr(args, "gap_analysis_profile", None)
+    if config_path is not None:
+        try:
+            payload = yaml.safe_load(config_path.expanduser().read_text())
+        except yaml.YAMLError as exc:
+            raise ValueError(f"invalid --gap-analysis-config: {exc}") from exc
+        resolved = validate_config(payload)
+        profile_name = "custom"
+    else:
+        profile_name = profile or (
+            "legacy_bare_okng"
+            if annotation_profile == "bare_okng"
+            else "deficit_weighted_round_robin"
+        )
+        resolved = load_profile(profile_name)
+    budget = getattr(args, "gap_analysis_budget", None)
+    seed = getattr(args, "gap_analysis_seed", None)
+    if budget is not None:
+        resolved["budget"] = budget
+    if seed is not None:
+        resolved["seed"] = seed
+    resolved = validate_config(resolved)
+    expected_builder = (
+        "legacy_bare_okng" if annotation_profile == "bare_okng" else "multitask_v1"
+    )
+    if resolved["candidate_builder"] != expected_builder:
+        raise ValueError(
+            f"gap profile {profile_name!r} candidate_builder="
+            f"{resolved['candidate_builder']!r} is incompatible with "
+            f"annotation profile {annotation_profile!r}"
+        )
+    return {
+        "profile": profile_name,
+        "resolved": resolved,
+        "sha256": _dict_sha256(resolved),
+    }
 
 
 def build_state(args: argparse.Namespace) -> dict[str, Any]:
@@ -229,10 +373,41 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             + ". Build them from the tao-finetune-cosmos-reason templates and "
             "stage them before initializing state."
         )
+    annotation_profile = getattr(args, "annotation_profile", "bare_okng")
+    mining_router_mode = getattr(args, "mining_router_mode", "image_only")
+    anomalygen_policy = getattr(args, "anomalygen_policy", "auto")
+    if annotation_profile == "bare_okng" and mining_router_mode != "image_only":
+        raise ValueError(
+            "bare_okng supports only --mining-router-mode image_only; "
+            "task-aware routing requires nvpaw_multitask_v1"
+        )
+    prompt_variant = getattr(args, "prompt_variant", "official_v1")
+    if prompt_variant != "official_v1":
+        raise ValueError(f"unsupported prompt variant {prompt_variant!r}")
+    kpi_profile = getattr(args, "kpi_profile", None) or (
+        "bare_okng_v1"
+        if annotation_profile == "bare_okng"
+        else "task_balanced_v1"
+    )
+    if annotation_profile == "bare_okng" and kpi_profile != "bare_okng_v1":
+        raise ValueError("bare_okng requires --kpi-profile bare_okng_v1")
+    if annotation_profile == "nvpaw_multitask_v1" and kpi_profile == "bare_okng_v1":
+        raise ValueError(
+            "nvpaw_multitask_v1 requires task_balanced_v1 or task_dataset_balanced_v1"
+        )
+    gap_analysis = _resolve_gap_analysis(args, annotation_profile)
+    required_groups = (
+        _rich_required_groups(annotations["benchmark"], kpi_profile)
+        if annotation_profile == "nvpaw_multitask_v1"
+        else None
+    )
     contract = _metric_contract(
         results_dir=results_dir,
         metric=args.kpi_metric,
         threshold=args.kpi_threshold,
+        kpi_profile=kpi_profile,
+        required_groups=required_groups,
+        min_group_support=getattr(args, "min_group_support", 1),
     )
     benchmark_hash = _sha256(annotations["benchmark"])
     media_root = (args.media_root or workspace).expanduser().resolve()
@@ -247,9 +422,64 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         getattr(args, "python_executable", None) or sys.executable
     ).expanduser().resolve()
     offline = network_mode == "airgap"
+    anomalygen_config: dict[str, Any] = {"policy": anomalygen_policy}
+    if anomalygen_policy == "auto":
+        anomalygen_container = args.anomalygen_container or _resolve_image_from_versions_yaml(
+            "images", "metropolis_sdg", "paidf_anomalygen"
+        )
+        anomalygen_config.update(
+            {
+                "sub_skill": "paidf-anomalygen",
+                # The DEFT loop only needs Phases 2-3 (AMP routing + SDG
+                # diffusion); Phases 4-7 are SDG-quality optimization and
+                # contribute no training pairs.
+                "mode": "inference_only",
+                "num_search_run": 0,
+                "nn_threshold": 0,
+                "project": args.anomalygen_project,
+                "num_SDG": args.num_sdg,
+                "container": anomalygen_container,
+                # Explicit flags win; otherwise derive the workspace
+                # convention. Resolve through symlinks so the recorded path is
+                # the real one — a symlinked subtree under the workspace
+                # dangles inside the container when only $WS is mounted.
+                "checkpoint_dir": str(
+                    _anomalygen_path(
+                        args.anomalygen_checkpoint_dir,
+                        workspace
+                        / "augmentation/anomalygen/checkpoints"
+                        / args.anomalygen_project,
+                    )
+                ),
+                "dataset_dir": str(
+                    _anomalygen_path(
+                        args.anomalygen_dataset_dir,
+                        workspace
+                        / "augmentation/anomalygen/datasets"
+                        / args.anomalygen_project,
+                    )
+                ),
+                "defect_spec": str(
+                    _anomalygen_path(
+                        args.anomalygen_dataset_dir,
+                        workspace
+                        / "augmentation/anomalygen/datasets"
+                        / args.anomalygen_project,
+                    )
+                    / "defect_spec.jsonl"
+                ),
+                "cosmos_models_dir": str(
+                    _anomalygen_path(
+                        args.cosmos_models_dir,
+                        workspace / "augmentation/anomalygen/base_checkpoints",
+                    )
+                ),
+                "label": "NG",
+            }
+        )
 
     return {
-        "version": 5,
+        "version": 5 if annotation_profile == "bare_okng" else 6,
         "workflow": WORKFLOW,
         "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(
             timespec="seconds"
@@ -257,6 +487,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         "status": "in_progress",
         "kpi_target": render_target(contract),
         "metric_contract": contract,
+        "metric_contract_sha256": _dict_sha256(contract),
         "results_dir": str(results_dir),
         "max_iterations": args.max_iterations,
         "current_iteration": 0,
@@ -277,9 +508,20 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             "model_skill": "tao-finetune-cosmos-reason",
             "base_model": base_model,
             "automl_policy": "off",
-            "annotation_mode": "bare_okng",
+            "annotation_mode": annotation_profile,
+            "annotation_profile": annotation_profile,
+            "prompt_variant": prompt_variant,
             "media_root": str(media_root),
             "annotations": {role: str(path) for role, path in annotations.items()},
+            "annotation_sha256": {
+                role: _sha256(path) for role, path in annotations.items()
+            },
+            "kpi": {
+                "profile": kpi_profile,
+                "group_metric_target": args.kpi_threshold,
+                "min_group_support": getattr(args, "min_group_support", 1),
+            },
+            "gap_analysis": gap_analysis,
             "evaluation": {
                 "proxy": {
                     "annotations": str(annotations["proxy"]),
@@ -299,7 +541,11 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "data_services": args.mining_container,
             },
             "training": {
-                "annotation_source": "generated_from_mining_and_anomalygen",
+                "annotation_source": (
+                    "generated_from_mining"
+                    if anomalygen_policy == "disabled"
+                    else "generated_from_mining_and_anomalygen"
+                ),
                 "num_gpus": args.num_gpus,
                 "num_nodes": args.num_nodes,
                 "gpu_model": args.gpu_model,
@@ -313,54 +559,22 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 },
             },
             "mining": {
+                "router_mode": mining_router_mode,
+                "top_k_scope": (
+                    "target" if mining_router_mode == "image_only" else "target_task"
+                ),
                 "top_k_per_target": args.top_k_per_target,
                 "metric": "cosine",
                 "min_similarity": args.min_similarity,
                 "history_aware": {
                     "enabled": True,
-                    "identity": "filepath",
+                    "identity": (
+                        "filepath" if annotation_profile == "bare_okng" else "target_id"
+                    ),
                     "history_file": str(results_dir / "mining_history.json"),
                 },
             },
-            "anomalygen": {
-                "sub_skill": "paidf-anomalygen",
-                # The DEFT loop only needs Phases 2-3 (AMP routing + SDG
-                # diffusion); Phases 4-7 are SDG-quality optimization and
-                # contribute no training pairs.
-                "mode": "inference_only",
-                "num_search_run": 0,
-                "nn_threshold": 0,
-                "project": args.anomalygen_project,
-                "num_SDG": args.num_sdg,
-                "container": args.anomalygen_container,
-                # Explicit flags win; otherwise derive the workspace
-                # convention. Resolve through symlinks so the recorded path is
-                # the real one — a symlinked subtree under the workspace
-                # dangles inside the container when only $WS is mounted.
-                "checkpoint_dir": str(_anomalygen_path(
-                    args.anomalygen_checkpoint_dir,
-                    workspace
-                    / "augmentation/anomalygen/checkpoints"
-                    / args.anomalygen_project,
-                )),
-                "dataset_dir": str(_anomalygen_path(
-                    args.anomalygen_dataset_dir,
-                    workspace
-                    / "augmentation/anomalygen/datasets"
-                    / args.anomalygen_project,
-                )),
-                "defect_spec": str(_anomalygen_path(
-                    args.anomalygen_dataset_dir,
-                    workspace
-                    / "augmentation/anomalygen/datasets"
-                    / args.anomalygen_project,
-                ) / "defect_spec.jsonl"),
-                "cosmos_models_dir": str(_anomalygen_path(
-                    args.cosmos_models_dir,
-                    workspace / "augmentation/anomalygen/base_checkpoints",
-                )),
-                "label": "NG",
-            },
+            "anomalygen": anomalygen_config,
         },
         "iterations": {},
         "events": [],
@@ -414,6 +628,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--kpi-threshold", type=float, default=1.0)
     parser.add_argument(
+        "--annotation-profile",
+        choices=("bare_okng", "nvpaw_multitask_v1"),
+        default="bare_okng",
+    )
+    parser.add_argument("--prompt-variant", default="official_v1")
+    parser.add_argument(
+        "--kpi-profile",
+        choices=("bare_okng_v1", "task_balanced_v1", "task_dataset_balanced_v1"),
+    )
+    parser.add_argument("--min-group-support", type=int, default=1)
+    gap_choice = parser.add_mutually_exclusive_group()
+    gap_choice.add_argument("--gap-analysis-profile")
+    gap_choice.add_argument("--gap-analysis-config", type=pathlib.Path)
+    parser.add_argument("--gap-analysis-budget", type=int)
+    parser.add_argument("--gap-analysis-seed", type=int)
+    parser.add_argument(
         "--base-model",
         default="nvidia/Cosmos3-Nano",
         help="Cosmos3 base model; Nano is default, Edge/Super require explicit selection.",
@@ -453,8 +683,26 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--top-k-per-target", type=int, default=5)
     parser.add_argument("--min-similarity", type=float, default=0.9)
+    parser.add_argument(
+        "--mining-router-mode",
+        choices=MINING_ROUTER_MODES,
+        default="image_only",
+        help=(
+            "Candidate routing policy over the same image embeddings. "
+            "Task-aware modes require --annotation-profile nvpaw_multitask_v1."
+        ),
+    )
     parser.add_argument("--cosmos-container", default=DEFAULT_COSMOS_IMAGE)
     parser.add_argument("--mining-container", default=DEFAULT_MINING_IMAGE)
+    parser.add_argument(
+        "--anomalygen-policy",
+        choices=ANOMALYGEN_POLICIES,
+        default="auto",
+        help=(
+            "Immutable augmentation policy. 'auto' keeps the gap-evidence skip "
+            "gate; 'disabled' always skips AnomalyGen and trains from mining data."
+        ),
+    )
     parser.add_argument("--anomalygen-container", default=DEFAULT_ANOMALYGEN_IMAGE)
     parser.add_argument(
         "--anomalygen-project",
@@ -525,7 +773,10 @@ def main(argv: list[str] | None = None) -> int:
         "lora_alpha": args.lora_alpha,
         "top_k_per_target": args.top_k_per_target,
         "num_sdg": args.num_sdg,
+        "min_group_support": args.min_group_support,
     }
+    if args.gap_analysis_budget is not None:
+        positive["gap_analysis_budget"] = args.gap_analysis_budget
     invalid = {name: value for name, value in positive.items() if value <= 0}
     if invalid:
         print(f"init_deft_state: positive values required: {invalid}", file=sys.stderr)
@@ -552,6 +803,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         state = build_state(args)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        (output.parent / "resolved_gap_analysis.yaml").write_text(
+            yaml.safe_dump(
+                state["config"]["gap_analysis"]["resolved"], sort_keys=True
+            )
+        )
         _atomic_json(output, state)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"init_deft_state: {exc}", file=sys.stderr)

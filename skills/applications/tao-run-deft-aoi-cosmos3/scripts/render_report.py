@@ -115,10 +115,27 @@ def _human_prompt(record: dict[str, Any]) -> str | None:
     return None
 
 
+def _assistant_response(record: dict[str, Any]) -> str | None:
+    conversations = record.get("conversations")
+    if not isinstance(conversations, list):
+        return None
+    response = None
+    for turn in conversations:
+        if not isinstance(turn, dict):
+            continue
+        if str(turn.get("from", "")).strip().lower() not in {"gpt", "assistant"}:
+            continue
+        value = turn.get("value")
+        if isinstance(value, str) and value.strip():
+            response = value.strip()
+    return response
+
+
 def _prompt_examples(state: dict[str, Any], *, limit: int = 3) -> str:
     config = state.get("config", {})
     if not isinstance(config, dict):
         config = {}
+    rich = config.get("annotation_profile") == "nvpaw_multitask_v1"
     annotations = config.get("annotations", {})
     if not isinstance(annotations, dict):
         annotations = {}
@@ -129,7 +146,14 @@ def _prompt_examples(state: dict[str, Any], *, limit: int = 3) -> str:
             prompt = _human_prompt(record)
             if prompt is None:
                 continue
-            example = examples.setdefault(prompt, {"roles": [], "records": 0})
+            example = examples.setdefault(
+                prompt,
+                {
+                    "roles": [],
+                    "records": 0,
+                    "response": _assistant_response(record),
+                },
+            )
             if role not in example["roles"]:
                 example["roles"].append(role)
             example["records"] += 1
@@ -150,6 +174,8 @@ def _prompt_examples(state: dict[str, Any], *, limit: int = 3) -> str:
             if len(prompt) > 600
             else ""
         )
+        response = metadata.get("response") or "not available"
+        response_preview = response if len(response) <= 240 else response[:239] + "…"
         rows.append(
             '<div class="prompt-example">'
             '<div class="prompt-meta">'
@@ -158,8 +184,8 @@ def _prompt_examples(state: dict[str, Any], *, limit: int = 3) -> str:
             "</div>"
             f'<div class="prompt-text">{_escape(preview)}</div>'
             f"{truncation}"
-            '<div class="prompt-response"><span>Exact assistant output</span>'
-            '<code>OK</code><span>or</span><code>NG</code></div>'
+            f'<div class="prompt-response"><span>{"Canonical" if rich else "Exact"} assistant output</span>'
+            f'<code>{_escape(response_preview)}</code></div>'
             "</div>"
         )
     return "\n".join(rows)
@@ -438,13 +464,25 @@ def _dataset_rows(state: dict[str, Any]) -> str:
         "mining": "Candidate source for mined training pairs",
     }
     rows: list[str] = []
+    rich = config.get("annotation_profile") == "nvpaw_multitask_v1"
     for role in ("proxy", "benchmark", "mining"):
         path = annotations.get(role)
         records = _json_records(path)
-        ok, ng = _label_counts(records)
+        if rich:
+            task_counts: dict[str, int] = {}
+            for record in records:
+                task = str(record.get("task_type", "unknown"))
+                task_counts[task] = task_counts.get(task, 0) + 1
+            breakdown = ", ".join(
+                f"{_escape(task)}: {count}"
+                for task, count in sorted(task_counts.items())
+            ) or "not available"
+        else:
+            ok, ng = _label_counts(records)
+            breakdown = f"{ok:,} / {ng:,}"
         rows.append(
             f'<tr><td><strong>{_escape(role.title())}</strong></td><td>{_escape(purposes[role])}</td>'
-            f'<td class="num">{len(records):,}</td><td class="num">{ok:,} / {ng:,}</td><td class="path">{_fmt(path)}</td></tr>'
+            f'<td class="num">{len(records):,}</td><td>{breakdown}</td><td class="path">{_fmt(path)}</td></tr>'
         )
     iterations = state.get("iterations", {})
     if isinstance(iterations, dict):
@@ -465,10 +503,21 @@ def _dataset_rows(state: dict[str, Any]) -> str:
                 if not path:
                     continue
                 records = _json_records(path)
-                ok, ng = _label_counts(records)
+                if rich:
+                    produced_tasks: dict[str, int] = {}
+                    for record in records:
+                        task = str(record.get("task_type", "unknown"))
+                        produced_tasks[task] = produced_tasks.get(task, 0) + 1
+                    produced_breakdown = ", ".join(
+                        f"{_escape(task)}: {count}"
+                        for task, count in sorted(produced_tasks.items())
+                    ) or "not available"
+                else:
+                    ok, ng = _label_counts(records)
+                    produced_breakdown = f"{ok:,} / {ng:,}"
                 rows.append(
                     f'<tr><td><strong>{_escape(label.title())} · {_escape(producer)}</strong></td><td>Generated Train producer</td>'
-                    f'<td class="num">{len(records):,}</td><td class="num">{ok:,} / {ng:,}</td><td class="path">{_fmt(path)}</td></tr>'
+                    f'<td class="num">{len(records):,}</td><td>{produced_breakdown}</td><td class="path">{_fmt(path)}</td></tr>'
                 )
     return "\n".join(rows)
 
@@ -503,6 +552,101 @@ def _metric_rows(
             f'<td class="num">{_fmt(constraints.get("unknown_predictions"))}</td><td>{verdict}</td></tr>'
         )
     return "\n".join(rows) or '<tr><td colspan="10">No frozen Benchmark metric has been committed yet.</td></tr>'
+
+
+def _iteration_metrics_html(
+    candidates: list[tuple[str, dict[str, Any], dict[str, Any]]],
+    contract: dict[str, Any],
+    best_label: str | None,
+) -> str:
+    if contract.get("name") != "balanced_score":
+        return (
+            '<div class="table-wrap"><table class="data-table"><thead><tr><th>Phase</th><th>Source</th>'
+            '<th>Accuracy</th><th>NG recall</th><th>NG precision</th><th>NG F1</th>'
+            '<th>False accepts</th><th>False rejects</th><th>Unknown</th><th>KPI</th></tr></thead><tbody>'
+            + _metric_rows(candidates, contract, best_label)
+            + "</tbody></table></div>"
+        )
+
+    task_rows: list[str] = []
+    dataset_rows: list[str] = []
+    coverage_rows: list[str] = []
+    worst_rows: list[str] = []
+    for label, _, result in candidates:
+        gate_groups = result.get("gate_groups", {})
+        if isinstance(gate_groups, dict) and gate_groups:
+            worst_name, worst = min(
+                (
+                    (name, metrics)
+                    for name, metrics in gate_groups.items()
+                    if isinstance(metrics, dict)
+                ),
+                key=lambda item: (float(item[1].get("attainment", 0.0)), item[0]),
+            )
+            worst_rows.append(
+                f'<tr><td>{_escape(label.title())}</td><td>{_escape(worst_name)}</td>'
+                f'<td class="num">{_fmt(worst.get("value"))}</td>'
+                f'<td class="num">{_fmt(worst.get("attainment"))}</td></tr>'
+            )
+        tasks = result.get("task_metrics", {})
+        if isinstance(tasks, dict):
+            for task, metrics in sorted(tasks.items()):
+                if not isinstance(metrics, dict):
+                    continue
+                met = metrics.get("met") is True
+                task_rows.append(
+                    f'<tr class="{"best" if label == best_label else ""}"><td><strong>{_escape(label.title())}</strong></td>'
+                    f'<td>{_escape(task)}</td><td>{_fmt(metrics.get("metric_family"))}</td>'
+                    f'<td class="num">{_fmt(metrics.get("support"))}</td><td>{_fmt(metrics.get("primary_metric"))}</td>'
+                    f'<td class="num">{_fmt(metrics.get("primary_value"))}</td><td class="num">{_fmt(metrics.get("attainment"))}</td>'
+                    f'<td><span class="badge {"good" if met else "warn"}">{"MET" if met else "GAP"}</span></td></tr>'
+                )
+        datasets = result.get("dataset_metrics", {})
+        if isinstance(datasets, dict):
+            for _, metrics in sorted(datasets.items()):
+                if not isinstance(metrics, dict):
+                    continue
+                dataset_rows.append(
+                    f'<tr><td>{_escape(label.title())}</td><td>{_fmt(metrics.get("task_type"))}</td>'
+                    f'<td>{_fmt(metrics.get("dataset"))}</td><td class="num">{_fmt(metrics.get("support"))}</td>'
+                    f'<td class="num">{_fmt(metrics.get("sample_macro_f1"))}</td></tr>'
+                )
+        constraints = result.get("constraints", {})
+        if isinstance(constraints, dict):
+            coverage_rows.append(
+                f'<tr><td>{_escape(label.title())}</td>'
+                + "".join(
+                    f'<td class="num">{_fmt(constraints.get(name))}</td>'
+                    for name in (
+                        "missing_predictions",
+                        "duplicate_prediction_ids",
+                        "unknown_prediction_ids",
+                        "parse_failures",
+                        "insufficient_support_groups",
+                    )
+                )
+                + "</tr>"
+            )
+    no_tasks = '<tr><td colspan="8">No rich Benchmark metric has been committed yet.</td></tr>'
+    no_worst = '<tr><td colspan="4">No worst-group evidence is available.</td></tr>'
+    no_datasets = '<tr><td colspan="5">No dataset diagnostics are available.</td></tr>'
+    no_coverage = '<tr><td colspan="6">No coverage evidence is available.</td></tr>'
+    return (
+        '<div class="chart-subtitle" style="margin-bottom:10px">Worst-group summary</div>'
+        '<div class="table-wrap"><table class="data-table"><thead><tr><th>Phase</th><th>Worst group</th><th>Value</th><th>Attainment</th></tr></thead><tbody>'
+        + ("\n".join(worst_rows) or no_worst)
+        + '</tbody></table></div><div class="chart-subtitle" style="margin-top:24px;margin-bottom:10px">Task KPI attainment</div>'
+        '<div class="table-wrap"><table class="data-table"><thead><tr><th>Phase</th><th>Task</th><th>Family</th>'
+        '<th>Support</th><th>Primary metric</th><th>Value</th><th>Attainment</th><th>KPI</th></tr></thead><tbody>'
+        + ("\n".join(task_rows) or no_tasks)
+        + '</tbody></table></div><div class="chart-subtitle" style="margin-top:24px;margin-bottom:10px">Task × dataset diagnostics</div>'
+        '<div class="table-wrap"><table class="data-table"><thead><tr><th>Phase</th><th>Task</th><th>Dataset</th><th>Support</th><th>Sample macro F1</th></tr></thead><tbody>'
+        + ("\n".join(dataset_rows) or no_datasets)
+        + '</tbody></table></div><div class="chart-subtitle" style="margin-top:24px;margin-bottom:10px">Prediction coverage constraints</div>'
+        '<div class="table-wrap"><table class="data-table"><thead><tr><th>Phase</th><th>Missing</th><th>Duplicate IDs</th><th>Unknown IDs</th><th>Parse failures</th><th>Insufficient support</th></tr></thead><tbody>'
+        + ("\n".join(coverage_rows) or no_coverage)
+        + "</tbody></table></div>"
+    )
 
 
 def _stage_rows(entries: list[dict[str, Any]]) -> str:
@@ -614,9 +758,20 @@ def _artifact_rows(state: dict[str, Any], contract: dict[str, Any]) -> str:
         ("best_ckpt_path", "Checkpoint"),
         ("benchmark_results_json", "Benchmark results"),
         ("benchmark_metrics_summary", "Benchmark metrics"),
+        ("benchmark_task_metrics", "Benchmark task metrics"),
+        ("benchmark_sample_metrics", "Benchmark sample metrics"),
+        ("benchmark_prediction_coverage", "Benchmark prediction coverage"),
         ("proxy_results_json", "Proxy results"),
         ("proxy_gaps_summary", "Proxy RCCA"),
+        ("proxy_task_metrics", "Proxy task metrics"),
+        ("proxy_sample_metrics", "Proxy sample metrics"),
+        ("proxy_prediction_coverage", "Proxy prediction coverage"),
+        ("gap_candidates_parquet", "Gap candidates"),
+        ("selected_gaps_parquet", "Selected gaps"),
+        ("gap_analysis_summary", "Gap-analysis summary"),
         ("mining_targets_json", "Routing targets"),
+        ("mining_targets_parquet", "Routing target parquet"),
+        ("routing_summary", "Routing summary"),
         ("anomalygen_sdg_csv", "AnomalyGen SDG_result.csv"),
         ("anomalygen_allocation_json", "AnomalyGen AMP allocation"),
         ("anomalygen_sharegpt_json", "AnomalyGen ShareGPT"),
@@ -647,8 +802,17 @@ def _artifact_rows(state: dict[str, Any], contract: dict[str, Any]) -> str:
                     f'<tr><td>{_escape(label.title())}</td><td>{_escape(display)}</td><td><span class="badge muted">NOT RUN</span></td><td>not run (terminal iteration)</td></tr>'
                 )
         if phase.get("anomalygen_skipped"):
+            skip_reason = phase.get("anomalygen_skip_reason")
+            if skip_reason == "policy_disabled":
+                skip_detail = "disabled by immutable run policy"
+            elif skip_reason == "no_eligible_gaps":
+                skip_detail = "documented skip: no AnomalyGen-eligible Proxy gaps"
+            else:
+                skip_detail = (
+                    "documented skip: driving Proxy RCCA recorded zero false accepts"
+                )
             rows.append(
-                f'<tr><td>{_escape(label.title())}</td><td>AnomalyGen</td><td><span class="badge muted">SKIPPED</span></td><td>documented skip: driving Proxy RCCA recorded zero false accepts</td></tr>'
+                f'<tr><td>{_escape(label.title())}</td><td>AnomalyGen</td><td><span class="badge muted">SKIPPED</span></td><td>{_escape(skip_detail)}</td></tr>'
             )
     return "\n".join(rows)
 
@@ -811,6 +975,11 @@ def render(results_dir: pathlib.Path) -> pathlib.Path:
     )
     values = {
         "GENERATED_DATE": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "REPORT_SUBTITLE": (
+            "Disk-backed improvement loop · NVPaw multi-task classification and detection"
+            if config.get("annotation_profile") == "nvpaw_multitask_v1"
+            else "Disk-backed improvement loop · bare OK/NG classification"
+        ),
         "KPI_TARGET": _escape(render_target(contract)),
         "ITERATIONS_RUN": str(completed_iterations),
         "MAX_ITERATIONS": _fmt(state.get("max_iterations")),
@@ -829,11 +998,28 @@ def render(results_dir: pathlib.Path) -> pathlib.Path:
         ),
         "GROWTH_ROWS_HTML": _growth_rows(state),
         "DATASET_ROWS_HTML": _dataset_rows(state),
+        "DATASET_BREAKDOWN_LABEL": (
+            "Task records"
+            if config.get("annotation_profile") == "nvpaw_multitask_v1"
+            else "OK / NG"
+        ),
         "BENCHMARK_HASH": _fmt(benchmark_hash),
         "PROMPT_EXAMPLES_HTML": _prompt_examples(state),
         "METRIC_CHART_HTML": _metric_chart(candidates, contract),
         "AUGMENTATION_ROWS_HTML": _augmentation_rows(state),
-        "METRIC_ROWS_HTML": _metric_rows(candidates, contract, best_label),
+        "ITERATION_METRICS_HEADER_HTML": (
+            '<div><div class="chart-title">Iteration Metrics</div>'
+            '<div class="chart-subtitle">'
+            + (
+                "Worst-group attainment gates the run; task and dataset evidence remain visible."
+                if contract.get("name") == "balanced_score"
+                else "Discrete OK/NG metrics with NG as the positive class."
+            )
+            + "</div></div>"
+        ),
+        "ITERATION_METRICS_HTML": _iteration_metrics_html(
+            candidates, contract, best_label
+        ),
         "STAGE_ROWS_HTML": _stage_rows(entries),
         "ARTIFACT_ROWS_HTML": _artifact_rows(state, contract),
         "WARNING_ROWS_HTML": _warnings(entries),

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Assemble monotonic bare OK/NG Cosmos3 AOI training JSON."""
+"""Assemble monotonic bare or NVPaw multi-task Cosmos3 training JSON."""
 
 from __future__ import annotations
 
@@ -12,40 +12,70 @@ import pathlib
 import sys
 from collections import Counter
 
-from validate_sharegpt import load_records, prompt_and_label
+from validate_sharegpt import load_records, prompt_and_label, prompt_and_response
 
 
-def _load_json_list(path: pathlib.Path) -> list[dict]:
+def _load_json_list(
+    path: pathlib.Path, annotation_profile: str = "bare_okng"
+) -> list[dict]:
     data = load_records(path)
     for index, record in enumerate(data):
         images = record.get("images")
-        if not isinstance(images, list) or len(images) != 2:
-            raise ValueError(
-                f"{path}[{index}]: images must contain [AOI, golden_reference]"
-            )
-        prompt_and_label(record, context=f"{path}[{index}]")
+        if annotation_profile == "nvpaw_multitask_v1":
+            roles = record.get("image_roles")
+            if not isinstance(images, list) or not isinstance(roles, list) or len(images) != len(roles):
+                raise ValueError(f"{path}[{index}]: images must match image_roles")
+            if roles.count("target") != 1:
+                raise ValueError(f"{path}[{index}]: image_roles requires one target")
+            prompt_and_response(record, context=f"{path}[{index}]")
+        else:
+            if not isinstance(images, list) or len(images) != 2:
+                raise ValueError(
+                    f"{path}[{index}]: images must contain [AOI, golden_reference]"
+                )
+            prompt_and_label(record, context=f"{path}[{index}]")
     return data
 
 
-def _assistant_label(record: dict) -> str:
+def _assistant_label(record: dict, annotation_profile: str = "bare_okng") -> str:
+    if annotation_profile == "nvpaw_multitask_v1":
+        answer = record.get("answer", {})
+        return str(answer.get("kind", "unknown"))
     return prompt_and_label(record, context="record")[1]
 
 
-def _pair_key(record: dict) -> tuple[str, ...]:
+def _pair_key(
+    record: dict, annotation_profile: str = "bare_okng"
+) -> tuple[str, ...]:
+    if annotation_profile == "nvpaw_multitask_v1":
+        return (
+            json.dumps(record, sort_keys=True, separators=(",", ":")),
+        )
     images = record.get("images")
     return tuple(images) if isinstance(images, list) else tuple()
 
 
-def _target_key(record: dict) -> str:
+def _target_key(record: dict, annotation_profile: str = "bare_okng") -> str:
     images = record.get("images")
     if not isinstance(images, list) or not images:
         return ""
+    if annotation_profile == "nvpaw_multitask_v1":
+        roles = record.get("image_roles")
+        if not isinstance(roles, list) or roles.count("target") != 1:
+            return ""
+        return str(images[roles.index("target")])
     return str(images[0])
 
 
-def _unique_target_images(records: list[dict]) -> set[str]:
+def _unique_target_images(
+    records: list[dict], annotation_profile: str = "bare_okng"
+) -> set[str]:
     """Return distinct, non-empty target image paths (the first image in each pair)."""
-    return {target for record in records if (target := _target_key(record))}
+    return {
+        target
+        for record in records
+        if (target := _target_key(record, annotation_profile))
+    }
 
 
 def assemble(
@@ -54,24 +84,29 @@ def assemble(
     *,
     dedupe: bool,
     validation_paths: list[pathlib.Path],
+    annotation_profile: str = "bare_okng",
 ) -> tuple[list[dict], dict]:
     if not new_paths:
         raise ValueError("at least one --new-json input is required")
-    seed = _load_json_list(seed_path) if seed_path is not None else []
-    seed_targets = _unique_target_images(seed)
+    seed = (
+        _load_json_list(seed_path, annotation_profile)
+        if seed_path is not None
+        else []
+    )
+    seed_targets = _unique_target_images(seed, annotation_profile)
     sources: list[tuple[pathlib.Path, list[dict]]] = []
     if seed_path is not None:
         sources.append((seed_path, seed))
     new_records: list[dict] = []
     for path in new_paths:
-        records = _load_json_list(path)
+        records = _load_json_list(path, annotation_profile)
         sources.append((path, records))
         new_records.extend(records)
 
     validation_targets: dict[str, pathlib.Path] = {}
     for validation_path in validation_paths:
-        for record in _load_json_list(validation_path):
-            key = _target_key(record)
+        for record in _load_json_list(validation_path, annotation_profile):
+            key = _target_key(record, annotation_profile)
             if key:
                 validation_targets[key] = validation_path
 
@@ -81,16 +116,17 @@ def assemble(
     duplicates = 0
     leakage: list[dict] = []
     labels: Counter[str] = Counter()
+    tasks: Counter[str] = Counter()
 
     for source_path, records in sources:
         for index, record in enumerate(records):
-            key = _pair_key(record)
+            key = _pair_key(record, annotation_profile)
             if dedupe and key and key in seen:
                 duplicates += 1
                 continue
             if key:
                 seen.add(key)
-            target_key = _target_key(record)
+            target_key = _target_key(record, annotation_profile)
             if validation_targets and target_key in validation_targets:
                 leakage.append(
                     {
@@ -101,22 +137,26 @@ def assemble(
                     }
                 )
             merged.append(record)
-            labels[_assistant_label(record)] += 1
+            labels[_assistant_label(record, annotation_profile)] += 1
+            if annotation_profile == "nvpaw_multitask_v1":
+                tasks[str(record.get("task_type", "unknown"))] += 1
             provenance.append({"source": str(source_path), "source_index": index})
 
     if leakage:
         raise ValueError(f"train/evaluation leakage detected: {leakage[:5]}")
 
-    new_input_targets = _unique_target_images(new_records)
-    output_targets = _unique_target_images(merged)
+    new_input_targets = _unique_target_images(new_records, annotation_profile)
+    output_targets = _unique_target_images(merged, annotation_profile)
 
     summary = {
         "seed": str(seed_path) if seed_path is not None else None,
         "new_inputs": [str(p) for p in new_paths],
         "output_records": len(merged),
-        "mode": "bare_okng",
+        "mode": annotation_profile,
         "dedupe": dedupe,
-        "dedupe_key": "media",
+        "dedupe_key": (
+            "media" if annotation_profile == "bare_okng" else "record_fingerprint"
+        ),
         "label_source": "assistant",
         "duplicates_skipped": duplicates,
         "unique_target_images": {
@@ -126,6 +166,7 @@ def assemble(
             "output_total": len(output_targets),
         },
         "labels": dict(labels),
+        "tasks": dict(sorted(tasks.items())),
         "validation_jsons": [str(path) for path in validation_paths],
         "provenance": provenance,
     }
@@ -138,6 +179,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--previous-json",
         type=pathlib.Path,
         help="Previous iteration training JSON. Omit for iter1.",
+    )
+    parser.add_argument(
+        "--annotation-profile",
+        choices=("bare_okng", "nvpaw_multitask_v1"),
+        default="bare_okng",
     )
     parser.add_argument("--new-json", action="append", default=[], type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
@@ -161,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             args.new_json,
             dedupe=args.dedupe,
             validation_paths=args.validation_json,
+            annotation_profile=args.annotation_profile,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(merged, indent=2) + "\n")

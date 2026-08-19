@@ -144,7 +144,9 @@ Required AOI values:
   zero-shot Proxy, RCA, and Mining selection have run, replace it in the staged
   Train spec with `iterN/assemble/train_iter_N.json`;
 - `custom.train_dataset.media_path` and `media_root`: compute-frame media root;
-- `custom.system_prompt`: exact OK/NG instruction;
+- `custom.system_prompt`: exact OK/NG instruction in `bare_okng`; a neutral
+  task-following instruction in `nvpaw_multitask_v1` so the record prompt owns
+  the requested answer schema;
 - `train.output_dir`: bound stage results directory. A checkpoint outside the
   iteration result tree is a hard stop, so a carried-over template value such
   as `results/train_lora` fails at commit rather than at launch — rewrite it
@@ -195,13 +197,16 @@ evaluation stages:
 - output: `results_dir`.
 
 Start from the model skill's current packaged Evaluate template and materialize
-it once for Proxy and once for Benchmark. Apply these AOI overrides to both:
+it once for Proxy and once for Benchmark. Apply these AOI overrides to both;
+profile-specific values must remain identical between Proxy and Benchmark:
 
 - `task.type=""`;
-- `dataset.system_prompt`: return exactly `OK` or `NG`;
+- `dataset.system_prompt`: return exactly `OK` or `NG` for `bare_okng`; use a
+  neutral instruction that preserves each task prompt for rich mode;
 - `evaluation.answer_type="freeform"` and
   `evaluation.soft_accuracy.enabled=false`;
-- `generation.max_tokens=4` and `generation.temperature=0`;
+- `generation.temperature=0`; use `generation.max_tokens=4` for bare and
+  `1024` for rich detection-list capacity;
 - `metrics.names=[]`;
 - save individual results; disable evaluator confusion-matrix and metric
   summary output because `analyze_gaps.py` owns the discrete OK/NG metrics.
@@ -215,7 +220,7 @@ with Train's prepared Qwen3-VL PTM.
 
 `cosmos_rl/evaluation/base.py` hardcodes
 `limit_mm_per_prompt={"video": 1, "image": 1}` when it builds the vLLM engine.
-Every AOI record carries two images, so both evaluation stages fail with
+Bare records and rich reference records carry two images, so both evaluation stages fail with
 `ValueError: At most 1 image(s) may be provided in one prompt` until that cap
 is raised. There is no spec key and no environment override; the rest of the
 file is already multi-image correct.
@@ -225,9 +230,13 @@ Run this once per run, before the first evaluate job:
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/patch_eval_image_cap.py" \
   --image "$COSMOS_RL_IMAGE" \
+  --images "$MAX_IMAGES_PER_RECORD" \
   --output-dir "$RESULTS_DIR/patches/cosmos_rl_eval" \
   --summary "$RESULTS_DIR/patches/cosmos_rl_eval/summary.json"
 ```
+
+Derive `MAX_IMAGES_PER_RECORD` from the selected profile validator summary;
+never hard-code a value from one split.
 
 It reads `base.py` out of the image actually pinned, rewrites only that
 literal, and prints `MOUNT_ARG=<host>:<container>:ro`. Add that as a read-only
@@ -247,8 +256,10 @@ The evaluator writes `results.json` with per-sample `video_id`, `response`,
 - `--evaluation-role benchmark` writes aggregate metrics and the stop-gate
   `metric_result.json`.
 
-The analysis layer normalizes the last standalone `OK`/`NG` token. Source
-training labels remain exact.
+The bare analysis layer normalizes the last standalone `OK`/`NG` token. Rich
+analysis instead joins by `id` and parses prompt-local choice sets or labeled
+normalized boxes; pass `--annotations` and
+`--annotation-profile nvpaw_multitask_v1` to `analyze_gaps.py`.
 
 ## Output commits
 

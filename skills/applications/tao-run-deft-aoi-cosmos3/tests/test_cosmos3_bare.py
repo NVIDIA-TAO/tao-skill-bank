@@ -1201,6 +1201,13 @@ class StateMachineTests(unittest.TestCase):
             self.assertEqual(
                 commit("iter1", "routing", "--mining-targets", str(targets)), 0
             )
+            # The default auto policy still enforces its evidence gate.
+            write_json(
+                proxy_dir / "false_accepts.json",
+                [{"gt": "NG", "response": "OK"}],
+            )
+            self.assertEqual(commit("iter1", "anomalygen", "--skip"), 2)
+            write_json(proxy_dir / "false_accepts.json", [])
             self.assertEqual(commit("iter1", "anomalygen", "--skip"), 0)
             phase = json.loads(
                 (results / "deft_state.json").read_text()

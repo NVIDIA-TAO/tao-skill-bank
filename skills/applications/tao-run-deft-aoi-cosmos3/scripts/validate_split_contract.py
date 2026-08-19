@@ -24,13 +24,28 @@ ROLE_PATHS = {
 }
 
 
-def _target(record: dict, path: pathlib.Path, index: int, media_root: pathlib.Path) -> str:
+def _target(
+    record: dict,
+    path: pathlib.Path,
+    index: int,
+    media_root: pathlib.Path,
+    annotation_profile: str = "bare_okng",
+) -> str:
     images = record.get("images")
-    if not isinstance(images, list) or len(images) != 2:
-        raise ValueError(f"{path}[{index}]: images must contain [target, golden_reference]")
+    if annotation_profile == "nvpaw_multitask_v1":
+        roles = record.get("image_roles")
+        if not isinstance(images, list) or not isinstance(roles, list) or len(images) != len(roles):
+            raise ValueError(f"{path}[{index}]: images must match image_roles")
+        if roles.count("target") != 1:
+            raise ValueError(f"{path}[{index}]: image_roles must contain one target")
+        target_index = roles.index("target")
+    else:
+        if not isinstance(images, list) or len(images) != 2:
+            raise ValueError(f"{path}[{index}]: images must contain [target, golden_reference]")
+        target_index = 0
     if not all(isinstance(image, str) and image for image in images):
         raise ValueError(f"{path}[{index}]: image paths must be non-empty strings")
-    target = pathlib.Path(images[0])
+    target = pathlib.Path(images[target_index])
     if not target.is_absolute():
         target = media_root / target
     return str(target.resolve())
@@ -58,7 +73,10 @@ def validate(
     *,
     media_root: pathlib.Path,
     expected_benchmark_sha256: str | None = None,
+    annotation_profile: str = "bare_okng",
 ) -> dict:
+    if annotation_profile not in {"bare_okng", "nvpaw_multitask_v1"}:
+        raise ValueError(f"unsupported annotation profile {annotation_profile!r}")
     missing_roles = {"proxy", "benchmark", "mining"} - set(role_paths)
     if missing_roles:
         raise ValueError(f"missing required roles: {sorted(missing_roles)}")
@@ -67,11 +85,12 @@ def validate(
     counts: dict[str, int] = {}
     for role, path in role_paths.items():
         records = load_records(path)
-        targets = {
-            _target(record, path, index, media_root)
+        target_rows = [
+            _target(record, path, index, media_root, annotation_profile)
             for index, record in enumerate(records)
-        }
-        if len(targets) != len(records):
+        ]
+        targets = set(target_rows)
+        if annotation_profile == "bare_okng" and len(targets) != len(records):
             raise ValueError(
                 f"{role}: target images must be unique ({len(records) - len(targets)} duplicate(s))"
             )
@@ -200,6 +219,10 @@ def validate(
             ),
         },
         "records": counts,
+        "unique_targets": {
+            role: len(targets) for role, targets in role_targets.items()
+        },
+        "annotation_profile": annotation_profile,
         "target_overlap": overlaps,
         "benchmark_sha256": benchmark_hash,
         "benchmark_hash_verified": bool(expected_benchmark_sha256),
@@ -247,6 +270,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional workspace manifest containing the frozen Benchmark sha256.",
     )
     parser.add_argument("--summary", default=None, type=pathlib.Path)
+    parser.add_argument(
+        "--annotation-profile",
+        choices=("bare_okng", "nvpaw_multitask_v1"),
+        default="bare_okng",
+    )
     return parser
 
 
@@ -275,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
             role_paths,
             media_root=workspace,
             expected_benchmark_sha256=expected_hash,
+            annotation_profile=args.annotation_profile,
         )
         if args.summary is not None:
             args.summary.parent.mkdir(parents=True, exist_ok=True)

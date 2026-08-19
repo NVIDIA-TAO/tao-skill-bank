@@ -31,14 +31,18 @@ A single `evaluate_spec.toml` is still accepted and is then materialized per
 stage. `init_deft_state.py` prefers the per-role files, falls back to the
 shared one, and accepts `--train-spec` / `--proxy-spec` / `--benchmark-spec`.
 
-The `augmentation/anomalygen/` tree is required only when the AnomalyGen stage
-runs. Its contents and bootstrap are owned by `references/paidf-anomalygen.md`.
+The `augmentation/anomalygen/` tree is required only when
+`anomalygen.policy=auto` and the stage runs. It is not required for
+`anomalygen.policy=disabled`. Its contents and bootstrap are owned by
+`references/paidf-anomalygen.md`.
 
-The three `.json` files are the only input annotation sets. Each file contains
-one non-empty JSON array of bare OK/NG ShareGPT records; JSONL is not accepted
-by the Cosmos-RL dataset loaders. There is no input Train annotation. Relative
-image paths resolve from the workspace root. Ignore legacy `.jsonl` siblings
-when both formats are present.
+The three `.json` files are the only runtime annotation sets. Each contains one
+non-empty JSON array in the explicitly selected `bare_okng` or
+`nvpaw_multitask_v1` ShareGPT contract; Cosmos-RL does not consume JSONL.
+Rich JSONL `messages` files may be retained as authoring sources, but must be
+materialized with `materialize_nvpaw_annotations.py` before validation or
+launch. There is no input Train annotation. Relative image paths resolve from
+the workspace root.
 
 The workspace TOML files are concrete or staged job specs, not application
 reference templates. They must exist before `init_deft_state.py` runs — it
@@ -124,7 +128,7 @@ results/run_<id>/
     ├── routing/
     ├── anomalygen/
     │   ├── sdg/                       # SDG_result.csv, reconstructed_image/, original_image/
-    │   └── sdg_sharegpt.json          # generated bare NG records
+    │   └── sdg_sharegpt.json          # bare NG or supported rich classification records
     ├── mining/
     ├── assemble/
     ├── validate/

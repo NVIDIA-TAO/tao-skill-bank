@@ -4,12 +4,12 @@ Read this file only after Pre-Flight has resolved `network_mode=network-enabled`
 It is never part of an air-gapped run.
 
 If `scripts/deft_python.sh` cannot select a dependency-complete interpreter,
-install `pyarrow` and `pyyaml` into a dedicated workspace-local environment,
+install `numpy`, `pyarrow`, and `pyyaml` into a dedicated workspace-local environment,
 then rerun Pre-Flight:
 
 ```bash
 python3 -m venv <workspace>/.venv
-<workspace>/.venv/bin/pip install pyarrow pyyaml
+<workspace>/.venv/bin/pip install numpy pyarrow pyyaml
 ```
 
 Record the selected absolute interpreter in

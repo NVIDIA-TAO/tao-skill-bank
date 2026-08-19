@@ -1,6 +1,6 @@
-# Bare OK/NG AOI Annotation
+# AOI Annotation Profiles
 
-## Record contract
+## Bare `bare_okng` record contract
 
 ```json
 [
@@ -20,8 +20,8 @@
 
 The annotation file root is one JSON array, not JSONL. `images` is always
 `[AOI, golden_reference]`. The final assistant value is exactly `OK` or `NG`.
-This skill does not accept rich answers, reasoning tags, captions,
-multiple-choice fan-out, or label-derived prose.
+This is the default compatibility profile. It does not accept reasoning tags,
+captions, multiple-choice fan-out, or label-derived prose.
 
 `id` is **required on the Proxy and Benchmark splits**: `cosmos-rl-evaluate`
 hard-indexes `item["id"]` and reuses it as the per-sample output filename, so a
@@ -39,10 +39,32 @@ tracing a mined record back to its source row.
 per-role field list; its `ROLE_CONTRACT` table is the source of truth if this
 document ever disagrees.
 
+## Rich `nvpaw_multitask_v1` record contract
+
+Author rich records as line-delimited OpenAI `messages`, then materialize one
+typed manifest and one Cosmos ShareGPT JSON array:
+
+```bash
+"$PYTHON" "$SKILL_ROOT/scripts/materialize_nvpaw_annotations.py" \
+  --source annotations/proxy_kpi.jsonl \
+  --manifest annotations/proxy_kpi.manifest.json \
+  --output annotations/proxy_kpi.json \
+  --prompt-variant official_v1
+```
+
+Each record has a filesystem-safe `id`, original `source_id`, physical
+`target_id`, `task_type`, `metric_family`, `image_roles`, `option_map`, typed
+`answer`, and `prompt_format`. A non-reference record has role `target`; a
+reference record has `golden,target`. Duplicate `id` is invalid; several
+prompt records may intentionally share one `target_id`. Detection boxes are
+positive-area integer `xyxy` in `[0,1000]`. See
+`nvpaw-prompt-formats.md` for the six task contracts.
+
 ## Align mined paths
 
-Mining returns paths, not full training records. Align them to the recorded
-Mining pool:
+Mining returns routed paths rather than full training records. Rich routed
+parquets also carry `route_tier` and `routed_task_types`; the emit script uses
+them to filter strict fan-out. Align the paths to the recorded Mining pool:
 
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/emit_mined_sharegpt.py" \
@@ -53,6 +75,10 @@ Mining pool:
   --output "$RESULTS_DIR/$LABEL/assemble/mined_sharegpt.json" \
   --summary "$RESULTS_DIR/$LABEL/assemble/emit_mined_summary.json"
 ```
+
+Add `--annotation-profile nvpaw_multitask_v1` in rich mode. The emitter
+deduplicates input queries by physical target and fans a match out to every
+compatible prompt record.
 
 The join tries resolved/exact paths and then a unique basename. Missing or
 ambiguous matches hard-stop. Each emitted record inherits the source prompt,
@@ -78,6 +104,11 @@ The prompt is inherited from the Mining pool so synthetic and mined records ask
 the same question. A missing or empty image on either side of a pair
 hard-stops. See `references/paidf-anomalygen.md`.
 
+In rich mode add `--annotation-profile nvpaw_multitask_v1` and
+`--template-id <classification-record-id>`. Only defect classification is
+supported. A detection template fails because SDG does not provide validated
+geometry from which normalized boxes can be derived.
+
 ## Assemble monotonically
 
 ```bash
@@ -97,6 +128,10 @@ synthetic records become the first training set. For later iterations add
 `--previous-json "$PREVIOUS_TRAIN_JSON"` using the preceding iteration's
 combined training JSON.
 
+Add `--annotation-profile nvpaw_multitask_v1` in rich mode. Rich deduplication
+uses the complete record fingerprint, not the shared target image, and the
+summary reports per-task contributions.
+
 ## Validate
 
 ```bash
@@ -111,6 +146,8 @@ combined training JSON.
   --train "$RESULTS_DIR/$LABEL/assemble/train_iter_${ITERATION}.json"
 ```
 
+Add `--annotation-profile nvpaw_multitask_v1` to both commands for a rich run.
+
 For N>1, also pass
 `--previous-train "$RESULTS_DIR/iter$((ITERATION - 1))/assemble/train_iter_$((ITERATION - 1)).json"`.
 Omit `--previous-train` only for `iter1`, and omit `--synthetic` when the
@@ -121,9 +158,10 @@ current iteration skipped AnomalyGen.
 shapes differ — only the first has a top-level `mode` and an integer `records`,
 which is what the committed validation stage records.
 
-The iteration cannot train until this report records
-`mode=bare_okng`, a positive record count, exact labels, unique targets, and
-existing files. The split validator must also prove that every generated Train
+The iteration cannot train until this report records the selected mode, a
+positive record count, valid typed answers, unique record IDs, and existing
+files. Bare mode additionally requires unique targets; rich mode allows target
+fan-out. The split validator must also prove that every generated Train
 target comes from Mining, the immediate `--previous-train` seed, or the current
 iteration's `--synthetic` output. It verifies that the new Train retains every
 preceding record and that none of these targets overlap Proxy or Benchmark.

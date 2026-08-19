@@ -1,0 +1,13 @@
+schema_version: gap_analysis_v1
+candidate_builder: multitask_v1
+scorer: {name: sample_metric_deficit}
+allocator: {name: equal_task_round_robin, group_by: [task_type, metric_family, reference_cohort]}
+selector: {name: hardness_diversity, hardness_weight: 0.7, embedding_field: embedding}
+budget: 600
+fraction_per_group: 0.10
+min_per_group: 8
+max_per_group: null
+max_per_dataset: 64
+expected_groups: {source: annotation_manifest}
+missing_group_policy: error
+seed: 17
