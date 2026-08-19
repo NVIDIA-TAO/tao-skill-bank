@@ -512,6 +512,33 @@ def test_finalize_binds_native_job_record_and_fresh_output(tmp_path, platform):
     assert errors == []
 
 
+def test_successful_action_status_prevents_relaunch(tmp_path):
+    _, _, stage, output, args = _write_fixture(tmp_path, "docker")
+    request_path, request = action.prepare(args)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(b"PAR1 completed output")
+    Path(request["log_path"]).write_text("action completed\n", encoding="utf-8")
+    record_path, record = _open_job_record(
+        request_path,
+        request,
+        job_id="data-services-deft-iaa-pool-embed-no-relaunch",
+    )
+    action.bind_job(argparse.Namespace(request=request_path, job_record=record_path))
+    _finish_job_record(record_path, record)
+    status_path, returncode = action.finalize(
+        argparse.Namespace(
+            request=request_path,
+            job_record=record_path,
+            native_exit_code=0,
+        )
+    )
+    assert returncode == 0
+    assert json.loads(status_path.read_text(encoding="utf-8"))["status"] == "ok"
+
+    with pytest.raises(ValueError, match="action already completed successfully"):
+        action.prepare(args)
+
+
 @pytest.mark.parametrize("platform", ("slurm", "kubernetes", "brev"))
 def test_remote_finalize_requires_output_absence_attestation(tmp_path, platform):
     _, _, stage, output, args = _write_fixture(tmp_path, platform)
