@@ -446,6 +446,38 @@ def _limit_minutes(time_limit: str) -> int:
     return int(days) * 1440 + hours * 60 + minutes + (1 if seconds else 0)
 
 
+def place_files(files: dict[str, str], ctx: dict[str, Any]) -> None:
+    """Write the rendered files on the CLUSTER, not on the launch host.
+
+    render() returns paths on the shared filesystem and an argv that runs
+    `sbatch` over ssh, so the script has to exist THERE. A generic caller that
+    writes rendered files locally -- the correct behaviour for kubernetes,
+    whose manifest is read by a local kubectl -- creates a stray tree on the
+    launch host instead, and sbatch then fails on a path it cannot see. Where
+    the launch host happens to have a writable parent of the same name, it is
+    worse than an error: submission silently picks up whichever file is
+    already on the cluster.
+
+    Content travels on stdin, never argv, because a rendered sbatch body can
+    carry credential material and argv is visible to anyone running `ps`.
+    `umask 077` so it lands mode 600, matching the credential sidecar the
+    template shreds on exit.
+    """
+    login = ctx["login"]
+    for path, content in files.items():
+        parent = str(pathlib.PurePosixPath(path).parent)
+        placed = subprocess.run(
+            ["ssh", login,
+             f"mkdir -p {shlex.quote(parent)} && umask 077 && "
+             f"cat > {shlex.quote(path)}"],
+            input=content, capture_output=True, text=True, check=False,
+        )
+        if placed.returncode != 0:
+            raise ValueError(
+                f"could not write {path} on {login}: {placed.stderr.strip()}"
+            )
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> a rendered sbatch script plus the ssh sbatch command."""
     job_id = ctx["job_id"]

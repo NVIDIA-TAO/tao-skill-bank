@@ -500,10 +500,26 @@ def submit_bundle(
                 "--message", "render failed")
         raise
 
-    for path, content in (rendered.get("files") or {}).items():
-        target = pathlib.Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+    # Where the rendered files belong depends on where the launcher runs.
+    # kubernetes writes a manifest a local kubectl reads; slurm writes an
+    # sbatch script that must exist on the CLUSTER, since its argv is ssh. A
+    # platform that launches remotely owns placement and says so with
+    # place_files(); everything else is local.
+    try:
+        place = getattr(renderer, "place_files", None)
+        if place is not None:
+            place(rendered.get("files") or {}, ctx)
+        else:
+            for path, content in (rendered.get("files") or {}).items():
+                target = pathlib.Path(path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+    except Exception:
+        # Without this the record stays PENDING forever: it is already open,
+        # and nothing downstream runs to close it.
+        _record("mark", job_id, "--state", "ERROR", "--err-class", "ERR_INFRA",
+                "--message", "could not place rendered files")
+        raise
 
     environment = os.environ.copy()
     if ctx["airgap"]:

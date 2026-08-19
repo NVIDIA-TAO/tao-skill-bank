@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import inspect
 import pathlib
 import re
 
@@ -718,3 +719,81 @@ def test_conversion_cpus_are_caller_settable(monkeypatch):
     module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
     module.prepare({"image": "nvcr.io/x:1"}, {**ctx, "conversion_cpus": 4})
     assert "--cpus-per-task 4" in next(c for c in calls if "enroot import" in c)
+
+
+# ── Rendered files must land where the launcher will look ──────────────────
+# Found end-to-end: submit wrote the sbatch script to the LOCAL filesystem
+# using the cluster path from ctx, i.e. tried to create /lustre on the launch
+# host. It surfaced as `[Errno 30] Read-only file system: '/lustre'` only
+# because macOS refuses a write at /. On a Linux launch host the same code
+# creates a stray local tree and sbatch fails on a path it cannot see -- or,
+# where a writable parent exists, silently submits whatever is already on the
+# cluster.
+#
+# The rule is about the launcher, not about slurm: kubernetes writes a
+# manifest that a LOCAL kubectl reads, so a local write is right there.
+
+REMOTE_LAUNCHER_TOKENS = ("ssh", "brev")
+
+
+def test_remote_launchers_own_file_placement():
+    """If argv crosses a machine boundary, so must the files."""
+    for name in PLATFORMS:
+        module = _load(name)
+        argv_source = inspect.getsource(module.render)
+        launches_remotely = any(
+            f'"{token}"' in argv_source for token in REMOTE_LAUNCHER_TOKENS
+        )
+        writes_files = '"files": {}' not in argv_source
+        if launches_remotely and writes_files:
+            assert hasattr(module, "place_files"), (
+                f"{name} launches remotely and returns rendered files, but "
+                "defines no place_files(); a generic caller writes them to the "
+                "launch host, where the launcher will never see them"
+            )
+
+
+def test_slurm_places_files_over_ssh(monkeypatch):
+    module = _load("tao-run-on-slurm")
+    calls = []
+
+    def fake(cmd, *a, **k):
+        calls.append((cmd, k.get("input")))
+        return _Done("")
+
+    monkeypatch.setattr(module.subprocess, "run", fake)
+    module.place_files({"/lustre/work/job.sbatch": "#!/bin/bash\necho hi\n"},
+                       {"login": "me@login"})
+    cmd, sent = calls[0]
+    assert cmd[0] == "ssh" and cmd[1] == "me@login"
+    assert "/lustre/work/job.sbatch" in cmd[2] and "mkdir -p /lustre/work" in cmd[2]
+    assert sent == "#!/bin/bash\necho hi\n", "content must travel on stdin"
+
+
+def test_placed_script_content_never_reaches_argv(monkeypatch):
+    """A rendered sbatch body can carry credential material; argv is public."""
+    module = _load("tao-run-on-slurm")
+    calls = []
+    monkeypatch.setattr(module.subprocess, "run",
+                        lambda cmd, *a, **k: (calls.append(cmd), _Done(""))[1])
+    module.place_files({"/w/j.sbatch": "SECRET_SENTINEL_VALUE"}, {"login": "h"})
+    assert "SECRET_SENTINEL_VALUE" not in " ".join(calls[0]), (
+        "script body appeared in argv, where `ps` exposes it to other users"
+    )
+
+
+def test_placed_script_is_not_world_readable(monkeypatch):
+    module = _load("tao-run-on-slurm")
+    calls = []
+    monkeypatch.setattr(module.subprocess, "run",
+                        lambda cmd, *a, **k: (calls.append(cmd), _Done(""))[1])
+    module.place_files({"/w/j.sbatch": "body"}, {"login": "h"})
+    assert "umask 077" in calls[0][2]
+
+
+def test_failed_placement_is_reported_not_swallowed(monkeypatch):
+    module = _load("tao-run-on-slurm")
+    monkeypatch.setattr(module.subprocess, "run",
+                        lambda *a, **k: _Done("", 1))
+    with pytest.raises(ValueError, match="could not write"):
+        module.place_files({"/w/j.sbatch": "body"}, {"login": "h"})

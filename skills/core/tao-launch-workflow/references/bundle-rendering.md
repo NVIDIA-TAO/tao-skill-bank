@@ -112,3 +112,30 @@ So: derive every allocation's identity from the same `ctx` keys, and when a
 platform-level command fails with none supplied, say so in the error rather
 than reporting only the tool's own message.
 
+## Where rendered files go
+
+`render()` returns `files` as a path→content map. **Whether those paths are
+local depends on where the argv runs**, and only the renderer knows:
+
+| platform | argv runs | files read by | placement |
+|---|---|---|---|
+| docker, virtualenv | locally | — (no files) | n/a |
+| kubernetes | locally (`kubectl`) | local kubectl | local write |
+| slurm | remotely (`ssh … sbatch`) | the cluster | **remote write** |
+
+A renderer whose launcher crosses a machine boundary must define
+`place_files(files, ctx)` and place them itself. A generic caller writing them
+locally produces a stray tree on the launch host and a launcher that cannot
+find its input — or worse, where a same-named writable parent exists, a silent
+submission of whatever file is already on the far side.
+
+Two constraints on a remote implementation:
+
+- **Content on stdin, never argv.** A rendered job script can carry credential
+  material, and argv is visible to any user running `ps`.
+- **Create it non-world-readable** (`umask 077`), matching the credential
+  sidecar handling in the job template.
+
+This is the same rule as scheduling identity and image references: what the
+platform needs is derived by the platform, not assumed by the caller.
+
