@@ -89,6 +89,7 @@ from deft_stages import (  # noqa: E402
     STAGE_ARTIFACTS,
     TERMINAL_STAGE,
     check_artifact,
+    derive_rare_classes,
     iter_number,
     log_path,
     phase_entry,
@@ -534,6 +535,41 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_rare_classes(state: dict, pool_report: str | None) -> str | None:
+    """Fill a null ``config.rare_class_list`` from the prepared pool's class counts.
+
+    Only applies to ``class_stratified`` allocation, which is the only policy that
+    reads the list. Returns a message describing what was written, or None when
+    there was nothing to do. A pool report that cannot be read is not fatal here:
+    the value stays null and `mine` refuses on a list it needs but does not have.
+    """
+    config = state.get("config")
+    if not isinstance(config, dict):
+        return None
+    if config.get("allocation_policy") != "class_stratified":
+        return None
+    if config.get("rare_class_list"):
+        return None
+    if not pool_report:
+        return ("rare_class_list is unset and no --pool-report was committed; "
+                "`mine` requires it under class_stratified allocation")
+    raw_targets = config.get("target_classes") or []
+    if isinstance(raw_targets, str):
+        raw_targets = raw_targets.split(",")
+    targets = [str(c).strip() for c in raw_targets if str(c).strip()]
+    try:
+        data = json.loads(Path(pool_report).read_text(encoding="utf-8"))
+        counts = {str(c): int(n) for c, n in (data.get("annotations_by_class") or {}).items()}
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        return f"rare_class_list left unset: --pool-report is unreadable ({exc})"
+    rare, detail = derive_rare_classes(counts, targets)
+    if not rare:
+        return (f"rare_class_list left unset: no target class holds a below-mean share "
+                f"of the pool ({detail})")
+    config["rare_class_list"] = ",".join(rare)
+    return (f"rare_class_list resolved to {rare} from the pool's class counts ({detail})")
+
+
 def main() -> int:
     parser = _build_parser()
     args, unknown = parser.parse_known_args()
@@ -709,10 +745,10 @@ def main() -> int:
                 extras["map_value"] = args.map_value
 
             # The weak-image count is gap_analysis's measurement and no other
-            # stage's. It used to be accepted everywhere, and `entry.update(extras)`
-            # meant a `--weak-image-count 0` on loop_stop overwrote the real count
-            # on the phase entry — buying a "documented early stop" completion for a
-            # run that stopped at iteration 1 of 3.
+            # stage's. `entry.update(extras)` writes it straight onto the phase
+            # entry, so accepting it elsewhere lets a later stage overwrite the real
+            # count with its own — and the count is what decides whether an early
+            # stop is a completed run.
             if stage != "gap_analysis":
                 offered = [
                     flag
@@ -826,6 +862,31 @@ def main() -> int:
                 raise ValueError(f"state.iterations.{phase} must be an object")
             entry.update(artifacts)
             entry.update(extras)
+
+            # Which target classes are rare is a property of the pool, so it can
+            # only be settled once prep has built one. init leaves it null on a run
+            # that still has to prep; this fills it from the pool's own class counts
+            # before `mine`, the first stage that reads it, can run.
+            if stage == "prep" and args.status == "ok":
+                resolved = _resolve_rare_classes(state, extras.get("pool_report"))
+                if resolved:
+                    print(resolved, file=sys.stderr)
+
+            # The deferral above is only safe if the value is guaranteed present by
+            # the time it matters. class_stratified apportions the budget by rare
+            # class; with no list it silently degrades to global allocation and the
+            # run stops protecting the classes it exists to improve.
+            if stage == "mine" and args.status == "ok":
+                config = state.get("config")
+                config = config if isinstance(config, dict) else {}
+                if (config.get("allocation_policy") == "class_stratified"
+                        and not config.get("rare_class_list")):
+                    raise ValueError(
+                        "config.rare_class_list is unset but allocation_policy is "
+                        "class_stratified. It is derived at the prep commit from "
+                        "pool_report.json; commit prep with --pool-report, or re-init "
+                        "with --rare-class-list"
+                    )
 
             run_failed = failure is not None or state.get("status") == "failed"
             if stage == TERMINAL_STAGE:

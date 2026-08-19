@@ -15,7 +15,13 @@ iteration to reproduce that behavior; pass the current iteration's parquet
 instead to let the budget track the shrinking gap set.
 
 ``--pool-size`` and ``--remaining-iterations`` turn the budget into a feasibility
-check. The pool is finite and iterations exclude what earlier ones already mined,
+check. Note the limit: ``--weak-parquet`` is required and the only weak parquet comes
+from iteration 1's ``gap_analysis``, so the earliest this can run is after the baseline
+has been scored. It bounds the *remaining* iterations, not the first one. A run whose
+pool cannot support its ``max_iterations`` still pays for a full baseline before
+hearing so.
+
+The pool is finite and iterations exclude what earlier ones already mined,
 so a run needs roughly ``budget x remaining_iterations`` unmined images left to
 finish. When it does not have them, the shortfall is knowable here — before the
 train, inference and KPI stages of this iteration run — rather than at the next

@@ -33,10 +33,6 @@ images:
     deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch
     data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch
     data_services_nightly: nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.8.10-rc-26-multiarch
-    # Interim until `gap_analysis object_detection` and `tmm unique_neighbor_matching` ship
-    # in a release data-services image. Verified to carry all five actions the DEFT
-    # object-detection pipeline uses: gap_analysis, tmm, analytics, embedding, annotations.
-    data_services_od:   nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
     cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl

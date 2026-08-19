@@ -61,7 +61,7 @@ class_mapping: {}
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   gap_analysis object_detection -e "$OD_GAP_SPEC"
 ```
@@ -95,6 +95,7 @@ Count the rows of `weak_images.parquet` and pass that number. It is required on 
   --weak-images "${RESULTS_DIR}/iter${N}/gaps/weak_images.parquet" \
   --gap-report "${RESULTS_DIR}/iter${N}/gaps/gap_report.json" \
   --weak-image-count <row count of weak_images.parquet> \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "gap_analysis: <N> weak images across <M> classes"
 ```
 

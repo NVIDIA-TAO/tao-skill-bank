@@ -8,6 +8,21 @@ Prep turns a directory of raw unlabeled images into the two artifacts every iter
 | `source_pool/source_embeddings.parquet` | `embedding image_embeddings` over the pool | `mine` (the search corpus) |
 | `source_pool/coco.json` | the KITTI→COCO step, retained | `mine` as `source_detection_file` (class_stratified only) |
 
+## Paths
+
+Every command below uses `${PREP_DIR}`. Export it before the first step:
+
+```bash
+export PREP_DIR="${RESULTS_DIR}/prep"
+mkdir -p "$PREP_DIR"
+```
+
+`${RESULTS_DIR}/prep` is the layout the rest of the workflow expects: the output tree
+in `references/pipeline-and-state.md` places the mappings and `pool_report.json` there,
+and the report reads them from that path. The pool's own artifacts are separate —
+they live under `<workspace>/source_pool/`, outside the results tree, so a second run
+against the same pool reuses them.
+
 **This runs exactly once, before the baseline.** Every iteration afterwards is a lookup against what prep produced — no labeler and no encoder runs inside the loop. That is the point: it keeps the per-iteration path deterministic and confines GPU work to train and inference.
 
 **Prep is idempotent.** Skip any step whose output already exists. A user arriving with a pool that is already labeled and embedded pays nothing; a user with raw images pays for the whole chain once. Never re-label or re-embed a pool that already has current artifacts.
@@ -97,13 +112,9 @@ Both consumers do exact-string lookups — Co-DETR checks `orig_name not in name
 
 Copy source names verbatim from the detector's classmap. `validate_pool_coco.py` (step 4) names case-only mismatches explicitly, because this is the most likely way a fold goes wrong and the least visible.
 
-> **Improvement to make to `annotations convert`:** `construct_category_map` /
-> `labels2cat` in `kitti_to_coco.py` should match class names case-insensitively, or
-> at minimum warn when a label class differs from a mapping alias only by case. Today
-> the reference mapping works around it by hand-enumerating variants — `Bicycle`,
-> `bicycle`, `AutoMobile`, `Automobile` — which is fragile and silently incomplete for
-> any spelling nobody thought of. The same function is imported by
-> `analytics kpi_analyze`, so a fix there covers both.
+Matching is case-sensitive in both `annotations convert` and `analytics kpi_analyze`,
+which share the same lookup, so a mapping must enumerate every spelling it expects to
+see — `Bicycle` and `bicycle`, `AutoMobile` and `Automobile`.
 
 ### Target names must be single tokens
 
@@ -206,7 +217,7 @@ value lands directly on `inference.category_mapping`.
 
 ```bash
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   $CODETR inference -e "$CODETR_SPEC" \
     inference.checkpoint="$CODETR_CHECKPOINT" \
@@ -216,6 +227,21 @@ docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
 
 Add `-v` for every path outside `$WORKSPACE` — the checkpoint and the classmap
 commonly live elsewhere, and a container cannot read what is not mounted.
+
+Runtime scales with pool size, so on a large pool this is the longest stage in the
+workflow. Wait on its artifacts, not on the process:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
+  --artifact "${PREP_DIR}/inference/labels" \
+  --status-json "${PREP_DIR}/inference/status.json" \
+  --status-contains "finished successfully"
+```
+
+TAO appends the action name to `results_dir`, so passing `results_dir=${PREP_DIR}`
+puts every output under `${PREP_DIR}/inference/`. A wait pointed at
+`${PREP_DIR}/status.json` never matches and times out while the stage runs
+normally.
 
 `dataset.infer_data_sources.classmap` is the detector's **own** vocabulary — one class name per line in `category_id` order starting at 1, COCO-80 for a COCO-trained checkpoint. It is not the target list; `category_mapping` names are matched against it. `results_dir` auto-appends the action, so labels land in `${PREP_DIR}/inference/labels/` already carrying target class names.
 
@@ -258,7 +284,7 @@ the targets. `results_dir` is **not** a scratch dir — see below. The overlay p
 step and the ODVG conversion both look for.
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" annotations convert -e "${PREP_DIR}/kitti_to_coco.yaml"
 ```
 
@@ -286,10 +312,10 @@ Do not read that as "the image survives to training". It does not: this step ski
   --classes     "$CLASSES_YAML" \
   --labels-dir  "${PREP_DIR}/inference/labels" \
   --images-dir  "$POOL_IMAGES" \
+  --record      target_classes="<comma-separated target classes>" \
+  --record      codetr_checkpoint="$CODETR_CHECKPOINT" \
+  --record      pyt_image="$TAO_PYT_IMAGE" \
   --report-json "${PREP_DIR}/pool_report.json"
-  --record target_classes="<comma-separated target classes>" \
-  --record codetr_checkpoint="$CODETR_CHECKPOINT" \
-  --record pyt_image="$TAO_PYT_IMAGE" \
 ```
 
 `--record` writes those under `prep_inputs` in the report. Prep is idempotent by
@@ -328,7 +354,7 @@ Pass `--allow-empty-classes` only when a class is listed defensively and its abs
 ```
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" annotations convert -e "${PREP_DIR}/coco_to_odvg.yaml"
 ```
 
@@ -367,8 +393,14 @@ container that sees no images, and an error that blames the image list rather th
   --pool-odvg "<workspace>/source_pool/odvg" \
   --pool-embeddings "<workspace>/source_pool/source_embeddings.parquet" \
   --pool-report "${PREP_DIR}/pool_report.json" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "prep: labeled <N> pool images, <M> boxes kept across <K> classes"
 ```
+
+`--pool-report` is what settles `rare_class_list`: under `class_stratified` allocation
+the commit derives it here from the pool's annotation counts and writes it into state,
+because which classes are rare is a property of the pool and nothing knows it before
+prep. Omitting the flag leaves the field unset and `mine` refuses.
 
 ## Gates
 
