@@ -288,3 +288,4 @@ batch-size divisibility and per-rank limits, stale cache, scheduler-None,
 gated-repo `HF_TOKEN`, GPU resource/architecture gate, status-logging warnings),
 DEFT support and `scripts/analyze_gaps.py` gap analysis, and the parent-model
 inference mapping table.
+

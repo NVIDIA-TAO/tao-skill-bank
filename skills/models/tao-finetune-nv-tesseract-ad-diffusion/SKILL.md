@@ -243,3 +243,4 @@ artifacts/finetune_my_data/
 | All MAE scores identical | Constant-value columns | Drop zero-variance columns before calling API |
 | `ModuleNotFoundError: sdk` | Wrong working directory | `cd ad_diffusion/` before `uv run`, or add it to `sys.path` |
 | Slow inference on CPU | Many diffusion windows | Reduce `nsample` to 5–10 for smoke tests |
+

@@ -373,3 +373,4 @@ the `0 entries written` halt, mid-round SDG failure resume, off-boundary
 `step`) are covered in `references/error-handling.md`; see also
 `references/finetune.md` and `references/inference.md` for phase-specific
 error handling.
+

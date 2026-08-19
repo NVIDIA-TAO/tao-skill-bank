@@ -309,3 +309,4 @@ similar — the entries map exception text to the underlying cause.
 ## What the SDK does NOT do
 
 The SDK does not read/interpret skills, run AutoML on its own, decide spec contents, select platforms, or orchestrate multi-step workflows — those stay the agent's responsibility. See [`references/scope.md`](references/scope.md) for the full scope guardrails, including the model-level AutoML policy (`automl_enabled: true` → `skills/applications/tao-run-automl` unless `automl_policy: off` or the user asks for a plain single run).
+
