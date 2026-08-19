@@ -301,3 +301,33 @@ next to its tool check so the version half is visible before it is needed.
 Registries are migrating to OCI generally, so treat an enroot too old to read
 it as a dependency with a clock on it, not a per-image workaround.
 
+## Translating `docker run` flags
+
+A skill that documents its stages as `docker run` is not docker-only: the image
+is converted once to `.sqsh` and every flag has a Pyxis equivalent, or needs
+none.
+
+| docker | on SLURM |
+|---|---|
+| `<image>` | `srun --container-image=<sqsh>` (converted once, cached) |
+| `--gpus all` | `#SBATCH --gres=gpu:N`, rendered from the bundle's `compute_shape` |
+| `-v src:dst` | `--container-mounts=src:dst` |
+| `-e VAR=…` | exported in the sbatch prologue |
+| `--shm-size=16g` | **nothing needed** — see below |
+| `--ipc=host` | **nothing needed** — same reason |
+| `--rm` | never: it destroys the exit code `status()` reads |
+
+**`--shm-size` is a docker workaround, not a requirement.** Docker defaults
+`/dev/shm` to 64 MB, which starves NCCL/DDP, so GPU images routinely pass
+`--shm-size`. Enroot does not impose that default — it exposes the host tmpfs.
+Measured inside a Pyxis container on a CS-OCI-ORD compute node:
+
+```
+$ srun --container-image=<sqsh> df -h /dev/shm
+tmpfs            89G   24K   89G   1% /dev/shm
+```
+
+So a stage whose docker recipe passes `--shm-size`/`--ipc=host` needs no SLURM
+counterpart, and their absence from the template is correct rather than an
+oversight. Re-measure on an unfamiliar cluster before assuming it holds there.
+
