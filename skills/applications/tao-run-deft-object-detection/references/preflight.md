@@ -80,12 +80,20 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    side effect and belongs after the gate, with the container pulls:
 
    ```bash
-   ZERO_SHOT_CHECKPOINT=$(<skill_root>/scripts/deft_python.sh \
+   # --plan reports what it would fetch; it prints a sentence, not a path.
+   <skill_root>/scripts/deft_python.sh \
      <skill_root>/scripts/fetch_gdino_checkpoint.py --plan \
+     --dest "$WORKSPACE/checkpoints/gdino"
+
+   # After approval, the same command without --plan downloads and prints the path.
+   ZERO_SHOT_CHECKPOINT=$(<skill_root>/scripts/deft_python.sh \
+     <skill_root>/scripts/fetch_gdino_checkpoint.py \
      --dest "$WORKSPACE/checkpoints/gdino")
    ```
 
-   After approval, run the same command without `--plan` to perform the download.
+   Capture the variable from the real run, not from `--plan`: under `--plan` the script
+   prints `WILL DOWNLOAD after approval: ... -> <dir>`, so capturing it puts an English
+   sentence in a variable every later stage uses as a path.
 
    That resolves `nvidia/tao/grounding_dino:grounding_dino_swin_tiny_commercial_trainable_v1.1`
    (1.93 GB) and prints the checkpoint path on stdout. It is idempotent — an existing
@@ -168,6 +176,8 @@ Resolve everything you can before asking the user. Parameter precedence is stric
      done
    fi
    [ -n "$resolved_siglip" ] && export SIGLIP_MODEL_PATH="$(realpath "$resolved_siglip")"
+   # init takes it as --embedding-model-path; bind it here or the resolution is lost.
+   export EMBEDDING_MODEL_PATH="${SIGLIP_MODEL_PATH:-}"
    ```
 
    Rules:
@@ -330,6 +340,35 @@ gap_analysis -> embed -> mine -> stage -> train -> inference -> kpi_analyze
 ```
 
 Remind the user to enable auto-mode (shift+tab) before approving — the post-gate loop is continuously side-effecting.
+
+## Run variables
+
+Every stage reference launches containers with shell variables. They are set once here
+and used unchanged for the rest of the run; nothing later re-derives them. Export them
+before the first stage:
+
+```bash
+# Resolved at the gate above
+export WORKSPACE RESULTS_DIR MAX_ITERATIONS NUM_GPUS NUM_EPOCHS LEARNING_RATE
+export MULTIPLIER ALLOCATION_POLICY AP50_THRESHOLDS_JSON
+export ZERO_SHOT_CHECKPOINT TRAIN_SPEC_TEMPLATE
+export SOURCE_POOL_EMBEDDINGS SOURCE_POOL_ANNOTATIONS
+export EMBEDDING_MODEL EMBEDDING_MODEL_PATH
+export KPI_IMAGES_DIR GROUND_TRUTH_LABELS_DIR CLASS_MAPPING
+export TAO_PYT_IMAGE TAO_DS_IMAGE EXTRA_MOUNTS DOCKER_IDENTITY
+
+# Prep runs only
+export POOL_IMAGES CODETR_CHECKPOINT CODETR_CLASSMAP CLASSES_YAML
+```
+
+An unset variable is not an error in a `docker run`: it expands to empty, so
+`-e ""` reaches TAO as a blank spec path and the failure reads as a spec problem rather
+than a missing export. Set them all, and prefer `set -u` in the shell driving the run so
+a typo fails at the point of use.
+
+Each stage's own spec path is bound in that stage's reference, next to the path it
+documents — `$CODETR_SPEC`, `$INFER_SPEC`, `$OD_GAP_SPEC`, `$EMBED_SPEC`, `$MINE_SPEC`
+and `$KPI_SPEC`.
 
 ## Immediately After Approval
 

@@ -19,7 +19,13 @@ Resolve `model` / `model_path` once in Pre-Flight (check 9) and reuse those exac
 
 ## Spec
 
-Write per-iteration under `${RESULTS_DIR}/iter${N}/embeddings/image_embeddings.yaml`:
+Write per-iteration under `${RESULTS_DIR}/iter${N}/embeddings/image_embeddings.yaml` — the invocation below reads it from
+`$EMBED_SPEC`, so bind the two:
+
+```bash
+EMBED_SPEC="${RESULTS_DIR}/iter${N}/embeddings/image_embeddings.yaml"
+```
+
 
 ```yaml
 input_parquet:  <absolute path to iter${N}/gaps/weak_images.parquet>
