@@ -198,14 +198,19 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
 13. **Spec sanity.** `train.checkpoint_interval` must be `<= train.num_epochs`. `prepare_spec_for_train.py` lowers it automatically when an explicit epoch override would violate this, but flag the adjustment in the Summary so it is not a surprise.
 
-**Required input — `max_iterations`.** No default. Ask if not supplied and do not proceed past Pre-Flight without it.
+**`max_iterations` defaults to `1`.** Confirm it with the user when they have not said how many iterations they want, but do not block on it: an unattended run takes the default.
 
 ## Defaults
 
 - `train.num_epochs` — from the train-spec template
 - `train.optim.lr` — from the train-spec template
 - `multiplier` — `3`
+- `max_iterations` — `1`
 - `allocation_policy` — `class_stratified` when rare classes are given, else `global`
+- `rare_class_list` — every target class holding a below-mean share of the pool's
+  annotations. It is a property of the pool, so on a run that still has to prep it is
+  left unset at init and the prep commit derives it from `pool_report.json`. Supply
+  `--rare-class-list` only to override that.
 - `distance_metric` — `euclidean`
 - `candidate_expansion_factor` — `5`
 - `embedding_model` — `SigLIP`; `embedding_model_path` is **resolved**, not defaulted (check 9)

@@ -76,6 +76,12 @@ visualize:              false
 
 **Allocation policy.** Use `class_stratified` when the user supplied rare classes — budget is apportioned by target class ratio using largest-remainder, with a non-rare fallback pool, and each source is owned by the first class that claims it. Use `global` when no rare classes are configured. The reference pipeline's `class_balanced` mode maps to `class_stratified`.
 
+**`rare_class_list` comes from state, not from this stage.** Read
+`config.rare_class_list` and write it into the spec verbatim. It is derived once, at
+the prep commit, from the pool's own annotation counts — every target class holding a
+below-mean share. Under `class_stratified` the commit refuses a `mine` while it is
+still unset, since allocation apportions the budget by exactly that list.
+
 **`candidate_expansion_factor` is not the loop's iteration count.** It seeds the miner's internal candidate-pool growth (starting at 5, widening each internal retry, capped at 8 internal passes). It is unrelated to `max_iterations`.
 
 ## Invocation

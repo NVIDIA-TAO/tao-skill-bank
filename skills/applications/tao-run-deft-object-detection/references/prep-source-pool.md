@@ -398,6 +398,11 @@ container that sees no images, and an error that blames the image list rather th
   --summary "prep: labeled <N> pool images, <M> boxes kept across <K> classes"
 ```
 
+`--pool-report` is what settles `rare_class_list`: under `class_stratified` allocation
+the commit derives it here from the pool's annotation counts and writes it into state,
+because which classes are rare is a property of the pool and nothing knows it before
+prep. Omitting the flag leaves the field unset and `mine` refuses.
+
 ## Gates
 
 Hard-stop before the baseline when any of these hold:

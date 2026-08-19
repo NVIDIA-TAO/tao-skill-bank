@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from deft_stages import (  # noqa: E402
     SCHEMA_VERSION,
     check_artifact,
+    derive_rare_classes,
     log_path,
     state_path,
     write_log_atomic,
@@ -98,8 +99,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Run directory; holds deft_state.json and loop_log.jsonl.")
     parser.add_argument("--workspace", required=True,
                         help="Workspace root. Mounted into every container as itself.")
-    parser.add_argument("--max-iterations", type=int, required=True,
-                        help="Number of iterations after the baseline. No default; the user supplies it.")
+    parser.add_argument("--max-iterations", type=int, default=1,
+                        help="Number of iterations after the baseline. Default 1: one mine, "
+                             "train and score pass, which is the smallest run that produces a "
+                             "comparison against the baseline.")
 
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--num-epochs", type=int, required=True,
@@ -389,18 +392,12 @@ def main() -> int:
                                     f"reuse it")
 
         if args.allocation_policy == "class_stratified" and not rare_classes and pool_counts:
-            backed = {c: pool_counts[c] for c in target_classes if pool_counts.get(c)}
-            if backed:
-                # Below-mean share: with one dominant class the median would call
-                # half the set rare regardless of how lopsided the pool actually is.
-                mean_share = sum(backed.values()) / len(backed)
-                rare_classes = sorted(c for c, n in backed.items() if n < mean_share)
-                if rare_classes:
-                    detail = ", ".join(f"{c}={backed[c]}" for c in sorted(backed, key=backed.get))
-                    warnings.append(
-                        f"--rare-class-list not given; derived {rare_classes} from the pool's "
-                        f"own class counts ({detail}). These are the classes the pool holds "
-                        "fewest of, which is what stratified allocation exists to protect")
+            rare_classes, detail = derive_rare_classes(pool_counts, target_classes)
+            if rare_classes:
+                warnings.append(
+                    f"--rare-class-list not given; derived {rare_classes} from the pool's "
+                    f"own class counts ({detail}). These are the classes the pool holds "
+                    "fewest of, which is what stratified allocation exists to protect")
 
         kpi_images_dir = _abs(args.kpi_images_dir)
         ground_truth_labels_dir = _abs(args.ground_truth_labels_dir)
@@ -461,7 +458,21 @@ def main() -> int:
         }
         if args.allocation_policy == "class_stratified":
             if not rare_classes:
-                errors.append("--allocation-policy class_stratified requires --rare-class-list")
+                # Which classes are rare is a property of the pool's annotation
+                # counts, and those counts are prep's output. Requiring the list
+                # here would make init and prep each other's precondition, so on a
+                # run that still has to prep it is left null and the prep commit
+                # derives it from pool_report.json. `mine` is the first stage that
+                # reads it, and prep is complete by then.
+                message = ("--allocation-policy class_stratified requires "
+                           "--rare-class-list")
+                if missing_pool and not absent_inputs:
+                    warnings.append(
+                        f"{message} — left unset; `commit_stage.py --stage prep` derives it "
+                        "from the pool's own class counts once prep has produced "
+                        "pool_report.json")
+                else:
+                    errors.append(message)
             if not args.pool_report:
                 # pool_report.json is the only artifact that cross-checks the prepared
                 # pool against the requested classes. It is also prep's own output, so
