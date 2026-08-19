@@ -93,7 +93,7 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    After approval, run the same command without `--plan` to perform the download.
 
    That resolves `nvidia/tao/grounding_dino:grounding_dino_swin_tiny_commercial_trainable_v1.1`
-   (1.93 GB, ~20s) and prints the checkpoint path on stdout. It is idempotent — an existing
+   (1.93 GB) and prints the checkpoint path on stdout. It is idempotent — an existing
    download is reused, so a resumed run re-costs nothing. Use a **`trainable`** release; the
    sibling `deployable` one is for TensorRT export and cannot be fine-tuned.
 

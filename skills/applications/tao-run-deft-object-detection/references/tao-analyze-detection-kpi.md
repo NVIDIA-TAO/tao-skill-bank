@@ -105,10 +105,10 @@ Pass the narrowed file as `data.mapping`, not the user's original.
 
 ## Invocation
 
-**Launch it detached.** This stage runs 25-45 minutes on a 14k-image KPI set — the
-baseline is the slowest, since every detection survives `conf_threshold: 0.0` — and the mAP
-appears *only* on stdout. A foreground `docker run | tee` loses the number if the client
-dies, while the container keeps running — name the container, redirect to the log, and
+**Launch it detached.** Runtime scales with the KPI set, and the baseline is the
+slowest phase to score because every detection survives `conf_threshold: 0.0`. The mAP
+appears *only* on stdout, and a foreground `docker run | tee` loses it if the client
+dies while the container keeps running — name the container, redirect to the log, and
 wait on the log with `await_stage.py`:
 
 ```bash
