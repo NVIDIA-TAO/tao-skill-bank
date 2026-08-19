@@ -8,6 +8,21 @@ Prep turns a directory of raw unlabeled images into the two artifacts every iter
 | `source_pool/source_embeddings.parquet` | `embedding image_embeddings` over the pool | `mine` (the search corpus) |
 | `source_pool/coco.json` | the KITTI→COCO step, retained | `mine` as `source_detection_file` (class_stratified only) |
 
+## Paths
+
+Every command below uses `${PREP_DIR}`. Export it before the first step:
+
+```bash
+export PREP_DIR="${RESULTS_DIR}/prep"
+mkdir -p "$PREP_DIR"
+```
+
+`${RESULTS_DIR}/prep` is the layout the rest of the workflow expects: the output tree
+in `references/pipeline-and-state.md` places the mappings and `pool_report.json` there,
+and the report reads them from that path. The pool's own artifacts are separate —
+they live under `<workspace>/source_pool/`, outside the results tree, so a second run
+against the same pool reuses them.
+
 **This runs exactly once, before the baseline.** Every iteration afterwards is a lookup against what prep produced — no labeler and no encoder runs inside the loop. That is the point: it keeps the per-iteration path deterministic and confines GPU work to train and inference.
 
 **Prep is idempotent.** Skip any step whose output already exists. A user arriving with a pool that is already labeled and embedded pays nothing; a user with raw images pays for the whole chain once. Never re-label or re-embed a pool that already has current artifacts.
@@ -213,6 +228,22 @@ docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
 Add `-v` for every path outside `$WORKSPACE` — the checkpoint and the classmap
 commonly live elsewhere, and a container cannot read what is not mounted.
 
+This is the longest stage in the workflow — it scales with pool size, and runs to
+tens of minutes on 5k images and hours on 100k. Wait on its artifacts, not on the
+process:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
+  --artifact "${PREP_DIR}/inference/labels" \
+  --status-json "${PREP_DIR}/inference/status.json" \
+  --status-contains "finished successfully"
+```
+
+TAO appends the action name to `results_dir`, so passing `results_dir=${PREP_DIR}`
+puts every output under `${PREP_DIR}/inference/`. A wait pointed at
+`${PREP_DIR}/status.json` never matches and times out while the stage runs
+normally.
+
 `dataset.infer_data_sources.classmap` is the detector's **own** vocabulary — one class name per line in `category_id` order starting at 1, COCO-80 for a COCO-trained checkpoint. It is not the target list; `category_mapping` names are matched against it. `results_dir` auto-appends the action, so labels land in `${PREP_DIR}/inference/labels/` already carrying target class names.
 
 `conf_threshold` is the main quality control on the pseudo-labels and is applied at write time.
@@ -282,10 +313,10 @@ Do not read that as "the image survives to training". It does not: this step ski
   --classes     "$CLASSES_YAML" \
   --labels-dir  "${PREP_DIR}/inference/labels" \
   --images-dir  "$POOL_IMAGES" \
+  --record      target_classes="<comma-separated target classes>" \
+  --record      codetr_checkpoint="$CODETR_CHECKPOINT" \
+  --record      pyt_image="$TAO_PYT_IMAGE" \
   --report-json "${PREP_DIR}/pool_report.json"
-  --record target_classes="<comma-separated target classes>" \
-  --record codetr_checkpoint="$CODETR_CHECKPOINT" \
-  --record pyt_image="$TAO_PYT_IMAGE" \
 ```
 
 `--record` writes those under `prep_inputs` in the report. Prep is idempotent by
@@ -363,6 +394,7 @@ container that sees no images, and an error that blames the image list rather th
   --pool-odvg "<workspace>/source_pool/odvg" \
   --pool-embeddings "<workspace>/source_pool/source_embeddings.parquet" \
   --pool-report "${PREP_DIR}/pool_report.json" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "prep: labeled <N> pool images, <M> boxes kept across <K> classes"
 ```
 

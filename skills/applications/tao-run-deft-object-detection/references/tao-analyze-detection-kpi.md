@@ -158,5 +158,6 @@ Tee the log: the aggregate **mAP is printed to stdout only** and is not written 
   --kpi-csv "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" \
   --kpi-log "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" \
   --map-value "<parsed mAP>" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "kpi: mAP=<value>"
 ```

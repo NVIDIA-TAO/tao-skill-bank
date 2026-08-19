@@ -95,6 +95,7 @@ Count the rows of `weak_images.parquet` and pass that number. It is required on 
   --weak-images "${RESULTS_DIR}/iter${N}/gaps/weak_images.parquet" \
   --gap-report "${RESULTS_DIR}/iter${N}/gaps/gap_report.json" \
   --weak-image-count <row count of weak_images.parquet> \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "gap_analysis: <N> weak images across <M> classes"
 ```
 

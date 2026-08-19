@@ -13,6 +13,11 @@ inference.conf_threshold: 0.0  # Dropped at write time, so this bounds what
                                # gap_analysis and KPI can score downstream. 0
                                # keeps the full PR curve.
 
+inference.save_annotated_images: false
+    # TAO: true. Renders a JPEG per image beside the labels. Nothing downstream reads
+    # them and they dominate the stage's output: 5.8 GB for a 14k-image KPI set, once
+    # per inference, on runs budgeted in tens of GB.
+
 dataset.batch_size: 8
 
 model.log_scale: auto          # Must not be null, and must match the checkpoint:

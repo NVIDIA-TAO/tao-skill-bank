@@ -109,6 +109,7 @@ Read `coverage_pct` from `summary.json`:
   --results-dir "${RESULTS_DIR}" --iter-label "iter${N}" --stage mine \
   --mining-output "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
   --mining-summary "${RESULTS_DIR}/iter${N}/mining/summary.json" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "mined <retrieved>/<desired> unique images (<coverage_pct>% coverage)"
 ```
 

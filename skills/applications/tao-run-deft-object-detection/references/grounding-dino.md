@@ -181,7 +181,18 @@ docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
   inference.num_gpus="$NUM_GPUS"
 ```
 
-Labels land in `${RESULTS_DIR}/baseline/inference/labels/`.
+Wait on the labels, the same way training does — `results_dir` gains the action name,
+so both the labels and `status.json` sit under `inference/`:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
+  --artifact "${RESULTS_DIR}/<phase>/inference/labels" \
+  --status-json "${RESULTS_DIR}/<phase>/inference/status.json" \
+  --status-contains "finished successfully"
+```
+
+Labels land in `${RESULTS_DIR}/baseline/inference/labels/`. The same wait applies to
+each iteration's inference with `<phase>` set to `iter${N}`.
 
 Also copy the user's train-spec template to `${RESULTS_DIR}/train_grounding_dino.yaml`. Iteration 1 extends that copy; nothing trains from it at baseline.
 
@@ -296,12 +307,14 @@ That is the reason to keep it at `0.0`. The labels then carry the full curve, an
   --results-dir "${RESULTS_DIR}" --iter-label "iter${N}" --stage train \
   --checkpoint "${RESULTS_DIR}/iter${N}/train/gdino_model_latest.pth" \
   --training-spec "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "trained iter${N}: <epochs> epochs, <N> data sources"
 
 # inference
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "<phase>" --stage inference \
   --inference-labels-dir "${RESULTS_DIR}/<phase>/inference/labels" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "inference: <N> label files"
 ```
 

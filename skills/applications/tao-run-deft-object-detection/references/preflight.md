@@ -218,11 +218,16 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 Export them once, right after init, and use the variable in every launch:
 
 ```bash
-EXTRA_MOUNTS=$("$DEFT_PY" -c 'import json,sys
+EXTRA_MOUNTS=$(<skill_root>/scripts/deft_python.sh -c 'import json,sys
 m=json.load(open(sys.argv[1]))["config"].get("extra_container_mounts") or []
-print(" ".join(f"-v {p}:{p}" for p in m))' "${RESULTS_DIR}/deft_state.json")
+print(" ".join(f"-v {p}:{p}" for p in m))' "${RESULTS_DIR}/deft_state.json") || exit 1
 export EXTRA_MOUNTS
+echo "EXTRA_MOUNTS=$EXTRA_MOUNTS"
 ```
+
+Echo it and read the result. A command substitution that fails leaves `EXTRA_MOUNTS`
+empty and every later launch still runs, mounting nothing extra — the same silent
+failure this block exists to prevent.
 
 Every `docker run` in this skill is written as
 `-v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE"`. With inputs inside the

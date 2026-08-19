@@ -38,7 +38,7 @@ visible without diffing against a container.
 | `kitti_to_coco.yaml` | `annotations convert` KITTI→COCO | `kitti.project: coco` — names the output file every later step looks for |
 | `coco_to_odvg.yaml` | `annotations convert` COCO→ODVG | formats only |
 | `codetr_inference.yaml` | pool pseudo-labelling | `num_select: 1000` (TAO 300 crowds rare classes out of the pool), `conf_threshold: 0.3`, the ViT-L/16 architecture the checkpoint requires, and `save_annotated_images: false` |
-| `grounding_dino_inference.yaml` | baseline + per-iteration inference | `conf_threshold: 0.0` (keep the full PR curve), `log_scale: auto`, `class_embed_bias: true` |
+| `grounding_dino_inference.yaml` | baseline + per-iteration inference | `conf_threshold: 0.0` (keep the full PR curve), `log_scale: auto`, `class_embed_bias: true`, and `save_annotated_images: false` |
 | `kpi_analyze.yaml` | scoring | `num_recall_points: 11`, `ignore_sqwidth: 40` |
 
 `grounding_dino train` has no overlay: it is built from the full

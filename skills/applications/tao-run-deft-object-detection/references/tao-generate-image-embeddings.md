@@ -27,6 +27,11 @@ output_parquet: <absolute path to iter${N}/embeddings/weak_images_embeddings.par
 model:          <SigLIP|CLIP — from state.config.embedding_model>
 model_path:     <from state.config.embedding_model_path>
 model_config_path: ""      # only when model_path is a TAO .pth/.ckpt
+                           # Setting this via --set needs the empty string quoted
+                           # twice: --set model_config_path='""'. A bare
+                           # --set model_config_path="" parses as YAML null and TAO
+                           # rejects it with `Incompatible value 'None' for field of
+                           # type 'str'`.
 batch_size:     64
 ```
 
@@ -56,5 +61,6 @@ The embedding column is named **`embedding`**, which is what `tmm unique_neighbo
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "iter${N}" --stage embed \
   --embeddings-parquet "${RESULTS_DIR}/iter${N}/embeddings/weak_images_embeddings.parquet" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "embedded <N> weak images with <model>"
 ```
