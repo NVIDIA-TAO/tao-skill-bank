@@ -165,6 +165,10 @@ already-approved stages.
    canonical state, log, metric, or history files.
 6. Render the HTML report with `render_deft_report.py`. Reporting is a
    deterministic read of audited state; it does not require another agent.
+7. Keep the driving turn attached through the complete bounded loop. After a
+   stage reaches terminal status, finalize/commit it, re-audit, and immediately
+   continue with the audit-selected next action. An in-progress update is
+   commentary, not a final response and not a detach point.
 
 All recorded artifact paths are absolute host paths under `${RESULTS_DIR}`.
 Baseline artifacts live under `zs/`, iteration N under `iter_N/`, and run-wide
@@ -209,9 +213,18 @@ failing visualization mid-run without revising and reapproving the config.
 - The loop is bounded by `max_iterations`; never create an iteration outside
   that range. Once the KPI passes, the only legal next transition is
   `loop_stop`. Do not mine or train again.
-- Do not use open-ended polling. For a deliberately backgrounded container,
-  retain the process handle and poll no more often than every 30 seconds while
-  continuing to update the user.
+- Monitoring defaults to attached (`long_running_enabled=true`, five-minute
+  updates). Use terminal-condition polling: for a deliberately backgrounded
+  container, poll its wrapper-owned status evidence no more often than every
+  30 seconds, continuing through finalize, commit, audit, and the next stage.
+  The bounded workflow's terminal audit status is the end condition, so this is
+  not open-ended polling.
+- Never send a final response while an approved run is nonterminal. A final
+  response ends chat-side execution and nothing can wake it automatically.
+  Finalize the turn only after the audit reports `COMPLETE`, terminal `FAILED`,
+  or `INVALID`, or when the user explicitly asks to stop or detach. If the
+  runtime genuinely cannot keep a turn alive, say so before launch and provide
+  the exact durable resume audit command; do not claim unattended monitoring.
 - Never repeat an unchanged failed command speculatively. Classify the failure,
   inspect its final log block, make one evidence-based correction permitted by
   the stage reference, then retry once. Stable command status records persist
