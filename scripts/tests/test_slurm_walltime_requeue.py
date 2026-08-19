@@ -136,6 +136,75 @@ def test_auto_resume_ignores_empty_checkpoints(render):
     assert "-size +0c" in body
 
 
+def test_auto_resume_avoids_gnu_only_printf(render):
+    """stderr is discarded here, so a GNU-only predicate would fail silently
+    on a BSD find and disable auto-resume without a word."""
+    body = _body(render, resume_key="train.resume_training_checkpoint_path")
+    code = "\n".join(l for l in body.splitlines() if not l.lstrip().startswith("#"))
+    assert "-printf" not in code, "GNU-only -printf fails silently under 2>/dev/null"
+    assert "-print0" in code and "xargs -0" in code
+
+
+# ── Executed behaviour ──────────────────────────────────────────────────────
+# Grepping the template proves the text; these run the block under bash and
+# assert what it actually selects.
+
+def _run_resume_block(render, results_dir, env=None):
+    import os
+    import re as _re
+    # render() substitutes @@RESULTS_DIR@@, so point it at the fixture via ctx
+    # rather than trying to patch the rendered text afterwards.
+    body = _body(render, resume_key="train.resume_training_checkpoint_path",
+                 results_dir=str(results_dir))
+    block = _re.search(r'^RESUME_OVERRIDE=""$.*?^fi$', body, _re.S | _re.M).group(0)
+    script = f'{block}\necho "${{RESUME_OVERRIDE:-}}"\n'
+    environ = {**os.environ, **(env or {})}
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         env=environ)
+    return out.stdout.strip().splitlines()[-1] if out.stdout.strip() else ""
+
+
+def _mk(tmp_path, *names):
+    import time
+    root = tmp_path / "results"
+    (root / "ptm").mkdir(parents=True)
+    (root / "train").mkdir(parents=True)
+    for name in names:
+        path = (root / "ptm" / name[4:]) if name.startswith("ptm/") else (root / "train" / name)
+        path.write_text("" if name.endswith("!empty") else "x")
+        time.sleep(0.02)
+    return root
+
+
+def test_resume_prefers_epoch_checkpoint_over_best_and_latest(render, tmp_path):
+    """best/latest are often written LAST, so newest-by-time alone is wrong."""
+    root = _mk(tmp_path, "model_epoch_007.pth", "best_model.pth", "latest.ckpt")
+    assert _run_resume_block(render, root).endswith("model_epoch_007.pth")
+
+
+def test_resume_falls_back_to_best_when_nothing_else_exists(render, tmp_path):
+    root = _mk(tmp_path, "best_model.pth")
+    assert _run_resume_block(render, root).endswith("best_model.pth")
+
+
+def test_resume_never_picks_a_staged_ptm(render, tmp_path):
+    """The failure this prevents: resuming from a pretrained backbone."""
+    root = _mk(tmp_path, "ptm/pretrained.pth")
+    assert _run_resume_block(render, root) == ""
+
+
+def test_resume_ignores_zero_byte_checkpoints(render, tmp_path):
+    root = tmp_path / "results"
+    (root / "train").mkdir(parents=True)
+    (root / "train" / "model_epoch_1.pth").write_text("")
+    assert _run_resume_block(render, root) == ""
+
+
+def test_resume_is_disabled_by_env(render, tmp_path):
+    root = _mk(tmp_path, "model_epoch_007.pth")
+    assert _run_resume_block(render, root, {"TAO_AUTO_RESUME": "0"}) == ""
+
+
 def test_auto_resume_is_disablable(render):
     """TAO_AUTO_RESUME=0, the same switch the SDK exposed."""
     body = _body(render, resume_key="train.resume_training_checkpoint_path")

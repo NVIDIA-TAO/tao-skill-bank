@@ -55,11 +55,26 @@ export NODE_RANK=$SLURM_NODEID
 # train.resume_training_checkpoint_path); empty disables the block entirely.
 RESUME_OVERRIDE=""
 if [ -n "@@RESUME_KEY@@" ] && [ "${TAO_AUTO_RESUME:-1}" != "0" ]; then
+  # Prefer real training state. A `best`/`latest` file is often written AFTER
+  # the last epoch checkpoint, so newest-by-mtime alone would resume from a
+  # metric-best snapshot or an alias and lose optimizer/scheduler position.
+  # Fall back to them only when nothing else exists.
+  # Newest wins. `ls -t` rather than find's -printf: -printf is GNU-only, and
+  # because stderr is discarded here a BSD find would fail silently and disable
+  # auto-resume without a word. -print0/xargs -0 keeps paths with spaces intact.
   RESUME_CKPT=$(find "@@RESULTS_DIR@@" \
       \( -type d \( -name ptm -o -name inputs \) -prune \) -o \
       \( -type f \( -name '*.pth' -o -name '*.ckpt' -o -name '*.tlt' \) \
-         -size +0c -printf '%T@ %p\n' \) 2>/dev/null \
-    | sort -rn | head -1 | cut -d' ' -f2-)
+         ! -iname '*best*' ! -iname '*latest*' \
+         -size +0c -print0 \) 2>/dev/null \
+    | xargs -0 ls -t 2>/dev/null | head -1)
+  if [ -z "$RESUME_CKPT" ]; then
+    RESUME_CKPT=$(find "@@RESULTS_DIR@@" \
+        \( -type d \( -name ptm -o -name inputs \) -prune \) -o \
+        \( -type f \( -name '*.pth' -o -name '*.ckpt' -o -name '*.tlt' \) \
+           -size +0c -print0 \) 2>/dev/null \
+      | xargs -0 ls -t 2>/dev/null | head -1)
+  fi
   if [ -n "$RESUME_CKPT" ]; then
     RESUME_OVERRIDE="@@RESUME_KEY@@=$RESUME_CKPT"
     echo "auto-resume: continuing from $RESUME_CKPT" >&2
