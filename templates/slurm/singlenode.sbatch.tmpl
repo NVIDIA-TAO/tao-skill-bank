@@ -41,6 +41,16 @@ fi
 
 # Single node: the TAO container reads its GPU count from the spec; no cross-node
 # rendezvous. Spec + dataset are on Lustre, mounted read-through by Pyxis/Enroot.
+# Pyxis/Enroot will NOT create a missing --container-mounts source: it fails the
+# whole container start with "enroot-mount: failed to mount: ... No such file or
+# directory", which names the mount and not the missing directory. Docker's -v
+# auto-creates one, so this gap stays invisible until a bundle runs on SLURM.
+# results_dir is bound into the job record BEFORE launch, so it is known here
+# and only needs materialising. The OUTPUT directory only: creating a missing
+# INPUT would paper over unstaged data instead of failing on it.
+# Unconditional -- the mount happens whether or not auto-resume is enabled.
+mkdir -p "@@RESULTS_DIR@@"
+
 # Auto-resume across a requeue. A requeued attempt re-runs THIS script with the
 # spec frozen at submit time, so a resumable job would otherwise restart from
 # epoch 0. Search only the declared results dir — a staged PTM or downloaded

@@ -162,3 +162,78 @@ def test_resume_is_off_without_a_key():
     """The key is network-specific; a workflow that cannot resume omits it."""
     body = _render(TEMPLATES["singlenode"], RESUME_KEY="")
     assert 'if [ -n "" ]' in body
+
+
+# ── The mount source must exist before the mount ────────────────────────────
+# Found end-to-end. The job scheduled, ran, and died inside pyxis:
+#
+#   enroot-mount: failed to mount: /lustre/.../results/<job> at /raid/...:
+#   No such file or directory
+#
+# results_dir is bound into the record BEFORE launch, but nothing created it on
+# the cluster. Docker's -v auto-creates a missing source, so every docker run
+# hid this; Pyxis/Enroot refuses and fails the whole container start, naming
+# the mount rather than the missing directory.
+
+def _rendered(tmp_path, **over):
+    """Render a template with real paths so it can be EXECUTED, not grepped."""
+    import pathlib as _p
+    template = _p.Path(__file__).resolve().parents[2] / "templates/slurm/singlenode.sbatch.tmpl"
+    body = template.read_text(encoding="utf-8")
+    values = {
+        "RESULTS_DIR": str(tmp_path / "results" / "job-1"),
+        "RESUME_KEY": "", "TIMEOUT_MINUTES": "1", "IMAGE": "img.sqsh",
+        "CONTAINER_MOUNTS": "/a:/a", "COMMAND": "true", "JOB_NAME": "j",
+        "NUM_GPUS": "0", "CPUS_PER_TASK": "1", "TIME": "00:01:00",
+        "LOG_DIR": str(tmp_path / "logs"), "SBATCH_EXTRA": "",
+        "ENV_FILE": "", "NUM_NODES": "1",
+    }
+    values.update(over)
+    for key, value in values.items():
+        body = body.replace(f"@@{key}@@", value)
+    # Blank any placeholder this fixture does not name. The renderer always
+    # substitutes every one, and hard-coding the list here means a template
+    # gaining a placeholder breaks these tests for an unrelated reason.
+    return re.sub(r"@@[A-Z_]+@@", "", body)
+
+
+def test_results_dir_is_created_before_the_container_mount(tmp_path):
+    """Execute the prologue: the directory must exist by the time srun runs."""
+    import re
+    import subprocess
+
+    body = _rendered(tmp_path)
+    prologue = body[: body.index("timeout ")]
+    # Drop #SBATCH directives and the trap/env lines that need a live job.
+    script = "\n".join(
+        line for line in prologue.splitlines()
+        if not line.startswith("#SBATCH") and "scontrol" not in line
+    )
+    subprocess.run(["bash", "-c", script], check=True, capture_output=True,
+                   text=True, timeout=30)
+    assert (tmp_path / "results" / "job-1").is_dir(), (
+        "the prologue did not create results_dir; pyxis will refuse to mount "
+        "it and fail the container start"
+    )
+
+
+def test_results_dir_creation_is_not_conditional_on_auto_resume(tmp_path):
+    """The mount happens either way, so the mkdir cannot sit inside that if.
+
+    It did, on the first attempt at this fix: the comment-block walkback landed
+    it after `if [ -n "@@RESUME_KEY@@" ]`, so a bundle with no resume key --
+    every CPU-only glue stage -- would still have failed to mount.
+    """
+    import subprocess
+
+    body = _rendered(tmp_path, RESUME_KEY="")
+    prologue = body[: body.index("timeout ")]
+    script = "\n".join(
+        line for line in prologue.splitlines()
+        if not line.startswith("#SBATCH") and "scontrol" not in line
+    )
+    subprocess.run(["bash", "-c", script], check=True, capture_output=True,
+                   text=True, timeout=30)
+    assert (tmp_path / "results" / "job-1").is_dir(), (
+        "results_dir is only created when auto-resume is on"
+    )
