@@ -186,7 +186,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--candidate-expansion-factor", type=int, default=5,
                         help="Miner's internal candidate-pool growth seed. Not the loop iteration count.")
     parser.add_argument("--iou-threshold", type=float, default=0.5)
-    parser.add_argument("--kpi-conf-threshold", type=float, default=0.3)
+    parser.add_argument("--kpi-conf-threshold", type=float, default=0.0,
+                        help="kpi.conf_threshold for every phase. Default 0.0: inference\n"
+                             "writes its labels at 0.0, so scoring there covers the full\n"
+                             "PR curve. A higher value truncates the low-confidence tail\n"
+                             "and is not comparable to a run scored at 0.0.")
 
     parser.add_argument("--extra-mount", action="append", default=None, metavar="PATH",
                         help="Extra host path a container must read, repeatable. The mount "

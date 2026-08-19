@@ -38,6 +38,7 @@ cannot keep a TAO default just because nobody typed it:
   --spec "${RESULTS_DIR}/<phase>/kpi_spec.yaml" \
   --apply-workflow-defaults <skill_root>/assets/overlays/kpi_analyze.yaml \
   --set results_dir="${RESULTS_DIR}/<phase>/kpi" \
+  --set kpi.conf_threshold=<state.config.kpi_conf_threshold> \
   --set visualize.tag=<phase> \
   --set data.kpi_sources="[{image_dir: <KPI images>, ground_truth_ann_path: <KPI labels>, inference_ann_path: ${RESULTS_DIR}/<phase>/inference/labels}]" \
   --set data.mapping=<class-mapping YAML> \
@@ -56,31 +57,44 @@ The resulting `kpi:` block:
 ```yaml
 kpi:
   iou_threshold: 0.5
-  conf_threshold: 0.0        # the full PR curve — see below
+  conf_threshold: 0.0        # from state; the run's own setting — see below
   num_recall_points: 11      # 11-point interpolated AP; 101 selects COCO-style
   ignore_sqwidth: 40         # TAO emits 0, which scores smaller boxes
   filter: false
   is_internal: false
 ```
 
+`conf_threshold` is the one value here the run owns. `init_deft_state.py` freezes it as
+`config.kpi_conf_threshold` and every phase is scored at that same value, so the baseline
+and each iteration stay comparable. Read it from state rather than retyping it.
+
+The default is `0.0`, and that is the value to score at: inference writes its labels at
+`0.0`, so scoring there covers the full PR curve. A higher threshold truncates the
+low-confidence tail and produces a number that cannot be compared against a run scored at
+`0.0`. `--kpi-conf-threshold` exists so a run that needs a different operating point can
+say so once, at init, and have every phase honour it.
+
 ### These values are the leaf skill's defaults too
 
 `tao-analyze-detection-kpi` ships the same `conf_threshold: 0.0`, `num_recall_points: 11`
-and `ignore_sqwidth: 40`, so delegating to it and applying this overlay agree. Apply the
-overlay anyway: the agreement is a fact about the current versions, not a guarantee, and
-a spec that states its own scoring settings is auditable after the fact.
+and `ignore_sqwidth: 40`, so delegating to it and applying this overlay agree by default.
+They stop agreeing on `conf_threshold` as soon as a run sets its own, which is why this
+stage passes it explicitly rather than relying on the leaf's default. Apply the overlay
+and the `--set` anyway: the agreement is a fact about the current versions, not a
+guarantee, and a spec that states its own scoring settings is auditable after the fact.
 
 ## Scoring at more than one confidence threshold
 
 Inference runs at `0.0`, so the labels carry every detection and this stage can score them
 at any threshold without re-running inference — re-apply the overlay with
-`--set kpi.conf_threshold=<t> --allow-workflow-default-override` and a distinct
-`results_dir` per point, since `kpi_calc.csv` is written unconditionally and a shared
-directory keeps only the last. `conf_threshold` selects from what inference wrote; it cannot
-recover a box inference dropped.
+`--set kpi.conf_threshold=<t>` and a distinct `results_dir` per point, since
+`kpi_calc.csv` is written unconditionally and a shared directory keeps only the last. No
+`--allow-workflow-default-override` is needed: the overlay no longer pins this key.
+`conf_threshold` selects from what inference wrote; it cannot recover a box inference
+dropped.
 
-Only the `0.0` result is comparable to the loop's reported mAP. The loop itself scores once,
-at `0.0`; sweeps are a diagnostic.
+Only a result at `config.kpi_conf_threshold` is comparable to the loop's reported mAP. The
+loop scores every phase once, at that one value; sweeps are a diagnostic.
 
 **`input_format` is uppercase here.** `analytics kpi_analyze` accepts only `KITTI` or `COCO`. This differs from `gap_analysis object_detection` in the same container, which takes lowercase `kitti` / `coco`. The two stages in this loop therefore spell the same format differently — that is expected, not a typo to "fix".
 
@@ -106,7 +120,8 @@ Pass the narrowed file as `data.mapping`, not the user's original.
 ## Invocation
 
 **Launch it detached.** Runtime scales with the KPI set, and the baseline is the
-slowest phase to score because every detection survives `conf_threshold: 0.0`. The mAP
+slowest phase to score because inference writes its labels at `conf_threshold: 0.0`, so
+every detection is present to be read. The mAP
 appears *only* on stdout, and a foreground `docker run | tee` loses it if the client
 dies while the container keeps running — name the container, redirect to the log, and
 wait on the log with `await_stage.py`:

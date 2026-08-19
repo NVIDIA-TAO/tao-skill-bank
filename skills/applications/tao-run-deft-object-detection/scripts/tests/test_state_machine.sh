@@ -2476,6 +2476,24 @@ case "$RUN_OUT" in
   *"--extra-mount"*) ok "[G26] the refusal names the flag" ;;
   *) notok "[G26] the refusal names the flag" "output: $RUN_OUT" ;;
 esac
+# G27 — the KPI confidence threshold is the run's, and it is recorded
+#
+# Every phase is scored at config.kpi_conf_threshold, so it decides whether two
+# runs are comparable. It defaults to 0.0, the threshold inference writes at.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G27 kpi_conf_threshold"
+
+G27=$(new_workspace g27); make_pool "$G27"
+init_run "$G27" "$G27/results/run_g27" 1
+assert_eq '0.0' "$(state_json "$G27/results/run_g27" kpi_conf_threshold)" \
+  "[G27] the default is 0.0, what inference writes its labels at"
+
+init_run "$G27" "$G27/results/run_g27" 1 --force --kpi-conf-threshold 0.3
+assert_eq '0.3' "$(state_json "$G27/results/run_g27" kpi_conf_threshold)" \
+  "[G27] a supplied threshold is recorded for every phase to score at"
+
+init_run "$G27" "$G27/results/run_g27" 1 --force --kpi-conf-threshold 1.5
+assert_rc 1 "[G27] a threshold outside [0, 1] is refused"
 
 # ═══════════════════════════════════════════════════════════════════════════
 

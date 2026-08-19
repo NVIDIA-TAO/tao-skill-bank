@@ -215,7 +215,7 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 - `candidate_expansion_factor` — `5`
 - `embedding_model` — `SigLIP`; `embedding_model_path` is **resolved**, not defaulted (check 9)
 - `iou_threshold` — `0.5`
-- `kpi.conf_threshold` — `0.3`
+- `kpi.conf_threshold` — `0.0` (frozen as `config.kpi_conf_threshold`; every phase is scored at it)
 - workspace root — user prompt, else `~/workspace`
 
 ## Container mounts
