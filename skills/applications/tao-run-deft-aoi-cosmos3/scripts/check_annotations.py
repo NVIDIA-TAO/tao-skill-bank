@@ -48,8 +48,12 @@ ROLE_CONTRACT = {
 ALWAYS = "images is [AOI, golden_reference]; final assistant value is exactly OK or NG"
 
 
-def _print_contract() -> None:
-    print(f"bare_okng field contract  ({ALWAYS})\n")
+def _print_contract(annotation_profile: str = "bare_okng") -> None:
+    if annotation_profile == "bare_okng":
+        detail = ALWAYS
+    else:
+        detail = "explicit image_roles, task_type, metric_family, target_id, answer"
+    print(f"{annotation_profile} field contract  ({detail})\n")
     print(f"{'role':<10} {'file':<22} {'required':<34} optional")
     print("-" * 92)
     for role, spec in ROLE_CONTRACT.items():
@@ -81,7 +85,11 @@ def _media_root_hint(message: str, media_root: pathlib.Path) -> str | None:
 
 
 def check(
-    paths: dict[str, pathlib.Path], *, media_root: pathlib.Path, require_files: bool
+    paths: dict[str, pathlib.Path],
+    *,
+    media_root: pathlib.Path,
+    require_files: bool,
+    annotation_profile: str = "bare_okng",
 ) -> tuple[dict[str, dict], list[str]]:
     report: dict[str, dict] = {}
     failures: list[str] = []
@@ -94,6 +102,7 @@ def check(
                 media_root=media_root,
                 require_files=require_files,
                 require_id=needs_id,
+                annotation_profile=annotation_profile,
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             message = str(exc)
@@ -132,13 +141,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the role/field contract and exit.",
     )
+    parser.add_argument(
+        "--annotation-profile",
+        choices=("bare_okng", "nvpaw_multitask_v1"),
+        default="bare_okng",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.print_contract:
-        _print_contract()
+        _print_contract(args.annotation_profile)
         return 0
     if args.workspace is None:
         print("check_annotations: --workspace is required", file=sys.stderr)
@@ -154,7 +168,10 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     report, failures = check(
-        paths, media_root=media_root, require_files=args.require_files
+        paths,
+        media_root=media_root,
+        require_files=args.require_files,
+        annotation_profile=args.annotation_profile,
     )
     for role, spec in ROLE_CONTRACT.items():
         entry = report[role]
@@ -178,7 +195,10 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    print("check_annotations: OK all roles satisfy the bare_okng field contract")
+    print(
+        "check_annotations: OK all roles satisfy the "
+        f"{args.annotation_profile} field contract"
+    )
     return 0
 
 

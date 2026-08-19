@@ -162,7 +162,7 @@
   <header class="hero">
     <div class="eyebrow">NVIDIA TAO · DEFT AOI</div>
     <h1>Cosmos Reason 3 AOI Report</h1>
-    <p class="subtitle">Disk-backed improvement loop · bare OK/NG classification</p>
+    <p class="subtitle">{{ REPORT_SUBTITLE }}</p>
     <div class="meta">
       <div class="meta-item"><strong>Generated</strong> &nbsp;<span class="value">{{ GENERATED_DATE }}</span></div>
       <div class="meta-item"><strong>KPI Target</strong> &nbsp;<span class="value">{{ KPI_TARGET }}</span></div>
@@ -198,7 +198,7 @@
 
     <section class="card">
       <div class="header"><div><div class="chart-title">Dataset Isolation</div><div class="chart-subtitle">Proxy drives RCCA; frozen Benchmark alone owns the stop gate; Mining supplies training candidates.</div></div></div>
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>Role / producer</th><th>Purpose</th><th>Records</th><th>OK / NG</th><th>Path / evidence</th></tr></thead><tbody>{{ DATASET_ROWS_HTML }}</tbody></table></div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Role / producer</th><th>Purpose</th><th>Records</th><th>{{ DATASET_BREAKDOWN_LABEL }}</th><th>Path / evidence</th></tr></thead><tbody>{{ DATASET_ROWS_HTML }}</tbody></table></div>
       <div class="notice" style="margin-top:14px"><strong>Frozen Benchmark SHA-256:</strong> <span class="path">{{ BENCHMARK_HASH }}</span></div>
     </section>
 
@@ -213,8 +213,8 @@
     </section>
 
     <section class="card">
-      <div class="header"><div><div class="chart-title">Iteration Metrics</div><div class="chart-subtitle">Discrete OK/NG metrics with NG as the positive class.</div></div></div>
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>Phase</th><th>Source</th><th>Accuracy</th><th>NG recall</th><th>NG precision</th><th>NG F1</th><th>False accepts</th><th>False rejects</th><th>Unknown</th><th>KPI</th></tr></thead><tbody>{{ METRIC_ROWS_HTML }}</tbody></table></div>
+      <div class="header">{{ ITERATION_METRICS_HEADER_HTML }}</div>
+      {{ ITERATION_METRICS_HTML }}
     </section>
 
     <section class="card">

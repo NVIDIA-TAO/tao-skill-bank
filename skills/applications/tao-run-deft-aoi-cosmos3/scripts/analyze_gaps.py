@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Analyze Cosmos evaluator OK/NG results for DEFT AOI.
+"""Analyze Cosmos evaluator results with a bare or NVPaw multi-task profile.
 
-NG is the positive class:
+In bare mode NG is the positive class:
   TP = NG -> NG
   FN = NG -> OK  (false accept: a defective component passed)
   FP = OK -> NG  (false reject: a good component was scrapped)
@@ -20,6 +20,14 @@ import pathlib
 import re
 import sys
 from typing import Any
+
+import multitask_metrics
+from gap_analysis.config import load_profile, validate_config
+from gap_analysis.runner import run_selection
+from run_gap_analysis import file_sha256, write_selection
+from validate_sharegpt import load_records
+
+import yaml
 
 
 LABEL_RE = re.compile(r"\b(OK|NG)\b", re.IGNORECASE)
@@ -201,6 +209,33 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--results-json", required=True, type=pathlib.Path)
     parser.add_argument("--output-dir", required=True, type=pathlib.Path)
     parser.add_argument(
+        "--annotations",
+        type=pathlib.Path,
+        help="Frozen materialized annotations; required by nvpaw_multitask_v1.",
+    )
+    parser.add_argument(
+        "--annotation-profile",
+        choices=("bare_okng", "nvpaw_multitask_v1"),
+        default="bare_okng",
+    )
+    parser.add_argument(
+        "--kpi-profile",
+        choices=("bare_okng_v1", "task_balanced_v1", "task_dataset_balanced_v1"),
+        help="KPI profile; rich mode supports task- or task-by-dataset-balanced gates.",
+    )
+    parser.add_argument("--min-group-support", type=int, default=1)
+    parser.add_argument(
+        "--iou-threshold",
+        default=0.5,
+        type=float,
+        help="Strict detection IoU threshold; a TP requires IoU greater than this value.",
+    )
+    gap_choice = parser.add_mutually_exclusive_group()
+    gap_choice.add_argument("--gap-analysis-profile")
+    gap_choice.add_argument("--gap-analysis-config", type=pathlib.Path)
+    parser.add_argument("--gap-analysis-budget", type=int)
+    parser.add_argument("--gap-analysis-seed", type=int)
+    parser.add_argument(
         "--kpi-metric",
         default="recall_ng",
         choices=(
@@ -238,6 +273,71 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.annotation_profile == "nvpaw_multitask_v1":
+        try:
+            if args.annotations is None:
+                raise ValueError(
+                    "--annotations is required for nvpaw_multitask_v1 so prediction coverage can be joined by id"
+                )
+            rich_kpi_profile = args.kpi_profile or "task_balanced_v1"
+            samples = _load_samples(args.results_json)
+            annotations = load_records(args.annotations)
+            rich = multitask_metrics.evaluate(
+                samples,
+                annotations,
+                evaluation_role=args.evaluation_role,
+                kpi_threshold=args.kpi_threshold,
+                iou_threshold=args.iou_threshold,
+                kpi_profile=rich_kpi_profile,
+                min_group_support=args.min_group_support,
+            )
+            multitask_metrics.write_artifacts(rich, args.output_dir)
+            if args.evaluation_role == "proxy":
+                if args.gap_analysis_config is not None:
+                    try:
+                        gap_payload = yaml.safe_load(args.gap_analysis_config.read_text())
+                    except yaml.YAMLError as exc:
+                        raise ValueError(f"invalid custom gap-analysis config: {exc}") from exc
+                    gap_config = validate_config(gap_payload)
+                    gap_profile = "custom"
+                else:
+                    gap_profile = args.gap_analysis_profile or "deficit_weighted_round_robin"
+                    gap_config = load_profile(gap_profile)
+                if args.gap_analysis_budget is not None:
+                    gap_config["budget"] = args.gap_analysis_budget
+                if args.gap_analysis_seed is not None:
+                    gap_config["seed"] = args.gap_analysis_seed
+                gap_config = validate_config(gap_config)
+                selected, gap_summary = run_selection(
+                    rich["gap_candidates"], gap_config
+                )
+                gap_summary["profile"] = gap_profile
+                gap_summary["candidate_file_sha256"] = file_sha256(
+                    args.output_dir / "gap_candidates.parquet"
+                )
+                gap_summary["task_metrics_sha256"] = file_sha256(
+                    args.output_dir / "task_metrics.json"
+                )
+                write_selection(args.output_dir, selected, gap_summary)
+            elif args.gap_analysis_profile or args.gap_analysis_config:
+                raise ValueError(
+                    "gap-analysis selection is Proxy-only; Benchmark cannot route samples"
+                )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"analyze_gaps: {exc}", file=sys.stderr)
+            return 2
+        metrics = rich["summary"]["metrics"]
+        coverage = rich["coverage"]
+        print(
+            "analyze_gaps: "
+            f"profile=nvpaw_multitask_v1 role={args.evaluation_role} "
+            f"balanced_score={metrics['balanced_score']:.6f} "
+            f"macro_attainment={metrics['macro_attainment']:.6f} "
+            f"missing={coverage['missing_predictions']} "
+            f"parse_failures={coverage['parse_failures']} "
+            f"kpi_met={rich['summary']['kpi']['met']}"
+        )
+        return 0
     try:
         samples = _load_samples(args.results_json)
         summary, false_accepts, false_rejects, unknowns = analyze(

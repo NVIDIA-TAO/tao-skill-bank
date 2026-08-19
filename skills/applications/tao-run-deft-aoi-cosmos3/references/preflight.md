@@ -106,11 +106,19 @@ TAO_DS_IMAGE=$(
     --skill-bank "$TAO_SKILL_BANK_PATH" \
     images.tao_toolkit.data_services
 )
-AG_IMAGE=$(
-  "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
-    --skill-bank "$TAO_SKILL_BANK_PATH" \
-    images.metropolis_sdg.paidf_anomalygen
-)
+```
+
+Resolve AnomalyGen only for the effective `auto` policy. For `disabled`, do
+not resolve or inspect this image and record it as `NOT REQUIRED`:
+
+```bash
+if [ "$ANOMALYGEN_POLICY" = auto ]; then
+  AG_IMAGE=$(
+    "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+      --skill-bank "$TAO_SKILL_BANK_PATH" \
+      images.metropolis_sdg.paidf_anomalygen
+  )
+fi
 ```
 
 Use image inspection through the chosen platform. If an image is absent and
@@ -133,7 +141,8 @@ discovering them on the first GPU job. Training is unaffected:
   file only for `patch_required`. If it reports `classification=unknown`, the
   evaluator still references a changed cap/vLLM shape; hard-stop and verify it.
 
-Probe the AnomalyGen assets read-only and report each as present or
+When the policy is `auto`, probe the AnomalyGen assets read-only and report
+each as present or
 `WILL_AUTO_FETCH`: the fine-tuned checkpoint directory holding `ag_config.yaml`,
 the dataset directory with `defect_spec.jsonl` and
 `semantic_segmentation_labels.json`, and the Cosmos base-checkpoints cache.
@@ -144,6 +153,8 @@ the bootstrap that populates missing assets is post-gate and is owned by
 pre-staged; report a missing one instead of planning a download. Before Phase
 3, use the executable file check in that reference to gate the AnomalyGen
 Guardrail safety model; a missing file is a hard stop.
+For `disabled`, skip every AnomalyGen asset probe and report the whole asset
+set as `NOT REQUIRED (policy disabled)`.
 
 ## 6. Model and evaluator contract
 
@@ -271,7 +282,8 @@ Record:
 - LoRA rank/alpha/target modules;
 - epochs, batch size, learning rate;
 - Proxy and Benchmark sample counts;
-- mining top-K (default 5), cosine floor,
+- mining router mode (`image_only`, `task_strict`, or `task_then_fallback`),
+  top-K (default 5), cosine floor,
   and run-level filepath history ledger;
 - estimated baseline and per-iteration runtime.
 
@@ -313,11 +325,11 @@ record-then-launch ordering must be explicit.
 | KPI | <metric operator target> + unknown_predictions <= 0 | user/default |
 | Iterations | <N> | user |
 | Train shape | <nodes x GPUs; exact GPU model/memory; epochs; batch; LR; LoRA> | user/spec/platform |
-| Mining | <top-K, default 5; cosine floor; history-aware filepath dedup> | user/default |
-| AnomalyGen | <project; num_SDG; each asset path or will auto-fetch from HF (default)> | user/default |
+| Mining | <router mode; top-K, default 5; cosine floor; history-aware filepath dedup> | user/default |
+| AnomalyGen | <policy; project/num_SDG/assets, or NOT REQUIRED> | user/default |
 | Cosmos-RL image | <resolved URI> | versions.yaml |
 | Data-services image | <resolved URI> | versions.yaml |
-| AnomalyGen image | <resolved URI> | versions.yaml |
+| AnomalyGen image | <resolved URI, or NOT REQUIRED when disabled> | versions.yaml/policy |
 | Credential status | <names with SET/UNSET only> | environment |
 | Job tracking | record before every native launch | workflow |
 | Monitoring | <yes/no and interval> | user/default |
@@ -335,12 +347,13 @@ lines below the table instead:
 
 - the variant-matched VLM base for the prepared PTM (Edge and Super never
   inherit Nano's default; see step 7);
-- which AnomalyGen assets are staged; `WILL_AUTO_FETCH` is legal only in
-  network-enabled mode, plus their commercial-training approval.
+- for `auto`, which AnomalyGen assets are staged; `WILL_AUTO_FETCH` is legal
+  only in network-enabled mode, plus their commercial-training approval; for
+  `disabled`, state `NOT REQUIRED (policy disabled)`.
 
 Then stop. Remind the user that approval permits checkpoint preparation,
-post-gate spec/state creation, any network-enabled AnomalyGen bootstrap, and GPU
-submissions. After approval, prepare and
+post-gate spec/state creation, any network-enabled AnomalyGen bootstrap required
+by the `auto` policy, and GPU submissions. After approval, prepare and
 validate the Qwen3-VL checkpoint, write the staged specs with concrete nested
 values, initialize state once, re-read it, then begin baseline frozen
 Benchmark evaluation.

@@ -7,13 +7,14 @@ description: >
   mine real image pairs from Proxy gaps, assemble a per-iteration Train JSON
   from selected Mining samples, train with cosmos-rl LoRA SFT, and repeat
   through the selected platform's submit/status/logs/cancel contract.
-  This migration supports bare labels only: the assistant response must be
-  exactly OK or NG. Use for "run Cosmos3 DEFT AOI", "CR3 AOI loop", or
-  "improve Cosmos3 PCB inspection with bare OK/NG"; do not use for
-  rich/reasoning annotation, one-off Cosmos training, or generic anomaly
-  generation.
+  The default bare_okng profile uses exact OK/NG labels; the opt-in
+  nvpaw_multitask_v1 profile supports component/defect classification and
+  normalized-box detection with optional golden references, task-balanced
+  KPI gates, and pluggable gap-analysis ablations. Use for "run Cosmos3 DEFT
+  AOI", "CR3 AOI loop", or "improve Cosmos3 PCB inspection"; do not use for
+  one-off Cosmos training or generic anomaly generation.
 license: Apache-2.0 AND CC-BY-4.0
-compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python with `pyarrow` and `yaml`, and the selected platform's native CLI.
+compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python with `numpy`, `pyarrow`, and `yaml`, and the selected platform's native CLI.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -37,7 +38,8 @@ Cosmos model resolver `scripts/resolve_tao_image.py`, plus the
 `skills/{applications,models,data,platform,core}/...` tree listed in
 `eval.config`. Run bundled validation with the skill Python so dependencies
 match runtime: `PYTHON=$(bash scripts/deft_python.sh); "$PYTHON" -m unittest
-tests.test_cosmos3_bare`. Resolve network mode first. Missing air-gap imports
+tests.test_cosmos3_bare tests.test_cosmos3_nvpaw
+tests.test_gap_analysis_profiles`. Resolve network mode first. Missing air-gap imports
 are a hard stop; network-enabled setup lives only in
 `references/network-bootstrap.md`.
 
@@ -169,9 +171,12 @@ the selected Cosmos-RL image can load the prepared PTM and train the requested
 variant; do not reuse Nano conversion, parallelism, or memory assumptions for
 Edge or Super.
 
-## Bare OK/NG Contract
+## Annotation Profiles
 
-This migration supports one annotation mode: `bare_okng`.
+Profile selection is explicit and frozen in state. `bare_okng` remains the
+default; never infer a profile from annotation contents.
+
+### `bare_okng`
 
 - Each record is ShareGPT JSON with exactly two images in
   `[AOI, golden_reference]` order.
@@ -183,11 +188,37 @@ This migration supports one annotation mode: `bare_okng`.
   false reject.
 - Evaluation may normalize a model response by its last standalone `OK`/`NG`
   token, but training labels remain exact.
-- Rich, reasoning, BCQ/MCQ, and task fan-out modes are outside this migration.
-  Stop instead of silently accepting them.
 
-Run `"$PYTHON" scripts/validate_sharegpt.py` on Proxy, Benchmark, Mining, and each
-generated iteration training file. There is no input Train annotation.
+### `nvpaw_multitask_v1`
+
+- Supports the six task types in `references/nvpaw-prompt-formats.md`:
+  component/defect classification and detection, each with the documented
+  single-image or golden-then-target role contract.
+- `id` identifies one prompt/answer record; `target_id` identifies one physical
+  target. Multiple records may share a target without duplicate embedding work.
+- Classification answers are prompt-local semantic choice sets, including
+  valid `[]`. Detection answers are labeled `xyxy` integer boxes normalized to
+  `[0,1000]`, also allowing `[]`.
+- JSONL OpenAI `messages` is an authoring format only. Run
+  `materialize_nvpaw_annotations.py`; Cosmos consumes the deterministic JSON
+  array it produces.
+- Pass `--annotation-profile nvpaw_multitask_v1` through validation, analysis,
+  routing, emit, assembly, and state commands. Rich mode is never automatic.
+- Freeze `--mining-router-mode` in state for every run. `image_only` preserves
+  the visual-similarity baseline; `task_strict` restricts each query to Mining
+  targets carrying at least one matching task; `task_then_fallback` fills a
+  short strict neighborhood from the global image pool and records every such
+  row as `route_tier=fallback`. The default remains `image_only` for backward
+  compatibility. See `assets/mining-router.svg` for the operator-facing flow.
+- Freeze `--anomalygen-policy auto|disabled` in state. `auto` is the backward-
+  compatible default and keeps the gap-evidence skip gate. `disabled` makes
+  the AnomalyGen skip unconditional for every iteration: do not resolve its
+  image or assets, do not launch it, commit the stage with `--skip`, and keep
+  training from mined records.
+
+Run `"$PYTHON" scripts/validate_sharegpt.py` with the selected profile on Proxy,
+Benchmark, Mining, and each generated iteration training file. There is no
+input Train annotation.
 Run `"$PYTHON" scripts/validate_split_contract.py` to prove that Proxy, Benchmark, and
 Mining targets are disjoint and that the frozen Benchmark annotation hash has
 not changed. When a generated Train file is supplied, the same validator
@@ -205,10 +236,12 @@ retained.
 - **Benchmark:** `annotations/benchmark_kpi.json`. It is frozen, evaluated
   at baseline and every iteration, and is the only stop-gate source. Benchmark
   sample errors never feed routing or mining.
-- Default gate: `recall_ng >= 1.0`. If the user asks for accuracy, use
+- Bare default gate: `recall_ng >= 1.0`. If the user asks for accuracy, use
   `accuracy >= <target>`.
-- Unknown model responses block the gate through the
-  `unknown_predictions <= 0` metric constraint.
+- Rich default gate: `task_balanced_v1`. Its scalar is the worst task
+  attainment; missing, duplicate, unknown, or unparsable predictions block the
+  gate. `task_dataset_balanced_v1` is an explicit experimental alternative and
+  enforces `--min-group-support` for every task×dataset cell.
 
 `scripts/analyze_gaps.py` writes Proxy RCCA artifacts or Benchmark aggregate
 metrics plus `metric_result.json`. `scripts/record_metric_result.py` binds the
@@ -255,9 +288,10 @@ Read `references/preflight.md` and run every ordered check:
 
 1. select and preflight the platform;
 2. resolve workspace, annotations, media root, and `max_iterations`;
-3. validate bare ShareGPT and Proxy/Benchmark/Mining target isolation;
+3. validate the selected annotation profile and Proxy/Benchmark/Mining target isolation;
 4. hash and freeze Benchmark annotations;
-5. resolve current Cosmos-RL and data-services images from `versions.yaml`;
+5. resolve current Cosmos-RL and data-services images from `versions.yaml`,
+   plus AnomalyGen only when `--anomalygen-policy auto`;
 6. plan conversion of the selected Cosmos Reason 3 reasoner into a Qwen3-VL
    PTM, and that output's platform-visible path;
 7. check only required environment-variable presence;
@@ -294,31 +328,38 @@ and state fields come from `references/rcca-artifact-manifest.json`.
 
 For each `iterN` when the frozen Benchmark gate is unmet:
 
-1. `routing` — derive mining targets from Proxy false accepts/rejects only.
+1. `routing` — derive mining targets from Proxy gaps only.
    Write both formats from the same rows: `mining_targets.json` for state
    (`--mining-targets` takes the JSON) and a `filepath[,label]` parquet for the
-   embedding container. Gap rows carry no image paths, so join back to Proxy by
-   `id` — see `references/gap-analysis.md`.
-2. `anomalygen` — generate synthetic defects with `tao-generate-anomalies` in
-   `inference_only` mode, then turn each generated pair into a bare `NG`
-   record with `"$PYTHON" scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
-   the driving Proxy RCCA recorded zero false accepts, and even then generating
-   is often still worthwhile. The emitter accepts PAIDF 1.0.1 repo-root-relative
-   and documented output-dir-relative paths, with `--sdg-root` as an explicit
-   additional base — see `references/tao-generate-anomalies.md`.
-3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
-   floor with `"$PYTHON" scripts/filter_mined_by_cosine.py`, then run the mapped skill's
-   history-aware post-processing so a filepath selected by a prior iteration
-   cannot enter Train again. The default top-K remains 5; preserve an explicit
-   user value and increase it only when the history summary shows low novelty.
+   embedding container. Bare rows join back to Proxy by `id`; rich rows already
+   carry explicit target identity and collapse record gaps by `target_id` — see
+   `references/gap-analysis.md`.
+2. `anomalygen` — when the frozen policy is `disabled`, commit an unconditional
+   `--skip` and continue to mining. Under `auto`, generate synthetic defects
+   with `tao-generate-anomalies` in `inference_only` mode or use its evidence-gated
+   skip. Bare output becomes exact `NG`; rich output is limited to defect-
+   classification tasks with a known label. Detection SDG is a hard error
+   without validated geometry. The emitter accepts PAIDF 1.0.1 repo-root-
+   relative and documented output-dir-relative paths, with `--sdg-root` as an
+   explicit additional base. See `references/tao-generate-anomalies.md`.
+3. `data_mining` — use `tao-mine-aoi-images` to embed each unique Proxy target
+   and Mining source image once. Bare mode keeps the native nearest-neighbor
+   plus `"$PYTHON" scripts/filter_mined_by_cosine.py` path. Rich mode passes both embedding
+   artifacts through `task_mining_router.py`, which applies the frozen
+   `image_only`, `task_strict`, or `task_then_fallback` policy, top-K, and cosine
+   floor while retaining routed task provenance. Then run the mapped skill's
+   history-aware post-processing. The default top-K remains 5.
 4. `assemble_data` — align mined target paths to Mining source prompts,
    golden references, and exact labels with `"$PYTHON" scripts/emit_mined_sharegpt.py`;
-   create `train_iter_1.json` from the mined and synthetic records only after
-   Proxy RCA and Mining selection, then append monotonically into
+   task-aware rows fan out only to `routed_task_types`, while `image_only` and
+   explicit fallback rows retain the source target's available tasks;
+   create `train_iter_1.json` from mined records plus synthetic records only
+   when AnomalyGen produced them, after Proxy RCA and Mining selection; then
+   append monotonically into
    `train_iter_N.json` in later iterations with
    `"$PYTHON" scripts/assemble_training_json.py`.
-5. `validate_data` — validate exact bare labels, files, duplicates, and
-   generated-Train lineage plus Proxy/Benchmark leakage.
+5. `validate_data` — validate the selected profile, files, record-level
+   duplicates, generated-Train lineage, and Proxy/Benchmark target leakage.
 6. `train`
 7. `evaluate_benchmark`
 8. `benchmark_metrics` — stop here when the gate passes or
@@ -332,8 +373,8 @@ For each `iterN` when the frozen Benchmark gate is unmet:
 passes, `max_iterations` is reached, or a hard stop occurs. For an ordinary
 stop, run `"$PYTHON" scripts/finalize_run.py` with the explicit reason, then run
 `"$PYTHON" scripts/render_report.py --require-terminal` after optional token alignment.
-The Cosmos-only report addition is a bounded prompt showcase sourced from
-recorded annotations; keep every other visual convention aligned with
+The report includes a bounded prompt showcase; rich runs also show task KPI
+attainment, task×dataset diagnostics, and prediction coverage. Keep every other visual convention aligned with
 ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or hand-author
 report rendering.
 
@@ -346,25 +387,26 @@ report rendering.
 | Proxy RCCA / Benchmark metric | bundled `analyze_gaps.py` | `references/gap-analysis.md` |
 | Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
 | AnomalyGen | `tao-generate-anomalies`, `mode=inference_only` | `references/tao-generate-anomalies.md` |
-| Assemble / validate | bundled bare ShareGPT scripts | `references/aoi-annotation.md` |
+| Assemble / validate | bundled profile-aware ShareGPT scripts | `references/aoi-annotation.md` |
 | State/report | bundled state commit + deterministic report hook | `references/scripts-and-agents.md` |
 
 ## Hard Stops
 
-Commit an error stage and do not auto-retry for: invalid disk state; a rich or
-non-exact training label; a JSONL or non-array annotation input; an
+Commit an error stage and do not auto-retry for: invalid disk state; a label or
+answer invalid for the selected profile; a non-array materialized annotation input; an
 an unconverted Cosmos Reason 3 checkpoint still in native Omni format at a
 Cosmos-RL boundary;
 missing/ambiguous mined-to-source alignment; missing/tampered mining history,
 cross-iteration mined filepath duplication; target overlap among
 Proxy/Benchmark/Mining; a generated Train target outside Mining and AnomalyGen
 output, or overlapping Proxy/Benchmark; a changed Benchmark hash; any Benchmark
-error used for routing; missing/empty mining output; a failed or empty
-AnomalyGen run while Proxy false accepts remain outstanding; an `anomalygen`
-skip not backed by zero false accepts in the driving RCCA; a synthetic record
-whose label is not `NG` or whose paired image is missing; a
-PAIDF-incompatible AnomalyGen fine-tuned checkpoint; a missing AnomalyGen
-Guardrail checkpoint or an SDG log showing disabled screening; a checkpoint outside
+error used for routing; missing/empty mining output; attempting to run
+AnomalyGen when its frozen policy is `disabled`; under `auto`, a failed or
+empty AnomalyGen run while eligible gaps remain outstanding, or an
+`anomalygen` skip without the required zero-gap evidence; a synthetic record
+whose label is not `NG` or whose paired image is missing; a PAIDF-incompatible
+AnomalyGen fine-tuned checkpoint; a missing AnomalyGen Guardrail checkpoint or
+an SDG log showing disabled screening; a checkpoint outside
 the iteration result tree; an invalid nested TOML spec; unknown evaluator
 ground truth; or a program error.
 

@@ -16,7 +16,7 @@ visible from the compute frame:
   `semantic_segmentation_labels.json`, clean images, cad masks), and the Cosmos
   base-checkpoints cache — required only when the AnomalyGen stage will run;
 - selected platform native CLI and GPU runtime;
-- host Python with `pyarrow` and `yaml`.
+- host Python with `numpy`, `pyarrow`, and `yaml`.
 
 In air-gap mode:
 
@@ -31,7 +31,7 @@ In air-gap mode:
   bootstrap, whose checkpoint/dataset/base-cache fetchers must all be
   pre-staged instead;
 - use `bash scripts/deft_python.sh` to select an already-provisioned interpreter; if
-  no candidate provides `pyarrow` and `yaml`, report those imports and stop;
+  no candidate provides `numpy`, `pyarrow`, and `yaml`, report those imports and stop;
 - keep `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` set for AnomalyGen runs;
 - leave both `HF_TOKEN` and its legacy alias `HUGGING_FACE_HUB_TOKEN` unset
   when local assets are sufficient; clearing only one still leaves a usable

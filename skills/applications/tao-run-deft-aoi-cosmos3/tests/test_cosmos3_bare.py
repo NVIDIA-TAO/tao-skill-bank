@@ -1251,6 +1251,15 @@ class StateMachineTests(unittest.TestCase):
                 commit("iter1", "routing", "--mining-targets", str(targets)), 0
             )
             skip_reason = "iter1 anomalygen"
+            # The default auto policy still enforces its evidence gate.
+            write_json(
+                proxy_dir / "false_accepts.json",
+                [{"gt": "NG", "response": "OK"}],
+            )
+            self.assertEqual(
+                commit("iter1", "anomalygen", "--skip", duration="0"), 2
+            )
+            write_json(proxy_dir / "false_accepts.json", [])
             self.assertEqual(
                 commit("iter1", "anomalygen", "--skip", duration="0"), 0
             )

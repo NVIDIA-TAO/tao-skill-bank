@@ -1,0 +1,37 @@
+%% SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+%% SPDX-License-Identifier: Apache-2.0
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#76b900","primaryTextColor":"#000000","primaryBorderColor":"#333333","lineColor":"#666666","secondaryColor":"#f4f7f7","tertiaryColor":"#ffffff","fontFamily":"Arial, sans-serif","fontSize":"12px"},"flowchart":{"curve":"basis","nodeSpacing":42,"rankSpacing":55}}}%%
+flowchart LR
+    G[(Proxy Gap Records)]:::data --> A[Task-Balanced<br/>Gap Selection]:::function
+    A --> C[Collapse by<br/>target_id]:::function
+    C --> T[(Unique Target<br/>Embeddings)]:::data
+
+    M[(Mining Pool<br/>Embeddings + Tasks)]:::data --> R{{NVIDIA DEFT<br/>Mining Router}}:::nvidia
+    T --> R
+    S[Immutable Run State<br/>Router Mode]:::resource -.-> R
+
+    subgraph Modes[One Ablation Mode]
+        I[image_only<br/>Global Cosine Top-K]:::function
+        X[task_strict<br/>Top-K Per Target × Task]:::function
+        F[task_then_fallback<br/>Strict Then Fill Each Task]:::function
+    end
+
+    R --> I
+    R --> X
+    R --> F
+    I --> P[Attach Route Tier<br/>and Routed Tasks]:::function
+    X --> P
+    F --> P
+    P --> H[History-Aware<br/>Deduplication]:::function
+    H --> O[(Task-Aligned<br/>Training Records)]:::data
+
+    classDef nvidia fill:#76b900,stroke:#333333,color:#ffffff
+    classDef actor fill:#2290c7,stroke:#ffffff,color:#ffffff
+    classDef location fill:#1dbfa4,stroke:#ffffff,color:#ffffff
+    classDef function fill:#ffbc01,stroke:#ffffff,color:#000000
+    classDef data fill:#d96421,stroke:#ffffff,color:#ffffff
+    classDef resource fill:#8922b9,stroke:#ffffff,color:#ffffff
+    classDef thirdPartyService fill:#c2262d,stroke:#ffffff,color:#ffffff
+    classDef thirdPartyApp fill:#d128a8,stroke:#ffffff,color:#ffffff
+    classDef group fill:#f4f7f7,stroke:#cccccc,color:#000000
+    classDef nvidiaGroup fill:#f4f7f7,stroke:#76b900,color:#000000
