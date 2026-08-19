@@ -2319,6 +2319,92 @@ case "$RUN_OUT" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G25 — rare classes are a property of the pool, so prep settles them
+#
+# init runs before prep, and which target classes are rare is decided by the
+# pool's annotation counts. On a run that still has to prep, the list is left
+# unset and the prep commit derives it. `mine` is the first stage that reads it
+# and refuses to commit while it is still unset.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G25 rare classes are derived at the prep commit"
+
+G25=$(new_workspace g25)
+make_file "$G25/classes/classes_its.yaml" "car: [car]
+person: [person]
+bicycle: [bicycle]"
+make_file "$G25/raw/img0.png" "png"
+make_file "$G25/ckpt/codetr.pth" "not a real checkpoint"
+make_file "$G25/ckpt/coco_classmap.txt" "person"
+make_file "$G25/pool/coco_source.json" '{}'
+make_file "$G25/pool/coco_target.json" '{}'
+G25_RUN="$G25/results/run_g25"
+
+init_run "$G25" "$G25_RUN" 1 \
+  --ap50-thresholds-json '{"car": 0.9, "person": 0.85, "bicycle": 0.8}' \
+  --pool-images "$G25/raw" \
+  --codetr-checkpoint "$G25/ckpt/codetr.pth" \
+  --codetr-classmap "$G25/ckpt/coco_classmap.txt" \
+  --allocation-policy class_stratified \
+  --source-detection-file "$G25/pool/coco_source.json" \
+  --target-detection-file "$G25/pool/coco_target.json"
+assert_rc 0 "[G25] class_stratified init succeeds with no rare list on a prep run"
+case "$RUN_OUT" in
+  *"commit_stage.py --stage prep"*)
+    ok "[G25] the warning names what will derive it" ;;
+  *) notok "[G25] the warning names what will derive it" "output: $RUN_OUT" ;;
+esac
+assert_eq 'null' "$(state_json "$G25_RUN" rare_class_list)" \
+  "[G25] the list is left unset until prep has built a pool"
+
+# Prep produces the counts that decide it: car dominates, the other two are rare.
+make_pool "$G25"
+make_file "$G25_RUN/prep/pool_report.json" \
+  '{"annotations_by_class": {"car": 72287, "person": 4103, "bicycle": 2002}}'
+commit "$G25_RUN" prep prep \
+  --pool-odvg "$G25/source_pool/odvg" \
+  --pool-embeddings "$G25/source_pool/source_embeddings.parquet" \
+  --pool-report "$G25_RUN/prep/pool_report.json" \
+  --summary "prep" --duration-sec 1
+assert_rc 0 "[G25] prep commits"
+assert_eq '"bicycle,person"' "$(state_json "$G25_RUN" rare_class_list)" \
+  "[G25] the below-mean classes are derived from the pool's own counts"
+
+# Without that derivation, mine cannot commit: class_stratified allocates by it.
+G25B=$(new_workspace g25b); make_pool "$G25B"
+G25B_RUN="$G25B/results/run_g25b"
+init_run "$G25B" "$G25B_RUN" 1
+"$PY" - "$G25B_RUN/deft_state.json" <<'EOF'
+import json, sys
+p = sys.argv[1]
+s = json.load(open(p))
+s["config"]["allocation_policy"] = "class_stratified"
+s["config"]["rare_class_list"] = None
+json.dump(s, open(p, "w"))
+EOF
+make_phase_artifacts "$G25B_RUN" baseline
+commit "$G25B_RUN" baseline inference \
+  --inference-labels-dir "$G25B_RUN/baseline/inference/labels" --summary s --duration-sec 1
+commit "$G25B_RUN" baseline kpi_analyze \
+  --kpi-csv "$G25B_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 --summary s --duration-sec 1
+make_iter_artifacts "$G25B_RUN" iter1
+commit "$G25B_RUN" iter1 gap_analysis \
+  --weak-images "$G25B_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G25B_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 5 --summary s --duration-sec 1
+commit "$G25B_RUN" iter1 embed \
+  --embeddings-parquet "$G25B_RUN/iter1/embeddings/weak_images_embeddings.parquet" \
+  --summary s --duration-sec 1
+commit "$G25B_RUN" iter1 mine \
+  --mining-output "$G25B_RUN/iter1/mining/final_unique_files.parquet" \
+  --mining-summary "$G25B_RUN/iter1/mining/summary.json" --summary s --duration-sec 1
+assert_rc 1 "[G25] mine refuses while rare_class_list is still unset"
+case "$RUN_OUT" in
+  *"rare_class_list is unset"*)
+    ok "[G25] the refusal names the unset field and how to fill it" ;;
+  *) notok "[G25] the refusal names the unset field and how to fill it" "output: $RUN_OUT" ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then

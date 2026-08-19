@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from deft_stages import (  # noqa: E402
     SCHEMA_VERSION,
     check_artifact,
+    derive_rare_classes,
     log_path,
     state_path,
     write_log_atomic,
@@ -98,8 +99,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Run directory; holds deft_state.json and loop_log.jsonl.")
     parser.add_argument("--workspace", required=True,
                         help="Workspace root. Mounted into every container as itself.")
-    parser.add_argument("--max-iterations", type=int, required=True,
-                        help="Number of iterations after the baseline. No default; the user supplies it.")
+    parser.add_argument("--max-iterations", type=int, default=1,
+                        help="Number of iterations after the baseline. Default 1: one mine, "
+                             "train and score pass, which is the smallest run that produces a "
+                             "comparison against the baseline.")
 
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--num-epochs", type=int, required=True,
@@ -389,18 +392,12 @@ def main() -> int:
                                     f"reuse it")
 
         if args.allocation_policy == "class_stratified" and not rare_classes and pool_counts:
-            backed = {c: pool_counts[c] for c in target_classes if pool_counts.get(c)}
-            if backed:
-                # Below-mean share: with one dominant class the median would call
-                # half the set rare regardless of how lopsided the pool actually is.
-                mean_share = sum(backed.values()) / len(backed)
-                rare_classes = sorted(c for c, n in backed.items() if n < mean_share)
-                if rare_classes:
-                    detail = ", ".join(f"{c}={backed[c]}" for c in sorted(backed, key=backed.get))
-                    warnings.append(
-                        f"--rare-class-list not given; derived {rare_classes} from the pool's "
-                        f"own class counts ({detail}). These are the classes the pool holds "
-                        "fewest of, which is what stratified allocation exists to protect")
+            rare_classes, detail = derive_rare_classes(pool_counts, target_classes)
+            if rare_classes:
+                warnings.append(
+                    f"--rare-class-list not given; derived {rare_classes} from the pool's "
+                    f"own class counts ({detail}). These are the classes the pool holds "
+                    "fewest of, which is what stratified allocation exists to protect")
 
         kpi_images_dir = _abs(args.kpi_images_dir)
         ground_truth_labels_dir = _abs(args.ground_truth_labels_dir)
@@ -461,7 +458,21 @@ def main() -> int:
         }
         if args.allocation_policy == "class_stratified":
             if not rare_classes:
-                errors.append("--allocation-policy class_stratified requires --rare-class-list")
+                # Which classes are rare is a property of the pool's annotation
+                # counts, and those counts are prep's output. Requiring the list
+                # here would make init and prep each other's precondition, so on a
+                # run that still has to prep it is left null and the prep commit
+                # derives it from pool_report.json. `mine` is the first stage that
+                # reads it, and prep is complete by then.
+                message = ("--allocation-policy class_stratified requires "
+                           "--rare-class-list")
+                if missing_pool and not absent_inputs:
+                    warnings.append(
+                        f"{message} — left unset; `commit_stage.py --stage prep` derives it "
+                        "from the pool's own class counts once prep has produced "
+                        "pool_report.json")
+                else:
+                    errors.append(message)
             if not args.pool_report:
                 # pool_report.json is the only artifact that cross-checks the prepared
                 # pool against the requested classes. It is also prep's own output, so
@@ -527,8 +538,26 @@ def main() -> int:
 
         # Containers see only "$WORKSPACE:$WORKSPACE"; anything outside is invisible inside them.
         # embedding_model_path is exempt: HF_HOME legitimately lives outside the workspace.
+        # Every path a container has to read, not a subset. The encoder is included
+        # despite living outside the workspace by design: prep's embed reads it from
+        # inside the container, and an unmounted local snapshot is passed to
+        # HuggingFace as a repo id, which fails as HFValidationError rather than as a
+        # missing mount. Prep's own inputs are here for the same reason -- Co-DETR
+        # reads the classmap and checkpoint from inside the container.
         mounted = [results_dir, zero_shot_checkpoint, train_spec_template, source_pool_embeddings,
                    source_pool_annotations, kpi_images_dir, ground_truth_labels_dir, class_mapping]
+        if looks_local:
+            # A HuggingFace hub snapshot is all symlinks into a sibling blobs/ dir, so
+            # mounting the snapshot alone gives the container dangling links and the
+            # loader reports "no file named model.safetensors found" -- a missing-model
+            # error for a model that is present. Mount the repo root, which holds both.
+            encoder = Path(model_path)
+            if "snapshots" in encoder.parts:
+                encoder = Path(*encoder.parts[:encoder.parts.index("snapshots")])
+            mounted.append(encoder)
+        for extra in (args.pool_images, args.codetr_checkpoint, args.codetr_classmap):
+            if extra:
+                mounted.append(_abs(extra))
         # Anything outside the workspace needs its own -v or the container cannot read
         # it. Deriving the mounts here means the stages get a list to use rather than a
         # warning to act on, which is what left earlier runs to work it out mid-flight.

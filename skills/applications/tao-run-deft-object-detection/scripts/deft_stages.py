@@ -28,6 +28,28 @@ TERMINAL_STAGE = "loop_stop"
 
 ALL_STAGES = sorted(set(PREP_ORDER + BASELINE_ORDER + ITER_ORDER + [TERMINAL_STAGE]))
 
+
+def derive_rare_classes(pool_counts: dict[str, int],
+                        target_classes: list[str]) -> tuple[list[str], str]:
+    """Rare target classes from the pool's own annotation counts.
+
+    Below-mean share, not below-median: with one dominant class the median calls
+    half the target set rare however lopsided the pool actually is.
+
+    Returns the class list and a human-readable account of the counts it used.
+    Only classes the pool actually holds are eligible -- a class with no
+    annotations cannot be mined for, so naming it rare would allocate budget that
+    nothing can fill.
+    """
+    backed = {c: pool_counts[c] for c in target_classes if pool_counts.get(c)}
+    if not backed:
+        return [], "the pool holds no annotations for any target class"
+    mean_share = sum(backed.values()) / len(backed)
+    rare = sorted(c for c, n in backed.items() if n < mean_share)
+    detail = ", ".join(f"{c}={backed[c]}" for c in sorted(backed, key=backed.get))
+    return rare, detail
+
+
 # stage -> {state field: (commit flag, "file"|"dir")}
 # Every listed artifact must exist on disk before the stage may be committed.
 STAGE_ARTIFACTS: dict[str, dict[str, tuple[str, str]]] = {

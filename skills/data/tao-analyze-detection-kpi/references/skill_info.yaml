@@ -1,6 +1,6 @@
 network_arch: tao-analyze-detection-kpi
 type: data
-container_image: nvcr.io/nvstaging/tao/tao-dataservices:gapanalysis-02  # versions-key: images.tao_toolkit.data_services_od
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.8.10-rc-26-multiarch  # versions-key: images.tao_toolkit.data_services_nightly
 gpu_spec_key: null
 required_credentials: []
 actions:

@@ -163,7 +163,7 @@ If an *overlay* is missing, stop and ask the user to reinstall the plugin — th
 | Pipeline stages, state schema, loop-end sequence | `references/pipeline-and-state.md` |
 | Bundled scripts, glue, reporter agent, stage table | `references/scripts-and-agents.md` |
 
-**Required input — `max_iterations`.** No default; ask the user if not supplied. All other parameters have documented defaults.
+**`max_iterations` defaults to `1`** — one mine, train and score pass, the smallest run that yields a comparison against the baseline. Confirm it with the user when they have not said how many iterations they want; an unattended run takes the default rather than stopping to ask.
 
 ## Gating
 
