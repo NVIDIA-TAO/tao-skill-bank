@@ -172,7 +172,7 @@ pool's `classes.yaml`, not a class list. Pass it in every phase.
 No training at baseline. Score the user-supplied zero-shot / pretrained checkpoint:
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   grounding_dino inference -e "$INFER_SPEC" \
@@ -226,7 +226,7 @@ that cannot train.
 Then:
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   grounding_dino train -e "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
@@ -278,7 +278,7 @@ Required output: a newly emitted checkpoint under `${RESULTS_DIR}/iter${N}/train
 ## Iteration inference
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   grounding_dino inference -e "$INFER_SPEC" \

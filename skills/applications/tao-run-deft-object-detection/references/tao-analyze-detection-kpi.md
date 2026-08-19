@@ -141,7 +141,7 @@ Pass `--gpus all` even though the scoring itself is CPU-bound: the TAO launcher 
 <skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-analyze-detection-kpi/scripts/verify_kpi_analyze_spec.py \
   --spec "$KPI_SPEC"
 
-docker run -d --name "deft_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):$(id -g)" \
+docker run -d --name "deft_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   analytics kpi_analyze -e "$KPI_SPEC" 2>&1
