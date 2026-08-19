@@ -187,7 +187,7 @@ different platform.
 failures such as CUDA driver errors, missing GPUs, NCCL/RDMA failures, Xid
 errors, and node failures up to the configured retry limit.
 
-## Enroot temp paths (CS-OCI-ORD)
+## Enroot temp paths
 
 Set both `ENROOT_TEMP_PATH` and `SLURM_ENROOT_TEMP_PATH` to a job-unique
 `/tmp/enroot-tao-${SLURM_JOB_ID}` and force `TMPDIR=/tmp`. Direct Enroot reads
@@ -200,3 +200,62 @@ path can also fail on cleanup races between concurrent jobs. Note that
 `/lustre/fsw/...` user directories may themselves be symlinks onto another
 Lustre filesystem, so pointing the temp path at "a different Lustre path" is a
 no-op — it has to be node-local.
+
+## Acquire the image off the GPU allocation
+
+**The GPU is yours from the moment the allocation starts, not from when compute
+begins.** Anything done before training — pulling an image, converting it,
+fetching data — runs on GPUs that are idle, billed, and visible to the
+GPU-idle reaper. A first-time TAO pull plus conversion is minutes of that.
+
+So the image must already be a local `.sqsh` when the GPU job starts: passing a
+`docker://` or `registry#image:tag` URI to `srun --container-image=` makes Pyxis
+pull *and* convert inside the allocation. Convert once on a **CPU partition**,
+then point every later job at the file:
+
+```bash
+# One-time per image, on CPU. Always pass -t (the partition DEFAULT, not its
+# max, is what truncates a conversion). Note enroot's '#' registry separator.
+ssh $LOGIN "test -e <sqsh>" || \
+  ssh $LOGIN "srun --chdir=/tmp -n1 -p <cpu_partition> -t <minutes> \
+    bash -c 'set -Eeuo pipefail
+      export TMPDIR=/tmp
+      export ENROOT_TEMP_PATH=/tmp/enroot-tao-\${SLURM_JOB_ID}
+      export SLURM_ENROOT_TEMP_PATH=\${ENROOT_TEMP_PATH}
+      mkdir -p \"\${ENROOT_TEMP_PATH}\"
+      cd /tmp
+      enroot import -o <sqsh> docker://<registry>#<image>:<tag>'"
+
+# Every GPU job then references the file, never the registry.
+srun --container-image=<sqsh> ...
+```
+
+Temp-path exports: `references/slurm-container-execution.md`.
+
+The same rule governs data: stage it to Lustre before submit (tier A) rather
+than fetching inside the allocation.
+
+**Cluster-specific values — CS-OCI-ORD.** The general rule above is portable;
+these numbers are not, and are recorded because each cost real allocations:
+
+- **Always pass an explicit `-t`** — every partition sets
+  `DefaultTime=00:31:00`, so a conversion without one is capped at 31 min and
+  truncated. That, not the partition, is what killed conversions: `cpu` allows
+  `MaxTime=1-00:00:00`, and `cpu`/`cpu_short`/`cpu_long`/`cpu_interactive` share
+  one node pool. Check with `scontrol show partition <name>`.
+- Conversion `-t` is a ceiling, not an estimate, clamped to the partition's
+  real `MaxTime` and never left below its `DefaultTime`.
+
+Partial conversions are self-detecting: `references/render.py` `prepare()` reads
+the 4-byte `hsqs` magic, reconverts on mismatch, and treats a still-bad
+conversion as fatal. Conversion runs once, then is cached by image name.
+
+**A failed conversion must not fall back to the registry image.** The tempting
+recovery — pass `docker://…` to `srun` and let Pyxis handle it — puts the pull
+back inside the GPU allocation, which is the cost the conversion existed to
+avoid, and it does so precisely when something is already wrong. Treat a failed
+or truncated conversion as fatal: fix it on the CPU partition and resubmit.
+
+Diagnostic: if a job is slow to produce output, check what `--container-image=`
+received — a registry URI rather than a `.sqsh` path means the pull happened on
+the GPUs.

@@ -36,13 +36,20 @@ resource_defaults:
   time_hours: 4
   timeout_hours: 3.8
   max_time_hours: 4
-  partition: polar,polar3,polar4,grizzly
+  # FALLBACK ONLY -- these name partitions on one cluster and are wrong
+  # everywhere else. Preflight runs `sinfo` and requires SLURM_PARTITION to
+  # match a partition that actually exists; treat this as an example of the
+  # shape, never as a default to submit against.
+  partition: example-gpu-partition
   container_mounts: runtime-supplied
   use_sqsh: true
-  # Every partition on CS-OCI-ORD has DefaultTime=00:31:00, so a conversion
-  # without an explicit -t is capped at 31 minutes regardless of partition.
-  # The timeout below is a CEILING, not an estimate; cpu's MaxTime is 1 day.
-  sqsh_conversion_partition: cpu
+  # Conversion is CPU-only work, so it is placed on a GPU-free partition chosen
+  # from `sinfo` at conversion time rather than named here. Left unset, the
+  # renderer discovers one.
+  sqsh_conversion_partition:
+  # A CEILING, not an estimate, and clamped down to the chosen partition's real
+  # MaxTime. It must exceed the partition's DefaultTime: the default -- not the
+  # maximum -- is what silently truncates a conversion when no -t is passed.
   sqsh_conversion_timeout_minutes: 120
   sqsh_conversion_memory_gb: 32
 cloud_storage:

@@ -53,6 +53,20 @@ def _skill_text(name: str) -> str:
     return (PLATFORM_DIR / name / "SKILL.md").read_text(encoding="utf-8")
 
 
+def _skill_docs(name: str) -> str:
+    """SKILL.md plus its references.
+
+    Use this for detail that may legitimately live in a reference -- SKILL.md
+    is capped at ~20k chars, so prose migrates outward under size pressure and
+    an assertion pinned to the file, rather than to the skill, breaks on a move
+    that lost nothing. Contract-level claims (e.g. the four verbs) should keep
+    using _skill_text: those must be in the entry point itself.
+    """
+    skill = PLATFORM_DIR / name
+    files = [skill / "SKILL.md", *sorted((skill / "references").glob("*.md"))]
+    return "\n".join(f.read_text(encoding="utf-8") for f in files)
+
+
 @pytest.mark.parametrize("platform", RUN_PLATFORMS)
 @pytest.mark.parametrize("verb", sorted(VERB_PATTERNS))
 def test_platform_documents_every_verb(platform, verb):
@@ -149,7 +163,7 @@ def test_slurm_enroot_conversion_uses_job_unique_node_local_temp():
     allocation.  Enroot then fails during whiteout conversion with ``getcwd``
     and ``failed to resolve path`` errors after all image layers were fetched.
     """
-    text = _skill_text("tao-run-on-slurm")
+    text = _skill_docs("tao-run-on-slurm")
     assert "ENROOT_TEMP_PATH=/tmp/enroot-tao-\\${SLURM_JOB_ID}" in text
     assert "SLURM_ENROOT_TEMP_PATH=\\${ENROOT_TEMP_PATH}" in text
     assert "--chdir=/tmp" in text

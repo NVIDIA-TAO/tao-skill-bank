@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import pathlib
+import re
 
 import pytest
 
@@ -239,13 +240,36 @@ class _Done:
         self.stdout, self.stderr, self.returncode = stdout, "", returncode
 
 
-def _slurm_with(monkeypatch, outputs):
+# A fixture cluster, not this repo's: two CPU queues and a GPU one, so
+# partition choice is actually exercised. Fields are sinfo's %R|%l|%L|%a|%G.
+FIXTURE_SINFO = (
+    "batch*|2-00:00:00|00:31:00|up|(null)\n"
+    "short|4:00:00|00:31:00|up|(null)\n"
+    "accel|infinite|00:31:00|up|gpu:8\n"
+)
+
+
+def _slurm_with(monkeypatch, magics, sinfo=FIXTURE_SINFO, convert_rc=0):
+    """Answer by COMMAND, not by call order.
+
+    The positional version broke four unrelated tests the moment prepare()
+    grew one more ssh call -- the fake encoded a call sequence nothing had
+    promised to keep. Dispatching on the command says what each response IS,
+    so adding a probe cannot silently re-target another command's answer.
+    """
     module = _load("tao-run-on-slurm")
-    seq, calls = list(outputs), []
+    pending, calls = list(magics), []
 
     def fake(cmd, *a, **k):
-        calls.append(" ".join(cmd))
-        return _Done(seq.pop(0) if seq else "")
+        joined = " ".join(cmd)
+        calls.append(joined)
+        if "sinfo" in joined:
+            return _Done(sinfo)
+        if "head -c4" in joined:
+            return _Done(pending.pop(0) if pending else "")
+        if "enroot import" in joined:
+            return _Done("", convert_rc)
+        return _Done()
 
     monkeypatch.setattr(module.subprocess, "run", fake)
     ctx = {"login": "me@login", "sqsh_dir": "/lustre/img"}
@@ -260,14 +284,14 @@ def test_sqsh_valid_cache_is_reused_without_converting(monkeypatch):
 
 
 def test_sqsh_missing_is_converted(monkeypatch):
-    module, ctx, calls = _slurm_with(monkeypatch, ["", "", "hsqs"])
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
     module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
     assert any("enroot import" in c for c in calls)
 
 
 def test_truncated_sqsh_is_reconverted(monkeypatch):
     """The failure mode the shipped cpu/30min defaults actually produce."""
-    module, ctx, calls = _slurm_with(monkeypatch, ["hsq", "", "hsqs"])
+    module, ctx, calls = _slurm_with(monkeypatch, ["hsq", "hsqs"])
     out = module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
     assert "corrupt or truncated" in out["notes"][0]
     assert any("enroot import" in c for c in calls)
@@ -276,7 +300,7 @@ def test_truncated_sqsh_is_reconverted(monkeypatch):
 def test_failed_conversion_never_falls_back_to_the_registry(monkeypatch):
     """Falling back puts the pull inside the GPU allocation, exactly when
     something is already wrong."""
-    module, ctx, _ = _slurm_with(monkeypatch, ["", "", "hsq"])
+    module, ctx, _ = _slurm_with(monkeypatch, ["", "hsq"])
     with pytest.raises(ValueError, match="no valid squashfs"):
         module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
 
@@ -295,7 +319,7 @@ def test_conversion_always_passes_an_explicit_time_limit(monkeypatch):
     minutes whichever partition it lands on. Changing partition alone fixes
     nothing; the explicit -t is the fix.
     """
-    module, ctx, calls = _slurm_with(monkeypatch, ["", "", "hsqs"])
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
     module.prepare({"image": "nvcr.io/nvidia/tao:1"}, ctx)
     convert = next(c for c in calls if "enroot import" in c)
     assert "-t " in convert, "no explicit time limit: the 31-minute default applies"
@@ -345,15 +369,8 @@ def _slurm():
 
 def test_conversion_allocation_carries_scheduling_identity(monkeypatch):
     """The conversion srun is an allocation like any other."""
-    module = _slurm()
-    seq, calls = ["", "", "hsqs"], []
-
-    def fake(cmd, *a, **k):
-        calls.append(" ".join(cmd))
-        return _Done(seq.pop(0) if seq else "")
-
-    monkeypatch.setattr(module.subprocess, "run", fake)
-    module.prepare({"image": "nvcr.io/x/y:1"}, dict(SCHEDULED_CTX))
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
+    module.prepare({"image": "nvcr.io/x/y:1"}, {**ctx, **SCHEDULED_CTX})
     convert = next(c for c in calls if "enroot import" in c)
     assert "-A some-account" in convert, (
         "the conversion allocation omits the account; the scheduler rejects it "
@@ -421,18 +438,107 @@ def test_already_translated_reference_is_untouched():
 
 def test_conversion_uses_the_translated_reference(monkeypatch):
     """The bug was in the command, so assert on the command."""
-    module = _slurm()
-    seq, calls = ["", "", "hsqs"], []
-
-    def fake(cmd, *a, **k):
-        calls.append(" ".join(cmd))
-        return _Done(seq.pop(0) if seq else "")
-
-    monkeypatch.setattr(module.subprocess, "run", fake)
-    module.prepare({"image": "docker.io/library/alpine:3.20"},
-                   {"login": "u@h", "sqsh_dir": "/lustre/img"})
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
+    module.prepare({"image": "docker.io/library/alpine:3.20"}, ctx)
     convert = next(c for c in calls if "enroot import" in c)
     assert "docker://docker.io#library/alpine:3.20" in convert
     assert "docker://docker.io/library" not in convert, (
         "registry left in the path; enroot requests /v2/<registry>/... and 401s"
     )
+
+
+# ── The skill's documentation is part of the contract ───────────────────────
+# The enroot bug is the one worth generalising from. SKILL.md documented the
+# correct form -- `docker://<registry>#<image>:<tag>` -- and render.py emitted
+# `docker://<image>` anyway. The skill was RIGHT and the code ignored it, and
+# because nothing tied a documented command to the rendered one, 66 tests
+# passed while the only real cluster run 401'd.
+#
+# So: assert the documented command shapes and the emitted ones agree.
+
+SLURM_DIR = REPO / "skills/platform/tao-run-on-slurm"
+
+
+def _slurm_docs() -> str:
+    """SKILL.md plus its references -- prose moves between them for size."""
+    files = [SLURM_DIR / "SKILL.md", *sorted((SLURM_DIR / "references").glob("*.md"))]
+    return "\n".join(f.read_text(encoding="utf-8") for f in files)
+
+
+def test_documented_enroot_form_separates_the_registry():
+    """Guard the documentation itself; the code test below points back here."""
+    assert "docker://<registry>#<image>:<tag>" in _slurm_docs(), (
+        "the skill no longer documents enroot's registry separator; if this "
+        "moved, move test_rendered_enroot_matches_documentation with it"
+    )
+
+
+def test_rendered_enroot_matches_documentation(monkeypatch):
+    """What we emit must instantiate what we document."""
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
+    module.prepare({"image": "nvcr.io/nvidia/tao/toolkit:7.1.0"}, ctx)
+    convert = next(c for c in calls if "enroot import" in c)
+    uri = re.search(r"docker://(\S+)", convert).group(1)
+    registry, sep, rest = uri.partition("#")
+    assert sep, f"documented form is <registry>#<image>:<tag>, emitted {uri!r}"
+    assert "/" not in registry, f"registry {registry!r} leaked path components"
+    assert rest, "no image path after the separator"
+
+
+# ── Schedulability is a prerequisite, not a submit-time surprise ────────────
+# Preflight verified reachability (ssh, enroot credentials, storage) but never
+# schedulability, so both real failures -- a missing account and a partition
+# assumption -- were structurally invisible to it.
+
+def test_sinfo_is_parsed_in_the_cluster_s_own_dialect():
+    """sinfo prints `31:00` as MM:SS; the requested-limit parser reads HH:MM."""
+    module = _slurm()
+    assert module.parse_sinfo_minutes("31:00") == 31
+    assert module.parse_sinfo_minutes("1-00:00:00") == 1440
+    assert module.parse_sinfo_minutes("infinite") is None, (
+        "unbounded must be None, not a number that later clamps a ceiling down"
+    )
+    assert module.parse_sinfo_minutes("garbage") is None
+
+
+def test_unknown_partition_is_rejected_with_the_real_list():
+    """`invalid partition specified` does not say what IS valid."""
+    module = _slurm()
+    found = {"cpu": {"max_minutes": 1440, "available": True, "gres": ""}}
+    with pytest.raises(ValueError, match="available: cpu"):
+        module.require_partition(found, "polar3")
+
+
+def test_conversion_avoids_gpu_partitions():
+    """Conversion is CPU work; it should not idle in a GPU queue."""
+    module = _slurm()
+    found = {
+        "gpu": {"max_minutes": 10000, "available": True, "gres": "gpu:8"},
+        "cpu": {"max_minutes": 1440, "available": True, "gres": ""},
+        "dead": {"max_minutes": None, "available": False, "gres": ""},
+    }
+    assert module.choose_conversion_partition(found) == "cpu"
+
+
+def test_no_partition_is_invented_when_discovery_finds_nothing():
+    """An ssh blip must not look like a cluster with a partition named 'cpu'."""
+    module = _slurm()
+    assert module.choose_conversion_partition({}) is None
+
+
+def test_ceiling_is_clamped_to_what_the_partition_grants():
+    """Over-asking is rejected at submit, so it does not fail safe."""
+    module = _slurm()
+    found = {"short": {"max_minutes": 60, "available": True, "gres": ""}}
+    assert module.conversion_minutes(found, "short", 120) == 60
+    assert module.conversion_minutes({}, None, 120) == 120
+
+
+def test_explicit_time_survives_an_unknown_partition(monkeypatch):
+    """DefaultTime, not MaxTime, is the trap -- -t must always be emitted."""
+    module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"], sinfo="")
+    module.prepare({"image": "alpine:3.20"}, ctx)
+    convert = next(c for c in calls if "enroot import" in c)
+    assert " -p " not in convert, "invented a partition discovery never found"
+    convert = next(c for c in calls if "enroot import" in c)
+    assert re.search(r"-t \d+", convert), f"no explicit wall limit in {convert!r}"

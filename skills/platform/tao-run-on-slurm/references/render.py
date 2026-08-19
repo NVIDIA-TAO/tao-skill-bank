@@ -134,6 +134,139 @@ def sqsh_path(image: str, ctx: dict[str, Any]) -> str:
     return f"{ctx['sqsh_dir'].rstrip('/')}/{slug}.sqsh"
 
 
+# ── Scheduler discovery ─────────────────────────────────────────────────────
+# Preflight used to verify only that we could REACH the cluster: ssh, enroot
+# credentials, writable storage. None of that is schedulability, so a run could
+# pass preflight completely and still die at submit on a partition that does
+# not exist or an account the site requires. Both of this skill's real-cluster
+# failures were of exactly that kind. Ask the scheduler instead of shipping one
+# site's answers as defaults.
+
+SINFO_FORMAT = "%R|%l|%L|%a|%G"
+
+
+def parse_sinfo_minutes(value: str) -> int | None:
+    """sinfo time limit -> minutes; None when unbounded or unparseable.
+
+    Deliberately NOT `_limit_minutes`. That one parses a limit we ASKED for and
+    is always HH:MM:SS, while sinfo reports the cluster's own dialect: it emits
+    `infinite`, and it prints a bare `31:00` meaning MM:SS. Reusing the other
+    parser would read that as 31 hours -- silently generous in the one place
+    the number exists to be a ceiling.
+    """
+    text = (value or "").strip().lower()
+    if not text or text in ("n/a", "none", "not_set"):
+        return None
+    if text.startswith(("infinite", "unlimited")):
+        return None
+    days = 0
+    if "-" in text:
+        head, _, text = text.partition("-")
+        if not head.isdigit():
+            return None
+        days = int(head)
+    fields = text.split(":")
+    if not all(f.isdigit() for f in fields) or not 1 <= len(fields) <= 3:
+        return None
+    nums = [int(f) for f in fields]
+    if len(fields) == 3:
+        hours, minutes, seconds = nums
+    elif len(fields) == 2:
+        # A day component makes the clock HH:MM; on its own it is MM:SS.
+        hours, minutes, seconds = (nums[0], nums[1], 0) if days else (0, nums[0], nums[1])
+    else:
+        hours, minutes, seconds = 0, nums[0], 0
+    return days * 1440 + hours * 60 + minutes + (1 if seconds else 0)
+
+
+def discover_scheduler(login: str) -> dict[str, dict[str, Any]]:
+    """Ask the cluster which partitions exist and what limits they carry.
+
+    Returns {name: {max_minutes, default_minutes, available, gres}}. An empty
+    dict means sinfo told us nothing; callers must treat that as "unknown", not
+    as "no partitions", so a transient ssh failure cannot look like a cluster
+    with nothing on it.
+    """
+    probe = subprocess.run(
+        ["ssh", login, f"sinfo -h -o {shlex.quote(SINFO_FORMAT)}"],
+        capture_output=True, text=True, check=False,
+    )
+    partitions: dict[str, dict[str, Any]] = {}
+    for line in probe.stdout.splitlines():
+        fields = line.strip().split("|")
+        if len(fields) < 4:
+            continue
+        # A default partition is starred in sinfo output; the star is display,
+        # not part of the name, and passing it to -p is rejected.
+        name = fields[0].strip().rstrip("*")
+        if not name:
+            continue
+        gres = fields[4].strip() if len(fields) > 4 else ""
+        partitions[name] = {
+            "max_minutes": parse_sinfo_minutes(fields[1]),
+            "default_minutes": parse_sinfo_minutes(fields[2]),
+            "available": fields[3].strip().lower() in ("up", "avail"),
+            "gres": "" if gres in ("(null)", "n/a") else gres,
+        }
+    return partitions
+
+
+def require_partition(partitions: dict[str, dict[str, Any]], requested: str) -> None:
+    """Fail before submitting, naming what the cluster actually offers.
+
+    `-p nosuch` fails at submit with a bare "invalid partition specified" that
+    does not say what IS valid, so the next step is always another round trip.
+    """
+    if not partitions or not requested:
+        return
+    missing = [p for p in requested.split(",") if p.strip().rstrip("*")
+               and p.strip().rstrip("*") not in partitions]
+    if missing:
+        raise ValueError(
+            f"partition {','.join(missing)} does not exist on this cluster; "
+            f"available: {','.join(sorted(partitions))}"
+        )
+
+
+def choose_conversion_partition(
+    partitions: dict[str, dict[str, Any]], requested: str | None = None
+) -> str | None:
+    """Pick where the one-time image conversion runs.
+
+    Conversion is pure CPU work, so it should not sit in a GPU queue burning
+    allocation the job has not started needing. Prefer a GPU-free partition,
+    longest wall limit first, since the conversion's failure mode is being cut
+    short. Returns None when discovery found nothing -- the caller then leaves
+    the choice to the cluster's own default rather than inventing one.
+    """
+    if requested:
+        require_partition(partitions, requested)
+        return requested
+    usable = [(n, m) for n, m in partitions.items() if m["available"]]
+    if not usable:
+        return None
+    cpu_only = [(n, m) for n, m in usable if not m["gres"]] or usable
+    # None (unbounded) sorts highest: it is the most headroom, not the least.
+    return sorted(
+        cpu_only,
+        key=lambda nm: (nm[1]["max_minutes"] is None, nm[1]["max_minutes"] or 0, nm[0]),
+        reverse=True,
+    )[0][0]
+
+
+def conversion_minutes(
+    partitions: dict[str, dict[str, Any]], partition: str | None, ceiling: int
+) -> int:
+    """Clamp the requested ceiling to what the partition will actually grant.
+
+    Asking for more than MaxTime is rejected outright, so an over-generous
+    ceiling does not fail safe -- it fails at submit.
+    """
+    meta = partitions.get(partition or "") or {}
+    cap = meta.get("max_minutes")
+    return min(ceiling, cap) if cap else ceiling
+
+
 def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Reuse the cached .sqsh; convert only when it is missing or corrupt.
 
@@ -175,11 +308,22 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         )
 
     note = "converted" if not magic else "reconverted (corrupt or truncated sqsh)"
-    partition = ctx.get("conversion_partition", "cpu")
-    minutes = int(ctx.get("conversion_minutes", 120))
+    # Only now -- on the rare path that actually converts -- is discovery worth
+    # an ssh round trip. The cached path stays a single `head -c4`.
+    partitions = ctx.get("partitions")
+    if partitions is None:
+        partitions = discover_scheduler(login)
+    partition = choose_conversion_partition(partitions, ctx.get("conversion_partition"))
+    minutes = conversion_minutes(
+        partitions, partition, int(ctx.get("conversion_minutes", 120))
+    )
     scheduling = " ".join(shlex.quote(f) for f in scheduling_srun_flags(ctx))
+    # An explicit -t always, even when the partition was not chosen here: the
+    # trap is the partition DEFAULT, not its maximum, so omitting -t silently
+    # caps the conversion at DefaultTime no matter where it lands.
+    select = f"-p {shlex.quote(partition)} " if partition else ""
     convert = (
-        f"srun -n1 -p {shlex.quote(partition)} -t {minutes} "
+        f"srun -n1 {select}-t {minutes} "
         f"{scheduling} enroot import -o {shlex.quote(target)} "
         f"docker://{enroot_uri(image)}"
     ).replace("  ", " ")

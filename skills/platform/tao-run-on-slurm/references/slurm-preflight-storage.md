@@ -249,3 +249,53 @@ Results are supplied at runtime, for example:
 
 The runner sets `TAO_API_RESULTS_DIR` to the parent results directory because
 container code appends the job id when writing status and artifacts.
+
+## Schedulability is not reachability
+
+SSH answering, `sbatch`/`srun`/`enroot` being present, and every dataset path
+being readable all establish that the cluster is *reachable*. None of it
+establishes that it will *schedule* what you are about to ask for. A run can
+pass every reachability check and still be rejected at `submit` because the
+partition does not exist here, or because the site requires an account that was
+never set. Both failure modes are invisible until submit, and both produce
+errors that point somewhere else:
+
+- A missing account fails the one-time image conversion, and the message names
+  `enroot import`, so it reads as a broken conversion rather than a missing
+  scheduler setting.
+- A nonexistent partition fails with a bare `invalid partition specified`,
+  which never says what *is* valid — so diagnosing it costs another round trip.
+
+So preflight asks first, and prints the answer:
+
+```bash
+ssh $LOGIN "sinfo -h -o '%R|%l|%L|%a'"   # partition|MaxTime|DefaultTime|state
+ssh $LOGIN "sacctmgr -n show assoc user=\$USER format=account,partition,qos"
+```
+
+`scripts/check_tao_launch_preflight.py` runs the `sinfo` probe automatically
+after the tool check, fails closed when `SLURM_PARTITION` names something the
+cluster does not have, and lists the real partitions when it does.
+
+### DefaultTime, not MaxTime, is the trap
+
+A job submitted without an explicit `-t`/`--time` is capped at the partition's
+**DefaultTime**, which on many clusters is well under an hour. A partition
+advertising `MaxTime=infinite` will still cut an image conversion short if you
+rely on its default, and moving to a "longer" partition changes nothing —
+because the default, not the maximum, is what applied. Always pass an explicit
+limit; the renderer does.
+
+A conversion killed this way leaves a **truncated** `.sqsh` that `test -e`
+accepts, which is why the cached image is validated by its `hsqs` magic rather
+than by existence.
+
+### Choosing where the conversion runs
+
+Image conversion is CPU-only work and should not sit in a GPU queue holding an
+allocation the job has not started needing. The renderer picks a GPU-free
+partition with the longest wall limit from `sinfo`, and clamps the requested
+ceiling to that partition's real `MaxTime` — asking for more than `MaxTime` is
+rejected outright, so an over-generous ceiling does not fail safe. When
+discovery finds nothing, it names no partition at all rather than inventing
+one, leaving the choice to the cluster's own default.

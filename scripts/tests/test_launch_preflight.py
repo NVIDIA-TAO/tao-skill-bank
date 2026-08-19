@@ -125,6 +125,10 @@ def test_slurm_preflight_checks_remote_scheduler_pyxis_and_enroot(monkeypatch, t
         remote = command[-1]
         if remote == "echo TAO_SSH_OK":
             return subprocess.CompletedProcess(command, 0, stdout="TAO_SSH_OK\n", stderr="")
+        if "sinfo" in remote:
+            return subprocess.CompletedProcess(
+                command, 0, stdout="compute*|2-00:00:00|00:31:00|up\n", stderr=""
+            )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr(preflight, "run", fake_run)
@@ -141,6 +145,68 @@ def test_slurm_preflight_checks_remote_scheduler_pyxis_and_enroot(monkeypatch, t
     assert any("command -v sbatch" in command for command in remote_commands)
     assert any("command -v enroot" in command for command in remote_commands)
     assert any("--container-image" in command for command in remote_commands)
+    assert any("sinfo" in command for command in remote_commands), (
+        "preflight verified reachability but never asked what the cluster "
+        "will schedule; a nonexistent partition then fails at submit"
+    )
+
+
+def _slurm_env(monkeypatch, tmp_path, partition="compute"):
+    key = tmp_path / "id_ed25519"
+    key.write_text("fixture")
+    for name, value in {
+        "SLURM_USER": "user",
+        "SLURM_HOSTNAME": "login.example",
+        "SLURM_PARTITION": partition,
+        "SSH_KEY_PATH": str(key),
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(preflight.socket, "getaddrinfo", lambda *_args: [(None,)])
+    monkeypatch.setattr(preflight, "check_slurm_runtime", lambda _platform: True)
+
+
+def _fake_ssh(monkeypatch, sinfo):
+    def fake_run(command, timeout=30, env=None):
+        remote = command[-1]
+        if remote == "echo TAO_SSH_OK":
+            return subprocess.CompletedProcess(command, 0, stdout="TAO_SSH_OK\n", stderr="")
+        if "sinfo" in remote:
+            return subprocess.CompletedProcess(command, 0, stdout=sinfo, stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(preflight, "run", fake_run)
+
+
+SLURM_PLATFORM = {
+    "required_credentials": [
+        {"name": "SLURM_USER", "source": "env_var"},
+        {"name": "SLURM_HOSTNAME", "source": "env_var"},
+        {"name": "SLURM_PARTITION", "source": "env_var"},
+    ],
+    "credential_groups": [{"require_one_of": ["SSH_KEY_PATH", "SSH_AUTH_SOCK"]}],
+}
+
+
+def test_slurm_preflight_rejects_a_partition_the_cluster_lacks(
+    monkeypatch, tmp_path, capsys
+):
+    """Fail here, where the real list can be printed, not at submit."""
+    _slurm_env(monkeypatch, tmp_path, partition="polar3")
+    _fake_ssh(monkeypatch, "compute*|2-00:00:00|00:31:00|up\ncpu|1-00:00:00|00:31:00|up\n")
+    assert not preflight.check_slurm(SLURM_PLATFORM, [], {}, 20, False)
+    out = capsys.readouterr().out
+    assert "polar3" in out and "compute" in out, (
+        "'invalid partition specified' does not say what IS valid; preflight "
+        "has the list and must print it"
+    )
+
+
+def test_slurm_preflight_reports_the_default_time_limit(monkeypatch, tmp_path, capsys):
+    """DefaultTime, not MaxTime, is what silently truncates a conversion."""
+    _slurm_env(monkeypatch, tmp_path)
+    _fake_ssh(monkeypatch, "compute*|2-00:00:00|00:31:00|up\n")
+    assert preflight.check_slurm(SLURM_PLATFORM, [], {}, 20, False)
+    assert "00:31:00" in capsys.readouterr().out
 
 
 def test_slurm_preflight_rejects_missing_remote_pyxis(monkeypatch, tmp_path, capsys):
