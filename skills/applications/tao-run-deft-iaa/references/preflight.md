@@ -281,10 +281,9 @@ For a new run, perform the following in order.
    login without placing it in argv or output, then pull only the pinned images:
 
    ```bash
-   set -a; source /path/to/.env; set +a   # omit if already exported
    (
      if [ -z "${NGC_KEY:-}" ]; then
-       echo "NGC_KEY is not set. Export it, or point the loader above at a user-approved env file." >&2
+       echo "NGC_KEY is not set. Export it in the shell that launches the agent." >&2
        exit 2
      fi
      printf '%s' "$NGC_KEY" | docker login nvcr.io \
