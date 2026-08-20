@@ -54,8 +54,8 @@ from metric_contract import validate_contract
 
 
 WORKFLOW = "tao-run-deft-iaa"
-PINNED_PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"  # versions-key: images.tao_toolkit.pyt
-PINNED_DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"  # versions-key: images.tao_toolkit.data_services
+PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch"  # versions-key: images.tao_toolkit.pyt
+PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch"  # versions-key: images.tao_toolkit.data_services
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
     "tao_spec.yaml",
