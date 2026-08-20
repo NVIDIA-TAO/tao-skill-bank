@@ -1,8 +1,8 @@
 type: platform
-required_credentials:
+required_credentials: []
+optional_credentials:
 - name: BREV_API_TOKEN
   source: env_var
-optional_credentials:
 - name: NGC_KEY
   source: env_var
 - name: ACCESS_KEY
