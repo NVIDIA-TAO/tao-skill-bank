@@ -12,6 +12,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+import jsonschema
 import yaml
 
 
@@ -78,6 +79,7 @@ def _sealed_plan(
             "model_tier": model_tier,
         },
         "compute": {"total_gpus": 8},
+        "image": {"tag": f"nvcr.io/nvidia/tao/{backend}:test"},
         "decoder_artifact": {"enabled": False},
         "evaluation_contract": {
             "schema_version": 1,
@@ -186,7 +188,9 @@ def _checkpoint_manifest(
                     if mode == "peft"
                     else "hf_dense_safetensors"
                 ),
-                "files": [{"path": "config.json", "size": 1}],
+                "files": [
+                    {"path": "config.json", "size": 1, "sha256": "a" * 64}
+                ],
             }
         ),
         encoding="utf-8",
@@ -562,6 +566,16 @@ def test_framework_export_is_automated_not_user_intake(tmp_path: Path) -> None:
 
     assert unresolved["required_user_inputs"] == []
     assert unresolved["automated_actions"][0]["action"] == "framework_checkpoint_pre_action"
+    assert {
+        item["source"] for item in unresolved["automated_actions"][0]["supporting_files"]
+    } == {
+        "scripts/framework_checkpoint_action.py",
+        "scripts/cosmos_common.py",
+    }
+    assert all(
+        len(item["sha256"]) == 64
+        for item in unresolved["automated_actions"][0]["supporting_files"]
+    )
     assert not config_path.exists()
 
     rerun, resolved_path, resolved_config = _run(
@@ -588,6 +602,101 @@ def test_multiple_checkpoints_require_exact_selection(tmp_path: Path) -> None:
     assert selected.returncode == 0, selected.stderr
     config = tomllib.loads(selected_config.read_text(encoding="utf-8"))
     assert config["model"]["model_name"] == "/runtime/safetensors/epoch_2"
+
+
+def test_ready_plan_emits_reusable_backend_isolated_execution_bundle(
+    tmp_path: Path,
+) -> None:
+    rl_dir = tmp_path / "rl"
+    framework_dir = tmp_path / "framework"
+    rl_dir.mkdir()
+    framework_dir.mkdir()
+    rl_result, rl_plan_path, _ = _run(rl_dir)
+    framework_result, framework_plan_path, _ = _run(
+        framework_dir,
+        backend="cosmos-framework",
+        extra=["--action-model-path", "/runtime/exported-checkpoint"],
+    )
+    assert rl_result.returncode == 0, rl_result.stderr
+    assert framework_result.returncode == 0, framework_result.stderr
+
+    rl_plan = json.loads(rl_plan_path.read_text(encoding="utf-8"))
+    framework_plan = json.loads(framework_plan_path.read_text(encoding="utf-8"))
+    rl = rl_plan["spec_bundle"]
+    framework = framework_plan["spec_bundle"]
+    schema = json.loads(
+        (
+            ROOT
+            / "skills"
+            / "core"
+            / "tao-artifacts"
+            / "references"
+            / "spec_bundle.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    jsonschema.validate(rl, schema)
+    jsonschema.validate(framework, schema)
+    assert rl["spec"]["results_dir"] == "{results_dir}"
+    assert framework["spec"]["results_dir"] == "{results_dir}"
+    assert rl_plan["spec_bundle_sha256"] == stable_hash(rl)
+    assert framework_plan["spec_bundle_sha256"] == stable_hash(framework)
+    assert rl["command"] == "cosmos-rl-evaluate --config {config_path}"
+    assert framework["command"] == (
+        "cosmos-framework-evaluate --config {config_path}"
+    )
+    assert rl["execution"]["pre_commands"] == []
+    assert "FrameworkTorchCodecVideoPreprocessor" in framework["execution"][
+        "pre_commands"
+    ][0]
+    assert rl["execution"]["environment"]["FORCE_QWENVL_VIDEO_READER"] == (
+        "pynvvideocodec"
+    )
+    assert "FORCE_QWENVL_VIDEO_READER" not in framework["execution"][
+        "environment"
+    ]
+    assert "exact_coverage=true" in rl["execution"]["post_commands"][0]
+
+
+def test_evaluation_model_length_override_is_explicit_and_provenanced(
+    tmp_path: Path,
+) -> None:
+    result, plan_path, config_path = _run(
+        tmp_path, extra=["--model-max-length", "16384"]
+    )
+    assert result.returncode == 0, result.stderr
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert config["model"]["max_length"] == 16384
+    assert plan["provenance"]["model.max_length"] == {
+        "source": "user",
+        "value": 16384,
+    }
+
+
+def test_unsealed_training_plan_is_rejected(tmp_path: Path) -> None:
+    training_plan = _sealed_plan(tmp_path)
+    plan = json.loads(training_plan.read_text(encoding="utf-8"))
+    plan.pop("plan_artifact")
+    training_plan.write_text(json.dumps(plan), encoding="utf-8")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--training-plan",
+            str(training_plan),
+            "--results-dir",
+            "/runtime/evaluation-results",
+            "--generation-max-tokens",
+            "16",
+            "--plan-output",
+            str(tmp_path / "evaluation-plan.json"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "sealed plan artifact" in completed.stderr
 
 
 def test_cosmos_rl_native_checkpoint_is_an_automatic_pre_action(tmp_path: Path) -> None:
@@ -640,6 +749,10 @@ def test_cosmos_rl_native_checkpoint_is_an_automatic_pre_action(tmp_path: Path) 
     assert action["input_checkpoint"].endswith("checkpoints/epoch_1/policy")
     assert action["checkpoint_epoch"] == 1
     assert action["user_input"] is False
+    assert {item["source"] for item in action["supporting_files"]} == {
+        "scripts/cosmos_rl_checkpoint_action.py",
+        "scripts/cosmos_common.py",
+    }
 
 
 def test_multiple_recorded_validation_manifests_are_automated_not_user_selection(tmp_path: Path) -> None:

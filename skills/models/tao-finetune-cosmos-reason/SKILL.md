@@ -148,16 +148,18 @@ and scoring fields; never ask the user to repeat them. Ask once only for the
 helper's `required_user_inputs`, execute its `automated_actions`, and launch
 only a checksum-valid `ready=true` plan. Cosmos-RL policy checkpoints require
 the emitted `cosmos_rl_checkpoint_pre_action`; Framework DCP inputs require
-their emitted export pre-action. On SLURM use `render_evaluation_slurm.py`,
-aggregate all rank shards atomically, and verify complete record coverage.
+their emitted export pre-action. The ready plan includes a validated
+`spec_bundle.execution`; pass it unchanged to the selected platform. Cosmos
+owns attestation and exact-coverage aggregation; the platform owns launch.
 
 ## Framework checkpoint pre-action
 
 Before Framework evaluate, inference, or microservice actions, run
 `scripts/framework_checkpoint_action.py plan` and its emitted `prepare` and
 `verify` steps. Follow `references/cosmos-backend-operations.md`; never ask the
-user to export DCP manually. On SLURM stage the closed
-`framework-checkpoint` action bundle. Use only the verified
+user to export DCP manually. On SLURM stage only the helper dependency set
+declared by `workflow_contract.action_helper_dependencies`; the platform
+verifies the closed bundle. Use only the verified
 `action_model_path`, reuse only matching complete exports, and record the
 pre-action, manifest, fingerprints, and independent child result.
 
@@ -239,8 +241,9 @@ Execute these stages in order and persist their outputs.
     backend-owned automated checkpoint pre-actions, and require `ready=true`.
     On Cosmos-RL, verify the selected HF export with
     `cosmos_rl_checkpoint_action.py`, rerun resolution with its manifest, and
-    render SLURM only with `render_evaluation_slurm.py`; never select the
-    native policy directory or improvise `/results` and TAO status variables.
+    submit the emitted spec-bundle through the chosen platform; never select
+    the native policy directory, copy the lifecycle into an application-owned
+    launcher, or improvise result/status variables.
     Evaluate the selected checkpoint with identical prompt, preprocessing,
     generation, normalization, and task scoring. Extract final metrics with
     `scripts/extract_cosmos_metrics.py`.
@@ -337,11 +340,8 @@ implementation.
 
 Use `references/cosmos-reproducibility-gates.md` as the source-owner/test map.
 
-For infrastructure retries, `cosmos_retry_plan.py` seals `--retry-of`, current
-node inventory, verified prior inspection, refreshed identities, and explicit
-or scheduler-quarantined exclusions. Give it the new job record's
-`<action-root>/config/train.toml`; it rebases results, checkpoints, cache,
-container output roots, and stdout/stderr under that fresh action root. Its
-automatic exclusions consider only GPU nodes eligible for the requested
-partition and recognized unhealthy states or diagnostic comments. Render its
-plan; never patch SBATCH.
+For infrastructure retries, the launch skill classifies the failure and opens
+the new `--retry-of` record; SLURM supplies validated node inventory and
+exclusions. Run `cosmos_workflow.py retry-plan` with the new record's
+`<action-root>/config/train.toml`; it rebases all writable paths and reseals the
+Cosmos request. Render that plan; never patch SBATCH.

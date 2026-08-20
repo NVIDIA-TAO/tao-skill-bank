@@ -3503,10 +3503,10 @@ def build_plan(
 ) -> dict[str, Any]:
     """Build a training plan, optionally reusing a sealed prior inspection.
 
-    ``remote_inspection_override`` exists only for the checked-in retry helper.
-    It lets an infrastructure retry retain the original model/dataset evidence
-    without repeating a multi-hour media inspection.  Ordinary callers never
-    supply it and keep the existing inspection behavior.
+    ``remote_inspection_override`` exists only for this planner's ``retry-plan``
+    verb. It lets an infrastructure retry retain the original model/dataset
+    evidence without repeating a multi-hour media inspection. Ordinary callers
+    never supply it and keep the existing inspection behavior.
     """
     if not args.base_model_path_or_uri:
         raise WorkflowError(
@@ -4442,6 +4442,142 @@ def load_plan_artifact(
             "render-slurm requires --tao-job-id from a newly opened job record"
         )
     return args, plan
+
+
+def _retry_identity(value: str, kind: str) -> dict[str, object]:
+    return {
+        "original": value,
+        "expanded": value,
+        "resolved": value,
+        "exists": True,
+        "kind": kind,
+        "nearest_existing_parent": value,
+        "parent_writable": kind == "directory",
+    }
+
+
+def _retry_action_root(spec_path: Path, *, label: str) -> Path:
+    expanded = spec_path.expanduser().resolve()
+    if expanded.parent.name != "config":
+        raise WorkflowError(
+            f"{label} must use the record-owned <action-root>/config/<spec> layout; "
+            f"found {expanded}"
+        )
+    return expanded.parent.parent
+
+
+def build_retry_plan(args: argparse.Namespace) -> dict[str, object]:
+    """Reseal a Cosmos plan under a new record-owned retry identity.
+
+    The launch skill owns retry classification and the new ``retry_of`` job
+    record; the SLURM skill owns live node inventory. This model-owned step
+    restores the prior inspected Cosmos request and rebases only its native
+    config/output paths before sealing it again.
+    """
+
+    prior_path = args.prior_plan.expanduser().resolve()
+    prior = json.loads(prior_path.read_text(encoding="utf-8"))
+    artifact = prior.get("plan_artifact", {})
+    expected = str(artifact.get("sha256") or "")
+    actual = _plan_artifact_sha256(prior)
+    if artifact.get("schema_version") != PLAN_ARTIFACT_SCHEMA_VERSION:
+        raise WorkflowError("prior plan has an unsupported artifact schema")
+    if not expected or expected != actual:
+        raise WorkflowError(
+            f"prior plan checksum mismatch: expected {expected or '<missing>'}, found {actual}"
+        )
+    if prior.get("action") != "train" or prior.get("backend") not in {
+        "cosmos-framework",
+        "cosmos-rl",
+    }:
+        raise WorkflowError("retry preparation requires a sealed Cosmos training plan")
+
+    request = copy.deepcopy(prior.get("planner_request"))
+    if not isinstance(request, dict) or not request:
+        raise WorkflowError("prior plan has no sealed planner_request")
+    write_spec_path = args.write_spec.expanduser().resolve()
+    action_root = _retry_action_root(write_spec_path, label="--write-spec")
+    container_spec = Path(args.container_spec_path or write_spec_path)
+    container_action_root = _retry_action_root(
+        container_spec, label="--container-spec-path"
+    )
+    inherited_exclusions = (
+        []
+        if args.replace_node_exclusions
+        else list(prior.get("slurm_node_exclusions", {}).get("validated", []))
+    )
+    requested_exclusions = list(
+        dict.fromkeys([*inherited_exclusions, *args.exclude_node])
+    )
+    request.update(
+        {
+            "experiment_id": args.job_id,
+            "tao_job_id": args.job_id,
+            "write_spec": str(write_spec_path),
+            "container_spec_path": str(container_spec.expanduser().resolve()),
+            "results_dir": str(action_root / "results"),
+            "checkpoint_dir": str(action_root / "checkpoints"),
+            "cache_dir": str(action_root / "cache"),
+            "stdout_path": str(action_root / "logs" / "%x-%j.out"),
+            "stderr_path": str(action_root / "logs" / "%x-%j.err"),
+            "container_results_dir": str(container_action_root / "results"),
+            "container_checkpoint_dir": str(container_action_root / "checkpoints"),
+            "container_cache_dir": str(container_action_root / "cache"),
+            "exclude_node": requested_exclusions,
+            "exclude_unhealthy_inventory_nodes": True,
+            "slurm_node_inventory_file": str(
+                args.slurm_node_inventory.expanduser().resolve()
+            ),
+        }
+    )
+    planned_args = argparse.Namespace(**request)
+    planned_args.verb = "plan"
+    planned_args.format = "json"
+    planned_args.plan_artifact = str(args.output.expanduser().resolve())
+
+    verified_host = prior.get("input_frame", {}).get("verified_host")
+    if not verified_host:
+        raise WorkflowError("prior plan has no verified SLURM inspection host")
+    remote_inspection = {
+        "frame": "target_compute",
+        "verified_host": verified_host,
+        "model": prior["model"],
+        "datasets": prior["datasets"],
+        "runtime_paths": {
+            "results_dir": _retry_identity(planned_args.results_dir, "directory"),
+            "checkpoint_dir": _retry_identity(
+                planned_args.checkpoint_dir, "directory"
+            ),
+            "cache_dir": _retry_identity(planned_args.cache_dir, "directory"),
+            "sqsh_cache_dir": _retry_identity(
+                planned_args.sqsh_cache_dir, "directory"
+            ),
+            "sqsh_path": _retry_identity(planned_args.sqsh_path, "file"),
+        },
+    }
+    plan = build_plan(planned_args, remote_inspection_override=remote_inspection)
+    write_spec(planned_args, plan, allow_remote_write=False)
+    metadata = initial_metadata(planned_args, plan)
+    validate_metadata(metadata)
+    plan["initial_metadata"] = metadata
+    plan["retry_preparation"] = {
+        "retry_of_plan": str(prior_path),
+        "retry_of_plan_sha256": expected,
+        "inspection_reused": True,
+        "attempt_root": str(action_root),
+        "container_attempt_root": str(container_action_root),
+        "node_exclusions": plan["slurm_node_exclusions"],
+        "inherited_node_exclusions": inherited_exclusions,
+    }
+    save_plan_artifact(planned_args, plan, str(args.output))
+    return {
+        "schema_version": 1,
+        "job_id": args.job_id,
+        "backend": plan["backend"],
+        "output": str(args.output.expanduser().resolve()),
+        "config": plan["config"],
+        "node_exclusions": plan["slurm_node_exclusions"],
+    }
 
 
 def _render_environment(
@@ -5569,12 +5705,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     child.add_argument("--scheduler-exit-code", default="")
     child.add_argument("--allocated-node", action="append", default=[])
     child.add_argument("--job-id", default="")
+    child = subs.add_parser("retry-plan")
+    child.add_argument("--prior-plan", type=Path, required=True)
+    child.add_argument("--job-id", required=True)
+    child.add_argument(
+        "--write-spec",
+        type=Path,
+        required=True,
+        help="Fresh record-owned <action-root>/config/<spec> path.",
+    )
+    child.add_argument("--container-spec-path", default="")
+    child.add_argument("--exclude-node", action="append", default=[])
+    child.add_argument("--replace-node-exclusions", action="store_true")
+    child.add_argument("--slurm-node-inventory", type=Path, required=True)
+    child.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     if getattr(args, "experiment_id", None) is None:
         args.experiment_id = ""
     if (
         args.verb
-        not in {"validate-metadata", "verify-provenance", "parity", "finalize-metadata"}
+        not in {
+            "validate-metadata",
+            "verify-provenance",
+            "parity",
+            "finalize-metadata",
+            "retry-plan",
+        }
         and not args.experiment_id
     ):
         args.experiment_id = str(uuid.uuid4())
@@ -5656,6 +5812,8 @@ def main(argv: list[str] | None = None) -> int:
             args.metadata.write_text(
                 json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
+        elif args.verb == "retry-plan":
+            result = build_retry_plan(args)
         elif args.verb == "resolve":
             args.model = resolve_model_name(args.model, args.base_model_path_or_uri)
             backend, reason = select_backend(

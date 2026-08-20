@@ -61,6 +61,10 @@ uses `scripts/cosmos_workflow.py` for this step.
    - `actions.<action>.inputs` — declared input contract (paths + types)
    - `actions.<action>.outputs` — declared output contract (paths + types)
    - `actions.<action>.upload_excludes` — what NOT to upload back
+   - `actions.<action>.execution_contract` and the produced
+     `spec_bundle.execution` — model-owned runtime environment, pre/post
+     commands, distributed intent, helper dependencies, and completion
+     evidence consumed unchanged by the selected platform
    - `data_format` (if present)
    - `backend_contracts` / `backend_selection` / `backend_resolver` (if
      present) — implementation-specific image, command, TOML, dataset,

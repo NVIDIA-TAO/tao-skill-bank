@@ -7,8 +7,8 @@
 This preflight is read-only and intentionally does not hash, extract, patch, or
 mount the image.  It reads only the three installed Python modules needed by
 the Framework evaluator and attests their required source capabilities before
-a GPU allocation is submitted.  The renderer repeats the check inside the
-container as defense in depth.
+a GPU allocation is submitted. The model-owned spec-bundle lifecycle repeats
+the check inside the container as defense in depth.
 """
 
 from __future__ import annotations
@@ -99,8 +99,8 @@ def _read_installed_sources(sqsh: Path, listing: str) -> dict[str, str]:
     help_text = f"{help_result.stdout}\n{help_result.stderr}"
     if not any(line.strip().startswith("-cat") for line in help_text.splitlines()):
         # Squashfs-tools before 4.5 cannot stream a member.  Do not extract or
-        # mount merely to inspect source: the generated job repeats this
-        # attestation inside the immutable container before evaluator startup.
+        # mount merely to inspect source: the spec-bundle pre-command repeats
+        # this attestation inside the immutable container before startup.
         return {}
     sources: dict[str, str] = {}
     for suffix, listed_path in _installed_paths(listing).items():
@@ -152,8 +152,9 @@ def main() -> int:
         result = check_listing(listing, image, sources=sources)
         if not args.listing_file and sources is None:
             result["source_attestation_deferred_reason"] = (
-                "installed unsquashfs cannot stream members; renderer performs the same "
-                "source attestation inside the immutable container before evaluator startup"
+                "installed unsquashfs cannot stream members; the model-owned "
+                "spec-bundle pre-command performs the same source attestation "
+                "inside the immutable container before evaluator startup"
             )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["compatible"] else 4

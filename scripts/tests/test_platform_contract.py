@@ -173,6 +173,32 @@ def test_slurm_sqsh_conversion_uses_validated_cpu_long_resource_profile():
     assert "QOSGrpMemLimit" in text
 
 
+def test_slurm_consumes_model_action_lifecycle_without_private_renderers():
+    text = _skill_text("tao-run-on-slurm") + (
+        PLATFORM_DIR
+        / "tao-run-on-slurm"
+        / "references"
+        / "slurm-container-execution.md"
+    ).read_text(encoding="utf-8")
+    guardrails = (
+        PLATFORM_DIR
+        / "tao-run-on-slurm"
+        / "references"
+        / "cosmos-slurm-guardrails.md"
+    ).read_text(encoding="utf-8")
+    for term in (
+        "pre_commands",
+        "post_commands",
+        "supporting_files",
+        "processes_per_node",
+        "child_exit_code_path",
+    ):
+        assert term in text
+    assert "model-specific retry launcher" in text
+    assert "Cosmos-only SLURM" in guardrails
+    assert "renderer" in guardrails
+
+
 # Required flags of `tao_job_record.py open`, per its argparse definition. A
 # documented invocation missing any of these fails at runtime with exit 2 —
 # which is exactly how this test was born: a hand-written Brev example omitted

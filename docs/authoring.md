@@ -365,6 +365,8 @@ actions:
       results_dir: { type: folder }
     upload_excludes:
       - inputs/
+    execution_contract:
+      producer: planner output spec_bundle.execution
 
 # Action mode controls how launch tooling serializes the spec:
 # - config: write a YAML/TOML/JSON spec file and substitute {config_path}
@@ -384,6 +386,13 @@ features: [tracking, multi-node, lustre]
 
 tags: [classification, my-domain]
 ```
+
+An action that needs runtime environment, pre/post commands, distributed-launch
+intent, completion evidence, or checked-in orchestration helpers emits the
+optional `spec_bundle.execution` contract defined by `tao-artifacts`. This
+keeps semantics reusable by every application that routes through the model
+skill. Platforms own launch syntax; do not add a model-specific SLURM/K8s
+renderer.
 
 ## 5. Optional: `example/` reference output
 

@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -31,6 +32,127 @@ from cosmos_common import WorkflowError, sha256_file, stable_hash
 from cosmos_workflow import dump_toml
 
 SUCCESS = {"SUCCESS", "COMPLETE", "COMPLETED"}
+SCRIPT_ROOT = Path(__file__).resolve().parent
+
+
+AGGREGATE_RESULTS_PROGRAM = r'''import json
+import re
+import sys
+import tomllib
+from collections import Counter
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+expected_shards = int(sys.argv[2])
+with config_path.open("rb") as stream:
+    config = tomllib.load(stream)
+results_root = Path(config["results_dir"])
+annotation_path = Path(config["dataset"]["annotation_path"])
+annotations = json.loads(annotation_path.read_text(encoding="utf-8"))
+if not isinstance(annotations, list):
+    raise SystemExit(f"evaluation annotation is not a JSON array: {annotation_path}")
+
+def text(value):
+    if not isinstance(value, str):
+        return ""
+    value = value.replace("<video>", " ")
+    return " ".join(value.split())
+
+def media_id(record):
+    value = None
+    for key in ("video_id", "video", "media", "media_path", "file_name"):
+        candidate = record.get(key)
+        if isinstance(candidate, list):
+            candidate = candidate[0] if candidate else None
+        if isinstance(candidate, str) and candidate:
+            value = candidate
+            break
+    if value is None:
+        return ""
+    path = Path(value)
+    return path.stem if path.suffix else path.name
+
+def turn_text(turn):
+    if not isinstance(turn, dict):
+        return ""
+    return text(turn.get("value") if "value" in turn else turn.get("content"))
+
+def identity(record, *, result):
+    conversations = record.get("conversations") or record.get("messages") or []
+    question = text(record.get("question"))
+    target = text(record.get("gt") if result else record.get("answer"))
+    if not question and isinstance(conversations, list):
+        for turn in conversations:
+            role = str(turn.get("from") or turn.get("role") or "").casefold() if isinstance(turn, dict) else ""
+            if role in {"human", "user"}:
+                question = turn_text(turn)
+                break
+    if not target and isinstance(conversations, list):
+        for turn in reversed(conversations):
+            role = str(turn.get("from") or turn.get("role") or "").casefold() if isinstance(turn, dict) else ""
+            if role in {"gpt", "assistant"}:
+                target = turn_text(turn)
+                break
+    if not media_id(record) or not question or not target:
+        kind = "result" if result else "annotation"
+        raise SystemExit(f"{kind} record lacks canonical media/question/target identity: {record}")
+    return media_id(record), question, target
+
+shards = list(results_root.rglob("results_shard*.json"))
+if shards:
+    if len(shards) != expected_shards:
+        raise SystemExit(
+            f"expected {expected_shards} evaluation result shards, found {len(shards)}"
+        )
+    rank_pattern = re.compile(r"results_shard(\d+)\.json$")
+    if any(rank_pattern.fullmatch(path.name) is None for path in shards):
+        raise SystemExit("evaluation result shard has an invalid rank suffix")
+    shards.sort(key=lambda path: int(rank_pattern.fullmatch(path.name).group(1)))
+    ranks = [int(rank_pattern.fullmatch(path.name).group(1)) for path in shards]
+    if ranks != list(range(expected_shards)):
+        raise SystemExit(f"evaluation shard ranks are incomplete: {ranks}")
+    parents = {path.parent for path in shards}
+    if len(parents) != 1:
+        raise SystemExit(
+            f"evaluation result shards span multiple directories: {sorted(map(str, parents))}"
+        )
+    records = []
+    for path in shards:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise SystemExit(f"evaluation result shard is not a JSON array: {path}")
+        records.extend(payload)
+    output = next(iter(parents)) / "results.json"
+else:
+    matches = list(results_root.rglob("results.json"))
+    if len(matches) != 1:
+        raise SystemExit(
+            f"expected one aggregated results.json or {expected_shards} shards; "
+            f"found results={len(matches)} shards=0"
+        )
+    output = matches[0]
+    records = json.loads(output.read_text(encoding="utf-8"))
+    if not isinstance(records, list):
+        raise SystemExit(f"evaluation results are not a JSON array: {output}")
+
+expected = Counter(identity(row, result=False) for row in annotations)
+actual = Counter(identity(row, result=True) for row in records)
+missing = expected - actual
+unexpected = actual - expected
+if missing or unexpected:
+    raise SystemExit(
+        "evaluation identity coverage mismatch: "
+        f"expected={sum(expected.values())} actual={sum(actual.values())} "
+        f"missing={sum(missing.values())} unexpected_or_duplicate={sum(unexpected.values())}"
+    )
+if shards:
+    temporary = output.with_name(f".{output.name}.tmp")
+    temporary.write_text(
+        json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    temporary.replace(output)
+print(f"TAO_EVALUATION_RESULTS_AGGREGATED path={output} records={len(records)} exact_coverage=true")
+'''
 
 
 VERIFIED_EVALUATOR_PROFILES: dict[str, dict[str, Any]] = {
@@ -120,15 +242,18 @@ def _atomic_write(path: Path, text: str) -> None:
 def _verify_training_plan(path: Path) -> dict[str, Any]:
     plan = _load_json(path)
     artifact = plan.get("plan_artifact")
-    if isinstance(artifact, Mapping):
-        expected = str(artifact.get("sha256") or "")
-        payload = copy.deepcopy(plan)
-        payload.pop("plan_artifact", None)
-        actual = stable_hash(payload)
-        if not expected or expected != actual:
-            raise WorkflowError(
-                f"sealed training plan checksum mismatch: expected {expected or '<missing>'}, found {actual}"
-            )
+    if not isinstance(artifact, Mapping):
+        raise WorkflowError("training_plan must be a sealed plan artifact")
+    if artifact.get("schema_version") != 1:
+        raise WorkflowError("training_plan has an unsupported plan artifact schema")
+    expected = str(artifact.get("sha256") or "")
+    payload = copy.deepcopy(plan)
+    payload.pop("plan_artifact", None)
+    actual = stable_hash(payload)
+    if not expected or expected != actual:
+        raise WorkflowError(
+            f"sealed training plan checksum mismatch: expected {expected or '<missing>'}, found {actual}"
+        )
     if plan.get("action") != "train" or plan.get("backend") not in {"cosmos-rl", "cosmos-framework"}:
         raise WorkflowError("training_plan must be a Cosmos train plan with an explicit backend")
     required = ("training", "datasets", "model", "compute")
@@ -259,6 +384,179 @@ def _source(value: Any, origin: str) -> dict[str, Any]:
     return {"value": value, "source": origin}
 
 
+def _supporting_files(*names: str) -> list[dict[str, Any]]:
+    files: list[dict[str, Any]] = []
+    for name in names:
+        path = SCRIPT_ROOT / name
+        if not path.is_file():
+            raise WorkflowError(f"declared action helper is missing: {path}")
+        files.append(
+            {
+                "source": f"scripts/{name}",
+                "destination": name,
+                "sha256": sha256_file(path),
+            }
+        )
+    return files
+
+
+def _selected_image(plan: Mapping[str, Any]) -> str:
+    image = plan.get("image")
+    if not isinstance(image, Mapping):
+        return ""
+    for key in ("tag", "container_image", "selected"):
+        value = image.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _framework_runtime_preflight(config: Mapping[str, Any]) -> str:
+    vision = config.get("vision") if isinstance(config.get("vision"), Mapping) else {}
+    expected_runtime = {
+        "video_decoder": "torchcodec-cuda-on-demand",
+        "process_threads": 8,
+        "decoder_device": "cuda",
+        "dataloader_multiprocessing_context": "spawn",
+    }
+    mismatches = {
+        key: {"expected": value, "actual": vision.get(key)}
+        for key, value in expected_runtime.items()
+        if vision.get(key) != value
+    }
+    worker_profile = (
+        int(vision.get("dataloader_num_workers", -1)),
+        int(vision.get("dataloader_prefetch_factor", -1)),
+        bool(vision.get("dataloader_persistent_workers")),
+    )
+    if (
+        mismatches
+        or worker_profile not in {(1, 2, True), (0, 0, False)}
+        or int(vision.get("decoder_threads") or 0) <= 0
+        or int(vision.get("video_cache_size") or 0) <= 0
+        or int(vision.get("max_pixels") or 0) <= 0
+        or int(vision.get("min_pixels") or 0) != int(vision.get("max_pixels") or 0)
+    ):
+        raise WorkflowError(
+            "Framework evaluation config does not preserve its sealed TorchCodec runtime: "
+            f"runtime={json.dumps(mismatches, sort_keys=True)} worker_profile={worker_profile}"
+        )
+    worker_probe = (
+        "assert 'if self.dataloader_num_workers == 0' in source; "
+        "assert ('yield self.prepare_tasks' in source or "
+        "'TAO_FRAMEWORK_DIRECT_PREFETCH_ATTESTATION' in source); "
+        if worker_profile == (0, 0, False)
+        else "assert 'persistent_workers=self.dataloader_persistent_workers' in source; "
+        "assert 'multiprocessing_context=self.dataloader_multiprocessing_context' in source; "
+    )
+    probe = (
+        "import inspect; "
+        "from cosmos_rl.evaluation.base import BaseEvaluator; "
+        "from cosmos_rl.framework.runtime import CosmosFrameworkRuntime; "
+        "from cosmos_rl.utils.framework_torchcodec_video import FrameworkTorchCodecVideoPreprocessor; "
+        "assert 'torchcodec-cuda-on-demand' in inspect.getsource(BaseEvaluator.load_model); "
+        "assert '_framework_decoded_media' in inspect.getsource(CosmosFrameworkRuntime._task_conversation); "
+        "source = inspect.getsource(FrameworkTorchCodecVideoPreprocessor); "
+        "assert 'iter_prepared_batches' in source; "
+        + worker_probe
+        + "assert FrameworkTorchCodecVideoPreprocessor.__name__ == 'FrameworkTorchCodecVideoPreprocessor'"
+    )
+    return "/workspace/.venv/bin/python -c " + shlex.quote(probe)
+
+
+def _evaluation_spec_bundle(
+    plan: Mapping[str, Any], backend: str, config: Mapping[str, Any]
+) -> dict[str, Any]:
+    image = _selected_image(plan)
+    if not image:
+        raise WorkflowError("sealed training plan does not record the selected backend image")
+    total_gpus = int(config.get("num_gpus") or 0)
+    compute = plan.get("compute") if isinstance(plan.get("compute"), Mapping) else {}
+    gpus_per_node = int(compute.get("gpus_per_node") or total_gpus)
+    if total_gpus <= 0 or gpus_per_node <= 0 or total_gpus % gpus_per_node:
+        raise WorkflowError(
+            f"evaluation GPU topology is invalid: total={total_gpus}, per_node={gpus_per_node}"
+        )
+    nodes = total_gpus // gpus_per_node
+    model = config.get("model") if isinstance(config.get("model"), Mapping) else {}
+    dataset = config.get("dataset") if isinstance(config.get("dataset"), Mapping) else {}
+    results_dir = str(config.get("results_dir") or "")
+    command_name = (
+        "cosmos-framework-evaluate" if backend == "cosmos-framework" else "cosmos-rl-evaluate"
+    )
+    environment = {
+        "NCCL_DEBUG": "WARN",
+        "NVIDIA_DRIVER_CAPABILITIES": "compute,utility,video",
+        "PYTHONHASHSEED": str(config.get("evaluation", {}).get("seed", 0)),
+        "PYTHONUNBUFFERED": "1",
+        "TAO_API_JOB_ID": "{job_id}",
+        "TAO_API_RESULTS_DIR": "{results_dir}",
+        "TAO_JOB_ID": "{job_id}",
+        "TAO_RESULTS_ROOT": "{results_dir}",
+        "TAO_STATUS_FILE": "{results_dir}/status.json",
+        "TAO_STATUS_PATH": "{results_dir}/status.json",
+        "TORCH_NCCL_ASYNC_ERROR_HANDLING": "1",
+    }
+    vision = config.get("vision") if isinstance(config.get("vision"), Mapping) else {}
+    if backend == "cosmos-rl":
+        environment.update(
+            {
+                "FORCE_QWENVL_VIDEO_READER": "pynvvideocodec",
+                "TAO_PYNV_DECODER_CACHE_SIZE": str(vision.get("decoder_cache_size", 4)),
+                "TAO_PYNV_FRAME_TRANSFER": str(vision.get("frame_transfer", "host_rgb")),
+                "TAO_PYNV_VIDEO_CACHE_SIZE": str(vision.get("video_cache_size", 0)),
+            }
+        )
+    pre_commands = (
+        [_framework_runtime_preflight(config)]
+        if backend == "cosmos-framework"
+        else []
+    )
+    post_command = (
+        "python -c "
+        + shlex.quote(AGGREGATE_RESULTS_PROGRAM)
+        + " {config_path} "
+        + str(total_gpus)
+    )
+    runtime_spec = copy.deepcopy(dict(config))
+    runtime_spec["results_dir"] = "{results_dir}"
+    return {
+        "network_arch": "cosmos-reason",
+        "action": "evaluate",
+        "image": image,
+        "mode": "config",
+        "command": f"{command_name} --config {{config_path}}",
+        "config_format": "toml",
+        "spec": runtime_spec,
+        "declared_inputs": [
+            {"spec_key": "dataset.annotation_path", "type": "file", "uri": str(dataset.get("annotation_path") or "")},
+            {"spec_key": "dataset.media_dir", "type": "folder", "uri": str(dataset.get("media_dir") or "")},
+            {"spec_key": "model.model_name", "type": "folder", "uri": str(model.get("model_name") or "")},
+        ],
+        "declared_outputs": [{"spec_key": "results_dir", "type": "folder"}],
+        "upload_excludes": ["inputs/"],
+        "compute_shape": {"gpus": gpus_per_node, "nodes": nodes},
+        "gpu_spec_key": "num_gpus",
+        "execution": {
+            "environment": environment,
+            "pre_commands": pre_commands,
+            "post_commands": [post_command],
+            "post_scope": "leader",
+            "distributed": {
+                "launcher": "torchrun",
+                "processes_per_node": gpus_per_node,
+                "tasks_per_node": 1,
+            },
+            "supporting_files": [],
+            "completion": {
+                "child_exit_code_path": "{results_dir}/child_exit_code",
+                "structured_status_path": "{results_dir}/status.json",
+                "success_states": ["SUCCESS"],
+            },
+        },
+    }
+
+
 def _verify_cosmos_rl_checkpoint_manifest(
     manifest_path: Path,
     *,
@@ -302,6 +600,7 @@ def _verify_cosmos_rl_checkpoint_manifest(
             or ".." in Path(item["path"]).parts
             or not isinstance(item.get("size"), int)
             or item["size"] <= 0
+            or not re.fullmatch(r"[a-f0-9]{64}", str(item.get("sha256") or ""))
         ):
             raise WorkflowError("Cosmos-RL checkpoint manifest has an invalid file inventory")
     return manifest
@@ -577,6 +876,9 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "action": "framework_checkpoint_pre_action",
                 "owner": "scripts/framework_checkpoint_action.py",
+                "supporting_files": _supporting_files(
+                    "framework_checkpoint_action.py", "cosmos_common.py"
+                ),
                 "input_checkpoint": checkpoint,
                 "required_output": "action_model_path",
                 "user_input": False,
@@ -587,6 +889,9 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "action": "cosmos_rl_checkpoint_pre_action",
                 "owner": "scripts/cosmos_rl_checkpoint_action.py",
+                "supporting_files": _supporting_files(
+                    "cosmos_rl_checkpoint_action.py", "cosmos_common.py"
+                ),
                 "input_checkpoint": checkpoint,
                 "checkpoint_epoch": next(
                     (
@@ -785,12 +1090,7 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             raise WorkflowError(
                 "Framework evaluation requires explicit local-rank CUDA decoder binding"
             )
-        framework_decoder_override = getattr(args, "framework_video_decoder", None)
-        framework_decoder = (
-            "torchcodec-cuda-on-demand"
-            if framework_decoder_override is None
-            else str(framework_decoder_override)
-        )
+        framework_decoder = "torchcodec-cuda-on-demand"
         decoder_threads_override = getattr(args, "framework_decoder_threads", None)
         framework_decoder_threads = (
             int(framework_runtime["decoder_threads"])
@@ -837,46 +1137,26 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             raise WorkflowError(
                 "Framework evaluation prefetch factor must be two when one worker is selected"
             )
-        if framework_decoder == "torchcodec-cuda-on-demand":
-            vision: dict[str, Any] = {
-                "num_frames": frames,
-                "video_decoder": framework_decoder,
-                "video_cache_size": framework_cache_size,
-                "process_threads": int(framework_runtime["sft_process_threads"]),
-                "decoder_threads": framework_decoder_threads,
-                "decoder_device": str(framework_runtime["decoder_device"]),
-                "dataloader_num_workers": framework_workers,
-                "dataloader_prefetch_factor": framework_prefetch,
-                "dataloader_multiprocessing_context": str(
-                    framework_runtime["dataloader_multiprocessing_context"]
-                ),
-                "dataloader_persistent_workers": (
-                    framework_workers > 0
-                    and bool(framework_runtime["dataloader_persistent_workers"])
-                ),
-            }
-        elif framework_decoder == "pynvvideocodec":
-            if worker_override not in (None, 0) or prefetch_override not in (None, 0):
-                raise WorkflowError(
-                    "Framework PyNv evaluation bypasses the TorchCodec DataLoader; "
-                    "workers and prefetch must be omitted or zero"
-                )
-            vision = {
-                "num_frames": frames,
-                "video_decoder": framework_decoder,
-                "video_cache_size": framework_cache_size,
-                "decoder_cache_size": 4,
-                "frame_transfer": "device_rgbp",
-            }
-        else:
-            raise WorkflowError(
-                f"Unsupported Framework evaluation video decoder: {framework_decoder}"
-            )
+        vision: dict[str, Any] = {
+            "num_frames": frames,
+            "video_decoder": framework_decoder,
+            "video_cache_size": framework_cache_size,
+            "process_threads": int(framework_runtime["sft_process_threads"]),
+            "decoder_threads": framework_decoder_threads,
+            "decoder_device": str(framework_runtime["decoder_device"]),
+            "dataloader_num_workers": framework_workers,
+            "dataloader_prefetch_factor": framework_prefetch,
+            "dataloader_multiprocessing_context": str(
+                framework_runtime["dataloader_multiprocessing_context"]
+            ),
+            "dataloader_persistent_workers": (
+                framework_workers > 0
+                and bool(framework_runtime["dataloader_persistent_workers"])
+            ),
+        }
         provenance["vision.video_decoder"] = _source(
             vision["video_decoder"],
-            "sealed_training_plan.framework_video_runtime"
-            if framework_decoder_override is None
-            else "explicit_framework_decoder_experiment",
+            "sealed_training_plan.framework_video_runtime",
         )
         provenance["vision.video_cache_size"] = _source(
             vision["video_cache_size"],
@@ -890,36 +1170,28 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
                 else "user"
             ),
         )
-        if framework_decoder == "torchcodec-cuda-on-demand":
-            provenance["vision.decoder_threads"] = _source(
-                vision["decoder_threads"],
-                "sealed_training_plan.framework_video_runtime"
-                if decoder_threads_override is None
-                else "explicit_framework_decoder_thread_experiment",
-            )
-            provenance["vision.dataloader_num_workers"] = _source(
-                vision["dataloader_num_workers"],
-                "media_balanced_direct_loader"
-                if worker_override is None and optimized_framework_media_profile
-                else "sealed_training_plan.framework_video_runtime"
-                if worker_override is None
-                else "user",
-            )
-            provenance["vision.dataloader_prefetch_factor"] = _source(
-                vision["dataloader_prefetch_factor"],
-                "sealed_training_plan.framework_video_runtime"
-                if prefetch_override is None and framework_workers > 0
-                else "derived_zero_worker_profile"
-                if prefetch_override is None
-                else "user",
-            )
-        else:
-            provenance["vision.decoder_cache_size"] = _source(
-                vision["decoder_cache_size"], "explicit_framework_decoder_experiment"
-            )
-            provenance["vision.frame_transfer"] = _source(
-                vision["frame_transfer"], "explicit_framework_decoder_experiment"
-            )
+        provenance["vision.decoder_threads"] = _source(
+            vision["decoder_threads"],
+            "sealed_training_plan.framework_video_runtime"
+            if decoder_threads_override is None
+            else "user",
+        )
+        provenance["vision.dataloader_num_workers"] = _source(
+            vision["dataloader_num_workers"],
+            "media_balanced_direct_loader"
+            if worker_override is None and optimized_framework_media_profile
+            else "sealed_training_plan.framework_video_runtime"
+            if worker_override is None
+            else "user",
+        )
+        provenance["vision.dataloader_prefetch_factor"] = _source(
+            vision["dataloader_prefetch_factor"],
+            "sealed_training_plan.framework_video_runtime"
+            if prefetch_override is None and framework_workers > 0
+            else "derived_zero_worker_profile"
+            if prefetch_override is None
+            else "user",
+        )
     else:
         # Cosmos-RL evaluation owns a distinct PyNvVideoCodec runtime.  Reuse
         # the sealed training runtime when present so a fresh evaluation does
@@ -1151,6 +1423,7 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
                 }
             )
     ready = not blockers
+    spec_bundle = _evaluation_spec_bundle(plan, backend, config) if ready else None
     result = {
         "schema_version": 1,
         "ready": ready,
@@ -1175,6 +1448,8 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         "blockers": blockers,
         "provenance": provenance,
         "config": config,
+        "spec_bundle": spec_bundle,
+        "spec_bundle_sha256": stable_hash(spec_bundle) if spec_bundle else None,
         "config_sha256": hashlib.sha256(dump_toml(config).encode()).hexdigest() if ready else None,
     }
     return result
@@ -1211,10 +1486,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--rl-video-frame-transfer", choices=("host_rgb", "device_rgbp")
     )
     parser.add_argument("--framework-video-cache-size", type=int)
-    parser.add_argument(
-        "--framework-video-decoder",
-        choices=("torchcodec-cuda-on-demand", "pynvvideocodec"),
-    )
     parser.add_argument("--framework-decoder-threads", type=int)
     parser.add_argument("--framework-dataloader-num-workers", type=int)
     parser.add_argument("--framework-dataloader-prefetch-factor", type=int)
