@@ -19,15 +19,19 @@ import pathlib
 import shutil
 import sys
 import tempfile
+import urllib.parse
 from typing import Any
 
 import yaml
 
 from metric_contract import validate_contract
+from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
+from virtualenv_runtime import resolve_virtualenv_profiles
 
 
 SPEC_NAMES = (
     "deft_config.yaml",
+    "sdg_config.yaml",
     "tao_spec.yaml",
     "text_embed_spec.yaml",
     "image_embed_spec.yaml",
@@ -46,20 +50,39 @@ def _bool(value: str) -> bool:
     raise argparse.ArgumentTypeError(f"expected true or false, got {value!r}")
 
 
-def _gpu_ids(raw: str, count: int) -> list[int]:
+def _gpu_id_list(raw: str, flag: str) -> list[int]:
     try:
         values = [int(item.strip()) for item in raw.split(",") if item.strip()]
     except ValueError as exc:
-        raise ValueError("--gpu-ids must be a comma-separated integer list") from exc
-    if len(values) != count or len(set(values)) != len(values) or any(v < 0 for v in values):
+        raise ValueError(f"{flag} must be a comma-separated integer list") from exc
+    if not values or len(set(values)) != len(values) or any(v < 0 for v in values):
         raise ValueError(
-            "--gpu-ids must contain exactly --num-gpus distinct non-negative IDs"
+            f"{flag} must contain distinct non-negative IDs"
         )
     return values
 
 
+def _gpu_ids(raw: str, count: int) -> list[int]:
+    values = _gpu_id_list(raw, "--gpu-ids")
+    if len(values) != count:
+        raise ValueError("--gpu-ids must contain exactly --num-gpus IDs")
+    return values
+
+
+def _role_gpu_ids(raw: str | None, role: str) -> list[int]:
+    if raw is None:
+        raise ValueError(f"--{role.replace('_', '-')}-gpu-ids is required for managed endpoints")
+    try:
+        values = [int(item.strip()) for item in raw.split(",") if item.strip()]
+    except ValueError as exc:
+        raise ValueError(f"--{role.replace('_', '-')}-gpu-ids must be comma-separated integers") from exc
+    if not values or len(set(values)) != len(values) or any(value < 0 for value in values):
+        raise ValueError(f"--{role.replace('_', '-')}-gpu-ids must contain distinct non-negative IDs")
+    return values
+
+
 def _workspace_child(path: pathlib.Path, workspace: pathlib.Path, name: str) -> pathlib.Path:
-    resolved = path.expanduser().resolve()
+    resolved = safe_absolute_path(path, name)
     try:
         relative = resolved.relative_to(workspace)
     except ValueError as exc:
@@ -79,7 +102,7 @@ def _load_yaml(path: pathlib.Path) -> dict[str, Any]:
 
 
 def _existing_path(path: pathlib.Path, name: str, *, directory: bool) -> pathlib.Path:
-    resolved = path.expanduser().resolve()
+    resolved = safe_absolute_path(path, name, require_exists=True)
     valid = resolved.is_dir() if directory else resolved.is_file()
     if not valid or (not directory and resolved.stat().st_size == 0):
         kind = "directory" if directory else "non-empty file"
@@ -157,11 +180,28 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     templates = skill_root / "specs"
     runtime_dir = skill_root / "scripts" / "iaa_deft"
     runtime_sha256 = _python_tree_sha256(runtime_dir)
-    workspace = args.workspace.expanduser().resolve()
+    workspace = safe_absolute_path(
+        args.workspace, "--workspace", require_exists=True
+    )
     if not workspace.is_dir() or workspace == pathlib.Path(workspace.anchor):
         raise ValueError(f"--workspace must be an existing non-root directory: {workspace}")
     results_dir = _workspace_child(args.results_dir, workspace, "--results-dir")
     dataset_root = _workspace_child(args.dataset_root, workspace, "--dataset-root")
+    virtualenvs = resolve_virtualenv_profiles(
+        platform=args.platform,
+        legacy=args.virtualenv,
+        pyt=args.pyt_virtualenv,
+        ds=args.ds_virtualenv,
+        probe_imports=True,
+    )
+    if args.docker_remote and args.platform != "docker":
+        raise ValueError("--docker-remote is valid only with --platform docker")
+    if virtualenvs is not None:
+        control_environment = (workspace / ".venv").resolve()
+        if any(path == control_environment for path in virtualenvs.values()):
+            raise ValueError(
+                "TAO execution profiles must be separate from the workspace control .venv"
+            )
     images_archive = _existing_path(
         args.images_archive, "--images-archive", directory=False
     )
@@ -186,6 +226,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "deft_state.json or choose a fresh --results-dir"
         )
     config_dir = results_dir / "config"
+    safe_absolute_path(config_dir, "run config directory")
 
     positive = {
         "max_iterations": args.max_iterations,
@@ -193,6 +234,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "num_gpus": args.num_gpus,
         "mining_topn": args.mining_topn,
         "target_query_count": args.target_query_count,
+        "sdg_max_samples": args.sdg_max_samples,
     }
     invalid = {key: value for key, value in positive.items() if value < 1}
     if invalid:
@@ -205,6 +247,13 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     if args.knn_metric not in {"cosine", "euclidean"}:
         raise ValueError("--knn-metric must be cosine or euclidean")
     gpu_ids = _gpu_ids(args.gpu_ids, args.num_gpus)
+    visible_gpu_ids = _gpu_id_list(args.visible_gpu_ids, "--visible-gpu-ids")
+    unavailable = sorted(set(gpu_ids) - set(visible_gpu_ids))
+    if unavailable:
+        raise ValueError(
+            "--gpu-ids contains device(s) absent from --visible-gpu-ids: "
+            + ", ".join(str(item) for item in unavailable)
+        )
     metric_contract = validate_contract(
         {
             "metric_name": args.metric_name,
@@ -216,6 +265,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
 
     deft = _load_yaml(templates / "deft_config.yaml")
     tao = _load_yaml(templates / "tao_spec.yaml")
+    sdg = _load_yaml(templates / "sdg_config.yaml")
 
     deft["experiment"].update(
         {
@@ -268,17 +318,68 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "gpu_ids": gpu_ids,
         }
     )
-    tao["evaluate"].update({"num_gpus": args.num_gpus, "gpu_ids": gpu_ids})
+    for action in ("evaluate", "inference"):
+        tao[action].update({"num_gpus": args.num_gpus, "gpu_ids": gpu_ids})
+
+    sdg["endpoints"]["ownership"] = args.sdg_endpoint_mode
+    for role in ("image_edit", "vlm", "llm"):
+        port = getattr(args, f"{role}_port")
+        if not 1024 <= port <= 65535:
+            raise ValueError(f"--{role.replace('_', '-')}-port must be in [1024, 65535]")
+        sdg["models"][role]["port"] = port
+    if len({sdg["models"][role]["port"] for role in ("image_edit", "vlm", "llm")}) != 3:
+        raise ValueError("managed endpoint ports must be distinct")
+    sdg["endpoints"]["cache_dir"] = str(
+        (args.sdg_cache_dir or (workspace / "cache" / "huggingface")).expanduser().resolve()
+    )
+    if args.sdg_endpoint_mode == "managed":
+        sdg["endpoints"]["gpu_ids"] = {
+            role: _role_gpu_ids(getattr(args, f"{role}_gpu_ids"), role)
+            for role in ("image_edit", "vlm", "llm")
+        }
+        sdg["endpoints"]["external_urls"] = {role: "" for role in ("image_edit", "vlm", "llm")}
+    else:
+        sdg["endpoints"]["gpu_ids"] = {role: [] for role in ("image_edit", "vlm", "llm")}
+        urls = {
+            role: getattr(args, f"{role}_url")
+            for role in ("image_edit", "vlm", "llm")
+        }
+        if any(not value for value in urls.values()):
+            raise ValueError("all three --*-url values are required for external endpoints")
+        for role, url in urls.items():
+            parsed = urllib.parse.urlsplit(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(f"--{role.replace('_', '-')}-url must be HTTP(S)")
+            if parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ValueError(f"--{role.replace('_', '-')}-url must not contain credentials, query, or fragment")
+            if parsed.hostname not in {"127.0.0.1", "localhost", "::1", "host.docker.internal"}:
+                raise ValueError(f"--{role.replace('_', '-')}-url must identify a local endpoint host")
+        sdg["endpoints"]["external_urls"] = urls
+    sdg["generation"].update(
+        {
+            "max_samples_per_iteration": args.sdg_max_samples,
+            "verification_max_attempts": args.sdg_verification_attempts,
+            "caption_policy": args.sdg_caption_policy,
+        }
+    )
 
     _atomic_yaml(config_dir / "deft_config.yaml", deft)
+    _atomic_yaml(config_dir / "sdg_config.yaml", sdg)
     _atomic_yaml(config_dir / "tao_spec.yaml", tao)
-    for name in SPEC_NAMES[2:]:
+    for name in SPEC_NAMES[3:]:
         _copy_atomic(templates / name, config_dir / name)
     _atomic_json(
         config_dir / "approval.json",
         {
-            "schema_version": "2",
+            "schema_version": "3",
             "workflow": "tao-run-deft-iaa",
+            "platform": args.platform,
+            "docker_remote": args.docker_remote,
+            "virtualenvs": (
+                {name: str(path) for name, path in virtualenvs.items()}
+                if virtualenvs is not None
+                else None
+            ),
             "workspace": str(workspace),
             "results_dir": str(results_dir),
             "dataset_root": str(dataset_root),
@@ -287,10 +388,23 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "metadata_archive": str(metadata_archive),
             "checksums_file": str(checksums_file) if checksums_file else None,
             "requires_hf_token": args.requires_hf_token,
+            "visible_gpu_ids": visible_gpu_ids,
             "max_iterations": args.max_iterations,
             "metric_contract": metric_contract,
             "pyt_image": PINNED_PYT_IMAGE,
             "ds_image": PINNED_DS_IMAGE,
+            "sdg": {
+                "endpoint_mode": args.sdg_endpoint_mode,
+                "images": sdg["images"],
+                "models": sdg["models"],
+                "gpu_ids": sdg["endpoints"]["gpu_ids"],
+                "external_urls": sdg["endpoints"]["external_urls"],
+                "ports": {role: sdg["models"][role]["port"] for role in ("image_edit", "vlm", "llm")},
+                "cache_dir": sdg["endpoints"]["cache_dir"],
+                "max_samples_per_iteration": args.sdg_max_samples,
+                "verification_max_attempts": args.sdg_verification_attempts,
+                "caption_policy": args.sdg_caption_policy,
+            },
         },
     )
 
@@ -302,9 +416,19 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "training_epochs": args.training_epochs,
         "num_gpus": args.num_gpus,
         "gpu_ids": gpu_ids,
+        "visible_gpu_count": len(visible_gpu_ids),
+        "visible_gpu_ids": visible_gpu_ids,
+        "platform": args.platform,
+        "docker_remote": args.docker_remote,
+        "virtualenvs": (
+            {name: str(path) for name, path in virtualenvs.items()}
+            if virtualenvs is not None
+            else None
+        ),
         "requires_hf_token": args.requires_hf_token,
         "iaa_deft_bundle_sha256": runtime_sha256,
         "approval_manifest": str(config_dir / "approval.json"),
+        "sdg_config": str(config_dir / "sdg_config.yaml"),
     }
 
 
@@ -316,6 +440,33 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--images-archive", required=True, type=pathlib.Path)
     parser.add_argument("--metadata-archive", required=True, type=pathlib.Path)
     parser.add_argument("--checksums-file", type=pathlib.Path)
+    parser.add_argument("--platform", required=True, choices=SUPPORTED_PLATFORMS)
+    parser.add_argument(
+        "--docker-remote",
+        action="store_true",
+        help=(
+            "Approve Docker execution through a remote DOCKER_HOST; requires "
+            "remote staging/absence attestation instead of launcher-local mounts."
+        ),
+    )
+    parser.add_argument(
+        "--virtualenv",
+        type=pathlib.Path,
+        help=(
+            "Compatibility form: one environment that independently satisfies both "
+            "pyt and ds profiles; cannot be combined with profile-specific options."
+        ),
+    )
+    parser.add_argument(
+        "--pyt-virtualenv",
+        type=pathlib.Path,
+        help="Python 3.12 TAO PyTorch execution profile for train/evaluate.",
+    )
+    parser.add_argument(
+        "--ds-virtualenv",
+        type=pathlib.Path,
+        help="Python 3.12 TAO data-services execution profile for embedding/mining.",
+    )
     parser.add_argument(
         "--requires-hf-token",
         action="store_true",
@@ -325,19 +476,38 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--training-epochs", default=1, type=int)
     parser.add_argument("--num-gpus", default=1, type=int)
     parser.add_argument("--gpu-ids", default="0")
+    parser.add_argument(
+        "--visible-gpu-ids",
+        required=True,
+        help="Comma-separated device IDs reported by the approved host preflight.",
+    )
     parser.add_argument("--mining-topn", default=25, type=int)
     parser.add_argument("--knn-metric", default="cosine")
     parser.add_argument("--target-query-count", default=10000, type=int)
     parser.add_argument("--history-aware", default=True, type=_bool)
     parser.add_argument("--replay-fraction", default=0.20, type=float)
     parser.add_argument("--continual-dataset", default=True, type=_bool)
-    parser.add_argument("--continual-model", default=False, type=_bool)
+    parser.add_argument("--continual-model", default=True, type=_bool)
     parser.add_argument("--visualize", default=True, type=_bool)
     parser.add_argument("--visualize-embeddings", default=True, type=_bool)
     parser.add_argument("--metric-name", default="Rank-1")
     parser.add_argument("--metric-query-type", default="medium")
     parser.add_argument("--metric-op", default=">=", choices=(">=", ">", "<=", "<"))
     parser.add_argument("--metric-target", type=float)
+    parser.add_argument("--sdg-endpoint-mode", choices=("managed", "external"), default="managed")
+    parser.add_argument("--image-edit-gpu-ids")
+    parser.add_argument("--vlm-gpu-ids")
+    parser.add_argument("--llm-gpu-ids")
+    parser.add_argument("--image-edit-url")
+    parser.add_argument("--vlm-url")
+    parser.add_argument("--llm-url")
+    parser.add_argument("--image-edit-port", type=int, default=8002)
+    parser.add_argument("--vlm-port", type=int, default=8000)
+    parser.add_argument("--llm-port", type=int, default=8001)
+    parser.add_argument("--sdg-cache-dir", type=pathlib.Path)
+    parser.add_argument("--sdg-max-samples", type=int, default=1000)
+    parser.add_argument("--sdg-verification-attempts", type=int, choices=range(1, 6), default=2)
+    parser.add_argument("--sdg-caption-policy", choices=("all", "easy", "medium", "hard"), default="all")
     return parser
 
 

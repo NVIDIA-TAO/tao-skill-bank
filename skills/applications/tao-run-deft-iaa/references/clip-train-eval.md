@@ -4,6 +4,10 @@ Read with `metric-contract.md` when the audit selects `train` or `evaluate`.
 The IAA workflow uses plain TAO CLIP train/evaluate commands. There is no
 AutoML branch and no hand-authored per-stage YAML.
 
+Every `run_deft_action.py prepare` call only writes the immutable action
+request. Execute and finalize it through `platform-execution.md` before parsing,
+publishing, or committing its outputs.
+
 ## Contents
 
 - [Evaluate](#evaluate)
@@ -32,7 +36,7 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
 
    ```bash
    EVAL_DIR="$PHASE_DIR/evaluate"
-   METRICS="$EVAL_DIR/nvidia_iaa_metrics_aggregate.csv"
+   METRICS="$EVAL_DIR/nvidia_pas_metrics_aggregate.csv"
    TAO_STATUS="$EVAL_DIR/status.json"
    HF_ARGS=()
    if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
@@ -40,7 +44,7 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
    fi
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-     "$SKILL_ROOT/scripts/run_deft_container.py" \
+     "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
        --results-dir "$RESULTS_DIR" --image pyt \
        --stage-dir "$EVAL_DIR" --name evaluate \
        "${HF_ARGS[@]}" \
@@ -48,7 +52,7 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
        clip evaluate -e "/results/$CONTAINER_PHASE/specs/eval_config.yaml"
    ```
 
-   The Docker exit must be zero, the aggregate CSV must be non-empty, and the
+   The native backend exit must be zero, the aggregate CSV must be non-empty, and the
    TAO status must contain `Evaluate finished successfully`. A stale CSV next
    to a failed status is not evidence.
 3. Parse the approved metric contract exactly as shown in
@@ -102,10 +106,11 @@ another label/path even when its numeric value is plausible.
        --deft-config "$RESULTS_DIR/config/deft_config.yaml" --iter-num "$N"
    ```
 
-   In the default continual-dataset/non-continual-model mode, the accumulated
-   mined datasets are included but training starts from the configured base
-   model each iteration. With approved continual-model mode, the adapter uses
-   the prior iteration's normalized state. Never hand-edit the generated YAML.
+   In the default continual-dataset/continual-model mode, each iteration uses
+   the accumulated mined datasets and the prior iteration's normalized model
+   state. When non-continual model mode is explicitly approved, training starts
+   from the configured base model each iteration. Never hand-edit the generated
+   YAML.
 2. Recheck occupancy for the approved GPU IDs. If the shape must change, stop
    for a revised pre-flight approval and begin a new immutable run; do not
    patch the current config.
@@ -122,7 +127,7 @@ another label/path even when its numeric value is plausible.
    fi
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-     "$SKILL_ROOT/scripts/run_deft_container.py" \
+     "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
        --results-dir "$RESULTS_DIR" --image pyt \
        --stage-dir "$TRAIN_DIR" --name train \
        "${HF_ARGS[@]}" \
@@ -130,7 +135,8 @@ another label/path even when its numeric value is plausible.
        clip train -e "/results/iter_$N/specs/train_config.yaml"
    ```
 
-4. Only after a zero container exit, select the best validation
+4. Only after a zero native backend exit and successful action finalization,
+   select the best validation
    checkpoint and create the normalized warm-start state:
 
    ```bash
@@ -149,7 +155,12 @@ another label/path even when its numeric value is plausible.
    ```
 
    The first is the raw evaluation checkpoint; the second is the normalized
-   model-only warm-start form.
+   model-only warm-start form. Selection uses `val/t2i_mAP` when metric
+   evidence exists; otherwise checkpoint metadata records
+   `selection_strategy=newest_fallback`. Freshness is anchored to the first
+   attempt in the bounded train-attempt lineage, and is validated before the
+   canonical link/copy is created, so a retry can safely reuse a checkpoint
+   produced by its earlier attempt.
 5. Commit:
 
    ```bash
@@ -169,20 +180,20 @@ another label/path even when its numeric value is plausible.
 
 The validator requires TAO's `Train finished successfully.` marker, an exact
 approved `clip train` argv digest, and a selected raw checkpoint newer than
-that launch. The canonical relative symlink is allowed only when it
+the train attempt lineage. The canonical relative symlink is allowed only when it
 resolves directly to a regular checkpoint inside this iteration's `train/`;
 its metadata-backed hardlink/copy fallbacks are also accepted. Symlink chains,
 stale targets, and cross-iteration targets are rejected.
 
 ## Failure handling
 
-- Nonzero Docker exit: inspect the wrapper log's last meaningful error block,
+- Nonzero native backend exit: inspect the captured action log's last meaningful error block,
   do not publish or evaluate outputs, and apply at most one documented retry.
 - CUDA OOM caused by changed occupancy: retry the same approved shape once
   after those GPUs are free. Config reshaping requires a new run.
 - Hydra reports an unknown key: regenerate the config; never add `workflow` or
   `automl_policy` to TAO YAML.
-- A PyTorch 2.6+ NumPy dtype allowlist error: the container wrapper already
+- A PyTorch 2.6+ NumPy dtype allowlist error: the platform action already
   mounts the bundled `sitecustomize.py`. If the error persists, hard-stop
   rather than weakening checkpoint loading.
 - Eval success marker absent: treat all CSVs from that launch as partial and

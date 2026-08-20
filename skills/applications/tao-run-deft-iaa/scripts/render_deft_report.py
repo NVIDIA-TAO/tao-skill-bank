@@ -443,12 +443,21 @@ def _render_html(
                 (row for row in metric_rows if row["label"] == label), None
             )
             metric_text = _format_value(metric["value"]) if metric else "—"
+            generated_text = "—"
+            sdg_manifest = info.get("sdg_manifest")
+            if sdg_manifest:
+                try:
+                    sdg_payload = json.loads(_resolve_path(str(sdg_manifest), base=results_dir).read_text())
+                    generated_text = f"{sdg_payload.get('num_source_images', 0)} sources / {sdg_payload.get('num_pairs', 0)} pairs"
+                except (OSError, json.JSONDecodeError):
+                    generated_text = "invalid evidence"
             iteration_rows.append(
                 [
                     html.escape(label),
                     html.escape(_format_value(info.get("status"))),
                     html.escape(_format_value(info.get("stage_completed"))),
                     html.escape(metric_text),
+                    html.escape(generated_text),
                     artifacts_html,
                 ]
             )
@@ -526,7 +535,7 @@ footer {{ color:var(--muted); margin:18px 2px; }}
   {_table(["Iteration", "Value", "Δ baseline", "Δ previous", "Gate", "Evidence"], kpi_rows, empty="No successfully committed evaluate result yet.")}
 </section>
 <section><h2>Iterations and evidence</h2>
-  {_table(["Iteration", "Status", "Last stage", "KPI", "Artifacts"], iteration_rows, empty="No iteration state recorded.")}
+  {_table(["Iteration", "Status", "Last stage", "KPI", "Generated", "Artifacts"], iteration_rows, empty="No iteration state recorded.")}
 </section>
 <section><h2>Stage timeline</h2>
   {_table(["Seq", "Iteration", "Stage", "Status", "Duration", "Summary"], timeline_rows, empty="No stage events committed yet.")}

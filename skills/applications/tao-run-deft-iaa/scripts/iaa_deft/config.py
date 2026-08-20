@@ -7,8 +7,415 @@
 """Parsed configuration for an IAA CLIP DEFT experiment."""
 
 import json
+import math
 import os
 import yaml
+
+
+_MISSING = object()
+
+
+def _error(config_path: str, key: str, message: str) -> None:
+    raise ValueError(f"{config_path}: {key} {message}")
+
+
+def _mapping(root, key: str, source: str, config_path: str, *, required=True):
+    value = root.get(key, _MISSING)
+    qualified = f"{source}.{key}" if source else key
+    if value is _MISSING:
+        if required:
+            _error(config_path, qualified, "is required")
+        return {}
+    if not isinstance(value, dict):
+        _error(config_path, qualified, "must be an object")
+    return value
+
+
+def _known(mapping, allowed, source: str, config_path: str) -> None:
+    unknown = sorted(set(mapping) - set(allowed), key=repr)
+    if unknown:
+        _error(
+            config_path,
+            f"{source}.{unknown[0]}" if source else unknown[0],
+            "is not a recognized setting",
+        )
+
+
+def _value(mapping, key: str, source: str, config_path: str, *, required=False):
+    value = mapping.get(key, _MISSING)
+    qualified = f"{source}.{key}" if source else key
+    if value is _MISSING and required:
+        _error(config_path, qualified, "is required")
+    return value, qualified
+
+
+def _string(
+    mapping,
+    key: str,
+    source: str,
+    config_path: str,
+    *,
+    required=False,
+    allow_empty=False,
+    choices=None,
+) -> None:
+    value, qualified = _value(
+        mapping, key, source, config_path, required=required
+    )
+    if value is _MISSING:
+        return
+    if not isinstance(value, str) or (not allow_empty and not value.strip()):
+        suffix = "string" if allow_empty else "non-empty string"
+        _error(config_path, qualified, f"must be a {suffix}; got {value!r}")
+    if choices is not None and value not in choices:
+        _error(
+            config_path,
+            qualified,
+            f"must be one of {', '.join(sorted(choices))}; got {value!r}",
+        )
+
+
+def _boolean(mapping, key: str, source: str, config_path: str, *, required=False):
+    value, qualified = _value(
+        mapping, key, source, config_path, required=required
+    )
+    if value is _MISSING:
+        return
+    if not isinstance(value, bool):
+        _error(config_path, qualified, f"must be a boolean; got {value!r}")
+
+
+def _integer(
+    mapping,
+    key: str,
+    source: str,
+    config_path: str,
+    *,
+    required=False,
+    minimum=None,
+) -> None:
+    value, qualified = _value(
+        mapping, key, source, config_path, required=required
+    )
+    if value is _MISSING:
+        return
+    if not isinstance(value, int) or isinstance(value, bool):
+        _error(config_path, qualified, f"must be an integer; got {value!r}")
+    if minimum is not None and value < minimum:
+        _error(config_path, qualified, f"must be >= {minimum}; got {value!r}")
+
+
+def _number(
+    mapping,
+    key: str,
+    source: str,
+    config_path: str,
+    *,
+    minimum=None,
+    maximum=None,
+) -> None:
+    value, qualified = _value(mapping, key, source, config_path)
+    if value is _MISSING:
+        return
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+    ):
+        _error(config_path, qualified, f"must be a finite number; got {value!r}")
+    if minimum is not None and value < minimum:
+        _error(config_path, qualified, f"must be >= {minimum}; got {value!r}")
+    if maximum is not None and value > maximum:
+        _error(config_path, qualified, f"must be <= {maximum}; got {value!r}")
+
+
+def _validate_config(root, config_path: str) -> None:
+    if not isinstance(root, dict):
+        _error(config_path, "<root>", "must be an object")
+    _known(
+        root,
+        {
+            "experiment",
+            "iteration",
+            "training",
+            "mining",
+            "gap_analysis",
+            "iaa",
+            "visualization",
+            "kratos_namespace",
+        },
+        "",
+        config_path,
+    )
+
+    experiment = _mapping(root, "experiment", "", config_path)
+    _known(
+        experiment,
+        {
+            "name",
+            "results_path",
+            "train_config",
+            "eval_config",
+            "tao_pytorch_root",
+            "visualize",
+            "visualize_embeddings",
+        },
+        "experiment",
+        config_path,
+    )
+    for key in ("name", "results_path", "train_config", "eval_config"):
+        _string(experiment, key, "experiment", config_path, required=True)
+    _string(
+        experiment, "tao_pytorch_root", "experiment", config_path, allow_empty=True
+    )
+    for key in ("visualize", "visualize_embeddings"):
+        _boolean(experiment, key, "experiment", config_path)
+
+    iteration = _mapping(root, "iteration", "", config_path)
+    _known(iteration, {"start", "end"}, "iteration", config_path)
+    _integer(iteration, "start", "iteration", config_path, required=True, minimum=1)
+    _integer(iteration, "end", "iteration", config_path, required=True, minimum=1)
+    if iteration["end"] < iteration["start"]:
+        _error(config_path, "iteration.end", "must be >= iteration.start")
+
+    training = _mapping(root, "training", "", config_path)
+    _known(
+        training,
+        {"init_checkpoint", "continual_model", "continual_dataset", "num_nodes"},
+        "training",
+        config_path,
+    )
+    _string(
+        training,
+        "init_checkpoint",
+        "training",
+        config_path,
+        required=True,
+        allow_empty=True,
+    )
+    _boolean(training, "continual_model", "training", config_path, required=True)
+    _boolean(training, "continual_dataset", "training", config_path, required=True)
+    _integer(training, "num_nodes", "training", config_path, minimum=1)
+
+    mining = _mapping(root, "mining", "", config_path)
+    _known(
+        mining,
+        {"topn", "knn_metric", "knn_batch_size", "history_aware", "recovery"},
+        "mining",
+        config_path,
+    )
+    _integer(mining, "topn", "mining", config_path, minimum=1)
+    _string(
+        mining,
+        "knn_metric",
+        "mining",
+        config_path,
+        choices={"cosine", "euclidean"},
+    )
+    _integer(mining, "knn_batch_size", "mining", config_path, minimum=1)
+    history = _mapping(mining, "history_aware", "mining", config_path, required=False)
+    _known(history, {"enabled", "replay_fraction"}, "mining.history_aware", config_path)
+    _boolean(history, "enabled", "mining.history_aware", config_path)
+    _number(
+        history,
+        "replay_fraction",
+        "mining.history_aware",
+        config_path,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    recovery = _mapping(mining, "recovery", "mining", config_path, required=False)
+    _known(recovery, {"caption_expansion"}, "mining.recovery", config_path)
+    expansion = _mapping(
+        recovery,
+        "caption_expansion",
+        "mining.recovery",
+        config_path,
+        required=False,
+    )
+    _known(
+        expansion,
+        {
+            "enabled",
+            "mode",
+            "max_pairs_per_image_path",
+            "max_expanded_pair_fraction",
+            "dedupe_normalized_caption",
+            "count_expanded_pairs_toward_target",
+        },
+        "mining.recovery.caption_expansion",
+        config_path,
+    )
+    expansion_path = "mining.recovery.caption_expansion"
+    _boolean(expansion, "enabled", expansion_path, config_path)
+    _string(
+        expansion,
+        "mode",
+        expansion_path,
+        config_path,
+        choices={"nearest", "all"},
+    )
+    _integer(
+        expansion, "max_pairs_per_image_path", expansion_path, config_path, minimum=1
+    )
+    _number(
+        expansion,
+        "max_expanded_pair_fraction",
+        expansion_path,
+        config_path,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    _boolean(expansion, "dedupe_normalized_caption", expansion_path, config_path)
+    count_value, count_key = _value(
+        expansion, "count_expanded_pairs_toward_target", expansion_path, config_path
+    )
+    if count_value is not _MISSING and not (
+        isinstance(count_value, bool)
+        or (
+            isinstance(count_value, str)
+            and count_value in {"auto", "true", "false"}
+        )
+    ):
+        _error(config_path, count_key, "must be auto, true, false, or a boolean")
+
+    visualization = _mapping(root, "visualization", "", config_path, required=False)
+    viz_keys = {
+        "viz_max_samples_per_group",
+        "viz_max_total_samples",
+        "viz_tile_size",
+    }
+    _known(visualization, viz_keys, "visualization", config_path)
+    for key in viz_keys:
+        _integer(visualization, key, "visualization", config_path, minimum=1)
+
+    iaa = _mapping(root, "iaa", "", config_path)
+    iaa_keys = {
+        "train_pairs_source_file",
+        "pool_pairs_source_file",
+        "eval_pairs_source_file",
+        "train_image_dir",
+        "train_caption_dir",
+        "source_image_dir",
+        "source_caption_dir",
+        "eval_image_dir",
+        "eval_caption_dir",
+        "seed_exclude_datasets",
+        "augmented_suffix",
+        "query_types",
+        "mining_pool_mode",
+        "max_seed_rows",
+        "max_aug_pool_rows",
+        "val_sample_size",
+    }
+    _known(iaa, iaa_keys, "iaa", config_path)
+    _string(
+        iaa, "train_pairs_source_file", "iaa", config_path, allow_empty=True
+    )
+    _string(iaa, "pool_pairs_source_file", "iaa", config_path)
+    for key in (
+        "eval_pairs_source_file",
+        "train_image_dir",
+        "train_caption_dir",
+        "source_image_dir",
+        "source_caption_dir",
+        "eval_image_dir",
+        "eval_caption_dir",
+    ):
+        _string(iaa, key, "iaa", config_path, required=True)
+    for key in ("seed_exclude_datasets", "augmented_suffix", "query_types"):
+        _string(iaa, key, "iaa", config_path)
+    _string(
+        iaa,
+        "mining_pool_mode",
+        "iaa",
+        config_path,
+        choices={"real", "augmented", "real_and_augmented"},
+    )
+    _integer(iaa, "max_seed_rows", "iaa", config_path, minimum=0)
+    _integer(iaa, "max_aug_pool_rows", "iaa", config_path, minimum=0)
+    _integer(iaa, "val_sample_size", "iaa", config_path, minimum=1)
+    if not str(iaa.get("pool_pairs_source_file") or "").strip() and not str(
+        iaa.get("train_pairs_source_file") or ""
+    ).strip():
+        _error(
+            config_path,
+            "iaa.pool_pairs_source_file",
+            "or iaa.train_pairs_source_file must be a non-empty string",
+        )
+
+    gap = _mapping(root, "gap_analysis", "", config_path, required=False)
+    gap_keys = {
+        "metric_name",
+        "queries_per_slice",
+        "min_num_queries",
+        "query_types",
+        "weak_attribute_topk",
+        "target_query_count",
+        "total_queries_mAP",
+        "analyze_by_mAP",
+        "caption_diversity",
+    }
+    _known(gap, gap_keys, "gap_analysis", config_path)
+    for key in ("metric_name", "query_types"):
+        _string(gap, key, "gap_analysis", config_path)
+    _integer(gap, "queries_per_slice", "gap_analysis", config_path, minimum=1)
+    _integer(gap, "min_num_queries", "gap_analysis", config_path, minimum=0)
+    _integer(gap, "weak_attribute_topk", "gap_analysis", config_path, minimum=1)
+    _integer(gap, "target_query_count", "gap_analysis", config_path, minimum=1)
+    _integer(gap, "total_queries_mAP", "gap_analysis", config_path, minimum=1)
+    _boolean(gap, "analyze_by_mAP", "gap_analysis", config_path)
+    diversity = _mapping(
+        gap, "caption_diversity", "gap_analysis", config_path, required=False
+    )
+    diversity_path = "gap_analysis.caption_diversity"
+    diversity_keys = {
+        "enabled",
+        "history_file",
+        "history_policy",
+        "coverage_target",
+        "min_unique_texts_per_attribute",
+        "max_unique_texts_per_attribute",
+        "max_rows_per_unique_text",
+        "max_rows_per_image_path",
+        "recent_exclude_iters",
+        "replay_fraction_when_noncontinual",
+    }
+    _known(diversity, diversity_keys, diversity_path, config_path)
+    _boolean(diversity, "enabled", diversity_path, config_path)
+    _string(diversity, "history_file", diversity_path, config_path)
+    _string(
+        diversity,
+        "history_policy",
+        diversity_path,
+        config_path,
+        choices={"auto", "prefer_unseen", "novelty_with_replay"},
+    )
+    _number(
+        diversity,
+        "coverage_target",
+        diversity_path,
+        config_path,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    for key in (
+        "min_unique_texts_per_attribute",
+        "max_unique_texts_per_attribute",
+        "recent_exclude_iters",
+    ):
+        _integer(diversity, key, diversity_path, config_path, minimum=0)
+    for key in ("max_rows_per_unique_text", "max_rows_per_image_path"):
+        _integer(diversity, key, diversity_path, config_path, minimum=1)
+    _number(
+        diversity,
+        "replay_fraction_when_noncontinual",
+        diversity_path,
+        config_path,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    _string(root, "kratos_namespace", "", config_path, allow_empty=True)
 
 
 def _bool_str(value) -> str:
@@ -56,6 +463,7 @@ class IaaDeftConfig:
 
         with open(config_path) as f:
             _cfg = yaml.safe_load(f)
+        _validate_config(_cfg, config_path)
 
         self.sweep_args_str: str = json.dumps({
             "config": config_path,
@@ -116,7 +524,7 @@ class IaaDeftConfig:
         ).lower()
 
         # ── Visualization (contact sheets / t-SNE) ─────────────────────────
-        _viz = _cfg.get("lepton_e2e", {}) or {}
+        _viz = _cfg.get("visualization", {}) or {}
         self.viz_max_samples_per_group: int = int(_viz.get("viz_max_samples_per_group", 12) or 12)
         self.viz_max_total_samples: int = int(_viz.get("viz_max_total_samples", 96) or 96)
         self.viz_tile_size: int = int(_viz.get("viz_tile_size", 192) or 192)
@@ -134,6 +542,13 @@ class IaaDeftConfig:
         self.iaa_max_seed_rows: int = int(_iaa.get("max_seed_rows", 0) or 0)
         self.iaa_max_aug_pool_rows: int = int(_iaa.get("max_aug_pool_rows", 0) or 0)
         self.iaa_mining_pool_mode: str = _iaa.get("mining_pool_mode", "real_and_augmented")
+        valid_pool_modes = {"real", "augmented", "real_and_augmented"}
+        if self.iaa_mining_pool_mode not in valid_pool_modes:
+            choices = ", ".join(sorted(valid_pool_modes))
+            raise ValueError(
+                f"{self.config_path}: iaa.mining_pool_mode must be one of "
+                f"{choices}; got {self.iaa_mining_pool_mode!r}"
+            )
         self.iaa_val_sample_size: int = int(_iaa.get("val_sample_size", 512) or 512)
         self.iaa_train_pairs_source_file: str = _abs_data_path(
             _iaa.get("train_pairs_source_file", "")

@@ -23,6 +23,7 @@ baseline/dataset_setup
 
 iterN/data_mining
   -> iterN/history_select
+  -> iterN/sdg                                bounded local generation
   -> iterN/visualize                          real or config-approved skip
   -> iterN/train
   -> iterN/evaluate
@@ -46,7 +47,9 @@ rejects duplicate, skipped-ahead, post-KPI, and out-of-range transitions.
 `deft_state.json` is a schema-v3 resume snapshot. It records:
 
 - immutable workspace, archives, intended dataset root, bundled-runtime hash,
-  Docker images, config paths and hashes;
+  selected TAO platform, pinned execution and component images/runtime, model
+  roles/revisions, endpoint ownership/GPU allocation, generation limits, config
+  paths and hashes;
 - immutable loop/config values and metric contract;
 - current iteration, gate flag, per-label stage proofs, and stop reason.
 
@@ -58,6 +61,9 @@ bundled state scripts.
 Artifact files are additional evidence, not alternate state. The audit checks
 their exact paths, structure, row counts, provenance, freshness, and
 cross-file invariants. It also reopens metric CSVs and selection history.
+The uncommitted `sdg_progress.json` is operation evidence for the current SDG
+stage only. It cannot advance state; `commit_stage.py` requires the final
+endpoint, execution, provenance, pairs, list, and normalization statuses.
 
 Do not display the full state or log in conversation. The audit's compact
 fields are sufficient:
@@ -82,7 +88,7 @@ For each stage:
 
 1. Audit and confirm the selected next action.
 2. Read only its named reference.
-3. Run the documented adapter/container commands with verbose output in logs.
+3. Run the documented host adapters or platform actions with verbose output in logs.
 4. Validate and commit once with the exact artifact and command-status flags.
 5. Audit again. Advance only when the committed event is accepted.
 6. Tell the user one line: `[label · stage] outcome · next: <action>`.
@@ -112,8 +118,11 @@ On startup or after context compaction:
 4. Read one reference and continue the selected stage.
 
 Uncommitted outputs can be reused only when that stage's validators accept a
-successful matching command status and fresh scoped artifacts. Otherwise the
-documented wrapper reruns the exact stage after deleting only named fresh
+successful matching command status and fresh scoped artifacts. When a
+container wrapper was interrupted and its status remains `running`, rerun the
+exact wrapper command after the deterministic container exits. The wrapper
+first reconciles durable Docker/log success evidence and fresh outputs; only
+when that fails does it consume the bounded retry and delete the named fresh
 outputs. For history selection, use its one `--resume` path. Never backfill a
 log entry or manually mark a stage complete.
 

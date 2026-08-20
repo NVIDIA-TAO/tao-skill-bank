@@ -38,6 +38,12 @@ from command_contract import (
     expected_hf_forwarding,
     expected_image_kind,
 )
+from deft_action_contract import (
+    SUPPORTED_PLATFORMS,
+    platform_evidence_error,
+    remote_freshness_attested,
+    validate_tao_virtualenv,
+)
 from metric_contract import (
     compare,
     pick_best,
@@ -58,6 +64,7 @@ VALID_STAGES = {
     "gap_analysis",
     "data_mining",
     "history_select",
+    "sdg",
     "visualize",
     "train",
     "loop_stop",
@@ -71,6 +78,7 @@ EVAL_SUCCESS_MARKER = "Evaluate finished successfully"
 TRAIN_SUCCESS_MARKER = "Train finished successfully."
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
+    "sdg_config.yaml",
     "tao_spec.yaml",
     "text_embed_spec.yaml",
     "image_embed_spec.yaml",
@@ -101,6 +109,7 @@ RESULTS_SCOPED_FILE_FIELDS = {
     "checksum_verify_log",
     "dataset_materialize_status",
     "gap_analysis_status",
+    "endpoint_manifest",
 }
 PHASE_SCOPED_FILE_FIELDS = {
     "metrics_aggregate_csv",
@@ -123,6 +132,11 @@ PHASE_SCOPED_FILE_FIELDS = {
     "iteration_summary_status",
     "mining_postprocess_status",
     "history_select_status",
+    "sdg_manifest",
+    "sdg_pairs",
+    "sdg_image_list",
+    "sdg_execution_manifest",
+    "sdg_status",
     "train_config_status",
     "publish_checkpoint_status",
 }
@@ -171,6 +185,12 @@ FIELD_STAGE = {
     "cumulative_names": "history_select",
     "mining_history": "history_select",
     "history_select_status": "history_select",
+    "endpoint_manifest": "sdg",
+    "sdg_manifest": "sdg",
+    "sdg_pairs": "sdg",
+    "sdg_image_list": "sdg",
+    "sdg_execution_manifest": "sdg",
+    "sdg_status": "sdg",
     "samples_dir": "visualize",
     "tsne_plot": "visualize",
     "visualize_skipped": "visualize",
@@ -221,6 +241,14 @@ STAGE_REQUIRED_FIELDS = {
         "cumulative_names",
         "history_select_status",
     ),
+    "sdg": (
+        "endpoint_manifest",
+        "sdg_manifest",
+        "sdg_pairs",
+        "sdg_image_list",
+        "sdg_execution_manifest",
+        "sdg_status",
+    ),
     "visualize": (),
     "train": (
         "best_ckpt_path",
@@ -244,6 +272,7 @@ STAGE_REFERENCES = {
     "gap_analysis": ("references/gap-analysis.md",),
     "data_mining": ("references/mining.md",),
     "history_select": ("references/mining.md",),
+    "sdg": ("references/local-sdg.md",),
     "visualize": ("references/visualization.md",),
     "train": ("references/clip-train-eval.md",),
     "loop_stop": ("references/pipeline-and-state.md",),
@@ -379,6 +408,8 @@ def _expected_next(
     if stage == "data_mining":
         return {(label, "history_select")}
     if stage == "history_select":
+        return {(label, "sdg")}
+    if stage == "sdg":
         return {(label, "visualize")}
     if stage == "visualize":
         return {(label, "train")}
@@ -440,7 +471,7 @@ def _expected_artifact_path(
         "dataset_materialize_status": results_dir / "dataset_setup" / "dataset-materialize.host.status.json",
         "pool_embeddings_parquet": results_dir / "embeddings" / "source" / "embeddings.parquet",
         "pool_embed_command_status": results_dir / "embeddings" / "source" / "pool_embed.status.json",
-        "metrics_aggregate_csv": phase / "evaluate" / "nvidia_iaa_metrics_aggregate.csv",
+        "metrics_aggregate_csv": phase / "evaluate" / "nvidia_pas_metrics_aggregate.csv",
         "eval_status_json": phase / "evaluate" / "status.json",
         "eval_command_status": phase / "evaluate" / "evaluate.status.json",
         "iteration_summary": phase / "iteration_summary.json",
@@ -469,6 +500,12 @@ def _expected_artifact_path(
         "train_config": phase / "specs" / "train_config.yaml",
         "mining_postprocess_status": phase / "mining" / "mining-postprocess.host.status.json",
         "history_select_status": phase / "mining" / "history-select.host.status.json",
+        "endpoint_manifest": results_dir / "endpoints" / "manifest.json",
+        "sdg_manifest": phase / "datagen" / "dataset" / "sdg_manifest.json",
+        "sdg_pairs": phase / "datagen" / "dataset" / "sdg_pairs.json",
+        "sdg_image_list": phase / "datagen" / "dataset" / "sdg_image_list.txt",
+        "sdg_execution_manifest": phase / "datagen" / "sdg_execution_manifest.json",
+        "sdg_status": phase / "datagen" / "status" / "sdg-normalize.host.status.json",
         "train_config_status": phase / "specs" / "train-config.host.status.json",
         "publish_checkpoint_status": phase / "train" / "publish-checkpoint.host.status.json",
     }
@@ -612,12 +649,13 @@ def _validate_command_status(
     required_image_kind: str | None = None,
     required_image: str | None = None,
     required_hf_forwarding: bool | None = None,
+    required_platform: str | None = None,
 ) -> dict[str, Any] | None:
     payload = _validate_json_shape(path, field, errors, dict)
     if payload is None:
         return None
-    if payload.get("schema_version") != "1":
-        errors.append(f"{field}.schema_version must be '1'")
+    if payload.get("schema_version") not in {"1", "2"}:
+        errors.append(f"{field}.schema_version must be '1' or '2'")
     if not isinstance(payload.get("name"), str) or not payload.get("name", "").strip():
         errors.append(f"{field}.name must be a non-empty string")
     elif required_name is not None and payload.get("name") != required_name:
@@ -625,16 +663,17 @@ def _validate_command_status(
             f"{field}.name must be {required_name!r}, got {payload.get('name')!r}"
         )
     if required_command is not None:
-        if payload.get("kind") != "container":
-            errors.append(f"{field}.kind must be 'container'")
+        if required_platform is None:
+            errors.append(f"{field} lacks an initialized workflow platform contract")
+            evidence_error = "expected platform was not supplied"
+        else:
+            evidence_error = platform_evidence_error(payload, required_platform)
+        if evidence_error is not None:
+            errors.append(f"{field} does not prove native action success: {evidence_error}")
         if payload.get("command") != required_command:
             errors.append(f"{field} does not record the approved command argv")
         if payload.get("command_sha256") != command_sha256(required_command):
             errors.append(f"{field}.command_sha256 does not match approved argv")
-        if payload.get("docker_exit_code") != 0:
-            errors.append(f"{field}.docker_exit_code must be zero")
-        if payload.get("artifact_error") is not None:
-            errors.append(f"{field}.artifact_error must be null")
         if payload.get("image_kind") != required_image_kind:
             errors.append(
                 f"{field}.image_kind must be {required_image_kind!r}, "
@@ -809,6 +848,8 @@ def _next_action(
     elif stage == "data_mining":
         nxt = (label, "history_select")
     elif stage == "history_select":
+        nxt = (label, "sdg")
+    elif stage == "sdg":
         nxt = (label, "visualize")
     elif stage == "visualize":
         nxt = (label, "train")
@@ -1053,6 +1094,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     )
             for field, name in (
                 ("deft_config", "deft_config.yaml"),
+                ("sdg_config", "sdg_config.yaml"),
                 ("tao_spec", "tao_spec.yaml"),
             ):
                 value = config.get(field)
@@ -1084,8 +1126,9 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 except (OSError, json.JSONDecodeError) as exc:
                     errors.append(f"approval manifest is invalid JSON: {exc}")
                 else:
+                    approval_version = approval.get("schema_version")
                     expected_approval = {
-                        "schema_version": "2",
+                        "schema_version": approval_version,
                         "workflow": WORKFLOW,
                         "workspace": str(pathlib.Path(str(config.get("workspace", ""))).resolve()),
                         "results_dir": str(results_dir.resolve()),
@@ -1103,7 +1146,38 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         "metric_contract": gate,
                         "pyt_image": config.get("pyt_image"),
                         "ds_image": config.get("ds_image"),
+                        "sdg": config.get("sdg"),
                     }
+                    if "visible_gpu_ids" in config:
+                        expected_approval["visible_gpu_ids"] = config.get(
+                            "visible_gpu_ids"
+                        )
+                    if approval_version == "3":
+                        expected_approval["platform"] = config.get("platform")
+                        expected_approval["docker_remote"] = config.get(
+                            "docker_remote", False
+                        )
+                        if "virtualenvs" in approval:
+                            expected_approval["virtualenvs"] = config.get("virtualenvs")
+                        else:
+                            legacy_virtualenv = config.get("virtualenv")
+                            profiles = config.get("virtualenvs")
+                            if (
+                                legacy_virtualenv is None
+                                and isinstance(profiles, dict)
+                                and profiles.get("pyt") == profiles.get("ds")
+                            ):
+                                legacy_virtualenv = profiles.get("pyt")
+                            expected_approval["virtualenv"] = legacy_virtualenv
+                    elif not (
+                        approval_version == "2"
+                        and config.get("platform") == "docker"
+                        and config.get("virtualenv") is None
+                    ):
+                        errors.append(
+                            "approval manifest schema must be version 3; version 2 is "
+                            "accepted only for legacy Docker runs"
+                        )
                     if approval != expected_approval:
                         errors.append(
                             "state immutable approval fields disagree with approval.json"
@@ -1111,15 +1185,17 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
 
             deft_path = config_dir_path / "deft_config.yaml"
             tao_path = config_dir_path / "tao_spec.yaml"
-            if deft_path.is_file() and tao_path.is_file():
+            sdg_path = config_dir_path / "sdg_config.yaml"
+            if deft_path.is_file() and tao_path.is_file() and sdg_path.is_file():
                 try:
                     deft_payload = yaml.safe_load(deft_path.read_text())
                     tao_payload = yaml.safe_load(tao_path.read_text())
+                    sdg_payload = yaml.safe_load(sdg_path.read_text())
                 except (OSError, yaml.YAMLError) as exc:
                     errors.append(f"approved run config is not readable YAML: {exc}")
                 else:
-                    if not isinstance(deft_payload, dict) or not isinstance(tao_payload, dict):
-                        errors.append("approved DEFT and TAO config roots must be objects")
+                    if not all(isinstance(item, dict) for item in (deft_payload, tao_payload, sdg_payload)):
+                        errors.append("approved DEFT, SDG, and TAO config roots must be objects")
                     else:
                         experiment = _config_section(
                             deft_payload, "experiment", "deft_config", errors
@@ -1216,8 +1292,59 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             value = config.get(field)
             if not isinstance(value, str) or not value.strip():
                 errors.append(f"state.config.{field} must be a non-empty string")
-        if config.get("platform") != "docker":
-            errors.append("state.config.platform must be 'docker' for this workflow")
+        if config.get("platform") not in SUPPORTED_PLATFORMS:
+            errors.append(
+                "state.config.platform must be one of "
+                + ", ".join(SUPPORTED_PLATFORMS)
+            )
+        docker_remote = config.get("docker_remote", False)
+        if not isinstance(docker_remote, bool):
+            errors.append("state.config.docker_remote must be boolean")
+        elif docker_remote and config.get("platform") != "docker":
+            errors.append(
+                "state.config.docker_remote may be true only for platform=docker"
+            )
+        virtualenv = config.get("virtualenv")
+        virtualenvs = config.get("virtualenvs")
+        if config.get("platform") == "virtualenv":
+            if isinstance(virtualenvs, dict) and set(virtualenvs) == {"pyt", "ds"}:
+                selected_profiles = virtualenvs
+            elif isinstance(virtualenv, str) and virtualenv.strip():
+                selected_profiles = {"pyt": virtualenv, "ds": virtualenv}
+            else:
+                selected_profiles = {}
+                errors.append(
+                    "state.config.virtualenvs must bind the pyt and ds profiles"
+                )
+            for profile, selected in selected_profiles.items():
+                if pathlib.Path(str(selected)).expanduser().resolve() == (
+                    pathlib.Path(str(config.get("workspace"))).expanduser().resolve()
+                    / ".venv"
+                ).resolve():
+                    errors.append(
+                        f"state.config.virtualenvs.{profile} must be separate from "
+                        "the workspace control .venv"
+                    )
+                    continue
+                try:
+                    venv = validate_tao_virtualenv(
+                        pathlib.Path(str(selected)),
+                        profile=profile,
+                        probe_imports=False,
+                    )
+                except (OSError, ValueError) as exc:
+                    errors.append(
+                        f"state.config.virtualenvs.{profile} is not TAO-capable: {exc}"
+                    )
+                else:
+                    if not venv.is_absolute():
+                        errors.append(
+                            f"state.config.virtualenvs.{profile} must be absolute"
+                        )
+        elif virtualenv is not None or virtualenvs is not None:
+            errors.append(
+                "state virtualenv configuration must be null unless platform is virtualenv"
+            )
         if config.get("pyt_image") != PINNED_PYT_IMAGE:
             errors.append("state.config.pyt_image must be the pinned IAA PyTorch image")
         if config.get("ds_image") != PINNED_DS_IMAGE:
@@ -1229,6 +1356,28 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         gpu_ids = config.get("gpu_ids")
         if not isinstance(gpu_ids, list) or len(gpu_ids) != config.get("num_gpus"):
             errors.append("state.config.gpu_ids must match state.config.num_gpus")
+        if "visible_gpu_ids" in config or "visible_gpu_count" in config:
+            visible_gpu_ids = config.get("visible_gpu_ids")
+            if (
+                not isinstance(visible_gpu_ids, list)
+                or not visible_gpu_ids
+                or len(set(visible_gpu_ids)) != len(visible_gpu_ids)
+                or any(
+                    not isinstance(item, int) or isinstance(item, bool) or item < 0
+                    for item in visible_gpu_ids
+                )
+            ):
+                errors.append(
+                    "state.config.visible_gpu_ids must be unique non-negative integers"
+                )
+            elif isinstance(gpu_ids, list) and not set(gpu_ids).issubset(
+                visible_gpu_ids
+            ):
+                errors.append("state.config.gpu_ids must be a subset of visible_gpu_ids")
+            if config.get("visible_gpu_count") != (
+                len(visible_gpu_ids) if isinstance(visible_gpu_ids, list) else None
+            ):
+                errors.append("state.config.visible_gpu_count must match visible_gpu_ids")
         for field in (
             "history_aware",
             "continual_dataset",
@@ -1586,6 +1735,10 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             "mined_manifest": dict,
             "cumulative_names": list,
             "iteration_summary": dict,
+            "endpoint_manifest": dict,
+            "sdg_manifest": dict,
+            "sdg_pairs": list,
+            "sdg_execution_manifest": dict,
         }
         for field, expected_type in json_contracts.items():
             value = info.get(field)
@@ -1596,6 +1749,63 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     errors,
                     expected_type,
                 )
+
+        if (label, "sdg") in successful_keys:
+            try:
+                manifest = json.loads(pathlib.Path(str(info.get("sdg_manifest", ""))).read_text())
+                pairs = json.loads(pathlib.Path(str(info.get("sdg_pairs", ""))).read_text())
+                endpoint = json.loads(pathlib.Path(str(info.get("endpoint_manifest", ""))).read_text())
+                immutable_sdg = yaml.safe_load(pathlib.Path(str(config.get("sdg_config", ""))).read_text())
+                image_names = [
+                    line.strip()
+                    for line in pathlib.Path(str(info.get("sdg_image_list", ""))).read_text().splitlines()
+                    if line.strip()
+                ]
+            except (OSError, AttributeError, TypeError, json.JSONDecodeError, yaml.YAMLError) as exc:
+                errors.append(f"state.iterations.{label} SDG evidence is unreadable: {exc}")
+            else:
+                if manifest.get("dataset_format_version") != 3:
+                    errors.append(f"state.iterations.{label}.sdg_manifest has the wrong format version")
+                if manifest.get("rejected_samples_included") != 0:
+                    errors.append(f"state.iterations.{label}.sdg_manifest includes rejected samples")
+                if not pairs or len(pairs) != len(image_names) or manifest.get("num_pairs") != len(pairs):
+                    errors.append(f"state.iterations.{label} SDG pair/image counts disagree")
+                required_pair_fields = {
+                    "unique_name", "caption", "image_path", "query_type",
+                    "source_split", "is_augmented", "source_unique_name",
+                    "verification_metadata_sha256", "image_attr_values", "text_attr_values",
+                }
+                malformed = [index for index, row in enumerate(pairs) if not isinstance(row, dict) or not required_pair_fields.issubset(row)]
+                if malformed:
+                    errors.append(f"state.iterations.{label}.sdg_pairs has malformed rows at {malformed[:3]}")
+                if any(row.get("source_split") != "train" or row.get("is_augmented") is not True for row in pairs if isinstance(row, dict)):
+                    errors.append(f"state.iterations.{label}.sdg_pairs contains non-training or non-generated rows")
+                expected_ownership = immutable_sdg.get("endpoints", {}).get("ownership")
+                if endpoint.get("ownership") != expected_ownership:
+                    errors.append(f"state.iterations.{label}.endpoint_manifest ownership changed")
+                endpoint_records = endpoint.get("containers") if expected_ownership == "managed" else endpoint.get("probes")
+                if not isinstance(endpoint_records, dict):
+                    errors.append(f"state.iterations.{label}.endpoint_manifest lacks role evidence")
+                else:
+                    for role in ("image_edit", "vlm", "llm"):
+                        record = endpoint_records.get(role)
+                        expected_model = immutable_sdg.get("models", {}).get(role, {}).get("id")
+                        if not isinstance(record, dict) or record.get("model") != expected_model:
+                            errors.append(f"state.iterations.{label}.endpoint_manifest {role} model changed")
+                        elif expected_ownership == "managed" and record.get("owned") is not True:
+                            errors.append(f"state.iterations.{label}.endpoint_manifest {role} is not run-owned")
+
+        if (label, "train") in successful_keys and phase_root is not None:
+            try:
+                train_spec = yaml.safe_load(pathlib.Path(str(info.get("train_config", ""))).read_text())
+                datasets = train_spec["dataset"]["train"]["datasets"]
+            except (OSError, KeyError, TypeError, yaml.YAMLError) as exc:
+                errors.append(f"state.iterations.{label}.train_config dataset contract is invalid: {exc}")
+            else:
+                expected_sdg_list = f"/results/iter_{label[4:]}/datagen/dataset/sdg_image_list.txt"
+                sdg_entries = [entry for entry in datasets if isinstance(entry, dict) and entry.get("image_list_file") == expected_sdg_list]
+                if len(sdg_entries) != 1:
+                    errors.append(f"state.iterations.{label}.train_config must contain exactly one current SDG dataset entry")
 
         samples_value = info.get("samples_dir")
         if samples_value and pathlib.Path(str(samples_value)).is_dir():
@@ -1643,6 +1853,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     "iteration_summary_status": phase_root,
                     "mining_postprocess_status": phase_root,
                     "history_select_status": phase_root,
+                    "sdg_status": phase_root,
                     "train_config_status": phase_root,
                     "publish_checkpoint_status": phase_root,
                 }
@@ -1665,6 +1876,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 "cumulative_names",
                 "mining_history",
             ),
+            "sdg_status": ("sdg_manifest", "sdg_pairs", "sdg_image_list"),
             "train_config_status": ("train_config",),
             "publish_checkpoint_status": (
                 "pretrained_state",
@@ -1683,6 +1895,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             "iteration_summary_status": "iteration-summary",
             "mining_postprocess_status": "mining-postprocess",
             "history_select_status": "history-select",
+            "sdg_status": "sdg-normalize",
             "train_config_status": "train-config",
             "publish_checkpoint_status": "publish-checkpoint",
         }
@@ -1722,6 +1935,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 required_image_kind=required_kind,
                 required_image=required_image,
                 required_hf_forwarding=required_hf,
+                required_platform=config.get("platform"),
             )
             output_fields = status_outputs[field]
             if payload is not None:
@@ -1766,6 +1980,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         isinstance(started_ns, int)
                         and output_path.is_file()
                         and output_path.stat().st_mtime_ns < started_ns
+                        and not remote_freshness_attested(payload)
                         and not (
                             field == "history_select_status"
                             and payload.get("resume") is True
@@ -1784,10 +1999,13 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 if not isinstance(train_payload, dict):
                     raise ValueError("train command status root must be an object")
                 started_ns = train_payload.get("started_ns")
+                lineage_started_ns = train_payload.get(
+                    "lineage_started_ns", started_ns
+                )
                 provenance = validate_best_checkpoint(
                     pathlib.Path(str(info.get("best_ckpt_path", ""))),
                     phase_root / "train",
-                    started_ns=started_ns,
+                    started_ns=lineage_started_ns,
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
                 errors.append(
@@ -1903,6 +2121,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                             required_hf_forwarding=expected_hf_forwarding(
                                 command_name, config
                             ),
+                            required_platform=config.get("platform"),
                         )
                         output = expected_visual_outputs[index]
                         _validate_parquet(
@@ -1926,6 +2145,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                                 isinstance(started_ns, int)
                                 and output.is_file()
                                 and output.stat().st_mtime_ns < started_ns
+                                and not remote_freshness_attested(payload)
                             ):
                                 errors.append(
                                     f"state.iterations.{label}.visualization_embedding"
@@ -1987,6 +2207,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         isinstance(started_ns, int)
                         and output.exists()
                         and output.stat().st_mtime_ns < started_ns
+                        and not remote_freshness_attested(prepare_payload)
                     ):
                         errors.append(
                             f"state.iterations.{label} visualization input/output "
@@ -2017,6 +2238,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 if (
                     isinstance(started_ns, int)
                     and tsne.stat().st_mtime_ns < started_ns
+                    and not remote_freshness_attested(finish_payload)
                 ):
                     errors.append(
                         f"state.iterations.{label}.tsne_plot predates "
@@ -2128,7 +2350,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                                     "evidence root must be an object"
                                 )
                                 raw_evidence = {}
-                            metrics_path = phase_root / "evaluate" / "nvidia_iaa_metrics_aggregate.csv"
+                            metrics_path = phase_root / "evaluate" / "nvidia_pas_metrics_aggregate.csv"
                             if raw_evidence.get("iter_label") != label:
                                 errors.append(
                                     f"metric evidence iter_label={raw_evidence.get('iter_label')!r} "
@@ -2451,6 +2673,22 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     f"(e.g. {sample}); mined lists must have zero basename "
                     f"overlap with {eval_list_path}"
                 )
+            if (label, "sdg") in successful_keys and info.get("sdg_pairs"):
+                try:
+                    generated_pairs = json.loads(pathlib.Path(str(info["sdg_pairs"])).read_text())
+                except (OSError, json.JSONDecodeError):
+                    pass  # reported by the JSON evidence checks above
+                else:
+                    generated_sources = {
+                        pathlib.Path(str(row.get("source_unique_name", ""))).name
+                        for row in generated_pairs if isinstance(row, dict)
+                    }
+                    generated_overlap = sorted(generated_sources & eval_names)
+                    if generated_overlap:
+                        errors.append(
+                            f"state.iterations.{label}.sdg_pairs leaks {len(generated_overlap)} "
+                            f"evaluation source image(s) into generated training data"
+                        )
     elif any(key[1] == "history_select" for key in successful_keys):
         errors.append(
             "history_select is committed but iaa_splits/eval_list.txt is "

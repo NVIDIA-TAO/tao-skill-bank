@@ -6,13 +6,18 @@ experiment:
   visualize: true
   visualize_embeddings: true
 
+visualization:
+  viz_max_samples_per_group: 12
+  viz_max_total_samples: 96
+  viz_tile_size: 192
+
 iteration:
   start: 1
   end: 2
 
 training:
   init_checkpoint: ""
-  continual_model: false
+  continual_model: true
   continual_dataset: true
   num_nodes: 1
 

@@ -26,6 +26,10 @@ def create_clip_train_config(
     val_image_dir: str = "",
     val_caption_dir: str = "",
     continual_dataset: bool = False,
+    sdg_image_dir: str = "",
+    sdg_caption_dir: str = "",
+    sdg_image_list_file: str = "",
+    sdg_pairs_file: str = "",
 ) -> str:
     """Create a TAO CLIP training config YAML by patching a source config.
 
@@ -130,6 +134,17 @@ def create_clip_train_config(
         if mined_pairs_file:
             mined_entry["train_pairs_file"] = mined_pairs_file
         _add_dataset(mined_entry)
+
+    if sdg_image_list_file:
+        if not all((sdg_image_dir, sdg_caption_dir, sdg_pairs_file)):
+            raise ValueError("SDG dataset requires image, caption, image-list, and pairs paths")
+        _add_dataset({
+            "image_dir": sdg_image_dir,
+            "caption_dir": sdg_caption_dir,
+            "image_list_file": sdg_image_list_file,
+            "caption_file_suffix": ".txt",
+            "train_pairs_file": sdg_pairs_file,
+        })
 
     train_data_cfg["datasets"] = datasets
 
@@ -335,6 +350,7 @@ def get_current_checkpoint(
     train_output_dir: str,
     checkpoint_relpath: str = "best/clip_best_val_t2i_mAP.pth",
     metric_name: str = "val/t2i_mAP",
+    earliest_mtime_ns=None,
 ) -> str:
     """Select the best epoch checkpoint from a TAO CLIP training run.
 
@@ -534,8 +550,18 @@ def get_current_checkpoint(
                 return exact[-1]
         return candidates[-1]
 
-    def _publish_selected(selected, best_metric=None):
+    def _publish_selected(selected, best_metric=None, *, selection_strategy):
         selected_path = selected["path"]
+        if not os.path.isfile(selected_path) or os.path.getsize(selected_path) == 0:
+            raise ValueError(f"selected checkpoint is missing or empty: {selected_path}")
+        if (
+            earliest_mtime_ns is not None
+            and os.stat(selected_path).st_mtime_ns < earliest_mtime_ns
+        ):
+            raise ValueError(
+                "selected checkpoint predates the train attempt lineage: "
+                f"{selected_path}"
+            )
         os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
         if os.path.lexists(ckpt_path):
             os.remove(ckpt_path)
@@ -559,6 +585,7 @@ def get_current_checkpoint(
                 "published_checkpoint": ckpt_path,
                 "metric_name": metric_name,
                 "metric": best_metric,
+                "selection_strategy": selection_strategy,
                 "publish_mode": link_mode,
             }, f, indent=2)
         print(f"Published best checkpoint ({link_mode}): {ckpt_path}")
@@ -582,11 +609,15 @@ def get_current_checkpoint(
                 f"{best_metric['value']:.6g} from {best_metric['source']}: "
                 f"{selected['path']}"
             )
-            return _publish_selected(selected, best_metric)
+            return _publish_selected(
+                selected, best_metric, selection_strategy="metric"
+            )
 
     if candidates:
         print(f"No {metric_name} metric found; using newest checkpoint.")
-        return _publish_selected(candidates[-1], None)
+        return _publish_selected(
+            candidates[-1], None, selection_strategy="newest_fallback"
+        )
 
     raise FileNotFoundError(
         f"No checkpoints found under {train_output_dir}"

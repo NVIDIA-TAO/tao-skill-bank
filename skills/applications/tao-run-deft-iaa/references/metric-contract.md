@@ -33,7 +33,7 @@ metric after state initialization.
 
 ## Bind evaluation evidence
 
-After the TAO evaluation has a zero container exit and its canonical
+After the TAO evaluation has a zero native backend exit and its canonical
 `status.json` contains `Evaluate finished successfully`, parse the exact
 label's CSV:
 
@@ -45,7 +45,7 @@ fi
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
   "$SKILL_ROOT/scripts/parse_iaa_metrics.py" \
-    --metrics-csv "$PHASE_DIR/evaluate/nvidia_iaa_metrics_aggregate.csv" \
+    --metrics-csv "$PHASE_DIR/evaluate/nvidia_pas_metrics_aggregate.csv" \
     --metric-name "$METRIC_NAME" --query-type "$QUERY_TYPE" \
     --op "$METRIC_OP" "${TARGET_ARGS[@]}" \
     --iter-label "$LABEL" \
@@ -59,7 +59,7 @@ row, normalized contract, numeric value, and computed `passed`. Its exit is
 zero for a valid non-passing result; gate failure is workflow data, not a
 parser error.
 
-Pass the aggregate CSV, TAO status, parser result, container status, and (for
+Pass the aggregate CSV, TAO status, parser result, platform-action status, and (for
 iterN) iteration summary together to `commit_stage.py`, as shown in
 `clip-train-eval.md`. Commit reopens the CSV, verifies label/path provenance,
 re-derives the value and comparison, and records the canonical result. Never

@@ -3,7 +3,8 @@
 
 """Deterministic host-side adapters for the IAA DEFT stages.
 
-Container work remains in ``run_deft_container.py``.  This command exposes the
+TAO work is prepared/finalized by ``run_deft_action.py`` and executed by the
+selected platform skill. This command exposes the
 canonical Python calls as bounded subcommands so an agent never has to invent
 inline Python or rediscover function signatures.
 """
@@ -31,6 +32,7 @@ from command_contract import (
     expected_hf_forwarding,
     expected_image_kind,
 )
+from deft_action_contract import platform_evidence_error, remote_freshness_attested
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -485,6 +487,10 @@ def train_config(args: argparse.Namespace) -> dict[str, Any]:
         val_image_dir=cfg.iaa_eval_image_dir,
         val_caption_dir=cfg.iaa_eval_caption_dir,
         continual_dataset=cfg.continual_dataset,
+        sdg_image_dir=f"/results/iter_{args.iter_num}/datagen/dataset/images",
+        sdg_caption_dir=f"/results/iter_{args.iter_num}/datagen/dataset/captions",
+        sdg_image_list_file=f"/results/iter_{args.iter_num}/datagen/dataset/sdg_image_list.txt",
+        sdg_pairs_file=f"/results/iter_{args.iter_num}/datagen/dataset/sdg_pairs.json",
     )
     _require([output])
     return {"train_config": str(output), "checkpoint_input": _training_checkpoint(cfg, args.iter_num)}
@@ -520,14 +526,12 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     attempt = payload.get("attempt") if isinstance(payload, dict) else None
     if (
         not isinstance(payload, dict)
-        or payload.get("schema_version") != "1"
+        or payload.get("schema_version") not in {"1", "2"}
         or payload.get("workflow") != "tao-run-deft-iaa"
-        or payload.get("kind") != "container"
+        or platform_evidence_error(payload, str(state_config.get("platform"))) is not None
         or payload.get("name") != "train"
         or payload.get("status") != "ok"
         or payload.get("exit_code") != 0
-        or payload.get("docker_exit_code") != 0
-        or payload.get("artifact_error") is not None
         or payload.get("image_kind") != expected_image_kind("train")
         or payload.get("image") != state_config.get("pyt_image")
         or payload.get("command") != expected_command
@@ -544,6 +548,16 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     started_ns = payload.get("started_ns")
     if not isinstance(started_ns, int) or isinstance(started_ns, bool) or started_ns < 1:
         raise ValueError("train command status started_ns must be a positive integer")
+    lineage_started_ns = payload.get("lineage_started_ns", started_ns)
+    if (
+        not isinstance(lineage_started_ns, int)
+        or isinstance(lineage_started_ns, bool)
+        or not 1 <= lineage_started_ns <= started_ns
+    ):
+        raise ValueError(
+            "train command status lineage_started_ns must be a positive integer "
+            "no later than started_ns"
+        )
     log_path = pathlib.Path(str(payload.get("log_path", "")))
     if (
         not log_path.is_absolute()
@@ -570,7 +584,10 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         or train_tao_status.stat().st_size == 0
         or train_tao_status.is_symlink()
         or train_tao_status.resolve() != train_tao_status
-        or train_tao_status.stat().st_mtime_ns < started_ns
+        or (
+            train_tao_status.stat().st_mtime_ns < started_ns
+            and not remote_freshness_attested(payload)
+        )
     ):
         raise ValueError("TAO train status is missing, unsafe, empty, or stale")
     if "Train finished successfully." not in train_tao_status.read_text(errors="replace"):
@@ -589,10 +606,16 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
             output.unlink()
         except FileNotFoundError:
             pass
-    published = pathlib.Path(get_current_checkpoint(str(train_dir)))
+    published = pathlib.Path(
+        get_current_checkpoint(
+            str(train_dir), earliest_mtime_ns=lineage_started_ns
+        )
+    )
     if pathlib.Path(os.path.abspath(published)) != best:
         raise ValueError(f"checkpoint publisher returned {published}, expected {best}")
-    provenance = validate_best_checkpoint(best, train_dir, started_ns=started_ns)
+    provenance = validate_best_checkpoint(
+        best, train_dir, started_ns=lineage_started_ns
+    )
     normalize_clip_pretrained_checkpoint(str(best), str(normalized))
     _require([best, metadata, normalized])
     if normalized.is_symlink() or normalized.resolve() != normalized:

@@ -50,6 +50,9 @@ import tempfile
 
 import yaml
 
+from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
+from virtualenv_runtime import resolve_virtualenv_profiles
+
 from metric_contract import validate_contract
 
 
@@ -58,6 +61,7 @@ PINNED_PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"  # versions-key: i
 PINNED_DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"  # versions-key: images.tao_toolkit.data_services
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
+    "sdg_config.yaml",
     "tao_spec.yaml",
     "text_embed_spec.yaml",
     "image_embed_spec.yaml",
@@ -72,6 +76,7 @@ _COMPLETED_STEP_VALUES = [
     "gap_analysis",
     "data_mining",
     "history_select",
+    "sdg",
     "visualize",
     "train",
     "loop_stop",
@@ -100,14 +105,14 @@ def _parse_gpu_ids(raw: str, num_gpus: int) -> list[int]:
 
 def _resolve_dataset_root(root: pathlib.Path) -> pathlib.Path:
     """Resolve the intended dataset root before dataset_setup materializes it."""
-    resolved = root.expanduser().resolve()
+    resolved = safe_absolute_path(root, "--dataset-root")
     if resolved.exists() and not resolved.is_dir():
         raise ValueError(f"--dataset-root exists but is not a directory: {resolved}")
     return resolved
 
 
 def _workspace_child(path: pathlib.Path, workspace: pathlib.Path, name: str) -> pathlib.Path:
-    resolved = path.expanduser().resolve()
+    resolved = safe_absolute_path(path, name)
     try:
         relative = resolved.relative_to(workspace)
     except ValueError as exc:
@@ -142,8 +147,7 @@ def _validate_metric_gate(
 
 
 def _required_input_file(path: pathlib.Path, name: str) -> pathlib.Path:
-    expanded = path.expanduser()
-    resolved = expanded.resolve()
+    resolved = safe_absolute_path(path, name, require_exists=True)
     if not resolved.is_file():
         raise ValueError(f"{name} must be an existing file: {path}")
     if resolved.stat().st_size == 0:
@@ -152,7 +156,7 @@ def _required_input_file(path: pathlib.Path, name: str) -> pathlib.Path:
 
 
 def _required_input_dir(path: pathlib.Path, name: str) -> pathlib.Path:
-    resolved = path.expanduser().resolve()
+    resolved = safe_absolute_path(path, name, require_exists=True)
     if not resolved.is_dir():
         raise ValueError(f"{name} must be an existing directory: {path}")
     return resolved
@@ -220,17 +224,52 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         raise ValueError(
             f"prepared config directory must be {expected_config_dir}, got {config_dir}"
         )
-    if args.tao_spec.parent.resolve() != config_dir:
-        raise ValueError("--deft-config and --tao-spec must share the run config directory")
+    if args.tao_spec.parent.resolve() != config_dir or args.sdg_config.parent.resolve() != config_dir:
+        raise ValueError("--deft-config, --sdg-config, and --tao-spec must share the run config directory")
     spec_sha256: dict[str, str] = {}
     for name in RUN_SPEC_NAMES:
         spec_path = _required_input_file(config_dir / name, f"run config {name}")
         spec_sha256[name] = _sha256(spec_path)
     approval_path = config_dir / "approval.json"
     approval = json.loads(approval_path.read_text())
+    visible_gpu_ids = approval.get("visible_gpu_ids")
+    if (
+        not isinstance(visible_gpu_ids, list)
+        or not visible_gpu_ids
+        or any(
+            not isinstance(item, int) or isinstance(item, bool) or item < 0
+            for item in visible_gpu_ids
+        )
+        or len(set(visible_gpu_ids)) != len(visible_gpu_ids)
+    ):
+        raise ValueError("approval.json visible_gpu_ids must be unique non-negative integers")
+    deft = yaml.safe_load(args.deft_config.read_text())
+    tao = yaml.safe_load(args.tao_spec.read_text())
+    sdg = yaml.safe_load(args.sdg_config.read_text())
+    if not isinstance(deft, dict) or not isinstance(tao, dict) or not isinstance(sdg, dict):
+        raise ValueError("prepared run configs must have object roots")
+    endpoints = _mapping(sdg, "endpoints", "sdg_config")
+    generation = _mapping(sdg, "generation", "sdg_config")
+    ownership = endpoints.get("ownership")
+    if ownership not in {"managed", "external"}:
+        raise ValueError("prepared sdg_config endpoints.ownership is invalid")
+    args.approved_sdg = {
+        "endpoint_mode": ownership,
+        "images": sdg.get("images"),
+        "models": sdg.get("models"),
+        "gpu_ids": endpoints.get("gpu_ids"),
+        "external_urls": endpoints.get("external_urls"),
+        "ports": {role: sdg.get("models", {}).get(role, {}).get("port") for role in ("image_edit", "vlm", "llm")},
+        "cache_dir": endpoints.get("cache_dir"),
+        "max_samples_per_iteration": generation.get("max_samples_per_iteration"),
+        "verification_max_attempts": generation.get("verification_max_attempts"),
+        "caption_policy": generation.get("caption_policy"),
+    }
     expected_approval = {
-        "schema_version": "2",
+        "schema_version": "3",
         "workflow": WORKFLOW,
+        "platform": args.platform,
+        "docker_remote": args.docker_remote,
         "workspace": str(args.workspace.resolve()),
         "results_dir": str(args.results_dir.resolve()),
         "dataset_root": str(args.dataset_root.resolve()),
@@ -243,20 +282,28 @@ def _load_run_config(args: argparse.Namespace) -> dict:
             else None
         ),
         "requires_hf_token": args.requires_hf_token,
+        "visible_gpu_ids": visible_gpu_ids,
         "max_iterations": args.max_iterations,
         "metric_contract": args.metric_contract,
         "pyt_image": args.pyt_image,
         "ds_image": args.ds_image,
+        "sdg": args.approved_sdg,
     }
+    if "virtualenvs" in approval:
+        expected_approval["virtualenvs"] = (
+            {name: str(path) for name, path in args.virtualenvs.items()}
+            if args.virtualenvs is not None
+            else None
+        )
+    else:
+        expected_approval["virtualenv"] = (
+            str(args.virtualenv.resolve()) if args.virtualenv is not None else None
+        )
     if approval != expected_approval:
         raise ValueError(
             "approval.json does not match the approved initialization inputs; "
             "rerun config preparation in a fresh results directory"
         )
-    deft = yaml.safe_load(args.deft_config.read_text())
-    tao = yaml.safe_load(args.tao_spec.read_text())
-    if not isinstance(deft, dict) or not isinstance(tao, dict):
-        raise ValueError("--deft-config and --tao-spec must have object roots")
     iteration = _mapping(deft, "iteration", "deft_config")
     experiment = _mapping(deft, "experiment", "deft_config")
     mining = _mapping(deft, "mining", "deft_config")
@@ -280,6 +327,12 @@ def _load_run_config(args: argparse.Namespace) -> dict:
     if not isinstance(gpu_ids, list):
         raise ValueError("prepared tao_spec train.gpu_ids must be a list")
     parsed_gpu_ids = _parse_gpu_ids(",".join(str(item) for item in gpu_ids), num_gpus)
+    unavailable = sorted(set(parsed_gpu_ids) - set(visible_gpu_ids))
+    if unavailable:
+        raise ValueError(
+            "prepared GPU IDs were not visible during preflight: "
+            + ", ".join(str(item) for item in unavailable)
+        )
     if evaluate.get("num_gpus") != num_gpus or evaluate.get("gpu_ids") != gpu_ids:
         raise ValueError("prepared TAO train/evaluate GPU shapes must match")
     training_epochs = train.get("num_epochs")
@@ -323,10 +376,13 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "approval_manifest": str(approval_path),
         "spec_sha256": spec_sha256,
         "deft_config_sha256": _sha256(args.deft_config),
+        "sdg_config_sha256": _sha256(args.sdg_config),
         "tao_spec_sha256": _sha256(args.tao_spec),
         "training_epochs": training_epochs,
         "num_gpus": num_gpus,
         "gpu_ids": parsed_gpu_ids,
+        "visible_gpu_count": len(visible_gpu_ids),
+        "visible_gpu_ids": visible_gpu_ids,
         "history_aware": history.get("enabled"),
         "replay_fraction": replay,
         "mining_topn": int(mining.get("topn")),
@@ -336,6 +392,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "continual_model": training.get("continual_model"),
         "visualize": experiment.get("visualize"),
         "visualize_embeddings": experiment.get("visualize_embeddings"),
+        "sdg_config": str(args.sdg_config),
+        "sdg": args.approved_sdg,
     }
 
 
@@ -372,6 +430,12 @@ def build_state(args: argparse.Namespace) -> dict:
             ),
             "requires_hf_token": args.requires_hf_token,
             "platform": args.platform,
+            "docker_remote": args.docker_remote,
+            "virtualenvs": (
+                {name: str(path) for name, path in args.virtualenvs.items()}
+                if args.virtualenvs is not None
+                else None
+            ),
             "pyt_image": args.pyt_image,
             "ds_image": args.ds_image,
             "deft_config": str(args.deft_config),
@@ -390,6 +454,7 @@ def build_state(args: argparse.Namespace) -> dict:
                 "mining_selection_history": str(
                     rd / "mining_selection_history.json"
                 ),
+                "endpoint_manifest": str(rd / "endpoints" / "manifest.json"),
             },
         },
         "iterations": {"baseline": {"status": "pending"}},
@@ -467,7 +532,34 @@ def _build_parser() -> argparse.ArgumentParser:
             "the loop runs to --max-iterations."
         ),
     )
-    parser.add_argument("--platform", default="docker", choices=("docker",))
+    parser.add_argument(
+        "--platform",
+        required=True,
+        choices=SUPPORTED_PLATFORMS,
+    )
+    parser.add_argument(
+        "--docker-remote",
+        action="store_true",
+        help="Record the approved remote-DOCKER_HOST staging contract.",
+    )
+    parser.add_argument(
+        "--virtualenv",
+        type=pathlib.Path,
+        help=(
+            "Compatibility form: one environment that independently satisfies both "
+            "pyt and ds profiles; cannot be combined with profile-specific options."
+        ),
+    )
+    parser.add_argument(
+        "--pyt-virtualenv",
+        type=pathlib.Path,
+        help="Python 3.12 TAO PyTorch execution profile for train/evaluate.",
+    )
+    parser.add_argument(
+        "--ds-virtualenv",
+        type=pathlib.Path,
+        help="Python 3.12 TAO data-services execution profile for embedding/mining.",
+    )
     parser.add_argument(
         "--pyt-image",
         required=True,
@@ -490,12 +582,33 @@ def _build_parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help="The run's TAO experiment spec file.",
     )
+    parser.add_argument(
+        "--sdg-config",
+        required=True,
+        type=pathlib.Path,
+        help="The run's immutable local generation and endpoint configuration.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
+        args.virtualenvs = resolve_virtualenv_profiles(
+            platform=args.platform,
+            legacy=args.virtualenv,
+            pyt=args.pyt_virtualenv,
+            ds=args.ds_virtualenv,
+            probe_imports=True,
+        )
+        if args.docker_remote and args.platform != "docker":
+            raise ValueError("--docker-remote is valid only with --platform docker")
+        if args.virtualenvs is not None:
+            control_environment = (args.workspace.expanduser().resolve() / ".venv").resolve()
+            if any(path == control_environment for path in args.virtualenvs.values()):
+                raise ValueError(
+                    "TAO execution profiles must be separate from the workspace control .venv"
+                )
         args.metric_contract = _validate_metric_gate(
             args.metric_name, args.metric_query_type, args.metric_op, args.metric_target
         )
@@ -535,6 +648,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         args.deft_config = _required_input_file(args.deft_config, "--deft-config")
         args.tao_spec = _required_input_file(args.tao_spec, "--tao-spec")
+        args.sdg_config = _required_input_file(args.sdg_config, "--sdg-config")
         args.run_config = _load_run_config(args)
     except (
         OSError,
@@ -566,7 +680,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    out = args.results_dir.expanduser().resolve() / "deft_state.json"
+    out = safe_absolute_path(
+        args.results_dir / "deft_state.json", "deft state output"
+    )
     if out.exists():
         print(
             f"init_deft_state: refusing to reinitialize {out}; deft_state.json "
