@@ -35,7 +35,9 @@
     "dataset.transform.local_crops_scale",
     "train.optim",
     "inference",
-    "dataset.transform.global_crops_scale"
+    "dataset.transform.global_crops_scale",
+    "model.lora.target_modules",
+    "model.preservation"
   ],
   "default": {
     "dataset": {
@@ -95,8 +97,19 @@
       },
       "lora": {
         "alpha": 16.0,
+        "dropout": 0.05,
         "enable": false,
-        "rank": 8
+        "num_last_blocks": 0,
+        "rank": 8,
+        "target_modules": [
+          "qkv",
+          "proj"
+        ]
+      },
+      "preservation": {
+        "cls_cosine_weight": 0.05,
+        "cls_mse_weight": 0.05,
+        "enable": false
       }
     },
     "model_name": "",
@@ -137,15 +150,15 @@
         "last_layer_learning_rate": {
           "freeze_steps": 1250,
           "max_decay_steps": 2500000,
-          "val_base": 7.07e-06,
-          "val_final": 1e-06,
+          "val_base": 0.00000707,
+          "val_final": 0.000001,
           "val_start": 0.0,
           "warm_up_steps": 100000
         },
         "learning_rate": {
           "max_decay_steps": 2500000,
-          "val_base": 7.07e-06,
-          "val_final": 1e-06,
+          "val_base": 0.00000707,
+          "val_final": 0.000001,
           "val_start": 0.0,
           "warm_up_steps": 100000
         },
@@ -173,7 +186,8 @@
       },
       "seed": 1234,
       "use_custom_attention": true,
-      "validation_interval": 1
+      "validation_interval": 1,
+      "log_every_n_steps": 1
     },
     "wandb": {
       "enable": true,
@@ -253,6 +267,21 @@
         "bottleneck_dim": 384,
         "hidden_dim": 2048,
         "num_layers": 3
+      },
+      "lora": {
+        "alpha": 16.0,
+        "enable": false,
+        "num_last_blocks": 0,
+        "rank": 8,
+        "target_modules": [
+          "qkv",
+          "proj"
+        ]
+      },
+      "preservation": {
+        "cls_cosine_weight": 0.05,
+        "cls_mse_weight": 0.05,
+        "enable": false
       }
     },
     "train": {
@@ -275,15 +304,15 @@
         "last_layer_learning_rate": {
           "freeze_steps": 1250,
           "max_decay_steps": 2500000,
-          "val_base": 7.07e-06,
-          "val_final": 1e-06,
+          "val_base": 0.00000707,
+          "val_final": 0.000001,
           "val_start": 0.0,
           "warm_up_steps": 100000
         },
         "learning_rate": {
           "max_decay_steps": 2500000,
-          "val_base": 7.07e-06,
-          "val_final": 1e-06,
+          "val_base": 0.00000707,
+          "val_final": 0.000001,
           "val_start": 0.0,
           "warm_up_steps": 100000
         },
@@ -530,7 +559,8 @@
         "model.backbone",
         "model.head",
         "model.gram",
-        "model.lora"
+        "model.lora",
+        "model.preservation"
       ],
       "automl_enabled": false,
       "default": {
@@ -564,8 +594,19 @@
         },
         "lora": {
           "alpha": 16.0,
+          "dropout": 0.05,
           "enable": false,
-          "rank": 8
+          "num_last_blocks": 0,
+          "rank": 8,
+          "target_modules": [
+            "qkv",
+            "proj"
+          ]
+        },
+        "preservation": {
+          "cls_cosine_weight": 0.05,
+          "cls_mse_weight": 0.05,
+          "enable": false
         }
       },
       "description": "Configurable parameters to construct the model for a DINOv3 experiment.",
@@ -574,7 +615,9 @@
         "centering_method",
         "gram",
         "distill",
-        "head"
+        "head",
+        "lora",
+        "preservation"
       ],
       "properties": {
         "backbone": {
@@ -825,32 +868,122 @@
           "type": "collection"
         },
         "lora": {
+          "automl_disabled_parameters": [
+            "model.lora.target_modules"
+          ],
           "automl_enabled": false,
           "default": {
             "alpha": 16.0,
+            "dropout": 0.05,
             "enable": false,
-            "rank": 8
+            "num_last_blocks": 0,
+            "rank": 8,
+            "target_modules": [
+              "qkv",
+              "proj"
+            ]
           },
-          "description": "Disabled LoRA stub for forward-compatibility",
+          "description": "Configuration for LoRA parameter-efficient continual pre-training",
+          "popular": [
+            "alpha",
+            "target_modules",
+            "enable",
+            "num_last_blocks",
+            "rank"
+          ],
           "properties": {
             "alpha": {
               "default": 16.0,
-              "description": "LoRA scaling alpha",
+              "description": "LoRA scaling alpha; the applied scale is alpha / rank.",
+              "popular": true,
               "title": "lora alpha",
+              "type": "float"
+            },
+            "dropout": {
+              "default": 0.05,
+              "description": "Dropout applied to the LoRA branch input only (the frozen base path is untouched).",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "lora dropout",
               "type": "float"
             },
             "enable": {
               "default": false,
-              "description": "Whether to apply LoRA adapters (disabled in v1)",
+              "description": "Whether to apply LoRA adapters to the backbone (parameter-efficient SSL)",
+              "popular": true,
               "title": "enable lora",
               "type": "bool"
             },
+            "num_last_blocks": {
+              "default": 0,
+              "description": "Adapt only the last N transformer blocks. 0 = all blocks.",
+              "maximum": Infinity,
+              "minimum": 0,
+              "popular": true,
+              "title": "lora num last blocks",
+              "type": "int"
+            },
             "rank": {
               "default": 8,
-              "description": "LoRA rank",
+              "description": "LoRA rank (r). The low-rank update is dW = (alpha/r) * B @ A.",
+              "maximum": Infinity,
               "minimum": 1,
+              "popular": true,
               "title": "lora rank",
               "type": "int"
+            },
+            "target_modules": {
+              "automl_enabled": false,
+              "default": [
+                "qkv",
+                "proj"
+              ],
+              "description": "Projections to adapt inside each targeted ViT block. 'qkv' and 'proj' are the attention projections (the v1 default); 'fc1'/'fc2' additionally adapt the FFN. SwiGLU backbones (ViT-S+/H+/7B) expose a fused fc1 and are deferred in v1.",
+              "popular": true,
+              "title": "lora target modules",
+              "type": "list"
+            }
+          },
+          "type": "collection"
+        },
+        "preservation": {
+          "automl_enabled": false,
+          "default": {
+            "cls_cosine_weight": 0.05,
+            "cls_mse_weight": 0.05,
+            "enable": false
+          },
+          "description": "Configuration for CLS-token preservation against the frozen anchor teacher",
+          "popular": [
+            "cls_cosine_weight",
+            "cls_mse_weight",
+            "enable"
+          ],
+          "properties": {
+            "cls_cosine_weight": {
+              "default": 0.05,
+              "description": "Weight of the CLS-token cosine preservation term (0 disables just this term).",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "cls cosine weight",
+              "type": "float"
+            },
+            "cls_mse_weight": {
+              "default": 0.05,
+              "description": "Weight of the CLS-token MSE preservation term (0 disables just this term).",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "cls mse weight",
+              "type": "float"
+            },
+            "enable": {
+              "default": false,
+              "description": "Whether to add CLS-token preservation losses against the frozen anchor teacher. Recommended alongside LoRA for continual pre-training.",
+              "popular": true,
+              "title": "enable preservation",
+              "type": "bool"
             }
           },
           "type": "collection"
@@ -915,15 +1048,15 @@
           "last_layer_learning_rate": {
             "freeze_steps": 1250,
             "max_decay_steps": 2500000,
-            "val_base": 7.07e-06,
-            "val_final": 1e-06,
+            "val_base": 0.00000707,
+            "val_final": 0.000001,
             "val_start": 0.0,
             "warm_up_steps": 100000
           },
           "learning_rate": {
             "max_decay_steps": 2500000,
-            "val_base": 7.07e-06,
-            "val_final": 1e-06,
+            "val_base": 0.00000707,
+            "val_final": 0.000001,
             "val_start": 0.0,
             "warm_up_steps": 100000
           },
@@ -951,7 +1084,8 @@
         },
         "seed": 1234,
         "use_custom_attention": true,
-        "validation_interval": 1
+        "validation_interval": 1,
+        "log_every_n_steps": 1
       },
       "description": "Configurable parameters to construct the trainer for a DINOv3 experiment.",
       "popular": [
@@ -1194,15 +1328,15 @@
             "last_layer_learning_rate": {
               "freeze_steps": 1250,
               "max_decay_steps": 2500000,
-              "val_base": 7.07e-06,
-              "val_final": 1e-06,
+              "val_base": 0.00000707,
+              "val_final": 0.000001,
               "val_start": 0.0,
               "warm_up_steps": 100000
             },
             "learning_rate": {
               "max_decay_steps": 2500000,
-              "val_base": 7.07e-06,
-              "val_final": 1e-06,
+              "val_base": 0.00000707,
+              "val_final": 0.000001,
               "val_start": 0.0,
               "warm_up_steps": 100000
             },
@@ -1242,8 +1376,8 @@
               "default": {
                 "freeze_steps": 1250,
                 "max_decay_steps": 2500000,
-                "val_base": 7.07e-06,
-                "val_final": 1e-06,
+                "val_base": 0.00000707,
+                "val_final": 0.000001,
                 "val_start": 0.0,
                 "warm_up_steps": 100000
               },
@@ -1272,14 +1406,14 @@
                   "type": "int"
                 },
                 "val_base": {
-                  "default": 7.07e-06,
+                  "default": 0.00000707,
                   "description": "The value after warm-up for scheduler.",
                   "popular": true,
                   "title": "base value",
                   "type": "float"
                 },
                 "val_final": {
-                  "default": 1e-06,
+                  "default": 0.000001,
                   "description": "Final value for scheduler",
                   "popular": true,
                   "title": "final value",
@@ -1306,8 +1440,8 @@
               "automl_enabled": false,
               "default": {
                 "max_decay_steps": 2500000,
-                "val_base": 7.07e-06,
-                "val_final": 1e-06,
+                "val_base": 0.00000707,
+                "val_final": 0.000001,
                 "val_start": 0.0,
                 "warm_up_steps": 100000
               },
@@ -1328,14 +1462,14 @@
                   "type": "int"
                 },
                 "val_base": {
-                  "default": 7.07e-06,
+                  "default": 0.00000707,
                   "description": "The value after warm-up for scheduler",
                   "popular": true,
                   "title": "base value",
                   "type": "float"
                 },
                 "val_final": {
-                  "default": 1e-06,
+                  "default": 0.000001,
                   "description": "Final value for scheduler",
                   "popular": true,
                   "title": "final value",
@@ -1550,6 +1684,13 @@
           "popular": true,
           "title": "Validation interval",
           "type": "int"
+        },
+        "log_every_n_steps": {
+          "default": 1,
+          "description": "Number of training steps between logger updates.",
+          "minimum": 1,
+          "title": "logging interval",
+          "type": "int"
         }
       },
       "type": "collection"
@@ -1629,6 +1770,6 @@
     "network_arch": "dinov3",
     "schema_action": "train",
     "schema_version": 1,
-    "source": "tao-pytorch dataclass config"
+    "source": "tao-core dataclass config"
   }
 }
