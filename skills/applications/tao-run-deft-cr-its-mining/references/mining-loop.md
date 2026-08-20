@@ -61,6 +61,26 @@ Resolve `images.tao_toolkit.deft_cosmos_reason` from the installed skill bank's 
 
 Run every Cosmos Reason train/evaluate action through `tao-finetune-cosmos-reason` and the selected platform skill. Confirm the submitted job records `DEFT_COSMOS_REASON_IMAGE` before launch. For local or remote single-node Docker, select `tao-run-on-docker`; do not construct a competing unmanaged Docker launch. Require its submitted container command to include `--ipc=host --ulimit memlock=-1 --ulimit stack=67108864`. Kubernetes or Slurm must provide equivalent shared-memory and memlock resources. Keep the platform job id and use the platform's status and log operations until the job reaches a terminal state.
 
+Before every Cosmos Reason launch, set `STAGE_DIR` and `TAO_JOB_ID` from this table:
+
+| Launch | `STAGE_DIR` | `TAO_JOB_ID` |
+| --- | --- | --- |
+| Baseline evaluate | `$RUN_DIR/baseline/evaluate` | `baseline-evaluate` |
+| Iteration train | `$RUN_DIR/iter_${ITER}/train` | `iter-${ITER}-train` |
+| Iteration evaluate | `$RUN_DIR/iter_${ITER}/evaluate` | `iter-${ITER}-evaluate` |
+
+Set `CONTAINER_STAGE_DIR` to the exact writable container destination where the selected platform mounts `STAGE_DIR`. The submitted job must record the read-write mapping `STAGE_DIR:CONTAINER_STAGE_DIR`; a one-to-one mapping is valid. Do not infer `CONTAINER_STAGE_DIR` from the image working directory. If the platform submission does not expose this mapping, stop before launch.
+
+Create `$STAGE_DIR/.tao-status/$TAO_JOB_ID/` on the host and verify it is writable. Because it is below the stage mount, its container path is `$CONTAINER_STAGE_DIR/.tao-status/$TAO_JOB_ID/`. Set:
+
+```text
+TAO_API_JOB_ID=$TAO_JOB_ID
+TAO_API_RESULTS_DIR=$CONTAINER_STAGE_DIR/.tao-status
+TAO_STATUS_FILE=$CONTAINER_STAGE_DIR/.tao-status/$TAO_JOB_ID/status.json
+```
+
+Confirm the submitted job contains the mount and all three environment variables before launch; otherwise the 7.0 TAO status decorator may fall back to writing `./results` under the image's unwritable `/workspace` directory.
+
 ## Baseline Evaluation
 
 Generate the baseline evaluate TOML:
