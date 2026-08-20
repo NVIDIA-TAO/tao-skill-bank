@@ -228,6 +228,17 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         spec_sha256[name] = _sha256(spec_path)
     approval_path = config_dir / "approval.json"
     approval = json.loads(approval_path.read_text())
+    visible_gpu_ids = approval.get("visible_gpu_ids")
+    if (
+        not isinstance(visible_gpu_ids, list)
+        or not visible_gpu_ids
+        or any(
+            not isinstance(item, int) or isinstance(item, bool) or item < 0
+            for item in visible_gpu_ids
+        )
+        or len(set(visible_gpu_ids)) != len(visible_gpu_ids)
+    ):
+        raise ValueError("approval.json visible_gpu_ids must be unique non-negative integers")
     expected_approval = {
         "schema_version": "2",
         "workflow": WORKFLOW,
@@ -243,6 +254,7 @@ def _load_run_config(args: argparse.Namespace) -> dict:
             else None
         ),
         "requires_hf_token": args.requires_hf_token,
+        "visible_gpu_ids": visible_gpu_ids,
         "max_iterations": args.max_iterations,
         "metric_contract": args.metric_contract,
         "pyt_image": args.pyt_image,
@@ -280,6 +292,12 @@ def _load_run_config(args: argparse.Namespace) -> dict:
     if not isinstance(gpu_ids, list):
         raise ValueError("prepared tao_spec train.gpu_ids must be a list")
     parsed_gpu_ids = _parse_gpu_ids(",".join(str(item) for item in gpu_ids), num_gpus)
+    unavailable = sorted(set(parsed_gpu_ids) - set(visible_gpu_ids))
+    if unavailable:
+        raise ValueError(
+            "prepared GPU IDs were not visible during preflight: "
+            + ", ".join(str(item) for item in unavailable)
+        )
     if evaluate.get("num_gpus") != num_gpus or evaluate.get("gpu_ids") != gpu_ids:
         raise ValueError("prepared TAO train/evaluate GPU shapes must match")
     training_epochs = train.get("num_epochs")
@@ -327,6 +345,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "training_epochs": training_epochs,
         "num_gpus": num_gpus,
         "gpu_ids": parsed_gpu_ids,
+        "visible_gpu_count": len(visible_gpu_ids),
+        "visible_gpu_ids": visible_gpu_ids,
         "history_aware": history.get("enabled"),
         "replay_fraction": replay,
         "mining_topn": int(mining.get("topn")),

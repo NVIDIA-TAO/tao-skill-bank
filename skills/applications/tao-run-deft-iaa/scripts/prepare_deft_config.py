@@ -46,15 +46,22 @@ def _bool(value: str) -> bool:
     raise argparse.ArgumentTypeError(f"expected true or false, got {value!r}")
 
 
-def _gpu_ids(raw: str, count: int) -> list[int]:
+def _gpu_id_list(raw: str, flag: str) -> list[int]:
     try:
         values = [int(item.strip()) for item in raw.split(",") if item.strip()]
     except ValueError as exc:
-        raise ValueError("--gpu-ids must be a comma-separated integer list") from exc
-    if len(values) != count or len(set(values)) != len(values) or any(v < 0 for v in values):
+        raise ValueError(f"{flag} must be a comma-separated integer list") from exc
+    if not values or len(set(values)) != len(values) or any(v < 0 for v in values):
         raise ValueError(
-            "--gpu-ids must contain exactly --num-gpus distinct non-negative IDs"
+            f"{flag} must contain distinct non-negative IDs"
         )
+    return values
+
+
+def _gpu_ids(raw: str, count: int) -> list[int]:
+    values = _gpu_id_list(raw, "--gpu-ids")
+    if len(values) != count:
+        raise ValueError("--gpu-ids must contain exactly --num-gpus IDs")
     return values
 
 
@@ -205,6 +212,13 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     if args.knn_metric not in {"cosine", "euclidean"}:
         raise ValueError("--knn-metric must be cosine or euclidean")
     gpu_ids = _gpu_ids(args.gpu_ids, args.num_gpus)
+    visible_gpu_ids = _gpu_id_list(args.visible_gpu_ids, "--visible-gpu-ids")
+    unavailable = sorted(set(gpu_ids) - set(visible_gpu_ids))
+    if unavailable:
+        raise ValueError(
+            "--gpu-ids contains device(s) absent from --visible-gpu-ids: "
+            + ", ".join(str(item) for item in unavailable)
+        )
     metric_contract = validate_contract(
         {
             "metric_name": args.metric_name,
@@ -268,7 +282,8 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "gpu_ids": gpu_ids,
         }
     )
-    tao["evaluate"].update({"num_gpus": args.num_gpus, "gpu_ids": gpu_ids})
+    for action in ("evaluate", "inference"):
+        tao[action].update({"num_gpus": args.num_gpus, "gpu_ids": gpu_ids})
 
     _atomic_yaml(config_dir / "deft_config.yaml", deft)
     _atomic_yaml(config_dir / "tao_spec.yaml", tao)
@@ -287,6 +302,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "metadata_archive": str(metadata_archive),
             "checksums_file": str(checksums_file) if checksums_file else None,
             "requires_hf_token": args.requires_hf_token,
+            "visible_gpu_ids": visible_gpu_ids,
             "max_iterations": args.max_iterations,
             "metric_contract": metric_contract,
             "pyt_image": PINNED_PYT_IMAGE,
@@ -302,6 +318,8 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "training_epochs": args.training_epochs,
         "num_gpus": args.num_gpus,
         "gpu_ids": gpu_ids,
+        "visible_gpu_count": len(visible_gpu_ids),
+        "visible_gpu_ids": visible_gpu_ids,
         "requires_hf_token": args.requires_hf_token,
         "iaa_deft_bundle_sha256": runtime_sha256,
         "approval_manifest": str(config_dir / "approval.json"),
@@ -325,6 +343,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--training-epochs", default=1, type=int)
     parser.add_argument("--num-gpus", default=1, type=int)
     parser.add_argument("--gpu-ids", default="0")
+    parser.add_argument(
+        "--visible-gpu-ids",
+        required=True,
+        help="Comma-separated device IDs reported by the approved host preflight.",
+    )
     parser.add_argument("--mining-topn", default=25, type=int)
     parser.add_argument("--knn-metric", default="cosine")
     parser.add_argument("--target-query-count", default=10000, type=int)
