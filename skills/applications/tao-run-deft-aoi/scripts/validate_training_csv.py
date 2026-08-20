@@ -21,9 +21,15 @@ This script:
    case-sensitive equality against the literal string "PASS" to detect
    class 0; any deviation produces silent class-collapse failures at
    training start.
-3. Optionally diffs the training CSV against a validation CSV (when
+3. Rejects duplicate sample identities. Repeating rows to change class weight
+   is not allowed: weighting must be expressed by the sampler/loss config so
+   accumulated DEFT snapshots do not silently overweight repeatedly mined
+   samples.
+4. Optionally diffs the training CSV against a validation CSV (when
    `--validation-csv` is supplied) on `(input_path, golden_path, label,
-   object_name, boardname)` where present. Any validation row appearing
+   object_name, boardname)` where present. Paths are normalized across the
+   base-CSV and assembled-workspace coordinate systems before comparison. Any
+   validation row appearing
    in training is a hard-stop train/val leak — running this BEFORE CSV
    assembly is finalized lets the orchestrator avoid a wasted GPU run.
 
@@ -54,6 +60,11 @@ _LEAK_KEY_CANDIDATES = (
     "object_name",
     "boardname",
 )
+_IDENTITY_KEY_CANDIDATES = (
+    "input_path",
+    "golden_path",
+    "object_name",
+)
 
 
 def _resolve(p: str, workspace_root: pathlib.Path) -> pathlib.Path:
@@ -68,6 +79,79 @@ def normalize_label(label: str) -> str:
     if label == "PASS":
         return label
     return label.lower().strip()
+
+
+def _normalize_identity_path(value: str, workspace_root: pathlib.Path) -> str:
+    """Return one logical path across base and assembled CSV coordinates."""
+    raw = (value or "").strip()
+    if not raw:
+        return raw
+    path = pathlib.Path(raw)
+    if path.is_absolute():
+        try:
+            path = path.resolve().relative_to(workspace_root.resolve())
+        except ValueError:
+            path = path.resolve()
+    normalized = path.as_posix().lstrip("./").rstrip("/")
+    if normalized.startswith("kpi/images/"):
+        normalized = normalized[len("kpi/images/") :]
+    return normalized
+
+
+def _identity_key(row: dict, workspace_root: pathlib.Path) -> tuple[str, str, str]:
+    return (
+        _normalize_identity_path(row.get("input_path") or "", workspace_root),
+        _normalize_identity_path(row.get("golden_path") or "", workspace_root),
+        (row.get("object_name") or "").strip(),
+    )
+
+
+def _check_duplicates(
+    rows: list[dict],
+    columns: list[str],
+    workspace_root: pathlib.Path,
+) -> list[str]:
+    missing = [key for key in _IDENTITY_KEY_CANDIDATES if key not in columns]
+    if missing:
+        return []  # Required-column validation reports the schema error.
+
+    first_seen: dict[tuple[str, str, str], tuple[int, str]] = {}
+    duplicates: list[tuple[int, int, tuple[str, str, str]]] = []
+    conflicts: list[tuple[int, int, tuple[str, str, str], str, str]] = []
+    for index, row in enumerate(rows):
+        identity = _identity_key(row, workspace_root)
+        label = normalize_label(row.get("label") or "")
+        prior = first_seen.get(identity)
+        if prior is None:
+            first_seen[identity] = (index, label)
+            continue
+        prior_index, prior_label = prior
+        if label != prior_label:
+            conflicts.append((index, prior_index, identity, label, prior_label))
+        else:
+            duplicates.append((index, prior_index, identity))
+
+    errors: list[str] = []
+    if duplicates:
+        sample = ", ".join(
+            f"row {index} duplicates row {prior}: {identity}"
+            for index, prior, identity in duplicates[:5]
+        )
+        errors.append(
+            f"{len(duplicates)} duplicate sample row(s) on keys "
+            f"{list(_IDENTITY_KEY_CANDIDATES)}; first: {sample}"
+        )
+    if conflicts:
+        sample = ", ".join(
+            f"row {index} conflicts with row {prior}: {identity} "
+            f"labels={prior_label!r}/{label!r}"
+            for index, prior, identity, label, prior_label in conflicts[:5]
+        )
+        errors.append(
+            f"{len(conflicts)} conflicting-label sample row(s) on keys "
+            f"{list(_IDENTITY_KEY_CANDIDATES)}; first: {sample}"
+        )
+    return errors
 
 
 def _check_label_case(rows: list[dict]) -> list[str]:
@@ -99,6 +183,7 @@ def _check_leakage(
     train_rows: list[dict],
     train_cols: list[str],
     validation_csv: pathlib.Path,
+    workspace_root: pathlib.Path,
 ) -> list[str]:
     if not validation_csv.is_file():
         return [f"--validation-csv not found: {validation_csv}"]
@@ -115,7 +200,16 @@ def _check_leakage(
         ]
 
     def _key(row: dict) -> tuple:
-        return tuple((row.get(k) or "").strip() for k in join_keys)
+        values = []
+        for key in join_keys:
+            value = row.get(key) or ""
+            if key in _PATH_COLUMNS:
+                values.append(_normalize_identity_path(value, workspace_root))
+            elif key == "label":
+                values.append(normalize_label(value))
+            else:
+                values.append(value.strip())
+        return tuple(values)
 
     val_keys = {_key(r) for r in val_rows}
     leaks: list[tuple[int, tuple]] = [
@@ -234,8 +328,17 @@ def validate(
     if "label" in columns:
         errors.extend(_check_label_case(rows))
 
+    errors.extend(_check_duplicates(rows, list(columns), workspace_root))
+
     if validation_csv is not None:
-        errors.extend(_check_leakage(rows, list(columns), validation_csv))
+        errors.extend(
+            _check_leakage(
+                rows,
+                list(columns),
+                validation_csv,
+                workspace_root,
+            )
+        )
 
     return errors
 
@@ -295,7 +398,8 @@ def _build_parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help=(
             "Write a machine-verifiable success report containing rows_checked, "
-            "missing_file_count, and train_val_leakage_overlap_count."
+            "missing_file_count, duplicate_row_count, and "
+            "train_val_leakage_overlap_count."
         ),
     )
     return parser
@@ -316,6 +420,7 @@ def _write_success_report(args: argparse.Namespace) -> None:
         ),
         "rows_checked": rows_checked,
         "missing_file_count": 0,
+        "duplicate_row_count": 0,
         "train_val_leakage_overlap_count": (
             0 if args.validation_csv is not None else None
         ),
