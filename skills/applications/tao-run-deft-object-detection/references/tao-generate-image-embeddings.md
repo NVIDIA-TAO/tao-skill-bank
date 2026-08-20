@@ -47,7 +47,7 @@ batch_size:     64
 <skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-generate-image-embeddings/scripts/verify_image_embeddings_spec.py \
   --spec "$EMBED_SPEC"
 
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
+docker run --rm --name "deft_iter${N}_embed" --gpus all --ipc=host --user "$(id -u):$(id -g)" \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   embedding image_embeddings -e "$EMBED_SPEC"
