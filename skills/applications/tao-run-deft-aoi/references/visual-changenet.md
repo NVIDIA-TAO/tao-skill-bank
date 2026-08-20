@@ -77,8 +77,10 @@ Before every train launch, validate these coupled spec invariants:
   the first epoch.
 - Derive inference/evaluate specs from the exact training spec. Preserve the
   model architecture, set `dataset.classify.augmentation_config.augment=false`,
-  and change only task paths/checkpoint/results overrides. Non-train specs do
-  not need `train.classify.loss`.
+  and change only task paths/checkpoint/results overrides. Keep only the
+  matching `train.classify.loss` compatibility stub while the skill baseline
+  remains TAO 7.1; TAO 7.2 images containing NVIDIA-TAO/tao-pytorch#107 no
+  longer require it.
 - Use the underlying skill's documented `visual_changenet <task> -e <spec>`
   entrypoint. Do not switch to direct package-module/Hydra commands after an
   error; their config-path semantics differ.

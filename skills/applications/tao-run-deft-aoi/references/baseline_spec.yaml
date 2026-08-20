@@ -113,14 +113,14 @@ dataset:
       augment: True
     num_classes: 2
 evaluate:
-  # The loop discovers a successful train artifact and passes its explicit
-  # container path. Never derive this from the action-local results_dir.
+  # The loop discovers successful artifacts and passes explicit container
+  # paths. Never derive them from the action-local results_dir.
   checkpoint: ''
-  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
+  trt_engine: ''
   batch_size: ${dataset.classify.batch_size}
 inference:
   checkpoint: ''
-  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
+  trt_engine: ''
   batch_size: ${dataset.classify.batch_size}
 export:
   gpu_id: 0

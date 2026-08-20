@@ -52,4 +52,13 @@ def test_downstream_checkpoint_defaults_are_explicit_inputs():
     )
     for template in templates:
         spec = yaml.safe_load(template.read_text())
-        assert all(spec[action]["checkpoint"] == "" for action in ("evaluate", "inference", "export"))
+        assert all(
+            spec[action]["checkpoint"] == ""
+            for action in ("evaluate", "inference", "export")
+        )
+
+    deft_spec = yaml.safe_load(
+        (DEFT_ROOT / "references" / "baseline_spec.yaml").read_text()
+    )
+    assert deft_spec["evaluate"]["trt_engine"] == ""
+    assert deft_spec["inference"]["trt_engine"] == ""

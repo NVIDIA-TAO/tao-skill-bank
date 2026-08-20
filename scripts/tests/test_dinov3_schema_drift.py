@@ -148,25 +148,9 @@ def test_regenerated_contracts_match_committed(tao_core_dinov3_config, tmp_path)
         regenerated = json.loads(
             (scratch_model_dir / "schemas" / f"{action}.schema.json").read_text()
         )
-        committed_backbone = _backbone_properties(_load_committed_schema(action))
-        regenerated_backbone = _backbone_properties(regenerated)
-        for field in ("teacher_type", "student_type"):
-            assert regenerated_backbone[field]["enum"] == committed_backbone[field]["enum"], (
-                f"{action}.schema.json backbone options drifted from tao-core: re-run "
-                "scripts/generate_dataclass_schemas.py for tao-train-dinov3."
-            )
-            assert regenerated_backbone[field]["default"] == committed_backbone[field]["default"]
-
-        committed_model = _model_properties(_load_committed_schema(action))
-        regenerated_model = _model_properties(regenerated)
-        for field in ("lora", "preservation"):
-            assert _normalize_unordered_metadata(
-                regenerated_model[field]
-            ) == _normalize_unordered_metadata(committed_model[field]), (
-                f"{action}.schema.json model.{field} drifted from tao-core"
-            )
-        assert (
-            regenerated["properties"]["train"]["properties"]["log_every_n_steps"]
-            == _load_committed_schema(action)["properties"]["train"]["properties"]
-            ["log_every_n_steps"]
+        assert _normalize_unordered_metadata(
+            regenerated
+        ) == _normalize_unordered_metadata(_load_committed_schema(action)), (
+            f"{action}.schema.json drifted from verbatim tao-core generator output: "
+            "re-run scripts/generate_dataclass_schemas.py for tao-train-dinov3."
         )

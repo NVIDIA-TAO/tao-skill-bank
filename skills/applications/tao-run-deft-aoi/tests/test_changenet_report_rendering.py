@@ -100,7 +100,7 @@ class ReportRenderingTests(unittest.TestCase):
             inference_spec = yaml.safe_load(
                 (results / "best_model_inference_spec.yaml").read_text()
             )
-            self.assertNotIn("train", inference_spec)
+            self.assertEqual(inference_spec["train"]["classify"]["loss"], "ce")
             self.assertEqual(
                 inference_spec["inference"]["checkpoint"],
                 prepare_inference_spec.CHECKPOINT_MOUNT,

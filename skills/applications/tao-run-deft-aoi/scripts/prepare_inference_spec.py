@@ -86,9 +86,10 @@ def _build_inference_spec(
 
     Strips train/evaluate/export blocks. Keeps model + dataset architecture
     verbatim so backbone, lighting layout, image size, difference module, and
-    concat type all match the checkpoint. Non-training actions derive their
-    checkpoint-compatible criterion from the model architecture, so no
-    ``train`` subtree is carried into the inference handoff.
+    concat type all match the checkpoint. The currently pinned TAO 7.1 runtime
+    still rebuilds its criterion during non-training actions, so carry only the
+    matching ``train.classify.loss`` compatibility stub. TAO 7.2 runtimes that
+    include NVIDIA-TAO/tao-pytorch#107 no longer require it.
 
     The ``inference.checkpoint`` path is the in-container mount point, not the
     host path — consumers mount ``best_model.json["checkpoint"]`` (host) to
@@ -100,6 +101,17 @@ def _build_inference_spec(
         "encryption_key": train_spec.get("encryption_key", "tlt_encode"),
         "task": train_spec.get("task", "classify"),
         "results_dir": "",  # CONSUMER: override with your output dir
+        # Required by the pinned TAO 7.1 runtime. Remove after the documented
+        # baseline includes NVIDIA-TAO/tao-pytorch#107.
+        "train": {
+            "classify": {
+                "loss": (
+                    train_spec.get("train", {})
+                    .get("classify", {})
+                    .get("loss", "ce")
+                ),
+            },
+        },
         "model": deepcopy(train_spec["model"]),
         "dataset": {"classify": deepcopy(train_spec["dataset"]["classify"])},
         "inference": {
