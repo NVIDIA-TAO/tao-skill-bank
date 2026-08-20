@@ -72,7 +72,15 @@ python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_evaluate.py" \
   --run-dir "$RUN_DIR"
 ```
 
-Use `tao-finetune-cosmos-reason` evaluate with `$RUN_DIR/baseline/evaluate/specs/evaluate.toml`. After the job exits successfully, locate its one result and compute the authoritative binary metrics:
+Use `tao-finetune-cosmos-reason` evaluate with `$RUN_DIR/baseline/evaluate/specs/evaluate.toml`. After the job exits successfully, restore host write access before result discovery:
+
+```bash
+python3 "$DEFT_SKILL_ROOT/scripts/restore_docker_mount_permissions.py" \
+  --path "$RUN_DIR/baseline/evaluate" \
+  --docker-image "$DEFT_COSMOS_REASON_IMAGE"
+```
+
+The helper exits without changing anything when the directory is already writable. Do not continue unless it succeeds. Then locate the result and compute the authoritative binary metrics:
 
 ```bash
 BASELINE_RESULTS_JSON="$(python3 "$DEFT_SKILL_ROOT/scripts/find_cosmos_reason_results.py" \
@@ -194,7 +202,15 @@ Nearest-neighbor output contains only selected source filepaths. The preparation
 
 Iteration 1 trains on mined annotations only; `train_dataset.annotations_path` remains a mining source pool and is not inserted directly. Later iterations accumulate the previous iteration's assembled annotations. Iteration 1 starts from `cosmos_reason.baseline_model_path`. Later iterations use the checkpoint recorded in the previous iteration's generated evaluate TOML only when `cosmos_reason.continual_model: true`; otherwise they start from the baseline.
 
-6. **Train Cosmos Reason**: use `tao-finetune-cosmos-reason` train with `$RUN_DIR/iter_<N>/train/specs/train.toml`. Keep monitoring the submitted job until it reaches terminal success. Do not infer completion from checkpoint files appearing during training.
+6. **Train Cosmos Reason**: use `tao-finetune-cosmos-reason` train with `$RUN_DIR/iter_<N>/train/specs/train.toml`. Keep monitoring the submitted job until it reaches terminal success. Do not infer completion from checkpoint files appearing during training. After the job exits successfully, restore host write access before checkpoint discovery or evaluation preparation:
+
+```bash
+python3 "$DEFT_SKILL_ROOT/scripts/restore_docker_mount_permissions.py" \
+  --path "$RUN_DIR/iter_${ITER}/train" \
+  --docker-image "$DEFT_COSMOS_REASON_IMAGE"
+```
+
+Do not continue unless the helper succeeds.
 
 7. **Prepare and run evaluation**: after the training job reaches terminal success, prepare evaluation:
 
@@ -206,7 +222,15 @@ python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_reason_evaluate.py" \
   --iteration "$ITER"
 ```
 
-The preparation command finds the latest `epoch_<N>` safetensors checkpoint under this iteration's completed train directory, prints the selected path, and writes it into `$RUN_DIR/iter_<N>/evaluate/specs/evaluate.toml`. If no checkpoint exists, stop before launching evaluation. Use `tao-finetune-cosmos-reason` evaluate with that TOML. After the job exits successfully, locate the result and compute that iteration's metrics:
+The preparation command finds the latest `epoch_<N>` safetensors checkpoint under this iteration's completed train directory, prints the selected path, and writes it into `$RUN_DIR/iter_<N>/evaluate/specs/evaluate.toml`. If no checkpoint exists, stop before launching evaluation. Use `tao-finetune-cosmos-reason` evaluate with that TOML. After the job exits successfully, restore host write access before result discovery:
+
+```bash
+python3 "$DEFT_SKILL_ROOT/scripts/restore_docker_mount_permissions.py" \
+  --path "$RUN_DIR/iter_${ITER}/evaluate" \
+  --docker-image "$DEFT_COSMOS_REASON_IMAGE"
+```
+
+Do not continue unless the helper succeeds. Then locate the result and compute that iteration's metrics:
 
 ```bash
 ITERATION_RESULTS_JSON="$(python3 "$DEFT_SKILL_ROOT/scripts/find_cosmos_reason_results.py" \
@@ -254,7 +278,7 @@ This writes `$RUN_DIR/bcq_accuracy_report.md` and `$RUN_DIR/bcq_accuracy_summary
 | `mine_nearest_neighbors` | One mined-neighbor parquet and mining summary exist. |
 | `record_mined_paths` | The cumulative log exists when enabled, or a skipped event is logged when disabled. |
 | `prepare_cosmos_reason_train` | Mined and accumulated LLaVA annotations plus `train/specs/train.toml` exist. |
-| `train` | The Cosmos Reason training job reaches terminal success. |
+| `train` | The Cosmos Reason training job reaches terminal success and its timestamped output and checkpoint directories are writable by the invoking user. |
 | `evaluate` | Evaluation preparation finds the latest completed training checkpoint, the evaluation job exits successfully, exactly one iteration `results.json` is found, and its `bcq_accuracy_metrics.json` exists. |
 | `cleanup_cosmos_reason_training` | `train/checkpoint_cleanup.json` exists, all timestamped `checkpoints/` directories and `best/checkpoints` links are absent, and the listed safetensors exports still exist. |
 | `loop_stop` | Stop reason is logged; the run-level Markdown and JSON accuracy reports cover the baseline and every completed iteration. |
