@@ -104,7 +104,13 @@ Do not use this skill for a single standalone TAO training run, one-off inferenc
 
 ## Base Model
 
-The loop operates on **NVIDIA TAO Visual ChangeNet** classify with the **NVIDIA C-RADIOv2-B** backbone, fine-tuned end-to-end. The architecture is defined in `specs/baseline_spec.yaml` — that file is the source of truth. Pretrained weights originate from HuggingFace (`HF_TOKEN` required for networked fetches); `NGC_KEY` gates container pulls. ChangeNet backbone resolution and the staged-file/HuggingFace-download fallback for `model.backbone.pretrained_backbone_path` are owned by `references/visual-changenet.md`; the spec itself must always point to a local mounted file, never a URL. SigLIP for k-NN mining is owned by `references/tao-mine-aoi-images.md`. AnomalyGen-side checkpoints (Cosmos-Predict2, T5, NVDINOV2, C-RADIO-V3, DINOv2-large, SAM2, Qwen3-VL — ~22 GB for 2B-only, ~140 GB with 14B + T5-11b) live under `<workspace>/augmentation/anomalygen/base_checkpoints/`. Network-mode rules and staged-asset requirements are in `references/air-gap.md`; model-specific bootstrap details are in `references/paidf-anomalygen.md`.
+The loop uses **NVIDIA TAO Visual ChangeNet** classify with either end-to-end
+C-RADIOv2-B or a frozen DINOv3 backbone. `specs/baseline_spec.yaml` defines the
+architecture. Backbone variants, staging, `HF_TOKEN`, and mount rules are owned
+by `references/visual-changenet.md`; the spec always points to a local mounted
+file. `NGC_KEY` gates container pulls. SigLIP mining is owned by
+`references/tao-mine-aoi-images.md`; AnomalyGen assets and network/air-gap rules
+are owned by `references/paidf-anomalygen.md` and `references/air-gap.md`.
 
 ## Train AutoML Policy
 

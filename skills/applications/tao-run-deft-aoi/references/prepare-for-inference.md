@@ -68,7 +68,7 @@ spec, then:
 - Setting `inference.checkpoint` to the best checkpoint
 - Setting `model.classify.eval_margin` to the evaluator-selected threshold when one exists; otherwise retaining the training spec value
 - Disabling augmentation (`augmentation_config.augment: false`)
-- Adding a stub `train.classify.loss` (TAO's `load_from_checkpoint` rebuilds the criterion and asserts on the loss/difference_module pairing)
+- Omitting the training-only `train` subtree
 
 The consumer sets four things and runs:
 
@@ -144,10 +144,9 @@ config verbatim, but if you build an inference spec by hand, watch out:
    set to `.png`. Dataloader finds zero rows; predict loop runs over 0 batches;
    no error. Verify `image_ext` matches actual files on disk.
 
-4. **`loss` / `difference_module` pair (assertion).** Contrastive loss requires
-   `difference_module: euclidean`. CE loss works with either. The training spec
-   already paired them correctly — copy both fields together, never one without
-   the other.
+4. **Training-only keys copied into inference.** Do not carry the `train`
+   subtree into a hand-authored inference spec. The model architecture determines
+   the checkpoint-compatible criterion for non-training actions.
 
 ## When to Re-Run
 

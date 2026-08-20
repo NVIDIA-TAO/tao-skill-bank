@@ -86,10 +86,9 @@ def _build_inference_spec(
 
     Strips train/evaluate/export blocks. Keeps model + dataset architecture
     verbatim so backbone, lighting layout, image size, difference module, and
-    concat type all match the checkpoint. Adds a ``train.classify.loss`` stub
-    because TAO's PL classifier rebuilds its criterion on load and asserts the
-    loss/difference_module pairing — without this stub, load_from_checkpoint
-    raises before inference ever starts.
+    concat type all match the checkpoint. Non-training actions derive their
+    checkpoint-compatible criterion from the model architecture, so no
+    ``train`` subtree is carried into the inference handoff.
 
     The ``inference.checkpoint`` path is the in-container mount point, not the
     host path — consumers mount ``best_model.json["checkpoint"]`` (host) to
@@ -101,12 +100,6 @@ def _build_inference_spec(
         "encryption_key": train_spec.get("encryption_key", "tlt_encode"),
         "task": train_spec.get("task", "classify"),
         "results_dir": "",  # CONSUMER: override with your output dir
-        # Stub required by TAO's load_from_checkpoint criterion check.
-        "train": {
-            "classify": {
-                "loss": train_spec.get("train", {}).get("classify", {}).get("loss", "ce"),
-            },
-        },
         "model": deepcopy(train_spec["model"]),
         "dataset": {"classify": deepcopy(train_spec["dataset"]["classify"])},
         "inference": {

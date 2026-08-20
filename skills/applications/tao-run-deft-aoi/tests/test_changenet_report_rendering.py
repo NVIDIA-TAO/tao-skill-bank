@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
+import yaml
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
@@ -96,6 +97,14 @@ class ReportRenderingTests(unittest.TestCase):
                 "c_radio_v2_vit_base_patch16_224",
             )
             self.assertFalse(handoff["backbone_frozen"])
+            inference_spec = yaml.safe_load(
+                (results / "best_model_inference_spec.yaml").read_text()
+            )
+            self.assertNotIn("train", inference_spec)
+            self.assertEqual(
+                inference_spec["inference"]["checkpoint"],
+                prepare_inference_spec.CHECKPOINT_MOUNT,
+            )
 
     def test_airgap_guard_blocks_install_and_forces_no_pull(self) -> None:
         policy = {"network_mode": "airgap"}
