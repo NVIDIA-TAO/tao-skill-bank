@@ -393,8 +393,40 @@ First build the input list. Do not hand-write it:
   --out        "${PREP_DIR}/pool_input.parquet"
 ```
 
-Then invoke `tao-skill-bank:tao-generate-image-embeddings` over it, writing
-`source_pool/source_embeddings.parquet`, with the encoder resolved in Pre-Flight check 9.
+Then embed it. `tao-skill-bank:tao-generate-image-embeddings` covers this stage, but its
+spec block is written for an iteration — `weak_images.parquet` in, embeddings for the weak
+set out. Prep embeds the **pool**, so the two paths differ and the encoder fields do not:
+
+```bash
+EMBED_SPEC="${PREP_DIR}/image_embeddings.yaml"
+
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
+  --stage embedding --ds-image "$TAO_DS_IMAGE" --out "$EMBED_SPEC"
+
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
+  --spec "$EMBED_SPEC" \
+  --set input_parquet="${PREP_DIR}/pool_input.parquet" \
+  --set output_parquet="<workspace>/source_pool/source_embeddings.parquet" \
+  --set model="$EMBEDDING_MODEL" \
+  --set model_path="$EMBEDDING_MODEL_PATH" \
+  --set model_config_path='""' \
+  --set batch_size=64
+```
+
+```bash
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
+  "$TAO_DS_IMAGE" \
+  embedding image_embeddings -e "$EMBED_SPEC"
+```
+
+The encoder is whatever Pre-Flight check 9 resolved, and it must be the same one every
+iteration uses: mining compares an iteration's embeddings against this pool parquet, so
+two encoders produce vectors that are not comparable and the failure is silent — mining
+succeeds and returns confidently wrong neighbours.
+
+`model_config_path` needs the doubled quoting shown above; see
+`references/tao-generate-image-embeddings.md` for why.
 
 **Embed the whole pool, not just what reached the COCO.** Step 3 skips images with no surviving
 box — 35 of 5,000 on the reference pool — so `coco.json` is not the image list. Mining searches
