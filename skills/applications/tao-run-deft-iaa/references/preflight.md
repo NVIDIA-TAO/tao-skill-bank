@@ -163,7 +163,10 @@ Run this section only after required intake is resolved.
 6. Resolve the approved GPU shape. SigLIP2-so400m training commonly needs
    roughly 30–45 GB free per selected GPU at the bundled batch size. Treat this
    as a planning estimate, not a capability guarantee. Surface occupied GPUs;
-   do not silently reshape `gpu_ids`.
+   do not silently reshape the selected host `gpu_ids`. These are launcher
+   device selectors. The immutable preparation step separately derives TAO's
+   in-container ordinals as `0..num_gpus-1`, because Docker renumbers every
+   exposed allocation into a dense container-local CUDA namespace.
 7. Resolve all run values and their sources. Validate the metric contract
    vocabulary against `references/metric-contract.md`. Do not create a config
    to discover defaults; read the bundled templates.
@@ -305,7 +308,9 @@ For a new run, perform the following in order.
      nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt python3 -c 'import torch; torch.zeros(1).cuda()'  # versions-key: images.tao_toolkit.pyt
    ```
 
-   `GPU_IDS` is the exact approved `gpu_ids` list (for example `0` or `0,2`).
+   `GPU_IDS` is the exact approved host `gpu_ids` list (for example `0` or
+   `0,2`). The Docker selector remains `device=0,2`, while the TAO spec uses
+   container-local `gpu_ids: [0, 1]` for that two-device allocation.
    CUDA initialization or unsupported-architecture failure is a hard stop.
 3. Reuse a complete workspace venv if the runtime probe passes. Otherwise
    create it and install only the bundled runtime's third-party dependencies:
