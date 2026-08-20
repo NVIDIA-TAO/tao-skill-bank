@@ -68,7 +68,10 @@ spec, then:
 - Setting `inference.checkpoint` to the best checkpoint
 - Setting `model.classify.eval_margin` to the evaluator-selected threshold when one exists; otherwise retaining the training spec value
 - Disabling augmentation (`augmentation_config.augment: false`)
-- Adding a stub `train.classify.loss` (TAO's `load_from_checkpoint` rebuilds the criterion and asserts on the loss/difference_module pairing)
+- Carrying only `train.classify.loss` as a compatibility stub for the pinned
+  TAO 7.1 image. It must match the checkpoint's training spec. TAO 7.2 images
+  containing NVIDIA-TAO/tao-pytorch#107 derive the non-training criterion from
+  the model architecture and no longer require this stub.
 
 The consumer sets four things and runs:
 
@@ -144,10 +147,11 @@ config verbatim, but if you build an inference spec by hand, watch out:
    set to `.png`. Dataloader finds zero rows; predict loop runs over 0 batches;
    no error. Verify `image_ext` matches actual files on disk.
 
-4. **`loss` / `difference_module` pair (assertion).** Contrastive loss requires
-   `difference_module: euclidean`. CE loss works with either. The training spec
-   already paired them correctly — copy both fields together, never one without
-   the other.
+4. **`loss` / `difference_module` pair (assertion on the pinned TAO 7.1 image).**
+   Contrastive loss requires `difference_module: euclidean`; CE loss works with
+   either. Copy `train.classify.loss` from the training spec until the documented
+   image baseline includes NVIDIA-TAO/tao-pytorch#107. Do not copy other
+   training-only keys.
 
 ## When to Re-Run
 

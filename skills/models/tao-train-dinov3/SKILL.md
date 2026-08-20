@@ -163,6 +163,9 @@ For `convert`, `export`, and `inference`, copy the training-time backbone config
 - `model.backbone.rope_theta` controls the rotary frequency base. It defaults to `100.0` and is tunable; changing it alters positional encoding, so evaluate the resulting checkpoint for the intended task.
 - `model.centering_method` supports `sinkhorn` and `softmax`.
 - `model.gram.*` controls optional Gram anchoring.
+- `model.lora.*` enables parameter-efficient continual pre-training. The default targets the attention `qkv` and `proj` projections; `num_last_blocks: 0` adapts every transformer block.
+- `model.preservation.*` adds CLS-token MSE and cosine losses against the frozen anchor teacher. It is recommended with LoRA when global embedding quality matters.
+- `train.log_every_n_steps` controls step-level loss visibility and defaults to `1`, so short smoke runs emit component and preservation losses.
 - `train.precision` defaults to `16-mixed`; choose precision based on hardware and measured quality.
 - `train.use_custom_attention: false` uses native attention when custom attention is unavailable.
 - Crop and export dimensions need to be divisible by `model.backbone.patch_size`.

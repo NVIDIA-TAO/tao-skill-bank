@@ -1,41 +1,43 @@
 {
   "automl_default_parameters": [
-    "dataset.batch_size",
-    "dataset.workers"
+    "dataset.workers",
+    "dataset.batch_size"
   ],
   "automl_disabled_parameters": [
-    "gen_trt_engine",
-    "gen_trt_engine.tensorrt",
-    "train.schedulers.momentum",
-    "inference.gpu_ids",
+    "dataset.train_dataset",
+    "wandb.tags",
+    "inference",
+    "train.cudnn",
+    "train.gpu_ids",
+    "train.schedulers",
+    "model",
+    "model.head",
     "model.backbone",
     "dataset",
-    "wandb",
-    "dataset.train_dataset",
-    "train.schedulers",
-    "train.schedulers.weight_decay",
-    "model.gram",
-    "train.schedulers.teacher_temperature",
-    "wandb.tags",
-    "train.schedulers.learning_rate",
-    "convert",
-    "dataset.transform",
-    "train.gpu_ids",
-    "export",
     "train.checkpointer",
-    "train.schedulers.last_layer_learning_rate",
-    "model.lora",
-    "train.cudnn",
-    "model.head",
-    "train",
-    "model.distill",
-    "dataset.test_dataset",
-    "gen_trt_engine.tensorrt.layers_precision",
-    "model",
-    "dataset.transform.local_crops_scale",
     "train.optim",
-    "inference",
-    "dataset.transform.global_crops_scale"
+    "model.gram",
+    "gen_trt_engine",
+    "model.preservation",
+    "train.schedulers.weight_decay",
+    "model.lora.target_modules",
+    "train.schedulers.last_layer_learning_rate",
+    "dataset.transform.global_crops_scale",
+    "train.schedulers.learning_rate",
+    "wandb",
+    "model.distill",
+    "train",
+    "train.schedulers.teacher_temperature",
+    "inference.gpu_ids",
+    "dataset.transform",
+    "train.schedulers.momentum",
+    "gen_trt_engine.tensorrt.layers_precision",
+    "dataset.transform.local_crops_scale",
+    "gen_trt_engine.tensorrt",
+    "convert",
+    "dataset.test_dataset",
+    "model.lora",
+    "export"
   ],
   "default": {
     "dataset": {
@@ -69,8 +71,8 @@
       "checkpoint": "???",
       "gpu_id": 0,
       "input_channel": 3,
-      "input_height": 518,
-      "input_width": 518,
+      "input_height": 256,
+      "input_width": 256,
       "on_cpu": false,
       "onnx_file": "???",
       "opset_version": 12,
@@ -108,8 +110,19 @@
       },
       "lora": {
         "alpha": 16.0,
+        "dropout": 0.05,
         "enable": false,
-        "rank": 8
+        "num_last_blocks": 0,
+        "rank": 8,
+        "target_modules": [
+          "qkv",
+          "proj"
+        ]
+      },
+      "preservation": {
+        "cls_cosine_weight": 0.05,
+        "cls_mse_weight": 0.05,
+        "enable": false
       }
     },
     "model_name": "",
@@ -119,10 +132,9 @@
       "checkpoint_interval_unit": "epoch",
       "checkpointer": {
         "auto_insert_metric_name": false,
-        "dirpath": "",
         "enable_topk": false,
         "filename": "model_best_{epoch:03d}",
-        "monitor": "",
+        "replace_periodic": false,
         "save_top_k": 1
       },
       "clip_grad_norm": 3.0,
@@ -135,6 +147,7 @@
         0
       ],
       "layerwise_decay": 1.0,
+      "log_every_n_steps": 1,
       "num_epochs": 10,
       "num_gpus": 1,
       "num_nodes": 1,
@@ -143,7 +156,6 @@
         "optim": "adamw"
       },
       "precision": "16-mixed",
-      "pretrained_model_path": "",
       "results_dir": "",
       "resume_training_checkpoint_path": "",
       "schedulers": {
@@ -266,6 +278,21 @@
         "bottleneck_dim": 384,
         "hidden_dim": 2048,
         "num_layers": 3
+      },
+      "lora": {
+        "alpha": 16.0,
+        "enable": false,
+        "num_last_blocks": 0,
+        "rank": 8,
+        "target_modules": [
+          "qkv",
+          "proj"
+        ]
+      },
+      "preservation": {
+        "cls_cosine_weight": 0.05,
+        "cls_mse_weight": 0.05,
+        "enable": false
       }
     },
     "train": {
@@ -385,6 +412,7 @@
           "automl_enabled": true,
           "default": 4,
           "description": "The batch size for training",
+          "maximum": Infinity,
           "minimum": 1,
           "popular": true,
           "title": "batch size",
@@ -406,7 +434,7 @@
           "properties": {
             "images_dir": {
               "default": "",
-              "description": "Path to an extracted images directory for the dataset. Archive files such as .tar, .tar.gz, .tgz, and .zip are not supported.",
+              "description": "Path to the extracted images directory for the dataset (not an archive such as .tar.gz)",
               "title": "image directory",
               "type": "string"
             }
@@ -423,7 +451,7 @@
           "properties": {
             "images_dir": {
               "default": "",
-              "description": "Path to an extracted images directory for the dataset. Archive files such as .tar, .tar.gz, .tgz, and .zip are not supported.",
+              "description": "Path to the extracted images directory for the dataset (not an archive such as .tar.gz)",
               "title": "image directory",
               "type": "string"
             }
@@ -453,11 +481,11 @@
           },
           "description": "Configuration parameters for data transformation",
           "popular": [
-            "local_crops_size",
-            "global_crops_size",
-            "global_crops_scale",
-            "local_crops_scale",
             "n_global_crops",
+            "global_crops_size",
+            "local_crops_scale",
+            "global_crops_scale",
+            "local_crops_size",
             "n_local_crops"
           ],
           "properties": {
@@ -475,6 +503,7 @@
             "global_crops_size": {
               "default": 256,
               "description": "Size of global crops for DINOv3 training.",
+              "maximum": Infinity,
               "minimum": 1,
               "popular": true,
               "title": "Global Crops Size",
@@ -494,6 +523,7 @@
             "local_crops_size": {
               "default": 112,
               "description": "Size of local crops (multiple of patch 16)",
+              "maximum": Infinity,
               "minimum": 1,
               "popular": true,
               "title": "Local Crops Size",
@@ -502,6 +532,7 @@
             "n_global_crops": {
               "default": 2,
               "description": "Number of global crops to generate",
+              "maximum": Infinity,
               "minimum": 1,
               "popular": true,
               "title": "Number of Global Crops",
@@ -510,6 +541,7 @@
             "n_local_crops": {
               "default": 8,
               "description": "Number of local crops to generate",
+              "maximum": Infinity,
               "minimum": 1,
               "popular": true,
               "title": "Number of Local Crops",
@@ -523,6 +555,7 @@
           "automl_enabled": true,
           "default": 8,
           "description": "The number of parallel workers processing data",
+          "maximum": Infinity,
           "minimum": 1,
           "popular": true,
           "title": "batch size",
@@ -544,8 +577,8 @@
         "checkpoint": "???",
         "gpu_id": 0,
         "input_channel": 3,
-        "input_height": 518,
-        "input_width": 518,
+        "input_height": 256,
+        "input_width": 256,
         "on_cpu": false,
         "onnx_file": "???",
         "opset_version": 12,
@@ -580,14 +613,14 @@
           "type": "int"
         },
         "input_height": {
-          "default": 518,
+          "default": 256,
           "description": "Input height",
           "minimum": 128,
           "title": "Input height",
           "type": "int"
         },
         "input_width": {
-          "default": 518,
+          "default": 256,
           "description": "Input width",
           "minimum": 128,
           "title": "Input width",
@@ -633,7 +666,8 @@
         "model.backbone",
         "model.head",
         "model.gram",
-        "model.lora"
+        "model.lora",
+        "model.preservation"
       ],
       "automl_enabled": false,
       "default": {
@@ -667,17 +701,30 @@
         },
         "lora": {
           "alpha": 16.0,
+          "dropout": 0.05,
           "enable": false,
-          "rank": 8
+          "num_last_blocks": 0,
+          "rank": 8,
+          "target_modules": [
+            "qkv",
+            "proj"
+          ]
+        },
+        "preservation": {
+          "cls_cosine_weight": 0.05,
+          "cls_mse_weight": 0.05,
+          "enable": false
         }
       },
       "description": "Configurable parameters to construct the model for a DINOv3 experiment.",
       "popular": [
         "backbone",
-        "centering_method",
-        "gram",
+        "lora",
         "distill",
-        "head"
+        "head",
+        "preservation",
+        "centering_method",
+        "gram"
       ],
       "properties": {
         "backbone": {
@@ -693,11 +740,11 @@
           },
           "description": "Configuration for the DINOv3 backbone",
           "popular": [
+            "patch_size",
+            "rope_theta",
             "img_size",
             "num_register_tokens",
-            "drop_path_rate",
-            "rope_theta",
-            "patch_size"
+            "drop_path_rate"
           ],
           "properties": {
             "drop_path_rate": {
@@ -722,6 +769,7 @@
             "num_register_tokens": {
               "default": 4,
               "description": "Number of register tokens (DINOv3 ViT-B uses 4)",
+              "maximum": Infinity,
               "minimum": 0,
               "popular": true,
               "title": "num register tokens",
@@ -739,7 +787,7 @@
             },
             "rope_theta": {
               "default": 100.0,
-              "description": "Frequency base for 2D axial RoPE. Defaults to 100.0 and may be tuned; changing it alters rotary position encoding.",
+              "description": "Frequency base for 2D axial RoPE. Must match the timm DINOv3 reference; verified by the step-4 feature-parity smoke test.",
               "popular": true,
               "title": "RoPE theta",
               "type": "float"
@@ -795,8 +843,8 @@
           },
           "description": "Configuration for distillation (reused from nvdinov2)",
           "popular": [
-            "disable_masking",
-            "enable"
+            "enable",
+            "disable_masking"
           ],
           "properties": {
             "disable_masking": {
@@ -833,9 +881,9 @@
           },
           "description": "Configuration for DINOv3 Gram anchoring",
           "popular": [
-            "w_gram",
             "start_step",
-            "enable"
+            "enable",
+            "w_gram"
           ],
           "properties": {
             "enable": {
@@ -848,6 +896,7 @@
             "refresh_interval": {
               "default": 0,
               "description": "Steps between refreshing the Gram teacher from the EMA teacher (only when teacher_source='ema'). 0 = never refresh (frozen snapshot, Phase 0 behavior).",
+              "maximum": Infinity,
               "minimum": 0,
               "title": "gram refresh interval",
               "type": "int"
@@ -855,6 +904,7 @@
             "start_step": {
               "default": 0,
               "description": "Global step at which the Gram term activates",
+              "maximum": Infinity,
               "minimum": 0,
               "popular": true,
               "title": "gram start step",
@@ -895,14 +945,15 @@
           },
           "description": "Configuration for the DINOv3 head (reused from nvdinov2)",
           "popular": [
-            "hidden_dim",
             "bottleneck_dim",
-            "num_layers"
+            "num_layers",
+            "hidden_dim"
           ],
           "properties": {
             "bottleneck_dim": {
               "default": 384,
               "description": "Dimension of the bottleneck layer in the NVDINOv2 head",
+              "maximum": Infinity,
               "minimum": 1,
               "popular": true,
               "title": "bottleneck dimension",
@@ -911,6 +962,7 @@
             "hidden_dim": {
               "default": 2048,
               "description": "Dimension of the hidden layers in the NVDINOv2 head",
+              "maximum": Infinity,
               "minimum": 1,
               "popular": true,
               "title": "hidden dimension",
@@ -919,6 +971,7 @@
             "num_layers": {
               "default": 3,
               "description": "Number of layers in the NVDINOv2 head",
+              "maximum": Infinity,
               "minimum": 1,
               "popular": true,
               "title": "number of Layers",
@@ -928,32 +981,122 @@
           "type": "collection"
         },
         "lora": {
+          "automl_disabled_parameters": [
+            "model.lora.target_modules"
+          ],
           "automl_enabled": false,
           "default": {
             "alpha": 16.0,
+            "dropout": 0.05,
             "enable": false,
-            "rank": 8
+            "num_last_blocks": 0,
+            "rank": 8,
+            "target_modules": [
+              "qkv",
+              "proj"
+            ]
           },
-          "description": "Disabled LoRA stub for forward-compatibility",
+          "description": "Configuration for LoRA parameter-efficient continual pre-training",
+          "popular": [
+            "rank",
+            "num_last_blocks",
+            "alpha",
+            "target_modules",
+            "enable"
+          ],
           "properties": {
             "alpha": {
               "default": 16.0,
-              "description": "LoRA scaling alpha",
+              "description": "LoRA scaling alpha; the applied scale is alpha / rank.",
+              "popular": true,
               "title": "lora alpha",
+              "type": "float"
+            },
+            "dropout": {
+              "default": 0.05,
+              "description": "Dropout applied to the LoRA branch input only (the frozen base path is untouched).",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "lora dropout",
               "type": "float"
             },
             "enable": {
               "default": false,
-              "description": "Whether to apply LoRA adapters (disabled in v1)",
+              "description": "Whether to apply LoRA adapters to the backbone (parameter-efficient SSL)",
+              "popular": true,
               "title": "enable lora",
               "type": "bool"
             },
+            "num_last_blocks": {
+              "default": 0,
+              "description": "Adapt only the last N transformer blocks. 0 = all blocks.",
+              "maximum": Infinity,
+              "minimum": 0,
+              "popular": true,
+              "title": "lora num last blocks",
+              "type": "int"
+            },
             "rank": {
               "default": 8,
-              "description": "LoRA rank",
+              "description": "LoRA rank (r). The low-rank update is dW = (alpha/r) * B @ A.",
+              "maximum": Infinity,
               "minimum": 1,
+              "popular": true,
               "title": "lora rank",
               "type": "int"
+            },
+            "target_modules": {
+              "automl_enabled": false,
+              "default": [
+                "qkv",
+                "proj"
+              ],
+              "description": "Projections to adapt inside each targeted ViT block. 'qkv' and 'proj' are the attention projections (the v1 default); 'fc1'/'fc2' additionally adapt the FFN. SwiGLU backbones (ViT-S+/H+/7B) expose a fused fc1 and are deferred in v1.",
+              "popular": true,
+              "title": "lora target modules",
+              "type": "list"
+            }
+          },
+          "type": "collection"
+        },
+        "preservation": {
+          "automl_enabled": false,
+          "default": {
+            "cls_cosine_weight": 0.05,
+            "cls_mse_weight": 0.05,
+            "enable": false
+          },
+          "description": "Configuration for CLS-token preservation against the frozen anchor teacher",
+          "popular": [
+            "cls_mse_weight",
+            "cls_cosine_weight",
+            "enable"
+          ],
+          "properties": {
+            "cls_cosine_weight": {
+              "default": 0.05,
+              "description": "Weight of the CLS-token cosine preservation term (0 disables just this term).",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "cls cosine weight",
+              "type": "float"
+            },
+            "cls_mse_weight": {
+              "default": 0.05,
+              "description": "Weight of the CLS-token MSE preservation term (0 disables just this term).",
+              "maximum": Infinity,
+              "minimum": 0.0,
+              "popular": true,
+              "title": "cls mse weight",
+              "type": "float"
+            },
+            "enable": {
+              "default": false,
+              "description": "Whether to add CLS-token preservation losses against the frozen anchor teacher. Recommended alongside LoRA for continual pre-training.",
+              "popular": true,
+              "title": "enable preservation",
+              "type": "bool"
             }
           },
           "type": "collection"
@@ -987,10 +1130,9 @@
         "checkpoint_interval_unit": "epoch",
         "checkpointer": {
           "auto_insert_metric_name": false,
-          "dirpath": "",
           "enable_topk": false,
           "filename": "model_best_{epoch:03d}",
-          "monitor": "",
+          "replace_periodic": false,
           "save_top_k": 1
         },
         "clip_grad_norm": 3.0,
@@ -1003,6 +1145,7 @@
           0
         ],
         "layerwise_decay": 1.0,
+        "log_every_n_steps": 1,
         "num_epochs": 10,
         "num_gpus": 1,
         "num_nodes": 1,
@@ -1011,7 +1154,6 @@
           "optim": "adamw"
         },
         "precision": "16-mixed",
-        "pretrained_model_path": "",
         "results_dir": "",
         "resume_training_checkpoint_path": "",
         "schedulers": {
@@ -1058,20 +1200,20 @@
       },
       "description": "Configurable parameters to construct the trainer for a DINOv3 experiment.",
       "popular": [
-        "schedulers",
-        "num_prototypes",
-        "checkpoint_interval",
-        "use_custom_attention",
-        "num_gpus",
-        "clip_grad_norm",
-        "validation_interval",
         "layerwise_decay",
+        "checkpoint_interval",
         "optim",
-        "num_nodes",
-        "distributed_strategy",
-        "num_epochs",
         "gpu_ids",
-        "precision"
+        "validation_interval",
+        "num_gpus",
+        "precision",
+        "num_prototypes",
+        "schedulers",
+        "distributed_strategy",
+        "num_nodes",
+        "clip_grad_norm",
+        "num_epochs",
+        "use_custom_attention"
       ],
       "properties": {
         "checkpoint_interval": {
@@ -1096,10 +1238,9 @@
           "automl_enabled": false,
           "default": {
             "auto_insert_metric_name": false,
-            "dirpath": "",
             "enable_topk": false,
             "filename": "model_best_{epoch:03d}",
-            "monitor": "",
+            "replace_periodic": false,
             "save_top_k": 1
           },
           "properties": {
@@ -1108,13 +1249,12 @@
               "type": "bool"
             },
             "dirpath": {
-              "default": "",
               "description": "Directory for best checkpoints. Defaults to results_dir.",
               "type": "string"
             },
             "enable_topk": {
               "default": false,
-              "description": "Save the top-K checkpoints ranked by a monitored metric, in addition to the periodic checkpoints.",
+              "description": "Save checkpoint(s) ranked by a monitored metric. This is additive to periodic checkpoints unless replace_periodic is enabled.",
               "title": "Enable best-checkpoint saving",
               "type": "bool"
             },
@@ -1124,7 +1264,7 @@
               "type": "string"
             },
             "mode": {
-              "description": "Override direction. 'min' for losses, 'max' for accuracy/mAP/mIoU. Leave unset to use the network default.",
+              "description": "Leave unset to use the network's default direction.",
               "enum": [
                 "min",
                 "max"
@@ -1133,14 +1273,18 @@
               "type": "categorical"
             },
             "monitor": {
-              "default": "",
-              "description": "Override the network's default monitored metric (e.g. val_loss, val_acc, val_miou, mAP). Leave unset to use the network default.",
+              "description": "Leave unset to use the network's default metric.",
               "title": "Monitored metric",
               "type": "string"
             },
+            "replace_periodic": {
+              "default": false,
+              "description": "When best-checkpoint saving is enabled, replace periodic history with one metric-best checkpoint and its latest symlink.",
+              "title": "Replace periodic checkpoints",
+              "type": "bool"
+            },
             "save_top_k": {
               "default": 1,
-              "description": "How many best checkpoints to keep (1 = only the single best).",
               "minimum": 1,
               "title": "Number of best checkpoints",
               "type": "int"
@@ -1161,6 +1305,7 @@
             "benchmark": true,
             "deterministic": false
           },
+          "description": "CuDNN settings compatible with DINOv3 custom attention.",
           "properties": {
             "benchmark": {
               "default": true,
@@ -1206,9 +1351,17 @@
           "title": "layerwise decay factor",
           "type": "float"
         },
+        "log_every_n_steps": {
+          "default": 1,
+          "description": "Number of training steps between logger updates.",
+          "minimum": 1,
+          "title": "logging interval",
+          "type": "int"
+        },
         "num_epochs": {
           "default": 10,
           "description": "Number of epochs to run the training.",
+          "maximum": Infinity,
           "minimum": 1,
           "popular": true,
           "title": "Number of epochs",
@@ -1335,9 +1488,9 @@
           "popular": [
             "learning_rate",
             "weight_decay",
-            "last_layer_learning_rate",
             "teacher_temperature",
-            "momentum"
+            "momentum",
+            "last_layer_learning_rate"
           ],
           "properties": {
             "last_layer_learning_rate": {
@@ -1354,10 +1507,10 @@
               "popular": [
                 "val_base",
                 "val_final",
-                "max_decay_steps",
-                "freeze_steps",
+                "val_start",
                 "warm_up_steps",
-                "val_start"
+                "freeze_steps",
+                "max_decay_steps"
               ],
               "properties": {
                 "freeze_steps": {
@@ -1418,9 +1571,9 @@
               "popular": [
                 "val_base",
                 "val_final",
-                "max_decay_steps",
+                "val_start",
                 "warm_up_steps",
-                "val_start"
+                "max_decay_steps"
               ],
               "properties": {
                 "max_decay_steps": {
@@ -1474,9 +1627,9 @@
               "popular": [
                 "val_base",
                 "val_final",
-                "max_decay_steps",
+                "val_start",
                 "warm_up_steps",
-                "val_start"
+                "max_decay_steps"
               ],
               "properties": {
                 "max_decay_steps": {
@@ -1530,9 +1683,9 @@
               "popular": [
                 "val_base",
                 "val_final",
-                "max_decay_steps",
+                "val_start",
                 "warm_up_steps",
-                "val_start"
+                "max_decay_steps"
               ],
               "properties": {
                 "max_decay_steps": {
@@ -1586,9 +1739,9 @@
               "popular": [
                 "val_base",
                 "val_final",
-                "max_decay_steps",
+                "val_start",
                 "warm_up_steps",
-                "val_start"
+                "max_decay_steps"
               ],
               "properties": {
                 "max_decay_steps": {
@@ -1635,6 +1788,7 @@
         "seed": {
           "default": 1234,
           "description": "The seed for the initializer in PyTorch. If < 0, disable fixed seed.",
+          "maximum": Infinity,
           "minimum": -1,
           "title": "Seed for randomization",
           "type": "int"
@@ -1732,6 +1886,6 @@
     "network_arch": "dinov3",
     "schema_action": "export",
     "schema_version": 1,
-    "source": "tao-pytorch dataclass config"
+    "source": "tao-core dataclass config"
   }
 }
