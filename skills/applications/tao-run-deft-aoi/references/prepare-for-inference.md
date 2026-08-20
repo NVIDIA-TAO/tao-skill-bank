@@ -97,21 +97,33 @@ TAO_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.t
 HANDOFF="${RESULTS_DIR}/best_model.json"
 BACKBONE=$(jq -er '.backbone | strings | select(length > 0)' "$HANDOFF")
 BACKBONE_CONTAINER_PATH=$(jq -er '.backbone_container_path | strings | select(startswith("/"))' "$HANDOFF")
+HOST_RESULTS=<output_dir>
+mkdir -p "$HOST_RESULTS"
+probe="$HOST_RESULTS/.tao-write-probe.$$"
+(umask 077 && : >"$probe" && rm -f "$probe") || {
+    echo "FATAL: $HOST_RESULTS is not writable by uid $(id -u)" >&2
+    exit 2
+}
 
 docker run --pull=never --rm --gpus all --shm-size=8g \
     --user "$(id -u):$(id -g)" \
+    -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
+    -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
     -v <your_csv_dir>:/data/infer \
     -v "$(jq -er .images_dir "$HANDOFF"):/data/images:ro" \
     -v "$(jq -er .checkpoint "$HANDOFF"):/model/best.pth:ro" \
     -v "${BACKBONE}:${BACKBONE_CONTAINER_PATH}:ro" \
     -v /tmp/my_inference.yaml:/specs/inference.yaml \
-    -v <output_dir>:/results \
+    -v "$HOST_RESULTS:/results" \
     "$TAO_PYT_IMAGE" \
     visual_changenet inference -e /specs/inference.yaml
 ```
 
 The `--shm-size=8g` is required — TAO dataloaders crash with bus errors on the
 default 64MB allocation.
+
+The output tree is owned by the submitting host user, so it can be updated or
+removed without sudo.
 
 ## Threshold Contract
 

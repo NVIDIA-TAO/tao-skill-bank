@@ -24,6 +24,31 @@ Pre-Flight fallback).
 `BACKBONE_CONTAINER_PATH` is the matching container path written into the
 training spec. Use this resolved pair for every train, evaluate, and inference launch.
 
+For every direct Docker action in the underlying reference, first verify the
+DEFT results root is writable, then compose this application-owned identity
+block:
+
+```bash
+mkdir -p "$RESULTS_DIR"
+probe="$RESULTS_DIR/.tao-write-probe.$$"
+(umask 077 && : >"$probe" && rm -f "$probe") || {
+  echo "FATAL: $RESULTS_DIR is not writable by uid $(id -u)" >&2
+  exit 2
+}
+
+VCN_IDENTITY_ARGS=(
+  --user "$(id -u):$(id -g)"
+  -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp
+  -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro
+)
+```
+
+Insert `"${VCN_IDENTITY_ARGS[@]}"` into the underlying `docker run` command for
+train, evaluate, inference, export, and quantize, including resumed actions.
+Every resulting checkpoint, status file, inference CSV, and export is then
+owned by the submitting host user, so two-checkpoint evaluation and cleanup
+need no sudo.
+
 ```
 -v <workspace>:/data/workspace                                  # combined iter CSVs + staged images
 -v ${RESULTS_DIR}:/results                                      # canonical run root; never /results/iterN

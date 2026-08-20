@@ -56,7 +56,9 @@ persisted policy:
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_context.py \
   --state "${RESULTS_DIR}/deft_state.json" --stage data_mining
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_exec.py \
-  --state "${RESULTS_DIR}/deft_state.json" -- docker run ...
+  --state "${RESULTS_DIR}/deft_state.json" -- \
+  docker run --user "$(id -u):$(id -g)" \
+    -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp ...
 ```
 
 Set `STAGE_DURATION_SEC` from measured wall-clock evidence before committing:
