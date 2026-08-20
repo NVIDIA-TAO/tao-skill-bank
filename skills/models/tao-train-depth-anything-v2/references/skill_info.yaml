@@ -1,7 +1,7 @@
 name: tao-train-depth-anything-v2
 network_arch: depth_net_mono
 automl_enabled: true
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.pyt
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-45-multiarch  # versions-key: images.tao_toolkit.pyt
 data_format: RelativeMonoDataset
 gpu_spec_key: train.num_gpus
 actions:
