@@ -39,8 +39,6 @@ images:
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
     cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
-    # Interim until tao-pytorch !620 merges and TAO publishes an official IV2CLIP image.
-    video_clip:         nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-03
     vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
