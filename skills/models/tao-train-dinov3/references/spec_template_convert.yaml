@@ -30,6 +30,17 @@ model:
     teacher_scale: 1.0
   lora:
     enable: false
+    rank: 8
+    alpha: 16.0
+    dropout: 0.05
+    target_modules:
+    - qkv
+    - proj
+    num_last_blocks: 0
+  preservation:
+    enable: false
+    cls_mse_weight: 0.05
+    cls_cosine_weight: 0.05
 dataset:
   train_dataset:
     images_dir: ''
@@ -69,6 +80,7 @@ train:
   precision: 16-mixed
   use_custom_attention: true
   distributed_strategy: auto
+  log_every_n_steps: 1
   schedulers:
     learning_rate:
       val_base: 5.0e-05
