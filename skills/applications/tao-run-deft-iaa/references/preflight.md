@@ -196,7 +196,7 @@ hardware, pool size, and accumulated data can change this substantially.
 | GPU shape | `num_gpus=1`, `gpu_ids=0` |
 | mining | budget `10000`, top-N `25`, cosine distance |
 | history selection | enabled, replay fraction `0.20` |
-| continual behavior | dataset `true`, model `false` |
+| continual behavior | dataset `true`, model `true` |
 | visualization | contact sheets `true`, embedding plot `true` |
 | Hugging Face token forwarding | disabled; enable only when the approved model/environment requires it |
 | PyTorch image | `nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt` | <!-- versions-key: images.tao_toolkit.pyt -->
