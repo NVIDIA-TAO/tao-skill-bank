@@ -38,7 +38,7 @@ def state_dir(tmp_path, monkeypatch):
 def open_job(capsys, **overrides):
     argv = [
         "open", "--platform", "slurm",
-        "--image", "nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt",
+        "--image", "nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt",  # unpinned: test fixture
         "--network-arch", "dino", "--action", "train",
         "--storage-tier", "A",
         "--results-root", "/lustre/fsw/users/me/results",
@@ -89,7 +89,7 @@ def test_open_id_is_the_printed_handle_and_matches_pattern(capsys):
 
 
 def test_open_explicit_results_dir_used_verbatim(state_dir, capsys):
-    argv = ["open", "--platform", "docker", "--image", "nvcr.io/x/y:1",
+    argv = ["open", "--platform", "docker", "--image", "nvcr.io/x/y:1",  # unpinned: test fixture
             "--network-arch", "dino", "--action", "evaluate",
             "--storage-tier", "C", "--results-dir", "/data/out/run1"]
     assert jr.main(argv) == 0
@@ -98,7 +98,7 @@ def test_open_explicit_results_dir_used_verbatim(state_dir, capsys):
 
 
 def test_open_requires_exactly_one_results_arg(capsys):
-    base = ["open", "--platform", "docker", "--image", "nvcr.io/x/y:1",
+    base = ["open", "--platform", "docker", "--image", "nvcr.io/x/y:1",  # unpinned: test fixture
             "--network-arch", "d", "--action", "a", "--storage-tier", "C"]
     with pytest.raises(SystemExit):
         jr.main(base)  # neither
@@ -116,7 +116,7 @@ def test_open_never_overwrites_existing_record(state_dir, capsys, monkeypatch):
 
 
 def test_open_sanitizes_weird_arch_names(state_dir, capsys):
-    argv = ["open", "--platform", "docker", "--image", "nvcr.io/x/y:1",
+    argv = ["open", "--platform", "docker", "--image", "nvcr.io/x/y:1",  # unpinned: test fixture
             "--network-arch", "visual changenet!", "--action", "train",
             "--storage-tier", "C", "--results-dir", "/data/out"]
     assert jr.main(argv) == 0
@@ -253,7 +253,7 @@ def test_rt_out_of_pattern_secrets_redacted(state_dir, capsys):
 
 
 def test_rt_url_userinfo_redacted_in_results_dir(state_dir, capsys):
-    argv = ["open", "--platform", "docker", "--image", "nvcr.io/x/y:1",
+    argv = ["open", "--platform", "docker", "--image", "nvcr.io/x/y:1",  # unpinned: test fixture
             "--network-arch", "dino", "--action", "train", "--storage-tier", "C",
             "--results-dir", "https://user:leakSECRETpw@host/bucket/out"]
     assert jr.main(argv) == 0
@@ -263,7 +263,7 @@ def test_rt_url_userinfo_redacted_in_results_dir(state_dir, capsys):
 
 
 def test_rt_legit_results_dir_with_credword_segment_untouched(state_dir, capsys):
-    argv = ["open", "--platform", "slurm", "--image", "nvcr.io/x/y:1",
+    argv = ["open", "--platform", "slurm", "--image", "nvcr.io/x/y:1",  # unpinned: test fixture
             "--network-arch", "dino", "--action", "train", "--storage-tier", "A",
             "--results-dir", "/lustre/exp/token=v1/keyframes/run"]
     assert jr.main(argv) == 0
@@ -339,7 +339,7 @@ def test_platform_input_is_normalized_not_rejected(capsys, state_dir, raw, canon
     # --platform=<raw> form: a raw value may start with '-' (argparse-safe).
     assert jr.main([
         "open", f"--platform={raw}",
-        "--image", "nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt",
+        "--image", "nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt",  # unpinned: test fixture
         "--network-arch", "dino", "--action", "train",
         "--storage-tier", "A", "--results-root", "/tmp/results",
     ]) == 0
