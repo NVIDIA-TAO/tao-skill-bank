@@ -157,7 +157,28 @@ docker run -d --name "deft_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):
 #   docker rm "deft_${PHASE}_kpi"
 ```
 
-Tee the log: the aggregate **mAP is printed to stdout only** and is not written into `kpi_calc.csv`. Parse it from the log line `mAP: <value>` and record it in state; otherwise the trend across iterations cannot be reported.
+The aggregate **mAP is printed to stdout only** — nothing writes it into `kpi_calc.csv`,
+which carries one row per class and no aggregate row. Do not depend on holding that stream:
+the stage runs tens of minutes on a large KPI set, and a driver whose shell calls time out,
+a dropped pipe, or a container reaped before `docker logs` runs all lose the one number the
+loop compares phases on.
+
+Derive it from the CSV instead. The aggregate is the unweighted mean of the per-class APs,
+so it recomputes exactly:
+
+```bash
+MAP_VALUE=$(<skill_root>/scripts/deft_python.sh <skill_root>/scripts/summarize_kpi.py \
+  --kpi-csv "${RESULTS_DIR}/${PHASE}/kpi/kpi_calc.csv" \
+  --expect-classes <number of target classes> | tail -1)
+```
+
+It writes `kpi_summary.json` beside the CSV and prints the value for `--map-value`.
+`--expect-classes` is what makes the mean trustworthy: the CSV has no class column, so a
+row that is not a target class — the `Summary` row `kpi.is_internal: true` appends — would
+shift the mean silently. A disagreement is an error instead.
+
+Still capture the log. It is the only place the per-row class names appear, and the report
+needs them to label the per-class APs.
 
 ## Outputs
 
@@ -165,7 +186,8 @@ Tee the log: the aggregate **mAP is printed to stdout only** and is not written 
 |---|---|
 | Per-class metrics | `${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv` |
 | PR curve plot | `${RESULTS_DIR}/<phase>/kpi/` |
-| Captured log (mAP source) | `${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log` |
+| Captured log (class names for the CSV rows) | `${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log` |
+| Aggregate mAP | `${RESULTS_DIR}/<phase>/kpi/kpi_summary.json` |
 
 `kpi_calc.csv` columns: `Sequence Name`, `TP`, `FP`, `FN`, `TN`, `Pr`, `Re`, `Acc`, `AP`.
 
@@ -178,7 +200,7 @@ Tee the log: the aggregate **mAP is printed to stdout only** and is not written 
   --results-dir "${RESULTS_DIR}" --iter-label "<phase>" --stage kpi_analyze \
   --kpi-csv "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" \
   --kpi-log "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" \
-  --map-value "<parsed mAP>" \
+  --map-value "$MAP_VALUE" \
   --duration-sec "$(( SECONDS - started ))" \
   --summary "kpi: mAP=<value>"
 ```
