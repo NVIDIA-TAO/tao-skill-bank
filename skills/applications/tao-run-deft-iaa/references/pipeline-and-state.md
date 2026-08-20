@@ -46,7 +46,7 @@ rejects duplicate, skipped-ahead, post-KPI, and out-of-range transitions.
 `deft_state.json` is a schema-v3 resume snapshot. It records:
 
 - immutable workspace, archives, intended dataset root, bundled-runtime hash,
-  Docker images, config paths and hashes;
+  selected TAO platform, pinned images/runtime, config paths and hashes;
 - immutable loop/config values and metric contract;
 - current iteration, gate flag, per-label stage proofs, and stop reason.
 
@@ -82,7 +82,7 @@ For each stage:
 
 1. Audit and confirm the selected next action.
 2. Read only its named reference.
-3. Run the documented adapter/container commands with verbose output in logs.
+3. Run the documented host adapters or platform actions with verbose output in logs.
 4. Validate and commit once with the exact artifact and command-status flags.
 5. Audit again. Advance only when the committed event is accepted.
 6. Tell the user one line: `[label · stage] outcome · next: <action>`.
