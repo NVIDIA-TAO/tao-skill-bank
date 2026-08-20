@@ -49,13 +49,20 @@ job_payload_builder:
           f"--job {shlex.quote(job_json)} --docker_env_vars {shlex.quote(env_json)}"
       )
 
-      # Resolve image per Section 2: read network config → docker_image_defaults.mapping
-      # value (a versions.yaml dotted key) → resolve against versions.yaml. No TAO SDK.
+      # Resolve Cosmos-RL through the model skill's backend metadata. No TAO SDK.
       import os, subprocess
-      image = os.environ.get("IMAGE_COSMOS_RL") or subprocess.check_output(
-          [f"{os.environ['TAO_SKILL_BANK_PATH']}/scripts/resolve_versions_key.py",
-           "images.tao_toolkit.cosmos_rl"], text=True
-      ).strip()
+      image = os.environ.get("IMAGE_COSMOS_RL")
+      if not image:
+          resolved = subprocess.check_output(
+              [f"{os.environ['TAO_SKILL_BANK_PATH']}/scripts/resolve_tao_image.py",
+               "--skill-bank", os.environ["TAO_SKILL_BANK_PATH"],
+               "--model", "nvidia/Cosmos3-Nano",
+               "--action", "inference_microservice",
+               "--backend", "cosmos-rl",
+               "--format", "json"],
+              text=True,
+          )
+          image = json.loads(resolved)["image"]
 
   cosmos-predict2.5:
     description: >
