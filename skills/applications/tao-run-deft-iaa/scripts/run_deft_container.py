@@ -27,11 +27,13 @@ from typing import Any
 
 from command_contract import (
     command_sha256,
+    derived_spec_evidence,
     expected_container_command,
     expected_hf_forwarding,
     expected_fresh_outputs,
     expected_image_kind,
     expected_stage_directory,
+    validate_content_bound_outputs,
 )
 
 
@@ -281,6 +283,30 @@ def _load_existing_status(path: pathlib.Path) -> dict[str, Any] | None:
     return payload
 
 
+def _validate_derived_spec_input(
+    name: str, label: str, results_dir: pathlib.Path
+) -> dict[str, str]:
+    evidence = derived_spec_evidence(name, label, results_dir)
+    if evidence is None:
+        return {}
+    spec_path, status_path, producer = evidence
+    payload = _load_existing_status(status_path)
+    if (
+        payload is None
+        or payload.get("schema_version") != "1"
+        or payload.get("workflow") != "tao-run-deft-iaa"
+        or payload.get("kind") != "host"
+        or payload.get("name") != producer
+        or payload.get("status") != "ok"
+        or payload.get("exit_code") != 0
+        or str(spec_path) not in payload.get("fresh_outputs", [])
+    ):
+        raise ValueError(
+            f"{name} requires successful content-bound {producer} evidence: {status_path}"
+        )
+    return validate_content_bound_outputs(payload, [spec_path], str(status_path))
+
+
 def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
     results_dir = args.results_dir.expanduser().resolve()
     state = _load_state(results_dir)
@@ -336,6 +362,9 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
         raise ValueError(
             f"--pass-hf-token for {args.name} must be {required_hf} per immutable approval"
         )
+    input_sha256 = _validate_derived_spec_input(
+        args.name, label, results_dir
+    )
     stage_dir.mkdir(parents=True, exist_ok=True)
     log_path = stage_dir / f"{args.name}.log"
     status_path = stage_dir / f"{args.name}.status.json"
@@ -475,6 +504,7 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
             "exit_code": None,
             "log_path": str(log_path),
             "fresh_outputs": fresh_outputs,
+            "input_sha256": input_sha256,
         }
         _atomic_json(status_path, running_payload)
         for raw in fresh_outputs:

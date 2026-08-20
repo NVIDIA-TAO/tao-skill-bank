@@ -36,6 +36,7 @@ from command_contract import (
     expected_container_command,
     expected_hf_forwarding,
     expected_image_kind,
+    validate_content_bound_outputs,
 )
 from log_stage import append_stage, next_seq
 
@@ -321,6 +322,8 @@ def _required_command_status(
                 raise ValueError(
                     f"{output} is older than the command recorded by {name}"
                 )
+        if required_name in {"eval-config", "train-config"}:
+            validate_content_bound_outputs(payload, outputs, name)
     return str(resolved)
 
 

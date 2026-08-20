@@ -51,6 +51,13 @@ consume only variables inherited from the launching process; no wrapper opens
 or sources a credentials file, and no value is written to argv, status, state,
 or logs.
 
+Host adapters record SHA256 digests for their regular-file outputs. For the
+derived `eval_config.yaml` and `train_config.yaml` that TAO containers consume,
+this digest is a mandatory launch and audit boundary: the container wrapper,
+stage commit, and run audit all re-hash the exact file against its successful
+producer status. Never edit a derived spec. Regenerate it through the named
+adapter; a byte change after generation blocks launch and invalidates audit.
+
 ## Stage ownership
 
 | State stage | Producer | Adapter or launch | Read first |

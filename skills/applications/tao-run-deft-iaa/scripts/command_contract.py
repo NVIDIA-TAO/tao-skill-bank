@@ -31,6 +31,77 @@ def command_sha256(command: list[str]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def file_sha256(path: pathlib.Path) -> str:
+    """Hash one regular, non-symlink file without trusting path aliases."""
+    absolute = pathlib.Path(path).expanduser()
+    if (
+        not absolute.is_absolute()
+        or not absolute.is_file()
+        or absolute.is_symlink()
+        or absolute.resolve() != absolute
+    ):
+        raise ValueError(f"content-bound input is missing or unsafe: {absolute}")
+    digest = hashlib.sha256()
+    with absolute.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def fresh_output_sha256(paths: list[str]) -> dict[str, str]:
+    """Bind the byte content of every regular file produced by an adapter."""
+    hashes: dict[str, str] = {}
+    for raw in paths:
+        path = pathlib.Path(raw)
+        if path.is_file() and not path.is_symlink():
+            hashes[str(path)] = file_sha256(path)
+    return hashes
+
+
+def validate_content_bound_outputs(
+    payload: dict[str, Any], required_outputs: list[pathlib.Path], evidence_name: str
+) -> dict[str, str]:
+    """Verify that required outputs still have their producer-recorded bytes."""
+    hashes = payload.get("fresh_output_sha256")
+    if not isinstance(hashes, dict):
+        raise ValueError(f"{evidence_name}.fresh_output_sha256 must be an object")
+    verified: dict[str, str] = {}
+    for path in required_outputs:
+        absolute = pathlib.Path(path).expanduser()
+        key = str(absolute)
+        expected = hashes.get(key)
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError(
+                f"{evidence_name} does not bind a SHA256 digest for {absolute}"
+            )
+        actual = file_sha256(absolute)
+        if actual != expected:
+            raise ValueError(
+                f"content hash mismatch for {absolute}: expected {expected}, got {actual}"
+            )
+        verified[key] = actual
+    return verified
+
+
+def derived_spec_evidence(
+    name: str, label: str, results_dir: pathlib.Path
+) -> tuple[pathlib.Path, pathlib.Path, str] | None:
+    """Return the exact generated spec and producer status consumed by an action."""
+    if name == "evaluate":
+        phase = "zs" if label == "baseline" else f"iter_{_iteration_number(label)}"
+        spec_name = "eval_config.yaml"
+        producer = "eval-config"
+    elif name == "train":
+        phase = f"iter_{_iteration_number(label)}"
+        spec_name = "train_config.yaml"
+        producer = "train-config"
+    else:
+        return None
+    spec = results_dir / phase / "specs" / spec_name
+    status = results_dir / phase / "specs" / f"{producer}.host.status.json"
+    return spec, status, producer
+
+
 def _iteration_number(label: str) -> int:
     match = re.fullmatch(r"iter([1-9][0-9]*)", label)
     if not match:
