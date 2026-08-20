@@ -440,7 +440,7 @@ def _expected_artifact_path(
         "dataset_materialize_status": results_dir / "dataset_setup" / "dataset-materialize.host.status.json",
         "pool_embeddings_parquet": results_dir / "embeddings" / "source" / "embeddings.parquet",
         "pool_embed_command_status": results_dir / "embeddings" / "source" / "pool_embed.status.json",
-        "metrics_aggregate_csv": phase / "evaluate" / "nvidia_iaa_metrics_aggregate.csv",
+        "metrics_aggregate_csv": phase / "evaluate" / "nvidia_pas_metrics_aggregate.csv",
         "eval_status_json": phase / "evaluate" / "status.json",
         "eval_command_status": phase / "evaluate" / "evaluate.status.json",
         "iteration_summary": phase / "iteration_summary.json",
@@ -2128,7 +2128,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                                     "evidence root must be an object"
                                 )
                                 raw_evidence = {}
-                            metrics_path = phase_root / "evaluate" / "nvidia_iaa_metrics_aggregate.csv"
+                            metrics_path = phase_root / "evaluate" / "nvidia_pas_metrics_aggregate.csv"
                             if raw_evidence.get("iter_label") != label:
                                 errors.append(
                                     f"metric evidence iter_label={raw_evidence.get('iter_label')!r} "

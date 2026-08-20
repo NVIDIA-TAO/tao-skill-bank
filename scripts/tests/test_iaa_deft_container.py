@@ -18,6 +18,8 @@ IAA_SCRIPTS = (
 sys.path.insert(0, str(IAA_SCRIPTS))
 import run_deft_container as container  # noqa: E402
 
+IAA_ROOT = IAA_SCRIPTS.parent
+
 
 def test_docker_gpu_args_use_exact_approved_devices():
     assert container._docker_gpu_args(  # noqa: SLF001
@@ -37,3 +39,18 @@ def test_docker_gpu_args_use_exact_approved_devices():
 def test_docker_gpu_args_reject_invalid_or_mismatched_state(config):
     with pytest.raises(ValueError):
         container._docker_gpu_args(config)  # noqa: SLF001
+
+
+def test_metric_contract_uses_the_pinned_containers_pas_filenames():
+    relevant_suffixes = {".py", ".md", ".json"}
+    text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in IAA_ROOT.rglob("*")
+        if path.is_file()
+        and path.suffix in relevant_suffixes
+        and "__pycache__" not in path.parts
+    )
+
+    assert "nvidia_iaa_metrics" not in text
+    assert "nvidia_pas_metrics.csv" in text
+    assert "nvidia_pas_metrics_aggregate.csv" in text

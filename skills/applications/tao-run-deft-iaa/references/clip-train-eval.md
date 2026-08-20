@@ -32,7 +32,7 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
 
    ```bash
    EVAL_DIR="$PHASE_DIR/evaluate"
-   METRICS="$EVAL_DIR/nvidia_iaa_metrics_aggregate.csv"
+   METRICS="$EVAL_DIR/nvidia_pas_metrics_aggregate.csv"
    TAO_STATUS="$EVAL_DIR/status.json"
    HF_ARGS=()
    if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
