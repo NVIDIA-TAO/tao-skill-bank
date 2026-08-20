@@ -18,7 +18,11 @@ resolve_tao_image = importlib.import_module("resolve_tao_image")
 resolve_tao_model = importlib.import_module("resolve_tao_model")
 
 
+<<<<<<< HEAD
 COSMOS_RL_IMAGE = "nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch"
+=======
+COSMOS_RL_IMAGE = "nvcr.io/nvstaging/tao/tao-cosmos-rl:main-direct-train-no-cache-20260811-v1"  # versions-key: images.tao_toolkit.cosmos_rl
+>>>>>>> bd559e7 ([TAO-0000][CI] stamp: scan scripts/ so duplicated pins can't drift unnoticed (#162))
 
 
 def test_cosmos_nano_default_train_preserves_rl_image_contract():
