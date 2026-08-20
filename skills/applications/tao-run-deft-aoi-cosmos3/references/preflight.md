@@ -219,17 +219,20 @@ show:
   `Cosmos3 Nano Reasoner (nvidia/Cosmos3-Nano)`;
 - host output path and selected-platform compute-frame path for the prepared
   Qwen3-VL checkpoint;
+- persistent host cache path for the pinned model snapshots, converter checkout,
+  and locked Python environment;
 - whether a complete prepared output can be reused;
 - the exact `prepare_cosmos3_vlm_checkpoint.py` command planned after approval;
-- the selected backend image passed through `--runtime-image` and its resolved
-  image ID or digest passed through `--runtime-image-digest`;
-- the variant-matched `--vlm-architecture-model-path-or-uri` and, for a model
-  ID or URI, its immutable `--vlm-architecture-model-revision`.
+- the immutable Nano source and Qwen3-VL donor revisions resolved from the
+  model skill;
+- the immutable Cosmos Framework converter commit and conversion-image digest
+  resolved from the model skill.
 
-Nano may use the model helper's packaged Qwen3-VL 8B default. Edge and Super
-must have their own validated mapping; never inherit Nano's default. The
-preparation helper may clone, pull, and write files, so run it only after the
-single approval gate and before the baseline frozen Benchmark evaluation.
+Nano uses the model helper's packaged immutable defaults automatically; never
+ask the user to choose a donor or Framework repository. Edge and Super must
+have their own model-skill-owned mapping and must never inherit Nano's default.
+The preparation helper may clone, pull, and write files, so run it only after
+the single approval gate and before the baseline frozen Benchmark evaluation.
 
 ## 8. Credentials
 

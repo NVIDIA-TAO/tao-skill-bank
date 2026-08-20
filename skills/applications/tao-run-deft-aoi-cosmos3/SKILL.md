@@ -119,6 +119,12 @@ credential value.
   or verify a Qwen3-VL HF snapshot. Use that path for Framework
   `[model.backbone]` and zero-shot evaluate. Edge/Super require their own
   validated VLM base; never reuse Nano conversion arguments.
+- Nano automatically uses the helper's checked-in immutable source revision,
+  Qwen3-VL donor revision, Framework converter commit, and conversion-image
+  digest (`references/cosmos3-conversion-defaults.json` in the model skill).
+  Do not ask the user to select any of them. Edge and Super require a
+  variant-specific policy owned by the model skill; never reuse Nano's
+  conversion defaults.
 - Train container image: resolve `images.tao_toolkit.cosmos_framework` with
   `scripts/resolve_versions_key.py`; never copy its tag into this skill.
 - Train with `python -m cosmos_framework.scripts.train --sft-toml=<config>`.

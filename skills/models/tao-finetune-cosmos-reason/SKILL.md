@@ -2,122 +2,72 @@
 name: tao-finetune-cosmos-reason
 description: >-
   Shared Cosmos3 frontend that explicitly routes Cosmos Framework and
-  Cosmos-RL, validates runtime model/video-dataset/SLURM inputs, consumes an
-  SQSH or packaged backend image, optionally plans explicit clean
-  source builds, prepares checkpoints, validates the first update in-process,
-  and returns token-weighted losses and task-aware accuracy.
+  Cosmos-RL, validates runtime model/video-dataset/SLURM inputs, builds clean
+  repository-derived images, prepares checkpoints, gates full training on a
+  smoke run, and returns token-weighted losses and task-aware accuracy.
 license: Apache-2.0
-compatibility: Requires Python 3.11+ with PyYAML and a supported container execution platform; SLURM runs additionally require SSH, sbatch/srun, Pyxis/Enroot, and shared storage.
+compatibility: Docker with NVIDIA Container Toolkit, or SLURM with Pyxis/Enroot and a user-supplied shared-storage configuration.
 metadata:
   author: NVIDIA Corporation
-  version: "0.3.6"
+  version: "0.3.1"
 allowed-tools: Read Bash
-tags:
-- model
-- cosmos
-- multimodal
-- training
+tags: [cosmos, vlm, sft, peft, video, reasoning, slurm]
 ---
 
 # Cosmos3 TAO training
 
-Keep one shared model-facing frontend. Backend image fields and contract paths
-live under `backend_contracts` in `references/skill_info.yaml`; image literals
-are stamped from `versions.yaml`, while referenced backend YAMLs define native
-runtime schemas. Never translate between them.
+Keep this as one shared model-facing frontend. Shared concepts live here;
+backend-native runtime contracts remain separate in
+`references/cosmos-framework-backend.yaml` and
+`references/cosmos-rl-backend.yaml`. Never translate one backend's TOML into
+the other backend's schema.
 
 ## Mandatory runtime intake
 
 Before planning training, collect all of the following. Do not infer a path
 from history, another user, a prior job, an image, or a developer checkout.
 
-- `base_model_path_or_uri`. For a Hugging Face model ID or URL, accept an
-  optional friendly `base_model_revision` such as a branch or tag. If omitted,
-  resolve `main`; do not ask the user for a commit SHA. Resolve the selected
-  ref read-only through the Hub API to its immutable commit and seal the model
-  ID, requested ref, and resolved SHA in the plan. A complete local snapshot
-  needs no revision and is sealed by its file fingerprints.
-- For Cosmos3-Nano, an explicit input-checkpoint `model_type`: `qwen3_vl`
-  or `cosmos3_omni`. If the user did not supply it, ask once before planning;
-  never infer the choice from `config.json`, a model ID, a path name, or a
-  previous run. Explain the two choices in plain language: `qwen3_vl` uses a
-  compatible Hugging Face checkpoint directly, while `cosmos3_omni` requires
-  an immutable conversion to exact Qwen3-VL safetensors before training.
-  Record the answer as `base_model_format`. Cosmos3-Edge is inferred as
-  `cosmos3_edge` from the resolved model ID and does not present this Nano-only
-  choice.
-- Do not expose Omni preparation implementation fields during normal intake.
-  For Nano, use the packaged `Qwen/Qwen3-VL-8B-Instruct` architecture mapping,
-  resolve both Hub models to immutable commits automatically, and run the
-  TAO-owned `cosmos_rl.model_preparation.vlm_safetensors` entrypoint with the
-  already selected backend image/SQSH. Both backend images must package that
-  entrypoint and its pinned native Framework conversion runtime. An explicitly
-  supplied `prepared_checkpoint_path` or donor is an advanced override: validate
-  it, but never present a route A/B choice or ask for one by default.
-- Accept `hf_model://nvidia/Cosmos3-Nano` directly. If a gated/private model
-  cannot be resolved, ask the user only to set `HF_TOKEN` in the session
-  environment; never ask them to discover a SHA or provide the token value in
-  chat.
-- explicit video sampling mode: either uniform `nframes` or `fps`. FPS mode
-  may also set `min_frames` and `max_frames`; both modes may set clip-time,
-  resize, and pixel-budget fields supported by the selected backend.
+- `base_model_path_or_uri`; require `base_model_revision` for an unrecognized
+  URI/model ID. The packaged `nvidia/Cosmos3-Nano` default resolves its checked-in
+  immutable revision without asking the user.
+- `base_model_format`; the packaged Nano URI resolves to `cosmos3_omni`.
+  Other Nano URI inputs must declare `qwen3_vl` or `cosmos3_omni`.
+  Cosmos3-Edge is inferred as `cosmos3_edge` from the resolved model ID.
+- optional `prepared_checkpoint_path`; validate it instead of silently
+  replacing it.
 - training/validation annotation paths and media roots for conversation-style
   or task-aware video supervision, plus optional task selection.
 - explicit `backend` for a comparison; `cosmos-framework` or `cosmos-rl`.
 - `training_mode`; `dense` or `peft`. PEFT also requires rank, alpha, dropout,
   target modules, bias, RS-LoRA, modules-to-save, and adapter precision.
 - user-owned `results_dir`, `checkpoint_dir`, `cache_dir`, and, for SLURM,
-  `sqsh_cache_dir`, `ssh_key_path`, mounts, and scheduler settings.
-- Runtime order: compute-readable `sqsh_path`, explicit image, then the selected
-  backend image in `references/skill_info.yaml`. On SLURM reuse or convert it
-  once under `sqsh_cache_dir`. Never
-  compare an SQSH filename with an image tag or request source provenance/SHA.
-- Repository paths, commits/trees, branch, base image, build context, and
-  timestamp are advanced inputs required only for explicit `source-build`.
-  See `references/cosmos-backend-operations.md`; never infer a build from
-  runtime selection.
+  `sqsh_cache_dir`, `sqsh_path`, `ssh_key_path`, container mounts, and all
+  scheduler settings.
+- clean repository paths and exact commits for the selected native backend,
+  TAO integration, DAFT, and TAO Core; image tags/base images/build context are
+  runtime inputs.
 
 The planner preserves each original path and reports an accessible `realpath`.
-Missing required paths fail. A missing supplied SQSH fails; an omitted SQSH
-selects the packaged image. No historical fallback path or image is allowed.
-
-### Nano checkpoint model-type choice
-
-Treat the selected `base_model_format` as a user decision and verify that it
-matches the supplied local checkpoint's `config.json.model_type`. A mismatch
-fails; it is not permission to relabel or rewrite the source checkpoint.
-
-For `qwen3_vl`, fingerprint and use a complete compatible Hugging Face Nano
-checkpoint directly. For `cosmos3_omni`, tell the user in the launch review
-that Cosmos-RL will prepare its compatible checkpoint automatically, name the
-planned output path, and preserve the source checkpoint unchanged. Do not ask
-the user for an architecture donor, preparation image, or preparation SQSH.
-The backend-owned preparation step emits a verified `qwen3_vl` checkpoint
-under the selected platform's user-owned `checkpoint_dir`:
-
-- Docker: the local Docker host's `checkpoint_dir`.
-- SLURM: the compute-node-verified shared `checkpoint_dir`, covered by an
-  explicit container mount. Run conversion through the SLURM/Pyxis contract;
-  do not write the converted checkpoint to controller-local storage.
-
-Use the packaged Nano architecture mapping and selected backend runtime unless
-an advanced override was explicitly supplied. Fingerprint the source,
-architecture mapping, converted config/tokenizer/processor/index/shards, and
-conversion provenance. Before conversion, bind the
-sealed plan's backend-native training fields and `VLM_SAFETENSORS_PATH` to the
-planned converted checkpoint inside the selected container. Validate that
-exact output before training without mutating the sealed plan. The original
-Omni/Hugging Face path remains provenance only and must never remain as the
-runtime model path. Reuse is allowed only when the exact target has complete
-matching conversion provenance and passes the same validation.
+Missing paths fail. No fallback dataset, checkpoint, cache, result directory,
+image, partition, account, mount, SSH key, or shared-storage root is allowed.
 
 ### Public Cosmos3-Edge checkpoint contract
 
-Accept the public model at its resolved immutable revision or a local
-snapshot; never request a second checkpoint.
-Apply the model-aware runtime defaults from `references/skill_info.yaml` and
-`references/cosmos-framework-backend.yaml`, preserving separate model and
-processor-profile fingerprints and each default/override origin.
+For Cosmos3-Edge, accept the public Hugging Face model ID plus an immutable
+revision, or a complete local snapshot of that same public model. Do not ask
+the user for a second workload-specific checkpoint and do not copy or edit
+`processor_config.json` or `video_preprocessor_config.json` to create one.
+Keep the base-model fingerprint separate from the processor-profile
+fingerprint.
+
+The model-aware TAO profile supplies Edge runtime defaults: 6 sampled video
+frames, a 1280 x 720 per-frame reference budget (5,529,600 aggregate video
+pixels), sequence length 16,000, and `flash_attention_2`. These are runtime
+settings, not checkpoint contents. Record whether each value came from the
+skill profile or an explicit user override, include it in parity and cache
+keys, and require the normal compute-node smoke gate before full training.
+Framework receives the pixel budget through `TAO_VIDEO_MAX_PIXELS`; Nano keeps its native processor limit unless the user
+explicitly overrides it.
 
 ## Backend selection
 
@@ -139,29 +89,60 @@ Framework-trained checkpoints use the native exact-key exporter, then the
 repository-backed TAO evaluation adapter. That does not make Framework a
 Cosmos-RL version.
 
-## Evaluation intake and inheritance
+## Cosmos3-Nano checkpoint conversion
 
-Run `scripts/evaluation_workflow.py` for every evaluate action and follow
-`references/cosmos-reason-evaluate.md` completely. A parent training plan owns
-all inheritable model, dataset, prompt, preprocessing, precision, checkpoint,
-and scoring fields; never ask the user to repeat them. Ask once only for the
-helper's `required_user_inputs`, execute its `automated_actions`, and launch
-only a checksum-valid `ready=true` plan. Cosmos-RL policy checkpoints require
-the emitted `cosmos_rl_checkpoint_pre_action`; Framework DCP inputs require
-their emitted export pre-action. The ready plan includes a validated
-`spec_bundle.execution`; pass it unchanged to the selected platform. Cosmos
-owns runtime attestation and evaluator configuration; the platform owns launch.
+When Nano is supplied in native `cosmos3_omni` format, invoke
+`scripts/prepare_cosmos3_vlm_checkpoint.py`; do not ask the user to choose an
+architecture donor, Cosmos Framework revision, or conversion image. The helper
+resolves those values from
+`references/cosmos3-conversion-defaults.json`, where the Nano source and
+Qwen3-VL architecture model use immutable Hugging Face revisions, the native
+converter uses an immutable Cosmos Framework commit, and the NVIDIA PyTorch
+conversion image uses an immutable digest.
+
+The helper clones the exact converter source into its cache only when missing,
+installs the pinned checkout's locked environment inside the conversion
+container, downloads URI inputs at their exact revisions, runs as the invoking
+uid/gid, validates the resulting Qwen3-VL safetensors directory, and writes
+`tao_conversion_provenance.json`. A matching complete output is reused before
+any clone, pull, or source-checkpoint access. A different donor or converter is
+an explicit advanced override and still requires immutable revisions/digests.
+
+```bash
+python scripts/prepare_cosmos3_vlm_checkpoint.py \
+  --base-model-path-or-uri nvidia/Cosmos3-Nano \
+  --output-path /abs/path/Cosmos3-Nano-VLM \
+  --cache-dir /abs/path/cosmos3-conversion-cache
+```
 
 ## Framework checkpoint pre-action
 
-Before Framework evaluate, inference, or microservice actions, run
-`scripts/framework_checkpoint_action.py plan` and its emitted `prepare` and
-`verify` steps. Follow `references/cosmos-backend-operations.md`; never ask the
-user to export DCP manually. On SLURM stage only the helper dependency set
-declared by `workflow_contract.action_helper_dependencies`; the platform
-verifies the closed bundle. Use only the verified
-`action_model_path`, reuse only matching complete exports, and record the
-pre-action, manifest, fingerprints, and independent child result.
+Before every Framework `evaluate`, `inference`, or `inference_microservice`
+action, invoke `scripts/framework_checkpoint_action.py plan`. Do not ask the
+user to find or run an exporter manually. The helper preserves the supplied
+checkpoint path, detects a complete HF safetensors directory versus a native
+Framework DCP, infers the saved Framework config only from the checkpoint's
+standard run layout, and otherwise requires an explicit `config_file`.
+
+For DCP input, run the helper's `prepare` verb in the newly built Framework
+TAO action image before starting the requested action. Its runner may be local
+Docker or an `srun` Pyxis command supplied through `--command-prefix`. On
+SLURM, stage this checked-in helper and `cosmos_common.py` with checksums in the
+job input directory; mount only that job directory, not a source checkout.
+The helper invokes the repository-owned exact-key exporter, verifies the DCP
+metadata/config/base-model/revision/exported weights and manifest, writes
+`.tao_export_complete`, and returns `action_model_path`. Put that verified path
+into `model.model_name` for evaluation or `model_path` for inference and the
+microservice. Run `verify` once more from the target compute frame before the
+action child starts.
+
+An already verified export is reused without conversion. A stale or partial
+export is never silently accepted: `prepare` creates and verifies a sibling
+temporary export, preserves the invalid directory under an `.invalid-*` name,
+then atomically installs the replacement. Capture the pre-action JSON, child
+exit code, export manifest checksum, source checkpoint/config fingerprints,
+and final action child code in the job metadata. A failed export blocks the
+evaluate or inference allocation/action and emits terminal `FAILURE`.
 
 ## Required gates
 
@@ -170,21 +151,17 @@ Execute these stages in order and persist their outputs.
 1. Resolve model/backend/action and load the selected backend contract.
 2. Check credentials by presence only. Never read or persist credential
    values. Require a token only for the operation that needs it.
-3. Validate tools, storage, paths, and runtime selection in the mandatory
-   intake order; existing-SQSH and packaged-image modes skip source gates.
-4. Only for explicit `source-build`, validate/build clean sources and verify
-   `/opt/tao/image-provenance.json`. Never mount host source into training.
-5. Enforce the explicit Nano checkpoint model-type choice. If it is
-   `cosmos3_omni`, show the conversion and platform-owned output path in the
-   launch review, then prepare the model through the shared TAO integration
-   entrypoint packaged in the selected clean backend image after approval.
-   Resolve URI/model-ID refs to immutable
-   Hub commits automatically. Validate exact tensor/config keys and fingerprint model,
-   tokenizer, processor, weight index, every shard, and provenance. Assign the
-   verified converted path—not the original source path—to training.
-6. Validate inputs, counts, duplicates, overlap, tasks, and identities. A
-   no-byte-hashing request selects both fast fingerprint flags; metadata stays
-   hashed while weight/media payloads use path+size.
+3. Validate host tools, clean repository commits/trees, build context, free
+   storage, every original/resolved path, and image build inputs.
+4. Build the selected native image and TAO action image from clean commits.
+   Inspect `/opt/tao/image-provenance.json`; reject dirty, missing, or mismatched
+   source. Never mount a host source checkout into training.
+5. If needed, prepare Nano through the helper's checked-in immutable conversion
+   policy. URI downloads use exact revisions, the converter source uses an
+   exact commit, and its base image uses an exact digest. Validate tensor/config
+   keys and fingerprint model, tokenizer, and processor files.
+6. Validate every annotation and referenced media file, record counts,
+   duplicates, train/validation overlap, task selection, and fingerprints.
    Verify the resolved inputs again from an allocated compute node.
    When SLURM storage is not mounted on the launch host, let
    `cosmos_workflow.py` stream its checked-in `cosmos_common.py` inspector to a
@@ -194,59 +171,54 @@ Execute these stages in order and persist their outputs.
    inspection exactly once with the `plan` verb and pass a local
    `--plan-artifact <path>` so the resolved request and inspection results are
    sealed for the remaining launch verbs.
-7. Resolve the video runtime from the structural dataset contract and enforce
-   every profile gate in `references/cosmos-reproducibility-gates.md`.
-   Cosmos-RL `auto` selects source-baked `pynv-device-rgbp` for
-   `video_conversation` and `system-pyav` for `task_aware_video_reasoning`;
-   Framework selects `torchcodec-cuda-on-demand`. All defaults use bounded
-   rank-local, on-demand memory with no disk prewarm. Repeated-media validation
-   may use the backend-native grouped sharder and validation-only caches only
-   while preserving records, explicit batch, weighting, prompts, and
-   preprocessing. Throughput settings that relax batch-1 parity require user
-   authorization.
+7. Prepare the decoder input selected by the structural dataset contract.
+   Cosmos-RL defaults to direct on-demand sample processing so training starts
+   without a dataset-cache prewarm phase. Conversation-style runs prewarm only
+   when the user explicitly selects `--rl-dataset-cache-mode prewarm`; that
+   opt-in uses separate deterministic train and validation keys. Task-aware
+   runs decode directly on GPU and require a fingerprinted override artifact
+   from the packaged
+   `cosmos_rl.utils.video_override_artifacts` builder. Pair every annotation
+   with its actual media root, scan the full input set for the NVDEC macroblock
+   limit, force every validation annotation with `--force-annotation`, and add
+   only independently diagnosed train streams with `--force-video`. Validate
+   the artifact with the packaged
+   `cosmos_rl.utils.validate_video_override_artifacts` command, including full
+   validation-media coverage and GPU random-access decoding, before smoke.
+   The JSON plan emits exact `decoder_artifact.preparation_command` and
+   `decoder_artifact.validation_command` values for the selected clean image;
+   re-plan once with their map, manifest, and artifact fingerprint outputs,
+   seal that plan, and never reuse another run's cache or override artifact.
 8. Generate backend-native TOML, environment, topology, preflight commands,
-   parity data, runtime profile, and metadata. Full specs contain no sample
-   limit. Reuse one sealed `--plan-artifact` across read-only `preflight`,
-   post-review `materialize`, and `render-slurm`; do not repeat original inputs.
-   Materialize atomically in the verified compute frame, derive container paths
-   only from explicit mounts, and never copy source patches to the cluster.
-   Diagnostic subsets are explicit opt-ins, never launch prerequisites.
-9. On SLURM reuse the supplied/derived SQSH or convert the selected image once
-   before GPU submit. SQSH SHA and source provenance are not runtime gates.
-   When Omni preparation is required, inspect the SQSH filesystem and reject it
-   unless it contains the shared TAO launcher, the native Framework converter,
-   and `/opt/tao/framework-converter-runtime.json`. The runtime artifact must
-   report `validation_mode=imported_converter_module`, proving the isolated
-   converter's transitive dependency graph imported during the image build;
-   file presence alone is not sufficient.
-   Verify Pyxis/Enroot, mounts, Python/packages, decoder, GPU, CUDA, NCCL, and
-   storage in the training allocation.
-10. Launch the requested training job directly; do not submit a separate smoke
-    job unless the user explicitly requests one. For Cosmos-RL VLM training,
-    require packaged source that emits a padding-aware `attention_mask` and
-    runs the visual-gradient contract after the first backward pass and before
-    the first optimizer update. Persist total/trainable/frozen counts and
-    gradient norms for the vision encoder, visual projector, language model,
-    and language head. Fail immediately when a trainable visual component has
-    no gradient, a non-finite norm, or a zero norm. Report an explicitly frozen
-    visual component as not applicable rather than as a failure.
-11. Materialize the full spec once and verify its SHA256 in the compute frame
-    before rendering the job from the same plan artifact. Monitor scheduler and
-    structured TAO state to a terminal result, and preserve the child exit code
-    independently of scheduler state. Require child exit zero, structured
-    `SUCCESS`, finite global train/validation loss, checkpoint completion, and
-    a final evaluator metric before reporting completion.
-12. Resolve evaluation with `scripts/evaluation_workflow.py`. Inherit exact
-    fine-tuning artifacts, collect only its remaining user inputs, run its
-    backend-owned automated checkpoint pre-actions, and require `ready=true`.
-    On Cosmos-RL, verify the selected HF export with
-    `cosmos_rl_checkpoint_action.py`, rerun resolution with its manifest, and
-    submit the emitted spec-bundle through the chosen platform; never select
-    the native policy directory, copy the lifecycle into an application-owned
-    launcher, or improvise result/status variables.
-    Evaluate the selected checkpoint with identical prompt, preprocessing,
-    generation, normalization, and task scoring. Extract final metrics with
-    `scripts/extract_cosmos_metrics.py`.
+   parity data, and machine-readable job metadata. Full specs must contain no
+   sample limit. `plan` and `preflight` are read-only with respect to the
+   target compute frame; the explicitly requested controller-side plan artifact
+   is their handoff. Invoke `preflight`, post-review `materialize`, and
+   `render-slurm` with that same `--plan-artifact` and no repeated original
+   input arguments. `materialize` atomically creates the TOML and any
+   merged/smoke manifest in the verified compute frame. For SSH-based
+   SLURM, the checked-in helper is streamed to the verified login host and the
+   generated files are written directly to user-supplied shared storage; do
+   not read a remote annotation through the launch host or copy a temporary
+   source patch to the cluster. The planner derives all in-container runtime
+   paths from explicit mount mappings and rejects an explicit mapping mismatch.
+9. Convert the newly built image to a new SQSH when SLURM is selected. Record
+   image ID/digest and SQSH SHA256; verify Pyxis/Enroot, mounts, non-root Python,
+   packages, decoder, GPU memory/type, CUDA/PyTorch, NCCL, and storage on the
+   allocated node.
+10. Run a smoke job for every distinct backend × structural dataset family × training
+    mode × checkpoint/evaluator path. Continue only on child exit zero,
+    structured `SUCCESS`, finite global train/validation loss, checkpoint
+    completion, and evaluator accuracy coverage.
+11. Create one fresh sealed full plan after the smoke gate, with all smoke
+    limits removed. Materialize its full spec once and verify its SHA256 in the
+    compute frame before rendering the job from the same plan artifact. Launch with
+    `afterok` only after the smoke gate, monitor scheduler and structured TAO
+    state to a terminal result, and preserve the child exit code independently
+    of scheduler state.
+12. Export/evaluate the selected checkpoint with identical prompt,
+    preprocessing, generation, normalization, and task scoring. Extract final
+    metrics with `scripts/extract_cosmos_metrics.py`.
 
 ## Dataset contracts
 
@@ -262,7 +234,7 @@ Default `dataset_family` to `auto`, inspect every annotation, and require train
 and validation to resolve to the same family. Capture record count, unique
 media count, media reuse, extensions, byte-size distribution, task/metric
 metadata, and any declared width, height, FPS, and duration. Select processor,
-cache and resource profiles from those characteristics and the
+cache, smoke-size, and resource profiles from those characteristics and the
 model tier. Never branch on a customer dataset name.
 
 Tasks declaring accuracy participate in deterministic accuracy; common binary
@@ -272,9 +244,10 @@ Aggregate accuracy is example-weighted over records with an accuracy definition.
 
 ## Dense and PEFT contracts
 
-Dense SFT has no LoRA block and reports trainable, frozen, and total counts.
-PEFT preserves rank, alpha, dropout, targets, bias, RS-LoRA, saved modules,
-precision, and trainable count across backends; mismatched semantics block a pair.
+Dense SFT must have no active LoRA block and must report trainable, frozen, and
+total parameter counts. PEFT must represent the same rank, alpha, dropout,
+target modules, bias, RS-LoRA, modules-to-save, precision, and trainable count
+on both backends. Reject a paired PEFT run when semantics cannot be matched.
 
 For fair comparisons, force the same logical model, train/validation records,
 media, prompt, frames, sequence length, precision, seed, epochs, effective
@@ -292,8 +265,8 @@ The required primary metrics are:
   and valid-label denominator;
 - final-validation globally reduced token-weighted loss, with numerator and
   valid-label denominator;
-- the repository evaluator's final validation metric and any supporting values
-  it emits. Do not add a second post-evaluation gate.
+- repository-evaluator validation accuracy, with correct/total, coverage,
+  per-task metrics, aggregation definition, exclusions, and evaluator version.
 
 Do not average console lines or rank means. A step loss is not the average
 training loss. A validation heartbeat is not final validation loss. A
@@ -306,42 +279,26 @@ child exit code is nonzero or the terminal TAO state is not successful.
 
 ## SLURM invariants
 
-Generated jobs use Bash, SQSH via Pyxis, no requeue by default, one launcher
-task per node, runtime-supplied logs, and the training child exit code. A
-single-node exclusive allocation preserves the requested CPU count in
-the `SBATCH` contract but passes every CPU actually granted by SLURM to the
-training step and records requested, allocated, and step counts. Before the
-training child, the same allocation runs the planner-owned packaged-runtime
-gate as the training job's first Pyxis step; a failed gate writes the independent
-child exit artifact and blocks training. Generated jobs set
-`SLURM_EXPORT_ENV=ALL`, and the platform consumer still submits with
-`sbatch --export=ALL`. Every Pyxis step also receives the planner-owned
-runtime variable names through `--container-env`, so a baked image `ENV` value
-cannot override the selected decoder, frame-transfer, cache, or worker profile.
-Framework topology is
-shard=`gpus_per_node`, replica=`nodes`.
+Generated jobs use `#!/usr/bin/env bash` and are syntax-checked by Bash. They
+use SQSH via Pyxis, disable requeue by default, run one launcher task per node,
+write stdout/stderr to runtime-supplied paths, and exit with the training child
+code. Framework topology is shard=`gpus_per_node`, replica=`nodes`.
 Cosmos-RL uses one controller on node zero and its policy-worker topology.
 Asynchronous distributed checkpointing is rejected for multi-node runs.
 
 Every job metadata record must validate against
-`schemas/cosmos-job-metadata.schema.json` and contain paths, fingerprints,
-runtime identity, config, resources, states, outputs, and timing without
-credentials. Source provenance exists only for `source-build`; SQSH SHA is
-optional and never a runtime gate.
+`schemas/cosmos-job-metadata.schema.json`. It records supplied/resolved paths,
+model/data/image fingerprints, source commits, config and SQSH checksums,
+requested/allocated topology, scheduler and child states, logs/results,
+timestamps, and terminal TAO status without credentials.
 
 ## Source-affecting recovery
 
 If a run exposes a code or image defect, stop the affected path, change the
 owning repository, add a test, commit it, rebuild both image and SQSH from a
-clean checkout, then restart every affected training job from its clean sealed
-plan. Never edit a running container, patch an existing image, reuse an old
-SQSH after a source change, or rely on a temporary launch script as the
-implementation.
+clean checkout, rerun smoke, and rerun every affected full job. Never edit a
+running container, patch an existing image, reuse an old SQSH after a source
+change, or rely on a temporary launch script as the implementation.
 
-Use `references/cosmos-reproducibility-gates.md` as the source-owner/test map.
-
-For infrastructure retries, the launch skill classifies the failure and opens
-the new `--retry-of` record; SLURM supplies validated node inventory and
-exclusions. Run `cosmos_workflow.py retry-plan` with the new record's
-`<action-root>/config/train.toml`; it rebases all writable paths and reseals the
-Cosmos request. Render that plan; never patch SBATCH.
+Use `references/cosmos-reproducibility-gates.md` as the source-owner and test
+map before proposing a workaround in a fresh session.

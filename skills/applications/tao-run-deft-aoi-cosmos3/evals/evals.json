@@ -1,17 +1,19 @@
 [
   {
     "id": "tao-run-deft-aoi-cosmos3-basic",
-    "question": "Plan a Cosmos Reason 3 DEFT AOI loop over two-image ShareGPT records with bare OK/NG labels. Do not launch anything.",
+    "question": "Plan a Cosmos Reason 3 DEFT AOI loop over single-image ShareGPT records with bare OK/NG labels. Do not launch anything.",
     "expected_skill": "tao-run-deft-aoi-cosmos3",
     "expected_script": null,
-    "ground_truth": "Select tao-run-deft-aoi-cosmos3, ask the user to choose a platform, use nvidia/Cosmos3-Nano unless Edge or Super was explicitly requested, require only Proxy/Benchmark/Mining annotations, start with a zero-shot frozen Benchmark gate and run zero-shot Proxy only when that gate is unmet, both before any training, use Proxy only for RCCA/mining, create train_iter_<N>.json from selected Mining records and AnomalyGen synthetic NG pairs only after RCA, use frozen Benchmark only for stopping, show one preflight gate, and route every later GPU stage through submit/status/logs/cancel with a job-record.",
+    "ground_truth": "Select tao-run-deft-aoi-cosmos3, ask the user to choose a platform, use nvidia/Cosmos3-Nano unless Edge or Super was explicitly requested, automatically resolve Nano's immutable source, donor, Framework converter, and image pins, require only Proxy/Benchmark/Mining annotations, start with a zero-shot frozen Benchmark gate and run zero-shot Proxy only when that gate is unmet, both before any training, use Proxy only for RCCA/mining, create train_iter_<N>.json from selected Mining records and AnomalyGen synthetic NG records only after RCA, use frozen Benchmark only for stopping, show one preflight gate, and route every later GPU stage through submit/status/logs/cancel with a job-record.",
     "expected_behavior": [
       "Identifies tao-run-deft-aoi-cosmos3",
       "Does not default to a platform",
       "Follows the prompt's model choice, defaults to Nano when unspecified, and keeps hardware advice non-binding",
       "Does not request an input Train annotation",
+      "Requires exactly one image in each ShareGPT images array",
+      "Does not ask the user to choose Nano's donor model or Cosmos Framework repository",
       "Creates train_iter_<N>.json from selected Mining records only after Proxy RCA",
-      "Adds AnomalyGen synthetic NG pairs as a second training-data producer alongside real-image mining",
+      "Adds AnomalyGen synthetic NG records as a second training-data producer alongside real-image mining, skipped only when the driving Proxy RCCA shows zero false accepts",
       "Evaluates the frozen Benchmark gate before any Proxy work and skips Proxy once the gate stops the run",
       "Keeps Proxy RCCA and frozen Benchmark stopping separate",
       "Requires exact OK/NG training labels",
