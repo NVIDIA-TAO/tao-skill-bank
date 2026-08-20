@@ -18,10 +18,6 @@ resolve_tao_image = importlib.import_module("resolve_tao_image")
 resolve_tao_model = importlib.import_module("resolve_tao_model")
 list_tao_models = importlib.import_module("list_tao_models")
 
-<<<<<<< HEAD
-
-COSMOS_RL_IMAGE = "nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch"
-=======
 COSMOS_SKILL = (
     ROOT / "skills" / "models" / "tao-finetune-cosmos-reason"
 )
@@ -30,7 +26,6 @@ COSMOS_SKILL_INFO = resolve_tao_model.load_yaml(COSMOS_SKILL_INFO_PATH)
 COSMOS_BACKENDS = COSMOS_SKILL_INFO["backend_contracts"]
 COSMOS_RL_IMAGE = COSMOS_BACKENDS["cosmos-rl"]["container_image"]
 COSMOS_FRAMEWORK_IMAGE = COSMOS_BACKENDS["cosmos-framework"]["container_image"]
->>>>>>> b9578f8 ([TAO-000][Feature] Harden Cosmos training and evaluation workflows (#146))
 
 
 def test_cosmos_nano_default_train_preserves_rl_image_contract():

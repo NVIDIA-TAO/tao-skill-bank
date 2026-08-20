@@ -3,14 +3,10 @@ backend: cosmos-rl
 display_name: Cosmos-RL
 native_source_repository: cosmos-reason-gitlab
 tao_integration_repository: cosmos-rl
-<<<<<<< HEAD
-container_image: nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
-=======
 runtime_image_selection:
   explicit_sqsh_precedence: true
   packaged_default_when_omitted: true
   source_build_requires_explicit_mode: true
->>>>>>> b9578f8 ([TAO-000][Feature] Harden Cosmos training and evaluation workflows (#146))
 build:
   owner: cosmos-rl
   dockerfile: Dockerfile

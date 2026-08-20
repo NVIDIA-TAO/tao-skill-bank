@@ -10,10 +10,6 @@ aliases:
 - cosmos-rl
 - cosmos-framework
 automl_enabled: true
-<<<<<<< HEAD
-container_image: nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
-=======
->>>>>>> b9578f8 ([TAO-000][Feature] Harden Cosmos training and evaluation workflows (#146))
 backend_contracts:
   cosmos-framework:
     path: references/cosmos-framework-backend.yaml
