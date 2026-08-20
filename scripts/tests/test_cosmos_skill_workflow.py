@@ -35,6 +35,7 @@ def load_module(name: str, path: Path):
 
 common = load_module("cosmos_common", SKILL / "scripts" / "cosmos_common.py")
 workflow = load_module("cosmos_workflow_test", SKILL / "scripts" / "cosmos_workflow.py")
+prepare = sys.modules["prepare_cosmos3_vlm_checkpoint"]
 metric = load_module("cosmos_metrics_test", SKILL / "scripts" / "extract_cosmos_metrics.py")
 framework_action = load_module(
     "framework_checkpoint_action_test", SKILL / "scripts" / "framework_checkpoint_action.py"
@@ -689,6 +690,103 @@ def test_public_edge_checkpoint_uses_skill_runtime_profile(tmp_path, dataset_fam
         "selection_basis": ["model_tier", "dataset_resolution_metadata", "record_count", "media_reuse", "explicit_overrides"],
     }
     assert plan["environment"]["TAO_VIDEO_MAX_PIXELS"] == str(plan["processor_profile"]["max_video_pixels"])
+
+
+def test_nano_omni_conversion_uses_reproducible_packaged_defaults(tmp_path):
+    args = args_for(tmp_path, backend="cosmos-rl")
+    (tmp_path / "model" / "config.json").write_text(
+        json.dumps({"model_type": "cosmos3_omni", "architectures": ["Cosmos3ForConditionalGeneration"]})
+    )
+    args.base_model_format = "cosmos3_omni"
+
+    plan = workflow.build_plan(args)
+    preparation = plan["model_preparation"]
+    defaults = prepare.conversion_defaults()
+    nano = defaults["models"]["nvidia/Cosmos3-Nano"]
+    converter = defaults["converter"]
+
+    assert preparation["required"] is True
+    assert preparation["kind"] == "cosmos3_omni_to_exact_qwen3_vl"
+    assert preparation["packaged_defaults_applied"] is True
+    assert preparation["architecture_model"] == nano["architecture_model"]
+    assert preparation["converter"] == {
+        "repository": converter["repository"],
+        "revision": converter["revision"],
+        "image": f"{converter['image']}@{converter['image_digest']}",
+    }
+    assert "<RESOLVE_AFTER_CLEAN_BUILD>" not in preparation["command"]
+    assert "--cosmos-framework-revision" in preparation["command"]
+    assert "--vlm-architecture-model-revision" in preparation["command"]
+
+
+def test_public_nano_uri_gets_packaged_source_and_conversion_revisions(tmp_path):
+    args = args_for(tmp_path, backend="cosmos-rl")
+    args.base_model_path_or_uri = "nvidia/Cosmos3-Nano"
+    args.base_model_revision = ""
+    args.base_model_format = "auto"
+
+    plan = workflow.build_plan(args)
+    nano = prepare.conversion_defaults()["models"]["nvidia/Cosmos3-Nano"]
+
+    assert args.base_model_revision == nano["revision"]
+    assert plan["model_preparation"]["architecture_model"] == nano["architecture_model"]
+    assert nano["revision"] in plan["model_preparation"]["command"]
+
+
+def test_prepare_helper_resolves_all_nano_defaults_and_output_mount(tmp_path):
+    model = make_model(tmp_path)
+    output = tmp_path / "prepared" / "fingerprinted-output"
+    cache = tmp_path / "cache"
+    checkout = tmp_path / "framework"
+    args = prepare.parse_args(
+        [
+            "--base-model-path-or-uri", str(model),
+            "--output-path", str(output),
+            "--cache-dir", str(cache),
+        ]
+    )
+    defaults, image_ref, digest = prepare.resolve_args(args)
+    command = prepare.command(
+        args, output, cache, checkout, image_ref, defaults["converter"]["dependency_group"]
+    )
+    nano = defaults["models"]["nvidia/Cosmos3-Nano"]
+
+    assert args.vlm_architecture_model_path_or_uri == nano["architecture_model"]["path_or_uri"]
+    assert args.vlm_architecture_model_revision == nano["architecture_model"]["revision"]
+    assert image_ref == f"{defaults['converter']['image']}@{digest}"
+    assert f"OUTPUT_PATH=/output/{output.name}" in command
+    assert f"{checkout}:/workspace/cosmos-framework" in command
+
+
+def test_prepare_helper_reuses_matching_output_without_source_or_checkout(tmp_path, capsys):
+    output = tmp_path / "prepared"
+    output.mkdir()
+    (output / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}))
+    (output / "model.safetensors").write_bytes(b"weights")
+    (output / "tokenizer_config.json").write_text("{}")
+    (output / "tokenizer.json").write_text("{}")
+    args = prepare.parse_args(
+        [
+            "--base-model-path-or-uri", "nvidia/Cosmos3-Nano",
+            "--output-path", str(output),
+            "--cache-dir", str(tmp_path / "cache"),
+        ]
+    )
+    _, image_ref, digest = prepare.resolve_args(args)
+    provenance = {
+        "schema_version": 2,
+        **prepare.request_provenance(args, image_ref, digest),
+    }
+    (output / "tao_conversion_provenance.json").write_text(json.dumps(provenance))
+
+    assert prepare.main(
+        [
+            "--base-model-path-or-uri", "nvidia/Cosmos3-Nano",
+            "--output-path", str(output),
+            "--cache-dir", str(tmp_path / "cache"),
+        ]
+    ) == 0
+    assert '"status": "reused_verified"' in capsys.readouterr().out
 
 
 def test_public_edge_uri_is_snapshotted_without_alternate_checkpoint(tmp_path):

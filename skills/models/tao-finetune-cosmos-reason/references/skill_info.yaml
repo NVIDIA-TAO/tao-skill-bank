@@ -50,6 +50,10 @@ runtime_requirements:
     min_container_toolkit_version: '1.19.1'
 workflow_contract:
   planner: scripts/cosmos_workflow.py
+  cosmos3_conversion:
+    helper: scripts/prepare_cosmos3_vlm_checkpoint.py
+    defaults: references/cosmos3-conversion-defaults.json
+    nano_policy: automatically resolve immutable source, donor, converter, and image inputs
   framework_checkpoint_action: scripts/framework_checkpoint_action.py
   metric_extractor: scripts/extract_cosmos_metrics.py
   smoke_gate:

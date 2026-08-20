@@ -12,69 +12,46 @@ So a one-time conversion turns the selected Cosmos Reason 3 reasoner into a
 Qwen3-VL PTM. The reasoner stays the model's identity and lineage throughout;
 the Qwen3-VL PTM is only the on-disk format Cosmos-RL can consume.
 
-After the user approves the launch review, prepare the selected checkpoint with
-the helper owned by `tao-finetune-cosmos-reason`:
+After the user approves the launch review, prepare Nano with the helper owned by
+`tao-finetune-cosmos-reason`:
 
 ```bash
-set -a; source /path/to/.env; set +a   # omit if already exported
-
-# --checkpoint-path is resolved as a filesystem path by the upstream converter,
-# so it must be a LOCAL DIRECTORY. A bare HuggingFace repo id can never work,
-# and the failure only surfaces after the container's slow `uv sync`. Download
-# first (~33 GB excluding demo assets; the repo is ungated):
-# Repeat --exclude per pattern. A second bare pattern is parsed as a positional
-# FILENAMES argument, and the whole download fails with "File not found in
-# repository" pointing at .../resolve/main/images/%2A — which reads like a
-# broken repo rather than a CLI syntax error.
-hf download nvidia/Cosmos3-Nano --local-dir "$COSMOS3_SOURCE_DIR" \
-  --exclude 'assets/*' --exclude 'images/*'
+set -a; source /path/to/.env; set +a   # omit unless this env file was approved
 
 "$PYTHON" \
   "$TAO_SKILL_BANK_PATH/skills/models/tao-finetune-cosmos-reason/scripts/prepare_cosmos3_vlm_checkpoint.py" \
-  --checkpoint-path "$COSMOS3_SOURCE_DIR" \
+  --base-model-path-or-uri nvidia/Cosmos3-Nano \
   --output-path "$PREPARED_MODEL_HOST_PATH" \
-  --validate-with-image "$COSMOS_RL_IMAGE"
+  --cache-dir "$COSMOS3_CONVERSION_CACHE"
 ```
 
-Confirm `$COSMOS3_SOURCE_DIR` exists before launching; that check costs nothing
-and saves several minutes plus a large cache write.
+Nano conversion is fully resolved by the model skill. Do not ask the user to
+choose a Qwen donor, a Cosmos Framework repository/commit, or an image. The
+helper reads the immutable Nano source revision, Qwen3-VL donor revision,
+Framework converter commit, and conversion-image digest from
+`references/cosmos3-conversion-defaults.json`. It downloads model snapshots,
+checks out the converter, and installs the locked converter environment only
+when its cache does not already contain them.
 
-The helper runs its own containers as root and repairs ownership afterwards
-with a trailing `chown ... || true`, which covers only the paths it names and
-tolerates its own failure. Expect a handful of root-owned files to survive in
-the converted directory — `chat_template.json` and `.cache/huggingface/` were
-the observed leftovers. They make the PTM directory unremovable by its owner,
-so repair it before the run needs to move or delete it. No sudo required:
+The helper runs the conversion container as the invoking uid/gid, so no repair
+container or `chown` step is needed. It forwards whichever of `HF_TOKEN` or
+`HUGGING_FACE_HUB_TOKEN` is already set, by name and without printing values.
+Use `--secrets-env` only for an env file the user approved.
 
-```bash
-docker run --pull=never --rm -v "$(dirname "$PREPARED_MODEL_HOST_PATH"):/out" busybox:latest \
-  chown -R "$(id -u):$(id -g)" "/out/$(basename "$PREPARED_MODEL_HOST_PATH")"
-```
-
-Prefer chowning over deleting: the prepared PTM is ~17 GB across four shards
-and re-converting means re-downloading the source checkpoint too. Once the
-ownership is fixed the helper reports `status=skipped_existing` and reuses it.
-
-The helper may clone NVIDIA/cosmos-framework, pull its conversion image, and
-write a large checkpoint, so never run it before approval. It forwards
-whichever of `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` is set in the session, by
-name and without printing values; the second is the legacy alias for the same
-HuggingFace access token, so either one is enough. For `--secrets-env`, see the
-model skill.
-
-Do not convert again when the helper reports `status=skipped_existing`; it has
-already verified a complete `qwen3_vl` safetensors directory. Mount or stage
-that directory for the selected platform, then use its compute-frame path for:
+Do not convert again when the helper reports `status="reused_verified"`; it has
+already validated the complete `qwen3_vl` directory and matching provenance
+before any clone, pull, or source-checkpoint access. Mount or stage that
+directory for the selected platform, then use its compute-frame path for:
 
 - baseline and iteration `model.model_name`;
 - Train `policy.model_name_or_path`;
 - LoRA evaluate `model.base_model_path`.
 
 Keep the canonical Cosmos Reason 3 ID (`nvidia/Cosmos3-Nano` by default) as the
-source-model lineage; it names the model, not the Cosmos-RL PTM path. The command above is the Nano default. For Edge or Super, supply the
-selected source checkpoint and a model-skill-approved, variant-matched
-`--vlm-model-name`; if that mapping and the selected Cosmos-RL image have not
-been validated, hard-stop instead of applying Nano's Qwen3-VL 8B default.
+source-model lineage; it names the model, not the Cosmos-RL PTM path. The
+automatic mapping is Nano-only. For Edge or Super, require a model-skill-owned,
+variant-specific conversion policy; hard-stop instead of applying Nano's
+Qwen3-VL donor.
 
 ## Run containers as the invoking user
 

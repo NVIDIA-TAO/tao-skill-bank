@@ -27,8 +27,11 @@ the other backend's schema.
 Before planning training, collect all of the following. Do not infer a path
 from history, another user, a prior job, an image, or a developer checkout.
 
-- `base_model_path_or_uri`; require `base_model_revision` for a URI/model ID.
-- `base_model_format`; Nano URI inputs use `qwen3_vl` or `cosmos3_omni`.
+- `base_model_path_or_uri`; require `base_model_revision` for an unrecognized
+  URI/model ID. The packaged `nvidia/Cosmos3-Nano` default resolves its checked-in
+  immutable revision without asking the user.
+- `base_model_format`; the packaged Nano URI resolves to `cosmos3_omni`.
+  Other Nano URI inputs must declare `qwen3_vl` or `cosmos3_omni`.
   Cosmos3-Edge is inferred as `cosmos3_edge` from the resolved model ID.
 - optional `prepared_checkpoint_path`; validate it instead of silently
   replacing it.
@@ -86,6 +89,32 @@ Framework-trained checkpoints use the native exact-key exporter, then the
 repository-backed TAO evaluation adapter. That does not make Framework a
 Cosmos-RL version.
 
+## Cosmos3-Nano checkpoint conversion
+
+When Nano is supplied in native `cosmos3_omni` format, invoke
+`scripts/prepare_cosmos3_vlm_checkpoint.py`; do not ask the user to choose an
+architecture donor, Cosmos Framework revision, or conversion image. The helper
+resolves those values from
+`references/cosmos3-conversion-defaults.json`, where the Nano source and
+Qwen3-VL architecture model use immutable Hugging Face revisions, the native
+converter uses an immutable Cosmos Framework commit, and the NVIDIA PyTorch
+conversion image uses an immutable digest.
+
+The helper clones the exact converter source into its cache only when missing,
+installs the pinned checkout's locked environment inside the conversion
+container, downloads URI inputs at their exact revisions, runs as the invoking
+uid/gid, validates the resulting Qwen3-VL safetensors directory, and writes
+`tao_conversion_provenance.json`. A matching complete output is reused before
+any clone, pull, or source-checkpoint access. A different donor or converter is
+an explicit advanced override and still requires immutable revisions/digests.
+
+```bash
+python scripts/prepare_cosmos3_vlm_checkpoint.py \
+  --base-model-path-or-uri nvidia/Cosmos3-Nano \
+  --output-path /abs/path/Cosmos3-Nano-VLM \
+  --cache-dir /abs/path/cosmos3-conversion-cache
+```
+
 ## Framework checkpoint pre-action
 
 Before every Framework `evaluate`, `inference`, or `inference_microservice`
@@ -127,9 +156,10 @@ Execute these stages in order and persist their outputs.
 4. Build the selected native image and TAO action image from clean commits.
    Inspect `/opt/tao/image-provenance.json`; reject dirty, missing, or mismatched
    source. Never mount a host source checkout into training.
-5. If needed, prepare the model with the converter packaged in the clean
-   Framework image. URI downloads require immutable revisions. Validate exact
-   tensor/config keys and fingerprint model, tokenizer, and processor files.
+5. If needed, prepare Nano through the helper's checked-in immutable conversion
+   policy. URI downloads use exact revisions, the converter source uses an
+   exact commit, and its base image uses an exact digest. Validate tensor/config
+   keys and fingerprint model, tokenizer, and processor files.
 6. Validate every annotation and referenced media file, record counts,
    duplicates, train/validation overlap, task selection, and fingerprints.
    Verify the resolved inputs again from an allocated compute node.

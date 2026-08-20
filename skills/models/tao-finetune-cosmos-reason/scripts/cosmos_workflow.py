@@ -43,6 +43,7 @@ from cosmos_common import (
     validate_metadata,
     validate_provenance,
 )
+from prepare_cosmos3_vlm_checkpoint import conversion_defaults
 
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
@@ -61,6 +62,14 @@ SUPPORTED_ACTIONS = {
 }
 PLAN_ARTIFACT_SCHEMA_VERSION = 1
 _PLAN_ARTIFACT_TRANSIENT_ARGS = {"verb", "format", "plan_artifact"}
+CONVERSION_DEFAULTS = conversion_defaults()
+
+
+def _apply_packaged_model_defaults(args: argparse.Namespace) -> None:
+    """Pin recognized public models before local or remote input inspection."""
+    model_defaults = CONVERSION_DEFAULTS["models"].get(args.base_model_path_or_uri)
+    if model_defaults and not args.base_model_revision:
+        args.base_model_revision = model_defaults["revision"]
 
 
 def resolve_model_name(
@@ -939,7 +948,10 @@ def _model_preparation(args: argparse.Namespace, model: Mapping[str, Any]) -> tu
         if tier == "edge":
             supplied_format = "cosmos3_edge"
         elif model.get("source_type") == "uri":
-            raise WorkflowError("base_model_format must be explicit for a model URI")
+            packaged = CONVERSION_DEFAULTS["models"].get(args.base_model_path_or_uri)
+            if not packaged:
+                raise WorkflowError("base_model_format must be explicit for an unrecognized model URI")
+            supplied_format = packaged["format"]
         else:
             supplied_format = "qwen3_vl" if detected == "qwen3_vl" else "cosmos3_omni" if detected == "cosmos3_omni" else "unknown"
     if args.prepared_checkpoint_path:
@@ -972,25 +984,45 @@ def _model_preparation(args: argparse.Namespace, model: Mapping[str, Any]) -> tu
         }
     if supplied_format != "cosmos3_omni":
         raise WorkflowError(f"unsupported Cosmos3-Nano base checkpoint format: {supplied_format}")
-    if not args.vlm_architecture_model_path_or_uri:
+    packaged = CONVERSION_DEFAULTS["models"].get(args.model)
+    architecture = args.vlm_architecture_model_path_or_uri
+    architecture_revision = args.vlm_architecture_model_revision
+    used_packaged_architecture = False
+    if not architecture and packaged:
+        architecture = packaged["architecture_model"]["path_or_uri"]
+        architecture_revision = packaged["architecture_model"]["revision"]
+        used_packaged_architecture = True
+    elif packaged and architecture == packaged["architecture_model"]["path_or_uri"] and not architecture_revision:
+        architecture_revision = packaged["architecture_model"]["revision"]
+        used_packaged_architecture = True
+    if not architecture:
         raise WorkflowError("Cosmos3 Omni conversion requires vlm_architecture_model_path_or_uri")
-    if ("://" in args.vlm_architecture_model_path_or_uri or not Path(args.vlm_architecture_model_path_or_uri).expanduser().exists()) and not args.vlm_architecture_model_revision:
+    if ("://" in architecture or not Path(architecture).expanduser().exists()) and not architecture_revision:
         raise WorkflowError("immutable architecture-model revision is required for a URI/identifier")
+    converter = CONVERSION_DEFAULTS["converter"]
+    conversion_image = f"{converter['image']}@{converter['image_digest']}"
     script = SKILL_DIR / "scripts" / "prepare_cosmos3_vlm_checkpoint.py"
     command = [
-        "python", str(script), "--base-model-path-or-uri", args.base_model_path_or_uri,
-        "--vlm-architecture-model-path-or-uri", args.vlm_architecture_model_path_or_uri,
+        sys.executable, str(script), "--base-model-path-or-uri", args.base_model_path_or_uri,
+        "--vlm-architecture-model-path-or-uri", architecture,
+        "--vlm-architecture-model-revision", architecture_revision,
         "--output-path", output, "--cache-dir", args.cache_dir,
-        "--framework-image", args.cosmos_framework_base_tag,
-        "--framework-image-digest", "<RESOLVE_AFTER_CLEAN_BUILD>",
+        "--cosmos-framework-repo", converter["repository"],
+        "--cosmos-framework-revision", converter["revision"],
+        "--conversion-image", conversion_image,
     ]
     if args.base_model_revision:
         command.extend(["--base-model-revision", args.base_model_revision])
-    if args.vlm_architecture_model_revision:
-        command.extend(["--vlm-architecture-model-revision", args.vlm_architecture_model_revision])
     return output, {
         "required": True, "kind": "cosmos3_omni_to_exact_qwen3_vl", "output": path_identity(output, required=False),
-        "command": shlex.join(command), "provenance": "tao_conversion_provenance.json plus exact tensor/config validation",
+        "command": shlex.join(command),
+        "architecture_model": {"path_or_uri": architecture, "revision": architecture_revision},
+        "converter": {
+            "repository": converter["repository"], "revision": converter["revision"],
+            "image": conversion_image,
+        },
+        "packaged_defaults_applied": used_packaged_architecture,
+        "provenance": "tao_conversion_provenance.json plus exact tensor/config validation",
     }
 
 
@@ -1207,6 +1239,7 @@ def _decoder_artifact_plan(
 
 
 def build_plan(args: argparse.Namespace) -> dict[str, Any]:
+    _apply_packaged_model_defaults(args)
     remote_inspection = _remote_inspection(args) if _needs_remote_inspection(args) else None
     inspected_model = remote_inspection["model"] if remote_inspection else None
     args.model = resolve_model_name(args.model, args.base_model_path_or_uri, inspected_model)

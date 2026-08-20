@@ -337,5 +337,19 @@ class StateMachineTests(unittest.TestCase):
         )
 
 
+class SkillContractTests(unittest.TestCase):
+    def test_nano_checkpoint_preparation_is_automatic_and_current(self) -> None:
+        skill = (SKILL_ROOT / "SKILL.md").read_text()
+        preparation = (SKILL_ROOT / "references" / "cosmos-reason.md").read_text()
+        preflight = (SKILL_ROOT / "references" / "preflight.md").read_text()
+        combined = "\n".join((skill, preparation, preflight))
+
+        self.assertIn("--base-model-path-or-uri nvidia/Cosmos3-Nano", preparation)
+        self.assertIn("cosmos3-conversion-defaults.json", combined)
+        self.assertIn("Do not ask the user", combined)
+        self.assertNotIn("--validate-with-image", combined)
+        self.assertNotIn("<RESOLVE_AFTER_CLEAN_BUILD>", combined)
+
+
 if __name__ == "__main__":
     unittest.main()

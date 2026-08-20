@@ -25,13 +25,15 @@ ABI and dispatch contracts.
 
 The logical base model is always supplied. A local Qwen3-VL safetensors model
 can be used directly after config, tensor-index, tokenizer, and processor
-validation. A URI requires an immutable revision and is snapshotted to the
-runtime checkpoint area. Cosmos3 Omni inputs use the native Framework
-converter and an explicitly supplied, revision-pinned architecture model. The
-conversion manifest proves the common source model and fingerprints the
-prepared representation. Framework DCP evaluation uses the native exact-key
-VLM exporter; PEFT adapters are reconstructed and merged before shared
-evaluation.
+validation. An unrecognized URI requires an explicit immutable revision and is
+snapshotted to the runtime checkpoint area. The packaged Cosmos3-Nano URI and
+native Omni inputs resolve the immutable source, Qwen3-VL donor, Framework
+converter commit, and conversion-image digest from
+`cosmos3-conversion-defaults.json`; callers may override them only with equally
+immutable inputs. The conversion manifest proves the common source model and
+fingerprints the prepared representation. Framework DCP evaluation uses the
+native exact-key VLM exporter; PEFT adapters are reconstructed and merged
+before shared evaluation.
 
 For every Framework evaluate, inference, or inference-microservice request,
 the skill runs `scripts/framework_checkpoint_action.py plan` and then

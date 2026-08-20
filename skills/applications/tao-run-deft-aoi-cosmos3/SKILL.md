@@ -124,9 +124,11 @@ credential value.
   being trained is still the selected Cosmos Reason 3 reasoner — keep its
   canonical ID as checkpoint lineage; the Qwen3-VL PTM is only the on-disk
   format Cosmos-RL consumes.
-- Nano may use the helper's packaged Qwen3-VL default. Edge and Super require
-  a variant-specific, validated VLM base; never reuse Nano's conversion
-  arguments.
+- Nano automatically uses the helper's immutable source revision, Qwen3-VL
+  donor revision, Framework converter commit, and conversion-image digest. Do
+  not ask the user to select any of them. Edge and Super require a
+  variant-specific policy owned by the model skill; never reuse Nano's
+  conversion defaults.
 - Container key: `images.tao_toolkit.cosmos_rl` in `versions.yaml`.
 - Train action: `cosmos-rl --config <spec.toml>
   /opt/cosmos_rl/tao_sft_example.py`.

@@ -1,10 +1,13 @@
 [
   {
+    "id": "tao-run-deft-aoi-cosmos3-single-image-loop",
     "question": "Plan a Cosmos Reason 3 DEFT AOI loop over single-image ShareGPT records with bare OK/NG labels. Do not launch anything.",
     "expected_skill": "tao-run-deft-aoi-cosmos3",
-    "ground_truth": "Select tao-run-deft-aoi-cosmos3, ask the user to choose a platform, use nvidia/Cosmos3-Nano unless Edge or Super was explicitly requested, require only Proxy/Benchmark/Mining annotations, start with a zero-shot frozen Benchmark gate and run zero-shot Proxy only when that gate is unmet, use Proxy only for RCCA and mining, create train_iter_<N>.json from selected Mining records only after RCA, use frozen Benchmark only for stopping, show one preflight gate, and route every later GPU stage through submit/status/logs/cancel with a job-record.",
-    "rubric": [
+    "expected_script": null,
+    "ground_truth": "Select tao-run-deft-aoi-cosmos3, ask the user to choose a platform, use nvidia/Cosmos3-Nano unless Edge or Super was explicitly requested, automatically resolve Nano's immutable source, donor, Framework converter, and image pins, require only Proxy/Benchmark/Mining annotations, start with a zero-shot frozen Benchmark gate and run zero-shot Proxy only when that gate is unmet, use Proxy only for RCCA and mining, create train_iter_<N>.json from selected Mining records only after RCA, use frozen Benchmark only for stopping, show one preflight gate, and route every later GPU stage through submit/status/logs/cancel with a job-record.",
+    "expected_behavior": [
       "Requires exactly one image in each ShareGPT images array",
+      "Does not ask the user to choose Nano's donor model or Cosmos Framework repository",
       "Uses only real-image mining as the training-data producer",
       "Keeps Proxy, Benchmark, Mining, and generated Train images isolated",
       "Preserves monotonic Train lineage through the immediate previous iteration",
