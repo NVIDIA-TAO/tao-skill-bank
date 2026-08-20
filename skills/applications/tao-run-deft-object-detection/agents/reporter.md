@@ -103,7 +103,11 @@ Include the `tokens` column only when the field is present.
 ## 4. Configuration
 
 Encoder, allocation policy, rare classes, mining multiplier, per-class AP50
-thresholds, epochs, learning rate, GPU count.
+thresholds, epochs, learning rate, GPU count, and `kpi_conf_threshold`.
+
+State the KPI confidence threshold whenever it is not `0.0`. Every mAP in the
+report is scored at it, and a run scored anywhere else is not comparable to one
+scored at `0.0` — a reader who cannot see the value cannot know that.
 
 ## 5. Observations
 

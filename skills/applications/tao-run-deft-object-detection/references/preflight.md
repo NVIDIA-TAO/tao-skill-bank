@@ -215,7 +215,7 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 - `candidate_expansion_factor` — `5`
 - `embedding_model` — `SigLIP`; `embedding_model_path` is **resolved**, not defaulted (check 9)
 - `iou_threshold` — `0.5`
-- `kpi.conf_threshold` — `0.3`
+- `kpi.conf_threshold` — `0.0` (frozen as `config.kpi_conf_threshold`; every phase is scored at it)
 - workspace root — user prompt, else `~/workspace`
 
 ## Container mounts
@@ -233,6 +233,12 @@ echo "EXTRA_MOUNTS=$EXTRA_MOUNTS"
 Echo it and read the result. A command substitution that fails leaves `EXTRA_MOUNTS`
 empty and every later launch still runs, mounting nothing extra — the same silent
 failure this block exists to prevent.
+
+`init_deft_state.py` derives this list from the run's own inputs — the checkpoints, the
+KPI images and labels, the class mapping, the encoder repo, the pool, and both COCO
+detection files. A path that none of those name is invisible to it: pass
+`--extra-mount PATH` (repeatable) at init and it joins the list. Files are mounted by
+their parent directory.
 
 Every `docker run` in this skill is written as
 `-v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE"`. With inputs inside the
@@ -315,6 +321,40 @@ produces them. Supplying neither the artifacts nor prep's inputs is still an err
 nothing would create them.
 
 
+Three groups of flags apply only to some runs. Build them first so the command below
+stays one shape:
+
+```bash
+# class_stratified only. Both are mandatory under that policy — init refuses without
+# them, so a run that omits them here fails at `mine`, several stages later.
+STRATIFIED_FLAGS=""
+if [ "$ALLOCATION_POLICY" = class_stratified ]; then
+  STRATIFIED_FLAGS="--source-detection-file $SOURCE_DETECTION_FILE"
+  STRATIFIED_FLAGS="$STRATIFIED_FLAGS --target-detection-file $TARGET_DETECTION_FILE"
+fi
+
+# Prep runs only: the pool does not exist yet and these are what builds it.
+PREP_FLAGS=""
+if [ -n "${POOL_IMAGES:-}" ]; then
+  PREP_FLAGS="--pool-images $POOL_IMAGES --codetr-checkpoint $CODETR_CHECKPOINT"
+  PREP_FLAGS="$PREP_FLAGS --codetr-classmap $CODETR_CLASSMAP"
+fi
+
+# A pool that already exists must declare what it holds. Under class_stratified both
+# of these are then mandatory: prep is what would otherwise produce the report and
+# derive the rare classes from it, and a prep that is not going to run cannot.
+EXISTING_POOL_FLAGS=""
+if [ -z "${POOL_IMAGES:-}" ] && [ "$ALLOCATION_POLICY" = class_stratified ]; then
+  EXISTING_POOL_FLAGS="--pool-report $POOL_REPORT --rare-class-list $RARE_CLASS_LIST"
+fi
+
+# Any path the run's own inputs do not name. Repeatable; omit when there are none.
+EXTRA_MOUNT_FLAGS=""
+for path in ${EXTRA_MOUNTS_IN:-}; do
+  EXTRA_MOUNT_FLAGS="$EXTRA_MOUNT_FLAGS --extra-mount $path"
+done
+```
+
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/init_deft_state.py \
   --workspace "$WORKSPACE" \
@@ -334,7 +374,10 @@ nothing would create them.
   --class-mapping "$CLASS_MAPPING" \
   --ap50-thresholds-json "$AP50_THRESHOLDS_JSON" \
   --multiplier "$MULTIPLIER" \
-  --allocation-policy "$ALLOCATION_POLICY"
+  --allocation-policy "$ALLOCATION_POLICY" \
+  --target-classes "$TARGET_CLASSES" \
+  --kpi-conf-threshold "$KPI_CONF_THRESHOLD" \
+  $STRATIFIED_FLAGS $PREP_FLAGS $EXISTING_POOL_FLAGS $EXTRA_MOUNT_FLAGS
 
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/audit_deft_run.py \
   --results-dir "$RESULTS_DIR"
