@@ -47,6 +47,10 @@ from deft_stages import (  # noqa: E402
 )
 
 ALLOCATION_POLICIES = ("global", "class_stratified")
+# The encoder families the embedding stage accepts. Kept in step with
+# tao-generate-image-embeddings' verify_image_embeddings_spec.py, which enforces the
+# same set against the spec.
+EMBEDDING_MODELS = ("CLIP", "SigLIP")
 
 # AP50 gates from the reference ITS pipeline, used when the caller does not supply
 # their own. The asymmetry is deliberate: `car` is abundant and already well learned,
@@ -149,7 +153,9 @@ def _build_parser() -> argparse.ArgumentParser:
                              "COCO-trained checkpoint). Required only when `prep` must run.")
 
     parser.add_argument("--embedding-model", default="SigLIP",
-                        help="Encoder family. Must match the source-pool parquet's encoder.")
+                        help="Encoder family: SigLIP or CLIP. Not a model id — the weights "
+                             "are --embedding-model-path. Must match the source-pool "
+                             "parquet's encoder.")
     parser.add_argument("--embedding-model-path", required=True,
                         help="Resolved local snapshot directory, or a verified HuggingFace id.")
 
@@ -291,6 +297,18 @@ def main() -> int:
                 errors.append(f"--ap50-thresholds-json[{name!r}] must be a number, got {value!r}")
             elif not 0 <= float(value) <= 1:
                 errors.append(f"--ap50-thresholds-json[{name!r}] must be within [0, 1], got {value}")
+
+        # `model` selects the loader inside the container and nothing between here
+        # and there validates it, so a bad value is accepted at init and fails an
+        # hour later at embed. The common mistake is putting the model id here.
+        if args.embedding_model not in EMBEDDING_MODELS:
+            hint = ""
+            if "/" in args.embedding_model or args.embedding_model.count("-") >= 2:
+                hint = (f"; {args.embedding_model!r} looks like a model id — did you mean "
+                        "--embedding-model-path?")
+            errors.append(
+                f"--embedding-model takes the encoder family "
+                f"({' or '.join(sorted(EMBEDDING_MODELS))}), got {args.embedding_model!r}{hint}")
 
         # ── class lists ──────────────────────────────────────────────────────
         target_classes = requested_classes or sorted(thresholds)

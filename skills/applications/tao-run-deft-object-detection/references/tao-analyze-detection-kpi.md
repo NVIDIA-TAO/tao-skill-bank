@@ -138,6 +138,9 @@ Pass `--gpus all` even though the scoring itself is CPU-bound: the TAO launcher 
 `FileNotFoundError: 'nvidia-smi'` before any work begins.
 
 ```bash
+<skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-analyze-detection-kpi/scripts/verify_kpi_analyze_spec.py \
+  --spec "$KPI_SPEC"
+
 docker run -d --name "deft_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):$(id -g)" \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
