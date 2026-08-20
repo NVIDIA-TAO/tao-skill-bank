@@ -194,7 +194,7 @@ Nearest-neighbor output contains only selected source filepaths. The preparation
 
 Iteration 1 trains on mined annotations only; `train_dataset.annotations_path` remains a mining source pool and is not inserted directly. Later iterations accumulate the previous iteration's assembled annotations. Iteration 1 starts from `cosmos_reason.baseline_model_path`. Later iterations use the checkpoint recorded in the previous iteration's generated evaluate TOML only when `cosmos_reason.continual_model: true`; otherwise they start from the baseline.
 
-6. **Train Cosmos Reason**: use `tao-finetune-cosmos-reason` train with `$RUN_DIR/iter_<N>/train/specs/train.toml`. Keep monitoring the submitted job until it reaches terminal success. Do not infer completion from checkpoint files appearing during training.
+6. **Train Cosmos Reason**: use `tao-finetune-cosmos-reason` train with `$RUN_DIR/iter_<N>/train/specs/train.toml`. Keep monitoring the submitted job until it reaches terminal success. Do not infer completion from checkpoint files appearing during training. After terminal success, inspect the final structured status and training log and require evidence that at least one optimizer step completed. If the observed optimizer-step count is zero, stop before checkpoint discovery or evaluation, tell the user that the training parameters likely need tuning for the assembled dataset and GPU count, and ask how they want to proceed. Do not report the training stage as successful merely because epochs completed or the process exited zero.
 
 7. **Prepare and run evaluation**: after the training job reaches terminal success, prepare evaluation:
 
@@ -254,7 +254,7 @@ This writes `$RUN_DIR/bcq_accuracy_report.md` and `$RUN_DIR/bcq_accuracy_summary
 | `mine_nearest_neighbors` | One mined-neighbor parquet and mining summary exist. |
 | `record_mined_paths` | The cumulative log exists when enabled, or a skipped event is logged when disabled. |
 | `prepare_cosmos_reason_train` | Mined and accumulated LLaVA annotations plus `train/specs/train.toml` exist. |
-| `train` | The Cosmos Reason training job reaches terminal success. |
+| `train` | The Cosmos Reason training job reaches terminal success and reports at least one completed optimizer step. |
 | `evaluate` | Evaluation preparation finds the latest completed training checkpoint, the evaluation job exits successfully, exactly one iteration `results.json` is found, and its `bcq_accuracy_metrics.json` exists. |
 | `cleanup_cosmos_reason_training` | `train/checkpoint_cleanup.json` exists, all timestamped `checkpoints/` directories and `best/checkpoints` links are absent, and the listed safetensors exports still exist. |
 | `loop_stop` | Stop reason is logged; the run-level Markdown and JSON accuracy reports cover the baseline and every completed iteration. |

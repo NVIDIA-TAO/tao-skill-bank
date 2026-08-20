@@ -201,7 +201,7 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 | `mine_nearest_neighbors` | One mined-neighbor parquet and mining summary exist. |
 | `record_mined_paths` | When `mine_unique_only` is true, `$RUN_DIR/mining/mined_paths_log.parquet` exists; otherwise the stage is logged as skipped. |
 | `prepare_cosmos_reason_train` | Mined and accumulated LLaVA annotations plus `train/specs/train.toml` exist. |
-| `train` | The Cosmos Reason training job reaches terminal success. |
+| `train` | The Cosmos Reason training job reaches terminal success and reports at least one completed optimizer step. |
 | `evaluate` | Evaluation preparation finds the latest completed training checkpoint, the evaluation job exits successfully, exactly one iteration `results.json` is found, and its `bcq_accuracy_metrics.json` exists. |
 | `cleanup_cosmos_reason_training` | `train/checkpoint_cleanup.json` exists, raw checkpoint directories are gone, and its listed safetensors exports remain. |
 | `loop_stop` | Stop reason is logged and `bcq_accuracy_report.md` plus `bcq_accuracy_summary.json` compare the baseline with every completed iteration. |
