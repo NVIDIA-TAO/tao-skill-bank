@@ -58,6 +58,25 @@ K8S_VALS = {
     "MOUNT_PATH": "/data",
     "SHM_SIZE": "16Gi",
     "PVC_CLAIM": "edgeai-datasets",
+    # Platform-neutral action request template. JSON is valid YAML and is the
+    # exact encoding used by render_action_job.py.
+    "JOB_NAME_JSON": '"nightly-contract-0001"',
+    "JOB_ID_JSON": '"nightly-contract-0001"',
+    "NAMESPACE_JSON": '"default"',
+    "TTL_SECONDS_JSON": "3600",
+    "IMAGE_PULL_SECRETS_JSON": '[{"name":"ngc-pull-secret"}]',
+    "IMAGE_JSON": '"nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"',
+    "COMMAND_JSON": '["python3"]',
+    "ARGS_JSON": '["-c","print(1)"]',
+    "NUM_GPUS_JSON": '"1"',
+    "ENV_JSON": '[{"name":"HOME","value":"/tmp"}]',
+    "VOLUME_MOUNTS_JSON": (
+        '[{"name":"dshm","mountPath":"/dev/shm","readOnly":false},'
+        '{"name":"workspace","mountPath":"/results",'
+        '"subPath":"jobs/nightly/results","readOnly":false}]'
+    ),
+    "SHM_SIZE_JSON": '"16Gi"',
+    "PVC_CLAIM_JSON": '"edgeai-datasets"',
 }
 SLURM_VALS = {
     **COMMON,
