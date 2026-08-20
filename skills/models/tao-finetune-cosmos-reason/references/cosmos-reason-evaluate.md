@@ -108,7 +108,7 @@ an automated pre-action. Ask only for entries in `required_user_inputs`; do
 not ask for entries in `automated_actions`. Multiple recorded validation
 manifests/media roots are an automated deterministic materialization step, not
 a reason to ask the user to select a subset; preserve the sealed fingerprint
-and full record coverage. Rerun with user inputs such as
+and full validation selection. Rerun with user inputs such as
 `--checkpoint-epoch`, `--checkpoint`, `--generation-max-tokens`,
 `--evaluation-batch-size`, `--evaluation-seed`,
 `--max-video-pixels`,
@@ -177,9 +177,9 @@ classification task, and do not relabel generation NLL or validation loss as
 answer accuracy.
 
 Preserve the resolved prompt, frame sampling, pixel budget, generation,
-parsing, normalization, coverage, and evaluator version in metadata. Aggregate
-accuracy as correct/covered examples over tasks that define accuracy; report
-excluded tasks and reasons.
+parsing, normalization, and evaluator version in metadata. Report the final
+metric emitted by the repository evaluator, including correct/total and
+per-task values when it provides them.
 
 ## Decoder and execution
 
@@ -198,15 +198,14 @@ decoding.
 
 Use `torchrun` data parallelism according to the resolved GPU count. Keep one
 model replica per rank unless the selected backend contract explicitly
-requires another topology. Full evaluation uses `limit=-1`, exact record
-coverage, rank-aware result files, and global deduplication before scoring.
+requires another topology. Full evaluation uses `limit=-1`; the repository
+evaluator owns its rank-aware outputs and scoring.
 
 The READY evaluation plan contains a validated `spec_bundle`. Its
 `execution` lifecycle owns backend CLI selection, non-secret runtime
-environment, Framework in-image capability attestation, and successful-only
-rank-shard aggregation. The aggregation requires a complete contiguous shard
-set and exact annotation/result identity multiset; matching row counts alone
-are insufficient because a duplicate can hide a missing record.
+environment, and Framework in-image capability attestation. It does not add a
+post-evaluation prediction-ID, annotation-envelope, or rank-shard gate after
+the evaluator returns its metric.
 
 Pass that bundle unchanged to the selected platform. On SLURM,
 `tao-run-on-slurm` owns the standard template, persistent results mount,
@@ -222,9 +221,10 @@ reason to stage source or select Cosmos-RL.
 ## Completion and results
 
 Treat scheduler completion as provisional. Require child exit zero, terminal
-TAO `SUCCESS`, a complete prediction set with no duplicate IDs, and evaluator
-metrics whose numerator/denominator recompute to the reported accuracy.
+TAO `SUCCESS`, and the final metric emitted by the repository evaluator. Do not
+turn a successful evaluation into a failure by comparing prediction IDs with
+annotation IDs or by imposing a second annotation-format assumption.
 Persist the selected checkpoint, Framework export when applicable, resolved
 config and SHA256, evaluation plan and provenance, stdout/stderr, status,
-results, per-task coverage, normalization/evaluator version, and duration in
-the job record.
+results, any emitted per-task metrics, normalization/evaluator version, and
+duration in the job record.

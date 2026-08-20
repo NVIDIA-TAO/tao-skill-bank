@@ -150,7 +150,7 @@ only a checksum-valid `ready=true` plan. Cosmos-RL policy checkpoints require
 the emitted `cosmos_rl_checkpoint_pre_action`; Framework DCP inputs require
 their emitted export pre-action. The ready plan includes a validated
 `spec_bundle.execution`; pass it unchanged to the selected platform. Cosmos
-owns attestation and exact-coverage aggregation; the platform owns launch.
+owns runtime attestation and evaluator configuration; the platform owns launch.
 
 ## Framework checkpoint pre-action
 
@@ -235,7 +235,7 @@ Execute these stages in order and persist their outputs.
     structured TAO state to a terminal result, and preserve the child exit code
     independently of scheduler state. Require child exit zero, structured
     `SUCCESS`, finite global train/validation loss, checkpoint completion, and
-    evaluator metric coverage before reporting completion.
+    a final evaluator metric before reporting completion.
 12. Resolve evaluation with `scripts/evaluation_workflow.py`. Inherit exact
     fine-tuning artifacts, collect only its remaining user inputs, run its
     backend-owned automated checkpoint pre-actions, and require `ready=true`.
@@ -292,8 +292,8 @@ The required primary metrics are:
   and valid-label denominator;
 - final-validation globally reduced token-weighted loss, with numerator and
   valid-label denominator;
-- repository-evaluator validation accuracy, with correct/total, coverage,
-  per-task metrics, aggregation definition, exclusions, and evaluator version.
+- the repository evaluator's final validation metric and any supporting values
+  it emits. Do not add a second post-evaluation gate.
 
 Do not average console lines or rank means. A step loss is not the average
 training loss. A validation heartbeat is not final validation loss. A

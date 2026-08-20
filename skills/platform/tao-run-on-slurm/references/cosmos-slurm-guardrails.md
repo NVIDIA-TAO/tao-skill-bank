@@ -16,10 +16,10 @@ shared filesystem to be mounted on the SSH launch host. Stage the Framework
 status bridge in the repository-derived image, not as an ad hoc source patch.
 Evaluation consumes the model skill's validated spec-bundle and its declarative
 `execution` lifecycle. The Cosmos producer owns runtime attestation, evaluator
-selection, result aggregation, and exact coverage; this platform owns the
-standard SBATCH/Pyxis envelope, torchrun mapping, mounts, timeout, and child
-exit preservation. Do not re-encode model semantics in a Cosmos-only SLURM
-renderer or improvise a command outside the sealed bundle.
+selection, and metric extraction; this platform owns the standard SBATCH/Pyxis
+envelope, torchrun mapping, mounts, timeout, and child exit preservation. Do
+not re-encode model semantics in a Cosmos-only SLURM renderer or improvise a
+command outside the sealed bundle.
 
 For a single-node exclusive job, request the user's CPU count, resolve granted
 `NumCPUs` inside the allocation, and pass it to the training `srun`. Record

@@ -34,127 +34,6 @@ from cosmos_workflow import dump_toml
 SUCCESS = {"SUCCESS", "COMPLETE", "COMPLETED"}
 SCRIPT_ROOT = Path(__file__).resolve().parent
 
-
-AGGREGATE_RESULTS_PROGRAM = r'''import json
-import re
-import sys
-import tomllib
-from collections import Counter
-from pathlib import Path
-
-config_path = Path(sys.argv[1])
-expected_shards = int(sys.argv[2])
-with config_path.open("rb") as stream:
-    config = tomllib.load(stream)
-results_root = Path(config["results_dir"])
-annotation_path = Path(config["dataset"]["annotation_path"])
-annotations = json.loads(annotation_path.read_text(encoding="utf-8"))
-if not isinstance(annotations, list):
-    raise SystemExit(f"evaluation annotation is not a JSON array: {annotation_path}")
-
-def text(value):
-    if not isinstance(value, str):
-        return ""
-    value = value.replace("<video>", " ")
-    return " ".join(value.split())
-
-def media_id(record):
-    value = None
-    for key in ("video_id", "video", "media", "media_path", "file_name"):
-        candidate = record.get(key)
-        if isinstance(candidate, list):
-            candidate = candidate[0] if candidate else None
-        if isinstance(candidate, str) and candidate:
-            value = candidate
-            break
-    if value is None:
-        return ""
-    path = Path(value)
-    return path.stem if path.suffix else path.name
-
-def turn_text(turn):
-    if not isinstance(turn, dict):
-        return ""
-    return text(turn.get("value") if "value" in turn else turn.get("content"))
-
-def identity(record, *, result):
-    conversations = record.get("conversations") or record.get("messages") or []
-    question = text(record.get("question"))
-    target = text(record.get("gt") if result else record.get("answer"))
-    if not question and isinstance(conversations, list):
-        for turn in conversations:
-            role = str(turn.get("from") or turn.get("role") or "").casefold() if isinstance(turn, dict) else ""
-            if role in {"human", "user"}:
-                question = turn_text(turn)
-                break
-    if not target and isinstance(conversations, list):
-        for turn in reversed(conversations):
-            role = str(turn.get("from") or turn.get("role") or "").casefold() if isinstance(turn, dict) else ""
-            if role in {"gpt", "assistant"}:
-                target = turn_text(turn)
-                break
-    if not media_id(record) or not question or not target:
-        kind = "result" if result else "annotation"
-        raise SystemExit(f"{kind} record lacks canonical media/question/target identity: {record}")
-    return media_id(record), question, target
-
-shards = list(results_root.rglob("results_shard*.json"))
-if shards:
-    if len(shards) != expected_shards:
-        raise SystemExit(
-            f"expected {expected_shards} evaluation result shards, found {len(shards)}"
-        )
-    rank_pattern = re.compile(r"results_shard(\d+)\.json$")
-    if any(rank_pattern.fullmatch(path.name) is None for path in shards):
-        raise SystemExit("evaluation result shard has an invalid rank suffix")
-    shards.sort(key=lambda path: int(rank_pattern.fullmatch(path.name).group(1)))
-    ranks = [int(rank_pattern.fullmatch(path.name).group(1)) for path in shards]
-    if ranks != list(range(expected_shards)):
-        raise SystemExit(f"evaluation shard ranks are incomplete: {ranks}")
-    parents = {path.parent for path in shards}
-    if len(parents) != 1:
-        raise SystemExit(
-            f"evaluation result shards span multiple directories: {sorted(map(str, parents))}"
-        )
-    records = []
-    for path in shards:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, list):
-            raise SystemExit(f"evaluation result shard is not a JSON array: {path}")
-        records.extend(payload)
-    output = next(iter(parents)) / "results.json"
-else:
-    matches = list(results_root.rglob("results.json"))
-    if len(matches) != 1:
-        raise SystemExit(
-            f"expected one aggregated results.json or {expected_shards} shards; "
-            f"found results={len(matches)} shards=0"
-        )
-    output = matches[0]
-    records = json.loads(output.read_text(encoding="utf-8"))
-    if not isinstance(records, list):
-        raise SystemExit(f"evaluation results are not a JSON array: {output}")
-
-expected = Counter(identity(row, result=False) for row in annotations)
-actual = Counter(identity(row, result=True) for row in records)
-missing = expected - actual
-unexpected = actual - expected
-if missing or unexpected:
-    raise SystemExit(
-        "evaluation identity coverage mismatch: "
-        f"expected={sum(expected.values())} actual={sum(actual.values())} "
-        f"missing={sum(missing.values())} unexpected_or_duplicate={sum(unexpected.values())}"
-    )
-if shards:
-    temporary = output.with_name(f".{output.name}.tmp")
-    temporary.write_text(
-        json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    temporary.replace(output)
-print(f"TAO_EVALUATION_RESULTS_AGGREGATED path={output} records={len(records)} exact_coverage=true")
-'''
-
-
 VERIFIED_EVALUATOR_PROFILES: dict[str, dict[str, Any]] = {
     # Full-validation protocols verified on 2026-08-16. Every entry is keyed
     # by annotation bytes, never by a mutable path or dataset nickname.
@@ -512,12 +391,6 @@ def _evaluation_spec_bundle(
         if backend == "cosmos-framework"
         else []
     )
-    post_command = (
-        "python -c "
-        + shlex.quote(AGGREGATE_RESULTS_PROGRAM)
-        + " {config_path} "
-        + str(total_gpus)
-    )
     runtime_spec = copy.deepcopy(dict(config))
     runtime_spec["results_dir"] = "{results_dir}"
     return {
@@ -540,8 +413,6 @@ def _evaluation_spec_bundle(
         "execution": {
             "environment": environment,
             "pre_commands": pre_commands,
-            "post_commands": [post_command],
-            "post_scope": "leader",
             "distributed": {
                 "launcher": "torchrun",
                 "processes_per_node": gpus_per_node,

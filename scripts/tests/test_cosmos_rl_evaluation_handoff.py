@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import json
 import struct
-import subprocess
 import sys
 from pathlib import Path
 
@@ -27,10 +26,6 @@ def _module(name: str, path: Path):
 CHECKPOINT = _module(
     "cosmos_rl_checkpoint_action_test",
     SKILL / "scripts" / "cosmos_rl_checkpoint_action.py",
-)
-EVALUATION = _module(
-    "evaluation_workflow_handoff_test",
-    SKILL / "scripts" / "evaluation_workflow.py",
 )
 
 
@@ -152,109 +147,3 @@ def test_dense_index_cannot_escape_epoch_export(tmp_path: Path) -> None:
         assert "escapes its epoch directory" in str(exc)
     else:
         raise AssertionError("checkpoint verifier accepted an escaping weight symlink")
-
-
-def test_evaluation_result_aggregation_merges_all_ranks_and_proves_coverage(
-    tmp_path: Path,
-) -> None:
-    annotations = tmp_path / "annotations.json"
-    annotation_rows = [
-        {
-            "video": f"clips/{index}.mp4",
-            "conversations": [
-                {"from": "human", "value": "<video> Is it safe?"},
-                {"from": "gpt", "value": "Yes"},
-            ],
-        }
-        for index in range(168)
-    ]
-    annotations.write_text(json.dumps(annotation_rows))
-    results = tmp_path / "results"
-    shard_dir = results / "epoch_8" / "freeform" / "general"
-    shard_dir.mkdir(parents=True)
-    for rank in range(8):
-        payload = [
-            {
-                "video_id": str(rank * 21 + index),
-                "question": "Is it safe?",
-                "response": "Yes",
-                "gt": "Yes",
-            }
-            for index in range(21)
-        ]
-        (shard_dir / f"results_shard{rank}.json").write_text(json.dumps(payload))
-    config = tmp_path / "eval.toml"
-    config.write_text(
-        f'results_dir = "{results}"\n[dataset]\nannotation_path = "{annotations}"\n'
-    )
-
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            EVALUATION.AGGREGATE_RESULTS_PROGRAM,
-            str(config),
-            "8",
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert "records=168" in completed.stdout
-    assert "exact_coverage=true" in completed.stdout
-    merged = json.loads((shard_dir / "results.json").read_text())
-    assert len(merged) == 168
-    assert [row["video_id"] for row in merged[:2]] == ["0", "1"]
-
-
-def test_evaluation_aggregation_rejects_duplicate_that_hides_missing_record(
-    tmp_path: Path,
-) -> None:
-    annotations = tmp_path / "annotations.json"
-    annotations.write_text(
-        json.dumps(
-            [
-                {
-                    "video": f"{index}.mp4",
-                    "conversations": [
-                        {"from": "human", "value": "Question"},
-                        {"from": "gpt", "value": "Answer"},
-                    ],
-                }
-                for index in range(2)
-            ]
-        )
-    )
-    results = tmp_path / "results"
-    results.mkdir()
-    duplicate = {
-        "video_id": "0",
-        "question": "Question",
-        "response": "Answer",
-        "gt": "Answer",
-    }
-    (results / "results_shard0.json").write_text(
-        json.dumps([duplicate, duplicate])
-    )
-    config = tmp_path / "eval.toml"
-    config.write_text(
-        f'results_dir = "{results}"\n[dataset]\nannotation_path = "{annotations}"\n'
-    )
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            EVALUATION.AGGREGATE_RESULTS_PROGRAM,
-            str(config),
-            "1",
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert completed.returncode != 0
-    assert "identity coverage mismatch" in completed.stderr
-    assert "missing=1" in completed.stderr
-    assert "unexpected_or_duplicate=1" in completed.stderr

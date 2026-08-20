@@ -654,7 +654,8 @@ def test_ready_plan_emits_reusable_backend_isolated_execution_bundle(
     assert "FORCE_QWENVL_VIDEO_READER" not in framework["execution"][
         "environment"
     ]
-    assert "exact_coverage=true" in rl["execution"]["post_commands"][0]
+    assert "post_commands" not in rl["execution"]
+    assert "post_commands" not in framework["execution"]
 
 
 def test_evaluation_model_length_override_is_explicit_and_provenanced(
