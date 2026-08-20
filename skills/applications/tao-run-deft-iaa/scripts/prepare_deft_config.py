@@ -33,8 +33,8 @@ SPEC_NAMES = (
     "image_embed_spec.yaml",
     "mining_spec.yaml",
 )
-PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-45-multiarch"  # versions-key: images.tao_toolkit.pyt
-PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-44-multiarch"  # versions-key: images.tao_toolkit.data_services
+PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-47-multiarch"  # versions-key: images.tao_toolkit.pyt
+PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-46-multiarch"  # versions-key: images.tao_toolkit.data_services
 
 
 def _bool(value: str) -> bool:

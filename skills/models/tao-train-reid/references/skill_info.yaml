@@ -1,7 +1,7 @@
 name: tao-train-reid
 network_arch: re_identification
 automl_enabled: true
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-45-multiarch  # versions-key: images.tao_toolkit.pyt
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-47-multiarch  # versions-key: images.tao_toolkit.pyt
 data_format: default
 gpu_spec_key: train.num_gpus
 actions:

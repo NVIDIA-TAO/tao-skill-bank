@@ -11,7 +11,7 @@ Set the deploy container once at the top of the session — every command below
 uses it:
 
 ```bash
-TAO_DEPLOY_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch  # versions-key: images.tao_toolkit.deploy
+TAO_DEPLOY_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-47-multiarch  # versions-key: images.tao_toolkit.deploy
 ```
 
 ### Generate TensorRT Engine
