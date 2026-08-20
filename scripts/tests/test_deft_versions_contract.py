@@ -19,7 +19,6 @@ DEFT_SKILLS = {
         "images.metropolis_sdg.paidf_anomalygen",
     ),
     REPO_ROOT / "skills/applications/tao-run-deft-aoi-cosmos3": (
-        "images.tao_toolkit.cosmos_rl",
         "images.tao_toolkit.data_services",
         "images.metropolis_sdg.paidf_anomalygen",
     ),
@@ -41,6 +40,17 @@ def test_preflight_resolves_images_from_versions_yaml(
         assert key in text
     for variable in ("TAO_PYT_IMAGE", "TAO_DS_IMAGE", "AG_IMAGE"):
         assert not re.search(rf"(?:export\s+)?{variable}=nvcr\.io/", text)
+
+
+def test_cosmos3_deft_resolves_model_image_from_skill_info() -> None:
+    skill_root = REPO_ROOT / "skills/applications/tao-run-deft-aoi-cosmos3"
+    text = (skill_root / "references/preflight.md").read_text(encoding="utf-8")
+
+    assert "scripts/resolve_tao_image.py" in text
+    assert 'COSMOS_MODEL_ID="${COSMOS_MODEL_ID:-nvidia/Cosmos3-Nano}"' in text
+    assert '--model "$COSMOS_MODEL_ID"' in text
+    assert "--backend cosmos-rl" in text
+    assert "images.tao_toolkit." + "cosmos_rl" not in text
 
 
 def test_active_deft_references_do_not_pin_anomalygen_release() -> None:

@@ -183,7 +183,12 @@ def verify_export(
     if base_model_revision and manifest.get("base_model_revision") != base_model_revision:
         raise WorkflowError("Framework export base model revision does not match the requested revision")
     return {
+        "schema_version": 1,
+        "status": "VERIFIED",
+        "backend": "cosmos-framework",
         "ok": True,
+        "source_checkpoint": str(checkpoint),
+        "action_model_path": str(output),
         "checkpoint": path_identity(str(checkpoint)),
         "config": path_identity(str(config)),
         "export": path_identity(str(output)),
@@ -316,7 +321,27 @@ def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
 def prepare_export(args: argparse.Namespace) -> dict[str, Any]:
     plan = build_plan(args)
     if not plan["export_required"]:
-        return {**plan, "pre_action_result": "reused" if plan.get("export") else "not_applicable"}
+        result = {
+            **plan,
+            "pre_action_result": "reused" if plan.get("export") else "not_applicable",
+        }
+        if plan.get("checkpoint_kind") == "framework_dcp":
+            verification = verify_export(
+                checkpoint_path=plan["checkpoint"]["resolved"],
+                config_file=plan["config"]["resolved"],
+                export_dir=plan["action_model_path"],
+                base_model_path_or_uri=args.base_model_path_or_uri,
+                base_model_revision=args.base_model_revision,
+            )
+            result.update(
+                {
+                    "status": "VERIFIED",
+                    "source_checkpoint": plan["checkpoint"]["resolved"],
+                    "action_model_path": plan["action_model_path"],
+                    "verification": verification,
+                }
+            )
+        return result
     if plan["checkpoint_kind"] != "framework_dcp":
         raise WorkflowError("only a Framework DCP checkpoint can require export")
 
@@ -357,9 +382,16 @@ def prepare_export(args: argparse.Namespace) -> dict[str, Any]:
     _atomic_json(final_output / ".tao_export_complete", marker)
     return {
         **build_plan(args),
+        "status": "VERIFIED",
+        "source_checkpoint": plan["checkpoint"]["resolved"],
+        "action_model_path": str(final_output),
         "pre_action_result": "exported",
         "displaced_invalid_export": str(displaced) if displaced else None,
-        "verification": {**verified, "export": path_identity(str(final_output))},
+        "verification": {
+            **verified,
+            "action_model_path": str(final_output),
+            "export": path_identity(str(final_output)),
+        },
     }
 
 

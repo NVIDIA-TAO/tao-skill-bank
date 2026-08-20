@@ -26,11 +26,16 @@ images:
   tao_toolkit:
 -   pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
 +   pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.27.0-pyt
-    cosmos_rl:  nvcr.io/nvidia/tao/tao-toolkit:6.26.3-cosmos-rl
     vila:       nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 ```
 
 That's it. Every skill referencing `tao_toolkit.pyt` (28 of them today) automatically picks up the new tag at runtime.
+
+For a multi-backend model such as Cosmos Reason, update its backend key in
+`versions.yaml`, then run `scripts/stamp_versions.py`. The stamped runtime value
+lives at `backend_contracts.<backend>.container_image` in the model skill's
+`references/skill_info.yaml`; the referenced backend contract must not duplicate
+the image field.
 
 ### Verify the bump
 
