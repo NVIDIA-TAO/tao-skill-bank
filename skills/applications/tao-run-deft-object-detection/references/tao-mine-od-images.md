@@ -87,6 +87,9 @@ still unset, since allocation apportions the budget by exactly that list.
 ## Invocation
 
 ```bash
+<skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-mine-od-images/scripts/verify_unique_neighbor_matching_spec.py \
+  --spec "$MINE_SPEC"
+
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \

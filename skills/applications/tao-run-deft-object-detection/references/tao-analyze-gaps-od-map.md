@@ -60,6 +60,9 @@ class_mapping: {}
 ## Invocation
 
 ```bash
+<skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-analyze-gaps-od-map/scripts/verify_object_detection_spec.py \
+  --spec "$OD_GAP_SPEC"
+
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
