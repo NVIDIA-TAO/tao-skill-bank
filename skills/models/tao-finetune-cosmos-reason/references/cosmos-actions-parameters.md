@@ -102,15 +102,15 @@ explicitly asks for that dataset mutation.
 
 ### Training Loop
 - **train.epoch**: Number of training epochs. Default 10. Use at least 2 for
-  local smoke or AutoML runs that need a host-visible best checkpoint for
+  explicitly requested diagnostic subsets or AutoML runs that need a host-visible best checkpoint for
   evaluate/inference; one-epoch runs can leave only a broken `best` symlink
   after checkpoint cleanup.
-- **train.train_batch_per_replica**: Global batch size per training step. Ideally >= 32 for stability. CRITICAL: must be divisible by `train.train_policy.mini_batch` (default 1 in the packaged smoke-safe template). Recommended production value: 32.
+- **train.train_batch_per_replica**: Global batch size per training step. Ideally >= 32 for stability. CRITICAL: must be divisible by `train.train_policy.mini_batch` (default 1 in the packaged template). Recommended production value: 32.
 - **train.compile**: Set to true for potential speedup on newer GPUs (H100), else false.
 - **train.output_dir**: Output directory for checkpoints and logs.
 
 ### Model & Policy
-- **policy.model_name_or_path**: Required runtime Hugging Face model URI or cluster-local snapshot path. URI sources also require an immutable revision.
+- **policy.model_name_or_path**: Required runtime Hugging Face model ID/URL or cluster-local snapshot path. The planner resolves an omitted revision as `main`, or a supplied branch/tag, to an immutable Hub commit automatically. Local snapshots use content fingerprints and need no revision.
 - **policy.model_max_length**: Context window size. Must be 40960 for video SFT. Affected by FPS, resolution, and prompt length.
 - **policy.model_gradient_checkpointing**: Save VRAM by recomputing activations. Keep true for large models.
 
@@ -143,21 +143,18 @@ For platform-side multi-node setup (sbatch flags on SLURM, Indexed Job + Service
 
 ### Vision Encoders
 - **custom.vision.fps** *or* **custom.vision.nframes** — **mutually exclusive**, set exactly one.
-  - `nframes` (default in template): extract this many frames evenly across the clip. This is the safest default for 1-GPU AutoML smoke runs.
+  - `nframes` (default in template): extract this many frames evenly across the clip. This is the safest default for 1-GPU AutoML diagnostic runs.
   - `fps`: extract frames at this rate. High motion: 3. Low motion/static: 1–2. Use when the selected videos, `policy.model_max_length`, and GPU memory can absorb the expanded token count.
   - Setting both makes qwen-vl-utils' decord backend error out (`Only accept either fps or nframes`) and silently fall back to torchvision, which deadlocks under multi-worker dataloading (`BlockingIOError [Errno 11]` swscaler errors). If you switch from `fps` to `nframes`, also delete `fps` from your spec.
-- Do not require per-record `video_fps` for the packaged `nframes` template.
-  If a run switches to `custom.vision.fps` or a selected dataset/image profile
-  requires per-record timing, validate annotations before any download or job
-  launch:
-  ```bash
-  scripts/check_tao_launch_preflight.py --platform <platform> \
-    --path train_annotation=/path/to/train.json \
-    --path val_annotation=/path/to/val.json \
-    --json-required-field train_annotation=video_fps \
-    --json-required-field val_annotation=video_fps
-  ```
-- **custom.vision.total_pixels**: Resolution constraint. Increase if the object of focus is small relative to the frame. Default 3136000.
+- Neither `nframes` nor `fps` sampling requires a per-record `video_fps`
+  field. The selected decoder reads the source frame rate from each media
+  stream and qwen-vl-utils uses it to resolve FPS sampling. Annotation-level
+  `fps` or `video_fps` is optional descriptive metadata; validate it when
+  present, but never invent or require it.
+- **custom.vision.min_frames** / **custom.vision.max_frames** — optional lower and upper sampled-frame bounds used only with `fps`. Qwen rounds the resolved count to its frame factor and clamps it to the selected clip length.
+- **custom.vision.video_start** / **custom.vision.video_end** — optional nonnegative clip boundaries in seconds; when both are present, start must be less than end.
+- **custom.vision.resized_height** / **custom.vision.resized_width** — explicit frame dimensions. Set both together; they replace automatic pixel-budget resizing.
+- **custom.vision.min_pixels** / **custom.vision.max_pixels** / **custom.vision.total_pixels** — per-frame minimum, per-frame maximum, and aggregate video pixel budgets forwarded to qwen-vl-utils.
 - **custom.system_prompt**: Instructions prepended to every prompt.
 
 ### Checkpointing
@@ -209,7 +206,7 @@ fine-tuned checkpoints for handoff.
 
 ## Hardware
 
-Cosmos-RL models are 8B parameters and use FSDP sharding. SFT requires at least 256 GB of cumulative visible GPU memory, with no fixed device count or per-device capacity. Set `dp_shard_size` to the actual visible GPU count and `dp_replicate_size=1` for a single node. Every visible architecture must be supported by the selected image and pass the runtime CUDA-stack smoke test.
+Cosmos-RL models are 8B parameters and use FSDP sharding. SFT requires at least 256 GB of cumulative visible GPU memory, with no fixed device count or per-device capacity. Set `dp_shard_size` to the actual visible GPU count and `dp_replicate_size=1` for a single node. Every visible architecture must be supported by the selected image and pass the allocated-node CUDA-stack gate.
 
 Apply `runtime_requirements.gpu_host` from `references/skill_info.yaml` as
 minimum-version overrides to the shared host setup check.
@@ -226,7 +223,7 @@ minimum-version overrides to the shared host setup check.
 
 **Quantize image/video token mismatch**: `Mismatch in image token count between
 text and input_ids` during calibration means `quantize.max_sequence_length` is
-too small for the sampled media tokens. The packaged smoke template uses 4096;
+too small for the sampled media tokens. The packaged template uses 4096;
 do not lower it to tiny values such as 128 for video calibration.
 
 **train_batch_per_replica not divisible by mini_batch**: The default `train_batch_per_replica=1` from the TAO Core schema is invalid because `mini_batch` defaults to 4. Immediate AssertionError on all ranks. Fix: set `train_batch_per_replica` to a multiple of `mini_batch` (recommended: 32 for large datasets, 4 for small datasets).

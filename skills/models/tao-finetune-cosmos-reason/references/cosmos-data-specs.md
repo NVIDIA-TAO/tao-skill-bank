@@ -24,7 +24,7 @@ Supported task names are `bcq`, `mcq`, `bcq_openended`, `mcq_openended`,
 `open_qa`, `scene_description`, `video_summarization`,
 `temporal_localization`, `temporal_description`, and `causal_linkage`.
 Prompts and response targets come from the versioned task-aware adapter in the
-repository-derived image. Frame sampling and pixel budgets come from the
+selected backend runtime. Frame sampling and pixel budgets come from the
 model/dataset profile or explicit user overrides.
 
 Tasks whose metadata declares `accuracy` or `exact_match_accuracy` participate
@@ -40,16 +40,18 @@ the user explicitly supplies it. Record the inferred schema, record count,
 unique media count, media reuse ratio, file extensions and byte-size summary.
 When annotations contain width, height, FPS, or duration metadata, record their
 sample counts and distributions. Use these characteristics—not a dataset name
-or directory name—to select preprocessing, cache, smoke-size, and resource
+or directory name—to select preprocessing, cache, and resource
 profiles. If resolution metadata is absent, use a conservative model-safe
-profile and require representative compute-node decoding during smoke.
+profile and require representative decoding in the training allocation before
+the training child starts.
 
-## Smoke and full materialization
+## Optional diagnostic subset and full materialization
 
-A smoke plan may materialize a new manifest under the runtime-supplied results
-area and apply an explicit sample limit. It records the source manifest and
-fingerprint. A full plan rereads the original runtime annotations and rejects
-all sample-limit fields. A smoke manifest is never a full-run fallback.
+Only an explicit user request may materialize a diagnostic subset under the
+runtime-supplied results area and apply a sample limit. It records the source
+manifest and fingerprint. The normal full plan reads the original runtime
+annotations and rejects every sample-limit field. A diagnostic manifest is
+never a full-run fallback or an automatic launch prerequisite.
 
 Cosmos-RL may merge multiple task-aware annotations into a generated manifest while
 preserving every original path and logical record fingerprint. Cosmos

@@ -33,6 +33,7 @@ tags:
 Install this application as part of the full TAO skill-bank root, not as only
 the companion skill folders: `TAO_SKILL_BANK_PATH` must point at a directory
 containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
+Cosmos model resolver `scripts/resolve_tao_image.py`, plus the
 `skills/{applications,models,data,platform,core}/...` tree listed in
 `eval.config`. Run bundled validation with the skill Python so dependencies
 match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
@@ -127,7 +128,10 @@ credential value.
 - Nano may use the helper's packaged Qwen3-VL default. Edge and Super require
   a variant-specific, validated VLM base; never reuse Nano's conversion
   arguments.
-- Container key: `images.tao_toolkit.cosmos_rl` in `versions.yaml`.
+- Container image: resolve the `cosmos-rl` backend from
+  `tao-finetune-cosmos-reason/references/skill_info.yaml` with
+  `scripts/resolve_tao_image.py`; never copy a Cosmos image pin into this
+  application skill.
 - Train action: `cosmos-rl --config <spec.toml>
   /opt/cosmos_rl/tao_sft_example.py`.
 - The pinned image caps vLLM evaluation at one image per prompt, which this

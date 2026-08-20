@@ -188,7 +188,12 @@ def resolve_image(
             action_config = backend_contract.get("actions", {}).get(action, {})
             candidates = [
                 ("backend.action.container_image", action_config.get("container_image") if isinstance(action_config, dict) else None),
-                ("backend.container_image", backend_contract.get("container_image")),
+                (
+                    backend_contract.get(
+                        "container_image_source", "backend.container_image"
+                    ),
+                    backend_contract.get("container_image"),
+                ),
             ]
             for source, image in candidates:
                 if isinstance(image, dict) and image.get("policy") == "repository_derived":

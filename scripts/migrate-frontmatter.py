@@ -69,21 +69,33 @@ def compatibility_for(skill_path: str) -> str:
     if layer == "platform" and name in platform_compat:
         return platform_compat[name]
 
-    # Look for container_image in references/skill_info.yaml
+    # Look for top-level or backend-specific container images in
+    # references/skill_info.yaml.
     skill_dir = os.path.dirname(skill_path)
     info_path = os.path.join(skill_dir, "references", "skill_info.yaml")
     has_container = False
+    container_images = []
     if os.path.isfile(info_path):
         try:
             with open(info_path) as f:
                 info = yaml.safe_load(f) or {}
-            has_container = bool(info.get("container_image"))
+            if isinstance(info.get("container_image"), str):
+                container_images.append(info["container_image"])
+            backend_contracts = info.get("backend_contracts", {})
+            if isinstance(backend_contracts, dict):
+                container_images.extend(
+                    declaration["container_image"]
+                    for declaration in backend_contracts.values()
+                    if isinstance(declaration, dict)
+                    and isinstance(declaration.get("container_image"), str)
+                )
+            has_container = bool(container_images)
         except yaml.YAMLError:
             pass
 
     if has_container:
         # Containerized model/data/application
-        if "ngc" in (info.get("container_image", "") if isinstance(info, dict) else ""):
+        if any("nvcr.io/" in image for image in container_images):
             return "Requires docker + nvidia-container-toolkit + NGC API key."
         return "Requires docker + nvidia-container-toolkit."
 

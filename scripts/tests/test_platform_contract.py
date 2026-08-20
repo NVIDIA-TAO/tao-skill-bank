@@ -155,6 +155,24 @@ def test_slurm_enroot_conversion_uses_job_unique_node_local_temp():
     assert "--chdir=/tmp" in text
 
 
+def test_slurm_sqsh_conversion_uses_validated_cpu_long_resource_profile():
+    """Keep image conversion under the CS-OCI QOS memory ceiling.
+
+    SLURM job 32370651 established this profile. Inheriting an eight-GPU
+    training job's CPU request multiplies the site's implicit per-CPU memory
+    and leaves conversion pending under ``QOSGrpMemLimit``.
+    """
+    text = _skill_text("tao-run-on-slurm")
+    info = (PLATFORM_DIR / "tao-run-on-slurm" / "references" /
+            "skill_info.yaml").read_text()
+    assert "sqsh_conversion_partition: cpu_long" in info
+    assert "sqsh_conversion_timeout_minutes: 120" in info
+    assert "sqsh_conversion_cpus_per_task: 4" in info
+    assert "sqsh_conversion_memory_mb: 7200" in info
+    assert "--mem=7200M" in text
+    assert "QOSGrpMemLimit" in text
+
+
 # Required flags of `tao_job_record.py open`, per its argparse definition. A
 # documented invocation missing any of these fails at runtime with exit 2 —
 # which is exactly how this test was born: a hand-written Brev example omitted

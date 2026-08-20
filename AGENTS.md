@@ -50,6 +50,9 @@ uses `scripts/cosmos_workflow.py` for this step.
 
 2. **Read `references/skill_info.yaml`** for the structured contract:
    - `container_image` — image key or absolute URI
+   - `backend_contracts.<backend>.container_image` — selected-backend image
+     for a multi-backend frontend; this remains in `skill_info.yaml` while the
+     referenced contract owns backend-native runtime semantics
    - `actions.<action>.command` — the in-container command template
    - `actions.<action>.mode` — `config` / `args` / `passthrough` (drives how you
      serialize the spec into the container command)
@@ -66,7 +69,9 @@ uses `scripts/cosmos_workflow.py` for this step.
 3. **Read the platform SKILL.md you'll dispatch to** for execution conventions
    (mounts, env vars, resource shapes, retry behavior, the four verbs).
 
-4. **Resolve `container_image`.** If it's a dotted key (`tao_toolkit.pyt`),
+4. **Resolve `container_image`.** For a multi-backend frontend, select the
+   backend first and read its `backend_contracts.<backend>.container_image`.
+   If the selected value is a dotted key (`tao_toolkit.pyt`),
    look it up in `${TAO_SKILL_BANK_PATH}/versions.yaml`. Absolute URIs
    (`nvcr.io/...`) are valid as-is.
 

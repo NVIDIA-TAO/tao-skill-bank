@@ -24,6 +24,25 @@ Image formats accepted by the handler:
 SQSH conversion is cached by image name. For `:latest` images, cached SQSH is
 used unless `force_reconvert_latest` is enabled.
 
+### CS-OCI-ORD SQSH conversion profile
+
+Use partition `cpu_long`, not `cpu`; the latter's roughly 30-minute wall can
+kill TAO conversion and leave a truncated file. Request 4 CPUs, 7200M memory,
+no exclusive node, and a timeout of at least 120 minutes. This profile is
+preserved from successful conversion job `32370651` (21m28s elapsed).
+
+Set `TMPDIR=/tmp` and both `ENROOT_TEMP_PATH` and
+`SLURM_ENROOT_TEMP_PATH` to job-unique
+`/tmp/enroot-tao-${SLURM_JOB_ID}`. Direct Enroot and Pyxis may read different
+variables; node-local unique paths avoid cleanup races and unsupported shared
+overlay whiteouts.
+
+Do not inherit a training job's CPU count: omitted memory is charged per CPU on
+this cluster, so oversized requests can remain pending with `QOSGrpMemLimit`.
+Inspect `ReqCPUS` and `ReqMem` with `scontrol`/`sacct`, cancel the pending job,
+and retry with a new job record and the explicit profile above. Do not wait for
+the QOS condition to clear or move conversion into a GPU allocation.
+
 ## Monitoring
 
 - Scheduler status comes from the stored SLURM job id via `squeue` or `sacct`.
