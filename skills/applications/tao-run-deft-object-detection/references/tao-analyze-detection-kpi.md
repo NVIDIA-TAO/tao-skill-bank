@@ -177,8 +177,8 @@ It writes `kpi_summary.json` beside the CSV and prints the value for `--map-valu
 row that is not a target class — the `Summary` row `kpi.is_internal: true` appends — would
 shift the mean silently. A disagreement is an error instead.
 
-Still capture the log. It is the only place the per-row class names appear, and the report
-needs them to label the per-class APs.
+Still capture the log. On an image predating tao-data-services#31 it is the only place the
+per-row class names appear, and it remains the record of what the stage actually reported.
 
 ## Outputs
 
@@ -189,7 +189,14 @@ needs them to label the per-class APs.
 | Captured log (class names for the CSV rows) | `${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log` |
 | Aggregate mAP | `${RESULTS_DIR}/<phase>/kpi/kpi_summary.json` |
 
-`kpi_calc.csv` columns: `Sequence Name`, `TP`, `FP`, `FN`, `TN`, `Pr`, `Re`, `Acc`, `AP`.
+`kpi_calc.csv` columns: `Sequence Name`, `class_name`, `TP`, `FP`, `FN`, `TN`, `Pr`, `Re`,
+`Acc`, `AP`.
+
+`class_name` arrived with tao-data-services#31. On an image built before it the column is
+absent and the rows are unlabeled — one per class, in the order `kpi_analyze.log` prints
+them. `summarize_kpi.py` handles both: with the column it labels each AP and drops any
+`Summary` row by name; without it, `--expect-classes` is the only thing standing between a
+stray row and a quietly wrong mean. Pass `--expect-classes` either way.
 
 `Sequence Name` is derived as the **second-to-last** component of `image_dir`, not configured. Keep `image_dir` free of a trailing slash and laid out so that component is the sequence identifier you want; two sources can otherwise collide under one name.
 
