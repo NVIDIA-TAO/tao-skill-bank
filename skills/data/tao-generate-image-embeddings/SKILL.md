@@ -41,7 +41,7 @@ Required spec fields:
 | `input_parquet` | Absolute path to a parquet containing image filepaths. |
 | `output_parquet` | Absolute path where the embedding parquet is written. |
 | `model` | `CLIP` or `SigLIP`. |
-| `model_path` | HuggingFace model id, local HF snapshot directory, or a TAO `.pth`/`.ckpt` checkpoint. **Must match `model`.** SigLIP: `google/siglip-base-patch16-224` (768-dim, the template default). CLIP: `openai/clip-vit-base-patch32` (512-dim). The two fields are validated independently, so a mismatched pair is accepted here and fails or mis-loads inside the container. |
+| `model_path` | HuggingFace model id, local HF snapshot directory, or a TAO `.pth`/`.ckpt` checkpoint. **Must match `model`.** SigLIP: `google/siglip-base-patch16-224` (768-dim, the template default). CLIP: `openai/clip-vit-base-patch32` (512-dim). The validator rejects a recognizable model/path mismatch before launch. |
 
 Common optional fields:
 
