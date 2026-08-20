@@ -26,7 +26,7 @@ tags:
 
 Resolve `DEFT_SKILL_ROOT` to the absolute directory containing this installed `SKILL.md`. The agent or plugin runtime resolves this path; it is not a user input. Run bundled helpers with `run_script("scripts/<name>.py", ...)` when the runtime provides it. Otherwise invoke them directly with `python3 "$DEFT_SKILL_ROOT/scripts/<name>.py"`. Never require a `tao-skills-external` checkout or change the user's working directory to a repository root.
 
-This workflow invokes `tao-finetune-cosmos-reason`, `tao-finetune-cosmos-embed`, `tao-analyze-gaps-vlm-bcq`, `tao-mine-nearest-neighbors`, and the selected platform skill by registered skill name. Those skills own their commands, credentials, and bundled assets. This workflow overrides only the Cosmos Reason runtime image: resolve `images.tao_toolkit.deft_cosmos_reason` from `versions.yaml` and pass that image as the planner `image_tag` and submitted action image for every Cosmos Reason train and evaluate launch instead of the image declared by `tao-finetune-cosmos-reason`. This workflow owns only the helpers under its own `scripts/` and `assets/` directories.
+This workflow invokes `tao-finetune-cosmos-embed`, `tao-analyze-gaps-vlm-bcq`, `tao-mine-nearest-neighbors`, and the selected platform skill by registered skill name. Those skills own their credentials, actions, and bundled assets. Cosmos Reason is workflow-owned: resolve `images.tao_toolkit.deft_cosmos_reason`, generate TOMLs with this workflow's helpers and configured base templates, and submit the exact train/evaluate commands in `references/mining-loop.md` through the selected platform. Do not invoke `tao-finetune-cosmos-reason` for planning, templates, action bundles, commands, or hook resolution.
 
 ## User Inputs (DEFT Workspace and Workflow Configuration Yaml)
 
@@ -201,7 +201,7 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 | `mine_nearest_neighbors` | One mined-neighbor parquet and mining summary exist. |
 | `record_mined_paths` | When `mine_unique_only` is true, `$RUN_DIR/mining/mined_paths_log.parquet` exists; otherwise the stage is logged as skipped. |
 | `prepare_cosmos_reason_train` | Mined and accumulated LLaVA annotations plus `train/specs/train.toml` exist. |
-| `train` | The Cosmos Reason training job reaches terminal success. |
+| `train` | The Cosmos Reason training job reaches terminal success and its timestamped output and checkpoint directories are writable by the invoking user. |
 | `evaluate` | Evaluation preparation finds the latest completed training checkpoint, the evaluation job exits successfully, exactly one iteration `results.json` is found, and its `bcq_accuracy_metrics.json` exists. |
 | `cleanup_cosmos_reason_training` | `train/checkpoint_cleanup.json` exists, raw checkpoint directories are gone, and its listed safetensors exports remain. |
 | `loop_stop` | Stop reason is logged and `bcq_accuracy_report.md` plus `bcq_accuracy_summary.json` compare the baseline with every completed iteration. |
@@ -216,7 +216,7 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 
 **Run directory looks nested under `results/<run.name>`**: This is expected. `run.name` is the run directory name under `<deft_workspace>/results`; all baseline, embedding, and iteration artifacts are nested there.
 
-**Docker-created output is not writable**: Use `restore_docker_mount_permissions.py` on the affected run subdirectory after informing the user which container produced root-owned files.
+**Docker output permissions or Cosmos Reason status paths fail**: Stop and follow the permission-repair and stage-local TAO status contracts in `references/mining-loop.md`.
 
 **Unparseable prediction count is nonzero**: Report the count to the user and inspect the corresponding raw `results.json` responses. These predictions count as incorrect in accuracy and class recall; the metrics script does not silently drop them. An unparseable ground truth stops metric computation because the expected class is undefined.
 
