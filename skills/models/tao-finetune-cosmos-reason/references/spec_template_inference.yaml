@@ -5,6 +5,7 @@ num_gpus: 1
 type: video
 media: ''
 fps: 1
+num_frames: null
 total_pixels: 200704
 prompt: Describe this video briefly.
 max_new_tokens: 32

@@ -90,10 +90,16 @@ Resolve, do not guess:
 : "${TAO_SKILL_BANK_PATH:?set TAO_SKILL_BANK_PATH to the installed TAO skill-bank root containing versions.yaml and scripts/resolve_versions_key.py}"
 test -f "$TAO_SKILL_BANK_PATH/versions.yaml" || { echo "missing $TAO_SKILL_BANK_PATH/versions.yaml" >&2; exit 2; }
 test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" >&2; exit 2; }
+test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" >&2; exit 2; }
+COSMOS_MODEL_ID="${COSMOS_MODEL_ID:-nvidia/Cosmos3-Nano}"
 COSMOS_RL_IMAGE=$(
-  "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+  "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" \
     --skill-bank "$TAO_SKILL_BANK_PATH" \
-    images.tao_toolkit.cosmos_rl
+    --model "$COSMOS_MODEL_ID" \
+    --action train \
+    --backend cosmos-rl \
+    --format json \
+  | "$PYTHON" -c 'import json, sys; image = json.load(sys.stdin).get("image"); assert image; print(image)'
 )
 TAO_DS_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
@@ -113,7 +119,7 @@ pulling requires a credential, report the missing variable name only. A
 `~/.docker/config.json`, not a missing key — retry once with a throwaway empty
 `DOCKER_CONFIG` before reporting a credential problem.
 
-Known defects in `images.tao_toolkit.cosmos_rl` as pinned (verified
+Known defects in the model skill's selected `cosmos-rl` image (verified
 2026-07-29). Both break evaluation only; training is unaffected. Check whether
 the pinned tag still carries them, and report them in the Pre-Flight Summary
 rather than discovering them on the first GPU job:

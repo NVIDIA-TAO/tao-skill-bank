@@ -16,6 +16,15 @@ from typing import Any, Mapping
 
 SUCCESS = {"SUCCESS", "COMPLETE", "COMPLETED"}
 FAILURE = {"FAILURE", "FAILED", "ERROR", "CANCELLED", "CANCELED"}
+VLM_COMPONENTS = ("vision_encoder", "vision_projector", "language_model", "lm_head")
+COMPONENT_FIELDS = (
+    "total_parameters",
+    "trainable_parameters",
+    "frozen_parameters",
+    "trainable_parameter_tensors",
+    "parameter_tensors_with_grad",
+    "grad_norm",
+)
 
 
 class MetricError(ValueError):
@@ -97,6 +106,29 @@ def _weighted_event(record: Mapping[str, Any], prefix: str) -> dict[str, Any] | 
     }
 
 
+def _visual_gradient_event(record: Mapping[str, Any]) -> dict[str, Any] | None:
+    values = metrics(record)
+    status = values.get("model/components/visual_gradient_contract")
+    if status is None:
+        return None
+    components: dict[str, dict[str, Any]] = {}
+    for component in VLM_COMPONENTS:
+        prefix = f"model/components/{component}"
+        component_values = {
+            field: values[f"{prefix}/{field}"]
+            for field in COMPONENT_FIELDS
+            if f"{prefix}/{field}" in values
+        }
+        if component_values:
+            components[component] = component_values
+    return {
+        "status": status,
+        "components": components,
+        "epoch": values.get("epoch", record.get("epoch")),
+        "step": values.get("step", record.get("step", record.get("iteration"))),
+    }
+
+
 def load_evaluation(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {"average_validation_accuracy": None, "numerator": None, "denominator": None, "per_task": {}, "excluded_tasks": [], "aggregation": None, "coverage": None}
@@ -123,6 +155,7 @@ def summarize_records(records: list[dict[str, Any]], evaluation: Mapping[str, An
     checkpoints: list[dict[str, Any]] = []
     failures: list[str] = []
     states: list[str] = []
+    visual_gradient_events: list[dict[str, Any]] = []
     inferred = backend
     for record in records:
         message = str(record.get("message", ""))
@@ -148,6 +181,9 @@ def summarize_records(records: list[dict[str, Any]], evaluation: Mapping[str, An
         # Only a validation-complete event is authoritative.
         if phase == "validation_complete" and ("val/avg_loss" in values or "val/loss_numerator" in values):
             validation_events.append(_weighted_event(record, "val"))
+        visual_gradient_event = _visual_gradient_event(record)
+        if visual_gradient_event is not None:
+            visual_gradient_events.append(visual_gradient_event)
     train_events = [item for item in train_events if item]
     validation_events = [item for item in validation_events if item]
     terminal = next((state for state in reversed(states) if state in SUCCESS | FAILURE), states[-1] if states else "UNKNOWN")
@@ -168,6 +204,9 @@ def summarize_records(records: list[dict[str, Any]], evaluation: Mapping[str, An
         "average_training_loss": train_events[-1] if train_events else None,
         "average_validation_loss": validation_events[-1] if validation_events else None,
         "validation_history": validation_events,
+        "first_update_visual_gradient_contract": (
+            visual_gradient_events[0] if visual_gradient_events else None
+        ),
         "evaluation": evaluation_summary, "checkpoints": checkpoints, "failures": failures,
         "missing": missing, "source": "structured_status_and_repository_evaluator",
     }
@@ -211,6 +250,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"average training loss: {summary['average_training_loss']}")
         print(f"average validation loss: {summary['average_validation_loss']}")
         print(f"average validation accuracy: {summary['evaluation']['average_validation_accuracy']}")
+        print(
+            "first-update visual-gradient contract: "
+            f"{summary['first_update_visual_gradient_contract']}"
+        )
     else:
         print(json.dumps(summary, indent=2, sort_keys=True))
     return 1 if summary["terminal_status"] in FAILURE else 0

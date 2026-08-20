@@ -1,6 +1,19 @@
 # Cosmos backend operations and recovery
 
-## Clean build and source equivalence
+## Runtime image selection and optional source builds
+
+Runtime selection is independent of source construction. A user-supplied
+SLURM `.sqsh` is the authoritative container artifact and is used directly
+after compute-frame readability checks. Its filename does not need to match a
+packaged image tag, and repository/build provenance and SQSH SHA256 are not
+runtime gates. If no SQSH is supplied, use the exact image in the selected
+backend contract, derive its target under `sqsh_cache_dir`, reuse that target
+when readable, or convert the exact image once through the SLURM platform
+before GPU submit. Docker uses an explicit image tag when supplied and the
+packaged backend image otherwise.
+
+The remaining source-equivalence rules apply only when the user explicitly
+selects `source-build`.
 
 For every repository, record branch, commit, tree, and dirty state. Refuse a
 reproducibility build when any packaged source is dirty. The Framework path
@@ -25,13 +38,25 @@ ABI and dispatch contracts.
 
 The logical base model is always supplied. A local Qwen3-VL safetensors model
 can be used directly after config, tensor-index, tokenizer, and processor
-validation. A URI requires an immutable revision and is snapshotted to the
-runtime checkpoint area. Cosmos3 Omni inputs use the native Framework
-converter and an explicitly supplied, revision-pinned architecture model. The
-conversion manifest proves the common source model and fingerprints the
-prepared representation. Framework DCP evaluation uses the native exact-key
-VLM exporter; PEFT adapters are reconstructed and merged before shared
-evaluation.
+validation. For a Hugging Face ID/URL, the planner resolves `main` or the
+user’s optional branch/tag to an immutable commit and snapshots that commit to the
+runtime checkpoint area. Cosmos3 Nano Omni inputs use the packaged
+`Qwen/Qwen3-VL-8B-Instruct` architecture mapping and the already selected
+backend runtime; the planner resolves both Hub identities to immutable commits.
+The selected image invokes the TAO-owned
+`cosmos_rl.model_preparation.vlm_safetensors` entrypoint. Cosmos-RL packages an
+isolated Framework converter environment pinned by the Framework repository's
+`uv.lock`; Cosmos Framework uses its native environment behind the same
+entrypoint. Its baked `/opt/tao/framework-converter-runtime.json` must attest
+`validation_mode=imported_converter_module`, which proves that the converter
+and its transitive dependencies imported in the isolated interpreter during
+the image build. Reject an existing SQSH before submit if either implementation
+or this import-level attestation is absent.
+Do not ask a Cosmos-RL user for a donor checkpoint, a second backend image, or
+a second SQSH. The conversion manifest proves the common source model and
+fingerprints the prepared representation. Framework DCP evaluation uses the
+native exact-key VLM exporter; PEFT adapters are reconstructed and merged
+before shared evaluation.
 
 For every Framework evaluate, inference, or inference-microservice request,
 the skill runs `scripts/framework_checkpoint_action.py plan` and then
@@ -49,7 +74,7 @@ to load an older export or checkpoint.
 
 Validate SSH configuration without reading key contents, scheduler reachability,
 partition/account/QOS/reservation, shared paths, free space, Pyxis, Enroot,
-SQSH readability, mount mapping, work directory, and non-root Python imports.
+the selected or derived SQSH, mount mapping, work directory, and non-root Python imports.
 On a short allocation validate the allocated GPU count/type/memory, driver,
 CUDA, PyTorch CUDA, architecture, NCCL initialization, decoder/library, and
 the model/data paths through the container.
@@ -68,35 +93,36 @@ resource limits without credentials.
 
 ## Decoder and cache recovery
 
-Framework uses its native CUDA TorchCodec path. The pinned Cosmos-RL image uses
-qwen-vl-utils' torchvision path backed by source-built PyAV and the restricted
-system FFmpeg/NVDEC codecs; Decord and PyNvVideoCodec are intentionally absent.
-Positive DataLoader worker counts require the runtime's `spawn` context and
-spawn-picklable cache implementation; worker count zero requires prefetch to be
+Framework uses its native CUDA TorchCodec path. On A100, the pinned Cosmos-RL
+image maps the qwen-vl-utils torchvision name to its sparse software System-
+PyAV reader. The canonical image build downloads the exact official PyAV wheel,
+verifies its SHA256, and requires `h264 -> h264` and `hevc -> hevc`; generic
+codec names resolving to CUVID are rejected because A100 has no NVDEC engine.
+Positive DataLoader worker counts require the runtime's `spawn` context, a
+picklable cache, and worker initialization that registers the reader without
+creating or selecting a CUDA context. Worker count zero requires prefetch to be
 absent or null. Cosmos-RL defaults to direct on-demand processing and starts
 model training without a dataset-cache prewarm phase. Prewarming is an explicit
 opt-in; when selected for conversation-style data, separate train and validation
 cache keys combine dataset, model, and processor fingerprints, and completeness
-manifests plus every entry are validated before training. Task-aware runs decode
-directly on GPU and use the
-packaged `cosmos_rl.utils.video_override_artifacts` builder for a deterministic
-map, manifest, and fingerprint. Pair each annotation with its real media root,
-force every validation annotation with `--force-annotation`, and reserve
-`--force-video` for independently diagnosed training streams. The packaged
-`cosmos_rl.utils.validate_video_override_artifacts` validator must prove the
-fingerprints, complete validation-media coverage, and GPU random access before
-smoke or full training starts.
+manifests plus every entry are validated before training. An explicitly
+selected NVDEC/PyNvVideoCodec task-aware run uses the packaged
+`cosmos_rl.utils.video_override_artifacts` builder and validator; the A100
+software path decodes the original paired media directly and does not create a
+GPU override artifact.
 
-Do not recover a full video run by falling back silently to CPU decoding, by
-forcing every training stream, or by reusing another run's cache or override
-artifact. A decoder, cache, or media failure is a failed smoke gate.
+Do not change decoder semantics silently. The generated configuration must
+record the selected software or hardware contract, and a decoder, cache, or
+media failure is a failed gate.
 
 ## Failure classes
 
 - request/input: missing runtime model, revision, dataset, media, path, or
   scheduler value;
-- source/provenance: dirty checkout, mismatched image source, old SQSH, or host
-  source import;
+- source/provenance (`source-build` only): dirty checkout, mismatched image
+  source, or host source import;
+- runtime image: inaccessible explicit SQSH, failed packaged-image conversion,
+  or unreadable derived SQSH;
 - platform: SSH, scheduler, Pyxis/Enroot, mount, permission, GPU, CUDA, NCCL,
   decoder, or storage failure;
 - model/data: incompatible checkpoint keys/config, missing media, duplicate or

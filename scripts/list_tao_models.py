@@ -130,14 +130,26 @@ def load_backend_capabilities(skill_bank: Path, model: str) -> dict[str, Any]:
     if not isinstance(parsed, dict) or not isinstance(parsed.get("backend_contracts"), dict):
         return {}
     backends: dict[str, Any] = {}
-    for name, relative in parsed["backend_contracts"].items():
+    for name, declaration in parsed["backend_contracts"].items():
+        if isinstance(declaration, str):
+            relative = declaration
+            declared_image = None
+        elif isinstance(declaration, dict):
+            relative = declaration.get("path")
+            declared_image = declaration.get("container_image")
+        else:
+            raise ValueError(
+                f"backend_contracts.{name} must be a relative YAML path or mapping"
+            )
+        if not isinstance(relative, str) or not relative.strip():
+            raise ValueError(f"backend_contracts.{name}.path must be a relative YAML path")
         contract_path = skill_dir / str(relative)
         contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
         if not isinstance(contract, dict):
             raise ValueError(f"{contract_path} must contain a YAML object")
         actions = contract.get("actions", {})
         backends[str(name)] = {
-            "container_image": contract.get("container_image"),
+            "container_image": declared_image or contract.get("container_image"),
             "contract": str(relative),
             "actions": {
                 str(action): {

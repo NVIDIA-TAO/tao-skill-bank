@@ -34,7 +34,12 @@ images:
     data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-44-multiarch
     data_services_nightly: nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.8.10-rc-26-multiarch
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
+<<<<<<< HEAD
     cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch
+=======
+    cosmos_framework:   nvcr.io/nvstaging/tao/cosmos-framework:cosmos3-tao-reproducibility-20260818-6aa9a80
+    cosmos_rl:          nvcr.io/nvstaging/tao/cosmos-rl:enhanced-hooks-custom-loggers-20260816-direct-cache-fast-v7
+>>>>>>> b9578f8 ([TAO-000][Feature] Harden Cosmos training and evaluation workflows (#146))
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
     cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
