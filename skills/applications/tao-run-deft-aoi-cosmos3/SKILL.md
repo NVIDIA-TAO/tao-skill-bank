@@ -287,11 +287,11 @@ For each `iterN` when the frozen Benchmark gate is unmet:
    (`--mining-targets` takes the JSON) and a `filepath[,label]` parquet for the
    embedding container. Gap rows carry no image paths, so join back to Proxy by
    `id` — see `references/gap-analysis.md`.
-2. `anomalygen` — generate synthetic defects with `paidf-anomalygen` in
+2. `anomalygen` — generate synthetic defects with `tao-generate-anomalies` in
    `inference_only` mode, then turn each generated pair into a bare `NG`
    record with `scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
    the driving Proxy RCCA recorded zero false accepts, and even then generating
-   is often still worthwhile — see `references/paidf-anomalygen.md`.
+   is often still worthwhile — see `references/tao-generate-anomalies.md`.
 3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
    floor with `scripts/filter_mined_by_cosine.py`, then run the mapped skill's
    history-aware post-processing so a filepath selected by a prior iteration
@@ -331,7 +331,7 @@ report rendering.
 | Proxy / Benchmark evaluate | `tao-finetune-cosmos-reason` evaluate | `references/cosmos-reason.md` |
 | Proxy RCCA / Benchmark metric | bundled `analyze_gaps.py` | `references/gap-analysis.md` |
 | Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
-| AnomalyGen | `paidf-anomalygen`, `mode=inference_only` | `references/paidf-anomalygen.md` |
+| AnomalyGen | `tao-generate-anomalies`, `mode=inference_only` | `references/tao-generate-anomalies.md` |
 | Assemble / validate | bundled bare ShareGPT scripts | `references/aoi-annotation.md` |
 | State/report | bundled state commit + deterministic report hook | `references/scripts-and-agents.md` |
 

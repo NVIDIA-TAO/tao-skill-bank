@@ -112,7 +112,7 @@ a reference file is missing, stop and ask the user to reinstall the plugin.
 | Stage(s) | Reference file | Underlying skill | Owns |
 |---|---|---|---|
 | `train`, `evaluate` | `references/visual-changenet.md` | `tao-skill-bank:tao-train-visual-changenet` | TAO training, inference, evaluation, checkpoint discovery, TAO spec edits, two-checkpoint compare, `${TAO_PYT_IMAGE}` (pinned in Pre-Flight step 5) invocation. |
-| `anomalygen` | `references/paidf-anomalygen.md` | `tao-skill-bank:paidf-anomalygen` | AMP / AnomalyGen synthetic defect generation, `defect_spec.jsonl` routing, testcase prep, allocation recovery, and SDG output schema. |
+| `anomalygen` | `references/tao-generate-anomalies.md` | `tao-skill-bank:tao-generate-anomalies` | AMP / AnomalyGen synthetic defect generation, `defect_spec.jsonl` routing, testcase prep, allocation recovery, and SDG output schema. |
 | `rca` (VCN Classify) | `references/tao-analyze-gaps-visual-changenet.md` | `tao-skill-bank:tao-analyze-gaps-visual-changenet` | Threshold sweep, per-label weakness ranking, per-lighting expansion, `kpi_gaps.parquet` schema, and `deft_state.json` output for VCN Classify models. |
 | `routing` | `references/tao-route-visual-changenet-samples.md` | `tao-skill-bank:tao-route-visual-changenet-samples` | VCN weak-sample routing to mining and/or AnomalyGen, `mining_gaps.parquet` + `anomalygen_gaps.parquet` outputs, dropped-label warnings. |
 | `data_mining` (VCN path) | `references/tao-mine-aoi-images.md` | `tao-skill-bank:tao-mine-aoi-images` | Embed-then-mine workflow: target embedding, source-pool embedding, k-NN nearest-neighbour mining, `mined.parquet` output schema, encoder consistency requirement. |
