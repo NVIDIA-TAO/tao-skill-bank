@@ -1,5 +1,5 @@
 ---
-name: paidf-anomalygen
+name: tao-generate-anomalies
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit and a CUDA GPU. Pulls the `metropolis_sdg.paidf_anomalygen` image declared in `versions.yaml` at the skill bank root.
 metadata:
@@ -20,7 +20,7 @@ tags:
 - data
 ---
 
-# PAIDF AnomalyGen
+# TAO Generate Anomalies
 
 > **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
 

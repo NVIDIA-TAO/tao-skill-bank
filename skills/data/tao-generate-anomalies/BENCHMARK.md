@@ -1,12 +1,12 @@
 # Evaluation Report
 
-Evaluation of the `paidf-anomalygen` skill before publication through NVSkills-Eval.
+Evaluation of the `tao-generate-anomalies` skill before publication through NVSkills-Eval.
 
 This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the skill. The goal is to document whether the skill is safe, discoverable, effective, and useful for agents before it is published for broader workflow use.
 
 ## Evaluation Summary
 
-- Skill: `paidf-anomalygen`
+- Skill: `tao-generate-anomalies`
 - Evaluation date: 2026-06-20
 - NVSkills-Eval profile: `external`
 - Environment: `astra-sandbox`
@@ -68,10 +68,10 @@ Tier 1 validation passed with observations. NVSkills-Eval ran 1 checks and found
 
 Top findings:
 
-- MEDIUM SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/data/paidf-anomalygen`)
-- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/data/paidf-anomalygen/SKILL.md`)
-- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/data/paidf-anomalygen/SKILL.md`)
-- LOW SCHEMA/author_format: Author must be of the form 'Name <email@host>' (`skills/data/paidf-anomalygen/SKILL.md`)
+- MEDIUM SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/data/tao-generate-anomalies`)
+- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/data/tao-generate-anomalies/SKILL.md`)
+- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/data/tao-generate-anomalies/SKILL.md`)
+- LOW SCHEMA/author_format: Author must be of the form 'Name <email@host>' (`skills/data/tao-generate-anomalies/SKILL.md`)
 
 ## Tier 2: Deduplication Summary
 

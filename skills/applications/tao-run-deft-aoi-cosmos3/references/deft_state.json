@@ -107,7 +107,7 @@
       }
     },
     "anomalygen": {
-      "sub_skill": "paidf-anomalygen",
+      "sub_skill": "tao-generate-anomalies",
       "mode": "inference_only",
       "num_search_run": 0,
       "nn_threshold": 0,

@@ -47,7 +47,7 @@
     "batch_size": 16,
     "num_epochs": 10,
     "anomalygen": {
-      "sub_skill": "paidf-anomalygen",
+      "sub_skill": "tao-generate-anomalies",
       "mode": "inference_only",
       "project": "nvpcb",
       "defect_spec": "/home/user/workspace/augmentation/anomalygen/datasets/nvpcb/defect_spec.jsonl",

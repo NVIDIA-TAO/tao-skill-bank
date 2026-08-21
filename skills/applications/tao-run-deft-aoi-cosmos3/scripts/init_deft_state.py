@@ -323,7 +323,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 },
             },
             "anomalygen": {
-                "sub_skill": "paidf-anomalygen",
+                "sub_skill": "tao-generate-anomalies",
                 # The DEFT loop only needs Phases 2-3 (AMP routing + SDG
                 # diffusion); Phases 4-7 are SDG-quality optimization and
                 # contribute no training pairs.
