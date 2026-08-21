@@ -100,7 +100,7 @@ train_dataset:
   media_dir: /abs/path/to/deft_workspace/data/train/media
 
 cosmos_reason:
-  baseline_model_path: /abs/path/to/deft_workspace/model/baseline
+  baseline_model_path: /abs/path/to/deft_workspace/model/reasoner_checkpoint
   base_evaluate_toml: /abs/path/to/deft_workspace/specs/cr_base_evaluate.toml
   base_train_toml: /abs/path/to/deft_workspace/specs/cr_base_train.toml
   continual_model: false
@@ -116,7 +116,7 @@ mining:
   mine_unique_only: true
 ```
 
-`run`, `kpi_dataset`, `train_dataset`, `cosmos_reason`, and `mining` are required. All configured paths should be absolute and inside `<deft_workspace>`. `cosmos_reason.continual_model` is optional and defaults to `false`; when false, every iteration trains from the baseline checkpoint. `mining.embeddings_modality` selects KPI target modalities; train/source embeddings always contain both text and video. `mining.mine_unique_only` is optional and defaults to `true`; when true, previously mined train/source filepaths are filtered out before later mining runs.
+`run`, `kpi_dataset`, `train_dataset`, `cosmos_reason`, and `mining` are required; configured paths must be absolute inside `<deft_workspace>`. `cosmos_reason.baseline_model_path` must be a Cosmos Reasoner checkpoint. Convert a native Omni checkpoint first with `tao-finetune-cosmos-reason`. The optional `continual_model` defaults to `false`, which starts every iteration from the baseline. `embeddings_modality` selects KPI targets; train/source embeddings always include text and video. The optional `mine_unique_only` defaults to `true` and filters previously mined train/source paths from later iterations.
 
 All workflow outputs go under `<deft_workspace>/results`; do not add a separate output root to `workflow.yaml`. `run.name` is not just a display label: if it is set, use `<deft_workspace>/results/<run.name>` as the run directory and explain that all stage outputs, including `baseline/`, `cosmos_embed_output/`, `embedding_parquets/`, and `iter_<N>/`, are nested under that run directory. If `run.name` is `null`, create `<deft_workspace>/results/run_<YYYYMMDD_HHMMSS>` and record the resolved run directory in `deft_state.json` so resume never recomputes it.
 
