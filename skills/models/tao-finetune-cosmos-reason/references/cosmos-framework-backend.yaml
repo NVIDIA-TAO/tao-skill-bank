@@ -118,7 +118,7 @@ actions:
     implementation: tao_integration_adapter_after_verified_export
     pre_action: export_if_framework_dcp
     command: cosmos-framework-evaluate --config <config>
-    slurm_renderer: scripts/render_evaluation_slurm.py
+    execution_contract: evaluation_workflow.spec_bundle.execution
     checkpoint_action_manifest: terminal_verified_required
     image_capability_attestation: baked_framework_evaluator_runtime_required
     video_runtime:

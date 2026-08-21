@@ -109,6 +109,14 @@ cannot launch. This is what keeps a run recoverable across a context break:
 `results_dir` is recorded before the backend object (which K8s TTL or docker
 `--rm` may later delete) ever exists.
 
+When the producing spec-bundle declares `execution`, preserve it as model-owned
+action semantics across every application that reuses that model skill. The
+selected platform consumes the lifecycle; an application must not copy its
+commands into a private launcher. Platform-independent pre/post commands,
+runtime attestations, helper dependencies, distributed intent, and completion
+evidence belong in the producer's spec-bundle. Scheduler syntax, mounts,
+secrets, timeouts, ranks, and child-exit preservation remain platform-owned.
+
 ### External platform skills
 
 No registry, no interface file: a platform skill **declares the contract by

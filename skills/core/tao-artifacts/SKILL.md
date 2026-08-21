@@ -52,6 +52,32 @@ job-record only when debugging (the writer script already enforces the schema).
    and a `command` containing `{config_path}`, and forbids `args`.
    `mode: args` requires `args` and forbids `spec`. There is no other mode.
 
+## Optional action lifecycle
+
+Use `execution` when an action needs more than its primary command. This is the
+shared model-to-platform seam; do not add a model-specific Docker, Kubernetes,
+or SLURM renderer merely to carry runtime environment, attestations,
+post-processing, or helper dependencies.
+
+- The producing model/data skill owns `environment`, ordered `pre_commands`,
+  ordered `post_commands`, distributed-launch intent, and completion evidence.
+- The platform owns container mounts, scheduler/container syntax, task/rank
+  binding, timeouts, log paths, and preservation of the real child exit code.
+- `environment` is non-secret. Credential values continue to use the selected
+  platform's secret/sidecar contract and never enter a spec-bundle.
+- Commands, environment values, and string values in `spec` may use
+  `{config_path}`, `{job_id}`, and `{results_dir}`. The platform binds them
+  only after the job record has been opened; the job record's `results_dir` is
+  authoritative over any pre-review display path. Persist hashes of both the
+  producer bundle and the bound runtime config.
+- `supporting_files` names checked-in orchestration helpers relative to the
+  producing skill root. The platform stages the closed set, verifies every
+  declared SHA256, and rejects traversal, undeclared siblings, or overwrite of
+  a different bundle. Supporting files orchestrate an action; they must never
+  shadow or patch code inside the selected image.
+- A `torchrun` declaration expresses process topology, not SLURM/Kubernetes
+  syntax. Each platform maps it to its native distributed launcher.
+
 ## Fixed status vocabulary
 
 Every job state anywhere in the pipeline is exactly one of:

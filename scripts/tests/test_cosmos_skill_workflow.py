@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import jsonschema
 import pytest
 import tomllib
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "skills" / "models" / "tao-finetune-cosmos-reason"
@@ -46,9 +47,6 @@ metric = load_module(
 framework_action = load_module(
     "framework_checkpoint_action_test",
     SKILL / "scripts" / "framework_checkpoint_action.py",
-)
-action_bundle = load_module(
-    "stage_action_bundle_test", SKILL / "scripts" / "stage_action_bundle.py"
 )
 framework_image_preflight = load_module(
     "framework_evaluation_image_preflight_test",
@@ -300,21 +298,29 @@ def attach_decoder_artifact(args, tmp_path: Path) -> None:
     Path(args.video_override_manifest).write_text("{}")
 
 
-def test_framework_action_bundle_is_import_closed_and_idempotent(
-    tmp_path: Path,
-) -> None:
-    destination = tmp_path / "framework-checkpoint-input"
-    first = action_bundle.stage("framework-checkpoint", destination)
-    second = action_bundle.stage("framework-checkpoint", destination)
-    assert first["state"] == "staged"
-    assert second["state"] == "reused"
-    assert {item["path"] for item in first["files"]} == {
-        "framework_checkpoint_action.py",
-        "cosmos_common.py",
+def test_checkpoint_helper_dependencies_are_declared_and_import_closed() -> None:
+    info = yaml.safe_load(
+        (SKILL / "references" / "skill_info.yaml").read_text(encoding="utf-8")
+    )
+    declarations = info["workflow_contract"]["action_helper_dependencies"]
+    assert declarations["staging_owner"] == "selected_platform"
+    assert declarations["staging_contract"] == (
+        "tao-artifacts.spec_bundle.execution.supporting_files"
+    )
+    framework = declarations["framework_checkpoint"]
+    assert set(framework["files"]) == {
+        "scripts/framework_checkpoint_action.py",
+        "scripts/cosmos_common.py",
     }
+    for relative in framework["files"]:
+        path = Path(relative)
+        assert not path.is_absolute()
+        assert ".." not in path.parts
+        assert (SKILL / path).is_file()
+        assert len(hashlib.sha256((SKILL / path).read_bytes()).hexdigest()) == 64
     imported = subprocess.run(
-        [sys.executable, str(destination / "framework_checkpoint_action.py"), "--help"],
-        cwd=destination,
+        [sys.executable, str(SKILL / framework["entrypoint"]), "--help"],
+        cwd=SKILL / "scripts",
         text=True,
         capture_output=True,
         check=False,
@@ -494,7 +500,8 @@ def test_retry_helper_reuses_sealed_inspection_and_refreshes_job_identity(
     completed = subprocess.run(
         [
             sys.executable,
-            str(SKILL / "scripts" / "cosmos_retry_plan.py"),
+            str(SKILL / "scripts" / "cosmos_workflow.py"),
+            "retry-plan",
             "--prior-plan",
             str(prior_output),
             "--job-id",
@@ -3046,3 +3053,78 @@ def test_request_and_metadata_schemas_and_no_environment_history():
             assert not any(
                 value in text.casefold() for value in development_dataset_names
             ), path
+
+
+def test_plan_parser_accepts_fractional_total_training_warmup() -> None:
+    args = workflow.parse_args(["plan", "--warmup", "0.03"])
+    assert args.warmup == 0.03
+
+
+def test_rl_spec_preserves_top_level_and_dataloader_seed_contract() -> None:
+    args = SimpleNamespace(
+        dataset_family="video_conversation",
+        rl_dataset_cache_mode="direct",
+        rl_train_batch_per_replica=8,
+        rl_mini_batch=1,
+        minimum_lr_factor=None,
+        container_checkpoint_dir="/checkpoints",
+        learning_rate=1.6e-5,
+        training_mode="dense",
+        weight_decay=0.01,
+        scheduler="none",
+        optimizer_epsilon=1e-8,
+        warmup=0.03,
+        gradient_clip=1.0,
+        precision="bfloat16",
+        async_checkpoint=False,
+        max_checkpoints=1,
+        rl_validation_freq_steps=0,
+        rl_validation_shard_strategy="stride",
+        validation_batch_size=1,
+        seed=42,
+        sequence_length=81920,
+        frames=0,
+        fps=2.0,
+        min_frames=None,
+        max_frames=128,
+        video_start=None,
+        video_end=None,
+        video_resized_height=None,
+        video_resized_width=None,
+        video_min_pixels=None,
+        video_max_pixels=186625,
+        video_total_pixels=None,
+        system_prompt="You are a helpful assistant.",
+        container_cache_dir="/cache",
+        run_mode="full",
+        nodes=1,
+        gpus_per_node=8,
+        experiment_id="reproducibility-contract",
+        video_override_map="",
+    )
+    runtime = {
+        "selected_profile": "pynv-device-rgbp",
+        "video_decoder": "pynvvideocodec",
+        "video_cache_size": 181,
+        "decoder_cache_size": 181,
+        "dataloader_num_workers": 0,
+        "dataloader_prefetch_factor": None,
+    }
+
+    spec = workflow._rl_spec(
+        args,
+        {"epochs": 8},
+        "/models/reasoner-8b",
+        ["/data/train.json"],
+        ["/data/train"],
+        ["/data/validation.json"],
+        ["/data/validation"],
+        {},
+        runtime,
+    )
+
+    assert spec["train"]["seed"] == 42
+    assert spec["train"]["deterministic"] is True
+    assert spec["train"]["train_policy"]["dataloader_seed"] == 42
+    assert spec["train"]["train_policy"]["dataloader_num_workers"] == 0
+    assert "dataloader_prefetch_factor" not in spec["train"]["train_policy"]

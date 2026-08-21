@@ -13,6 +13,7 @@ the native event to the exact verified action checkpoint.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -24,6 +25,14 @@ from typing import Any
 
 class CheckpointError(ValueError):
     """A deterministic checkpoint handoff failure."""
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _load_object(path: Path) -> dict[str, Any]:
@@ -206,6 +215,7 @@ def verify(
         {
             "path": str(path.relative_to(action_checkpoint)),
             "size": path.stat().st_size,
+            "sha256": _sha256(path),
         }
         for path in sorted(files)
     ]

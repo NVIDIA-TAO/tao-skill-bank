@@ -57,3 +57,13 @@ Before carrying a bad-node exclusion list into a retry, resolve the live node
 inventory with `scontrol show nodes`. Remove retired or nonexistent names that
 make `sbatch` reject the request, retain exclusions supported by failure
 evidence, and record the validated exclusion set in the new attempt.
+
+## Retry ownership boundary
+
+The retry is a normal new `submit`, not a workflow-specific fifth platform
+verb. Core launch owns classification, retry budget, the new job record, and
+`retry_of`. The platform owns live backend reconciliation and infrastructure
+inventory. The producer owns restoration of its sealed semantic request and
+must rebase every writable path under the new record before resealing. Reuse
+immutable inspection evidence; never reuse a prior result/checkpoint/cache
+root, mutate an old plan, or patch a rendered platform artifact.

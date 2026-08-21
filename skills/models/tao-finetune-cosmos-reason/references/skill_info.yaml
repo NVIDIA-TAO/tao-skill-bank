@@ -85,6 +85,19 @@ workflow_contract:
       local_snapshot_identity: content_fingerprint
       private_model_blocker: request_HF_TOKEN_presence_only
   framework_checkpoint_action: scripts/framework_checkpoint_action.py
+  action_helper_dependencies:
+    framework_checkpoint:
+      entrypoint: scripts/framework_checkpoint_action.py
+      files:
+      - scripts/framework_checkpoint_action.py
+      - scripts/cosmos_common.py
+    cosmos_rl_checkpoint:
+      entrypoint: scripts/cosmos_rl_checkpoint_action.py
+      files:
+      - scripts/cosmos_rl_checkpoint_action.py
+      - scripts/cosmos_common.py
+    staging_contract: tao-artifacts.spec_bundle.execution.supporting_files
+    staging_owner: selected_platform
   metric_extractor: scripts/extract_cosmos_metrics.py
   diagnostic_subset:
     policy: opt-in only; never submit a separate smoke job unless the user explicitly requests it
@@ -309,6 +322,10 @@ actions:
     command: cosmos-rl-evaluate --config {config_path}
     config_format: toml
     mode: config
+    execution_contract:
+      source: scripts/evaluation_workflow.py output spec_bundle.execution
+      platform_owned: [helper_staging, container_mounts, distributed_launcher, timeout, child_exit_preservation]
+      model_owned: [runtime_attestation, evaluator_command, metric_extraction, structured_success]
     automl_default_parameters:
     - dataset.system_prompt
     - vision.num_frames
