@@ -89,14 +89,19 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform slurm --image "$IMAGE" \
      --network-arch "$ARCH" --action "$ACTION" --storage-tier A --results-root "$SLURM_BASE_RESULTS_DIR")
    ```
-4. **Render** `templates/slurm/singlenode.sbatch.tmpl` — substitute every
+4. **Consume the optional model lifecycle.** If the validated spec-bundle has
+   `execution`, preserve its order and semantics while mapping distributed
+   intent to native SLURM/Pyxis. Stage only its checksum-closed
+   `supporting_files`. The full generic lifecycle and staging contract is in
+   `references/slurm-container-execution.md`.
+5. **Render** `templates/slurm/singlenode.sbatch.tmpl` — substitute every
    `@@<NAME>@@` (`JOB_NAME=$JOB_ID`, `NUM_GPUS`, `CPUS_PER_TASK`, `TIME`, `LOG_DIR`,
    `IMAGE`, `CONTAINER_MOUNTS=<RUNTIME_SUPPLIED_MOUNTS>`, `COMMAND=<bundle command reading the shared-storage
    spec>`, `SBATCH_EXTRA=` account/partition lines, `ENV_FILE=` the sidecar path or
    empty, `EXTRA_ENV=` any cluster NCCL knobs) → `<job_dir>/sbatch/job_$JOB_ID.sbatch`.
    **Lint + syntax-check before submit:** `redact_secrets.py lint <sbatch>` must
    pass and `bash -n <sbatch>` must succeed.
-5. **Submit + record RUNNING:**
+6. **Submit + record RUNNING:**
    ```bash
    SLURM_ID=$(ssh $LOGIN "sbatch --parsable <job_dir>/sbatch/job_$JOB_ID.sbatch")
    "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING --backend-ref "$SLURM_ID"

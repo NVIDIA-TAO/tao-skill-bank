@@ -232,8 +232,8 @@ Sixteen frames is a higher-cost option intended for detail- or coverage-bound
 failures on sufficiently provisioned local evaluation. The current Cosmos
 evaluator materializes processed video inputs before inference; split a large
 corpus into complete, video-disjoint execution shards when one monolithic action
-would exhaust host memory, then reject missing or duplicate prediction IDs
-before computing the aggregate metric.
+would exhaust host memory. Use the repository evaluator's final metric; do not
+add a second prediction-ID matching gate after evaluation.
 Validate every referenced media path and the resolved decoder contract before
 launching the baseline. Do not invent frame rates or patch source annotations
 unless the user explicitly requests dataset repair.

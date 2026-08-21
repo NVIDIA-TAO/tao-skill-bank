@@ -108,7 +108,7 @@ an automated pre-action. Ask only for entries in `required_user_inputs`; do
 not ask for entries in `automated_actions`. Multiple recorded validation
 manifests/media roots are an automated deterministic materialization step, not
 a reason to ask the user to select a subset; preserve the sealed fingerprint
-and full record coverage. Rerun with user inputs such as
+and full validation selection. Rerun with user inputs such as
 `--checkpoint-epoch`, `--checkpoint`, `--generation-max-tokens`,
 `--evaluation-batch-size`, `--evaluation-seed`,
 `--max-video-pixels`,
@@ -131,9 +131,12 @@ For Cosmos-RL, a status event normally names the native
 `checkpoints/epoch_N/policy` artifact. That path is never evaluator-loadable.
 Run `scripts/cosmos_rl_checkpoint_action.py` on the target compute frame; it
 derives and validates the exact sibling `safetensors/epoch_N` export and emits
-a binding manifest. Rerun the resolver with both `--action-model-path` and
+a binding manifest with path, size, and SHA256 for every config, index, shard,
+or adapter file. Rerun the resolver with both `--action-model-path` and
 `--action-model-manifest`. A missing, truncated, wrong-epoch, or wrong-kind
 export blocks launch automatically and is not a user question.
+Each emitted checkpoint pre-action carries its checksum-closed
+`supporting_files`; the selected platform stages that declared set directly.
 
 For Cosmos-RL dense training, the verified HF export becomes
 `model.model_name`. For Cosmos-RL PEFT, the verified adapter becomes
@@ -174,9 +177,9 @@ classification task, and do not relabel generation NLL or validation loss as
 answer accuracy.
 
 Preserve the resolved prompt, frame sampling, pixel budget, generation,
-parsing, normalization, coverage, and evaluator version in metadata. Aggregate
-accuracy as correct/covered examples over tasks that define accuracy; report
-excluded tasks and reasons.
+parsing, normalization, and evaluator version in metadata. Report the final
+metric emitted by the repository evaluator, including correct/total and
+per-task values when it provides them.
 
 ## Decoder and execution
 
@@ -195,22 +198,21 @@ decoding.
 
 Use `torchrun` data parallelism according to the resolved GPU count. Keep one
 model replica per rank unless the selected backend contract explicitly
-requires another topology. Full evaluation uses `limit=-1`, exact record
-coverage, rank-aware result files, and global deduplication before scoring.
+requires another topology. Full evaluation uses `limit=-1`; the repository
+evaluator owns its rank-aware outputs and scoring.
 
-On SLURM, render both backends only with
-`scripts/render_evaluation_slurm.py`. It rejects non-READY plans, TOML checksum
-mismatches, unverified checkpoint manifests, GPU shapes not divisible by the
-per-node GPU count, conflicting `/results` mounts, and result directories that
-do not end in the TAO job id. It owns the persistent parent-results to
-`/results` mount, `TAO_API_JOB_ID`, `TAO_API_RESULTS_DIR=/results`, structured
-status path, distributed rendezvous, no-requeue/exclusive contract, child
-timeout, backend CLI selection, Framework in-image capability attestation, and
-child-exit propagation. It also requires a complete contiguous rank-shard set,
-atomically writes the aggregated `results.json`, and compares its total with
-the annotation-array length before the job can succeed. Do not reconstruct
-those details in a prompt-authored sbatch file or treat per-rank shards as a
-complete evaluation.
+The READY evaluation plan contains a validated `spec_bundle`. Its
+`execution` lifecycle owns backend CLI selection, non-secret runtime
+environment, and Framework in-image capability attestation. It does not add a
+post-evaluation prediction-ID, annotation-envelope, or rank-shard gate after
+the evaluator returns its metric.
+
+Pass that bundle unchanged to the selected platform. On SLURM,
+`tao-run-on-slurm` owns the standard template, persistent results mount,
+job-record placeholder binding, distributed rendezvous, no-requeue/exclusive
+directives, timeout, and child-exit propagation. Do not create a Cosmos-only
+SLURM renderer, copy these semantics into an application skill, or treat
+per-rank shards as a complete evaluation.
 Run `scripts/framework_evaluation_image_preflight.py` against a selected
 Framework SQSH before opening/submitting the evaluation record. A missing
 baked Framework preprocessor is an immutable-image incompatibility, not a
@@ -219,9 +221,10 @@ reason to stage source or select Cosmos-RL.
 ## Completion and results
 
 Treat scheduler completion as provisional. Require child exit zero, terminal
-TAO `SUCCESS`, a complete prediction set with no duplicate IDs, and evaluator
-metrics whose numerator/denominator recompute to the reported accuracy.
+TAO `SUCCESS`, and the final metric emitted by the repository evaluator. Do not
+turn a successful evaluation into a failure by comparing prediction IDs with
+annotation IDs or by imposing a second annotation-format assumption.
 Persist the selected checkpoint, Framework export when applicable, resolved
 config and SHA256, evaluation plan and provenance, stdout/stderr, status,
-results, per-task coverage, normalization/evaluator version, and duration in
-the job record.
+results, any emitted per-task metrics, normalization/evaluator version, and
+duration in the job record.
