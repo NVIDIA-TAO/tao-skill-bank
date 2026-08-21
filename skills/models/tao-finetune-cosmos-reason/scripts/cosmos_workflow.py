@@ -1725,7 +1725,15 @@ def _rl_spec(
             "epsilon": args.optimizer_epsilon,
             # Cosmos-RL names a constant schedule "none"; the common parity
             # contract and Framework continue to expose it as "constant".
-            "optm_warmup_epochs": args.warmup,
+            # Cosmos-RL reads a FLOAT <= 1.0 as a fraction of the whole run, so
+            # a plain 1.0 becomes "warm up across every epoch" (epochs *
+            # steps_per_epoch steps) instead of one epoch. Emit an int whenever
+            # the request is a whole number of epochs.
+            "optm_warmup_epochs": (
+                int(args.warmup)
+                if float(args.warmup).is_integer()
+                else args.warmup
+            ),
             "optm_decay_type": "none"
             if args.scheduler == "constant"
             else args.scheduler,
