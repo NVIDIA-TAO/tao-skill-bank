@@ -24,7 +24,7 @@ Mitigation: Review and scan skill before deployment. <br>
 - [Visual ChangeNet](references/visual-changenet.md) <br>
 - [Customer Metric Contract](references/metric-contract.md) <br>
 - [Data Layout](references/data-layout.md) <br>
-- [PAIDF AnomalyGen](references/paidf-anomalygen.md) <br>
+- [PAIDF AnomalyGen](references/tao-generate-anomalies.md) <br>
 - [Scripts and Agents](references/scripts-and-agents.md) <br>
 
 

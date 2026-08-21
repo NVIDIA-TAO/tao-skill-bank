@@ -1,5 +1,5 @@
 ## Description: <br>
-Full PAIDF AnomalyGen pipeline — fine-tune on a new anomaly dataset, generate synthetic anomaly images (SDG), evaluate quality (nn_score), and search per-sample (guidance, crop_ratio) parameters. <br>
+The `tao-generate-anomalies` skill runs the full PAIDF AnomalyGen pipeline — fine-tune on a new anomaly dataset, generate synthetic anomaly images (SDG), evaluate quality (nn_score), and search per-sample (guidance, crop_ratio) parameters. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
