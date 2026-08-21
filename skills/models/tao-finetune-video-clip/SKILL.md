@@ -33,11 +33,7 @@ tags:
 
 TAO task **`video_clip`** wraps OpenGVLab **InternVideo2-CLIP L14**. The CLI entrypoint is `video_clip` with actions `train`, `evaluate`, `inference`, `export`, and `default_specs`.
 
-Container image and per-action commands are in `references/skill_info.yaml`. Starting specs are in `references/spec_template_*.yaml`.
-
-> **Release note:** The pinned image is an interim nvstaging build until [tao-pytorch !620](https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-pytorch/-/merge_requests/620) merges and TAO publishes an official `video_clip` image tag. After release, `versions.yaml` `images.tao_toolkit.video_clip` will be re-stamped.
->
-> **Known-broken images:** interim builds cut before tao-pytorch commit `0cc31de4` (`v7.0.1-pyt2.1.0-py3-01` and `-py3-02`, both superseded by the pinned `-py3-03`) ship a `video_clip` package with no `model.backbones` submodule, so `train`/`evaluate`/`inference` all die at import with `ModuleNotFoundError: nvidia_tao_pytorch.multimodal.video_clip.model.backbones` — while `video_clip --help` still exits 0. Run the import smoke check in the preflight below before pulling data or launching a run.
+Container image and per-action commands are in `references/skill_info.yaml`. Starting specs are in `references/spec_template_*.yaml`. The pinned image is the official TAO PyTorch container, which ships the complete `video_clip` stack (`model.backbones` and the `decord` decode backend).
 
 ## Train Action Policy
 
@@ -48,7 +44,7 @@ AutoML is not packaged for this model skill. Always use direct `video_clip` acti
 Use the pinned TAO container declared in `references/skill_info.yaml`. Pull with `NGC_KEY` when the image is not cached locally.
 
 ```bash
-VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-03"  # versions-key: images.tao_toolkit.video_clip
+VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-47-multiarch"  # versions-key: images.tao_toolkit.pyt
 VIDEO_CLIP_IMAGE="${VIDEO_CLIP_IMAGE:-$VIDEO_CLIP_IMAGE_DEFAULT}"
 docker pull "$VIDEO_CLIP_IMAGE"
 ```
@@ -76,7 +72,7 @@ workspace/
 Docker options for all actions (skill-eval CI uses the same `$WORKSPACE_DIR` bind-mount pattern):
 
 ```bash
-VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-03"  # versions-key: images.tao_toolkit.video_clip
+VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-47-multiarch"  # versions-key: images.tao_toolkit.pyt
 VIDEO_CLIP_IMAGE="${VIDEO_CLIP_IMAGE:-$VIDEO_CLIP_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
 DOCKER_COMMON=(
@@ -106,9 +102,7 @@ Preflight (host):
 docker run --rm "$VIDEO_CLIP_IMAGE" video_clip --help >/dev/null || echo "MISSING: video_clip in container"
 docker run --rm "$VIDEO_CLIP_IMAGE" \
   python -c "import nvidia_tao_pytorch.multimodal.video_clip.model.adapters.internvideo2clip" \
-  >/dev/null 2>&1 || echo "BROKEN IMAGE: video_clip package is incomplete (missing model.backbones) — stop, see Release note"
-docker run --rm "$VIDEO_CLIP_IMAGE" python -c "import decord" \
-  >/dev/null 2>&1 || echo "NO DECODE BACKEND: decord is not in the image and the container ffmpeg/opencv are codec-disabled — build a derived image (FROM \$VIDEO_CLIP_IMAGE + RUN pip install decord==0.6.0) and run every action from it"
+  >/dev/null 2>&1 || echo "BROKEN IMAGE: video_clip package failed to import — stop and report the image"
 nvidia-smi >/dev/null 2>&1 || echo "note: no GPU visible"
 ```
 
@@ -223,8 +217,7 @@ For vision-LoRA runs, start from `tao-pytorch` `experiment_spec_lora.yaml` or ad
 - **Eval precision**: match `train.precision` (typically `bf16`) or flash-attn paths may fail under fp32 eval.
 - **Empty `action_queries` on normal chunks** become literal `"Normal"` positives during training; exclude `Normal`/`Abnormal` in `dataset.metrics.exclude_categories` for classification eval.
 - **No hard-negative / explicit-neg training** on the vendor branch unless the spec and branch explicitly enable it.
-- **`video_clip --help` is not a health check.** It exits 0 on an image whose `video_clip` package is missing `model.backbones`; only the import smoke check in the preflight catches it.
-- **The pinned image has no working video-decode backend.** `decord` is not installed, the bundled `ffmpeg` is codec-disabled (no `pipe` protocol, no `rawvideo` muxer, no `select` filter), and the `opencv` build has `WITH_FFMPEG=OFF`, so `train` dies at data-loading with `All video decoding backends failed`. Until the base image is rebuilt from [tao-pytorch !620](https://gitlab-master.nvidia.com/nvidia-tao-toolkit/tao-pytorch/-/merge_requests/620) — which pins `decord==0.6.0` in `docker/requirements-pip.txt` — build a derived image (`FROM $VIDEO_CLIP_IMAGE` + `RUN pip install decord==0.6.0`) and run every action from it. A wheel-only release rebuild does **not** fix this: `release/docker/Dockerfile` consumes the base by hardcoded digest, so base-level dependency pins only land after a base-image rebuild.
+- **`video_clip --help` is not a health check.** It can exit 0 even when the `video_clip` package fails to import; only the data-free import smoke check in the preflight confirms the actions can run.
 - **PyTorch ≥ 2.6 defaults to `torch.load(weights_only=True)`** and rejects the TAO checkpoint’s numpy dtype objects with `_pickle.UnpicklingError`. `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` is set in `DOCKER_COMMON` above; keep it for `evaluate`, `inference`, and `export`.
 - **`model/hf/` is a snapshot, not an HF hub cache.** Offline packs stage InternVideo2 weights at repo-relative paths (`stage1/L14/L14_dist_1B_stage2/pytorch_model.bin`, `clip/L14/pytorch_model.bin`), while `HUGGINGFACE_HUB_CACHE` expects a `models--<org>--<repo>/snapshots/<sha>/` tree. Leaving `model.vision_encoder` / `model.clip_head` at `null` sends asset resolution to `hf_hub_download` and fails under `HF_HUB_OFFLINE=1` — point both at the files directly.
 - **CI / skill-eval**: stage weights + remapped JSON under `$WORKSPACE_DIR` from S3; do not rely on HuggingFace LFS downloads at eval time.
