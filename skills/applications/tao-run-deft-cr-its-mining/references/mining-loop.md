@@ -281,7 +281,7 @@ python3 "$DEFT_SKILL_ROOT/scripts/cleanup_cosmos_reason_training.py" \
   --train-dir "$RUN_DIR/iter_${ITER}/train"
 ```
 
-The command removes only `<timestamp>/checkpoints/` and its `best/checkpoints` link. It preserves every `<timestamp>/safetensors/epoch_<N>` export, training logs, specs, and annotations. It refuses to delete anything unless at least one safetensors epoch export exists, and writes `$RUN_DIR/iter_<N>/train/checkpoint_cleanup.json`. Log that report as the `cleanup_cosmos_reason_training` artifact before starting the next iteration. If Docker ownership prevents cleanup, restore write access to the iteration train directory with `restore_docker_mount_permissions.py` and the Cosmos Reason image, then retry this stage.
+The command removes only each `<timestamp>/checkpoints/` directory and the train directory's `best/checkpoints` link. It also removes a legacy `<timestamp>/best/checkpoints` link when present. It preserves every `<timestamp>/safetensors/epoch_<N>` export, training logs, specs, and annotations. It refuses to delete anything unless at least one safetensors epoch export exists, and writes `$RUN_DIR/iter_<N>/train/checkpoint_cleanup.json`. Log that report as the `cleanup_cosmos_reason_training` artifact before starting the next iteration. If Docker ownership prevents cleanup, restore write access to the iteration train directory with `restore_docker_mount_permissions.py` and the Cosmos Reason image, then retry this stage.
 
 ## Final Accuracy Report
 
