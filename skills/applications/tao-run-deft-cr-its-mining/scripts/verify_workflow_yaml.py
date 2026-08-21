@@ -26,6 +26,7 @@ from workflow_common import (
 
 
 HF_MODEL_PREFIX = "hf_model://"
+COSMOS3_OMNI_MODEL_TYPE = "cosmos3_omni"
 
 
 def require_positive_int(section: dict[str, Any], dotted_key: str) -> int:
@@ -61,6 +62,24 @@ def validate_optional_checkpoint(mining: dict[str, Any], workspace: Path) -> str
             "a Hugging Face model id like nvidia/Cosmos-Embed1-224p, or null"
         )
     return value
+
+
+def reject_cosmos3_omni_checkpoint(checkpoint: Path) -> None:
+    """Stop preflight when the baseline is a native Cosmos3 Omni checkpoint."""
+    config_path = checkpoint / "config.json"
+    if not config_path.is_file():
+        return
+    with config_path.open("r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    if not isinstance(config, dict) or config.get("model_type") != COSMOS3_OMNI_MODEL_TYPE:
+        return
+    raise ValueError(
+        f"cosmos_reason.baseline_model_path is a Cosmos3 Omni checkpoint: {checkpoint}. "
+        "This workflow requires a Cosmos Reasoner checkpoint. Use the "
+        "`tao-finetune-cosmos-reason` skill to convert the Omni checkpoint into a "
+        "Reasoner checkpoint, update cosmos_reason.baseline_model_path, and rerun the "
+        "workflow. Exiting before workflow initialization."
+    )
 
 
 def validate_cosmos_embed_template(path: Path) -> int:
@@ -186,6 +205,7 @@ def validate_workflow_config(config: dict[str, Any], workspace: Path) -> dict[st
         "cosmos_reason.baseline_model_path",
         "path",
     )
+    reject_cosmos3_omni_checkpoint(baseline_model)
     base_evaluate_toml = existing_absolute_path(
         require_string(cosmos_reason, "cosmos_reason.base_evaluate_toml"),
         workspace,
