@@ -353,6 +353,11 @@ def full_run_rows() -> list[dict]:
                         ptm=PTMS[key],
                         freeze=freeze,
                         lr=6.0e-5 if freeze else 1.0e-5,
+                        precision=(
+                            "bf16-mixed"
+                            if key == "dinov3_huge_plus" and not freeze
+                            else "32-true"
+                        ),
                     ),
                 }
             )
@@ -453,6 +458,7 @@ def probe_rows() -> list[dict]:
             epochs=1,
             freeze=False,
             lr=1.0e-5,
+            precision="bf16-mixed" if key == "dinov3_huge_plus" else "32-true",
         )
         rows.append(
             {

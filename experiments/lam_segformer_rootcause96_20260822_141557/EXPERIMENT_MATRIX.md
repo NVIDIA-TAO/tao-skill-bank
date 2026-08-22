@@ -49,8 +49,10 @@ that preserve the geometry and label map without interpolation blur.
 ## New-backbone runs (12)
 
 Each backbone receives both adapter/decoder-only (`freeze_backbone=true`) and
-full fine-tuning (`freeze_backbone=false`). Both use activation checkpointing,
-D4, C03 weighted CE, cosine, and their own pretrained checkpoint.
+full fine-tuning (`freeze_backbone=false`). Both use activation checkpointing.
+DINOv3-H+ full fine-tuning uses BF16 mixed precision because FP32 exceeds an
+80 GB GPU at 1024 px; the other runs retain FP32.
+All use D4, C03 weighted CE, cosine, and their own pretrained checkpoint.
 
 | IDs | SegFormer backbone | Support path |
 |---|---|---|

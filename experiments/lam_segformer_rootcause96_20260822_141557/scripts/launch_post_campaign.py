@@ -13,16 +13,17 @@ def main() -> None:
     core.stage_controller()
     ddp = json.loads((core.LOCAL_ROOT / "ddp_retry_manifest.json").read_text())["jobs"]
     backbone = json.loads((core.LOCAL_ROOT / "backbone_retry_manifest.json").read_text())["jobs"]
-    recovery = json.loads(
-        (core.LOCAL_ROOT / "dinov3_huge_bf16_retry_manifest.json").read_text()
-    )["jobs"]
-    replacement_by_run = {
-        row["run_id"]: row
-        for row in recovery
-        if row.get("group") == "backbone" and row.get("run_id") in {"B03", "B04"}
-    }
-    if set(replacement_by_run) != {"B03", "B04"}:
-        raise RuntimeError("DINOv3-H+ B03/B04 replacement jobs are incomplete")
+    recovery_path = core.LOCAL_ROOT / "dinov3_huge_bf16_retry_manifest.json"
+    replacement_by_run = {}
+    if recovery_path.is_file():
+        recovery = json.loads(recovery_path.read_text())["jobs"]
+        replacement_by_run = {
+            row["run_id"]: row
+            for row in recovery
+            if row.get("group") == "backbone" and row.get("run_id") in {"B03", "B04"}
+        }
+        if set(replacement_by_run) != {"B03", "B04"}:
+            raise RuntimeError("DINOv3-H+ recovery exists but B03/B04 replacements are incomplete")
     full_backbones = [
         replacement_by_run.get(row["run_id"], row)
         for row in backbone
