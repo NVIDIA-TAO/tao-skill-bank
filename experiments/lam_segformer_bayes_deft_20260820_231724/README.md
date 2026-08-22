@@ -64,10 +64,12 @@ The principal orchestration sequence is:
    a hierarchical nine-model fusion across all three experiment families and
    all three backbones.
 
-The current DEFT implementation performs one outer DEFT round on demand. It
-does not expose `num_deft_iterations=5|10|20`. The four folds, 20 OOF epochs,
-three neighbors, and 25% duplication fraction are inner-stage parameters, not
-outer iteration counts.
+The current DEFT implementation performs one explicitly launched outer DEFT
+round. It has neither an adaptive on-demand loop nor a
+`num_deft_iterations=5|10|20` parameter. The four folds, 20 OOF epochs, three
+neighbors, and 25% duplication fraction are inner-stage parameters, not outer
+iteration counts. A subsequent round would need new orchestration that starts
+from the preceding round's checkpoint and rescored predictions.
 
 ## DEFT snapshot definition
 
