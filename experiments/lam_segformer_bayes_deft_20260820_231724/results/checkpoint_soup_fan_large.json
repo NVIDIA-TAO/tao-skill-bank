@@ -1,0 +1,653 @@
+{
+  "best": {
+    "accuracy": 0.9864906017829423,
+    "class_iou": [
+      0.977640030319379,
+      0.9306910594757895,
+      0.9008011930487142,
+      0.980817076845223
+    ],
+    "confusion_matrix": [
+      [
+        624323650,
+        37958,
+        2088809,
+        6209992
+      ],
+      [
+        2584,
+        43950318,
+        1459799,
+        21
+      ],
+      [
+        1310351,
+        1755728,
+        63384821,
+        176376
+      ],
+      [
+        4629445,
+        16908,
+        189055,
+        573767097
+      ]
+    ],
+    "miou": 0.9474873399222764,
+    "name": "w_000_000_100",
+    "source": "single_model_2",
+    "weights": [
+      0.0,
+      0.0,
+      1.0
+    ]
+  },
+  "best_checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/downstream_fusion_soup/checkpoint_soup/fan_large/best_soup.pth",
+  "best_checkpoint_bytes": 319708235,
+  "experiment": "lam_fan_large_three_source",
+  "models": [
+    {
+      "backbone": "fan_large",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/full2000/full2000_fan_large_automl/train/model_epoch_1199_step_48000.pth",
+      "checkpoint_bytes": 958579922,
+      "checkpoint_epoch": 1199,
+      "name": "original_automl_bfbo",
+      "retained_best_epoch": 1219,
+      "retained_best_val_miou": 0.9473685994800141,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "original_data_automl",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/full2000_specs/full2000_fan_large_automl.yaml"
+    },
+    {
+      "backbone": "fan_large",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_full2000/deft_full2000_fan_large_mix25/train/model_epoch_899_step_45000.pth",
+      "checkpoint_bytes": 958579986,
+      "checkpoint_epoch": 899,
+      "name": "standalone_deft_mix25",
+      "retained_best_epoch": 849,
+      "retained_best_val_miou": 0.947746106666302,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "standalone_deft",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_full2000_specs/deft_full2000_fan_large_mix25.yaml"
+    },
+    {
+      "backbone": "fan_large",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_automl_full2000/deft_automl_full2000_fan_large_bfbo/train/model_epoch_899_step_45000.pth",
+      "checkpoint_bytes": 958580050,
+      "checkpoint_epoch": 899,
+      "name": "deft_automl_bfbo",
+      "retained_best_epoch": 929,
+      "retained_best_val_miou": 0.9483333645050775,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "deft_snapshot_automl",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_automl_full2000_specs/deft_automl_full2000_fan_large_bfbo.yaml"
+    }
+  ],
+  "num_classes": 4,
+  "results": [
+    {
+      "accuracy": 0.9864906017829423,
+      "class_iou": [
+        0.977640030319379,
+        0.9306910594757895,
+        0.9008011930487142,
+        0.980817076845223
+      ],
+      "confusion_matrix": [
+        [
+          624323650,
+          37958,
+          2088809,
+          6209992
+        ],
+        [
+          2584,
+          43950318,
+          1459799,
+          21
+        ],
+        [
+          1310351,
+          1755728,
+          63384821,
+          176376
+        ],
+        [
+          4629445,
+          16908,
+          189055,
+          573767097
+        ]
+      ],
+      "miou": 0.9474873399222764,
+      "name": "w_000_000_100",
+      "source": "single_model_2",
+      "weights": [
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "accuracy": 0.9864701333023289,
+      "class_iou": [
+        0.9777300940726009,
+        0.9294478024640774,
+        0.8996146368661491,
+        0.9808454716600059
+      ],
+      "confusion_matrix": [
+        [
+          624690728,
+          38368,
+          1912527,
+          6018786
+        ],
+        [
+          4593,
+          44044257,
+          1363858,
+          14
+        ],
+        [
+          1469228,
+          1913419,
+          63037177,
+          207452
+        ],
+        [
+          4785173,
+          23044,
+          167650,
+          573626638
+        ]
+      ],
+      "miou": 0.9469095012657083,
+      "name": "w_000_100_000",
+      "source": "single_model_1",
+      "weights": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9863779352130678,
+      "class_iou": [
+        0.9774487491905797,
+        0.9302691101466789,
+        0.8990161794659515,
+        0.9808234410729518
+      ],
+      "confusion_matrix": [
+        [
+          624163023,
+          35983,
+          2425349,
+          6036054
+        ],
+        [
+          3341,
+          43919975,
+          1489390,
+          16
+        ],
+        [
+          1110459,
+          1747210,
+          63611606,
+          158001
+        ],
+        [
+          4789218,
+          16203,
+          214894,
+          573582190
+        ]
+      ],
+      "miou": 0.9468893699690405,
+      "name": "w_000_075_025",
+      "source": "pair_1_2_quarters",
+      "weights": [
+        0.0,
+        0.75,
+        0.25
+      ]
+    },
+    {
+      "accuracy": 0.9863190915429649,
+      "class_iou": [
+        0.9774903569569912,
+        0.9275372830380645,
+        0.899895979996236,
+        0.9805654178248371
+      ],
+      "confusion_matrix": [
+        [
+          623879196,
+          30430,
+          1820382,
+          6930401
+        ],
+        [
+          950,
+          43570051,
+          1841708,
+          13
+        ],
+        [
+          1607150,
+          1420182,
+          63414894,
+          185050
+        ],
+        [
+          3977374,
+          110574,
+          179772,
+          574334785
+        ]
+      ],
+      "miou": 0.9463722594540322,
+      "name": "w_100_000_000",
+      "source": "single_model_0",
+      "weights": [
+        1.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9861400811305704,
+      "class_iou": [
+        0.9769326139049241,
+        0.9305536368138653,
+        0.8970255216571149,
+        0.9806186480427898
+      ],
+      "confusion_matrix": [
+        [
+          623840675,
+          35292,
+          2864892,
+          5919550
+        ],
+        [
+          2620,
+          43715666,
+          1694421,
+          15
+        ],
+        [
+          894871,
+          1517658,
+          64096642,
+          118105
+        ],
+        [
+          5012935,
+          12454,
+          268058,
+          573309058
+        ]
+      ],
+      "miou": 0.9462826051046735,
+      "name": "w_000_025_075",
+      "source": "pair_1_2_quarters",
+      "weights": [
+        0.0,
+        0.25,
+        0.75
+      ]
+    },
+    {
+      "accuracy": 0.986003564390252,
+      "class_iou": [
+        0.976689771064297,
+        0.9301603840897986,
+        0.8947457125983667,
+        0.9806164839413631
+      ],
+      "confusion_matrix": [
+        [
+          623624540,
+          34282,
+          3111002,
+          5890585
+        ],
+        [
+          2637,
+          43761370,
+          1648700,
+          15
+        ],
+        [
+          804369,
+          1588580,
+          64109349,
+          124978
+        ],
+        [
+          5040900,
+          11539,
+          263937,
+          573286129
+        ]
+      ],
+      "miou": 0.9455530879234564,
+      "name": "w_000_050_050",
+      "source": "pair_1_2_quarters",
+      "weights": [
+        0.0,
+        0.5,
+        0.5
+      ]
+    },
+    {
+      "accuracy": 0.985574492561836,
+      "class_iou": [
+        0.9760153676801945,
+        0.9257205117526436,
+        0.8950729371218448,
+        0.9797135201401639
+      ],
+      "confusion_matrix": [
+        [
+          621511169,
+          23683,
+          2637947,
+          8487610
+        ],
+        [
+          475,
+          43144232,
+          2268001,
+          14
+        ],
+        [
+          1085433,
+          1160965,
+          64241873,
+          139005
+        ],
+        [
+          3037887,
+          8740,
+          239556,
+          575316322
+        ]
+      ],
+      "miou": 0.9441305841737118,
+      "name": "w_075_025_000",
+      "source": "pair_0_1_quarters",
+      "weights": [
+        0.75,
+        0.25,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9854737166935215,
+      "class_iou": [
+        0.9758307353300035,
+        0.9252587119930135,
+        0.8946990549443049,
+        0.9795593798930382
+      ],
+      "confusion_matrix": [
+        [
+          621315353,
+          23290,
+          2690553,
+          8631213
+        ],
+        [
+          433,
+          43066436,
+          2345839,
+          14
+        ],
+        [
+          1051101,
+          1105206,
+          64332550,
+          138419
+        ],
+        [
+          2992078,
+          4073,
+          240454,
+          575365900
+        ]
+      ],
+      "miou": 0.94383697054009,
+      "name": "w_075_000_025",
+      "source": "pair_0_2_quarters",
+      "weights": [
+        0.75,
+        0.0,
+        0.25
+      ]
+    },
+    {
+      "accuracy": 0.9826506873129287,
+      "class_iou": [
+        0.9704720907962583,
+        0.9193685655403538,
+        0.8643168043487662,
+        0.9775854316502497
+      ],
+      "confusion_matrix": [
+        [
+          616577443,
+          20466,
+          5606495,
+          10456005
+        ],
+        [
+          145,
+          42958639,
+          2453937,
+          1
+        ],
+        [
+          380776,
+          1291188,
+          64870691,
+          84621
+        ],
+        [
+          2296305,
+          1867,
+          366590,
+          575937743
+        ]
+      ],
+      "miou": 0.932935723083907,
+      "name": "w_050_050_000",
+      "source": "pair_0_1_quarters",
+      "weights": [
+        0.5,
+        0.5,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9830829896941994,
+      "class_iou": [
+        0.9715562750154844,
+        0.9166325336132911,
+        0.8558417000938601,
+        0.9798685298448964
+      ],
+      "confusion_matrix": [
+        [
+          618604100,
+          19327,
+          6426614,
+          7610368
+        ],
+        [
+          77,
+          42587061,
+          2825570,
+          14
+        ],
+        [
+          287822,
+          1023650,
+          65219350,
+          96454
+        ],
+        [
+          3766328,
+          4643,
+          325462,
+          574506072
+        ]
+      ],
+      "miou": 0.9309747596418829,
+      "name": "w_025_075_000",
+      "source": "pair_0_1_quarters",
+      "weights": [
+        0.25,
+        0.75,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9812842428023011,
+      "class_iou": [
+        0.9678215420896829,
+        0.9167941965204828,
+        0.8546454839890283,
+        0.9760356074852053
+      ],
+      "confusion_matrix": [
+        [
+          614403911,
+          19583,
+          6480090,
+          11756825
+        ],
+        [
+          78,
+          42700028,
+          2712616,
+          0
+        ],
+        [
+          261883,
+          1143064,
+          65151420,
+          70909
+        ],
+        [
+          1909450,
+          0,
+          412118,
+          576280937
+        ]
+      ],
+      "miou": 0.9288242075210998,
+      "name": "w_050_000_050",
+      "source": "pair_0_2_quarters",
+      "weights": [
+        0.5,
+        0.0,
+        0.5
+      ]
+    },
+    {
+      "accuracy": 0.979993557212092,
+      "class_iou": [
+        0.9659350938334765,
+        0.9070102531781911,
+        0.8195079287415512,
+        0.978679612589467
+      ],
+      "confusion_matrix": [
+        [
+          614171495,
+          17499,
+          9541509,
+          8929906
+        ],
+        [
+          38,
+          41936000,
+          3476683,
+          1
+        ],
+        [
+          106192,
+          805199,
+          65666854,
+          49031
+        ],
+        [
+          3064380,
+          0,
+          484146,
+          575053979
+        ]
+      ],
+      "miou": 0.9177832220856714,
+      "name": "w_025_000_075",
+      "source": "pair_0_2_quarters",
+      "weights": [
+        0.25,
+        0.0,
+        0.75
+      ]
+    },
+    {
+      "accuracy": 0.9787945641579605,
+      "class_iou": [
+        0.9629793250893337,
+        0.912157726743475,
+        0.8168831882622228,
+        0.9764880568255295
+      ],
+      "confusion_matrix": [
+        [
+          611289900,
+          17721,
+          10004030,
+          11348758
+        ],
+        [
+          34,
+          42368713,
+          3043974,
+          1
+        ],
+        [
+          106007,
+          1017051,
+          65440531,
+          63687
+        ],
+        [
+          2023814,
+          1395,
+          434743,
+          576142553
+        ]
+      ],
+      "miou": 0.9171270742301403,
+      "name": "w_034_033_033",
+      "source": "near_uniform_three_model",
+      "weights": [
+        0.34,
+        0.33,
+        0.33
+      ]
+    }
+  ],
+  "sample_count": 1262,
+  "schema_version": 1,
+  "selection_split": "val",
+  "test_used_for_selection": false,
+  "validation_only": true
+}

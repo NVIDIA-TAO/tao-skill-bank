@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-08-22T09:13:26Z",
+  "classification": "recoverable_application_preflight_bug",
+  "symptom": "The first six downstream jobs reached a backend COMPLETED 0:0 state but produced no results.json artifact.",
+  "root_cause": "Serialized training specs omit the evaluate and inference sections normally supplied by Hydra defaults. Direct SegFormerPlModel construction therefore raised OmegaConf ConfigAttributeError before inference.",
+  "fixes": [
+    "Supply minimal evaluate.vis_after_n_batches and inference.vis_after_n_batches runtime sections before direct model construction.",
+    "Require results.json with sample_count=1262 and a best record before accepting backend COMPLETE.",
+    "For checkpoint soups, additionally require best_soup.pth larger than 1 MiB."
+  ],
+  "first_attempts": [
+    {"name": "prediction_fusion_fan_base", "job_id": "1d701191-93ad-4e7a-8ee8-e8c9c5acb3bb", "slurm_job_id": 32720645, "final_classification": "ERROR"},
+    {"name": "checkpoint_soup_fan_base", "job_id": "c468266a-00cb-409d-948d-3c9a6a433ec0", "slurm_job_id": 32720650, "final_classification": "ERROR"},
+    {"name": "prediction_fusion_fan_large", "job_id": "80d441ac-0290-442b-a463-3f121e0a9c20", "slurm_job_id": 32720661, "final_classification": "ERROR"},
+    {"name": "checkpoint_soup_fan_large", "job_id": "a36bc15e-954a-41ce-8b1b-d687d383f449", "slurm_job_id": 32720662, "final_classification": "ERROR"},
+    {"name": "prediction_fusion_mit_b5", "job_id": "9d38e6fc-a081-45e6-bddd-948dcd74581a", "slurm_job_id": 32720664, "final_classification": "ERROR"},
+    {"name": "checkpoint_soup_mit_b5", "job_id": "fc088090-2f7a-469b-9513-f84b224c9f8e", "slurm_job_id": 32720681, "final_classification": "ERROR"}
+  ],
+  "corrected_attempts": [
+    {"name": "prediction_fusion_fan_base", "job_id": "404dd332-fbe1-4191-b566-d836c067204b", "slurm_job_id": 32720825, "state": "COMPLETE"},
+    {"name": "checkpoint_soup_fan_base", "job_id": "c08eb1cc-ca12-4452-9d4d-7fe9ada2e563", "slurm_job_id": 32720828, "state": "COMPLETE"},
+    {"name": "prediction_fusion_fan_large", "job_id": "c7f91eae-1cb4-4b42-8184-6f19f063e889", "slurm_job_id": 32720869, "state": "COMPLETE"},
+    {"name": "checkpoint_soup_fan_large", "job_id": "fa2929c8-c635-4807-ba7e-2b502839ae5f", "slurm_job_id": 32720875, "state": "COMPLETE"},
+    {"name": "prediction_fusion_mit_b5", "job_id": "5bee9d78-f842-4dcd-8ce7-ad00a687a5a0", "slurm_job_id": 32720879, "state": "COMPLETE"},
+    {"name": "checkpoint_soup_mit_b5", "job_id": "cc9d3fc5-e4af-4dcd-90bc-fa0abaaf682b", "slurm_job_id": 32720880, "state": "COMPLETE"}
+  ]
+}
