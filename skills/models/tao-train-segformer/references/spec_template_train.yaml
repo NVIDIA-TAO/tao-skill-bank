@@ -125,6 +125,7 @@ train:
     policy: linear
     momentum: 0.9
     weight_decay: 0.01
+  precision: 32-true
   pretrained_model_path: ''
   segment:
     loss: ce

@@ -425,7 +425,7 @@ class ReportRenderingTests(unittest.TestCase):
             committed = json.loads((results / "deft_state.json").read_text())
             self.assertEqual(committed["events"][-1]["stage"], "data_merge")
 
-    def test_backbone_profiles_preserve_default_and_cover_dinov3(self) -> None:
+    def test_backbone_profiles_preserve_default_and_cover_latest_dense_backbones(self) -> None:
         expected_dinov3 = {
             "vit_small_dinov3",
             "vit_small_plus_dinov3",
@@ -436,6 +436,22 @@ class ReportRenderingTests(unittest.TestCase):
         }
         self.assertTrue(
             expected_dinov3.issubset(stage_backbone.BACKBONE_PROFILES)
+        )
+        expected_radio = {
+            "c_radio_v3_vit_large_patch16_reg4_dinov2",
+            "c_radio_v4_vit_huge_patch16_224",
+            "c_radio_v4_vit_so400m_patch16_224",
+        }
+        self.assertTrue(
+            expected_radio.issubset(stage_backbone.BACKBONE_PROFILES)
+        )
+        self.assertEqual(
+            stage_backbone.BACKBONE_PROFILES["vit5_large_patch16_224"],
+            (
+                "FengWang3211/ViT-5",
+                "vit5_large_patch16_224.pth",
+                "vit5_large_patch16_224.pth",
+            ),
         )
 
         args = SimpleNamespace(

@@ -80,6 +80,26 @@ BACKBONE_PROFILES = {
         "model.safetensors",
         "vit_huge_plus_dinov3.safetensors",
     ),
+    "vit5_large_patch16_224": (
+        "FengWang3211/ViT-5",
+        "vit5_large_patch16_224.pth",
+        "vit5_large_patch16_224.pth",
+    ),
+    "c_radio_v3_vit_large_patch16_reg4_dinov2": (
+        "nvidia/C-RADIOv3-L",
+        "model.safetensors",
+        "c_radio_v3_l.safetensors",
+    ),
+    "c_radio_v4_vit_huge_patch16_224": (
+        "nvidia/C-RADIOv4-H",
+        "model.safetensors",
+        "c_radio_v4_h.safetensors",
+    ),
+    "c_radio_v4_vit_so400m_patch16_224": (
+        "nvidia/C-RADIOv4-SO400M",
+        "model.safetensors",
+        "c_radio_v4_so400m.safetensors",
+    ),
     "vit_7b_dinov3": (
         "timm/vit_7b_patch16_dinov3.lvd1689m",
         "model.safetensors",

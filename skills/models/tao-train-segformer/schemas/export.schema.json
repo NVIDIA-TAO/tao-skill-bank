@@ -1023,6 +1023,7 @@
       ],
       "automl_enabled": false,
       "default": {
+        "activation_checkpoint": false,
         "backbone": {
           "feat_downsample": false,
           "freeze_backbone": false,
@@ -1055,6 +1056,12 @@
         }
       },
       "properties": {
+        "activation_checkpoint": {
+          "default": false,
+          "description": "Trade compute for lower backbone activation memory during training",
+          "title": "Activation checkpointing",
+          "type": "bool"
+        },
         "backbone": {
           "automl_default_parameters": [
             "model.backbone.freeze_backbone"
@@ -1088,6 +1095,12 @@
               "default": "fan_small_12_p4_hybrid",
               "description": "Backbone architure",
               "enum": [
+                "mit_b0",
+                "mit_b1",
+                "mit_b2",
+                "mit_b3",
+                "mit_b4",
+                "mit_b5",
                 "fan_tiny_8_p4_hybrid",
                 "fan_large_16_p4_hybrid",
                 "fan_small_12_p4_hybrid",
@@ -1100,7 +1113,14 @@
                 "vit_large_dinov3",
                 "vit_huge_plus_dinov3",
                 "vit_base_nvclip_16_siglip",
-                "vit_huge_nvclip_14_siglip"
+                "vit_huge_nvclip_14_siglip",
+                "c_radio_v2_vit_base_patch16_224",
+                "c_radio_v2_vit_large_patch16_224",
+                "c_radio_v2_vit_huge_patch16_224",
+                "c_radio_v3_vit_large_patch16_reg4_dinov2",
+                "c_radio_v4_vit_huge_patch16_224",
+                "c_radio_v4_vit_so400m_patch16_224",
+                "vit5_large_patch16_224"
               ],
               "title": "Backbone architectures",
               "type": "categorical"
@@ -1496,6 +1516,7 @@
               "description": "Optimizer policy",
               "enum": [
                 "linear",
+                "cosine",
                 "step"
               ],
               "type": "categorical"
@@ -1544,6 +1565,7 @@
           ],
           "automl_enabled": false,
           "default": {
+            "iou_weight": 0.5,
             "loss": "ce",
             "weights": [
               0.5,
@@ -1554,11 +1576,22 @@
             ]
           },
           "properties": {
+            "iou_weight": {
+              "default": 0.5,
+              "description": "Auxiliary overlap or boundary contribution for composite losses",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "float"
+            },
             "loss": {
               "default": "ce",
               "description": "ChangeNet Segment loss",
               "enum": [
-                "ce"
+                "ce",
+                "mmiou",
+                "ce_mmiou",
+                "ce_lovasz",
+                "ce_boundary"
               ],
               "type": "categorical"
             },

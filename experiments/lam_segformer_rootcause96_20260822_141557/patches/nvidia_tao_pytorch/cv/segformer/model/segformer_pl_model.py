@@ -3,6 +3,8 @@
 
 """SegFormer_pl Model PyTorch Lightning Module"""
 
+import logging
+import math
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,7 +19,12 @@ from nvidia_tao_pytorch.core.path_utils import expand_path
 import nvidia_tao_pytorch.core.loggers.api_logging as status_logging
 from nvidia_tao_pytorch.cv.segformer.model.segformer import build_model
 from nvidia_tao_pytorch.cv.segformer.dataloader.utils import build_target_class_list, build_palette
-from nvidia_tao_pytorch.cv.segformer.utils.loss import cross_entropy, mmIoULoss
+from nvidia_tao_pytorch.cv.segformer.utils.loss import (
+    BoundaryFScoreLoss,
+    LovaszSoftmaxLoss,
+    cross_entropy,
+    mmIoULoss,
+)
 from nvidia_tao_pytorch.cv.segformer.utils import utils_vis
 from nvidia_tao_pytorch.cv.segformer.utils.iou_metric import MeanIoUMeter
 from nvidia_tao_pytorch.cv.segformer.model.segformer_utils import resize
@@ -44,9 +51,10 @@ class SegFormerPlModel(TAOLightningModule):
 
         # Set n_class early as it's needed by _build_criterion()
         self.n_class = self.dataset_config.num_classes
-        # Capture per-class CE weights before criterion construction.  The
-        # upstream implementation previously stored this field later and
-        # never passed it to cross_entropy, silently disabling class weights.
+        # ``train.segment.weights`` is the per-class CE weighting vector.  It
+        # must be captured before criterion construction; the legacy code read
+        # this field later and never supplied it to cross_entropy, making every
+        # nominally class-weighted SegFormer run silently unweighted.
         self.weights = tuple(float(value) for value in self.train_config.segment.weights)
 
         # init the model
@@ -98,14 +106,23 @@ class SegFormerPlModel(TAOLightningModule):
 
     def _build_criterion(self):
         """Internal function to build the loss function."""
-        assert self.train_config.segment["loss"] in ['ce', 'mmiou'], "SegFormer Segmentation pipeline currently only supports ['ce', 'mmiou'] loss functions."
-        if self.train_config.segment["loss"] == 'ce':
+        loss_name = self.train_config.segment["loss"]
+        supported_losses = ['ce', 'mmiou', 'ce_mmiou', 'ce_lovasz', 'ce_boundary']
+        assert loss_name in supported_losses, f"SegFormer Segmentation pipeline supports {supported_losses}."
+        if loss_name in ('ce', 'ce_mmiou', 'ce_lovasz', 'ce_boundary'):
             self._pxl_loss = cross_entropy
             if len(self.weights) == self.n_class:
                 if any(value <= 0 for value in self.weights):
                     raise ValueError("SegFormer class weights must all be positive.")
                 self.class_weights = self.weights
+            elif not self.weights:
+                # Empty weights mean ordinary, unweighted cross entropy.
+                self.class_weights = None
             elif self.weights == (0.5, 0.5, 0.5, 0.8, 1.0):
+                # This five-value ChangeNet-era default was historically
+                # present in SegFormer specs while being unused.  Preserve
+                # compatibility for datasets with a different class count,
+                # but do not pretend that it is a valid weighting vector.
                 self.class_weights = None
                 logging.warning(
                     "Ignoring the legacy five-value train.segment.weights default; "
@@ -116,8 +133,18 @@ class SegFormerPlModel(TAOLightningModule):
                     "SegFormer train.segment.weights must contain exactly "
                     f"{self.n_class} positive class weights; got {len(self.weights)}."
                 )
-        elif self.train_config.segment["loss"] == 'mmiou':
-            self._pxl_loss = mmIoULoss(n_classes=self.n_class).cuda()
+            if loss_name != 'ce':
+                self.iou_weight = float(self.train_config.segment.get("iou_weight", 0.5))
+                if not 0.0 <= self.iou_weight <= 1.0:
+                    raise ValueError("SegFormer train.segment.iou_weight must be between 0 and 1.")
+                if loss_name == 'ce_mmiou':
+                    self._auxiliary_loss = mmIoULoss(n_classes=self.n_class)
+                elif loss_name == 'ce_lovasz':
+                    self._auxiliary_loss = LovaszSoftmaxLoss(n_classes=self.n_class)
+                else:
+                    self._auxiliary_loss = BoundaryFScoreLoss(n_classes=self.n_class)
+        elif loss_name == 'mmiou':
+            self._pxl_loss = mmIoULoss(n_classes=self.n_class)
             self.class_weights = None
         else:
             raise NotImplementedError(self.train_config.segment["loss"])
@@ -126,11 +153,16 @@ class SegFormerPlModel(TAOLightningModule):
 
     def _compute_loss(self, prediction, target):
         """Compute the configured loss, materializing CE weights on-device."""
-        if self.train_config.segment["loss"] == 'ce':
+        loss_name = self.train_config.segment["loss"]
+        if loss_name in ('ce', 'ce_mmiou', 'ce_lovasz', 'ce_boundary'):
             weight = None
             if self.class_weights is not None:
                 weight = prediction.new_tensor(self.class_weights)
-            return self.criterion(prediction, target, weight=weight)
+            ce_loss = self.criterion(prediction, target, weight=weight)
+            if loss_name != 'ce':
+                auxiliary_loss = self._auxiliary_loss(prediction, target)
+                return (1.0 - self.iou_weight) * ce_loss + self.iou_weight * auxiliary_loss
+            return ce_loss
         return self.criterion(prediction, target)
 
     def _get_parameter_groups(self, lr, weight_decay):
@@ -190,7 +222,10 @@ class SegFormerPlModel(TAOLightningModule):
             self.optimizer_G = optim.Adam(params, lr=self.lr, weight_decay=self.optimizer.weight_decay)
         elif self.optimizer.optim == "adamw":
             self.optimizer_G = optim.AdamW(
-                params, lr=self.lr, betas=[0.9, 0.999], weight_decay=self.optimizer.weight_decay
+                params,
+                lr=self.lr,
+                betas=[self.optimizer.momentum, 0.999],
+                weight_decay=self.optimizer.weight_decay,
             )
         else:
             raise NotImplementedError("Optimizer {} is not implemented".format(self.optimizer.optim))
@@ -214,12 +249,26 @@ class SegFormerPlModel(TAOLightningModule):
                 return lr_l
 
             scheduler = lr_scheduler.LambdaLR(self.optimizer_G, lr_lambda=lambda_rule)
+        elif self.lr_policy == 'cosine':
+            interval = "step"
+
+            def lambda_rule(step):
+                warmup_ratio = 1e-6
+                warmup_steps = self.trainer.estimated_stepping_batches // 100
+                max_steps = self.trainer.estimated_stepping_batches
+                if warmup_steps and step < warmup_steps:
+                    return warmup_ratio + (1.0 - warmup_ratio) * step / warmup_steps
+                progress = (step - warmup_steps) / max(1, max_steps - warmup_steps)
+                progress = min(max(progress, 0.0), 1.0)
+                return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+            scheduler = lr_scheduler.LambdaLR(self.optimizer_G, lr_lambda=lambda_rule)
         elif self.lr_policy == 'step':
             step_size = self.max_epochs // 3
             # args.lr_decay_iters
             scheduler = lr_scheduler.StepLR(self.optimizer_G, step_size=step_size, gamma=0.1)
         else:
-            return NotImplementedError('learning rate policy [%s] is not implemented', self.lr_policy)
+            raise NotImplementedError(f"learning rate policy [{self.lr_policy}] is not implemented")
 
         self.lr_scheduler = scheduler
 
