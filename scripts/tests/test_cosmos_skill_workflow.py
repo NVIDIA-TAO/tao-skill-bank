@@ -2420,10 +2420,10 @@ def test_omitted_sqsh_uses_packaged_backend_image_and_derived_cache_path(tmp_pat
     assert args.sqsh_path == str(expected_sqsh)
     assert plan["image"]["sqsh"]["conversion_required"] is True
     assert "enroot import" in plan["image"]["sqsh"]["command"]
-    assert (
-        "docker://nvcr.io#nvstaging/tao/cosmos-framework:"
-        in plan["image"]["sqsh"]["command"]
+    expected_enroot_uri = "docker://" + expected_image.replace(
+        "nvcr.io/", "nvcr.io#", 1
     )
+    assert expected_enroot_uri in plan["image"]["sqsh"]["command"]
     preflight = workflow.local_preflight(args, plan, env={"NGC_KEY": "SET"})
     assert not any(
         "source" in error or "repository" in error for error in preflight["errors"]
