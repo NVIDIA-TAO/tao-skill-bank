@@ -79,10 +79,32 @@ TEMPLATE = MODEL_SKILL / "references/spec_template_train.yaml"
 RECORD_TOOL = Path(
     "/localhome/local-rarunachalam/github/tao-skill-bank/scripts/tao_job_record.py"
 )
-PLUGIN_BANK = Path(
-    "/localhome/local-rarunachalam/.codex/plugins/cache/tao-local-plugins/"
-    "tao-skill-bank/0.1.12+codex.20260822004229"
-)
+def resolve_plugin_bank() -> Path:
+    """Resolve a usable installed bank without pinning a cache-buster version."""
+    candidates: list[Path] = []
+    configured = os.environ.get("TAO_SKILL_BANK_PATH")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    cache_root = Path(
+        "/localhome/local-rarunachalam/.codex/plugins/cache/tao-local-plugins/"
+        "tao-skill-bank"
+    )
+    candidates.extend(sorted(cache_root.glob("*"), reverse=True))
+    for candidate in candidates:
+        submit_tool = (
+            candidate
+            / "skills/platform/tao-run-on-slurm/scripts/slurm_submit_action.py"
+        )
+        bundle_schema = (
+            candidate
+            / "skills/core/tao-artifacts/references/spec_bundle.schema.json"
+        )
+        if submit_tool.is_file() and bundle_schema.is_file():
+            return candidate
+    raise RuntimeError("no complete installed TAO skill bank was found")
+
+
+PLUGIN_BANK = resolve_plugin_bank()
 SUBMIT_TOOL = (
     PLUGIN_BANK
     / "skills/platform/tao-run-on-slurm/scripts/slurm_submit_action.py"

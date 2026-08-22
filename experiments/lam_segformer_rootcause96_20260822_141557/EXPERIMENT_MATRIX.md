@@ -46,6 +46,55 @@ that preserve the geometry and label map without interpolation blur.
 | D01 | FAN base / DEFT mix100 | D4, C03 weighted CE, cosine |
 | D02 | FAN large / DEFT mix50 | D4, C03 weighted CE, cosine |
 
+## Dataset root-cause track
+
+The model/loss matrix is not a substitute for a dataset investigation.  A
+read-only first pass found the following facts that must be resolved before a
+data correction is promoted:
+
+- The labeled split is unusually inverted: 316 train images versus 1,262
+  validation images.  The unlabeled `test/images` directory contains 1,262
+  byte-identical copies of the validation images, so it is not an independent
+  test set.
+- Filename-derived acquisition groups show a slice-level split.  All 65 train
+  groups also occur in validation, and 1,084/1,262 validation images belong to
+  those shared groups.  A group-held-out diagnostic is therefore required to
+  measure true cross-acquisition generalization; it will not replace the
+  untouched historical validation score used for campaign comparability.
+- Aggregate class fractions are similar across train and validation
+  (`train=[0.484336,0.034816,0.049496,0.431352]`,
+  `val=[0.478092,0.034318,0.050349,0.437241]`), but the two mask-height classes
+  are small and can be dominated by a few anomalous frames.
+- One training annotation is an immediate review candidate:
+  `OUTS81055-IO08-SiGe-14.png` assigns 444,427 pixels to class 1 and no pixels
+  to trench class 3; the largest class-1 validation region is only 104,203
+  pixels.  This is a triage signal, not permission to alter the label.
+
+The staged dataset investigation is:
+
+1. Validate image/mask pairing, dimensions, allowed mask values, COCO-to-PNG
+   agreement, exact and perceptual duplicates, empty classes, disconnected
+   components, holes, implausible boundaries, and image/mask registration.
+2. Measure train/validation drift per acquisition group, Si versus SiGe,
+   slice index, intensity/contrast, class area, boundary complexity, and rare
+   geometry rather than relying only on aggregate pixel counts.
+3. Generate a per-image and per-group error atlas from the best corrected
+   checkpoint: class IoU, boundary IoU/F-score, confusion matrix, calibration,
+   and ensemble disagreement.  Compare adjacent slices to distinguish model
+   errors from likely annotation discontinuities.
+4. Review the highest-confidence annotation suspects.  Preserve the original
+   dataset and produce versioned correction/quarantine manifests; never train
+   on validation labels while reporting the historical validation metric.
+5. Run matched FAN-large 2,000-epoch data ablations on eight GPUs: original
+   versus reviewed-clean train manifests, acquisition-balanced sampling,
+   rare-class/boundary-aware sampling, hard-example curriculum, and a
+   same-backbone DEFT mix grid.  Keep model, loss, schedule, seed, and
+   validation set fixed so the data intervention is the only cause.
+6. Separately run group-held-out folds as a generalization diagnostic.  After
+   model selection, training on all 1,578 labeled images is valid only when a
+   newly labeled, acquisition-held-out test set is available for the final
+   claim.
+
 ## New-backbone runs (12)
 
 Each backbone receives both adapter/decoder-only (`freeze_backbone=true`) and
