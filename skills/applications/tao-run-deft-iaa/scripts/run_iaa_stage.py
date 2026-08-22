@@ -544,6 +544,16 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     started_ns = payload.get("started_ns")
     if not isinstance(started_ns, int) or isinstance(started_ns, bool) or started_ns < 1:
         raise ValueError("train command status started_ns must be a positive integer")
+    lineage_started_ns = payload.get("lineage_started_ns", started_ns)
+    if (
+        not isinstance(lineage_started_ns, int)
+        or isinstance(lineage_started_ns, bool)
+        or not 1 <= lineage_started_ns <= started_ns
+    ):
+        raise ValueError(
+            "train command status lineage_started_ns must be a positive integer "
+            "no later than started_ns"
+        )
     log_path = pathlib.Path(str(payload.get("log_path", "")))
     if (
         not log_path.is_absolute()
@@ -589,10 +599,16 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
             output.unlink()
         except FileNotFoundError:
             pass
-    published = pathlib.Path(get_current_checkpoint(str(train_dir)))
+    published = pathlib.Path(
+        get_current_checkpoint(
+            str(train_dir), earliest_mtime_ns=lineage_started_ns
+        )
+    )
     if pathlib.Path(os.path.abspath(published)) != best:
         raise ValueError(f"checkpoint publisher returned {published}, expected {best}")
-    provenance = validate_best_checkpoint(best, train_dir, started_ns=started_ns)
+    provenance = validate_best_checkpoint(
+        best, train_dir, started_ns=lineage_started_ns
+    )
     normalize_clip_pretrained_checkpoint(str(best), str(normalized))
     _require([best, metadata, normalized])
     if normalized.is_symlink() or normalized.resolve() != normalized:

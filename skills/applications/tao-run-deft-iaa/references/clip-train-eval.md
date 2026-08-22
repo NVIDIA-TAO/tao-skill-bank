@@ -149,7 +149,12 @@ another label/path even when its numeric value is plausible.
    ```
 
    The first is the raw evaluation checkpoint; the second is the normalized
-   model-only warm-start form.
+   model-only warm-start form. Selection uses `val/t2i_mAP` when metric
+   evidence exists; otherwise checkpoint metadata records
+   `selection_strategy=newest_fallback`. Freshness is anchored to the first
+   attempt in the bounded train-attempt lineage, and is validated before the
+   canonical link/copy is created, so a retry can safely reuse a checkpoint
+   produced by its earlier attempt.
 5. Commit:
 
    ```bash
@@ -169,7 +174,7 @@ another label/path even when its numeric value is plausible.
 
 The validator requires TAO's `Train finished successfully.` marker, an exact
 approved `clip train` argv digest, and a selected raw checkpoint newer than
-that launch. The canonical relative symlink is allowed only when it
+the train attempt lineage. The canonical relative symlink is allowed only when it
 resolves directly to a regular checkpoint inside this iteration's `train/`;
 its metadata-backed hardlink/copy fallbacks are also accepted. Symlink chains,
 stale targets, and cross-iteration targets are rejected.
