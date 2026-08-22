@@ -59,6 +59,10 @@ The principal orchestration sequence is:
 7. `launch_downstream_fusion_soups.py` launches six independent 8-GPU jobs:
    probability/class-rank prediction fusion and same-backbone checkpoint
    interpolation for FAN-base, FAN-large, and MiT-B5.
+8. `launch_cross_backbone_fusions.py` launches two independent 8-GPU
+   validation scorers: a best-checkpoint fusion across the three backbones and
+   a hierarchical nine-model fusion across all three experiment families and
+   all three backbones.
 
 The current DEFT implementation performs one outer DEFT round on demand. It
 does not expose `num_deft_iterations=5|10|20`. The four folds, 20 OOF epochs,
@@ -97,6 +101,11 @@ use an infinitesimal probability term only as a deterministic tie-break.
 The soup scorer evaluates all single checkpoints, pairwise quarter-step
 interpolations, and a near-uniform three-checkpoint average. It rejects
 cross-backbone averaging and validates identical state-dict keys/shapes.
+
+The cross-backbone scorer evaluates probability and per-pixel class-rank
+fusion. Its best result is the uniform probability average of all nine models,
+with `94.9851482012134%` validation mIoU. The same-backbone weight soups did
+not improve on their best constituent checkpoint.
 
 Candidate weights are selected only on the labeled validation split. Result
 acceptance requires `sample_count == 1262`; checkpoint-soup completion also

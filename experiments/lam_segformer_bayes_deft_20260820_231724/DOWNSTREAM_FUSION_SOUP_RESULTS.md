@@ -25,10 +25,19 @@ from that exact checkpoint in the same distributed scorer as its combinations.
 | MiT-B5 | Probability fusion | `[0.70, 0.30, 0.00]` | **94.79783%** | 94.64462% | +0.15322 pp |
 | MiT-B5 | Class-rank fusion | `[0.50, 0.25, 0.25]` | 94.70997% | 94.64462% | +0.06535 pp |
 | MiT-B5 | Checkpoint soup | `[1.00, 0.00, 0.00]` | 94.64462% | 94.64462% | +0.00000 pp |
+| Cross-backbone best checkpoints | Probability fusion | `[0.34, 0.33, 0.33]` | **94.94936%** | 94.80116% | +0.14820 pp |
+| Cross-backbone best checkpoints | Class-rank fusion | `[0.25, 0.25, 0.50]` | 94.92330% | 94.80116% | +0.12214 pp |
+| Hierarchical nine-model | Uniform probability fusion | nine weights of `1/9` | **94.98515%** | 94.80116% | +0.18400 pp |
+| Hierarchical nine-model | Uniform class-rank fusion | nine weights of `1/9` | 94.96908% | 94.80116% | +0.16792 pp |
 
-The campaign leader is FAN-base near-uniform probability fusion at 94.92203%
-validation mIoU. Prediction fusion improved every backbone; direct parameter
-averaging improved none of them.
+The campaign leader is the uniform nine-model probability average at 94.98515%
+validation mIoU. Prediction fusion improved every backbone and improved again
+when combining backbones; direct parameter averaging improved none of them.
+
+The three-checkpoint cross-backbone order is FAN-base DEFT-to-AutoML BFBO,
+FAN-large DEFT-to-AutoML BFBO, and MiT-B5 original-data AutoML BFBO. The
+nine-model order is the three sources listed above for FAN-base, then those
+three sources for FAN-large, then those three sources for MiT-B5.
 
 The first six launch attempts failed before inference because direct
 `SegFormerPlModel` construction received training-only specs without the Hydra

@@ -1,0 +1,4438 @@
+{
+  "best": {
+    "accuracy": 0.9871283673257722,
+    "class_iou": [
+      0.9786801850642041,
+      0.9338191282824438,
+      0.9052026225847012,
+      0.9817039921171873
+    ],
+    "confusion_matrix": [
+      [
+        624558077,
+        35578,
+        1791854,
+        6274900
+      ],
+      [
+        965,
+        43914432,
+        1497312,
+        13
+      ],
+      [
+        1426607,
+        1576524,
+        63443387,
+        180758
+      ],
+      [
+        4075626,
+        1876,
+        171056,
+        574353947
+      ]
+    ],
+    "miou": 0.949851482012134,
+    "name": "uniform_nine_models",
+    "scheme": "probability",
+    "sources": [
+      "uniform_all_sources_and_backbones"
+    ],
+    "weights": [
+      0.1111111111111111,
+      0.1111111111111111,
+      0.1111111111111111,
+      0.1111111111111111,
+      0.1111111111111111,
+      0.1111111111111111,
+      0.1111111111111111,
+      0.1111111111111111,
+      0.1111111111111111
+    ]
+  },
+  "candidate_count_per_scheme": 41,
+  "experiment": "hierarchical_nine_model_fusion",
+  "models": [
+    {
+      "backbone": "fan_base",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/full2000/full2000_fan_base_automl/train/model_epoch_1499_step_60000.pth",
+      "checkpoint_bytes": 641468940,
+      "checkpoint_epoch": 1499,
+      "name": "original_automl_bfbo",
+      "retained_best_epoch": 1519,
+      "retained_best_val_miou": 0.9472963230134421,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "original_data_automl",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/full2000_specs/full2000_fan_base_automl.yaml"
+    },
+    {
+      "backbone": "fan_base",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_full2000/deft_full2000_fan_base_mix25/train/model_epoch_1099_step_55000.pth",
+      "checkpoint_bytes": 641469004,
+      "checkpoint_epoch": 1099,
+      "name": "standalone_deft_mix25",
+      "retained_best_epoch": 1079,
+      "retained_best_val_miou": 0.9482030979054222,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "standalone_deft",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_full2000_specs/deft_full2000_fan_base_mix25.yaml"
+    },
+    {
+      "backbone": "fan_base",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_automl_full2000/deft_automl_full2000_fan_base_bfbo/train/model_epoch_1199_step_60000.pth",
+      "checkpoint_bytes": 641469132,
+      "checkpoint_epoch": 1199,
+      "name": "deft_automl_bfbo",
+      "retained_best_epoch": 1209,
+      "retained_best_val_miou": 0.9481150209677813,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "deft_snapshot_automl",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_automl_full2000_specs/deft_automl_full2000_fan_base_bfbo.yaml"
+    },
+    {
+      "backbone": "fan_large",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/full2000/full2000_fan_large_automl/train/model_epoch_1199_step_48000.pth",
+      "checkpoint_bytes": 958579922,
+      "checkpoint_epoch": 1199,
+      "name": "original_automl_bfbo",
+      "retained_best_epoch": 1219,
+      "retained_best_val_miou": 0.9473685994800141,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "original_data_automl",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/full2000_specs/full2000_fan_large_automl.yaml"
+    },
+    {
+      "backbone": "fan_large",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_full2000/deft_full2000_fan_large_mix25/train/model_epoch_899_step_45000.pth",
+      "checkpoint_bytes": 958579986,
+      "checkpoint_epoch": 899,
+      "name": "standalone_deft_mix25",
+      "retained_best_epoch": 849,
+      "retained_best_val_miou": 0.947746106666302,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "standalone_deft",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_full2000_specs/deft_full2000_fan_large_mix25.yaml"
+    },
+    {
+      "backbone": "fan_large",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_automl_full2000/deft_automl_full2000_fan_large_bfbo/train/model_epoch_899_step_45000.pth",
+      "checkpoint_bytes": 958580050,
+      "checkpoint_epoch": 899,
+      "name": "deft_automl_bfbo",
+      "retained_best_epoch": 929,
+      "retained_best_val_miou": 0.9483333645050775,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "deft_snapshot_automl",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_automl_full2000_specs/deft_automl_full2000_fan_large_bfbo.yaml"
+    },
+    {
+      "backbone": "mit_b5",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/full2000/full2000_mit_b5_automl/train/model_epoch_1199_step_48000.pth",
+      "checkpoint_bytes": 1016491752,
+      "checkpoint_epoch": 1199,
+      "name": "original_automl_bfbo",
+      "retained_best_epoch": 1229,
+      "retained_best_val_miou": 0.9465497370376059,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "original_data_automl",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/full2000_specs/full2000_mit_b5_automl.yaml"
+    },
+    {
+      "backbone": "mit_b5",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_full2000/deft_full2000_mit_b5_mix25/train/model_epoch_899_step_45000.pth",
+      "checkpoint_bytes": 1016491816,
+      "checkpoint_epoch": 899,
+      "name": "standalone_deft_mix25",
+      "retained_best_epoch": 849,
+      "retained_best_val_miou": 0.9447803496755431,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "standalone_deft",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_full2000_specs/deft_full2000_mit_b5_mix25.yaml"
+    },
+    {
+      "backbone": "mit_b5",
+      "checkpoint": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_automl_full2000/deft_automl_full2000_mit_b5_bfbo/train/model_epoch_299_step_15000.pth",
+      "checkpoint_bytes": 1016491880,
+      "checkpoint_epoch": 299,
+      "name": "deft_automl_bfbo",
+      "retained_best_epoch": 309,
+      "retained_best_val_miou": 0.9445373796625036,
+      "selection": "nearest durable checkpoint to retained best validation epoch",
+      "source": "deft_snapshot_automl",
+      "spec": "/lustre/fsw/portfolios/edgeai/users/rarunachalam/lam_segformer_bayes_deft_20260820_231724/deft_automl_full2000_specs/deft_automl_full2000_mit_b5_bfbo.yaml"
+    }
+  ],
+  "num_classes": 4,
+  "results": [
+    {
+      "accuracy": 0.9871283673257722,
+      "class_iou": [
+        0.9786801850642041,
+        0.9338191282824438,
+        0.9052026225847012,
+        0.9817039921171873
+      ],
+      "confusion_matrix": [
+        [
+          624558077,
+          35578,
+          1791854,
+          6274900
+        ],
+        [
+          965,
+          43914432,
+          1497312,
+          13
+        ],
+        [
+          1426607,
+          1576524,
+          63443387,
+          180758
+        ],
+        [
+          4075626,
+          1876,
+          171056,
+          574353947
+        ]
+      ],
+      "miou": 0.949851482012134,
+      "name": "uniform_nine_models",
+      "scheme": "probability",
+      "sources": [
+        "uniform_all_sources_and_backbones"
+      ],
+      "weights": [
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111
+      ]
+    },
+    {
+      "accuracy": 0.9871078497256417,
+      "class_iou": [
+        0.9786280176119314,
+        0.9339120707709158,
+        0.9051524395879972,
+        0.9816679541778506
+      ],
+      "confusion_matrix": [
+        [
+          624500912,
+          34724,
+          1792435,
+          6332338
+        ],
+        [
+          916,
+          43898182,
+          1513610,
+          14
+        ],
+        [
+          1435036,
+          1557174,
+          63456559,
+          178507
+        ],
+        [
+          4042851,
+          0,
+          172615,
+          574387039
+        ]
+      ],
+      "miou": 0.9498401205371738,
+      "name": "group_034_033_033",
+      "scheme": "probability",
+      "sources": [
+        "near_uniform_backbones"
+      ],
+      "weights": [
+        0.11560000000000002,
+        0.11220000000000001,
+        0.11220000000000001,
+        0.165,
+        0.0825,
+        0.0825,
+        0.23099999999999998,
+        0.099,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870994306404126,
+      "class_iou": [
+        0.9786140560213621,
+        0.9339315122284094,
+        0.9051704617460671,
+        0.9816401571242721
+      ],
+      "confusion_matrix": [
+        [
+          624599472,
+          34169,
+          1776759,
+          6250009
+        ],
+        [
+          954,
+          43905073,
+          1506681,
+          14
+        ],
+        [
+          1447635,
+          1564129,
+          63439395,
+          176117
+        ],
+        [
+          4140032,
+          0,
+          174862,
+          574287611
+        ]
+      ],
+      "miou": 0.9498390467800277,
+      "name": "group_050_025_025",
+      "scheme": "probability",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.17,
+        0.165,
+        0.165,
+        0.125,
+        0.0625,
+        0.0625,
+        0.175,
+        0.075,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870835121384514,
+      "class_iou": [
+        0.9785864676430593,
+        0.9338099157438468,
+        0.9050206382317443,
+        0.9816301204003614
+      ],
+      "confusion_matrix": [
+        [
+          624496714,
+          34490,
+          1800665,
+          6328540
+        ],
+        [
+          914,
+          43890294,
+          1521500,
+          14
+        ],
+        [
+          1434218,
+          1552235,
+          63461678,
+          179145
+        ],
+        [
+          4066476,
+          1868,
+          172361,
+          574361800
+        ]
+      ],
+      "miou": 0.9497617855047529,
+      "name": "group_025_050_025",
+      "scheme": "probability",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.085,
+        0.0825,
+        0.0825,
+        0.25,
+        0.125,
+        0.125,
+        0.175,
+        0.075,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870527686105477,
+      "class_iou": [
+        0.9785299643188871,
+        0.9337676330132262,
+        0.9049156724368271,
+        0.9815668023667182
+      ],
+      "confusion_matrix": [
+        [
+          624513831,
+          34786,
+          1777108,
+          6334684
+        ],
+        [
+          945,
+          43909830,
+          1501933,
+          14
+        ],
+        [
+          1455958,
+          1576857,
+          63417664,
+          176797
+        ],
+        [
+          4099047,
+          0,
+          174980,
+          574328478
+        ]
+      ],
+      "miou": 0.9496950180339147,
+      "name": "group_060_000_040",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.20400000000000001,
+        0.198,
+        0.198,
+        0.0,
+        0.0,
+        0.0,
+        0.27999999999999997,
+        0.12,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870864562867372,
+      "class_iou": [
+        0.9786130917480229,
+        0.9335909268354233,
+        0.9049131578528113,
+        0.9816459926783715
+      ],
+      "confusion_matrix": [
+        [
+          624573944,
+          35099,
+          1805684,
+          6245682
+        ],
+        [
+          1074,
+          43905492,
+          1506142,
+          14
+        ],
+        [
+          1425925,
+          1577007,
+          63445046,
+          179298
+        ],
+        [
+          4136165,
+          3791,
+          172649,
+          574289900
+        ]
+      ],
+      "miou": 0.9496907922786573,
+      "name": "uniform_nine_models",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "uniform_all_sources_and_backbones"
+      ],
+      "weights": [
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111,
+        0.1111111111111111
+      ]
+    },
+    {
+      "accuracy": 0.9870353931481411,
+      "class_iou": [
+        0.978498303910595,
+        0.933760925663935,
+        0.9049283758289923,
+        0.9815216338908971
+      ],
+      "confusion_matrix": [
+        [
+          624595736,
+          34615,
+          1765355,
+          6264703
+        ],
+        [
+          985,
+          43912300,
+          1499423,
+          14
+        ],
+        [
+          1465090,
+          1580011,
+          63407249,
+          174926
+        ],
+        [
+          4194230,
+          0,
+          176750,
+          574231525
+        ]
+      ],
+      "miou": 0.9496773098236049,
+      "name": "group_070_000_030",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.238,
+        0.23099999999999998,
+        0.23099999999999998,
+        0.0,
+        0.0,
+        0.0,
+        0.21,
+        0.09,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870648278298355,
+      "class_iou": [
+        0.9785548159060562,
+        0.9336501469159227,
+        0.9048085096370827,
+        0.9816199724746668
+      ],
+      "confusion_matrix": [
+        [
+          624335109,
+          35919,
+          1809538,
+          6479843
+        ],
+        [
+          878,
+          43892053,
+          1519778,
+          13
+        ],
+        [
+          1431312,
+          1562562,
+          63452004,
+          181398
+        ],
+        [
+          3924913,
+          39,
+          170958,
+          574506595
+        ]
+      ],
+      "miou": 0.9496583612334322,
+      "name": "group_025_025_050",
+      "scheme": "probability",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.085,
+        0.0825,
+        0.0825,
+        0.125,
+        0.0625,
+        0.0625,
+        0.35,
+        0.15,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870093235312097,
+      "class_iou": [
+        0.9784488169219744,
+        0.9337309693192065,
+        0.9048823291453267,
+        0.9814665920289393
+      ],
+      "confusion_matrix": [
+        [
+          624620419,
+          34533,
+          1760643,
+          6244814
+        ],
+        [
+          996,
+          43913163,
+          1498549,
+          14
+        ],
+        [
+          1470913,
+          1582526,
+          63399785,
+          174052
+        ],
+        [
+          4245907,
+          0,
+          177653,
+          574178945
+        ]
+      ],
+      "miou": 0.9496321768538617,
+      "name": "group_075_000_025",
+      "scheme": "probability",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.255,
+        0.2475,
+        0.2475,
+        0.0,
+        0.0,
+        0.0,
+        0.175,
+        0.075,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870449540732213,
+      "class_iou": [
+        0.9785194432684597,
+        0.9336481362228833,
+        0.9047486949972182,
+        0.9815747666639398
+      ],
+      "confusion_matrix": [
+        [
+          624412879,
+          35273,
+          1791375,
+          6420882
+        ],
+        [
+          928,
+          43904193,
+          1507587,
+          14
+        ],
+        [
+          1449447,
+          1576351,
+          63422575,
+          178903
+        ],
+        [
+          4009269,
+          0,
+          173421,
+          574419815
+        ]
+      ],
+      "miou": 0.9496227602881253,
+      "name": "group_050_000_050",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.17,
+        0.165,
+        0.165,
+        0.0,
+        0.0,
+        0.0,
+        0.35,
+        0.15,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.987024149312837,
+      "class_iou": [
+        0.9784846883258025,
+        0.9336961047626938,
+        0.9047246656747546,
+        0.9815193966106739
+      ],
+      "confusion_matrix": [
+        [
+          624671539,
+          33139,
+          1782122,
+          6173609
+        ],
+        [
+          1021,
+          43895066,
+          1516621,
+          14
+        ],
+        [
+          1461524,
+          1566294,
+          63423906,
+          175552
+        ],
+        [
+          4284112,
+          0,
+          176973,
+          574141420
+        ]
+      ],
+      "miou": 0.9496062138434813,
+      "name": "group_050_050_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.17,
+        0.165,
+        0.165,
+        0.25,
+        0.125,
+        0.125,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870122971512059,
+      "class_iou": [
+        0.9784620066420401,
+        0.9336879208553028,
+        0.9047461778443939,
+        0.981487988991957
+      ],
+      "confusion_matrix": [
+        [
+          624694577,
+          33256,
+          1772794,
+          6159782
+        ],
+        [
+          1041,
+          43900500,
+          1511167,
+          14
+        ],
+        [
+          1467644,
+          1572409,
+          63412858,
+          174365
+        ],
+        [
+          4316316,
+          0,
+          177877,
+          574108312
+        ]
+      ],
+      "miou": 0.9495960235834235,
+      "name": "group_060_040_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.20400000000000001,
+        0.198,
+        0.198,
+        0.2,
+        0.1,
+        0.1,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870307547543582,
+      "class_iou": [
+        0.9784986421386511,
+        0.9336273128037798,
+        0.9047141815126609,
+        0.9815407141109055
+      ],
+      "confusion_matrix": [
+        [
+          624581521,
+          33754,
+          1784426,
+          6260708
+        ],
+        [
+          955,
+          43891170,
+          1520583,
+          14
+        ],
+        [
+          1458147,
+          1564970,
+          63428232,
+          175927
+        ],
+        [
+          4186455,
+          0,
+          176301,
+          574239749
+        ]
+      ],
+      "miou": 0.9495952126414993,
+      "name": "group_050_025_025",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.17,
+        0.165,
+        0.165,
+        0.125,
+        0.0625,
+        0.0625,
+        0.175,
+        0.075,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869820281934059,
+      "class_iou": [
+        0.9783993234940991,
+        0.9336706334791592,
+        0.9047954598661413,
+        0.9814136925757936
+      ],
+      "confusion_matrix": [
+        [
+          624641704,
+          34388,
+          1757209,
+          6227108
+        ],
+        [
+          1026,
+          43913780,
+          1497902,
+          14
+        ],
+        [
+          1476781,
+          1586371,
+          63390891,
+          173233
+        ],
+        [
+          4294057,
+          0,
+          178631,
+          574129817
+        ]
+      ],
+      "miou": 0.9495697773537982,
+      "name": "group_080_000_020",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.272,
+        0.264,
+        0.264,
+        0.0,
+        0.0,
+        0.0,
+        0.13999999999999999,
+        0.06,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870149080424604,
+      "class_iou": [
+        0.9784723078389107,
+        0.933599039677543,
+        0.9046186185713376,
+        0.9815138114922775
+      ],
+      "confusion_matrix": [
+        [
+          624632283,
+          33033,
+          1792807,
+          6202286
+        ],
+        [
+          1003,
+          43888531,
+          1523174,
+          14
+        ],
+        [
+          1456775,
+          1562337,
+          63431322,
+          176842
+        ],
+        [
+          4256837,
+          1951,
+          176151,
+          574167566
+        ]
+      ],
+      "miou": 0.9495509443950172,
+      "name": "group_040_060_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.136,
+        0.132,
+        0.132,
+        0.3,
+        0.15,
+        0.15,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869916843347807,
+      "class_iou": [
+        0.9784255182455396,
+        0.9336304537314918,
+        0.9047002576109151,
+        0.9814448879551795
+      ],
+      "confusion_matrix": [
+        [
+          624714825,
+          33379,
+          1764755,
+          6147450
+        ],
+        [
+          1053,
+          43904747,
+          1506908,
+          14
+        ],
+        [
+          1474800,
+          1579729,
+          63399382,
+          173365
+        ],
+        [
+          4353652,
+          0,
+          178837,
+          574070016
+        ]
+      ],
+      "miou": 0.9495502793857815,
+      "name": "group_070_030_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.238,
+        0.23099999999999998,
+        0.23099999999999998,
+        0.15,
+        0.075,
+        0.075,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870154203968078,
+      "class_iou": [
+        0.9784740263559236,
+        0.9334495218627932,
+        0.904568534559734,
+        0.9815351674921051
+      ],
+      "confusion_matrix": [
+        [
+          624479334,
+          33651,
+          1805905,
+          6341519
+        ],
+        [
+          880,
+          43849679,
+          1562150,
+          13
+        ],
+        [
+          1446183,
+          1529569,
+          63472788,
+          178736
+        ],
+        [
+          4110117,
+          9,
+          173800,
+          574318579
+        ]
+      ],
+      "miou": 0.949506812567639,
+      "name": "group_034_033_033",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "near_uniform_backbones"
+      ],
+      "weights": [
+        0.11560000000000002,
+        0.11220000000000001,
+        0.11220000000000001,
+        0.165,
+        0.0825,
+        0.0825,
+        0.23099999999999998,
+        0.099,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869691097604114,
+      "class_iou": [
+        0.9783833219452195,
+        0.9335860419743874,
+        0.9046494005793545,
+        0.9813992701495294
+      ],
+      "confusion_matrix": [
+        [
+          624711151,
+          33460,
+          1761308,
+          6154490
+        ],
+        [
+          1069,
+          43906475,
+          1505164,
+          14
+        ],
+        [
+          1478954,
+          1583736,
+          63391644,
+          172942
+        ],
+        [
+          4373264,
+          0,
+          179414,
+          574049827
+        ]
+      ],
+      "miou": 0.9495045086621228,
+      "name": "group_075_025_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.255,
+        0.2475,
+        0.2475,
+        0.125,
+        0.0625,
+        0.0625,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869494899139163,
+      "class_iou": [
+        0.9783476736992411,
+        0.9335354177784037,
+        0.904583650025611,
+        0.9813621423748997
+      ],
+      "confusion_matrix": [
+        [
+          624710218,
+          33535,
+          1758461,
+          6158195
+        ],
+        [
+          1075,
+          43908029,
+          1503604,
+          14
+        ],
+        [
+          1483325,
+          1587876,
+          63383573,
+          172502
+        ],
+        [
+          4391199,
+          0,
+          179992,
+          574031314
+        ]
+      ],
+      "miou": 0.9494572209695389,
+      "name": "group_080_020_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.272,
+        0.264,
+        0.264,
+        0.1,
+        0.05,
+        0.05,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869939340086633,
+      "class_iou": [
+        0.9784408990319529,
+        0.9334417502731911,
+        0.9044211383441688,
+        0.9814875063948686
+      ],
+      "confusion_matrix": [
+        [
+          624537503,
+          34430,
+          1776848,
+          6311628
+        ],
+        [
+          1072,
+          43911974,
+          1499662,
+          14
+        ],
+        [
+          1471511,
+          1595927,
+          63381818,
+          178020
+        ],
+        [
+          4165656,
+          0,
+          176197,
+          574260652
+        ]
+      ],
+      "miou": 0.9494478235110454,
+      "name": "group_060_000_040",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.20400000000000001,
+        0.198,
+        0.198,
+        0.0,
+        0.0,
+        0.0,
+        0.27999999999999997,
+        0.12,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870023251335519,
+      "class_iou": [
+        0.97844638167931,
+        0.9334119759595633,
+        0.904406035497845,
+        0.9815264385463732
+      ],
+      "confusion_matrix": [
+        [
+          624292531,
+          36057,
+          1808633,
+          6523188
+        ],
+        [
+          915,
+          43896434,
+          1515360,
+          13
+        ],
+        [
+          1447039,
+          1579152,
+          63419782,
+          181303
+        ],
+        [
+          3936340,
+          0,
+          171861,
+          574494304
+        ]
+      ],
+      "miou": 0.9494477079207728,
+      "name": "group_040_000_060",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.136,
+        0.132,
+        0.132,
+        0.0,
+        0.0,
+        0.0,
+        0.42,
+        0.18,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869908583712087,
+      "class_iou": [
+        0.978435715552025,
+        0.9334256666888449,
+        0.9044039445937705,
+        0.9814828123837634
+      ],
+      "confusion_matrix": [
+        [
+          624535165,
+          34432,
+          1776655,
+          6314157
+        ],
+        [
+          1078,
+          43911433,
+          1500197,
+          14
+        ],
+        [
+          1472211,
+          1596156,
+          63381011,
+          177898
+        ],
+        [
+          4165942,
+          0,
+          176295,
+          574260268
+        ]
+      ],
+      "miou": 0.949437034804601,
+      "name": "group_070_000_030",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.238,
+        0.23099999999999998,
+        0.23099999999999998,
+        0.0,
+        0.0,
+        0.0,
+        0.21,
+        0.09,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869893024160442,
+      "class_iou": [
+        0.9784351027703101,
+        0.9333888877059808,
+        0.9044278453544822,
+        0.9814819723797046
+      ],
+      "confusion_matrix": [
+        [
+          624583406,
+          32962,
+          1804977,
+          6239064
+        ],
+        [
+          980,
+          43880666,
+          1531062,
+          14
+        ],
+        [
+          1453615,
+          1560085,
+          63435349,
+          178227
+        ],
+        [
+          4234340,
+          6432,
+          175336,
+          574186397
+        ]
+      ],
+      "miou": 0.9494334520526193,
+      "name": "group_030_070_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.10200000000000001,
+        0.099,
+        0.099,
+        0.35,
+        0.175,
+        0.175,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870141485791577,
+      "class_iou": [
+        0.9784902918950552,
+        0.9331415849906014,
+        0.9045173920813634,
+        0.9815448051363218
+      ],
+      "confusion_matrix": [
+        [
+          624296969,
+          35713,
+          1832809,
+          6494918
+        ],
+        [
+          873,
+          43873363,
+          1538473,
+          13
+        ],
+        [
+          1423792,
+          1551070,
+          63468303,
+          184111
+        ],
+        [
+          3935532,
+          17329,
+          169582,
+          574480062
+        ]
+      ],
+      "miou": 0.9494235185258355,
+      "name": "group_000_060_040",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.3,
+        0.15,
+        0.15,
+        0.27999999999999997,
+        0.12,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869354999197644,
+      "class_iou": [
+        0.9783230597041003,
+        0.9334786113098255,
+        0.9045242437183979,
+        0.9813372822929037
+      ],
+      "confusion_matrix": [
+        [
+          624696355,
+          34076,
+          1752506,
+          6177472
+        ],
+        [
+          1077,
+          43913344,
+          1498287,
+          14
+        ],
+        [
+          1489661,
+          1595889,
+          63369666,
+          172060
+        ],
+        [
+          4386756,
+          2,
+          180491,
+          574035256
+        ]
+      ],
+      "miou": 0.9494157992563068,
+      "name": "group_090_000_010",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.306,
+        0.297,
+        0.297,
+        0.0,
+        0.0,
+        0.0,
+        0.06999999999999998,
+        0.029999999999999992,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869836944785625,
+      "class_iou": [
+        0.978420889447264,
+        0.9332897097009756,
+        0.9044187428556055,
+        0.9814832268132293
+      ],
+      "confusion_matrix": [
+        [
+          624450186,
+          33404,
+          1810289,
+          6366530
+        ],
+        [
+          1010,
+          43843706,
+          1567993,
+          13
+        ],
+        [
+          1448728,
+          1528034,
+          63471335,
+          179179
+        ],
+        [
+          4112312,
+          3435,
+          173588,
+          574313170
+        ]
+      ],
+      "miou": 0.9494031422042687,
+      "name": "group_025_050_025",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.085,
+        0.0825,
+        0.0825,
+        0.25,
+        0.125,
+        0.125,
+        0.175,
+        0.075,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9870087106707734,
+      "class_iou": [
+        0.978476293984732,
+        0.9331513436802286,
+        0.9044254689177643,
+        0.9815458992678406
+      ],
+      "confusion_matrix": [
+        [
+          624226714,
+          36118,
+          1836058,
+          6561519
+        ],
+        [
+          871,
+          43874280,
+          1537558,
+          13
+        ],
+        [
+          1423117,
+          1555599,
+          63463565,
+          184995
+        ],
+        [
+          3873536,
+          12886,
+          169141,
+          574546942
+        ]
+      ],
+      "miou": 0.9493997514626414,
+      "name": "group_000_050_050",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.25,
+        0.125,
+        0.125,
+        0.35,
+        0.15,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.986964200831442,
+      "class_iou": [
+        0.9783860454719748,
+        0.9334112851339991,
+        0.9043474441735051,
+        0.9814280823540965
+      ],
+      "confusion_matrix": [
+        [
+          624682064,
+          32426,
+          1782496,
+          6163423
+        ],
+        [
+          1256,
+          43893465,
+          1517987,
+          14
+        ],
+        [
+          1473022,
+          1579637,
+          63398971,
+          175646
+        ],
+        [
+          4347502,
+          0,
+          176902,
+          574078101
+        ]
+      ],
+      "miou": 0.949393214283394,
+      "name": "group_060_040_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.20400000000000001,
+        0.198,
+        0.198,
+        0.2,
+        0.1,
+        0.1,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869659963387128,
+      "class_iou": [
+        0.9783928629529148,
+        0.9333564801928278,
+        0.9042903238849911,
+        0.9814409465208559
+      ],
+      "confusion_matrix": [
+        [
+          624630397,
+          32321,
+          1790200,
+          6207491
+        ],
+        [
+          1277,
+          43893196,
+          1518235,
+          14
+        ],
+        [
+          1467879,
+          1581243,
+          63402512,
+          175642
+        ],
+        [
+          4295367,
+          972,
+          177294,
+          574128872
+        ]
+      ],
+      "miou": 0.9493701533878974,
+      "name": "group_050_050_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.17,
+        0.165,
+        0.165,
+        0.25,
+        0.125,
+        0.125,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869916087662928,
+      "class_iou": [
+        0.9784546406555162,
+        0.9330386070189642,
+        0.9044502262276427,
+        0.9814999572790729
+      ],
+      "confusion_matrix": [
+        [
+          624338700,
+          35210,
+          1832461,
+          6454038
+        ],
+        [
+          891,
+          43870532,
+          1541286,
+          13
+        ],
+        [
+          1427829,
+          1549398,
+          63466497,
+          183552
+        ],
+        [
+          3997374,
+          21659,
+          170331,
+          574413141
+        ]
+      ],
+      "miou": 0.949360857795299,
+      "name": "group_000_070_030",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.35,
+        0.175,
+        0.175,
+        0.21,
+        0.09,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869721340112944,
+      "class_iou": [
+        0.9784105417336942,
+        0.93324790624219,
+        0.9043066259306821,
+        0.9814592013276306
+      ],
+      "confusion_matrix": [
+        [
+          624557779,
+          32998,
+          1811326,
+          6258306
+        ],
+        [
+          978,
+          43876417,
+          1535313,
+          14
+        ],
+        [
+          1453058,
+          1559034,
+          63436163,
+          179021
+        ],
+        [
+          4224731,
+          9996,
+          175038,
+          574192740
+        ]
+      ],
+      "miou": 0.9493560688085493,
+      "name": "group_025_075_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.085,
+        0.0825,
+        0.0825,
+        0.375,
+        0.1875,
+        0.1875,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869172380389956,
+      "class_iou": [
+        0.978294094298484,
+        0.9334005111117337,
+        0.9043990697496773,
+        0.9813093098115413
+      ],
+      "confusion_matrix": [
+        [
+          624726783,
+          33669,
+          1753842,
+          6146115
+        ],
+        [
+          1094,
+          43910272,
+          1501342,
+          14
+        ],
+        [
+          1493003,
+          1596941,
+          63365565,
+          171767
+        ],
+        [
+          4433406,
+          2,
+          181262,
+          573987835
+        ]
+      ],
+      "miou": 0.9493507462428591,
+      "name": "group_090_010_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.306,
+        0.297,
+        0.297,
+        0.04999999999999999,
+        0.024999999999999994,
+        0.024999999999999994,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869755391273559,
+      "class_iou": [
+        0.9784080088141351,
+        0.9331643216931276,
+        0.9042014970035098,
+        0.9814984830138886
+      ],
+      "confusion_matrix": [
+        [
+          624329737,
+          35372,
+          1823391,
+          6471909
+        ],
+        [
+          860,
+          43840979,
+          1570870,
+          13
+        ],
+        [
+          1443843,
+          1532856,
+          63469481,
+          181096
+        ],
+        [
+          4002642,
+          35,
+          172420,
+          574427408
+        ]
+      ],
+      "miou": 0.9493180776311653,
+      "name": "group_025_025_050",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.085,
+        0.0825,
+        0.0825,
+        0.125,
+        0.0625,
+        0.0625,
+        0.35,
+        0.15,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869399418354791,
+      "class_iou": [
+        0.9783489749875443,
+        0.9332874113573021,
+        0.9041998939375399,
+        0.9813884523607136
+      ],
+      "confusion_matrix": [
+        [
+          624678872,
+          33537,
+          1792054,
+          6155946
+        ],
+        [
+          1162,
+          43921423,
+          1490123,
+          14
+        ],
+        [
+          1464317,
+          1614724,
+          63374366,
+          173869
+        ],
+        [
+          4377231,
+          0,
+          179436,
+          574045838
+        ]
+      ],
+      "miou": 0.949306183160775,
+      "name": "group_070_030_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.238,
+        0.23099999999999998,
+        0.23099999999999998,
+        0.15,
+        0.075,
+        0.075,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869512929780359,
+      "class_iou": [
+        0.9783704302199956,
+        0.9332514248484831,
+        0.9041756180393283,
+        0.9814240333180195
+      ],
+      "confusion_matrix": [
+        [
+          624586827,
+          32281,
+          1804359,
+          6236942
+        ],
+        [
+          1292,
+          43888277,
+          1523139,
+          14
+        ],
+        [
+          1460325,
+          1578753,
+          63411375,
+          176823
+        ],
+        [
+          4273011,
+          3525,
+          176928,
+          574149041
+        ]
+      ],
+      "miou": 0.9493053766064566,
+      "name": "group_040_060_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.136,
+        0.132,
+        0.132,
+        0.3,
+        0.15,
+        0.15,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869758633161687,
+      "class_iou": [
+        0.9784306311193349,
+        0.9329512634390565,
+        0.9043640551895435,
+        0.9814737061423001
+      ],
+      "confusion_matrix": [
+        [
+          624356759,
+          34913,
+          1833037,
+          6435700
+        ],
+        [
+          898,
+          43868362,
+          1543449,
+          13
+        ],
+        [
+          1430930,
+          1549664,
+          63463318,
+          183364
+        ],
+        [
+          4028381,
+          23766,
+          170763,
+          574379595
+        ]
+      ],
+      "miou": 0.9493049139725588,
+      "name": "group_000_075_025",
+      "scheme": "probability",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.375,
+        0.1875,
+        0.1875,
+        0.175,
+        0.075,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869526101367787,
+      "class_iou": [
+        0.9783836041492961,
+        0.9330741623067221,
+        0.9041629938224952,
+        0.9814340142182059
+      ],
+      "confusion_matrix": [
+        [
+          624531834,
+          33092,
+          1818049,
+          6277434
+        ],
+        [
+          972,
+          43871629,
+          1540107,
+          14
+        ],
+        [
+          1452452,
+          1558766,
+          63436261,
+          179797
+        ],
+        [
+          4216400,
+          13793,
+          174773,
+          574197539
+        ]
+      ],
+      "miou": 0.9492636936241798,
+      "name": "group_020_080_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.068,
+        0.066,
+        0.066,
+        0.4,
+        0.2,
+        0.2,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869689110152884,
+      "class_iou": [
+        0.9784029148451013,
+        0.9330244410591896,
+        0.9041287962518426,
+        0.9814946711541861
+      ],
+      "confusion_matrix": [
+        [
+          624137824,
+          36231,
+          1843603,
+          6642751
+        ],
+        [
+          874,
+          43872275,
+          1539560,
+          13
+        ],
+        [
+          1426032,
+          1564178,
+          63450966,
+          186100
+        ],
+        [
+          3827612,
+          8440,
+          168684,
+          574597769
+        ]
+      ],
+      "miou": 0.9492627058275799,
+      "name": "group_000_040_060",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.2,
+        0.1,
+        0.1,
+        0.42,
+        0.18,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869571895871412,
+      "class_iou": [
+        0.9784023978954903,
+        0.9328424177219583,
+        0.9042385117109264,
+        0.9814456555408337
+      ],
+      "confusion_matrix": [
+        [
+          624372302,
+          34727,
+          1834762,
+          6418618
+        ],
+        [
+          904,
+          43865952,
+          1545853,
+          13
+        ],
+        [
+          1434368,
+          1550890,
+          63458701,
+          183317
+        ],
+        [
+          4059237,
+          25629,
+          171271,
+          574346368
+        ]
+      ],
+      "miou": 0.9492322457173021,
+      "name": "group_000_080_020",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.4,
+        0.2,
+        0.2,
+        0.13999999999999999,
+        0.06,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868813770130962,
+      "class_iou": [
+        0.9782359477610899,
+        0.9332301857128971,
+        0.9041602648578226,
+        0.9812549314759726
+      ],
+      "confusion_matrix": [
+        [
+          624741625,
+          33835,
+          1749995,
+          6134954
+        ],
+        [
+          1145,
+          43911838,
+          1499725,
+          14
+        ],
+        [
+          1504024,
+          1607037,
+          63345130,
+          171085
+        ],
+        [
+          4475464,
+          4,
+          182630,
+          573944407
+        ]
+      ],
+      "miou": 0.9492203324519455,
+      "name": "group_100_000_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.34,
+        0.33,
+        0.33,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.986914018821414,
+      "class_iou": [
+        0.9783015003874945,
+        0.9331612925560527,
+        0.9040659794416868,
+        0.9813479185483087
+      ],
+      "confusion_matrix": [
+        [
+          624624633,
+          33819,
+          1760819,
+          6241138
+        ],
+        [
+          1110,
+          43883261,
+          1528337,
+          14
+        ],
+        [
+          1500867,
+          1579907,
+          63369231,
+          177271
+        ],
+        [
+          4316276,
+          0,
+          177159,
+          574109070
+        ]
+      ],
+      "miou": 0.9492191727333856,
+      "name": "group_075_000_025",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.255,
+        0.2475,
+        0.2475,
+        0.0,
+        0.0,
+        0.0,
+        0.175,
+        0.075,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869335457186691,
+      "class_iou": [
+        0.9783295716403662,
+        0.9330677107195523,
+        0.9038900395907125,
+        0.9814393613138829
+      ],
+      "confusion_matrix": [
+        [
+          624160800,
+          36563,
+          1829709,
+          6633337
+        ],
+        [
+          910,
+          43886279,
+          1525520,
+          13
+        ],
+        [
+          1447297,
+          1585112,
+          63410889,
+          183978
+        ],
+        [
+          3877619,
+          2,
+          170817,
+          574554067
+        ]
+      ],
+      "miou": 0.9491816708161285,
+      "name": "group_030_000_070",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.10200000000000001,
+        0.099,
+        0.099,
+        0.0,
+        0.0,
+        0.0,
+        0.48999999999999994,
+        0.21,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868744413372832,
+      "class_iou": [
+        0.9782269124113182,
+        0.933144985484498,
+        0.9039858482704266,
+        0.9812641284214901
+      ],
+      "confusion_matrix": [
+        [
+          624695224,
+          33542,
+          1772071,
+          6159572
+        ],
+        [
+          1230,
+          43911905,
+          1499573,
+          14
+        ],
+        [
+          1491691,
+          1611702,
+          63350229,
+          173654
+        ],
+        [
+          4446177,
+          0,
+          179864,
+          573976464
+        ]
+      ],
+      "miou": 0.9491554686469333,
+      "name": "group_075_025_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.255,
+        0.2475,
+        0.2475,
+        0.125,
+        0.0625,
+        0.0625,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868952513874616,
+      "class_iou": [
+        0.9782860631649475,
+        0.9328316932812791,
+        0.9038551938506549,
+        0.9813409006182752
+      ],
+      "confusion_matrix": [
+        [
+          624499560,
+          32224,
+          1816708,
+          6311917
+        ],
+        [
+          1279,
+          43873929,
+          1537500,
+          14
+        ],
+        [
+          1462482,
+          1574064,
+          63412886,
+          177844
+        ],
+        [
+          4236718,
+          14050,
+          176752,
+          574174985
+        ]
+      ],
+      "miou": 0.9490784627287892,
+      "name": "group_030_070_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.10200000000000001,
+        0.099,
+        0.099,
+        0.35,
+        0.175,
+        0.175,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868942984688301,
+      "class_iou": [
+        0.9782854330547107,
+        0.9328172174437401,
+        0.9038535747169071,
+        0.9813387330095857
+      ],
+      "confusion_matrix": [
+        [
+          624499102,
+          32222,
+          1816719,
+          6312366
+        ],
+        [
+          1329,
+          43874014,
+          1537365,
+          14
+        ],
+        [
+          1462304,
+          1574300,
+          63412701,
+          177971
+        ],
+        [
+          4236789,
+          14637,
+          176797,
+          574174282
+        ]
+      ],
+      "miou": 0.9490737395562359,
+      "name": "group_025_075_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.085,
+        0.0825,
+        0.0825,
+        0.375,
+        0.1875,
+        0.1875,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868931203561049,
+      "class_iou": [
+        0.978285065735525,
+        0.9327924643286092,
+        0.9038547772282506,
+        0.9813357988876815
+      ],
+      "confusion_matrix": [
+        [
+          624499026,
+          32224,
+          1816691,
+          6312468
+        ],
+        [
+          1329,
+          43874054,
+          1537326,
+          13
+        ],
+        [
+          1462206,
+          1574302,
+          63412723,
+          178045
+        ],
+        [
+          4237049,
+          15924,
+          176795,
+          574172737
+        ]
+      ],
+      "miou": 0.9490670265450165,
+      "name": "group_020_080_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.068,
+        0.066,
+        0.066,
+        0.4,
+        0.2,
+        0.2,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868920888462459,
+      "class_iou": [
+        0.9782847513411819,
+        0.932773264497161,
+        0.9038483741080353,
+        0.9813339041960083
+      ],
+      "confusion_matrix": [
+        [
+          624498884,
+          32234,
+          1816683,
+          6312608
+        ],
+        [
+          1335,
+          43874038,
+          1537336,
+          13
+        ],
+        [
+          1462247,
+          1574492,
+          63412234,
+          178303
+        ],
+        [
+          4237062,
+          16675,
+          176749,
+          574172019
+        ]
+      ],
+      "miou": 0.9490600735355965,
+      "name": "group_010_090_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.034,
+        0.033,
+        0.033,
+        0.45,
+        0.225,
+        0.225,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869113300946171,
+      "class_iou": [
+        0.9782994533464547,
+        0.9328273921033192,
+        0.9036753352543866,
+        0.9814220540288157
+      ],
+      "confusion_matrix": [
+        [
+          624050427,
+          36276,
+          1855169,
+          6718537
+        ],
+        [
+          878,
+          43868876,
+          1542955,
+          13
+        ],
+        [
+          1432280,
+          1575172,
+          63432394,
+          187430
+        ],
+        [
+          3799488,
+          3690,
+          168387,
+          574630940
+        ]
+      ],
+      "miou": 0.9490560586832442,
+      "name": "group_000_030_070",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.15000000000000002,
+        0.07500000000000001,
+        0.07500000000000001,
+        0.49,
+        0.21000000000000002,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869079740980725,
+      "class_iou": [
+        0.9783235990402884,
+        0.9326607136948829,
+        0.903833733451311,
+        0.9813760316846251
+      ],
+      "confusion_matrix": [
+        [
+          624478769,
+          33358,
+          1831907,
+          6316375
+        ],
+        [
+          954,
+          43861321,
+          1550433,
+          14
+        ],
+        [
+          1452174,
+          1558998,
+          63434561,
+          181543
+        ],
+        [
+          4201607,
+          23086,
+          174267,
+          574203545
+        ]
+      ],
+      "miou": 0.9490485194677769,
+      "name": "group_010_090_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.034,
+        0.033,
+        0.033,
+        0.45,
+        0.225,
+        0.225,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869109613203965,
+      "class_iou": [
+        0.9783324608706282,
+        0.9325669431853261,
+        0.9038936013763712,
+        0.9813809525541205
+      ],
+      "confusion_matrix": [
+        [
+          624399027,
+          34312,
+          1839866,
+          6387204
+        ],
+        [
+          921,
+          43859278,
+          1552510,
+          13
+        ],
+        [
+          1443055,
+          1554735,
+          63446200,
+          183286
+        ],
+        [
+          4123469,
+          28933,
+          172459,
+          574277644
+        ]
+      ],
+      "miou": 0.9490434894966115,
+      "name": "group_000_090_010",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.45,
+        0.225,
+        0.225,
+        0.06999999999999999,
+        0.03,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.986882085845512,
+      "class_iou": [
+        0.9782388902145611,
+        0.9328630530521362,
+        0.903503280629294,
+        0.9813731226077099
+      ],
+      "confusion_matrix": [
+        [
+          624078694,
+          36509,
+          1842417,
+          6702789
+        ],
+        [
+          903,
+          43880322,
+          1531484,
+          13
+        ],
+        [
+          1452742,
+          1589059,
+          63400269,
+          185206
+        ],
+        [
+          3847389,
+          42,
+          170421,
+          574584653
+        ]
+      ],
+      "miou": 0.9489945866259253,
+      "name": "group_025_000_075",
+      "scheme": "probability",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.08500000000000002,
+        0.08250000000000002,
+        0.08250000000000002,
+        0.0,
+        0.0,
+        0.0,
+        0.525,
+        0.225,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868766872327415,
+      "class_iou": [
+        0.9782398866131766,
+        0.9327843687162325,
+        0.903554250193095,
+        0.9813509986321599
+      ],
+      "confusion_matrix": [
+        [
+          624354533,
+          34410,
+          1827274,
+          6444192
+        ],
+        [
+          857,
+          43823301,
+          1588551,
+          13
+        ],
+        [
+          1467088,
+          1534038,
+          63445813,
+          180337
+        ],
+        [
+          4114414,
+          0,
+          174944,
+          574313147
+        ]
+      ],
+      "miou": 0.948982376038666,
+      "name": "group_050_000_050",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.17,
+        0.165,
+        0.165,
+        0.0,
+        0.0,
+        0.0,
+        0.35,
+        0.15,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9869044412712665,
+      "class_iou": [
+        0.9783112981592007,
+        0.9324671250947788,
+        0.903749088006689,
+        0.9814019323363252
+      ],
+      "confusion_matrix": [
+        [
+          624172993,
+          35266,
+          1845805,
+          6606345
+        ],
+        [
+          854,
+          43817572,
+          1594283,
+          13
+        ],
+        [
+          1438637,
+          1527392,
+          63478434,
+          182813
+        ],
+        [
+          3910715,
+          15630,
+          171638,
+          574504522
+        ]
+      ],
+      "miou": 0.9489823608992485,
+      "name": "group_000_050_050",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.25,
+        0.125,
+        0.125,
+        0.35,
+        0.15,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.98688275009252,
+      "class_iou": [
+        0.9782705688973127,
+        0.9324363826916565,
+        0.9036932586779841,
+        0.9813604960174221
+      ],
+      "confusion_matrix": [
+        [
+          624211175,
+          34804,
+          1855692,
+          6558738
+        ],
+        [
+          946,
+          43808556,
+          1603207,
+          13
+        ],
+        [
+          1433312,
+          1519610,
+          63491493,
+          182861
+        ],
+        [
+          3981541,
+          15754,
+          171617,
+          574433593
+        ]
+      ],
+      "miou": 0.9489401765710939,
+      "name": "group_000_060_040",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.3,
+        0.15,
+        0.15,
+        0.27999999999999997,
+        0.12,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868110824500325,
+      "class_iou": [
+        0.9781296320014287,
+        0.9327698745928397,
+        0.9035346152480473,
+        0.981172699340253
+      ],
+      "confusion_matrix": [
+        [
+          624686536,
+          34396,
+          1774992,
+          6164485
+        ],
+        [
+          1218,
+          43928870,
+          1482620,
+          14
+        ],
+        [
+          1498957,
+          1647960,
+          63310085,
+          170274
+        ],
+        [
+          4493553,
+          0,
+          184464,
+          573924488
+        ]
+      ],
+      "miou": 0.9489017052956421,
+      "name": "group_080_000_020",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.272,
+        0.264,
+        0.264,
+        0.0,
+        0.0,
+        0.0,
+        0.13999999999999999,
+        0.06,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868071800933209,
+      "class_iou": [
+        0.9781212337838728,
+        0.9327841945397182,
+        0.9035256011706178,
+        0.9811643512228932
+      ],
+      "confusion_matrix": [
+        [
+          624687630,
+          34200,
+          1775369,
+          6163210
+        ],
+        [
+          1258,
+          43929203,
+          1482246,
+          15
+        ],
+        [
+          1499587,
+          1647790,
+          63309738,
+          170161
+        ],
+        [
+          4499485,
+          0,
+          184776,
+          573918244
+        ]
+      ],
+      "miou": 0.9488988451792755,
+      "name": "group_100_000_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.34,
+        0.33,
+        0.33,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868053558700247,
+      "class_iou": [
+        0.9781189822116219,
+        0.9327675673198825,
+        0.9035209101246227,
+        0.981160582468969
+      ],
+      "confusion_matrix": [
+        [
+          624685656,
+          34149,
+          1775129,
+          6165475
+        ],
+        [
+          1252,
+          43929210,
+          1482246,
+          14
+        ],
+        [
+          1499153,
+          1648688,
+          63309281,
+          170154
+        ],
+        [
+          4499377,
+          0,
+          184874,
+          573918254
+        ]
+      ],
+      "miou": 0.948892010531274,
+      "name": "group_080_020_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.272,
+        0.264,
+        0.264,
+        0.1,
+        0.05,
+        0.05,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868044830539903,
+      "class_iou": [
+        0.9781171736974782,
+        0.9327668671581322,
+        0.9035143653334352,
+        0.9811595545093403
+      ],
+      "confusion_matrix": [
+        [
+          624684768,
+          34204,
+          1775479,
+          6165958
+        ],
+        [
+          1258,
+          43929219,
+          1482231,
+          14
+        ],
+        [
+          1499314,
+          1648678,
+          63309257,
+          170027
+        ],
+        [
+          4499483,
+          0,
+          185020,
+          573918002
+        ]
+      ],
+      "miou": 0.9488894901745966,
+      "name": "group_090_010_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.306,
+        0.297,
+        0.297,
+        0.04999999999999999,
+        0.024999999999999994,
+        0.024999999999999994,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868037447498642,
+      "class_iou": [
+        0.9781157635042791,
+        0.9327587766439712,
+        0.9035163577235586,
+        0.9811582054852376
+      ],
+      "confusion_matrix": [
+        [
+          624683839,
+          34521,
+          1775240,
+          6166809
+        ],
+        [
+          1264,
+          43929226,
+          1482218,
+          14
+        ],
+        [
+          1499317,
+          1648777,
+          63309215,
+          169967
+        ],
+        [
+          4499445,
+          0,
+          185071,
+          573917989
+        ]
+      ],
+      "miou": 0.9488872758392616,
+      "name": "group_090_000_010",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.306,
+        0.297,
+        0.297,
+        0.0,
+        0.0,
+        0.0,
+        0.06999999999999998,
+        0.029999999999999992,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868529466366049,
+      "class_iou": [
+        0.978191262936564,
+        0.9326726064010342,
+        0.9033287382238955,
+        0.9813342317985652
+      ],
+      "confusion_matrix": [
+        [
+          623972581,
+          36289,
+          1862960,
+          6788579
+        ],
+        [
+          892,
+          43866151,
+          1545666,
+          13
+        ],
+        [
+          1440600,
+          1580839,
+          63417606,
+          188231
+        ],
+        [
+          3782125,
+          2893,
+          168447,
+          574649040
+        ]
+      ],
+      "miou": 0.9488817098400147,
+      "name": "group_000_025_075",
+      "scheme": "probability",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.12500000000000003,
+        0.06250000000000001,
+        0.06250000000000001,
+        0.525,
+        0.225,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.986833841411512,
+      "class_iou": [
+        0.9781571717805758,
+        0.9326350308136787,
+        0.9031503980615662,
+        0.9813094843461332
+      ],
+      "confusion_matrix": [
+        [
+          624006534,
+          36473,
+          1854815,
+          6762587
+        ],
+        [
+          902,
+          43873711,
+          1538096,
+          13
+        ],
+        [
+          1454940,
+          1593326,
+          63392373,
+          186637
+        ],
+        [
+          3824718,
+          223,
+          170086,
+          574607478
+        ]
+      ],
+      "miou": 0.9488130212504884,
+      "name": "group_020_000_080",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.068,
+        0.066,
+        0.066,
+        0.0,
+        0.0,
+        0.0,
+        0.5599999999999999,
+        0.24,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868615191258644,
+      "class_iou": [
+        0.9782666269904089,
+        0.9321653504816939,
+        0.903428388312428,
+        0.9813229850747085
+      ],
+      "confusion_matrix": [
+        [
+          624433620,
+          33761,
+          1847331,
+          6345697
+        ],
+        [
+          952,
+          43850351,
+          1561405,
+          14
+        ],
+        [
+          1453087,
+          1561142,
+          63429643,
+          183404
+        ],
+        [
+          4191718,
+          33762,
+          173917,
+          574203108
+        ]
+      ],
+      "miou": 0.9487958377148098,
+      "name": "group_000_100_000",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.25,
+        0.25,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.986814474719451,
+      "class_iou": [
+        0.978146574481366,
+        0.9322560774762311,
+        0.9034239760766493,
+        0.981238589050285
+      ],
+      "confusion_matrix": [
+        [
+          624201305,
+          32685,
+          1852087,
+          6574332
+        ],
+        [
+          1106,
+          43783994,
+          1627609,
+          13
+        ],
+        [
+          1449164,
+          1503646,
+          63493049,
+          181417
+        ],
+        [
+          4036324,
+          16577,
+          173484,
+          574376120
+        ]
+      ],
+      "miou": 0.948766304271133,
+      "name": "group_000_070_030",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.35,
+        0.175,
+        0.175,
+        0.21,
+        0.09,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868131205321492,
+      "class_iou": [
+        0.9781452278958844,
+        0.9322427334589022,
+        0.9034121646882172,
+        0.9812365955917736
+      ],
+      "confusion_matrix": [
+        [
+          624201237,
+          32707,
+          1852143,
+          6574322
+        ],
+        [
+          1050,
+          43783729,
+          1627930,
+          13
+        ],
+        [
+          1449080,
+          1504012,
+          63492751,
+          181433
+        ],
+        [
+          4037273,
+          16577,
+          173696,
+          574374959
+        ]
+      ],
+      "miou": 0.9487591804086943,
+      "name": "group_000_075_025",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.375,
+        0.1875,
+        0.1875,
+        0.175,
+        0.075,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868603470586181,
+      "class_iou": [
+        0.9782760638758767,
+        0.9320673189699454,
+        0.9033597413105415,
+        0.9813216479248082
+      ],
+      "confusion_matrix": [
+        [
+          624505959,
+          32886,
+          1827179,
+          6294385
+        ],
+        [
+          1315,
+          43862718,
+          1548676,
+          13
+        ],
+        [
+          1471395,
+          1578041,
+          63399092,
+          178748
+        ],
+        [
+          4240835,
+          35954,
+          178314,
+          574147402
+        ]
+      ],
+      "miou": 0.948756193020293,
+      "name": "group_000_100_000",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_1_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.25,
+        0.25,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868120051412688,
+      "class_iou": [
+        0.9781436338680395,
+        0.9322352845288395,
+        0.9034005191395058,
+        0.9812353630834258
+      ],
+      "confusion_matrix": [
+        [
+          624201060,
+          32651,
+          1852178,
+          6574520
+        ],
+        [
+          1062,
+          43783849,
+          1627798,
+          13
+        ],
+        [
+          1449518,
+          1504465,
+          63491816,
+          181477
+        ],
+        [
+          4037682,
+          16684,
+          173664,
+          574374475
+        ]
+      ],
+      "miou": 0.9487537001549528,
+      "name": "group_000_080_020",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.4,
+        0.2,
+        0.2,
+        0.13999999999999999,
+        0.06,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868101665599599,
+      "class_iou": [
+        0.9781424712834328,
+        0.9322015479603989,
+        0.9033749032473724,
+        0.981234298571174
+      ],
+      "confusion_matrix": [
+        [
+          624200770,
+          32669,
+          1852030,
+          6574940
+        ],
+        [
+          1198,
+          43783399,
+          1628112,
+          13
+        ],
+        [
+          1449938,
+          1505523,
+          63490125,
+          181690
+        ],
+        [
+          4037588,
+          16825,
+          173619,
+          574374473
+        ]
+      ],
+      "miou": 0.9487383052655944,
+      "name": "group_000_090_010",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.45,
+        0.225,
+        0.225,
+        0.06999999999999999,
+        0.03,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9868093421077577,
+      "class_iou": [
+        0.9781164193062795,
+        0.9324838564758923,
+        0.9030192072199982,
+        0.9812747505640257
+      ],
+      "confusion_matrix": [
+        [
+          623920926,
+          36288,
+          1870629,
+          6832566
+        ],
+        [
+          894,
+          43862806,
+          1549009,
+          13
+        ],
+        [
+          1445298,
+          1587162,
+          63405872,
+          188944
+        ],
+        [
+          3773424,
+          2504,
+          168505,
+          574658072
+        ]
+      ],
+      "miou": 0.9487235583915489,
+      "name": "group_000_020_080",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.1,
+        0.05,
+        0.05,
+        0.5599999999999999,
+        0.24,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.98679604054253,
+      "class_iou": [
+        0.9781035570082615,
+        0.9323367608878139,
+        0.9029019285086218,
+        0.9812582869742342
+      ],
+      "confusion_matrix": [
+        [
+          624161325,
+          35643,
+          1859413,
+          6604028
+        ],
+        [
+          841,
+          43813555,
+          1598313,
+          13
+        ],
+        [
+          1462627,
+          1544774,
+          63435588,
+          184287
+        ],
+        [
+          4010317,
+          133,
+          172449,
+          574419606
+        ]
+      ],
+      "miou": 0.9486501333447328,
+      "name": "group_040_000_060",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.136,
+        0.132,
+        0.132,
+        0.0,
+        0.0,
+        0.0,
+        0.42,
+        0.18,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9867951042489658,
+      "class_iou": [
+        0.9781024140889781,
+        0.9323277721516924,
+        0.9028895866969594,
+        0.9812575967843484
+      ],
+      "confusion_matrix": [
+        [
+          624161072,
+          36033,
+          1859420,
+          6603884
+        ],
+        [
+          836,
+          43814174,
+          1597699,
+          13
+        ],
+        [
+          1463039,
+          1545420,
+          63434441,
+          184376
+        ],
+        [
+          4010397,
+          214,
+          172746,
+          574419148
+        ]
+      ],
+      "miou": 0.9486443424304946,
+      "name": "group_030_000_070",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.10200000000000001,
+        0.099,
+        0.099,
+        0.0,
+        0.0,
+        0.0,
+        0.48999999999999994,
+        0.21,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9867965105785242,
+      "class_iou": [
+        0.9781205630567772,
+        0.9320671750166953,
+        0.9028345059357619,
+        0.9812766692066891
+      ],
+      "confusion_matrix": [
+        [
+          624019337,
+          35899,
+          1894835,
+          6710338
+        ],
+        [
+          812,
+          43809630,
+          1602267,
+          13
+        ],
+        [
+          1426203,
+          1549713,
+          63465454,
+          185906
+        ],
+        [
+          3890511,
+          4319,
+          171400,
+          574536275
+        ]
+      ],
+      "miou": 0.9485747283039808,
+      "name": "group_000_040_060",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.2,
+        0.1,
+        0.1,
+        0.42,
+        0.18,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9867958198825455,
+      "class_iou": [
+        0.9781197598416616,
+        0.9320600395336216,
+        0.9028250173117973,
+        0.9812762250697235
+      ],
+      "confusion_matrix": [
+        [
+          624018984,
+          36007,
+          1894961,
+          6710457
+        ],
+        [
+          812,
+          43809646,
+          1602251,
+          13
+        ],
+        [
+          1426374,
+          1549975,
+          63464982,
+          185945
+        ],
+        [
+          3890503,
+          4326,
+          171506,
+          574536170
+        ]
+      ],
+      "miou": 0.948570260439201,
+      "name": "group_000_030_070",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.15000000000000002,
+        0.07500000000000001,
+        0.07500000000000001,
+        0.49,
+        0.21000000000000002,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9867310017677948,
+      "class_iou": [
+        0.9779853003610889,
+        0.9321328458938377,
+        0.9023929103037968,
+        0.9811733580668995
+      ],
+      "confusion_matrix": [
+        [
+          623868289,
+          36401,
+          1880132,
+          6875587
+        ],
+        [
+          899,
+          43860111,
+          1551699,
+          13
+        ],
+        [
+          1460206,
+          1603409,
+          63373964,
+          189697
+        ],
+        [
+          3790210,
+          966,
+          169685,
+          574641644
+        ]
+      ],
+      "miou": 0.9484211036564056,
+      "name": "group_010_000_090",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.034,
+        0.033,
+        0.033,
+        0.0,
+        0.0,
+        0.0,
+        0.63,
+        0.27,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9867181876193136,
+      "class_iou": [
+        0.9779652482031059,
+        0.9320375007608559,
+        0.9023289807930557,
+        0.9811545290682536
+      ],
+      "confusion_matrix": [
+        [
+          623826493,
+          36305,
+          1887376,
+          6910235
+        ],
+        [
+          904,
+          43854482,
+          1557323,
+          13
+        ],
+        [
+          1455366,
+          1600728,
+          63380397,
+          190785
+        ],
+        [
+          3765387,
+          2517,
+          168922,
+          574665679
+        ]
+      ],
+      "miou": 0.9483715647063179,
+      "name": "group_000_010_090",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.05,
+        0.025,
+        0.025,
+        0.63,
+        0.27,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9866185709716023,
+      "class_iou": [
+        0.9778022927166463,
+        0.9315261316449519,
+        0.9015603143984573,
+        0.9810246552432474
+      ],
+      "confusion_matrix": [
+        [
+          623733366,
+          36284,
+          1905762,
+          6984997
+        ],
+        [
+          907,
+          43844813,
+          1566989,
+          13
+        ],
+        [
+          1466787,
+          1615574,
+          63352243,
+          192672
+        ],
+        [
+          3765028,
+          3142,
+          169529,
+          574664806
+        ]
+      ],
+      "miou": 0.9479783485008257,
+      "name": "group_000_000_100",
+      "scheme": "probability",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.7,
+        0.3,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9862295474189964,
+      "class_iou": [
+        0.9771506729565569,
+        0.9295558052965587,
+        0.8987999681398815,
+        0.980517612859642
+      ],
+      "confusion_matrix": [
+        [
+          623532435,
+          35307,
+          2024296,
+          7068371
+        ],
+        [
+          814,
+          43694729,
+          1717166,
+          13
+        ],
+        [
+          1474825,
+          1556109,
+          63406632,
+          189710
+        ],
+        [
+          3976837,
+          1893,
+          177139,
+          574446636
+        ]
+      ],
+      "miou": 0.9465060148131598,
+      "name": "group_000_025_075",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.12500000000000003,
+        0.06250000000000001,
+        0.06250000000000001,
+        0.525,
+        0.225,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9862274806208543,
+      "class_iou": [
+        0.9771442991897168,
+        0.9295756118162921,
+        0.8987878045703795,
+        0.9805151355614603
+      ],
+      "confusion_matrix": [
+        [
+          623532165,
+          35269,
+          2024359,
+          7068616
+        ],
+        [
+          819,
+          43694512,
+          1717378,
+          13
+        ],
+        [
+          1476256,
+          1555723,
+          63406004,
+          189293
+        ],
+        [
+          3979287,
+          1082,
+          177120,
+          574445016
+        ]
+      ],
+      "miou": 0.9465057127844622,
+      "name": "group_025_000_075",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_quarter_simplex"
+      ],
+      "weights": [
+        0.08500000000000002,
+        0.08250000000000002,
+        0.08250000000000002,
+        0.0,
+        0.0,
+        0.0,
+        0.525,
+        0.225,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9862263637186042,
+      "class_iou": [
+        0.9771458426322049,
+        0.9295411723680417,
+        0.8987593277359429,
+        0.9805149801238938
+      ],
+      "confusion_matrix": [
+        [
+          623531478,
+          35431,
+          2025246,
+          7068254
+        ],
+        [
+          818,
+          43694637,
+          1717254,
+          13
+        ],
+        [
+          1475919,
+          1556522,
+          63405132,
+          189703
+        ],
+        [
+          3977914,
+          1997,
+          177622,
+          574444972
+        ]
+      ],
+      "miou": 0.9464903307150209,
+      "name": "group_000_020_080",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.1,
+        0.05,
+        0.05,
+        0.5599999999999999,
+        0.24,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9862234392181252,
+      "class_iou": [
+        0.977138514658021,
+        0.9295551406574075,
+        0.8987561822026867,
+        0.9805091384814969
+      ],
+      "confusion_matrix": [
+        [
+          623526969,
+          35330,
+          2025377,
+          7072733
+        ],
+        [
+          819,
+          43694589,
+          1717273,
+          41
+        ],
+        [
+          1476213,
+          1556548,
+          63405337,
+          189178
+        ],
+        [
+          3977790,
+          1314,
+          177947,
+          574445454
+        ]
+      ],
+      "miou": 0.946489743999903,
+      "name": "group_020_000_080",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.068,
+        0.066,
+        0.066,
+        0.0,
+        0.0,
+        0.0,
+        0.5599999999999999,
+        0.24,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9862149475871478,
+      "class_iou": [
+        0.9771441512046233,
+        0.9292731663324287,
+        0.8987381548846565,
+        0.9804911733783273
+      ],
+      "confusion_matrix": [
+        [
+          623530171,
+          35432,
+          2025791,
+          7069015
+        ],
+        [
+          819,
+          43694336,
+          1717547,
+          20
+        ],
+        [
+          1476028,
+          1556721,
+          63404999,
+          189528
+        ],
+        [
+          3977571,
+          15030,
+          178298,
+          574431606
+        ]
+      ],
+      "miou": 0.9464116614500089,
+      "name": "group_000_010_090",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_1_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.05,
+        0.025,
+        0.025,
+        0.63,
+        0.27,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9862114351638335,
+      "class_iou": [
+        0.9771367026088963,
+        0.9292721902408381,
+        0.8987365248125366,
+        0.980483854480405
+      ],
+      "confusion_matrix": [
+        [
+          623525971,
+          35437,
+          2025746,
+          7073255
+        ],
+        [
+          819,
+          43694436,
+          1717426,
+          41
+        ],
+        [
+          1476348,
+          1556844,
+          63404813,
+          189271
+        ],
+        [
+          3977817,
+          15059,
+          178385,
+          574431244
+        ]
+      ],
+      "miou": 0.946407318035669,
+      "name": "group_010_000_090",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.034,
+        0.033,
+        0.033,
+        0.0,
+        0.0,
+        0.0,
+        0.63,
+        0.27,
+        0.0
+      ]
+    },
+    {
+      "accuracy": 0.9862033803187157,
+      "class_iou": [
+        0.977125788205288,
+        0.9292405578675567,
+        0.8986669770917144,
+        0.9804712931410775
+      ],
+      "confusion_matrix": [
+        [
+          623518167,
+          35498,
+          2027624,
+          7079120
+        ],
+        [
+          819,
+          43694336,
+          1717518,
+          49
+        ],
+        [
+          1476072,
+          1558269,
+          63403405,
+          189530
+        ],
+        [
+          3977234,
+          15066,
+          180308,
+          574429897
+        ]
+      ],
+      "miou": 0.9463761540764091,
+      "name": "group_000_000_100",
+      "scheme": "class_rank_probability_tiebreak",
+      "sources": [
+        "backbone_pair_0_2_tenths"
+      ],
+      "weights": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.7,
+        0.3,
+        0.0
+      ]
+    }
+  ],
+  "sample_count": 1262,
+  "schema_version": 1,
+  "selection_split": "val",
+  "test_used_for_selection": false,
+  "validation_only": true
+}

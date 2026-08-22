@@ -101,6 +101,37 @@ def weight_candidates(model_count: int) -> list[dict]:
     return [candidates[key] for key in sorted(candidates)]
 
 
+def supplied_weight_candidates(rows: list[dict], model_count: int) -> list[dict]:
+    """Validate explicit candidates supplied by a hierarchical manifest."""
+    validated = []
+    names = set()
+    for index, row in enumerate(rows):
+        name = str(row.get("name") or f"candidate_{index:03d}")
+        weights = [float(value) for value in row["weights"]]
+        if name in names:
+            raise ValueError(f"duplicate fusion candidate name: {name}")
+        if len(weights) != model_count:
+            raise ValueError(
+                f"{name}: expected {model_count} weights, found {len(weights)}"
+            )
+        if any(value < 0.0 for value in weights):
+            raise ValueError(f"{name}: fusion weights must be nonnegative")
+        total = sum(weights)
+        if abs(total - 1.0) > 1.0e-8:
+            raise ValueError(f"{name}: fusion weights sum to {total}, not 1")
+        names.add(name)
+        validated.append(
+            {
+                "name": name,
+                "weights": weights,
+                "sources": list(row.get("sources", ["manifest_supplied"])),
+            }
+        )
+    if not validated:
+        raise ValueError("manifest supplied no fusion candidates")
+    return validated
+
+
 def confusion_matrix_batch(
     predictions: torch.Tensor,
     target: torch.Tensor,
@@ -211,7 +242,12 @@ def main() -> None:
     )
 
     models = load_models(models_config, device)
-    candidates = weight_candidates(len(models))
+    if payload.get("weight_candidates"):
+        candidates = supplied_weight_candidates(
+            payload["weight_candidates"], len(models)
+        )
+    else:
+        candidates = weight_candidates(len(models))
     weight_matrix = torch.tensor(
         [row["weights"] for row in candidates],
         dtype=torch.float32,
