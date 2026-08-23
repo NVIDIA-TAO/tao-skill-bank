@@ -161,12 +161,57 @@ def build_spec(backbone: str) -> dict:
 
 def ssh_python(script: str, *args: str) -> str:
     host = os.environ["SLURM_HOSTNAME"].split(",", 1)[0]
+    remote_command = " ".join(
+        shlex.quote(value) for value in ("python3", "-", *map(str, args))
+    )
     command = [
         "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
         f"{os.environ['SLURM_USER']}@{host}",
-        "python3", "-c", script, *args,
+        remote_command,
     ]
-    return subprocess.check_output(command, text=True).strip()
+    return subprocess.check_output(command, input=script, text=True).strip()
+
+
+def lustre_path(value: str) -> str:
+    """Convert the SDK's lustre:// URI to the absolute cluster path."""
+    path = str(value)
+    if path.startswith("lustre://"):
+        path = path[len("lustre://"):]
+    elif "://" in path:
+        raise ValueError(f"unsupported results URI: {value}")
+    if not path.startswith("/"):
+        raise ValueError(f"results path is not absolute: {value}")
+    return path
+
+
+def read_best_val_miou(results_dir: str) -> dict:
+    script = r'''import json,os,sys
+root=os.path.realpath(sys.argv[1])
+prefix=os.path.realpath(sys.argv[2])+os.sep
+if not root.startswith(prefix):
+    raise RuntimeError("refusing status read outside campaign results")
+payload=os.path.join(root,"results_dir")
+if not os.path.isdir(payload): payload=root
+status=os.path.join(payload,"train","status.json")
+best_epoch=None
+best_value=float("-inf")
+current_epoch=None
+with open(status,errors="replace") as handle:
+    for line in handle:
+        try: row=json.loads(line)
+        except Exception: continue
+        epoch=row.get("epoch")
+        if isinstance(epoch,(int,float)):
+            current_epoch=int(epoch)
+        kpi=row.get("kpi") or {}
+        value=next((kpi.get(k) for k in ("val_miou","miou","mIoU") if isinstance(kpi.get(k),(int,float))),None)
+        if value is not None and value>best_value:
+            best_value=float(value); best_epoch=current_epoch
+if best_value==float("-inf"):
+    raise RuntimeError("status.json contains no validation mIoU")
+print(json.dumps({"best_epoch":best_epoch,"best_val_miou":best_value}))'''
+    prefix = str(REMOTE_ROOT / "results")
+    return json.loads(ssh_python(script, lustre_path(results_dir), prefix))
 
 
 def prune_periodic_checkpoints(results_dir: str) -> dict:
@@ -175,7 +220,9 @@ root=os.path.realpath(sys.argv[1])
 prefix=os.path.realpath(sys.argv[2])+os.sep
 if not root.startswith(prefix):
     raise RuntimeError("refusing checkpoint prune outside campaign results")
-train=os.path.join(root,"train")
+payload=os.path.join(root,"results_dir")
+if not os.path.isdir(payload): payload=root
+train=os.path.join(payload,"train")
 rx=re.compile(r"model_epoch_(\d+)_step_(\d+)\.pth$")
 checkpoints=[]
 for path in glob.glob(os.path.join(train,"model_epoch_*_step_*.pth")):
@@ -186,6 +233,7 @@ if not checkpoints:
     raise RuntimeError("no durable checkpoint to retain")
 best_epoch=None
 best_value=float("-inf")
+current_epoch=None
 status=os.path.join(train,"status.json")
 if os.path.isfile(status):
     with open(status,errors="replace") as handle:
@@ -193,10 +241,12 @@ if os.path.isfile(status):
             try: row=json.loads(line)
             except Exception: continue
             epoch=row.get("epoch")
+            if isinstance(epoch,(int,float)):
+                current_epoch=int(epoch)
             kpi=row.get("kpi") or {}
             value=next((kpi.get(k) for k in ("val_miou","miou","mIoU") if isinstance(kpi.get(k),(int,float))),None)
-            if isinstance(epoch,int) and value is not None and value>best_value:
-                best_value=float(value); best_epoch=epoch
+            if value is not None and value>best_value:
+                best_value=float(value); best_epoch=current_epoch
 latest=max(checkpoints)
 keep={latest[2]}
 if best_epoch is not None:
@@ -207,7 +257,7 @@ for _,_,path in checkpoints:
         os.remove(path); deleted.append(path)
 print(json.dumps({"retained":sorted(keep),"deleted_count":len(deleted),"best_epoch":best_epoch,"best_val_miou":None if best_value==float("-inf") else best_value}))'''
     prefix = str(REMOTE_ROOT / "results")
-    return json.loads(ssh_python(script, results_dir, prefix))
+    return json.loads(ssh_python(script, lustre_path(results_dir), prefix))
 
 
 def run(backbone: str, variant: str, resume: bool) -> dict:
@@ -218,6 +268,11 @@ def run(backbone: str, variant: str, resume: bool) -> dict:
     llm_enabled = variant.endswith("_llm")
     track = f"{backbone}_{variant}"
     workspace = LOCAL_ROOT / "workspaces" / track
+    if resume:
+        prior_runs = sorted(workspace.glob("run_*"))
+        if not prior_runs:
+            raise RuntimeError(f"no timestamped AutoML workspace to resume: {workspace}")
+        workspace = prior_runs[-1]
     state_dir = LOCAL_ROOT / "sdk_state" / track
     os.environ["TAO_SDK_STATE_DIR"] = str(state_dir)
     os.environ["SLURM_BASE_RESULTS_DIR"] = str(REMOTE_ROOT)
@@ -277,10 +332,74 @@ def run(backbone: str, variant: str, resume: bool) -> dict:
         if status == "success" and rec.job_id:
             results_dir = sdk.get_job_results_dir(rec.job_id)
             event["results_dir"] = results_dir
-            event["checkpoint_retention"] = prune_periodic_checkpoints(results_dir)
+            try:
+                event["checkpoint_retention"] = prune_periodic_checkpoints(results_dir)
+            except Exception as exc:
+                # Artifact cleanup is secondary and must never terminate a
+                # healthy AutoML search after the result was reported.
+                event["checkpoint_retention_error"] = repr(exc)
+                logging.exception(
+                    "checkpoint retention failed for rec %s job %s",
+                    rec.id,
+                    rec.job_id,
+                )
         append_jsonl(event_log, event)
 
+    def eval_result(rec, job_id: str) -> float:
+        results_dir = sdk.get_job_results_dir(job_id)
+        metric = read_best_val_miou(results_dir)
+        logging.info(
+            "Rec %s: exact status.json val_miou=%s at epoch=%s",
+            rec.id,
+            metric["best_val_miou"],
+            metric["best_epoch"],
+        )
+        return float(metric["best_val_miou"])
+
     runner = AutoMLRunner(sdk=sdk, skill_dir=str(SKILL_DIR), action="train")
+    if resume:
+        # A prior controller may have persisted the three-decimal value found
+        # in console logs before its callback failed.  Re-read status.json so
+        # the resumed optimizer sees the full-precision objective.
+        from tao_automl import AutoML, query_status
+
+        persisted = query_status(str(workspace))
+        reconciler = AutoML(
+            workspace=str(workspace),
+            network=runner.skill_ctx.network_arch,
+            train_specs=build_spec(backbone),
+            settings=settings,
+            automl_hyperparameters=SEARCH_PARAMETERS,
+            custom_param_ranges=SEARCH_RANGES,
+            action="train",
+            search_schema=runner.skill_ctx.schema,
+            resume=True,
+        )
+        for prior in persisted.get("recommendations", []):
+            if prior.get("status") not in {"success", "done"} or not prior.get("job_id"):
+                continue
+            try:
+                precise = read_best_val_miou(
+                    sdk.get_job_results_dir(prior["job_id"])
+                )
+                reconciler.report_result(
+                    int(prior["rec_id"]),
+                    float(precise["best_val_miou"]),
+                    best_epoch=precise["best_epoch"],
+                    status="success",
+                )
+                logging.info(
+                    "Reconciled rec %s to exact val_miou=%s at epoch=%s",
+                    prior["rec_id"],
+                    precise["best_val_miou"],
+                    precise["best_epoch"],
+                )
+            except Exception:
+                logging.exception(
+                    "Could not reconcile exact metric for rec %s; preserving persisted value",
+                    prior.get("rec_id"),
+                )
+
     result = runner.run(
         image=IMAGE,
         spec_overrides=build_spec(backbone),
@@ -289,6 +408,7 @@ def run(backbone: str, variant: str, resume: bool) -> dict:
         custom_param_ranges=SEARCH_RANGES,
         on_recommendation=on_recommendation,
         on_result=on_result,
+        eval_fn=eval_result,
         workspace_path=str(workspace),
         resume=resume,
         gpu_count=8,

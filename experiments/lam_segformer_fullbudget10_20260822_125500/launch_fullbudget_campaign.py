@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import signal
@@ -33,14 +34,45 @@ def atomic_json(path: Path, value: object) -> None:
 
 
 def process_alive(pid: int) -> bool:
+    stat_path = Path(f"/proc/{pid}/stat")
     try:
         os.kill(pid, 0)
+        if stat_path.is_file() and stat_path.read_text().split()[2] == "Z":
+            return False
     except (OSError, ValueError):
         return False
     return True
 
 
+def controller_alive(row: dict) -> bool:
+    pid = int(row["pid"])
+    if not process_alive(pid):
+        return False
+    try:
+        command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode()
+    except OSError:
+        return False
+    return (
+        str(SCRIPT) in command
+        and f"--backbone {row['backbone']}" in command
+        and f"--variant {row['variant']}" in command
+    )
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume only controllers that are not currently alive",
+    )
+    parser.add_argument(
+        "--tracks",
+        nargs="*",
+        help="optional track names to launch or resume",
+    )
+    args = parser.parse_args()
+
     required = ("SLURM_HOSTNAME", "SLURM_USER", "NGC_KEY")
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
@@ -51,10 +83,11 @@ def main() -> None:
     for path in (LOCAL_ROOT / "logs", LOCAL_ROOT / "workspaces", LOCAL_ROOT / "sdk_state"):
         path.mkdir(parents=True, exist_ok=True)
     manifest_path = LOCAL_ROOT / "controller_manifest.json"
+    previous = {"controllers": []}
     if manifest_path.exists():
         previous = json.loads(manifest_path.read_text())
-        live = [row for row in previous.get("controllers", []) if process_alive(int(row["pid"]))]
-        if live:
+        live = [row for row in previous.get("controllers", []) if controller_alive(row)]
+        if live and not args.resume:
             raise RuntimeError(f"refusing duplicate launch; {len(live)} controllers are alive")
 
     host = os.environ["SLURM_HOSTNAME"].split(",", 1)[0]
@@ -78,16 +111,36 @@ def main() -> None:
         "edgeai_tao-ptm_image-foundation-model-clip/users/rarunachalam"
     )
 
+    previous_by_track = {
+        row["track"]: row for row in previous.get("controllers", [])
+    }
+    all_tracks = [
+        f"{backbone}_{variant}"
+        for backbone in BACKBONES
+        for variant in VARIANTS
+    ]
+    requested = set(args.tracks or all_tracks)
+    unknown = requested.difference(all_tracks)
+    if unknown:
+        raise RuntimeError(f"unknown tracks: {sorted(unknown)}")
+
     launched = []
     for backbone in BACKBONES:
         for variant in VARIANTS:
             track = f"{backbone}_{variant}"
+            if track not in requested:
+                continue
+            prior = previous_by_track.get(track)
+            if args.resume and prior and controller_alive(prior):
+                continue
             log_path = LOCAL_ROOT / "logs" / f"{track}.log"
             log_handle = log_path.open("a", encoding="utf-8")
             command = [
                 sys.executable, "-u", str(SCRIPT),
                 "--backbone", backbone, "--variant", variant,
             ]
+            if args.resume:
+                command.append("--resume")
             process = subprocess.Popen(
                 command,
                 cwd=str(SCRIPT.parent),
@@ -106,18 +159,24 @@ def main() -> None:
                     "pid": process.pid,
                     "log": str(log_path),
                     "started_at": now(),
+                    "resume": args.resume,
+                    "previous_pid": prior.get("pid") if prior else None,
                     "recommendations": 10,
                     "epochs_per_recommendation": 2000,
                     "gpus_per_recommendation": 8,
                 }
             )
 
+    merged = dict(previous_by_track)
+    merged.update({row["track"]: row for row in launched})
     manifest = {
         "campaign": CAMPAIGN,
         "remote_root": str(REMOTE_ROOT),
         "partitions": ["polar", "polar3", "polar4", "grizzly"],
-        "launched_at": now(),
-        "controllers": launched,
+        "launched_at": previous.get("launched_at", now()),
+        "last_updated_at": now(),
+        "controllers": [merged[track] for track in all_tracks if track in merged],
+        "last_launch": launched,
     }
     atomic_json(manifest_path, manifest)
     print(json.dumps(manifest, indent=2))
