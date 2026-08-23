@@ -10,7 +10,7 @@ aliases:
 - cosmos-rl
 - cosmos-framework
 automl_enabled: true
-container_image: nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
+container_image: nvcr.io/nvstaging/tao/cosmos_rl:7.0.2-rc-234-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
 backend_contracts:
   cosmos-framework: references/cosmos-framework-backend.yaml
   cosmos-rl: references/cosmos-rl-backend.yaml

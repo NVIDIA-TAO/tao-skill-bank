@@ -179,6 +179,6 @@ Each step 4 file looks like:
 
 ## Prerequisites
 
-- **Container**: `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch`. <!-- versions-key: images.tao_toolkit.pyt -->
+- **Container**: `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.0.2-rc-27-multiarch`. <!-- versions-key: images.tao_toolkit.pyt -->
 - **ffmpeg / ffprobe**: required for chunk captioning (Step 1b) and highlight extraction (Step 1c).
 - **VLM endpoint**: at least one — Gemini API key or OpenAI-compatible endpoint.

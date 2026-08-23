@@ -123,7 +123,7 @@ NGC auth once per instance — **never put `NGC_KEY` on argv** (it lands in the
 remote process table); pipe it to `--password-stdin`:
 
 ```bash
-IMG=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.pyt
+IMG=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.0.2-rc-27-multiarch  # versions-key: images.tao_toolkit.pyt
 
 # NGC auth (one-time per instance) — value never on argv.
 # Single-quoted locally so $NGC_KEY expands in the instance's shell; export it
