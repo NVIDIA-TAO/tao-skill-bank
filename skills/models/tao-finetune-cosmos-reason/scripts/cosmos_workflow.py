@@ -1738,6 +1738,16 @@ def _rl_spec(
             if args.scheduler == "constant"
             else args.scheduler,
             "optm_grad_norm_clip": args.gradient_clip,
+            # PEFT SFT on this stack spikes often enough to lose roughly half of
+            # all runs; the backend's guard rewinds parameters and optimizer
+            # moments past the spike. It retains four snapshots of every
+            # trainable tensor, which is ~1.2GB for a LoRA adapter but ~350GB
+            # for a dense 8.8B model, so request it for PEFT only.
+            "optm_loss_spike_rollback": (
+                args.loss_spike_rollback
+                if args.loss_spike_rollback is not None
+                else (10.0 if args.training_mode == "peft" else 0.0)
+            ),
             "param_dtype": args.precision,
             # Preserve Cosmos-RL's full reproducibility contract in addition to
             # the DataLoader-specific seed below.
@@ -5556,6 +5566,17 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--minimum-lr-factor", type=float, default=None)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--gradient-clip", type=float, default=1.0)
+    parser.add_argument(
+        "--loss-spike-rollback",
+        type=float,
+        default=None,
+        help=(
+            "Rewind to the last healthy step when the gradient norm or loss "
+            "exceeds this multiple of its rolling median. Omit to enable it at "
+            "10.0 for PEFT and leave it off for dense training, where the "
+            "snapshots would not fit."
+        ),
+    )
     parser.add_argument("--precision", default="bfloat16")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--sequence-length", type=int, default=0)
