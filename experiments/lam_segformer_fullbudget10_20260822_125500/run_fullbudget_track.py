@@ -214,6 +214,55 @@ print(json.dumps({"best_epoch":best_epoch,"best_val_miou":best_value}))'''
     return json.loads(ssh_python(script, lustre_path(results_dir), prefix))
 
 
+def repair_missing_brain_design(workspace: Path) -> bool:
+    """Recover the issued rec-0 design vector from durable controller specs.
+
+    Older AutoML controllers persisted the pending recommendation before the
+    Bayesian/BFBO brain state.  If the controller was restarted in that
+    window, the recovered result had no corresponding normalized X vector.
+    This campaign uses only linear continuous ranges, so rec-0 can be
+    reconstructed exactly from its persisted hyperparameter values.
+    """
+    automl_dir = workspace / ".automl"
+    brain_files = sorted((automl_dir / "brain").glob("*.json"))
+    controller_files = sorted((automl_dir / "controller").glob("*.json"))
+    if len(brain_files) != 1 or len(controller_files) != 1:
+        raise RuntimeError(f"unexpected AutoML state layout in {workspace}")
+    brain = json.loads(brain_files[0].read_text())
+    if brain.get("Xs") or brain.get("ys"):
+        return False
+    recommendations = json.loads(controller_files[0].read_text())
+    successful = [
+        row for row in recommendations if row.get("status") in {"success", "done"}
+    ]
+    if not successful:
+        return False
+    if len(successful) != 1 or int(successful[0]["id"]) != 0:
+        raise RuntimeError(
+            "automatic design-vector repair is restricted to one completed rec-0"
+        )
+    specs = successful[0]["specs"]
+    design = []
+    for parameter in SEARCH_PARAMETERS:
+        bounds = SEARCH_RANGES[parameter]
+        value = float(specs[parameter])
+        minimum = float(bounds["valid_min"])
+        maximum = float(bounds["valid_max"])
+        normalized = (value - minimum) / (maximum - minimum)
+        if not -1.0e-9 <= normalized <= 1.0 + 1.0e-9:
+            raise RuntimeError(
+                f"persisted {parameter}={value} is outside [{minimum}, {maximum}]"
+            )
+        design.append(min(1.0, max(0.0, normalized)))
+    brain["Xs"] = [design]
+    brain["ys"] = []
+    atomic_json(brain_files[0], brain)
+    logging.warning(
+        "Repaired missing rec-0 optimizer design vector in %s", brain_files[0]
+    )
+    return True
+
+
 def prune_periodic_checkpoints(results_dir: str) -> dict:
     script = r'''import glob,json,os,re,sys
 root=os.path.realpath(sys.argv[1])
@@ -399,6 +448,7 @@ def run(backbone: str, variant: str, resume: bool) -> dict:
                     "Could not reconcile exact metric for rec %s; preserving persisted value",
                     prior.get("rec_id"),
                 )
+        repair_missing_brain_design(workspace)
 
     result = runner.run(
         image=IMAGE,
