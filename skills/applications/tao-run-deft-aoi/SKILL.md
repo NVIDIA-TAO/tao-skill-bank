@@ -110,7 +110,8 @@ architecture. Backbone variants, staging, `HF_TOKEN`, and mount rules are owned
 by `references/visual-changenet.md`; the spec always points to a local mounted
 file. `NGC_KEY` gates container pulls. SigLIP mining is owned by
 `references/tao-mine-aoi-images.md`; AnomalyGen assets and network/air-gap rules
-are owned by `references/paidf-anomalygen.md` and `references/air-gap.md`.
+are owned by `references/tao-generate-anomalies.md` and
+`references/air-gap.md`.
 
 ## Train AutoML Policy
 
@@ -234,7 +235,7 @@ report hook, stage mapping, direct-container fallback, and path invariants.
 
 ## Stage Reference Modules
 
-Each pipeline stage maps to one underlying skill in the bank; the matching `references/*.md` file layers DEFT-loop conventions (mounts, output dirs, and `commit_stage.py` arguments) on top of the skill's generic instructions. **Read only the current stage's relevant section, then invoke the skill via the Skill tool or the documented direct-container fallback; never preload all stage references.** If a reference file is missing, stop and ask the user to reinstall the plugin. The full stage→reference→skill→ownership table lives in `references/scripts-and-agents.md` → **Stage Reference Modules**. The stages: `train`/`evaluate` (`references/visual-changenet.md`), `anomalygen` (`references/paidf-anomalygen.md`), `rca` (`references/tao-analyze-gaps-visual-changenet.md`), `routing` (`references/tao-route-visual-changenet-samples.md`), and `data_mining` (`references/tao-mine-aoi-images.md`).
+Each pipeline stage maps to one underlying skill in the bank; the matching `references/*.md` file layers DEFT-loop conventions (mounts, output dirs, and `commit_stage.py` arguments) on top of the skill's generic instructions. **Read only the current stage's relevant section, then invoke the skill via the Skill tool or the documented direct-container fallback; never preload all stage references.** If a reference file is missing, stop and ask the user to reinstall the plugin. The full stage→reference→skill→ownership table lives in `references/scripts-and-agents.md` → **Stage Reference Modules**. The stages: `train`/`evaluate` (`references/visual-changenet.md`), `anomalygen` (`references/tao-generate-anomalies.md`), `rca` (`references/tao-analyze-gaps-visual-changenet.md`), `routing` (`references/tao-route-visual-changenet-samples.md`), and `data_mining` (`references/tao-mine-aoi-images.md`).
 
 **Path rule (invariant).** Record absolute host artifact paths under
 `${RESULTS_DIR}`. For ChangeNet direct containers, mount

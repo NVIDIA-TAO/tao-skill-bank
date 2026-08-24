@@ -1,7 +1,7 @@
 # Cosmos AnomalyGen — DEFT Loop Reference
 
 Read this when the parent runs the `anomalygen` stage. The underlying skill
-`tao-skill-bank:paidf-anomalygen` (`data/paidf-anomalygen/SKILL.md`) owns
+`tao-skill-bank:tao-generate-anomalies` (`data/tao-generate-anomalies/SKILL.md`) owns
 the standalone 8-phase pipeline and parameter reference. This file is the
 DEFT-loop overlay: what to pass, how mounts resolve, the few invariants
 that gate the run, and the failure mode the loop has actually hit.
@@ -32,8 +32,8 @@ the Cosmos base-checkpoints cache.
 | Input | Path (e.g. `<project>=nvpcb`) | Holds | Source (bring-your-own OR auto-populate) |
 |---|---|---|---|
 | `checkpoint_dir` | `augmentation/anomalygen/checkpoints/<project>/` | `ag_config.yaml` + `checkpoints/{latest_checkpoint.txt, model/iter_<step>.pt, …}` | **Auto-download** by default from HF (see *Fine-tuned checkpoint sources* below); **BYO** to override (pre-stage the dir). |
-| `dataset_dir` | `augmentation/anomalygen/datasets/<project>/` | PCB reference data + `semantic_segmentation_labels.json` + `defect_spec.jsonl`. Sibling to `checkpoints/`. | **BYO:** pre-stage. **Auto:** `python3 -m scripts.utilities.prepare_dataset_uc1 <dir>` (HF `nvidia/Cosmos-AnomalyGen-PCB-Dataset`). `uc1` is the paidf-anomalygen skill's identifier for the PCB use-case — the script name is unrelated to `<project>`. |
-| `defect_spec` | `${dataset_dir}/defect_spec.jsonl` | One entry per defect_type (`<T>+<A>`); `spatial_dependency ∈ {free, text, cad}` | Bundled with `dataset_dir` (either path). Template at `data/paidf-anomalygen/assets/defect_spec_template.jsonl`. |
+| `dataset_dir` | `augmentation/anomalygen/datasets/<project>/` | PCB reference data + `semantic_segmentation_labels.json` + `defect_spec.jsonl`. Sibling to `checkpoints/`. | **BYO:** pre-stage. **Auto:** `python3 -m scripts.utilities.prepare_dataset_uc1 <dir>` (HF `nvidia/Cosmos-AnomalyGen-PCB-Dataset`). `uc1` is the `tao-generate-anomalies` skill's identifier for the PCB use-case — the script name is unrelated to `<project>`. |
+| `defect_spec` | `${dataset_dir}/defect_spec.jsonl` | One entry per defect_type (`<T>+<A>`); `spatial_dependency ∈ {free, text, cad}` | Bundled with `dataset_dir` (either path). Template at `data/tao-generate-anomalies/assets/defect_spec_template.jsonl`. |
 | `cosmos_models_dir` | `${COSMOS_MODELS_DIR}` (resolved by Pre-Flight) | Cosmos base checkpoints — `nvidia/Cosmos-Predict2-2B-Text2Image/`, `google-t5/`, `NVDINOV2/`, … | **BYO:** pre-stage. **Auto:** container's `${ANOMALYGEN_SCRIPTS}/check.sh \|\| download_checkpoints.sh`. Post-gate bootstrap runs this once with a `:rw` mount; persists across runs. |
 
 DEFT AOI is always a PCB workflow; the `<project>` placeholder is just the
@@ -122,7 +122,7 @@ counts before launching Phase 3 — GPU + model load cost is fixed, so a
 
 ## DEFT-Loop Parameters
 
-The parent invokes `tao-skill-bank:paidf-anomalygen` (or the wrappers
+The parent invokes `tao-skill-bank:tao-generate-anomalies` (or the wrappers
 directly) with:
 
 | Param | Value | Notes |
@@ -224,7 +224,7 @@ docker run --pull=never --rm \
   -w /workspace/paidf-anomalygen $AG_IMAGE \
   bash -lc '${ANOMALYGEN_SCRIPTS}/check.sh || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh'
 
-# (b) PCB reference dataset — prepare_dataset_uc1.py is the paidf-anomalygen
+# (b) PCB reference dataset — prepare_dataset_uc1.py is the `tao-generate-anomalies`
 # skill's PCB-dataset fetcher (`uc1` = the skill's identifier for the PCB
 # use-case; unrelated to the host-side <project> directory label).
 if [ ! -f "$DS/defect_spec.jsonl" ]; then

@@ -142,7 +142,7 @@ Probe the AnomalyGen assets read-only and report each as present or
 the dataset directory with `defect_spec.jsonl` and
 `semantic_segmentation_labels.json`, and the Cosmos base-checkpoints cache.
 Probing only — the bootstrap that populates them is post-gate and is owned by
-`references/paidf-anomalygen.md`. In air-gapped runs every asset must be
+`references/tao-generate-anomalies.md`. In air-gapped runs every asset must be
 pre-staged; report a missing one instead of planning a download.
 
 ## 6. Model and evaluator contract

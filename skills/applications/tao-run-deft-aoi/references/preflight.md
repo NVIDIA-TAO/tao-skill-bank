@@ -133,9 +133,9 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    missing asset is a hard stop. NVIDIA publishes the PCB fine-tuned
    checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset
    (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on HuggingFace;
-   paidf-anomalygen downloads them automatically on first use. Users who want
-   to provide their own fine-tuned checkpoint or custom dataset can pre-stage
-   the directory to override. Do not ask the user about missing AnomalyGen
+   the `tao-generate-anomalies` skill downloads them automatically on first
+   use. Users who want to provide their own fine-tuned checkpoint or custom
+   dataset can pre-stage the directory to override. Do not ask the user about missing AnomalyGen
    assets — treat empty slots as `will auto-fetch from HF (default)` and
    proceed. If `base_checkpoints/` is pre-staged, export its host path as
    `COSMOS_MODELS_DIR` for downstream mounts. Stage the ChangeNet pretrained
@@ -144,7 +144,7 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    to the staged file and bind-mount it per `references/visual-changenet.md` →
    *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script
    exits non-zero; there is no URL fallback. See
-   `references/paidf-anomalygen.md` for invocation and mount layout.
+   `references/tao-generate-anomalies.md` for invocation and mount layout.
 9. **GPU memory sanity check.** ChangeNet classify with C-RADIOv2-B (ViT-B) at the spec defaults (`batch_size: 64`, `image_width/height: 224`, `cls_weight: [1.0, 10.0]`, learnable difference modules) OOMs on a single 48GB-class GPU. Inspect `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` and warn if the assembled spec's `dataset.classify.batch_size` is too large for the available memory: as a rule of thumb, **≤ 16 on 48GB GPUs, ≤ 8 on 24GB GPUs**. Surface the recommendation in the Pre-Flight Summary's `GPUs` row — let the user accept or override before launch rather than failing 30 seconds into training.
 10. Run train/validation leakage check before resuming any prior run.
 
