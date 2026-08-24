@@ -1,5 +1,5 @@
 ## Description: <br>
-Start, query, and stop a network-specific TAO inference microservice by delegating container execution to the appropriate platform skill, handling container image resolution, job-payload JSON construction, and the service registry. <br>
+NV-Tesseract AD Diffusion — diffusion-based anomaly detection and fine-tuning for multivariate time series. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,13 +9,13 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who want to deploy NVIDIA TAO model checkpoints as inference microservices, send inference requests to running containers, or manage service lifecycle across local Docker, Brev, Slurm, and Kubernetes platforms. <br>
+Developers and engineers use this skill to fine-tune and run inference with NV-Tesseract AD Diffusion for diffusion-based anomaly detection on multivariate time series data. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Yes] <br>
+**Requires API Key or External Credential:** [Optional] <br>
 **Credential Type(s):** [API key] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
@@ -25,15 +25,15 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [TAO Skill Bank repository](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
-- [service.yaml](references/service.yaml) <br>
-- [request.yaml](references/request.yaml) <br>
-- [code-templates.yaml](references/code-templates.yaml) <br>
+- [NV-Tesseract Source Repository](https://github.com/NVIDIA/NV-Tesseract) <br>
+- [AD Diffusion README (SDK reference, architecture, API docs)](https://github.com/NVIDIA/NV-Tesseract/blob/main/ad_diffusion/README.md) <br>
+- [Dataset Format and CSV Conventions](https://github.com/NVIDIA/NV-Tesseract/blob/main/ad_diffusion/examples/datasets/README.md) <br>
+- [Pretrained Weights (Hugging Face)](https://huggingface.co/nvidia/nv-tesseract-ad-diffusion) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Shell commands, Code, Configuration instructions] <br>
-**Output Format:** [Markdown with inline Python code blocks] <br>
+**Output Format:** [Markdown with inline bash and Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -44,35 +44,35 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive), tier 3 live agent evaluation against skill-evaluator-dataset-snapshot/1. <br>
+1 evaluation task (1 positive) — skill identification and workflow outline for fine-tuning and inference with NV-Tesseract AD Diffusion. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
 - Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Verifies final-answer correctness against the reference answer. <br>
-- Discoverability: Checks whether the expected skill was found and executed when needed. <br>
-- Effectiveness: Equal-weight mean of goal completion and expected workflow adherence. <br>
-- Efficiency: Evaluates routing quality, workspace-aware skill reads, and productive tool use. <br>
+- Correctness: Checks whether the answer is correct against the reference answer. <br>
+- Discoverability: Checks whether the right skill was found and executed when needed. <br>
+- Effectiveness: Checks whether the skill helped complete the user’s goal and expected workflow. <br>
+- Efficiency: Checks for routing quality, workspace-aware skill reads, and productive tool use. <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Detects unsafe operations, secret leakage, and unauthorized access. <br>
-- `accuracy`: Measures final-answer correctness against the reference answer. <br>
+- `security`: Verifies absence of unsafe operations, secret leakage, and unauthorized access. <br>
 - `skill_execution`: Verifies whether the expected skill was found and executed. <br>
-- `skill_efficiency`: Assesses routing quality, workspace-aware skill reads, and productive tool use. <br>
-- `goal_accuracy`: Determines whether the user's goal was achieved. <br>
-- `behavior_check`: Checks whether the expected workflow behavior was followed. <br>
+- `skill_efficiency`: Verifies routing quality, workspace-aware skill reads, and productive tool use. <br>
+- `accuracy`: Verifies final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Verifies whether the user’s goal was achieved. <br>
+- `behavior_check`: Verifies whether the expected workflow behavior was followed. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 50% → 96% (+45 points) | 34% → 60% (+26 points) |
+| Overall | 52% → 95% (+43 points) | 43% → 47% (+4 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
-| Correctness | 40% → 100% (+60 points) | 20% → 100% (+80 points) |
+| Correctness | 40% → 100% (+60 points) | 60% → 80% (+20 points) |
 | Discoverability | 50% → 100% (+50 points) | 0% → 0% (±0 points) |
-| Effectiveness | 42% → 95% (+53 points) | 48% → 100% (+52 points) |
-| Efficiency | 20% → 83% (+63 points) | 0% → 0% (±0 points) |
+| Effectiveness | 37% → 100% (+63 points) | 53% → 53% (±0 points) |
+| Efficiency | 35% → 75% (+40 points) | 0% → 0% (±0 points) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
