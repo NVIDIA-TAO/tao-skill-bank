@@ -43,3 +43,5 @@ In air-gap mode:
 The same user gate, job-record ordering, four verbs, state contract, frozen
 Benchmark hash, and bare annotation contract still apply.
 Never read `references/network-bootstrap.md` in this mode.
+
+When AnomalyGen will run, its base cache and Guardrail safety model must be fully pre-staged, and the base cache must be verified offline with the container's own check before SDG.

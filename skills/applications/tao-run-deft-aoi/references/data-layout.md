@@ -55,14 +55,14 @@ creates (paths under `<workspace>` unless absolute):
 ├── augmentation/
 │   ├── mining_pool/
 │   │   └── mining_pool.csv                  # append-only production-line samples; VCN paths resolve against <workspace>/images
-│   └── anomalygen/                          # [Optional] User override slots for AnomalyGen assets.
-│       │                                    # If pre-staged, the loop uses these host paths verbatim.
-│       │                                    # If absent, the tao-generate-anomalies skill handles asset acquisition
-│       │                                    # internally — exact storage location is its concern, not the loop's.
+│   └── anomalygen/                          # AnomalyGen assets; required when the stage runs.
+│       │                                    # Fine-tuned checkpoint: user pre-staged PAIDF-1.1-compatible LoRA package.
+│       │                                    # BYO required, never auto-downloaded.
+│       │                                    # Dataset/base assets may auto-fetch in network-enabled mode.
 │       │                                    # `<project>` is the project label (e.g. UC1).
 │       │                                    # See references/tao-generate-anomalies.md for details.
-│       ├── checkpoints/<project>/           # Fine-tuned PCB AnomalyGen model override (ag_config.yaml + checkpoints/{latest_checkpoint.txt, model/iter_<step>.pt}).
-│       ├── base_checkpoints/                # Cosmos base models cache override (~22 GB for 2B-only, ~140 GB with 14B + T5-11b).
+│       ├── checkpoints/<project>/           # ag_config.yaml + iter_<step>.pt (e.g. nvpcb/nvidia/Cosmos-AnomalyGen-PCB-2B/iter_000015000.pt).
+│       ├── base_checkpoints/                # Manifest-pinned Cosmos base models cache (~22 GB; Predict2 Text2Image 2B).
 │       └── datasets/<project>/              # PCB reference data override — defect_spec.jsonl + per-texture image/mask subdirs.
 └── results/run_<YYYYMMDD_HHMMSS>/           # created/resumed by this workflow (= ${RESULTS_DIR})
 ```

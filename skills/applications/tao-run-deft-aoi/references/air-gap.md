@@ -51,6 +51,10 @@ The normal Pre-Flight approval gate still applies. Air-gap mode changes asset
 resolution and network behavior, not user authorization or stage ordering.
 Never read `references/network-bootstrap.md` in this mode.
 
+## AnomalyGen staged set
+
+When AnomalyGen will run, its base cache and Guardrail safety model must be fully pre-staged, and the base cache must be verified offline with the container's own check before SDG.
+
 ## Pre-Flight Evidence
 
 Include these rows in the Summary:
