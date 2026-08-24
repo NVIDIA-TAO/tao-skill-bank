@@ -75,7 +75,7 @@ COSMOS_EMBED_IMAGE_DEFAULT=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed  # 
 COSMOS_EMBED_IMAGE="${COSMOS_EMBED_IMAGE:-$COSMOS_EMBED_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
 DOCKER_COMMON=(
-  --rm --gpus all --ipc=host --network=host
+  --rm --gpus all --shm-size=8g --network=host
   --shm-size=64g
   --ulimit memlock=-1
   --ulimit stack=67108864

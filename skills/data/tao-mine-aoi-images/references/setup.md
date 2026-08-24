@@ -19,7 +19,7 @@ A GPU is required for both the encoder forward pass and the cuML/cuDF k-NN searc
 
 ```bash
 WORKSPACE=<absolute path that contains all parquets, outputs, and the source-pool images>
-DOCKER="docker run --gpus all --rm --ipc=host -v $WORKSPACE:$WORKSPACE -w $WORKSPACE $DS_IMAGE"
+DOCKER="docker run --gpus all --rm --shm-size=8g -v $WORKSPACE:$WORKSPACE -w $WORKSPACE $DS_IMAGE"
 ```
 
 Do **not** pass `--user $(id -u):$(id -g)`. The `data_services` image imports `transformers` at startup, which calls `getpass.getuser()` → `pwd.getpwuid(os.getuid())`. With a non-root host UID and no matching `/etc/passwd` entry inside the container, this raises `KeyError: 'getpwuid(): uid not found: <uid>'` before any embedding or mining work starts. The container runs as root; chown outputs back to the host UID afterward if needed:

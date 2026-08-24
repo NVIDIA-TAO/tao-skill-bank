@@ -208,7 +208,7 @@ def run_conversion(args: argparse.Namespace) -> None:
         "docker",
         "run",
         "--rm",
-        "--ipc=host",
+        "--shm-size=8g",
         *docker_env_args(args),
         "-e",
         "HOME=/cache/home",

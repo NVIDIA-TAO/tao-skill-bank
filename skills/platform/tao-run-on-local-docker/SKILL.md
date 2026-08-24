@@ -224,7 +224,7 @@ HOST_UID="$(id -u)"; HOST_GID="$(id -g)"
 TAO_HOME=/results/.tao-runtime/home        # must live on a writable mount
 mkdir -p "$RESULTS_DIR/.tao-runtime/home"
 
-docker run --rm --gpus all --ipc=host \
+docker run --rm --gpus all --shm-size=8g \
   --ulimit memlock=-1 --ulimit stack=67108864 \
   --user "$HOST_UID:$HOST_GID" \
   -e USER="$HOST_UID" -e LOGNAME="$HOST_UID" \

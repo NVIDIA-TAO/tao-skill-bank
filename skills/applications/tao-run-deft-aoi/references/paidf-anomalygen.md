@@ -222,7 +222,7 @@ calls — same image, READ-ONLY mount on the cosmos cache.
 STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' $CKPT/checkpoints/latest_checkpoint.txt)
 
 # Phase 2: AMP routing → testcase.jsonl  (~10s, no GPU)
-docker run --rm --gpus all --ipc=host --shm-size=16g \
+docker run --rm --gpus all --shm-size=8g --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -234,7 +234,7 @@ docker run --rm --gpus all --ipc=host --shm-size=16g \
     --amp-output-dir $RUN_DIR/amp --output-jsonl $RUN_DIR/testcase.jsonl"
 
 # Phase 3: SDG diffusion → reconstructed_image/ + original_image/  (1-3 min on Blackwell)
-docker run --rm --gpus all --ipc=host --shm-size=16g \
+docker run --rm --gpus all --shm-size=8g --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
