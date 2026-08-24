@@ -286,7 +286,8 @@ base model, which establishes the zero-shot KPI:
 
 Before every `proxy_rcca` commit, write `proxy_rcca/RCCA_Report.md` from the
 three Proxy RCCA JSON artifacts using `references/RCCA_REPORT_TEMPLATE.md`,
-then pass it with `--rcca-report`.
+then pass it with `--rcca-report`. Artifact requirements, section headings,
+and state fields come from `references/rcca-artifact-manifest.json`.
 
 For each `iterN` when the frozen Benchmark gate is unmet:
 

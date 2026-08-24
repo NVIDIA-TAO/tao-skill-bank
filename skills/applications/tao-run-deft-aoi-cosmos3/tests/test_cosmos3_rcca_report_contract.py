@@ -129,6 +129,41 @@ class Cosmos3RccaReportContractTests(unittest.TestCase):
         self.assertIn("references/RCCA_REPORT_TEMPLATE.md", message)
 
     def test_proxy_rcca_commit_records_valid_report(self) -> None:
+        manifest = json.loads(
+            commit_stage.RCCA_ARTIFACT_MANIFEST.read_text(encoding="utf-8")
+        )
+        classes = manifest["artifact_classes"]
+        produced = classes["container_or_script_produced_required"]
+        self.assertEqual(
+            [entry["path"] for entry in produced],
+            [
+                "gaps_summary.json",
+                "false_accepts.json",
+                "false_rejects.json",
+            ],
+        )
+        self.assertEqual(
+            [entry["state_field"] for entry in produced],
+            [
+                "proxy_gaps_summary",
+                "false_accepts_json",
+                "false_rejects_json",
+            ],
+        )
+        report_entry = classes["agent_produced_required"][0]
+        self.assertEqual(report_entry["path"], "RCCA_Report.md")
+        self.assertEqual(report_entry["state_field"], "rcca_report")
+        self.assertEqual(
+            report_entry["validation"]["required_headings"],
+            [
+                "Verdict",
+                "False-Accept Breakdown",
+                "False-Reject Breakdown",
+                "Top-K Worst Samples",
+                "Per-Defect Analysis",
+                "Recommended Actions",
+            ],
+        )
         report = self.proxy_dir / "RCCA_Report.md"
         report.write_text(FULL_RCCA_REPORT, encoding="utf-8")
 

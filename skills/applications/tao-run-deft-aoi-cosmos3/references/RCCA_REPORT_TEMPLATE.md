@@ -2,7 +2,8 @@
 
 Build this report from `gaps_summary.json`, `false_accepts.json`, and
 `false_rejects.json`. Replace the guidance below with concrete evidence before
-committing `proxy_rcca`.
+committing `proxy_rcca`. The machine-readable artifact and heading contract is
+`references/rcca-artifact-manifest.json`.
 
 ## 1. Verdict
 

@@ -54,7 +54,8 @@ event. The bundled `commit_stage.py` owns that write.
    and false rejects as the only RCCA source.
 6. Before committing `proxy_rcca`, write `proxy_rcca/RCCA_Report.md` from the
    three machine artifacts using `references/RCCA_REPORT_TEMPLATE.md` and pass
-   it with `--rcca-report`.
+   it with `--rcca-report`; `references/rcca-artifact-manifest.json` is the
+   machine-readable source for artifact requirements and state fields.
 
 Baseline may stop immediately when the Benchmark gate passes. Baseline does not
 count against `max_iterations`.

@@ -20,6 +20,12 @@ import sys
 import tempfile
 from typing import Any
 
+RCCA_ARTIFACT_MANIFEST = (
+    pathlib.Path(__file__).resolve().parents[1]
+    / "references"
+    / "rcca-artifact-manifest.json"
+)
+
 from record_metric_result import commit as commit_metric_result
 from render_report import render as render_html_report
 
@@ -38,14 +44,6 @@ STAGES = (
     "loop_stop",
 )
 SKIPPABLE_STAGES = ("anomalygen",)
-RCCA_REPORT_HEADINGS = (
-    "Verdict",
-    "False-Accept Breakdown",
-    "False-Reject Breakdown",
-    "Top-K Worst Samples",
-    "Per-Defect Analysis",
-    "Recommended Actions",
-)
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -113,17 +111,67 @@ def _normalized_heading(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
 
-def _required_rcca_report(
-    value: pathlib.Path | None, phase_root: pathlib.Path
-) -> str:
-    report = pathlib.Path(_required_file(value, "--rcca-report"))
-    expected = (phase_root / "proxy_rcca" / "RCCA_Report.md").resolve()
-    if report != expected:
-        raise ValueError(f"--rcca-report must point to {expected}")
+def _rcca_manifest_entries(
+    manifest: dict[str, Any], class_name: str
+) -> list[dict[str, Any]]:
+    classes = manifest.get("artifact_classes")
+    entries = classes.get(class_name) if isinstance(classes, dict) else None
+    if not isinstance(entries, list) or not entries or not all(
+        isinstance(entry, dict) for entry in entries
+    ):
+        raise ValueError(
+            f"RCCA artifact manifest {class_name} must be a non-empty array"
+        )
+    return entries
+
+
+def _rcca_manifest_path(
+    output_dir: pathlib.Path, entry: dict[str, Any]
+) -> pathlib.Path:
+    value = entry.get("path")
+    if not isinstance(value, str) or not value:
+        raise ValueError("RCCA artifact manifest entry has no non-empty path")
+    relative = pathlib.Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(
+            f"RCCA artifact manifest path must be relative: {value}"
+        )
+    return output_dir / relative
+
+
+def _rcca_argument(
+    args: argparse.Namespace, entry: dict[str, Any]
+) -> tuple[pathlib.Path | None, str, str]:
+    state_field = entry.get("state_field")
+    if not isinstance(state_field, str) or not state_field:
+        raise ValueError(
+            f"RCCA artifact {entry.get('path')} must declare state_field"
+        )
+    argument = state_field.removesuffix("_json")
+    flag = f"--{argument.replace('_', '-')}"
+    return getattr(args, argument, None), flag, state_field
+
+
+def _validate_rcca_report(
+    report: pathlib.Path, entry: dict[str, Any], flag: str
+) -> None:
+    validation = entry.get("validation")
+    headings = (
+        validation.get("required_headings")
+        if isinstance(validation, dict)
+        and validation.get("type") == "markdown_sections"
+        else None
+    )
+    if not isinstance(headings, list) or not all(
+        isinstance(heading, str) and heading for heading in headings
+    ):
+        raise ValueError(
+            "RCCA report manifest must declare markdown required_headings"
+        )
     try:
         text = report.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
-        raise ValueError(f"--rcca-report must be UTF-8 text: {report}") from exc
+        raise ValueError(f"{flag} must be UTF-8 text: {report}") from exc
     actual = {
         _normalized_heading(match.group(1))
         for match in re.finditer(
@@ -134,15 +182,62 @@ def _required_rcca_report(
     }
     missing = [
         heading
-        for heading in RCCA_REPORT_HEADINGS
+        for heading in headings
         if _normalized_heading(heading) not in actual
     ]
     if missing:
         raise ValueError(
-            "--rcca-report is missing required section heading(s): "
+            f"{flag} is missing required section heading(s): "
             f"{', '.join(missing)}; follow references/RCCA_REPORT_TEMPLATE.md"
         )
-    return str(report)
+
+
+def _required_rcca_artifacts(
+    args: argparse.Namespace, phase_root: pathlib.Path
+) -> dict[str, str]:
+    try:
+        manifest = json.loads(
+            RCCA_ARTIFACT_MANIFEST.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"cannot load RCCA artifact manifest: {RCCA_ARTIFACT_MANIFEST} ({exc})"
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("RCCA artifact manifest root must be an object")
+
+    output_dir = phase_root / "proxy_rcca"
+    state_artifacts: dict[str, str] = {}
+    for class_name in (
+        "container_or_script_produced_required",
+        "agent_produced_required",
+    ):
+        for entry in _rcca_manifest_entries(manifest, class_name):
+            if entry.get("kind") != "file":
+                raise ValueError(
+                    f"RCCA artifact {entry.get('path')} must have kind=file"
+                )
+            value, flag, state_field = _rcca_argument(args, entry)
+            artifact = pathlib.Path(_required_file(value, flag))
+            if class_name == "agent_produced_required":
+                expected = _rcca_manifest_path(output_dir, entry).resolve()
+                if artifact != expected:
+                    raise ValueError(
+                        f"{flag} must point to the manifest artifact: {expected}"
+                    )
+            else:
+                artifact = pathlib.Path(
+                    _within(str(artifact), phase_root, flag)
+                )
+            validation = entry.get("validation")
+            if isinstance(validation, dict):
+                _validate_rcca_report(artifact, entry, flag)
+            elif validation != "non_empty":
+                raise ValueError(
+                    f"RCCA artifact {entry.get('path')} has unsupported validation"
+                )
+            state_artifacts[state_field] = str(artifact)
+    return state_artifacts
 
 
 def _parquet_row_count(path: str, flag: str) -> int:
@@ -289,24 +384,7 @@ def _apply_success(
             "--proxy-results",
         )
     elif stage == "proxy_rcca":
-        phase["proxy_gaps_summary"] = _within(
-            _required_file(args.proxy_gaps_summary, "--proxy-gaps-summary"),
-            phase_root,
-            "--proxy-gaps-summary",
-        )
-        phase["false_accepts_json"] = _within(
-            _required_file(args.false_accepts, "--false-accepts"),
-            phase_root,
-            "--false-accepts",
-        )
-        phase["false_rejects_json"] = _within(
-            _required_file(args.false_rejects, "--false-rejects"),
-            phase_root,
-            "--false-rejects",
-        )
-        phase["rcca_report"] = _required_rcca_report(
-            args.rcca_report, phase_root
-        )
+        phase.update(_required_rcca_artifacts(args, phase_root))
     elif stage == "evaluate_benchmark":
         phase["benchmark_results_json"] = _within(
             _required_file(args.benchmark_results, "--benchmark-results"),
