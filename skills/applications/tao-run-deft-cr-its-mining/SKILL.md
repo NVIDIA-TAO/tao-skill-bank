@@ -5,7 +5,7 @@ description: >-
   focused on the non-reasoning classification/evaluation path. Use when the user asks for a
   DEFT CR ITS mining workflow, traffic-camera Cosmos Reason improvement loop, collision-identification workflow with data mining, or iterative Cosmos-RL refinement driven by gap analysis.
 license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
+compatibility: Requires Docker with NVIDIA Container Toolkit, Python 3.11 with pandas, pyarrow, PyYAML, and huggingface_hub, plus the selected platform CLI.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -22,9 +22,13 @@ tags:
 
 # Skill: TAO Run DEFT CR ITS Mining
 
+## Prerequisites
+
+Before preflight, follow `references/host-prerequisites.md`; use its selected `DEFT_PYTHON` for every bundled helper and stop if the dependency probe fails.
+
 ## Bundled Resources
 
-Resolve `DEFT_SKILL_ROOT` to the absolute directory containing this installed `SKILL.md`. The agent or plugin runtime resolves this path; it is not a user input. Run bundled helpers with `run_script("scripts/<name>.py", ...)` when the runtime provides it. Otherwise invoke them directly with `python3 "$DEFT_SKILL_ROOT/scripts/<name>.py"`. Never require a `tao-skills-external` checkout or change the user's working directory to a repository root.
+Resolve `DEFT_SKILL_ROOT` to the absolute directory containing this installed `SKILL.md`. The agent or plugin runtime resolves this path; it is not a user input. Invoke bundled helpers with `"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/<name>.py" ...`. Never require a skill-bank checkout or change the user's working directory to a repository root.
 
 This workflow invokes `tao-finetune-cosmos-embed`, `tao-analyze-gaps-vlm-bcq`, `tao-mine-nearest-neighbors`, and the selected platform skill by registered skill name. Those skills own their credentials, actions, and bundled assets. Cosmos Reason is workflow-owned: resolve `images.tao_toolkit.deft_cosmos_reason`, generate TOMLs with this workflow's helpers and configured base templates, and submit the exact train/evaluate commands in `references/mining-loop.md` through the selected platform. Do not invoke `tao-finetune-cosmos-reason` for planning, templates, action bundles, commands, or hook resolution.
 
@@ -118,12 +122,12 @@ mining:
 
 `run`, `kpi_dataset`, `train_dataset`, `cosmos_reason`, and `mining` are required; configured paths must be absolute inside `<deft_workspace>`. `cosmos_reason.baseline_model_path` must be a Cosmos Reasoner checkpoint. Convert a native Omni checkpoint first with `tao-finetune-cosmos-reason`. The optional `continual_model` defaults to `false`, which starts every iteration from the baseline. `embeddings_modality` selects KPI targets; train/source embeddings always include text and video. The optional `mine_unique_only` defaults to `true` and filters previously mined train/source paths from later iterations.
 
-All workflow outputs go under `<deft_workspace>/results`; do not add a separate output root to `workflow.yaml`. `run.name` is not just a display label: if it is set, use `<deft_workspace>/results/<run.name>` as the run directory and explain that all stage outputs, including `baseline/`, `cosmos_embed_output/`, `embedding_parquets/`, and `iter_<N>/`, are nested under that run directory. If `run.name` is `null`, create `<deft_workspace>/results/run_<YYYYMMDD_HHMMSS>` and record the resolved run directory in `deft_state.json` so resume never recomputes it.
+Write all workflow outputs under `<deft_workspace>/results`; do not add another output root. When `run.name` is set, use `<deft_workspace>/results/<run.name>` and explain that `baseline/`, `cosmos_embed_output/`, `embedding_parquets/`, and `iter_<N>/` are nested there. When it is `null`, create `<deft_workspace>/results/run_<YYYYMMDD_HHMMSS>` and record that path in `deft_state.json` so resume never recomputes it.
 
 Before running any workflow stage, validate the config:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/verify_workflow_yaml.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/verify_workflow_yaml.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml"
 ```
@@ -137,14 +141,14 @@ If the user does not provide custom Cosmos Reason or Cosmos Embed templates, cop
 Initialize a run once after validation:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/initialize_workflow.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/initialize_workflow.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml"
 ```
 
 Use the printed `run_dir` as `RUN_DIR` for every later command. If `run.name` is `null`, never ask another preparation script to derive the run directory again; pass `--run-dir "$RUN_DIR"` so all stages write into the initialized run.
 
-Do not use `--force` for an ordinary resume. It rewrites the state/config snapshot but intentionally leaves `loop_log.jsonl` and all stage artifacts in place. Use it only to repair the snapshot for the same run; choose a new `run.name` for a clean restart. Before resuming, run `$DEFT_SKILL_ROOT/scripts/resume_position.py --run-dir "$RUN_DIR"` and continue from the reported stage.
+Do not use `--force` for an ordinary resume. It rewrites the state/config snapshot but intentionally leaves `loop_log.jsonl` and all stage artifacts in place. Use it only to repair the snapshot for the same run; choose a new `run.name` for a clean restart. Before resuming, run `"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/resume_position.py" --run-dir "$RUN_DIR"` and continue from the reported stage.
 
 ## Baseline Evaluation
 
@@ -161,7 +165,7 @@ The script downloads remote HF checkpoints before Cosmos Embed runs because Cosm
 Use `scripts/prepare_cosmos_embed_inference.py` once. It prepares both the KPI dataset and the train dataset:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_embed_inference.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_embed_inference.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml" \
   --run-dir "$RUN_DIR"
