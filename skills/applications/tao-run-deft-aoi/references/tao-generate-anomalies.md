@@ -14,9 +14,9 @@ by setting `num_search_run=0` and `nn_threshold=0`, or invoke the two
 wrappers directly (see *Per-iteration invocation* below).
 
 **Once, before the loop starts**, the post-gate bootstrap (SKILL.md →
-*Workflow* step 2) populates whichever assets are missing — Cosmos base
-checkpoints, PCB reference dataset, and the AnomalyGen fine-tuned
-checkpoint — all auto-download by default; bring-your-own to override.
+*Workflow* step 2) populates missing Cosmos base checkpoints and the PCB
+reference dataset. The AnomalyGen fine-tuned checkpoint is never downloaded:
+a PAIDF-compatible package must already be staged.
 Pre-Flight only **probes** status and reports it — no side-effecting work
 happens before the user gate.
 
@@ -29,12 +29,12 @@ input before running the per-iteration commands.
 Three independent inputs under `<workspace>/augmentation/anomalygen/` plus
 the Cosmos base-checkpoints cache.
 
-| Input | Path (e.g. `<project>=nvpcb`) | Holds | Source (bring-your-own OR auto-populate) |
+| Input | Path (e.g. `<project>=nvpcb`) | Holds | Source policy |
 |---|---|---|---|
-| `checkpoint_dir` | `augmentation/anomalygen/checkpoints/<project>/` | `ag_config.yaml` + `checkpoints/{latest_checkpoint.txt, model/iter_<step>.pt, …}` | **Auto-download** by default from HF (see *Fine-tuned checkpoint sources* below); **BYO** to override (pre-stage the dir). |
+| `checkpoint_dir` | `augmentation/anomalygen/checkpoints/<project>/` | A nested package such as `nvidia/Cosmos-AnomalyGen-PCB-2B/{ag_config.yaml,iter_000015000.pt}`; the flat model file is normalized below. | **BYO/pre-staged REQUIRED:** finetune the AnomalyGen LoRA with the container `texture_ft` recipe using the `uc1_pcb` layout, then stage `ag_config.yaml` and `iter_<step>.pt` as documented below. There is no checkpoint download fallback. |
 | `dataset_dir` | `augmentation/anomalygen/datasets/<project>/` | PCB reference data + `semantic_segmentation_labels.json` + `defect_spec.jsonl`. Sibling to `checkpoints/`. | **BYO:** pre-stage. **Auto:** `python3 -m scripts.utilities.prepare_dataset_uc1 <dir>` (HF `nvidia/Cosmos-AnomalyGen-PCB-Dataset`). `uc1` is the `tao-generate-anomalies` skill's identifier for the PCB use-case — the script name is unrelated to `<project>`. |
 | `defect_spec` | `${dataset_dir}/defect_spec.jsonl` | One entry per defect_type (`<T>+<A>`); `spatial_dependency ∈ {free, text, cad}` | Bundled with `dataset_dir` (either path). Template at `data/tao-generate-anomalies/assets/defect_spec_template.jsonl`. |
-| `cosmos_models_dir` | `${COSMOS_MODELS_DIR}` (resolved by Pre-Flight) | Cosmos base checkpoints — `nvidia/Cosmos-Predict2-2B-Text2Image/`, `google-t5/`, `NVDINOV2/`, … | **BYO:** pre-stage. **Auto:** container's `${ANOMALYGEN_SCRIPTS}/check.sh \|\| download_checkpoints.sh`. Post-gate bootstrap runs this once with a `:rw` mount; persists across runs. |
+| `cosmos_models_dir` | `${COSMOS_MODELS_DIR}` (resolved by Pre-Flight) | The container-required 2B workflow assets | **BYO:** pre-stage. **Auto:** the container's `check.sh` checks its own contract before the explicit Text2Image 2B download. Post-gate bootstrap runs this once with a `:rw` mount; persists across runs. |
 
 DEFT AOI is always a PCB workflow; the `<project>` placeholder is just the
 directory label the user picked for this AnomalyGen project's checkpoint +
@@ -47,27 +47,51 @@ container's first probe hit. The container handles both flat and
 split-by-texture layouts transparently via `validate_amp_inputs.py`; the
 loop passes the workspace dir verbatim, no pre-staging.
 
-## Fine-tuned checkpoint sources
+## PAIDF checkpoint compatibility and staging
 
-The 2B Cosmos-Predict2 finetunes for each UC are published on Hugging Face
-and can be downloaded with a helper script:
+The fine-tuned checkpoint must match the **major.minor** version of the
+container resolved from `images.metropolis_sdg.paidf_anomalygen`. PAIDF 1.0
+and 1.1 checkpoints are not interchangeable: the GB-scale, full-finetune
+`iter_000014000.pt` published in the 1.0-era Hugging Face repo
+`nvidia/Cosmos-AnomalyGen-PCB-2B` is incompatible with a PAIDF 1.1 container.
+PAIDF 1.1 uses the DEFT team's per-defect LoRA recipe on a Cosmos3 backbone.
 
-```bash
-scripts/utilities/download_anomalygen_checkpoints.sh --uc {pcb|metal|glass|all} \
-    [--checkpoint-dir checkpoints]
+Finetune the AnomalyGen LoRA with the container's `texture_ft` recipe using the
+`uc1_pcb` layout (`dataset_path/<texture>/anomaly_image/` paired with
+`dataset_path/<texture>/mask/<defect>/`), then stage the resulting
+`ag_config.yaml` and `iter_<step>.pt` before Pre-Flight. The uc1 reference
+dataset remains auto-downloadable, and the known PCB package uses this exact
+layout:
+
+```text
+augmentation/anomalygen/checkpoints/nvpcb/
+└── nvidia/Cosmos-AnomalyGen-PCB-2B/
+    ├── ag_config.yaml
+    └── iter_000015000.pt
 ```
 
-| UC | HF repo | Iter |
-|---|---|---|
-| pcb | [`nvidia/Cosmos-AnomalyGen-PCB-2B`](https://huggingface.co/nvidia/Cosmos-AnomalyGen-PCB-2B) | 14000 |
-| metal | [`nvidia/Cosmos-AnomalyGen-Metal-2B`](https://huggingface.co/nvidia/Cosmos-AnomalyGen-Metal-2B) | 10000 |
-| glass | [`nvidia/Cosmos-AnomalyGen-Glass-2B`](https://huggingface.co/nvidia/Cosmos-AnomalyGen-Glass-2B) | 9000 |
+Discover the package and derive its step from the single model file:
 
-Each repo ships the checkpoint plus its `ag_config.yaml` (which lists the
-supported anomaly types and trained `image_size`). Point the AnomalyGen
-pipeline at the downloaded directory via `checkpoint_dir=`. DEFT AOI is
-always a PCB workflow — the loop selects `--uc pcb` and reads
-`step=14000` from `${checkpoint_dir}/checkpoints/latest_checkpoint.txt`.
+```bash
+CKPT=$(find -L "$WS/augmentation/anomalygen/checkpoints/<project>" \
+  -path '*/ag_config.yaml' -print -quit | xargs -r dirname)
+: "${CKPT:?HARD STOP: PAIDF-compatible AnomalyGen checkpoint missing; finetune the AnomalyGen LoRA with the container texture_ft recipe using the uc1_pcb dataset layout to produce ag_config.yaml + iter_<step>.pt, then stage them under augmentation/anomalygen/checkpoints/<project>/...}"
+mapfile -t staged_models < <(
+  find -L "$CKPT" -maxdepth 1 -type f -name 'iter_[0-9]*.pt' \
+    ! -name '*_reg_model.pt' | sort
+)
+[ "${#staged_models[@]}" -eq 1 ] || {
+  echo "HARD STOP: expected exactly one PAIDF-compatible iter_<step>.pt in $CKPT" >&2
+  exit 2
+}
+model_name=$(basename "${staged_models[0]}")
+STEP=$(sed -n 's/^iter_0*\([0-9][0-9]*\)\.pt$/\1/p' <<<"$model_name")
+: "${STEP:?HARD STOP: cannot parse AnomalyGen step from $model_name}"
+```
+
+For the staged example, discovery resolves the nested directory and produces
+`STEP=15000`. A missing or ambiguous package is a hard stop in every network
+mode; never substitute an HF checkpoint.
 
 ## Invariants
 
@@ -135,7 +159,7 @@ directly) with:
 | `defect_spec` | `${dataset_dir}/defect_spec.jsonl` | |
 | `num_SDG` | per-iter budget from `deft_state.json` | proportionally allocated across defect types by mask count |
 | `num_gpus` | `1` | |
-| `model_size` | from `ag_config.yaml` (`2b` or `14b`) | |
+| `model_size` | `2b` (pinned by the DEFT AOI bootstrap and invocation) | |
 | `output_dir` | `${RESULTS_DIR}/iter${N}/anomalygen/sdg/` | receives `reconstructed_image/`, `original_image/`, `SDG_result.csv` |
 | `cosmos_models_dir` | `${COSMOS_MODELS_DIR}` | resolved in Pre-Flight |
 | `num_search_run` | `0` | skip Phase 5 search rounds |
@@ -149,10 +173,12 @@ Used by both the bootstrap and the per-iteration calls:
 # Per-iteration calls use staged assets and require no credential.
 WS=<workspace>
 DS=$WS/augmentation/anomalygen/datasets/<project>
-CKPT=$(find -L "$WS/augmentation/anomalygen/checkpoints/<project>" -path '*/ag_config.yaml' -print -quit | xargs dirname)  # -L follows a symlinked project checkpoint dir
-: "${CKPT:?no AnomalyGen checkpoint directory with ag_config.yaml found under checkpoints/<project>}"
+CKPT=$(find -L "$WS/augmentation/anomalygen/checkpoints/<project>" -path '*/ag_config.yaml' -print -quit | xargs -r dirname)  # -L follows a symlinked project checkpoint dir
+: "${CKPT:?HARD STOP: PAIDF-compatible AnomalyGen checkpoint missing; finetune the AnomalyGen LoRA with the container texture_ft recipe using the uc1_pcb dataset layout to produce ag_config.yaml + iter_<step>.pt, then stage them under augmentation/anomalygen/checkpoints/<project>/...}"
 COSMOS=$WS/augmentation/anomalygen/base_checkpoints
 RUN_DIR=$WS/results/run_<TS>/iter${N}/anomalygen
+TAO_SKILL_BANK_ROOT=<tao-skill-bank>
+DEFT_AOI_SKILL_ROOT=$TAO_SKILL_BANK_ROOT/skills/applications/tao-run-deft-aoi
 : "${AG_IMAGE:?AG_IMAGE unset — resolve images.metropolis_sdg.paidf_anomalygen from versions.yaml in Pre-Flight step 5}"
 mkdir -p $COSMOS $DS $(dirname $CKPT) $RUN_DIR/amp $RUN_DIR/sdg
 for p in "$COSMOS" "$DS" "$(dirname "$CKPT")" "$RUN_DIR"; do
@@ -165,10 +191,10 @@ for p in "$COSMOS" "$DS" "$(dirname "$CKPT")" "$RUN_DIR"; do
 done
 ```
 
-After approval, normalize a flat HuggingFace snapshot without modifying the
-source cache. The published repository may stage `iter_000014000.pt` beside
+After approval, normalize the flat, pre-staged PAIDF 1.1 package without
+modifying the source. The package stages `iter_000015000.pt` beside
 `ag_config.yaml`, while the container loads
-`checkpoints/model/iter_000014000.pt`. If the normal layout is already
+`checkpoints/model/iter_000015000.pt`. If the normal layout is already
 complete, keep `$CKPT` unchanged. Otherwise require exactly one root iteration
 file and build a lightweight view under the run directory:
 
@@ -213,21 +239,22 @@ host-side variables (like `$DS`, `$NUM_SDG`) expanded in the same line.
 ## Post-gate bootstrap (one-time, SKILL.md → Workflow step 2)
 
 Order matters — (a) populates the base checkpoints that (b) depends on.
-Run only the steps the Pre-Flight Summary flagged `WILL_AUTO_FETCH`. Both
+Run only the dataset/base-model steps the Pre-Flight Summary flagged
+`WILL_AUTO_FETCH`. Both
 are idempotent — re-running a completed step exits quickly.
 
 ```bash
 set -a; source /path/to/.env; set +a   # omit if already exported
 
-# (a) Cosmos base checkpoints (~22 GB for 2B-only, ~140 GB with 14B + T5-11b).
-# WRITABLE mount (no :ro) so download_checkpoints.sh can populate the cache.
+# (a) Container-owned Cosmos base checkpoints (~22 GB; Text2Image 2B only).
+# WRITABLE mount (no :ro) so the container downloader can populate it.
 docker run --pull=never --rm \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
   -v $COSMOS:/workspace/paidf-anomalygen/checkpoints \
   -w /workspace/paidf-anomalygen $AG_IMAGE \
-  bash -lc '${ANOMALYGEN_SCRIPTS}/check.sh || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh'
+  bash -lc '${ANOMALYGEN_SCRIPTS}/check.sh || python -m scripts.download_checkpoints --model_types text2image --model_sizes 2B'
 
 # (b) PCB reference dataset — prepare_dataset_uc1.py is the `tao-generate-anomalies`
 # skill's PCB-dataset fetcher (`uc1` = the skill's identifier for the PCB
@@ -242,41 +269,30 @@ if [ ! -f "$DS/defect_spec.jsonl" ]; then
 fi
 ```
 
-The AnomalyGen fine-tuned checkpoint at `$CKPT` auto-downloads by default
-from the per-UC HF repo (see *Fine-tuned checkpoint sources* above) via:
+The fine-tuned checkpoint is not part of this bootstrap. It must pass the
+pre-staged PAIDF compatibility and discovery checks above before either fetch
+step is eligible to run.
 
-```bash
-set -a; source /path/to/.env; set +a   # omit if already exported
+The container's `check.sh` owns asset completeness and skips the downloader
+when its contract is already satisfied. The fallback command explicitly
+requests `--model_sizes 2B`; a future larger model is a separate workflow
+opt-in, never an expansion of this default command.
 
-# (c) AnomalyGen fine-tuned checkpoint (PCB UC; ~5 GB).
-if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ]; then
-  docker run --pull=never --rm \
-    --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
-    -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
-    -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
-    -v $WS:$WS -w /workspace/paidf-anomalygen $AG_IMAGE \
-    bash -lc "scripts/utilities/download_anomalygen_checkpoints.sh \
-      --uc pcb --checkpoint-dir $CKPT"
-fi
-```
-
-Users who want to override pre-stage the dir before the loop starts.
-
-## Flat HF checkpoint layout — build a `checkpoint_view`
+## Flat BYO checkpoint layout — build a `checkpoint_view`
 
 `run_sdg.sh` resolves the model file as
-`<checkpoint_dir>/checkpoints/model/iter_<STEP>.pt`, but the HuggingFace
-checkpoint downloads land **flat** (`<dir>/iter_<STEP>.pt` + `ag_config.yaml`).
+`<checkpoint_dir>/checkpoints/model/iter_<STEP>.pt`, but the PAIDF 1.1 package
+is staged **flat** (`<dir>/iter_<STEP>.pt` + `ag_config.yaml`).
 Passing the flat directory fails with
-`FileNotFoundError: .../checkpoints/model/iter_000014000.pt`. Build a symlink
+`FileNotFoundError: .../checkpoints/model/iter_<STEP>.pt`. Build a symlink
 adapter once per iteration output dir and pass it as `--checkpoint_dir`:
 
 ```bash
 CV=${RUN_DIR}/checkpoint_view
 mkdir -p $CV/checkpoints/model
-ln -sf $CKPT_DIR/iter_000014000.pt $CV/checkpoints/model/iter_000014000.pt
+ln -sf $CKPT_DIR/iter_000015000.pt $CV/checkpoints/model/iter_000015000.pt
 ln -sf $CKPT_DIR/ag_config.yaml   $CV/ag_config.yaml
-echo "iter_000014000.pt" > $CV/checkpoints/latest_checkpoint.txt
+echo "iter_000015000.pt" > $CV/checkpoints/latest_checkpoint.txt
 ```
 
 ## Per-iteration invocation (every loop iteration)
@@ -286,6 +302,7 @@ calls — same image, READ-ONLY mount on the cosmos cache.
 
 ```bash
 STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' $CKPT/checkpoints/latest_checkpoint.txt)
+SDG_LOG=$RUN_DIR/sdg.log
 
 # Phase 2: AMP routing → testcase.jsonl  (~10s, no GPU)
 docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
@@ -300,6 +317,9 @@ docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
     --amp-output-dir $RUN_DIR/amp --output-jsonl $RUN_DIR/testcase.jsonl"
 
 # Phase 3: SDG diffusion → reconstructed_image/ + original_image/  (1-3 min on Blackwell)
+test -s "$COSMOS/nvidia/Cosmos-Guardrail1/video_content_safety_filter/safety_filter.pt" || { echo "FATAL: AnomalyGen Guardrail checkpoint missing; guardrail=not_run" >&2; exit 2; }
+
+set -o pipefail
 docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
@@ -309,8 +329,19 @@ docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
   bash -lc "\${ANOMALYGEN_SCRIPTS}/run_sdg.sh \
     --checkpoint_dir $CKPT --step $STEP \
     --input_jsonl $RUN_DIR/testcase.jsonl --output_dir $RUN_DIR/sdg \
-    --model_size 2b --num_gpus 1"
+    --model_size 2b --num_gpus 1" 2>&1 | tee "$SDG_LOG"
+sdg_rc=${PIPESTATUS[0]}
+if [ "$sdg_rc" -ne 0 ]; then
+  echo "FATAL: SDG container exited $sdg_rc; guardrail=not_run" >&2
+  exit "$sdg_rc"
+fi
+
+test -s "$SDG_LOG" && ! grep -Fqi "post-generation image checks are DISABLED" "$SDG_LOG" || { echo "FATAL: AnomalyGen Guardrail log missing or screening disabled; guardrail=not_run" >&2; exit 2; }
 ```
+
+Both one-line checks are hard gates. On failure, end the `anomalygen` stage as
+`--status error`, include `guardrail=not_run` in the summary, and halt; never
+commit the generated output downstream.
 
 Required mounts (per-iteration): `<workspace>:<workspace>` (same path) +
 `<cosmos_models_dir>:/workspace/paidf-anomalygen/checkpoints:ro`.
@@ -331,8 +362,9 @@ sudo on resume.
 ```
 
 After verifying `SDG_result.csv`, `reconstructed_image/`, and
-`original_image/`, keep Phase 2's `allocation.json` beside those outputs and
-commit:
+`original_image/`, confirming the disabled-screening marker is absent, and
+checking that every CSV Guardrail verdict passed, keep Phase 2's
+`allocation.json` beside those outputs and commit:
 
 ```python
 phase = state["iterations"][f"iter{N}"]
@@ -354,7 +386,7 @@ This snippet documents the schema only; never execute it as inline Python.
     --anomalygen-sdg <absolute path to SDG_result.csv> \
     --anomalygen-allocation <absolute path to allocation.json> \
     --duration-sec "${STAGE_DURATION_SEC}" \
-    --summary "SDG: requested=N, AMP-allocated=M, generated=K by type"
+    --summary "SDG: requested=N, AMP-allocated=M, generated=K by type; guardrail=passed"
 ```
 
 `commit_stage.py` derives `M` by summing the committed defect-to-count
@@ -362,3 +394,18 @@ This snippet documents the schema only; never execute it as inline Python.
 yield gap), include both requested and allocated counts
 — that's the signal a reviewer needs to spot allocation-vs-generation
 bottlenecks.
+
+## Guardrail tri-state and container follow-up
+
+Interpret image screening as a tri-state, never a boolean default:
+
+- `passed`: screening ran and accepted the generated row;
+- `failed`: screening ran and rejected the row; fail the stage rather than
+  emitting that row into training data;
+- `not_run`: screening was disabled or failed to initialize; fail the stage,
+  record `guardrail=not_run` (never `passed`), and treat the rows as unscreened.
+
+The current container CSV schema cannot represent `not_run` and may write `1`
+when initialization failed. The disabled-marker log check above blocks that
+contradiction. The paired container follow-up must add the tri-state schema and
+stop emitting safety-passed values for unscreened content.

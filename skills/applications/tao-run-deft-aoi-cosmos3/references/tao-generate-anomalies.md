@@ -9,14 +9,36 @@ committed.
 
 The generation mechanics are identical to the VCN loop; only the consumer
 differs. `skills/applications/tao-run-deft-aoi/references/tao-generate-anomalies.md`
-holds the shared shell setup, the one-time post-gate bootstrap, and the
-per-iteration `docker run` pair. Do not duplicate them here — read that file
-for the commands and apply the Cosmos3 values below.
+holds the shared shell setup, the container-owned one-time post-gate bootstrap,
+and the per-iteration `docker run` pair. Its download command explicitly
+requests Text2Image 2B for both loops. Do not duplicate them here — read that
+file for the commands and apply the Cosmos3 values below.
 
-## The published checkpoint is flat — normalize it first
+## The pre-staged PAIDF 1.1 checkpoint is flat — normalize it first
 
-This one is not optional reading: the official HF repo ships
-`iter_000014000.pt` and `ag_config.yaml` side by side, with no
+The fine-tuned checkpoint is **BYO/pre-staged REQUIRED**. It must match the
+major.minor version of the container resolved from
+`images.metropolis_sdg.paidf_anomalygen`: the GB-scale, full-finetune
+`iter_000014000.pt` from the 1.0-era Hugging Face repo
+`nvidia/Cosmos-AnomalyGen-PCB-2B` is incompatible with PAIDF 1.1's per-defect
+LoRA recipe on a Cosmos3 backbone. Finetune the AnomalyGen LoRA with the
+container's `texture_ft` recipe using the `uc1_pcb` layout
+(`dataset_path/<texture>/anomaly_image/` paired with
+`dataset_path/<texture>/mask/<defect>/`), then stage the resulting
+`ag_config.yaml` and `iter_<step>.pt` in the layout below. The uc1 reference
+dataset remains auto-downloadable; there is no fine-tuned checkpoint download
+fallback.
+
+Stage the known PCB package in this exact layout:
+
+```text
+augmentation/anomalygen/checkpoints/nvpcb/
+└── nvidia/Cosmos-AnomalyGen-PCB-2B/
+    ├── ag_config.yaml
+    └── iter_000015000.pt
+```
+
+The package has no
 `checkpoints/latest_checkpoint.txt` and no `checkpoints/model/`, while the
 container loads the nested layout. Every run hits it.
 
@@ -24,7 +46,8 @@ Build a symlink view under the run directory rather than touching the source
 cache, then take `step` from the view:
 
 ```bash
-CKPT=$(find -L "$AG_CHECKPOINT_DIR" -path '*/ag_config.yaml' -print -quit | xargs dirname)
+CKPT=$(find -L "$AG_CHECKPOINT_DIR" -path '*/ag_config.yaml' -print -quit | xargs -r dirname)
+: "${CKPT:?HARD STOP: PAIDF-compatible AnomalyGen checkpoint missing; finetune the AnomalyGen LoRA with the container texture_ft recipe using the uc1_pcb dataset layout to produce ag_config.yaml + iter_<step>.pt, then stage them under augmentation/anomalygen/checkpoints/<project>/...}"
 if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ]; then
   mapfile -t staged < <(
     find -L "$CKPT" -maxdepth 1 -type f -name 'iter_[0-9]*.pt' ! -name '*_reg_model.pt' | sort
@@ -43,7 +66,9 @@ STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' "$CKPT/checkpoints/latest_checkpoint.
 
 This is a path adapter, not a download. Requiring exactly one root checkpoint
 is deliberate — several means the intended one is ambiguous, and silently
-picking is worse than stopping.
+picking is worse than stopping. The staged example resolves the nested
+directory and produces `STEP=15000`; a missing package is a hard stop in every
+network mode.
 
 ## Why the stage exists
 
@@ -94,8 +119,8 @@ on the host.
 | `output_dir` | `${RESULTS_DIR}/iter${N}/anomalygen/sdg/` — the stage-bound results directory |
 | `num_search_run` / `nn_threshold` | `0` / `0` |
 
-DEFT AOI is always a PCB workflow: select `--uc pcb` for the fine-tuned
-checkpoint. AnomalyGen runs in its own container
+DEFT AOI is always a PCB workflow and uses the pre-staged, version-compatible
+fine-tuned checkpoint. AnomalyGen runs in its own container
 (`config.anomalygen.container`, `images.metropolis_sdg.paidf_anomalygen`), not
 the Cosmos-RL image.
 
@@ -139,6 +164,20 @@ deliberately.
 
 The emitter hard-stops on a missing or empty image on either side of a pair,
 and de-duplicates by generated image.
+
+Wrap Phase 3 with these two one-line hard gates, using the shared VCN
+reference's `$COSMOS` and `$SDG_LOG` values:
+
+```bash
+test -s "$COSMOS/nvidia/Cosmos-Guardrail1/video_content_safety_filter/safety_filter.pt" || { echo "FATAL: AnomalyGen Guardrail checkpoint missing; guardrail=not_run" >&2; exit 2; }
+test -s "$SDG_LOG" && ! grep -Fqi "post-generation image checks are DISABLED" "$SDG_LOG" || { echo "FATAL: AnomalyGen Guardrail log missing or screening disabled; guardrail=not_run" >&2; exit 2; }
+```
+
+The first runs before SDG and the second after it. On either failure, end the
+stage as `anomalygen --status error` and do not emit generated data downstream.
+Record `passed` only when screening ran and accepted the rows, `failed` when it
+rejected them, and `not_run` when it was disabled or failed to initialize;
+`not_run` is unscreened and must never be reported as passed.
 
 ## Skip condition
 
@@ -196,7 +235,7 @@ be automatic.
   --anomalygen-allocation "$RESULTS_DIR/iter${N}/anomalygen/sdg/allocation.json" \
   --anomalygen-sharegpt "$RESULTS_DIR/iter${N}/anomalygen/sdg_sharegpt.json" \
   --duration-sec "$STAGE_DURATION_SEC" \
-  --summary "SDG: requested=N, AMP-allocated=M, generated=K by defect type"
+  --summary "SDG: requested=N, AMP-allocated=M, generated=K by defect type; guardrail=passed"
 ```
 
 `commit_stage.py` derives `M` by summing the committed defect-to-count
