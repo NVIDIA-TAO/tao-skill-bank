@@ -134,10 +134,11 @@ credential value.
   application skill.
 - Train action: `cosmos-rl --config <spec.toml>
   /opt/cosmos_rl/tao_sft_example.py`.
-- The pinned image caps vLLM evaluation at one image per prompt, which this
-  two-image contract cannot satisfy. Run `scripts/patch_eval_image_cap.py`
-  before the first evaluate job and mount its output read-only into every
-  evaluation container; see `references/cosmos-reason.md`.
+- Before the first evaluate job, run `scripts/patch_eval_image_cap.py` to
+  source-classify the selected image. Mount its output read-only into every
+  evaluation container only when it reports `patch_required`; no mount is
+  needed for `already_sufficient` or `cap_absent`. An unrecognized cap/vLLM
+  shape is a hard stop; see `references/cosmos-reason.md`.
 - Workflow override: `automl_policy: off`. DEFT owns iteration and checkpoint
   selection; this is a workflow argument, not a TOML key.
 - Default adaptation: LoRA over the language-side projections
@@ -294,7 +295,9 @@ For each `iterN` when the frozen Benchmark gate is unmet:
    `inference_only` mode, then turn each generated pair into a bare `NG`
    record with `scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
    the driving Proxy RCCA recorded zero false accepts, and even then generating
-   is often still worthwhile — see `references/tao-generate-anomalies.md`.
+   is often still worthwhile. The emitter accepts PAIDF 1.0.1 repo-root-relative
+   and documented output-dir-relative paths, with `--sdg-root` as an explicit
+   additional base — see `references/tao-generate-anomalies.md`.
 3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
    floor with `scripts/filter_mined_by_cosine.py`, then run the mapped skill's
    history-aware post-processing so a filepath selected by a prior iteration

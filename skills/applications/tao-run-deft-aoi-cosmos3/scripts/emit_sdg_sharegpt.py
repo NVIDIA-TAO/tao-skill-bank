@@ -10,6 +10,11 @@ the ``original_image/<T>+<A>_<idx>.png`` clean board it was painted onto. That
 is exactly the Cosmos3 AOI pair shape ``[AOI, golden_reference]``, so every
 generated sample becomes one ``NG`` record.
 
+PAIDF 1.0.1 may echo a repo-root-relative output directory into
+``output_filename`` and records the clean source as ``image_filename``. Path
+resolution accepts that form, the output-dir-relative documented form, and an
+explicit ``--sdg-root`` base without rewriting the producer CSV.
+
 The prompt is never invented. It is inherited from the recorded Mining pool so
 that synthetic and mined records ask the model the same question, or supplied
 verbatim with ``--prompt``.
@@ -37,11 +42,17 @@ RECONSTRUCTED_COLUMNS = (
     "sdg_image",
     "output_filename",
 )
-# Deliberately excludes 1.0.0's "image_filename": that points at the dataset
-# clean_image, not the paired copy under original_image/. Adding it would
-# silently change which image lands in images[1]. The stem fallback below is
-# the correct source for that container.
-ORIGINAL_COLUMNS = ("original_image", "original", "clean_image", "golden_image")
+# PAIDF 1.0.1 records its clean source as image_filename. If that producer path
+# is unavailable to the consumer, resolution falls back to the paired copy
+# beside the resolved reconstructed image.
+ORIGINAL_COLUMNS = (
+    "original_image",
+    "original",
+    "clean_image",
+    "golden_image",
+    "image_filename",
+)
+PAIR_DIRECTORIES = ("reconstructed_image", "original_image")
 
 
 def _column(row: dict[str, str], candidates: tuple[str, ...]) -> str | None:
@@ -74,42 +85,107 @@ def _inherited_prompt(path: pathlib.Path) -> str:
     return prompts.pop()
 
 
+def _dedupe_paths(paths: list[pathlib.Path]) -> list[pathlib.Path]:
+    unique: list[pathlib.Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            unique.append(path)
+    return unique
+
+
+def _echo_prefix_base(
+    raw: pathlib.Path, *, sdg_dir: pathlib.Path
+) -> pathlib.Path | None:
+    """Remove a producer-echoed output prefix from the CSV-parent base."""
+    if raw.is_absolute():
+        return None
+    marker_indexes = [
+        raw.parts.index(marker)
+        for marker in PAIR_DIRECTORIES
+        if marker in raw.parts
+    ]
+    if not marker_indexes:
+        return None
+    prefix = raw.parts[: min(marker_indexes)]
+    if not prefix or tuple(sdg_dir.parts[-len(prefix) :]) != prefix:
+        return None
+    return pathlib.Path(*sdg_dir.parts[: -len(prefix)]).resolve()
+
+
+def _path_candidates(
+    value: str,
+    *,
+    sdg_dir: pathlib.Path,
+    sdg_root: pathlib.Path | None,
+) -> list[pathlib.Path]:
+    raw = pathlib.Path(value).expanduser()
+    if raw.is_absolute():
+        return [raw.resolve()]
+    bases = [sdg_dir]
+    echoed_base = _echo_prefix_base(raw, sdg_dir=sdg_dir)
+    if echoed_base is not None:
+        bases.append(echoed_base)
+    if sdg_root is not None:
+        bases.append(sdg_root)
+    return _dedupe_paths([(base / raw).resolve() for base in bases])
+
+
+def _resolve_existing(
+    candidates: list[pathlib.Path], *, role: str, row_number: int
+) -> pathlib.Path:
+    for candidate in candidates:
+        if candidate.is_file() and candidate.stat().st_size > 0:
+            return candidate
+    attempted = []
+    for candidate in candidates:
+        status = "empty" if candidate.is_file() else "missing"
+        attempted.append(f"{candidate} ({status})")
+    detail = "; ".join(attempted) if attempted else "none"
+    raise ValueError(
+        f"SDG_result.csv row {row_number}: {role} image could not be resolved; "
+        f"attempted paths: {detail}"
+    )
+
+
 def _resolve_pair(
     row: dict[str, str],
     *,
     sdg_dir: pathlib.Path,
     row_number: int,
+    sdg_root: pathlib.Path | None = None,
 ) -> tuple[pathlib.Path, pathlib.Path]:
     reconstructed = _column(row, RECONSTRUCTED_COLUMNS)
     if reconstructed is None:
         raise ValueError(
             f"SDG_result.csv row {row_number}: no reconstructed-image column "
-            f"among {list(RECONSTRUCTED_COLUMNS)}"
+            f"among {list(RECONSTRUCTED_COLUMNS)}; available columns: "
+            f"{sorted(row)}; attempted paths: none"
         )
-    generated = pathlib.Path(reconstructed)
-    if not generated.is_absolute():
-        generated = sdg_dir / generated
-    generated = generated.resolve()
+    generated = _resolve_existing(
+        _path_candidates(
+            reconstructed, sdg_dir=sdg_dir, sdg_root=sdg_root
+        ),
+        role="reconstructed",
+        row_number=row_number,
+    )
 
     original = _column(row, ORIGINAL_COLUMNS)
+    clean_candidates: list[pathlib.Path] = []
     if original is not None:
-        clean = pathlib.Path(original)
-        if not clean.is_absolute():
-            clean = sdg_dir / clean
-    else:
-        # No explicit column: AnomalyGen mirrors the stem into original_image/.
-        clean = sdg_dir / "original_image" / generated.name
-    clean = clean.resolve()
-
-    for role, path in (("reconstructed", generated), ("original", clean)):
-        if not path.is_file():
-            raise ValueError(
-                f"SDG_result.csv row {row_number}: {role} image does not exist: {path}"
-            )
-        if path.stat().st_size == 0:
-            raise ValueError(
-                f"SDG_result.csv row {row_number}: {role} image is empty: {path}"
-            )
+        clean_candidates.extend(
+            _path_candidates(original, sdg_dir=sdg_dir, sdg_root=sdg_root)
+        )
+    # The producer mirrors the generated stem into original_image/. Derive
+    # this from the resolved generated path, not from the CSV location.
+    clean_candidates.append(
+        (generated.parent.parent / "original_image" / generated.name).resolve()
+    )
+    clean = _resolve_existing(
+        _dedupe_paths(clean_candidates), role="original", row_number=row_number
+    )
     return generated, clean
 
 
@@ -131,6 +207,7 @@ def emit_records(
     prompt: str,
     relative: bool,
     label: str = "NG",
+    sdg_root: pathlib.Path | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     sdg_dir = sdg_csv.parent.resolve()
     with sdg_csv.open(newline="") as handle:
@@ -143,7 +220,12 @@ def emit_records(
     duplicates = 0
     defects: Counter[str] = Counter()
     for offset, row in enumerate(rows, start=2):
-        generated, clean = _resolve_pair(row, sdg_dir=sdg_dir, row_number=offset)
+        generated, clean = _resolve_pair(
+            row,
+            sdg_dir=sdg_dir,
+            row_number=offset,
+            sdg_root=sdg_root,
+        )
         key = str(generated)
         if key in seen:
             duplicates += 1
@@ -168,6 +250,7 @@ def emit_records(
         "mode": "bare_okng",
         "source": "anomalygen_sdg",
         "sdg_result_csv": str(sdg_csv),
+        "sdg_root": str(sdg_root) if sdg_root is not None else None,
         "generated_rows": len(rows),
         "output_records": len(output),
         "duplicates_skipped": duplicates,
@@ -185,6 +268,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="AnomalyGen SDG_result.csv under iterN/anomalygen/sdg/.",
     )
     parser.add_argument("--media-root", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--sdg-root",
+        type=pathlib.Path,
+        help="Additional base for producer-recorded relative image paths, "
+        "normally the paidf-anomalygen repository root.",
+    )
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--summary", default=None, type=pathlib.Path)
     parser.add_argument("--emit-relative", action="store_true")
@@ -216,6 +305,11 @@ def main(argv: list[str] | None = None) -> int:
             media_root=args.media_root.expanduser().resolve(),
             prompt=prompt,
             relative=args.emit_relative,
+            sdg_root=(
+                args.sdg_root.expanduser().resolve()
+                if args.sdg_root is not None
+                else None
+            ),
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(records, indent=2) + "\n")
