@@ -1695,6 +1695,7 @@ def _rl_spec(
     train_batch_per_replica = (
         getattr(args, "rl_train_batch_per_replica", 0) or args.rl_mini_batch
     )
+    requested_loss_spike_rollback = getattr(args, "loss_spike_rollback", None)
     if train_batch_per_replica % args.rl_mini_batch:
         raise WorkflowError(
             "rl_train_batch_per_replica must be divisible by rl_mini_batch"
@@ -1744,8 +1745,8 @@ def _rl_spec(
             # trainable tensor, which is ~1.2GB for a LoRA adapter but ~350GB
             # for a dense 8.8B model, so request it for PEFT only.
             "optm_loss_spike_rollback": (
-                args.loss_spike_rollback
-                if args.loss_spike_rollback is not None
+                requested_loss_spike_rollback
+                if requested_loss_spike_rollback is not None
                 else (10.0 if args.training_mode == "peft" else 0.0)
             ),
             "param_dtype": args.precision,
