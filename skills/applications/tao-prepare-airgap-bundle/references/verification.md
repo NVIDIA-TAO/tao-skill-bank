@@ -4,6 +4,7 @@
 
 - Packing: the manifest, and the delivery
 - Verification is optional, and it comes last
+- What happens after the run
 - The rule that makes it worth doing
 - Smoke data
 - The run
@@ -63,10 +64,40 @@ is verified for that cluster only by running it there, which is usually the
 customer's own site. Verify what the available machine can, record it per
 platform, and claim nothing about the rest.
 
-**Verification must leave the bundle byte-identical.** It runs against the
-packed delivery, so anything it writes and fails to remove changes what ships.
-The manifest generated at packing time is the proof: re-run `sha256sum -c` after
-cleanup, and a mismatch means the procedure left something behind.
+**The smoke run must leave the staged assets byte-identical.** It runs against
+the packed delivery, so anything it writes into `payload/`, `weights/`,
+`wheels/`, `specs/` or `skills/` and fails to remove changes what ships. The
+manifest is the proof — see *Cleaning up* below.
+
+**That rule is about the run's leftovers, not about the delivery's outcome.**
+The outcome is exactly what this phase produces, and recording it means the
+bundle changes on purpose.
+
+## What happens after the run
+
+Three outcomes, and each has a defined next step. None of them is "leave the
+bundle as it was".
+
+| Outcome | Next |
+|---|---|
+| **Passed**, assets unchanged | update the bundle's scope section to say what was exercised, regenerate the manifest, re-pack. The delivery now reads *verified* |
+| **Passed**, but cleanup left something | fix the cleanup, re-check, then as above. Do not regenerate the manifest to hide the difference |
+| **A defect** in the shipped instructions | fix them, re-author, re-pack, and **verify again from the start** |
+
+**A pass has to be written into the bundle, or the phase was pointless.** The
+delivery says *assembled* until something says otherwise, and that sentence
+lives in the bundle's own instructions — see `bundle-skill-template.md`. Update
+it, regenerate the manifest over the changed file, and re-pack. Only the
+instructions and the manifest change; the staged assets do not.
+
+**A defect sends you back to phase 4, not round the current run.** The artifact
+under test is the artifact that ships, so a fix belongs in the bundle's
+instructions and the run starts again against the re-packed bundle. Adjusting a
+command in the terminal and leaving the file alone converts a caught defect into
+a shipped one, which is the failure this whole ordering exists to prevent.
+
+**Re-verify after a fix.** The thing you tested is no longer the thing you have.
+A second pass is cheap next to a bundle that a customer cannot run.
 
 ## The rule that makes it worth doing
 

@@ -104,6 +104,14 @@ Sections, in this order:
    sentence of that section, in those words. A customer who believes a bundle
    was exercised will debug their own environment first when it fails, which is
    the most expensive place for them to start.
+
+   **This section is the one part of the bundle that a later phase rewrites.**
+   It is authored saying *assembled*, and a passing verification replaces it
+   with what was actually exercised — which action, on which platform, at what
+   configuration — after which the manifest is regenerated and the delivery
+   re-packed. Write it as its own section with nothing else in it, so that
+   rewrite is a replacement rather than surgery on a paragraph that also carries
+   instructions.
 8. **Troubleshooting**, symptom to cause, covering at least: a manifest
    mismatch, an image not found by name, and a run that stalls rather than
    failing.
