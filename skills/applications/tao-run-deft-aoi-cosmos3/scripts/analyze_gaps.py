@@ -278,6 +278,12 @@ def main(argv: list[str] | None = None) -> int:
             rich_kpi_profile = args.kpi_profile or "task_balanced_v1"
             samples = _load_samples(args.results_json)
             annotations = load_records(args.annotations)
+            required_tasks = {
+                task_type
+                for annotation in annotations
+                if isinstance((task_type := annotation.get("task_type")), str)
+                and task_type
+            }
             rich = multitask_metrics.evaluate(
                 samples,
                 annotations,
@@ -286,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
                 iou_threshold=args.iou_threshold,
                 kpi_profile=rich_kpi_profile,
                 min_group_support=args.min_group_support,
+                required_tasks=required_tasks,
             )
             multitask_metrics.write_artifacts(rich, args.output_dir)
             if args.evaluation_role == "proxy":

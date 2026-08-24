@@ -528,6 +528,45 @@ class NVPawMetricTests(unittest.TestCase):
                 self.assertTrue((output / name).is_file(), name)
                 self.assertGreater((output / name).stat().st_size, 0, name)
 
+    def test_analyze_gaps_cli_uses_observed_benchmark_tasks(self) -> None:
+        benchmark_annotations = [
+            row for row in self.annotations if row["task_type"] != "Component Count"
+        ]
+        benchmark_ids = {row["id"] for row in benchmark_annotations}
+        benchmark_samples = [
+            row for row in self.perfect_samples() if row["id"] in benchmark_ids
+        ]
+        expected_tasks = sorted(EXPECTED_TASKS - {"Component Count"})
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            annotations = root / "benchmark.json"
+            results = root / "results.json"
+            output = root / "metrics"
+            annotations.write_text(json.dumps(benchmark_annotations) + "\n")
+            results.write_text(json.dumps(benchmark_samples) + "\n")
+
+            status = analyze_gaps.main(
+                [
+                    "--results-json",
+                    str(results),
+                    "--annotations",
+                    str(annotations),
+                    "--output-dir",
+                    str(output),
+                    "--annotation-profile",
+                    "nvpaw_multitask_v1",
+                    "--evaluation-role",
+                    "benchmark",
+                    "--kpi-threshold",
+                    "0.6",
+                ]
+            )
+
+            self.assertEqual(status, 0)
+            metric_result = json.loads((output / "metric_result.json").read_text())
+            self.assertEqual(metric_result["required_groups"], expected_tasks)
+
 
 class NVPawStateTests(unittest.TestCase):
     def test_rich_state_uses_frozen_benchmark_observed_tasks_as_required_groups(self) -> None:
