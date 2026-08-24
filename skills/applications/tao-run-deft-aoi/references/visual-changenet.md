@@ -2,12 +2,19 @@
 
 Read this when the parent runs the `train`, `inference`, or `evaluate` stage. The
 underlying skill `tao-skill-bank:tao-train-visual-changenet` (`skills/models/tao-train-visual-changenet/SKILL.md`)
-owns the docker invocation, spec format, CSV format, lighting conventions, and error
-patterns — its `## Local Docker Invocation` section has the exact docker run command
-(including `--shm-size=8g`, backbone file mount, and how to override
-checkpoint/results_dir on the command line without editing the spec). This file only
-covers the DEFT-loop-specific overlay: mounts, spec paths, two-checkpoint compare,
-KPI sweep and `deft_state.json` updates.
+owns the spec format, CSV format, lighting conventions, and error patterns, and
+documents a standalone docker invocation for use outside this loop.
+
+**Inside the DEFT loop, launch through the platform contract instead** — emit
+the stage with `stage_bundle.py train|evaluate|inference` and submit it with
+`deft_exec.py`, per `references/stage-execution.md`. The loop must run on
+docker, SLURM or Kubernetes from one definition, so the stage declares what it
+needs and the platform renderer supplies the rest: `--shm-size`, the host
+identity flags, and the backbone mount are emitted by the docker renderer and
+have different (or no) equivalents elsewhere.
+
+This file covers only the DEFT-loop-specific overlay: spec paths, two-checkpoint
+compare, KPI sweep and `deft_state.json` updates.
 
 DEFT AOI is intentionally plain-train for Visual ChangeNet. When invoking the
 underlying model skill for any train stage, pass `automl_policy: off` so this

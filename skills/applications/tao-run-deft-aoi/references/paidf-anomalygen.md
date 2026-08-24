@@ -213,47 +213,46 @@ are idempotent — re-running a completed step exits quickly.
 
 ```bash
 set -a; source /path/to/.env; set +a   # omit if already exported
+SB="$BANK/skills/applications/tao-run-deft-aoi/scripts/stage_bundle.py"
+EX="$BANK/skills/applications/tao-run-deft-aoi/scripts/deft_exec.py"
 
 # (a) Cosmos base checkpoints (~22 GB for 2B-only, ~140 GB with 14B + T5-11b).
-# WRITABLE mount (no :ro) so download_checkpoints.sh can populate the cache.
-docker run --pull=never --rm \
-  --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
-  -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
-  -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
-  -v $COSMOS:/workspace/paidf-anomalygen/checkpoints \
-  -w /workspace/paidf-anomalygen $AG_IMAGE \
-  bash -lc '${ANOMALYGEN_SCRIPTS}/check.sh || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh'
+# The cache being populated is the stage's OUTPUT, so it is --results-dir:
+# declared inputs are read-only on every platform, and a bootstrap must write.
+python3 "$SB" anomalygen.bootstrap_cosmos --results-dir "$COSMOS" \
+  --arg '${ANOMALYGEN_SCRIPTS}/check.sh || ${ANOMALYGEN_SCRIPTS}/download_checkpoints.sh' \
+  > "$RUN_DIR/cosmos.bundle.json"
+python3 "$EX" --state "$STATE" --submit --bundle "$RUN_DIR/cosmos.bundle.json" \
+  --platform "$PLATFORM" $PLATFORM_CTX --ctx env_passthrough=HF_TOKEN
 
 # (b) PCB reference dataset — prepare_dataset_uc1.py is the paidf-anomalygen
 # skill's PCB-dataset fetcher (`uc1` = the skill's identifier for the PCB
 # use-case; unrelated to the host-side <project> directory label).
 if [ ! -f "$DS/defect_spec.jsonl" ]; then
-  docker run --pull=never --rm \
-    --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
-    -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
-    -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
-    -v $WS:$WS -w /workspace/paidf-anomalygen $AG_IMAGE \
-    python3 -m scripts.utilities.prepare_dataset_uc1 $DS
+  python3 "$SB" anomalygen.bootstrap_dataset --results-dir "$DS" \
+    --arg 'python3 -m scripts.utilities.prepare_dataset_uc1 $TAO_RESULTS_ROOT' \
+    > "$RUN_DIR/dataset.bundle.json"
+  python3 "$EX" --state "$STATE" --submit --bundle "$RUN_DIR/dataset.bundle.json" \
+    --platform "$PLATFORM" $PLATFORM_CTX --ctx env_passthrough=HF_TOKEN
 fi
-```
-
-The AnomalyGen fine-tuned checkpoint at `$CKPT` auto-downloads by default
-from the per-UC HF repo (see *Fine-tuned checkpoint sources* above) via:
-
-```bash
-set -a; source /path/to/.env; set +a   # omit if already exported
 
 # (c) AnomalyGen fine-tuned checkpoint (PCB UC; ~5 GB).
 if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ]; then
-  docker run --pull=never --rm \
-    --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
-    -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
-    -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
-    -v $WS:$WS -w /workspace/paidf-anomalygen $AG_IMAGE \
-    bash -lc "scripts/utilities/download_anomalygen_checkpoints.sh \
-      --uc pcb --checkpoint-dir $CKPT"
+  python3 "$SB" anomalygen.bootstrap_checkpoint --results-dir "$CKPT" \
+    --arg 'scripts/utilities/download_anomalygen_checkpoints.sh --uc pcb --checkpoint-dir $TAO_RESULTS_ROOT' \
+    > "$RUN_DIR/ckpt.bundle.json"
+  python3 "$EX" --state "$STATE" --submit --bundle "$RUN_DIR/ckpt.bundle.json" \
+    --platform "$PLATFORM" $PLATFORM_CTX --ctx env_passthrough=HF_TOKEN
 fi
 ```
+
+Each bootstrap is recorded like any other job, so a 22 GB download that stalls
+or fails is visible through `--logs` instead of being a silent hang inside a
+`docker run`. `HF_TOKEN` is passed by name only — the value comes from the
+environment and is never written into a bundle, a record, or a log.
+
+These touch the network, so the launch gate refuses them under
+`--ctx airgap=1`; pre-stage the directories instead.
 
 Users who want to override pre-stage the dir before the loop starts.
 
@@ -276,39 +275,66 @@ echo "iter_000014000.pt" > $CV/checkpoints/latest_checkpoint.txt
 
 ## Per-iteration invocation (every loop iteration)
 
-After bootstrap, the per-iteration AnomalyGen stage is two `docker run`
-calls — same image, READ-ONLY mount on the cosmos cache.
+After bootstrap, the per-iteration AnomalyGen stage is two launches — same
+image, cosmos cache bound read-only as an ordinary declared input.
+
+Two stages, launched through the platform contract — see
+`references/stage-execution.md` for the full submit/await/logs loop and the
+per-platform `$PLATFORM_CTX`.
 
 ```bash
 STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' $CKPT/checkpoints/latest_checkpoint.txt)
+SB="$BANK/skills/applications/tao-run-deft-aoi/scripts/stage_bundle.py"
+EX="$BANK/skills/applications/tao-run-deft-aoi/scripts/deft_exec.py"
 
-# Phase 2: AMP routing → testcase.jsonl  (~10s, no GPU)
-docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
-  --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
-  -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
-  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
-  -v $WS:$WS -v $COSMOS:/workspace/paidf-anomalygen/checkpoints:ro \
-  -w /workspace/paidf-anomalygen $AG_IMAGE \
-  bash -lc "\${ANOMALYGEN_SCRIPTS}/prep_testcase.sh \
+# Phase 2: AMP routing → testcase.jsonl  (~10s, declared gpus=0)
+python3 "$SB" anomalygen.amp --results-dir "$RUN_DIR" \
+  --param dataset_dir="$DS" \
+  --param defect_spec="$DS/defect_spec.jsonl" \
+  --param cosmos_models="$COSMOS" \
+  --arg "\${ANOMALYGEN_SCRIPTS}/prep_testcase.sh \
     --name iter${N} --num-sdg $NUM_SDG \
-    --dataset-dir $DS --clean-dir $DS --defect-spec $DS/defect_spec.jsonl \
-    --amp-output-dir $RUN_DIR/amp --output-jsonl $RUN_DIR/testcase.jsonl"
+    --dataset-dir \$TAO_INPUT_DATASET_DIR --clean-dir \$TAO_INPUT_DATASET_DIR \
+    --defect-spec \$TAO_INPUT_DEFECT_SPEC \
+    --amp-output-dir \$TAO_RESULTS_ROOT/amp \
+    --output-jsonl \$TAO_RESULTS_ROOT/testcase.jsonl" \
+  > "$RUN_DIR/amp.bundle.json"
+AMP=$(python3 "$EX" --state "$STATE" --submit --bundle "$RUN_DIR/amp.bundle.json" \
+        --platform "$PLATFORM" $PLATFORM_CTX)
+python3 "$EX" --state "$STATE" --await-job "$AMP" $PLATFORM_CTX
 
-# Phase 3: SDG diffusion → reconstructed_image/ + original_image/  (1-3 min on Blackwell)
-docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
-  --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
-  -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
-  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
-  -v $WS:$WS -v $COSMOS:/workspace/paidf-anomalygen/checkpoints:ro \
-  -w /workspace/paidf-anomalygen $AG_IMAGE \
-  bash -lc "\${ANOMALYGEN_SCRIPTS}/run_sdg.sh \
-    --checkpoint_dir $CKPT --step $STEP \
-    --input_jsonl $RUN_DIR/testcase.jsonl --output_dir $RUN_DIR/sdg \
-    --model_size 2b --num_gpus 1"
+# Phase 3: SDG diffusion → reconstructed_image/ + original_image/  (1-3 min)
+python3 "$SB" anomalygen.sdg --results-dir "$RUN_DIR" \
+  --param testcase_jsonl="$RUN_DIR/testcase.jsonl" \
+  --param checkpoint_dir="$CKPT" \
+  --param cosmos_models="$COSMOS" \
+  --arg "\${ANOMALYGEN_SCRIPTS}/run_sdg.sh \
+    --checkpoint_dir \$TAO_INPUT_CHECKPOINT_DIR --step $STEP \
+    --input_jsonl \$TAO_INPUT_TESTCASE_JSONL \
+    --output_dir \$TAO_RESULTS_ROOT/sdg \
+    --model_size 2b --num_gpus 1" \
+  > "$RUN_DIR/sdg.bundle.json"
+SDG=$(python3 "$EX" --state "$STATE" --submit --bundle "$RUN_DIR/sdg.bundle.json" \
+        --platform "$PLATFORM" $PLATFORM_CTX)
+python3 "$EX" --state "$STATE" --await-job "$SDG" $PLATFORM_CTX
 ```
 
-Required mounts (per-iteration): `<workspace>:<workspace>` (same path) +
-`<cosmos_models_dir>:/workspace/paidf-anomalygen/checkpoints:ro`.
+Paths inside `--arg` are `$TAO_INPUT_*` / `$TAO_RESULTS_ROOT`, not host paths:
+the platform chooses where a declared input lands, and a command that names a
+host path is guessing at a layout it cannot see. A wrong guess does not fail —
+the directory is simply absent, so the phase reads nothing and exits 0.
+
+**AMP is declared `gpus=0`.** The old recipe passed `--gpus all` because that is
+how the image is habitually launched, but Phase 2 is ~10s of CPU routing, and on
+a scheduler an allocation is billed from the moment it starts.
+
+`cosmos_models` is an ordinary declared input, so every platform binds it
+read-only — the `:ro` the docker recipe spelled by hand.
+
+`--pull=never`, `--ipc=host`, `--shm-size`, `--user`, and the `/etc/passwd`
+mounts are gone from this page because they are docker's spelling of things the
+docker renderer now emits and other platforms provide by other means. Air-gap
+stays a launch-gate concern (`--ctx airgap=1`), not a flag copied per stage.
 
 ## Output layout
 

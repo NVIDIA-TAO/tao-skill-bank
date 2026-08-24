@@ -110,6 +110,30 @@ STAGES: dict[str, dict[str, Any]] = {
         outputs=("testcase_jsonl", "allocation_json"),
         workdir="/workspace/paidf-anomalygen",
     ),
+    # Bootstrap: one-time asset population. These WRITE to their target, so
+    # the cache being populated is passed as --results-dir -- the only path a
+    # bundle may write to. Declared inputs are read-only on every platform, so
+    # a bootstrap cannot express its target that way, and should not: the
+    # populated cache genuinely is this stage's output.
+    #
+    # They need network and HF_TOKEN, so they are refused under --ctx airgap=1
+    # by the launch gate like any other registry-touching work.
+    "anomalygen.bootstrap_cosmos": _stage(
+        ANOMALYGEN, "bash -lc", gpus=0, mode="args",
+        inputs=(), outputs=("cosmos_models",),
+        workdir="/workspace/paidf-anomalygen",
+    ),
+    "anomalygen.bootstrap_dataset": _stage(
+        ANOMALYGEN, "bash -lc", gpus=0, mode="args",
+        inputs=(), outputs=("dataset_dir",),
+        workdir="/workspace/paidf-anomalygen",
+    ),
+    "anomalygen.bootstrap_checkpoint": _stage(
+        ANOMALYGEN, "bash -lc", gpus=0, mode="args",
+        inputs=(), outputs=("checkpoint_dir",),
+        workdir="/workspace/paidf-anomalygen",
+    ),
+
     "anomalygen.sdg": _stage(
         ANOMALYGEN, "bash -lc", gpus=1, mode="args",
         inputs=("testcase_jsonl", "checkpoint_dir", "cosmos_models"),

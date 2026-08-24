@@ -203,3 +203,69 @@ def test_a_bundle_without_workdir_renders_nothing_for_it(stage_bundle, platform,
     if platform == "kubernetes":
         import yaml
         yaml.safe_load(next(iter(rendered["files"].values())))   # must still parse
+
+
+# ── The references must not drift back to docker run ───────────────────────
+# Converting them is only half the job: the reason each DEFT workflow forked
+# the same lines is that a docker recipe is the easiest thing to paste into a
+# reference. This keeps the AOI stage docs on the platform contract.
+
+AOI_REFS = REPO / "skills/applications/tao-run-deft-aoi/references"
+
+
+def test_stage_execution_reference_exists():
+    assert (AOI_REFS / "stage-execution.md").is_file(), (
+        "the single documented way to launch a stage is missing"
+    )
+
+
+def test_aoi_skill_points_at_it():
+    body = (REPO / "skills/applications/tao-run-deft-aoi/SKILL.md").read_text(
+        encoding="utf-8")
+    assert "references/stage-execution.md" in body
+
+
+# Two files legitimately contain a docker command:
+#   stage-execution.md   quotes the OLD recipe to explain what replaced it
+#   prepare-for-inference.md is a HANDOFF -- a self-contained command given to
+#                        a customer to run the finished model on their own
+#                        machine, with no dependency on this bank
+DOCKER_RECIPE_ALLOWED = {"stage-execution.md", "prepare-for-inference.md"}
+
+
+def test_no_aoi_reference_prescribes_a_docker_run_command():
+    """Prose *about* docker is fine; a copyable recipe is the coupling."""
+    offenders = []
+    for path in sorted(AOI_REFS.glob("*.md")):
+        if path.name in DOCKER_RECIPE_ALLOWED:
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            # A command, not a mention: starts the line and carries flags.
+            if stripped.startswith("docker run") and "-" in stripped:
+                offenders.append(f"{path.name}:{number}")
+    assert not offenders, (
+        "these prescribe a docker run command, which cannot move platforms: "
+        + ", ".join(offenders)
+        + " -- emit the stage with stage_bundle.py instead"
+    )
+
+
+def test_converted_references_use_the_input_env(stage_bundle):
+    """A stage arg naming a host path guesses at a layout it cannot see."""
+    body = (AOI_REFS / "paidf-anomalygen.md").read_text(encoding="utf-8")
+    assert "$TAO_INPUT_DATASET_DIR" in body
+    assert "$TAO_RESULTS_ROOT" in body
+
+
+def test_every_documented_stage_name_exists_in_the_table(stage_bundle):
+    """A reference naming a stage the emitter does not know fails at runtime."""
+    import re as _re
+    known = set(stage_bundle.STAGES)
+    for path in sorted(AOI_REFS.glob("*.md")):
+        body = path.read_text(encoding="utf-8")
+        for match in _re.finditer(r'stage_bundle\.py"?\s+([a-z_]+(?:\.[a-z_]+)?)', body):
+            name = match.group(1)
+            if name in ("--list",):
+                continue
+            assert name in known, f"{path.name} names unknown stage {name!r}"
