@@ -68,7 +68,7 @@ Required sections:
 9. **Hard Stops / Warnings** — committed error events, if present.
 
 Cosmos3 bare mode is a discrete OK/NG classifier. Rich mode is explicitly
-identified as NVPaw multi-task classification/detection and must never inherit
+identified as NVPaw multi-task classification/counting/detection and must never inherit
 bare-only labels in its report.
 
 ## Terminal iterations have no Proxy artifacts

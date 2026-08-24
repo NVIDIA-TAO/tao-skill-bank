@@ -41,8 +41,10 @@ evidence; `commit_stage.py` validates it before recording the stage.
 ## Rich task-balanced contracts
 
 `task_balanced_v1` changes the primary metric to `balanced_score`, the minimum
-attainment across the six required task groups. Each group uses its own
-classification macro F1 or detection box-micro F1 against the frozen
+attainment across the task groups observed in the frozen Benchmark. The
+profile supports all seven NVPaw task types, but it never requires adding a
+task to or otherwise mutating that source-of-truth split. Each required group uses its own
+classification macro F1, component count-micro F1, or detection box-micro F1 against the frozen
 `group_metric_target`. Ties prefer larger macro attainment, smaller attainment
 spread, fewer coverage failures, then the earlier iteration.
 

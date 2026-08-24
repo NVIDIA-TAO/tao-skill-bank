@@ -976,7 +976,7 @@ def render(results_dir: pathlib.Path) -> pathlib.Path:
     values = {
         "GENERATED_DATE": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "REPORT_SUBTITLE": (
-            "Disk-backed improvement loop · NVPaw multi-task classification and detection"
+            "Disk-backed improvement loop · NVPaw multi-task classification, counting, and detection"
             if config.get("annotation_profile") == "nvpaw_multitask_v1"
             else "Disk-backed improvement loop · bare OK/NG classification"
         ),

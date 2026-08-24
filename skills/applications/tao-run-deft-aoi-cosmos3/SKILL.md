@@ -8,8 +8,8 @@ description: >
   from selected Mining samples, train with cosmos-rl LoRA SFT, and repeat
   through the selected platform's submit/status/logs/cancel contract.
   The default bare_okng profile uses exact OK/NG labels; the opt-in
-  nvpaw_multitask_v1 profile supports component/defect classification and
-  normalized-box detection with optional golden references, task-balanced
+  nvpaw_multitask_v1 profile supports component counting, component/defect
+  classification, and normalized-box detection with optional golden references, task-balanced
   KPI gates, and pluggable gap-analysis ablations. Use for "run Cosmos3 DEFT
   AOI", "CR3 AOI loop", or "improve Cosmos3 PCB inspection"; do not use for
   one-off Cosmos training or generic anomaly generation.
@@ -17,7 +17,7 @@ license: Apache-2.0 AND CC-BY-4.0
 compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python with `numpy`, `pyarrow`, and `yaml`, and the selected platform's native CLI.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.1.1"
 allowed-tools: Read Task Bash Write
 tags:
 - application
@@ -191,14 +191,14 @@ default; never infer a profile from annotation contents.
 
 ### `nvpaw_multitask_v1`
 
-- Supports the six task types in `references/nvpaw-prompt-formats.md`:
-  component/defect classification and detection, each with the documented
-  single-image or golden-then-target role contract.
+- Supports the seven task types in `references/nvpaw-prompt-formats.md`:
+  component counting plus component/defect classification and detection, each
+  with the documented single-image or golden-then-target role contract.
 - `id` identifies one prompt/answer record; `target_id` identifies one physical
   target. Multiple records may share a target without duplicate embedding work.
 - Classification answers are prompt-local semantic choice sets, including
-  valid `[]`. Detection answers are labeled `xyxy` integer boxes normalized to
-  `[0,1000]`, also allowing `[]`.
+  valid `[]`. Count answers are non-negative integers. Detection answers are
+  labeled `xyxy` integer boxes normalized to `[0,1000]`, also allowing `[]`.
 - JSONL OpenAI `messages` is an authoring format only. Run
   `materialize_nvpaw_annotations.py`; Cosmos consumes the deterministic JSON
   array it produces.
@@ -306,12 +306,18 @@ small-Python-helper remediation.
 
 ## Workflow
 
-The full transition graph is in `references/pipeline-and-state.md`.
+Read `references/pipeline-and-state.md` before initialization or stage
+execution; it owns the exact transition graph, commit evidence, resume rules,
+and stop procedure. Benchmark is always the first and only stop gate. Proxy
+evaluation and RCCA run only when that gate is unmet and may feed routing;
+Benchmark sample errors never may.
 
-The frozen Benchmark gate is always evaluated before any Proxy work. Proxy
-evaluate and RCCA exist only to seed the next iteration's mining, so they run
-only when the gate is unmet. A run that passes the gate stops without spending
-a Proxy evaluation.
+Each iteration routes Proxy gaps, commits the frozen AnomalyGen policy, mines
+and history-deduplicates real samples, assembles a monotonic Train JSON,
+validates its lineage and split isolation, trains, then Benchmark-evaluates.
+Only a continuing iteration runs Proxy evaluation afterward. Rich strict
+routing fans out only to `routed_task_types`; image-only and explicit fallback
+rows retain the source target's available tasks.
 
 Baseline starts with zero-shot frozen Benchmark evaluation of the unmodified
 base model, which establishes the zero-shot KPI:

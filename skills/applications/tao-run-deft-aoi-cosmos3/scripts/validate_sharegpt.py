@@ -299,9 +299,11 @@ def _validate_nvpaw_records(
         if not isinstance(answer, dict):
             raise ValueError(f"{context}: canonical answer must be an object")
         kind = answer.get("kind")
-        expected_kind = (
-            "choice_set" if spec["metric_family"] == "classification" else "detections"
-        )
+        expected_kind = {
+            "classification": "choice_set",
+            "counting": "count",
+            "detection": "detections",
+        }[spec["metric_family"]]
         if kind != expected_kind:
             raise ValueError(f"{context}: answer.kind must be {expected_kind!r}")
         if kind == "choice_set":
@@ -322,6 +324,14 @@ def _validate_nvpaw_records(
                 raise ValueError(
                     f"{context}: answer.labels must resolve through option_map"
                 )
+        elif kind == "count":
+            value = answer.get("value")
+            if type(value) is not int or value < 0:
+                raise ValueError(
+                    f"{context}: answer.value must be a non-negative integer"
+                )
+            if record.get("option_map", {}) != {}:
+                raise ValueError(f"{context}: count records must have an empty option_map")
         else:
             objects = answer.get("objects")
             if not isinstance(objects, list):
