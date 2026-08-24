@@ -56,7 +56,7 @@ install command. Do not apply one model's override to unrelated workflows.
 echo "$NGC_KEY" | docker login nvcr.io -u '$oauthtoken' --password-stdin
 ```
 
-Persists in `~/.docker/config.json` across reboots. Re-run on `unauthorized` errors.
+Persists in your local Docker credential store across reboots. Re-run on `unauthorized` errors.
 
 ## `docker run` — canonical flags
 
@@ -100,7 +100,7 @@ Notes:
 - `--user "$(id -u):$(id -g)"` — required by default whenever a bind mount is writable. It prevents root-owned checkpoint trees that the submitting host user cannot clean up.
 - Refuse UID `0` for the canonical writable-bind path. If the launcher itself is root, obtain the verified non-root submitting UID:GID explicitly; never infer it from the output-directory owner.
 - `--group-add <gid>` — preserve supplementary host-group access to shared datasets and workspaces. The canonical array adds every host group except the primary GID.
-- `HOME`, `USER`, `LOGNAME`, and cache redirects — keep frameworks from writing to image-owned locations such as `/root` after the user override. Prepare these directories on the writable mount before launch. `USER`/`LOGNAME` are load-bearing, not cosmetic: an arbitrary `--user` UID has no `/etc/passwd` entry in the image, and torch 2.x calls `getpass.getuser()` at import (`torch/_dynamo` → inductor cache-dir setup) — with neither env var set the container crashes with `KeyError: 'getpwuid(): uid not found: <uid>'` before any workload code runs. Any non-empty name satisfies it; the name does not need to exist in the image.
+- `HOME` and cache redirects — keep frameworks from writing to image-owned locations such as `/root` after the user override. Prepare these directories on the writable mount before launch. `USER`/`LOGNAME` are load-bearing, not cosmetic: an arbitrary `--user` UID has no `/etc/passwd` entry in the image, and torch 2.x calls `getpass.getuser()` at import (`torch/_dynamo` → inductor cache-dir setup) — with neither env var set the container crashes with `KeyError: 'getpwuid(): uid not found: <uid>'` before any workload code runs. Any non-empty name satisfies it; the name does not need to exist in the image.
 - `-v host:container` — bind mount; the command references container paths only.
 - `-e VAR` — passthrough from parent shell (no value needed if already set). Use this form for secrets.
 
@@ -304,7 +304,7 @@ user approval and a reviewed `docker system df` inventory.
 
 **`permission denied` on bind-mounted paths** — container UID ≠ host UID, or `HOME`/a framework cache still points to an image-owned directory. Use the canonical host UID:GID mapping and writable HOME/cache redirects above. For a documented root-required image, complete the mandatory post-run ownership normalization before retrying.
 
-**`KeyError: 'getpwuid(): uid not found: <uid>'` at import of torch/torchvision** — the container runs as a `--user` UID with no `/etc/passwd` entry and no `USER`/`LOGNAME` env var, so `getpass.getuser()` falls through to `pwd.getpwuid()` at import time. `-e HOME=...` alone does not fix it. Keep the UID:GID mapping and launch with the canonical identity env block (`-e USER=... -e LOGNAME=...` + writable `HOME` + cache redirects). Do not work around it by running as root; that recreates the root-owned-outputs hazard.
+**a user-lookup error at import of torch/torchvision** — the container runs as a `--user` UID with no `/etc/passwd` entry and no `USER`/`LOGNAME` env var, so `getpass.getuser()` falls through to `pwd.getpwuid()` at import time. `-e HOME=...` alone does not fix it. Keep the UID:GID mapping and launch with the canonical identity env block (`-e USER=... -e LOGNAME=...` + writable `HOME` + cache redirects). Do not work around it by running as root; that recreates the root-owned-outputs hazard.
 
 **`Error: No such container: <name>` after `docker run -d`** — container crashed on startup. `docker ps -a` shows exited; `docker logs <name>` for cause. Drop `--rm` while debugging.
 
