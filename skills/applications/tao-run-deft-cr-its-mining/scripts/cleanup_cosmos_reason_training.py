@@ -84,13 +84,17 @@ def cleanup_training_checkpoints(train_dir: Path) -> dict[str, object]:
         )
 
     targets: list[Path] = []
+    best_checkpoints = train_dir / "best" / "checkpoints"
+    if best_checkpoints.exists() or best_checkpoints.is_symlink():
+        targets.append(best_checkpoints)
+
     for run_dir in run_dirs:
         checkpoints_dir = run_dir / "checkpoints"
-        best_checkpoints = run_dir / "best" / "checkpoints"
         if checkpoints_dir.exists() or checkpoints_dir.is_symlink():
             targets.append(checkpoints_dir)
-        if best_checkpoints.exists() or best_checkpoints.is_symlink():
-            targets.append(best_checkpoints)
+        legacy_best_checkpoints = run_dir / "best" / "checkpoints"
+        if legacy_best_checkpoints.exists() or legacy_best_checkpoints.is_symlink():
+            targets.append(legacy_best_checkpoints)
 
     removed_bytes = 0
     for target in targets:
@@ -100,12 +104,10 @@ def cleanup_training_checkpoints(train_dir: Path) -> dict[str, object]:
     if missing_exports:
         raise RuntimeError(f"safetensors disappeared during cleanup: {missing_exports}")
 
-    remaining = [
-        str(path)
-        for run_dir in run_dirs
-        for path in (run_dir / "checkpoints", run_dir / "best" / "checkpoints")
-        if path.exists() or path.is_symlink()
-    ]
+    candidates = [train_dir / "best" / "checkpoints"]
+    for run_dir in run_dirs:
+        candidates.extend((run_dir / "checkpoints", run_dir / "best" / "checkpoints"))
+    remaining = [str(path) for path in candidates if path.exists() or path.is_symlink()]
     if remaining:
         raise RuntimeError(f"checkpoint paths remain after cleanup: {remaining}")
 

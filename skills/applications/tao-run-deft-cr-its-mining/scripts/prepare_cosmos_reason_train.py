@@ -164,6 +164,57 @@ def patch_train_config(
     return config
 
 
+def positive_int(mapping: dict[str, Any], key: str, section: str) -> int:
+    """Read a positive integer training parameter."""
+    value = mapping.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"{section}.{key} must be a positive integer")
+    return value
+
+
+def validate_expected_optimizer_steps(config: dict[str, Any], sample_count: int) -> int:
+    """Require the assembled dataset and training parameters to produce a step."""
+    train = config.get("train")
+    policy = config.get("policy")
+    if not isinstance(train, dict) or not isinstance(policy, dict):
+        raise ValueError("training config must contain [train] and [policy]")
+    train_policy = train.get("train_policy")
+    parallelism = policy.get("parallelism")
+    if not isinstance(train_policy, dict) or not isinstance(parallelism, dict):
+        raise ValueError(
+            "training config must contain [train.train_policy] and [policy.parallelism]"
+        )
+
+    epochs = positive_int(train, "epoch", "train")
+    batch_per_replica = positive_int(train, "train_batch_per_replica", "train")
+    dp_shard_size = positive_int(parallelism, "dp_shard_size", "policy.parallelism")
+    dp_replicate_size = positive_int(
+        parallelism,
+        "dp_replicate_size",
+        "policy.parallelism",
+    )
+    drop_last = train_policy.get("dataloader_drop_last", True)
+    if not isinstance(drop_last, bool):
+        raise ValueError("train.train_policy.dataloader_drop_last must be true or false")
+
+    effective_batch = batch_per_replica * dp_shard_size * dp_replicate_size
+    if drop_last:
+        steps_per_epoch = sample_count // effective_batch
+    else:
+        steps_per_epoch = (sample_count + effective_batch - 1) // effective_batch
+    expected_steps = epochs * steps_per_epoch
+    if expected_steps < 1:
+        raise ValueError(
+            "assembled training data and the configured Cosmos-RL parameters produce zero "
+            f"optimizer steps: samples={sample_count}, epoch={epochs}, "
+            f"train_batch_per_replica={batch_per_replica}, dp_shard_size={dp_shard_size}, "
+            f"dp_replicate_size={dp_replicate_size}, dataloader_drop_last={drop_last}. "
+            "Stop before training and tell the user that the training parameters likely need "
+            "to be tuned for this iteration's dataset size and GPU count."
+        )
+    return expected_steps
+
+
 def training_checkpoint(
     config: dict[str, Any],
     workspace: Path,
@@ -250,7 +301,11 @@ def generate_train_toml(
         val_media_dir=val_media_dir,
         checkpoint_path=checkpoint_path,
     )
+    sample_count = len(load_json_array(train_annotations))
+    expected_steps = validate_expected_optimizer_steps(patched, sample_count)
     output_path.write_text(dump_toml(patched), encoding="utf-8")
+    print(f"training samples: {sample_count}")
+    print(f"expected optimizer steps: {expected_steps}")
     return output_path
 
 
