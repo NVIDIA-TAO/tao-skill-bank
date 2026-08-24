@@ -1009,3 +1009,88 @@ def test_kubernetes_input_env_renders_valid_yaml(tmp_path):
     assert env["TAO_INPUT_DATASET_DIR"] == "/data/ds"
     assert env["TAO_INPUT_COSMOS_MODELS"] == "/data/ckpt"
     assert env["TAO_RESULTS_ROOT"] == "/data/results/j"
+
+
+# ── Docker's documented required flags must actually be rendered ───────────
+# SKILL.md documents --shm-size, --user, --group-add and the HOME/USER/cache
+# redirects as required for any writable bind mount. render() emitted none of
+# them, so every TAO stage rendered for docker would have:
+#   * crashed at IMPORT -- torch 2.x calls getpass.getuser() during inductor
+#     cache setup, and an arbitrary --user UID has no /etc/passwd entry, so it
+#     raises KeyError: 'getpwuid(): uid not found' before any workload code
+#   * or written root-owned checkpoints the submitting user cannot delete
+#   * or died with `Bus error` on docker's 64MB /dev/shm default
+#
+# These stay OUT of the spec-bundle and IN the docker renderer: they are how
+# docker expresses what enroot (rootless, host tmpfs) and kubernetes (dshm
+# emptyDir, securityContext) provide by other means.
+
+def _docker_argv(tmp_path, **ctx_extra):
+    module = _load("tao-run-on-docker")
+    ctx = {**_ctx(tmp_path), "uid": 1000, "gid": 1000, "groups": [1000, 27],
+           "user_name": "someuser", **ctx_extra}
+    return module.render(GPU_BUNDLE, ctx)["argv"]
+
+
+@pytest.mark.parametrize("flag", ["--shm-size", "--user", "--group-add"])
+def test_docker_renders_its_documented_flags(tmp_path, flag):
+    assert flag in _docker_argv(tmp_path), (
+        f"docker SKILL.md documents {flag} as required and render() omits it"
+    )
+
+
+@pytest.mark.parametrize("var", ["USER", "LOGNAME", "HOME"])
+def test_docker_sets_the_identity_env_torch_reads_at_import(tmp_path, var):
+    """Missing USER/LOGNAME crashes torch before any workload code runs."""
+    argv = _docker_argv(tmp_path)
+    assert any(a.startswith(f"{var}=") for a in argv), (
+        f"{var} unset; torch's getpass.getuser() raises KeyError at import"
+    )
+
+
+def test_docker_redirects_caches_onto_the_writable_mount(tmp_path):
+    """Frameworks otherwise write to /root, which an arbitrary UID cannot."""
+    argv = _docker_argv(tmp_path)
+    for var in ("HF_HOME", "TORCH_HOME", "TRITON_CACHE_DIR", "MPLCONFIGDIR"):
+        assert any(a.startswith(f"{var}=") for a in argv), f"{var} not redirected"
+
+
+def test_docker_refuses_to_launch_as_root(tmp_path):
+    """SKILL.md: refuse UID 0 rather than infer an id from the output owner."""
+    module = _load("tao-run-on-docker")
+    with pytest.raises(ValueError, match="UID 0"):
+        module.render(GPU_BUNDLE, {**_ctx(tmp_path), "uid": 0, "gid": 0})
+
+
+def test_docker_shm_size_is_overridable(tmp_path):
+    """`Bus error` on multi-GPU means raise it; 8g is a default, not a limit."""
+    argv = _docker_argv(tmp_path, shm_size="16g")
+    assert argv[argv.index("--shm-size") + 1] == "16g"
+
+
+def test_prepare_skips_cache_dirs_when_results_dir_is_not_real(tmp_path):
+    """render-only callers pass a notional path; prepare must not blow up."""
+    module = _load("tao-run-on-docker")
+    original = module.subprocess.run
+    module.subprocess.run = lambda *a, **k: _Done("")
+    try:
+        module.prepare(GPU_BUNDLE, _ctx(tmp_path))   # results_dir="/r"
+    finally:
+        module.subprocess.run = original
+
+
+def test_prepare_creates_the_cache_dirs(tmp_path):
+    """An arbitrary UID may not be able to create them once running."""
+    module = _load("tao-run-on-docker")
+    real = tmp_path / "res"
+    real.mkdir()
+    ctx = {**_ctx(tmp_path), "results_dir": str(real)}
+    monkey = getattr(module, "subprocess")
+    original = monkey.run
+    monkey.run = lambda *a, **k: _Done("")
+    try:
+        module.prepare(GPU_BUNDLE, ctx)
+    finally:
+        monkey.run = original
+    home = pathlib.Path(module.runtime_home(ctx["results_dir"]))
+    assert (home / ".cache" / "huggingface").is_dir()

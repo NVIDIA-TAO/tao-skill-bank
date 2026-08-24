@@ -13,6 +13,9 @@ whatever workflow is calling it.
 
 from __future__ import annotations
 
+import getpass
+import os
+import pathlib
 import re
 import shlex
 import subprocess
@@ -37,6 +40,83 @@ STATE_VOCAB = {
 }
 
 
+# ── Host identity and runtime environment ───────────────────────────────────
+# This skill's SKILL.md documents these as REQUIRED for any writable bind
+# mount, and render() emitted none of them. They are not cosmetic:
+#
+#  * Without --user, the container writes checkpoints as root and the
+#    submitting user cannot delete their own results tree.
+#  * Without USER/LOGNAME, torch 2.x crashes at IMPORT -- getpass.getuser()
+#    runs during `torch/_dynamo` inductor cache setup, and an arbitrary --user
+#    UID has no /etc/passwd entry in the image, so it raises
+#    KeyError: 'getpwuid(): uid not found: <uid>' before any workload code.
+#  * Without --shm-size, torchrun and PyTorch DataLoaders exhaust docker's
+#    64 MB /dev/shm default and die with `Bus error`.
+#
+# None of this belongs in the spec-bundle: it is how DOCKER expresses things
+# other platforms get for free (enroot is rootless and exposes the host tmpfs;
+# kubernetes has a dshm emptyDir and a securityContext).
+
+RUNTIME_SUBDIR = ".tao-runtime/home"
+
+# Frameworks that would otherwise write into image-owned paths like /root,
+# which an arbitrary --user UID cannot create.
+CACHE_ENV = {
+    "XDG_CACHE_HOME": "",
+    "HF_HOME": "huggingface",
+    "TORCH_HOME": "torch",
+    "TRITON_CACHE_DIR": "triton",
+    "TORCHINDUCTOR_CACHE_DIR": "torchinductor",
+    "MPLCONFIGDIR": "matplotlib",
+}
+
+
+def runtime_home(results_dir: str) -> str:
+    return f"{results_dir.rstrip('/')}/{RUNTIME_SUBDIR}"
+
+
+def identity_args(ctx: dict[str, Any]) -> list[str]:
+    """--user plus supplementary groups, refusing UID 0.
+
+    SKILL.md: "Refuse UID 0 for the canonical writable-bind path. If the
+    launcher itself is root, obtain the verified non-root submitting UID:GID
+    explicitly; never infer it from the output-directory owner." So a root
+    launcher must pass uid/gid in ctx rather than have one guessed for it.
+    """
+    uid = ctx.get("uid")
+    gid = ctx.get("gid")
+    if uid is None or gid is None:
+        uid, gid = os.getuid(), os.getgid()
+    uid, gid = int(uid), int(gid)
+    if uid == 0:
+        raise ValueError(
+            "refusing a writable docker launch as UID 0; pass the verified "
+            "non-root submitting uid/gid in ctx (uid=, gid=)"
+        )
+    args = ["--user", f"{uid}:{gid}"]
+    groups = ctx.get("groups")
+    if groups is None:
+        groups = os.getgroups() if hasattr(os, "getgroups") else []
+    # Preserve supplementary access to shared datasets and workspaces.
+    for group in groups:
+        if int(group) != gid:
+            args += ["--group-add", str(int(group))]
+    return args
+
+
+def runtime_env(results_dir: str, ctx: dict[str, Any]) -> list[str]:
+    """HOME, USER/LOGNAME and cache redirects onto the writable mount."""
+    home = runtime_home(results_dir)
+    name = str(ctx.get("user_name") or getpass.getuser() or "tao")
+    env = ["-e", f"HOME={home}",
+           # Any non-empty name satisfies getpass.getuser(); it need not exist
+           # in the image.
+           "-e", f"USER={name}", "-e", f"LOGNAME={name}"]
+    for var, leaf in CACHE_ENV.items():
+        env += ["-e", f"{var}={home}/.cache" + (f"/{leaf}" if leaf else "")]
+    return env
+
+
 def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Make the image locally available. Pull only when it is missing.
 
@@ -45,6 +125,24 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     `docker run` is billed as idle GPU time on a metered host, and it hides an
     auth failure inside a training log.
     """
+    # SKILL.md: "Prepare these directories on the writable mount before
+    # launch." An arbitrary --user UID may not be able to create them itself
+    # once the container is running, and a framework that cannot write its
+    # cache fails deep inside an import rather than at startup.
+    results_dir = ctx.get("results_dir")
+    if results_dir and pathlib.Path(results_dir).is_dir():
+        home = pathlib.Path(runtime_home(str(results_dir)))
+        for leaf in CACHE_ENV.values():
+            target = home / ".cache" / leaf if leaf else home / ".cache"
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise ValueError(
+                    f"cannot prepare the runtime cache dir {target}: {exc}. "
+                    "results_dir must be writable by the submitting user "
+                    "before launch"
+                ) from exc
+
     image = bundle["image"]
     present = subprocess.run(
         ["docker", "image", "inspect", image],
@@ -130,7 +228,11 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     env += [arg for name in ctx.get("env_passthrough") or [] for arg in ("-e", name)]
 
     workdir = ["-w", bundle["workdir"]] if bundle.get("workdir") else []
-    argv = ["docker", "run", "--name", job_id, "-d",
+    # Docker's 64MB /dev/shm default is what makes this necessary; slurm and
+    # kubernetes each solve it their own way, so it is rendered, not declared.
+    shm = ["--shm-size", str(ctx.get("shm_size", "8g"))]
+    argv = ["docker", "run", "--name", job_id, "-d", *shm,
+            *identity_args(ctx), *runtime_env(results_dir, ctx),
             *resources, *env, *mounts, *workdir, bundle["image"]]
     argv += shlex.split(bundle["command"])
     argv += list(bundle.get("args") or [])
