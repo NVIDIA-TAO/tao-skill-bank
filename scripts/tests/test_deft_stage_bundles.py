@@ -269,3 +269,82 @@ def test_every_documented_stage_name_exists_in_the_table(stage_bundle):
             if name in ("--list",):
                 continue
             assert name in known, f"{path.name} names unknown stage {name!r}"
+
+
+def test_image_override_is_available_for_smoke_tests(stage_bundle):
+    """A CI job proving the machinery works should not pull a multi-GB image."""
+    bundle = stage_bundle.build(
+        "anomalygen.amp", AMP_PARAMS, results_dir="/ws/r", bank=REPO,
+        args=["true"], image="busybox:1.36")
+    assert bundle["image"] == "busybox:1.36"
+
+
+def test_image_override_does_not_leak_into_the_table(stage_bundle):
+    """An override must be per-call, never mutate the shared stage table."""
+    stage_bundle.build("anomalygen.amp", AMP_PARAMS, results_dir="/ws/r",
+                       bank=REPO, args=["true"], image="busybox:1.36")
+    again = stage_bundle.build("anomalygen.amp", AMP_PARAMS,
+                               results_dir="/ws/r", bank=REPO, args=["true"])
+    assert again["image"].startswith("nvcr.io/")
+
+
+# ── The platform evals must stay honest ────────────────────────────────────
+# An eval that hand-writes `docker run` proves nothing about the contract, and
+# an eval that only covers docker leaves the multi-platform claim untested.
+
+EVAL_CONFIG = REPO / "skills/applications/tao-run-deft-aoi/eval.config"
+
+
+@pytest.fixture(scope="module")
+def eval_config():
+    return json.loads(EVAL_CONFIG.read_text(encoding="utf-8"))
+
+
+def test_eval_config_is_valid_json_with_ids(eval_config):
+    ids = [e["id"] for e in eval_config["evals"]]
+    assert len(ids) == len(set(ids)), f"duplicate eval ids: {ids}"
+
+
+@pytest.mark.parametrize("platform", ["docker", "kubernetes"])
+def test_a_platform_eval_exists(eval_config, platform):
+    ids = [e["id"] for e in eval_config["evals"]]
+    assert f"deft-aoi-stages-on-{platform}" in ids, (
+        f"no DEFT AOI eval covers {platform}; the multi-platform claim is "
+        "untested there"
+    )
+
+
+@pytest.mark.parametrize("platform", ["docker", "kubernetes"])
+def test_platform_eval_drives_the_contract_not_the_runtime(eval_config, platform):
+    """The whole point is that the eval must not bypass deft_exec.py."""
+    entry = next(e for e in eval_config["evals"]
+                 if e["id"] == f"deft-aoi-stages-on-{platform}")
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "stage_bundle.py" in body and "deft_exec.py" in body
+    assert "bypass" in body.lower(), (
+        "the eval does not forbid hand-writing a native launch, which would "
+        "pass while proving nothing"
+    )
+
+
+@pytest.mark.parametrize("platform", ["docker", "kubernetes"])
+def test_platform_eval_checks_for_the_silent_empty_read(eval_config, platform):
+    """A COMPLETE record over zero inputs is the failure that looks like success."""
+    entry = next(e for e in eval_config["evals"]
+                 if e["id"] == f"deft-aoi-stages-on-{platform}")
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "TAO_INPUT_DATASET_DIR" in body
+    assert "zero" in body.lower(), "the empty-read failure is not graded"
+
+
+@pytest.mark.parametrize("platform", ["docker", "kubernetes"])
+def test_platform_eval_names_a_stage_the_emitter_knows(eval_config, platform,
+                                                       stage_bundle):
+    entry = next(e for e in eval_config["evals"]
+                 if e["id"] == f"deft-aoi-stages-on-{platform}")
+    assert "anomalygen.amp" in entry["prompt"]
+    assert "anomalygen.amp" in stage_bundle.STAGES
+    assert stage_bundle.STAGES["anomalygen.amp"]["gpus"] == 0, (
+        "the eval claims this stage needs no GPU; the table must agree or CI "
+        "will queue for an accelerator it was told it did not need"
+    )

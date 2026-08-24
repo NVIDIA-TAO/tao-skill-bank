@@ -170,7 +170,8 @@ def spec_key_env(spec_key: str) -> str:
 def build(stage: str, params: dict[str, str], *, results_dir: str,
           bank: pathlib.Path, network_arch: str = "visual-changenet",
           args: list[str] | None = None,
-          spec: dict[str, Any] | None = None) -> dict[str, Any]:
+          spec: dict[str, Any] | None = None,
+          image: str | None = None) -> dict[str, Any]:
     """Assemble one stage's spec-bundle.
 
     Fails closed on a missing input rather than emitting a bundle that would
@@ -204,7 +205,12 @@ def build(stage: str, params: dict[str, str], *, results_dir: str,
     bundle: dict[str, Any] = {
         "network_arch": network_arch,
         "action": stage,
-        "image": resolve_image(entry["image"], bank),
+        # `image` overrides the versions.yaml lookup. This exists for smoke
+        # tests: a CI job proving the stage MACHINERY works on a platform --
+        # bundle, mounts, records, the four verbs -- should not have to pull a
+        # multi-GB TAO image to do it. Never use it to pin a production image;
+        # that is versions.yaml's job, and the table is asserted URI-free.
+        "image": image or resolve_image(entry["image"], bank),
         "mode": entry["mode"],
         "command": entry["command"],
         "declared_inputs": declared_inputs,
@@ -265,6 +271,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--spec-file", type=pathlib.Path,
                         help="YAML spec for a mode=config stage; travels as "
                              "bundle content, not as a mount")
+    parser.add_argument("--image",
+                        help="override the versions.yaml image. For smoke "
+                             "tests only; production images come from "
+                             "versions.yaml")
     parser.add_argument("--network-arch", default="visual-changenet")
     parser.add_argument("--bank", type=pathlib.Path,
                         default=pathlib.Path(__file__).resolve().parents[4])
@@ -289,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         bundle = build(parsed.stage, _parse_params(parsed.param),
                        results_dir=parsed.results_dir, bank=parsed.bank,
                        network_arch=parsed.network_arch, args=parsed.args,
-                       spec=spec)
+                       spec=spec, image=parsed.image)
     except ValueError as exc:
         print(f"stage_bundle: {exc}", file=sys.stderr)
         return 2
