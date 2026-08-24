@@ -73,12 +73,24 @@ if [ -n "@@RESUME_KEY@@" ] && [ "${TAO_AUTO_RESUME:-1}" != "0" ]; then
          ! -iname '*best*' ! -iname '*latest*' \
          -size +0c -print0 \) 2>/dev/null \
     | xargs -0 ls -t 2>/dev/null | head -1)
+  # GNU xargs runs its command even on EMPTY input, so `ls -t` with no
+  # arguments lists the current directory and returns a stray name -- the
+  # resume path then points at whatever sorted first in $PWD. BSD xargs skips
+  # the command instead, which is why this is invisible on macOS and happens on
+  # every real Linux compute node. Discard anything that is not a real file.
+  [ -f "$RESUME_CKPT" ] || RESUME_CKPT=""
   if [ -z "$RESUME_CKPT" ]; then
     RESUME_CKPT=$(find "@@RESULTS_DIR@@" \
         \( -type d \( -name ptm -o -name inputs \) -prune \) -o \
         \( -type f \( -name '*.pth' -o -name '*.ckpt' -o -name '*.tlt' \) \
            -size +0c -print0 \) 2>/dev/null \
       | xargs -0 ls -t 2>/dev/null | head -1)
+  # GNU xargs runs its command even on EMPTY input, so `ls -t` with no
+  # arguments lists the current directory and returns a stray name -- the
+  # resume path then points at whatever sorted first in $PWD. BSD xargs skips
+  # the command instead, which is why this is invisible on macOS and happens on
+  # every real Linux compute node. Discard anything that is not a real file.
+  [ -f "$RESUME_CKPT" ] || RESUME_CKPT=""
   fi
   if [ -n "$RESUME_CKPT" ]; then
     RESUME_OVERRIDE="@@RESUME_KEY@@=$RESUME_CKPT"

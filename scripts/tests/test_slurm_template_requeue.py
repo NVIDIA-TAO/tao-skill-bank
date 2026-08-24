@@ -237,3 +237,52 @@ def test_results_dir_creation_is_not_conditional_on_auto_resume(tmp_path):
     assert (tmp_path / "results" / "job-1").is_dir(), (
         "results_dir is only created when auto-resume is on"
     )
+
+
+# ── The resume path must survive GNU xargs' empty-input behaviour ──────────
+# Caught by CI, not locally. `find ... -print0 | xargs -0 ls -t` looks safe, but
+# GNU xargs runs its command even when input is EMPTY, so `ls -t` with no
+# arguments lists the CURRENT DIRECTORY and returns whatever sorted first. On
+# this repo that was "scripts", so an empty results dir produced
+#
+#     train.resume_training_checkpoint_path=scripts
+#
+# BSD xargs skips the command instead, which is why macOS never showed it --
+# and Linux is where every compute node actually runs.
+#
+# These tests simulate the GNU behaviour explicitly so the guard is verified on
+# any host, rather than only where the bug reproduces.
+
+@pytest.mark.parametrize("template", ["singlenode", "multinode"])
+def test_resume_candidate_is_validated_as_a_file(template):
+    body = (REPO / f"templates/slurm/{template}.sbatch.tmpl").read_text(encoding="utf-8")
+    assert body.count('[ -f "$RESUME_CKPT" ] || RESUME_CKPT=""') == 2, (
+        "each xargs result must be validated; an unguarded one lets `ls` "
+        "return a CWD entry when find matched nothing"
+    )
+
+
+@pytest.mark.parametrize("stray", ["scripts", "some-directory", ""])
+def test_a_non_file_resume_candidate_is_discarded(tmp_path, stray):
+    """Run the guard itself against what GNU xargs would have produced."""
+    import subprocess
+
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    (tmp_path / "some-directory").mkdir(exist_ok=True)
+    script = f'cd {tmp_path}; RESUME_CKPT="{stray}"; ' \
+             '[ -f "$RESUME_CKPT" ] || RESUME_CKPT=""; printf %s "$RESUME_CKPT"'
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         check=True).stdout
+    assert out == "", f"a non-file candidate {stray!r} survived as {out!r}"
+
+
+def test_a_real_checkpoint_still_survives_the_guard(tmp_path):
+    """The guard must not throw away a legitimate resume path."""
+    import subprocess
+
+    ckpt = tmp_path / "epoch_012.pth"
+    ckpt.write_text("weights")
+    script = f'RESUME_CKPT="{ckpt}"; [ -f "$RESUME_CKPT" ] || RESUME_CKPT=""; printf %s "$RESUME_CKPT"'
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                         check=True).stdout
+    assert out == str(ckpt)
