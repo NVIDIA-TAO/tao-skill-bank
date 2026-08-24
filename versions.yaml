@@ -44,7 +44,7 @@ images:
     vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
-    paidf_anomalygen: nvcr.io/nvidia/paidf-anomalygen:1.0.1
+    paidf_anomalygen: nvcr.io/nvidia/paidf-anomalygen:1.1.0
     paidf_augmentation: nvcr.io/nvidia/paidf-augmentation:1.0.0
 wheels:
   # TAO Python wheels, published to public PyPI. Skill Preflight sections
