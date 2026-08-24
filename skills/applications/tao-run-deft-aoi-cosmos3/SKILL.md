@@ -149,9 +149,12 @@ credential value.
 - Every spec is a nested dictionary serialized to TOML. Never write literal
   flat dotted keys into a spec.
 - Do not mount user data over `/workspace`; cosmos-rl is installed there.
-- Run every container that writes into the results tree as the invoking user,
-  not root, or the run's own outputs become undeletable by their owner. See
-  `references/cosmos-reason.md`.
+- Run every Docker container with a writable host mount as the invoking
+  UID:GID with `USER`, `LOGNAME`, `HOME=/tmp`, and the read-only host
+  passwd/group databases; never fall back to a root repair container. This
+  covers checkpoint preparation, Train, Proxy/Benchmark evaluate, AnomalyGen,
+  and mining. See `references/cosmos-reason.md` and
+  `references/tao-mine-aoi-images.md`.
 
 Read `skills/models/tao-finetune-cosmos-reason/SKILL.md` and its
 `references/skill_info.yaml` before authoring a spec. Start from the model

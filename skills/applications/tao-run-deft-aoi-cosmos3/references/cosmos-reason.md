@@ -29,6 +29,14 @@ set -a; source /path/to/.env; set +a   # omit if already exported
 hf download nvidia/Cosmos3-Nano --local-dir "$COSMOS3_SOURCE_DIR" \
   --exclude 'assets/*' --exclude 'images/*'
 
+PREPARED_MODEL_PARENT=$(dirname "$PREPARED_MODEL_HOST_PATH")
+mkdir -p "$PREPARED_MODEL_PARENT"
+probe="$PREPARED_MODEL_PARENT/.tao-write-probe.$$"
+(umask 077 && : >"$probe" && rm -f "$probe") || {
+  echo "FATAL: $PREPARED_MODEL_PARENT is not writable by uid $(id -u)" >&2
+  exit 2
+}
+
 "$PYTHON" \
   "$TAO_SKILL_BANK_PATH/skills/models/tao-finetune-cosmos-reason/scripts/prepare_cosmos3_vlm_checkpoint.py" \
   --checkpoint-path "$COSMOS3_SOURCE_DIR" \
@@ -39,21 +47,10 @@ hf download nvidia/Cosmos3-Nano --local-dir "$COSMOS3_SOURCE_DIR" \
 Confirm `$COSMOS3_SOURCE_DIR` exists before launching; that check costs nothing
 and saves several minutes plus a large cache write.
 
-The helper runs its own containers as root and repairs ownership afterwards
-with a trailing `chown ... || true`, which covers only the paths it names and
-tolerates its own failure. Expect a handful of root-owned files to survive in
-the converted directory — `chat_template.json` and `.cache/huggingface/` were
-the observed leftovers. They make the PTM directory unremovable by its owner,
-so repair it before the run needs to move or delete it. No sudo required:
-
-```bash
-docker run --pull=never --rm -v "$(dirname "$PREPARED_MODEL_HOST_PATH"):/out" busybox:latest \
-  chown -R "$(id -u):$(id -g)" "/out/$(basename "$PREPARED_MODEL_HOST_PATH")"
-```
-
-Prefer chowning over deleting: the prepared PTM is ~17 GB across four shards
-and re-converting means re-downloading the source checkpoint too. Once the
-ownership is fixed the helper reports `status=skipped_existing` and reuses it.
+The model helper owns its internal Docker command and maps the invoking
+UID:GID before writing the prepared checkpoint. Treat any root-owned output as
+a helper regression and hard-stop; never launch a root repair container. A
+valid existing checkpoint is reported as `status=skipped_existing` and reused.
 
 The helper may clone NVIDIA/cosmos-framework, pull its conversion image, and
 write a large checkpoint, so never run it before approval. It forwards
@@ -85,8 +82,18 @@ and the run tree then cannot be deleted, re-rendered into, or cleaned up
 without `sudo`. On Docker:
 
 ```bash
---user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
--v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
+CR3_IDENTITY_ARGS=(
+  --user "$(id -u):$(id -g)"
+  -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp
+  -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro
+)
+```
+
+Insert `"${CR3_IDENTITY_ARGS[@]}"` into every Docker Train, Proxy evaluate,
+and Benchmark evaluate launch, including resumed actions, and use the
+stage-local writable working directory:
+
+```bash
 -w "$RESULTS_DIR/<label>/<stage>/cwd"
 ```
 

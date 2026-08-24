@@ -155,8 +155,13 @@ COSMOS=$WS/augmentation/anomalygen/base_checkpoints
 RUN_DIR=$WS/results/run_<TS>/iter${N}/anomalygen
 : "${AG_IMAGE:?AG_IMAGE unset — resolve images.metropolis_sdg.paidf_anomalygen from versions.yaml in Pre-Flight step 5}"
 mkdir -p $COSMOS $DS $(dirname $CKPT) $RUN_DIR/amp $RUN_DIR/sdg
-for p in "$COSMOS" "$DS" "$(dirname "$CKPT")"; do
-  chmod 777 "$p" 2>/dev/null || echo "warning: could not chmod $p; continuing if it is readable"
+for p in "$COSMOS" "$DS" "$(dirname "$CKPT")" "$RUN_DIR"; do
+  probe="$p/.tao-write-probe.$$"
+  (umask 077 && : >"$probe" && rm -f "$probe") || {
+    rm -f "$probe" 2>/dev/null || true
+    echo "FATAL: $p is not writable by uid $(id -u)" >&2
+    exit 2
+  }
 done
 ```
 
@@ -217,7 +222,7 @@ set -a; source /path/to/.env; set +a   # omit if already exported
 # (a) Cosmos base checkpoints (~22 GB for 2B-only, ~140 GB with 14B + T5-11b).
 # WRITABLE mount (no :ro) so download_checkpoints.sh can populate the cache.
 docker run --pull=never --rm \
-  --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
+  --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
   -v $COSMOS:/workspace/paidf-anomalygen/checkpoints \
@@ -229,7 +234,7 @@ docker run --pull=never --rm \
 # use-case; unrelated to the host-side <project> directory label).
 if [ ! -f "$DS/defect_spec.jsonl" ]; then
   docker run --pull=never --rm \
-    --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
+    --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
     -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
     -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
     -v $WS:$WS -w /workspace/paidf-anomalygen $AG_IMAGE \
@@ -246,7 +251,7 @@ set -a; source /path/to/.env; set +a   # omit if already exported
 # (c) AnomalyGen fine-tuned checkpoint (PCB UC; ~5 GB).
 if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ]; then
   docker run --pull=never --rm \
-    --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
+    --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
     -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
     -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
     -v $WS:$WS -w /workspace/paidf-anomalygen $AG_IMAGE \
@@ -284,7 +289,7 @@ STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' $CKPT/checkpoints/latest_checkpoint.t
 
 # Phase 2: AMP routing → testcase.jsonl  (~10s, no GPU)
 docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
-  --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
+  --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
   -v $WS:$WS -v $COSMOS:/workspace/paidf-anomalygen/checkpoints:ro \
@@ -296,7 +301,7 @@ docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
 
 # Phase 3: SDG diffusion → reconstructed_image/ + original_image/  (1-3 min on Blackwell)
 docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
-  --user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
+  --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
   -v $WS:$WS -v $COSMOS:/workspace/paidf-anomalygen/checkpoints:ro \
@@ -309,6 +314,9 @@ docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
 
 Required mounts (per-iteration): `<workspace>:<workspace>` (same path) +
 `<cosmos_models_dir>:/workspace/paidf-anomalygen/checkpoints:ro`.
+All bootstrap and per-iteration calls map the submitting UID:GID, so their
+writable workspace/results artifacts remain updateable and removable without
+sudo on resume.
 
 ## Output layout
 
