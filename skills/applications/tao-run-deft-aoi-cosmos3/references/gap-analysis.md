@@ -21,6 +21,12 @@ Proxy writes:
 - `false_rejects.json` / `.csv`;
 - `unknown_predictions.json`.
 
+Before the `proxy_rcca` commit, write `RCCA_Report.md` in this same output
+directory from `gaps_summary.json`, `false_accepts.json`, and
+`false_rejects.json`, following `references/RCCA_REPORT_TEMPLATE.md`. The
+commit requires `--rcca-report <absolute path to RCCA_Report.md>` and validates
+all six section headings.
+
 Only these Proxy artifacts may produce routing/mining targets. Proxy
 `kpi.met` is intentionally null.
 

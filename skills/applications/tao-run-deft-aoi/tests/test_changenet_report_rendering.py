@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import pathlib
 import sys
@@ -38,6 +40,51 @@ import finalize_run  # noqa: E402
 import prepare_inference_spec  # noqa: E402
 import stage_backbone  # noqa: E402
 import resolve_mining_pool  # noqa: E402
+
+
+FULL_RCA_REPORT = """# VCN Gap Analysis Report: fixture
+
+## 1. Verdict
+Fixture verdict.
+
+## 2. Threshold Selection
+Fixture threshold selection.
+
+## 3. Kept-Sample Weakness Distribution
+Fixture weakness distribution.
+
+## 4. Top-K Weakest Samples
+Fixture weakest samples.
+
+## 5. Visual Spot Check
+Fixture visual evidence.
+
+## 6. Per-Label Breakdown
+Fixture label breakdown.
+
+## 7. Recommended Actions
+Fixture actions.
+"""
+
+
+def _write_reachable_rca_fixture(
+    output_dir: pathlib.Path,
+    *,
+    report_text: str = FULL_RCA_REPORT,
+) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+    output_dir.mkdir(parents=True)
+    gaps = output_dir / "kpi_gaps.parquet"
+    gaps.write_bytes(b"PAR1fixture")
+    (output_dir / "threshold.txt").write_text("0.125\n", encoding="utf-8")
+    (output_dir / "weak_samples_breakdown.txt").write_text(
+        "PASS: 1 kept row\n", encoding="utf-8"
+    )
+    report = output_dir / "RCA_Report.md"
+    report.write_text(report_text, encoding="utf-8")
+    images = output_dir / "rca_images"
+    images.mkdir()
+    (images / "weak-pass.png").write_bytes(b"fixture-image")
+    return gaps, report, images
 
 
 class ReportRenderingTests(unittest.TestCase):
@@ -194,7 +241,7 @@ class ReportRenderingTests(unittest.TestCase):
                     allocation.resolve(), "--anomalygen-allocation"
                 )
 
-    def test_stage_commit_requires_positive_measured_duration(self) -> None:
+    def test_stage_commit_validates_duration_by_skip_contract(self) -> None:
         base = [
             "--results-dir",
             "/tmp/deft-duration-contract",
@@ -207,7 +254,335 @@ class ReportRenderingTests(unittest.TestCase):
         ]
         with self.assertRaises(SystemExit):
             commit_stage._parser().parse_args(base)
-        self.assertEqual(commit_stage.main([*base, "--duration-sec", "0"]), 2)
+        for duration in ("0", "-1"):
+            self.assertEqual(
+                commit_stage.main([*base, "--duration-sec", duration]), 2
+            )
+        skip = [
+            "--results-dir",
+            "/tmp/deft-duration-contract",
+            "--iter-label",
+            "iter1",
+            "--stage",
+            "anomalygen",
+            "--skip",
+            "--summary",
+            "routing produced zero rows",
+        ]
+        self.assertEqual(commit_stage.main([*skip, "--duration-sec", "-1"]), 2)
+
+    def test_skipped_stage_accepts_zero_and_records_explicit_reason(self) -> None:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = self._state(results)
+            state["status"] = "in_progress"
+            state["iterations"]["iter1"] = {
+                "status": "in_progress",
+                "stage_completed": "routing",
+            }
+            state["events"] = []
+            routed = results / "iter1/routing/anomalygen.parquet"
+            routed.parent.mkdir(parents=True)
+            pq.write_table(
+                pa.table({"filepath": pa.array([], type=pa.string())}), routed
+            )
+            state["iterations"]["iter1"]["routing_anomalygen_parquet"] = str(
+                routed.resolve()
+            )
+            (results / "deft_state.json").write_text(json.dumps(state))
+
+            summary = "routing produced zero rows"
+            self.assertEqual(
+                commit_stage.main(
+                    [
+                        "--results-dir",
+                        str(results),
+                        "--iter-label",
+                        "iter1",
+                        "--stage",
+                        "anomalygen",
+                        "--skip",
+                        "--duration-sec",
+                        "0",
+                        "--summary",
+                        summary,
+                    ]
+                ),
+                0,
+            )
+            committed = json.loads((results / "deft_state.json").read_text())
+            phase = committed["iterations"]["iter1"]
+            event = committed["events"][-1]
+            self.assertTrue(phase["anomalygen_skipped"])
+            self.assertEqual(phase["anomalygen_skip_reason"], summary)
+            self.assertEqual(event["status"], "skipped")
+            self.assertEqual(event["skip_reason"], summary)
+            self.assertEqual(event["duration_sec"], 0)
+
+    def test_rca_target_defects_serialize_one_and_repeated_labels(self) -> None:
+        cases = (
+            (["missing"], ["missing"]),
+            (
+                ["missing", "shift", "lifted_lead"],
+                ["missing", "shift", "lifted_lead"],
+            ),
+            (
+                ["missing", "shift", "missing", "lifted_lead"],
+                ["missing", "shift", "lifted_lead"],
+            ),
+        )
+        for labels, expected in cases:
+            with (
+                self.subTest(labels=labels),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                results = pathlib.Path(temporary)
+                state = self._state(results)
+                state["status"] = "in_progress"
+                state["iterations"]["iter1"] = {"status": "in_progress"}
+                state["events"] = []
+                (results / "deft_state.json").write_text(json.dumps(state))
+                gaps, report, _ = _write_reachable_rca_fixture(
+                    results / "iter1/rca"
+                )
+                threshold = gaps.parent / "threshold.txt"
+                breakdown = gaps.parent / "weak_samples_breakdown.txt"
+                label_args = [
+                    item
+                    for label in labels
+                    for item in ("--rca-target-defect", label)
+                ]
+
+                self.assertEqual(
+                    commit_stage.main(
+                        [
+                            "--results-dir",
+                            str(results),
+                            "--iter-label",
+                            "iter1",
+                            "--stage",
+                            "rca",
+                            "--rca-gaps",
+                            str(gaps),
+                            "--rca-report",
+                            str(report),
+                            *label_args,
+                            "--duration-sec",
+                            "1",
+                            "--summary",
+                            "RCA complete",
+                        ]
+                    ),
+                    0,
+                )
+                committed = json.loads((results / "deft_state.json").read_text())
+                self.assertEqual(
+                    committed["iterations"]["iter1"]["rca_target_defects"],
+                    expected,
+                )
+                self.assertEqual(
+                    committed["iterations"]["iter1"]["rca_threshold_file"],
+                    str(threshold.resolve()),
+                )
+                self.assertEqual(
+                    committed["iterations"]["iter1"]["rca_breakdown_file"],
+                    str(breakdown.resolve()),
+                )
+
+    def test_rca_commit_requires_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = self._state(results)
+            state["status"] = "in_progress"
+            state["iterations"]["iter1"] = {"status": "in_progress"}
+            state["events"] = []
+            state_path = results / "deft_state.json"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            output_dir = results / "iter1/rca"
+            output_dir.mkdir(parents=True)
+            gaps = output_dir / "kpi_gaps.parquet"
+            gaps.write_bytes(b"PAR1fixture")
+            (output_dir / "threshold.txt").write_text("0.125\n")
+            (output_dir / "weak_samples_breakdown.txt").write_text("PASS: 1\n")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = commit_stage.main(
+                    [
+                        "--results-dir", str(results),
+                        "--iter-label", "iter1",
+                        "--stage", "rca",
+                        "--rca-gaps", str(gaps),
+                        "--duration-sec", "1",
+                        "--summary", "RCA complete",
+                    ]
+                )
+
+            self.assertEqual(rc, 2)
+            self.assertIn("--rca-report is required", stderr.getvalue())
+            self.assertNotIn("rca_report", json.loads(state_path.read_text())["iterations"]["iter1"])
+
+    def test_rca_commit_rejects_report_missing_required_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = self._state(results)
+            state["status"] = "in_progress"
+            state["iterations"]["iter1"] = {"status": "in_progress"}
+            state["events"] = []
+            state_path = results / "deft_state.json"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            gaps, report, _ = _write_reachable_rca_fixture(
+                results / "iter1/rca",
+                report_text="# Fixture\n\n## 1. Verdict\nIncomplete report.\n",
+            )
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = commit_stage.main(
+                    [
+                        "--results-dir", str(results),
+                        "--iter-label", "iter1",
+                        "--stage", "rca",
+                        "--rca-gaps", str(gaps),
+                        "--rca-report", str(report),
+                        "--duration-sec", "1",
+                        "--summary", "RCA complete",
+                    ]
+                )
+
+            self.assertEqual(rc, 2)
+            message = stderr.getvalue()
+            self.assertIn("missing required section heading(s)", message)
+            self.assertIn("Threshold Selection", message)
+            self.assertIn("references/output-template.md", message)
+
+    def test_rca_commit_records_report_and_image_paths(self) -> None:
+        manifest = json.loads(commit_stage.RCA_ARTIFACT_MANIFEST.read_text())
+        classes = manifest["artifact_classes"]
+        self.assertEqual(
+            [item["path"] for item in classes["container_produced_required"]],
+            ["kpi_gaps.parquet", "threshold.txt", "weak_samples_breakdown.txt"],
+        )
+        self.assertEqual(
+            [item["path"] for item in classes["agent_produced_required"]],
+            ["RCA_Report.md"],
+        )
+        self.assertEqual(
+            [
+                item["path"]
+                for item in classes["agent_produced_conditionally_required"]
+            ],
+            ["rca_images/"],
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = self._state(results)
+            state["status"] = "in_progress"
+            state["iterations"]["iter1"] = {"status": "in_progress"}
+            state["events"] = []
+            (results / "deft_state.json").write_text(json.dumps(state))
+            gaps, report, images = _write_reachable_rca_fixture(
+                results / "iter1/rca"
+            )
+
+            rc = commit_stage.main(
+                [
+                    "--results-dir", str(results),
+                    "--iter-label", "iter1",
+                    "--stage", "rca",
+                    "--rca-gaps", str(gaps),
+                    "--rca-report", str(report),
+                    "--duration-sec", "1",
+                    "--summary", "RCA complete",
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            phase = json.loads((results / "deft_state.json").read_text())["iterations"]["iter1"]
+            self.assertEqual(phase["rca_report"], str(report.resolve()))
+            self.assertEqual(phase["rca_images_dir"], str(images.resolve()))
+            self.assertEqual(phase["rca_gaps_parquet"], str(gaps.resolve()))
+
+    def test_rca_commit_accepts_unreachable_abridged_report_without_images(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = self._state(results)
+            state["status"] = "in_progress"
+            state["iterations"]["iter1"] = {"status": "in_progress"}
+            state["events"] = []
+            (results / "deft_state.json").write_text(json.dumps(state))
+            output_dir = results / "iter1/rca"
+            output_dir.mkdir(parents=True)
+            unreachable = output_dir / "unreachable_kpi.txt"
+            unreachable.write_text("maximum recall 0.75; target 1.0\n")
+            report = output_dir / "RCA_Report.md"
+            report.write_text(
+                "# VCN Gap Analysis Report: fixture\n\n"
+                "## KPI Unreachable\n"
+                "No threshold meets the target; retrain or relabel.\n"
+            )
+
+            rc = commit_stage.main(
+                [
+                    "--results-dir", str(results),
+                    "--iter-label", "iter1",
+                    "--stage", "rca",
+                    "--rca-report", str(report),
+                    "--duration-sec", "1",
+                    "--summary", "RCA found KPI unreachable",
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            phase = json.loads((results / "deft_state.json").read_text())["iterations"]["iter1"]
+            self.assertEqual(phase["rca_report"], str(report.resolve()))
+            self.assertEqual(
+                phase["rca_unreachable_kpi"], str(unreachable.resolve())
+            )
+            self.assertNotIn("rca_images_dir", phase)
+            self.assertNotIn("rca_gaps_parquet", phase)
+
+    def test_rca_target_defect_help_and_errors_explain_repeatable_flag(self) -> None:
+        help_text = commit_stage._parser().format_help()
+        self.assertIn("[--rca-target-defect <label>]...", help_text)
+        base = [
+            "--results-dir",
+            "/tmp/deft-rca-label-contract",
+            "--iter-label",
+            "baseline",
+            "--stage",
+            "rca",
+            "--rca-gaps",
+            "/tmp/gaps.parquet",
+            "--duration-sec",
+            "1",
+            "--summary",
+            "RCA complete",
+        ]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+            commit_stage._parser().parse_args(
+                [*base, "--rca-target-defect", "   "]
+            )
+        self.assertIn("label must not be empty", stderr.getvalue())
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+            commit_stage._parser().parse_args(
+                [
+                    *base,
+                    "--rca-target-defect",
+                    "missing",
+                    "shift",
+                    "lifted_lead",
+                ]
+            )
+        message = stderr.getvalue()
+        self.assertIn("accepts exactly one label per occurrence", message)
+        self.assertIn("repeat the flag for each label", message)
 
     def test_loop_stop_is_recorded_only_in_deft_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

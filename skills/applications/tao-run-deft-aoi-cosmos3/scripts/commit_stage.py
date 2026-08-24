@@ -38,6 +38,14 @@ STAGES = (
     "loop_stop",
 )
 SKIPPABLE_STAGES = ("anomalygen",)
+RCCA_REPORT_HEADINGS = (
+    "Verdict",
+    "False-Accept Breakdown",
+    "False-Reject Breakdown",
+    "Top-K Worst Samples",
+    "Per-Defect Analysis",
+    "Recommended Actions",
+)
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -99,6 +107,42 @@ def _required_file(value: pathlib.Path | None, flag: str) -> str:
     if not path.is_file() or path.stat().st_size == 0:
         raise ValueError(f"{flag} must be an existing non-empty file: {value}")
     return str(path.resolve())
+
+
+def _normalized_heading(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _required_rcca_report(
+    value: pathlib.Path | None, phase_root: pathlib.Path
+) -> str:
+    report = pathlib.Path(_required_file(value, "--rcca-report"))
+    expected = (phase_root / "proxy_rcca" / "RCCA_Report.md").resolve()
+    if report != expected:
+        raise ValueError(f"--rcca-report must point to {expected}")
+    try:
+        text = report.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"--rcca-report must be UTF-8 text: {report}") from exc
+    actual = {
+        _normalized_heading(match.group(1))
+        for match in re.finditer(
+            r"^##[ \t]+(?:[0-9]+\.[ \t]*)?(.+?)[ \t]*$",
+            text,
+            flags=re.MULTILINE,
+        )
+    }
+    missing = [
+        heading
+        for heading in RCCA_REPORT_HEADINGS
+        if _normalized_heading(heading) not in actual
+    ]
+    if missing:
+        raise ValueError(
+            "--rcca-report is missing required section heading(s): "
+            f"{', '.join(missing)}; follow references/RCCA_REPORT_TEMPLATE.md"
+        )
+    return str(report)
 
 
 def _parquet_row_count(path: str, flag: str) -> int:
@@ -210,11 +254,13 @@ def _append_event(
         ),
         "iter": args.iter_label,
         "stage": args.stage,
-        "status": args.status,
+        "status": "skipped" if args.skip else args.status,
         "summary": args.summary,
         "duration_sec": args.duration_sec,
         "context_tokens": 0,
     }
+    if args.skip:
+        event["skip_reason"] = args.summary.strip()
     events.append(event)
     return event
 
@@ -257,6 +303,9 @@ def _apply_success(
             _required_file(args.false_rejects, "--false-rejects"),
             phase_root,
             "--false-rejects",
+        )
+        phase["rcca_report"] = _required_rcca_report(
+            args.rcca_report, phase_root
         )
     elif stage == "evaluate_benchmark":
         phase["benchmark_results_json"] = _within(
@@ -310,6 +359,7 @@ def _apply_success(
                     "anomalygen --skip requires false_accepts_json to be an empty JSON array"
                 )
             phase["anomalygen_skipped"] = True
+            phase["anomalygen_skip_reason"] = args.summary.strip()
         else:
             phase["anomalygen_sdg_csv"] = _within(
                 _required_file(args.anomalygen_sdg, "--anomalygen-sdg"),
@@ -415,11 +465,13 @@ def _apply_success(
 def commit(args: argparse.Namespace) -> dict[str, Any]:
     if not re.fullmatch(r"baseline|iter[1-9][0-9]*", args.iter_label):
         raise ValueError("--iter-label must be baseline or iterN")
-    if (
-        not isinstance(args.duration_sec, int)
-        or isinstance(args.duration_sec, bool)
-        or args.duration_sec <= 0
-    ):
+    if not isinstance(args.duration_sec, int) or isinstance(args.duration_sec, bool):
+        raise ValueError(
+            "--duration-sec is required and must be a positive measured duration"
+        )
+    if args.skip and args.duration_sec < 0:
+        raise ValueError("--duration-sec must be >= 0 for a skipped stage")
+    if not args.skip and args.duration_sec <= 0:
         raise ValueError(
             "--duration-sec is required and must be a positive measured duration"
         )
@@ -427,6 +479,10 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(
             f"--skip is valid only for: {', '.join(SKIPPABLE_STAGES)}"
         )
+    if args.skip and args.status == "error":
+        raise ValueError("--skip and --status error are mutually exclusive")
+    if args.skip and not args.summary.strip():
+        raise ValueError("--summary must contain the reason for a skipped stage")
     results_dir = args.results_dir.expanduser().resolve()
     state_path = results_dir / "deft_state.json"
     if not state_path.is_file():
@@ -567,7 +623,7 @@ def _parser() -> argparse.ArgumentParser:
         "--duration-sec",
         required=True,
         type=int,
-        help="Measured wall-clock seconds for this stage; must be positive",
+        help="Measured wall-clock seconds; must be positive, or >= 0 with --skip",
     )
     parser.add_argument("--best-ckpt", type=pathlib.Path)
     parser.add_argument("--training-spec", type=pathlib.Path)
@@ -575,6 +631,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--proxy-gaps-summary", type=pathlib.Path)
     parser.add_argument("--false-accepts", type=pathlib.Path)
     parser.add_argument("--false-rejects", type=pathlib.Path)
+    parser.add_argument(
+        "--rcca-report",
+        type=pathlib.Path,
+        help="Required proxy_rcca/RCCA_Report.md path for a successful commit",
+    )
     parser.add_argument("--benchmark-results", type=pathlib.Path)
     parser.add_argument("--benchmark-metrics-summary", type=pathlib.Path)
     parser.add_argument("--metric-result", type=pathlib.Path)
@@ -586,8 +647,8 @@ def _parser() -> argparse.ArgumentParser:
         "--skip",
         action="store_true",
         help=(
-            "Record a documented branch skip instead of artifacts. Valid only "
-            f"for: {', '.join(SKIPPABLE_STAGES)}."
+            "Record a documented branch skip with status=skipped and a skip "
+            f"reason. Valid only for: {', '.join(SKIPPABLE_STAGES)}."
         ),
     )
     parser.add_argument("--mining-parquet", type=pathlib.Path)

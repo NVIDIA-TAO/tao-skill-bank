@@ -6,6 +6,11 @@ All stages run inline in the parent context. For SKILL stages, read the matching
 
 Baseline runs once before the loop: `train` → `inference` → `evaluate` (skill: `tao-skill-bank:tao-train-visual-changenet` plus the approved evaluator in `references/metric-contract.md`), then `rca` (skill: `tao-skill-bank:tao-analyze-gaps-visual-changenet`). The `train` sub-step is **skipped** when `deft_state.json` arrives with `iterations.baseline.stage_completed == "train"` and a `best_ckpt_path` pointing at an existing file — the `automl-deft-pipeline` main skill pre-seeds these from its Phase 1 AutoML winner so DEFT doesn't retrain at the same HPs. In that case, baseline picks up at `inference` against the pre-seeded checkpoint, then evaluates the configured customer metric, then runs RCA.
 
+Every RCA stage must complete the gaps skill's Steps 5–7 before its commit:
+spot-check and save `rca_images/`, then write the seven-section
+`RCA_Report.md`; only `unreachable_kpi.txt` permits the abridged report with no
+image directory.
+
 The RCA that feeds iteration N is already committed before iteration N starts:
 `baseline.rca_gaps_parquet` feeds iter1; `iterN.rca_gaps_parquet` feeds iterN+1.
 Do not run baseline RCA a second time under `iter1`. After an iteration's
@@ -25,8 +30,9 @@ iteration executes:
 
    If the committed `routing_anomalygen_parquet` has zero rows, do not launch
    the GPU generator. Set `anomalygen_skipped=true`, advance
-   `stage_completed` to `anomalygen`, and commit an `anomalygen/status=ok`
-   event whose summary says that routing produced zero rows. This is a
+   `stage_completed` to `anomalygen`, and commit an
+   `anomalygen/status=skipped` event whose `skip_reason` says that routing
+   produced zero rows. This is a
    documented branch skip, not a fabricated artifact.
 
    **SDG training contribution (INLINE).** Convert returned AnomalyGen outputs into ChangeNet paired training rows. Pre-create `${RESULTS_DIR}/iter${N}/mining_filter/` and `${RESULTS_DIR}/iter${N}/dataset/images/` before running the row-prep script. Stage NG/OK image pairs under `results/iter${N}/dataset/images/synthetic_iter${N}_{ng,ok}/`, run `scripts/changenet_data_pair_prepare.py` with `--input-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/reconstructed_image`, `--golden-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/original_image`, `--images-dir`, `--subdir synthetic_iter${N}`, `--light SolderLight`, `--image-ext .jpg` (or the exact `dataset.classify.image_ext` from the training spec), and `--output-csv ${RESULTS_DIR}/iter${N}/mining_filter/sdg_rows_raw.csv`. Rewrite the script's bare `synthetic_iter${N}_ng/` paths to workspace-root-relative form (`results/run_<TS>/iter${N}/dataset/images/synthetic_iter${N}_ng`) before appending into `mining_filter/mining_pool.csv`, since the per-iter training spec sets `images_dir=/data/workspace`. SDG rows skip k-NN filtering; only real-image mining applies the cosine threshold.
@@ -41,7 +47,8 @@ iteration executes:
    If the committed `routing_mining_parquet` has zero rows, do not run the
    embedding/mining containers. Set `data_mining_skipped=true`, advance
    `stage_completed` to `data_mining`, and commit a
-   `data_mining/status=ok` event that records the zero-row routing result.
+   `data_mining/status=skipped` event whose `skip_reason` records the zero-row
+   routing result.
    This is the only legal mining skip: an invalid source CSV or failed mining
    command with routed rows remaining is a hard stop.
 
@@ -112,9 +119,10 @@ paths, optional terminal artifacts, and an `events` array with one object per co
   "ts":             "<ISO-8601 UTC; stage end time>",
   "iter":           "baseline|iter1|iter2|...",
   "stage":          "evaluate|rca|routing|anomalygen_finetune|anomalygen|data_mining|data_merge|train|loop_stop",
-  "status":         "ok|error",
+  "status":         "ok|error|skipped",
   "summary":        "<one-line outcome, e.g. 'weighted_escape_cost=0.018 target<=0.02'>",
-  "duration_sec":   <int seconds from stage start to end>,
+  "skip_reason":    "<present only for status=skipped; copied from summary>",
+  "duration_sec":   <positive int for executed stages; non-negative int for skips>,
   "context_tokens": <0 at write time; backfilled at loop end by align_token_usage.py>,
   "tokens":         <object added at loop end: input, output, cache_read, cache_create, n_messages, models>
 }
@@ -160,7 +168,8 @@ After every stage finishes, before advancing:
 2. Invoke `commit_stage.py` once with the documented artifact flags. For an error use `--status error`; it sets the iteration failed. Never repair a rejected commit by editing JSON.
 3. Re-read `deft_state.json` and confirm the latest event matches the stage.
 4. If the committed event status is `error` — halt and surface the recorded error. Retry only after repairing its cause.
-5. If the committed event status is `ok` — confirm that `commit_stage.py` did
+5. If the committed event status is `ok` or `skipped` — confirm that
+   `commit_stage.py` did
    not print `report hook failed`, then print one status line in the standard
    format `[iter <N>/<max> · <stage>] <primary metric> · <duration> · next:
    <stage>` (e.g. `[iter 2/3 · evaluate] weighted escape cost 0.024 → 0.018
