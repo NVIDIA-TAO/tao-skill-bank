@@ -1,14 +1,14 @@
 # Cosmos AnomalyGen — Cosmos3 DEFT AOI Reference
 
 Read this when the loop runs the `anomalygen` stage. The underlying skill
-`tao-skill-bank:paidf-anomalygen` owns the standalone pipeline, the parameter
+`tao-skill-bank:tao-generate-anomalies` owns the standalone pipeline, the parameter
 reference, the invariants that gate a run, and the AMP no-ROI failure mode —
 **read it before invoking**. This file is the Cosmos3 overlay: how synthetic
 defects become bare OK/NG records, when the stage is skipped, and what is
 committed.
 
 The generation mechanics are identical to the VCN loop; only the consumer
-differs. `skills/applications/tao-run-deft-aoi/references/paidf-anomalygen.md`
+differs. `skills/applications/tao-run-deft-aoi/references/tao-generate-anomalies.md`
 holds the shared shell setup, the one-time post-gate bootstrap, and the
 per-iteration `docker run` pair. Do not duplicate them here — read that file
 for the commands and apply the Cosmos3 values below.

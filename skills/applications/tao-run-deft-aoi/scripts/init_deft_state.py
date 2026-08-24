@@ -203,11 +203,11 @@ def build_state(args: argparse.Namespace) -> dict:
             "batch_size": args.batch_size,
             "num_epochs": args.num_epochs,
             "anomalygen": {
-                "sub_skill": "paidf-anomalygen",
+                "sub_skill": "tao-generate-anomalies",
                 "mode": "inference_only",
                 "project": args.project,
                 # defect_spec lives under `datasets/<project>/` (sibling of
-                # `checkpoints/<project>/`), per references/paidf-anomalygen.md.
+                # `checkpoints/<project>/`), per references/tao-generate-anomalies.md.
                 "defect_spec": str(
                     ws
                     / "augmentation"
