@@ -38,6 +38,7 @@ cannot keep a TAO default just because nobody typed it:
   --spec "${RESULTS_DIR}/<phase>/kpi_spec.yaml" \
   --apply-workflow-defaults <skill_root>/assets/overlays/kpi_analyze.yaml \
   --set results_dir="${RESULTS_DIR}/<phase>/kpi" \
+  --set kpi.conf_threshold=<state.config.kpi_conf_threshold> \
   --set visualize.tag=<phase> \
   --set data.kpi_sources="[{image_dir: <KPI images>, ground_truth_ann_path: <KPI labels>, inference_ann_path: ${RESULTS_DIR}/<phase>/inference/labels}]" \
   --set data.mapping=<class-mapping YAML> \
@@ -56,52 +57,44 @@ The resulting `kpi:` block:
 ```yaml
 kpi:
   iou_threshold: 0.5
-  conf_threshold: 0.0        # the full PR curve — see below
+  conf_threshold: 0.0        # from state; the run's own setting — see below
   num_recall_points: 11      # 11-point interpolated AP; 101 selects COCO-style
   ignore_sqwidth: 40         # TAO emits 0, which scores smaller boxes
   filter: false
   is_internal: false
 ```
 
-### The leaf skill's defaults are not this loop's
+`conf_threshold` is the one value here the run owns. `init_deft_state.py` freezes it as
+`config.kpi_conf_threshold` and every phase is scored at that same value, so the baseline
+and each iteration stay comparable. Read it from state rather than retyping it.
 
-`tao-analyze-detection-kpi` ships `assets/default_kpi_analyze.yaml` with different
-values, so **invoking that skill without applying this overlay silently scores a
-different metric**:
+The default is `0.0`, and that is the value to score at: inference writes its labels at
+`0.0`, so scoring there covers the full PR curve. A higher threshold truncates the
+low-confidence tail and produces a number that cannot be compared against a run scored at
+`0.0`. `--kpi-conf-threshold` exists so a run that needs a different operating point can
+say so once, at init, and have every phase honour it.
 
-| field | this loop | leaf skill default |
-|---|---:|---:|
-| `kpi.conf_threshold` | 0.0 | 0.3 |
-| `kpi.num_recall_points` | 11 | 101 |
-| `kpi.ignore_sqwidth` | 40 | 0 |
+### These values are the leaf skill's defaults too
 
-The loop's values reproduce the reference pipeline this workflow is measured
-against; the leaf skill's are TAO's own defaults, sensible for standalone scoring.
-Neither is wrong in isolation — but a run that mixes them produces numbers
-comparable to nothing.
-
-The leaf skill also documents `conf_threshold` as needing to be `> 0`, because an
-undetected ground-truth box was carried as `(t=1, p=0.0)` and `p >= conf_threshold`
-counted it as a true positive at zero. **That defect is fixed in the data-services
-image this loop pins**, which is why 0.0 is safe here and why it is the right value:
-it keeps the full precision-recall curve so a threshold can be swept afterwards from
-a single inference pass. On an older image, 0.0 would report `TP` = ground-truth
-count and `FN` = 0.
-
-So: delegate the invocation, but always apply
-`assets/overlays/kpi_analyze.yaml` over the resulting spec.
+`tao-analyze-detection-kpi` ships the same `conf_threshold: 0.0`, `num_recall_points: 11`
+and `ignore_sqwidth: 40`, so delegating to it and applying this overlay agree by default.
+They stop agreeing on `conf_threshold` as soon as a run sets its own, which is why this
+stage passes it explicitly rather than relying on the leaf's default. Apply the overlay
+and the `--set` anyway: the agreement is a fact about the current versions, not a
+guarantee, and a spec that states its own scoring settings is auditable after the fact.
 
 ## Scoring at more than one confidence threshold
 
 Inference runs at `0.0`, so the labels carry every detection and this stage can score them
 at any threshold without re-running inference — re-apply the overlay with
-`--set kpi.conf_threshold=<t> --allow-workflow-default-override` and a distinct
-`results_dir` per point, since `kpi_calc.csv` is written unconditionally and a shared
-directory keeps only the last. `conf_threshold` selects from what inference wrote; it cannot
-recover a box inference dropped.
+`--set kpi.conf_threshold=<t>` and a distinct `results_dir` per point, since
+`kpi_calc.csv` is written unconditionally and a shared directory keeps only the last. No
+`--allow-workflow-default-override` is needed: the overlay no longer pins this key.
+`conf_threshold` selects from what inference wrote; it cannot recover a box inference
+dropped.
 
-Only the `0.0` result is comparable to the loop's reported mAP. The loop itself scores once,
-at `0.0`; sweeps are a diagnostic.
+Only a result at `config.kpi_conf_threshold` is comparable to the loop's reported mAP. The
+loop scores every phase once, at that one value; sweeps are a diagnostic.
 
 **`input_format` is uppercase here.** `analytics kpi_analyze` accepts only `KITTI` or `COCO`. This differs from `gap_analysis object_detection` in the same container, which takes lowercase `kitti` / `coco`. The two stages in this loop therefore spell the same format differently — that is expected, not a typo to "fix".
 
@@ -109,20 +102,56 @@ at `0.0`; sweeps are a diagnostic.
 
 **`is_internal` must stay `false`.** Setting it true drops every class except `person` and appends a `Summary` row, silently changing what the report means.
 
-## Invocation
+## Narrow the mapping to the target classes first
 
-KPI analysis is CPU-only — do not request a GPU.
+The user's mapping usually names more classes than the run targets. Scoring an
+untargeted class adds a constant-0 AP row and averages it into the mAP, so the number
+stops being comparable with any run that did not:
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_mapping_for_kpi_analyze.py \
+  --mapping "<the user's class mapping>" \
+  --target-classes "<comma-separated target classes>" \
+  --out "${RESULTS_DIR}/<phase>/kpi/mapping.yaml"
+```
+
+Pass the narrowed file as `data.mapping`, not the user's original.
+
+## Invocation
+
+**Launch it detached.** Runtime scales with the KPI set, and the baseline is the
+slowest phase to score because inference writes its labels at `conf_threshold: 0.0`, so
+every detection is present to be read. The mAP
+appears *only* on stdout, and a foreground `docker run | tee` loses it if the client
+dies while the container keeps running — name the container, redirect to the log, and
+wait on the log with `await_stage.py`:
+
+```bash
+docker run -d --name "deft_${PHASE}_kpi" ... > /dev/null
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
+  --artifact "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" --timeout-sec 5400
+docker logs "deft_${PHASE}_kpi" > "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" 2>&1
+```
+
+Pass `--gpus all` even though the scoring itself is CPU-bound: the TAO launcher calls
+`nvidia-smi -L` unconditionally at startup, so omitting it fails with
+`FileNotFoundError: 'nvidia-smi'` before any work begins.
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-analyze-detection-kpi/scripts/verify_kpi_analyze_spec.py \
+  --spec "$KPI_SPEC"
+
+docker run -d --name "deft_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):$(id -g)" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
-  analytics kpi_analyze -e "$KPI_SPEC" 2>&1 | tee "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log"
-# mAP appears only on stdout, so the tee is required — but a pipeline reports the
-# exit status of `tee`, not of the container. Without one of these, a failed
-# kpi_analyze looks like a success:
-#   set -o pipefail   (before the pipeline), or
-#   [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "kpi_analyze failed"; exit 1; }
+  analytics kpi_analyze -e "$KPI_SPEC" 2>&1
+# Detached, and NOT --rm: the mAP exists only on this container's stdout, so removing
+# it on exit discards the number. Wait on the artifact, then capture the log, then
+# remove the container yourself:
+#   await_stage.py --artifact "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" --timeout-sec 5400
+#   docker logs "deft_${PHASE}_kpi" > "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" 2>&1
+#   docker inspect -f '{{.State.ExitCode}}' "deft_${PHASE}_kpi"   # check before trusting it
+#   docker rm "deft_${PHASE}_kpi"
 ```
 
 Tee the log: the aggregate **mAP is printed to stdout only** and is not written into `kpi_calc.csv`. Parse it from the log line `mAP: <value>` and record it in state; otherwise the trend across iterations cannot be reported.
@@ -147,5 +176,6 @@ Tee the log: the aggregate **mAP is printed to stdout only** and is not written 
   --kpi-csv "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" \
   --kpi-log "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" \
   --map-value "<parsed mAP>" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "kpi: mAP=<value>"
 ```

@@ -55,9 +55,20 @@ persisted policy:
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_context.py \
   --state "${RESULTS_DIR}/deft_state.json" --stage data_mining
+<skill_root>/scripts/stage_bundle.py mining.embed_pool \
+  --results-dir "${RESULTS_DIR}/iter1/mining" \
+  --param mining_pool="$WS/augmentation/mining_pool" \
+  --spec-file "$RUN_DIR/embedding_spec.yaml" > "$RUN_DIR/embed.bundle.json"
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_exec.py \
-  --state "${RESULTS_DIR}/deft_state.json" -- docker run ...
+  --state "${RESULTS_DIR}/deft_state.json" --submit \
+  --bundle "$RUN_DIR/embed.bundle.json" --platform "$PLATFORM" $PLATFORM_CTX
 ```
+
+The trailing-argv form (`deft_exec.py -- docker run ...`) still works for an
+ad-hoc command, but a STAGE should go through `stage_bundle.py`: a pasted
+`docker run` pins the workflow to one platform, and the host identity flags it
+carries are emitted by the docker renderer anyway. See
+`references/stage-execution.md`.
 
 Set `STAGE_DURATION_SEC` from measured wall-clock evidence before committing:
 use the selected backend's elapsed time for submitted jobs, or time an inline
@@ -112,7 +123,7 @@ a reference file is missing, stop and ask the user to reinstall the plugin.
 | Stage(s) | Reference file | Underlying skill | Owns |
 |---|---|---|---|
 | `train`, `evaluate` | `references/visual-changenet.md` | `tao-skill-bank:tao-train-visual-changenet` | TAO training, inference, evaluation, checkpoint discovery, TAO spec edits, two-checkpoint compare, `${TAO_PYT_IMAGE}` (pinned in Pre-Flight step 5) invocation. |
-| `anomalygen` | `references/paidf-anomalygen.md` | `tao-skill-bank:paidf-anomalygen` | AMP / AnomalyGen synthetic defect generation, `defect_spec.jsonl` routing, testcase prep, allocation recovery, and SDG output schema. |
+| `anomalygen` | `references/tao-generate-anomalies.md` | `tao-skill-bank:tao-generate-anomalies` | AMP / AnomalyGen synthetic defect generation, `defect_spec.jsonl` routing, testcase prep, allocation recovery, and SDG output schema. |
 | `rca` (VCN Classify) | `references/tao-analyze-gaps-visual-changenet.md` | `tao-skill-bank:tao-analyze-gaps-visual-changenet` | Threshold sweep, per-label weakness ranking, per-lighting expansion, `kpi_gaps.parquet` schema, and `deft_state.json` output for VCN Classify models. |
 | `routing` | `references/tao-route-visual-changenet-samples.md` | `tao-skill-bank:tao-route-visual-changenet-samples` | VCN weak-sample routing to mining and/or AnomalyGen, `mining_gaps.parquet` + `anomalygen_gaps.parquet` outputs, dropped-label warnings. |
 | `data_mining` (VCN path) | `references/tao-mine-aoi-images.md` | `tao-skill-bank:tao-mine-aoi-images` | Embed-then-mine workflow: target embedding, source-pool embedding, k-NN nearest-neighbour mining, `mined.parquet` output schema, encoder consistency requirement. |

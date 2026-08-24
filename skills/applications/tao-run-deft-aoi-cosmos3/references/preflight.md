@@ -90,10 +90,16 @@ Resolve, do not guess:
 : "${TAO_SKILL_BANK_PATH:?set TAO_SKILL_BANK_PATH to the installed TAO skill-bank root containing versions.yaml and scripts/resolve_versions_key.py}"
 test -f "$TAO_SKILL_BANK_PATH/versions.yaml" || { echo "missing $TAO_SKILL_BANK_PATH/versions.yaml" >&2; exit 2; }
 test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" >&2; exit 2; }
+test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" >&2; exit 2; }
+COSMOS_MODEL_ID="${COSMOS_MODEL_ID:-nvidia/Cosmos3-Nano}"
 COSMOS_RL_IMAGE=$(
-  "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+  "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" \
     --skill-bank "$TAO_SKILL_BANK_PATH" \
-    images.tao_toolkit.cosmos_rl
+    --model "$COSMOS_MODEL_ID" \
+    --action train \
+    --backend cosmos-rl \
+    --format json \
+  | "$PYTHON" -c 'import json, sys; image = json.load(sys.stdin).get("image"); assert image; print(image)'
 )
 TAO_DS_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
@@ -113,7 +119,7 @@ pulling requires a credential, report the missing variable name only. A
 `~/.docker/config.json`, not a missing key — retry once with a throwaway empty
 `DOCKER_CONFIG` before reporting a credential problem.
 
-Known defects in `images.tao_toolkit.cosmos_rl` as pinned (verified
+Known defects in the model skill's selected `cosmos-rl` image (verified
 2026-07-29). Both break evaluation only; training is unaffected. Check whether
 the pinned tag still carries them, and report them in the Pre-Flight Summary
 rather than discovering them on the first GPU job:
@@ -131,13 +137,24 @@ rather than discovering them on the first GPU job:
   writing anything, which is what this gate requires. Run it again with
   `--output-dir` after approval to produce the mount.
 
-Probe the AnomalyGen assets read-only and report each as present or
-`WILL_AUTO_FETCH`: the fine-tuned checkpoint directory holding `ag_config.yaml`,
-the dataset directory with `defect_spec.jsonl` and
-`semantic_segmentation_labels.json`, and the Cosmos base-checkpoints cache.
-Probing only — the bootstrap that populates them is post-gate and is owned by
-`references/paidf-anomalygen.md`. In air-gapped runs every asset must be
-pre-staged; report a missing one instead of planning a download.
+Probe the AnomalyGen assets read-only. The fine-tuned checkpoint directory must
+contain one `ag_config.yaml` and one `iter_<step>.pt` in every network mode; it
+must match the pinned container's PAIDF major.minor. If it is missing or
+ambiguous, hard-stop and direct the user to finetune the AnomalyGen LoRA with
+the container's `texture_ft` recipe using the `uc1_pcb` layout
+(`dataset_path/<texture>/anomaly_image/` paired with
+`dataset_path/<texture>/mask/<defect>/`), then stage the resulting
+`ag_config.yaml` and `iter_<step>.pt` under
+`augmentation/anomalygen/checkpoints/<project>/...`. Never substitute the
+incompatible 1.0-era HF checkpoint. The dataset directory with
+`defect_spec.jsonl` and `semantic_segmentation_labels.json` and the Cosmos
+base-checkpoints cache may be `WILL_AUTO_FETCH` only in network-enabled mode;
+the uc1 reference dataset remains auto-downloadable.
+Probing only — their bootstrap is post-gate and is owned by
+`references/tao-generate-anomalies.md`. In air-gapped runs every asset must be
+pre-staged; report a missing one instead of planning a download. Before Phase
+3, use the executable file check in that reference to gate the AnomalyGen
+Guardrail safety model; a missing file is a hard stop.
 
 ## 6. Model and evaluator contract
 
@@ -326,8 +343,9 @@ lines below the table instead:
 
 - the variant-matched VLM base for the prepared PTM (Edge and Super never
   inherit Nano's default; see step 7);
-- which AnomalyGen assets are staged; `WILL_AUTO_FETCH` is legal only in
-  network-enabled mode, plus their commercial-training approval.
+- which AnomalyGen assets are staged; the fine-tuned checkpoint must be a
+  local PAIDF-compatible path, while dataset/base-cache `WILL_AUTO_FETCH` is
+  legal only in network-enabled mode, plus their commercial-training approval.
 
 Then stop. Remind the user that approval permits checkpoint preparation,
 post-gate spec/state creation, any network-enabled AnomalyGen bootstrap, and GPU

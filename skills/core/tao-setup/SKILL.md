@@ -75,10 +75,11 @@ creates a credentials file for you; the one credential write here is step 3's
    `tao-run-deft-aoi`, …) compose model + data + platform into workflows.
 
 2. **Read the skill's `references/skill_info.yaml`** (when present) for the
-   structured contract: `container_image` (a pinned URI), per-action
-   `command`, `mode`, `config_format`, `inputs`, `outputs`, and optional
-   `runtime_requirements.gpu_host`. Model runtime requirements override the
-   TAO-wide platform defaults for that workflow.
+   structured contract: `container_image` (a pinned URI), or
+   `backend_contracts.<backend>.container_image` for a multi-backend frontend;
+   per-action `command`, `mode`, `config_format`, `inputs`, `outputs`, and
+   optional `runtime_requirements.gpu_host`. Model runtime requirements
+   override the TAO-wide platform defaults for that workflow.
 
 3. **Pick an execution platform and read its skill** for mounts, env vars,
    and resource conventions: `tao-run-on-docker` conventions apply to any

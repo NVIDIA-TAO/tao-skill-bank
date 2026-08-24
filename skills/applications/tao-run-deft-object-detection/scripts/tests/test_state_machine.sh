@@ -2319,6 +2319,183 @@ case "$RUN_OUT" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G25 — rare classes are a property of the pool, so prep settles them
+#
+# init runs before prep, and which target classes are rare is decided by the
+# pool's annotation counts. On a run that still has to prep, the list is left
+# unset and the prep commit derives it. `mine` is the first stage that reads it
+# and refuses to commit while it is still unset.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G25 rare classes are derived at the prep commit"
+
+G25=$(new_workspace g25)
+make_file "$G25/classes/classes_its.yaml" "car: [car]
+person: [person]
+bicycle: [bicycle]"
+make_file "$G25/raw/img0.png" "png"
+make_file "$G25/ckpt/codetr.pth" "not a real checkpoint"
+make_file "$G25/ckpt/coco_classmap.txt" "person"
+make_file "$G25/pool/coco_source.json" '{}'
+make_file "$G25/pool/coco_target.json" '{}'
+G25_RUN="$G25/results/run_g25"
+
+init_run "$G25" "$G25_RUN" 1 \
+  --ap50-thresholds-json '{"car": 0.9, "person": 0.85, "bicycle": 0.8}' \
+  --pool-images "$G25/raw" \
+  --codetr-checkpoint "$G25/ckpt/codetr.pth" \
+  --codetr-classmap "$G25/ckpt/coco_classmap.txt" \
+  --allocation-policy class_stratified \
+  --source-detection-file "$G25/pool/coco_source.json" \
+  --target-detection-file "$G25/pool/coco_target.json"
+assert_rc 0 "[G25] class_stratified init succeeds with no rare list on a prep run"
+case "$RUN_OUT" in
+  *"commit_stage.py --stage prep"*)
+    ok "[G25] the warning names what will derive it" ;;
+  *) notok "[G25] the warning names what will derive it" "output: $RUN_OUT" ;;
+esac
+assert_eq 'null' "$(state_json "$G25_RUN" rare_class_list)" \
+  "[G25] the list is left unset until prep has built a pool"
+
+# Prep produces the counts that decide it: car dominates, the other two are rare.
+make_pool "$G25"
+make_file "$G25_RUN/prep/pool_report.json" \
+  '{"annotations_by_class": {"car": 72287, "person": 4103, "bicycle": 2002}}'
+commit "$G25_RUN" prep prep \
+  --pool-odvg "$G25/source_pool/odvg" \
+  --pool-embeddings "$G25/source_pool/source_embeddings.parquet" \
+  --pool-report "$G25_RUN/prep/pool_report.json" \
+  --summary "prep" --duration-sec 1
+assert_rc 0 "[G25] prep commits"
+assert_eq '"bicycle,person"' "$(state_json "$G25_RUN" rare_class_list)" \
+  "[G25] the below-mean classes are derived from the pool's own counts"
+
+# Without that derivation, mine cannot commit: class_stratified allocates by it.
+G25B=$(new_workspace g25b); make_pool "$G25B"
+G25B_RUN="$G25B/results/run_g25b"
+init_run "$G25B" "$G25B_RUN" 1
+"$PY" - "$G25B_RUN/deft_state.json" <<'EOF'
+import json, sys
+p = sys.argv[1]
+s = json.load(open(p))
+s["config"]["allocation_policy"] = "class_stratified"
+s["config"]["rare_class_list"] = None
+json.dump(s, open(p, "w"))
+EOF
+make_phase_artifacts "$G25B_RUN" baseline
+commit "$G25B_RUN" baseline inference \
+  --inference-labels-dir "$G25B_RUN/baseline/inference/labels" --summary s --duration-sec 1
+commit "$G25B_RUN" baseline kpi_analyze \
+  --kpi-csv "$G25B_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 --summary s --duration-sec 1
+make_iter_artifacts "$G25B_RUN" iter1
+commit "$G25B_RUN" iter1 gap_analysis \
+  --weak-images "$G25B_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G25B_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 5 --summary s --duration-sec 1
+commit "$G25B_RUN" iter1 embed \
+  --embeddings-parquet "$G25B_RUN/iter1/embeddings/weak_images_embeddings.parquet" \
+  --summary s --duration-sec 1
+commit "$G25B_RUN" iter1 mine \
+  --mining-output "$G25B_RUN/iter1/mining/final_unique_files.parquet" \
+  --mining-summary "$G25B_RUN/iter1/mining/summary.json" --summary s --duration-sec 1
+assert_rc 1 "[G25] mine refuses while rare_class_list is still unset"
+case "$RUN_OUT" in
+  *"rare_class_list is unset"*)
+    ok "[G25] the refusal names the unset field and how to fill it" ;;
+  *) notok "[G25] the refusal names the unset field and how to fill it" "output: $RUN_OUT" ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G26 — every path a container opens is mounted, including the ones it is handed
+#
+# The detection files are read by `tmm unique_neighbor_matching` from inside the
+# container. The target file is the KPI detections, which live with the read-only
+# dataset rather than in the per-run workspace. --extra-mount covers whatever the
+# derivation cannot know about.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G26 detection files and arbitrary mounts"
+
+G26_WS=$(new_workspace g26); make_pool "$G26_WS"
+G26_OUT="$WORK/g26_dataset"
+make_file "$G26_OUT/kpi/images/000001.png" "png"
+make_file "$G26_OUT/kpi/labels/000001.txt" "car 0.0 0 0.0 10 10 100 100 0 0 0 0 0 0 0"
+make_file "$G26_OUT/hl_coco_its_kpi.json" '{"images": [], "annotations": []}'
+make_file "$G26_WS/source_pool/coco.json" '{"images": [], "annotations": []}'
+make_file "$G26_WS/source_pool/pool_report.json" '{"annotations_by_class": {"car": 10}}'
+make_file "$WORK/g26_aux/notes.txt" "an input no config key names"
+G26_RUN="$G26_WS/results/run_g26"
+
+mounts_contain() {  # mounts_contain RESULTS_DIR NEEDLE
+  "$PY" -c 'import json,sys
+mounts = json.load(open(sys.argv[1]))["config"]["extra_container_mounts"]
+print(1 if any(sys.argv[2] in m for m in mounts) else 0)' "$1" "$2"
+}
+
+run "$PY" "$INIT" \
+  --results-dir "$G26_RUN" --workspace "$G26_WS" --max-iterations 1 \
+  --num-epochs 1 --learning-rate 0.0001 \
+  --zero-shot-checkpoint "$G26_WS/ckpt/gdino_zero_shot.pth" \
+  --train-spec-template "$G26_WS/specs/train_grounding_dino.yaml" \
+  --source-pool-embeddings "$G26_WS/source_pool/source_embeddings.parquet" \
+  --source-pool-annotations "$G26_WS/source_pool/odvg" \
+  --embedding-model-path "$G26_WS/encoder/siglip" \
+  --kpi-images-dir "$G26_OUT/kpi/images" \
+  --ground-truth-labels-dir "$G26_OUT/kpi/labels" \
+  --class-mapping "$G26_WS/classes/classes_its.yaml" \
+  --ap50-thresholds-json '{"car": 0.9}' \
+  --allocation-policy class_stratified --rare-class-list car \
+  --pool-report "$G26_WS/source_pool/pool_report.json" \
+  --source-detection-file "$G26_WS/source_pool/coco.json" \
+  --target-detection-file "$G26_OUT/hl_coco_its_kpi.json" \
+  --extra-mount "$WORK/g26_aux"
+assert_rc 0 "[G26] class_stratified init succeeds with detection files outside the workspace"
+assert_eq 1 "$(mounts_contain "$G26_RUN/deft_state.json" "$G26_OUT")" \
+  "[G26] the target detection file's directory is mounted"
+assert_eq 1 "$(mounts_contain "$G26_RUN/deft_state.json" "$WORK/g26_aux")" \
+  "[G26] --extra-mount admits a path no config key names"
+
+# A source detection file inside the workspace needs no mount of its own.
+assert_eq 0 "$(mounts_contain "$G26_RUN/deft_state.json" "$G26_WS/source_pool")" \
+  "[G26] a detection file inside the workspace adds no mount"
+
+# An --extra-mount that is not on disk is a configuration error, not a silent skip.
+run "$PY" "$INIT" \
+  --results-dir "$G26_RUN" --workspace "$G26_WS" --max-iterations 1 --force \
+  --num-epochs 1 --learning-rate 0.0001 \
+  --zero-shot-checkpoint "$G26_WS/ckpt/gdino_zero_shot.pth" \
+  --train-spec-template "$G26_WS/specs/train_grounding_dino.yaml" \
+  --source-pool-embeddings "$G26_WS/source_pool/source_embeddings.parquet" \
+  --source-pool-annotations "$G26_WS/source_pool/odvg" \
+  --embedding-model-path "$G26_WS/encoder/siglip" \
+  --kpi-images-dir "$G26_OUT/kpi/images" \
+  --ground-truth-labels-dir "$G26_OUT/kpi/labels" \
+  --class-mapping "$G26_WS/classes/classes_its.yaml" \
+  --ap50-thresholds-json '{"car": 0.9}' \
+  --extra-mount "$WORK/g26_absent"
+assert_rc 1 "[G26] an --extra-mount that is not on disk is refused"
+case "$RUN_OUT" in
+  *"--extra-mount"*) ok "[G26] the refusal names the flag" ;;
+  *) notok "[G26] the refusal names the flag" "output: $RUN_OUT" ;;
+esac
+# G27 — the KPI confidence threshold is the run's, and it is recorded
+#
+# Every phase is scored at config.kpi_conf_threshold, so it decides whether two
+# runs are comparable. It defaults to 0.0, the threshold inference writes at.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G27 kpi_conf_threshold"
+
+G27=$(new_workspace g27); make_pool "$G27"
+init_run "$G27" "$G27/results/run_g27" 1
+assert_eq '0.0' "$(state_json "$G27/results/run_g27" kpi_conf_threshold)" \
+  "[G27] the default is 0.0, what inference writes its labels at"
+
+init_run "$G27" "$G27/results/run_g27" 1 --force --kpi-conf-threshold 0.3
+assert_eq '0.3' "$(state_json "$G27/results/run_g27" kpi_conf_threshold)" \
+  "[G27] a supplied threshold is recorded for every phase to score at"
+
+init_run "$G27" "$G27/results/run_g27" 1 --force --kpi-conf-threshold 1.5
+assert_rc 1 "[G27] a threshold outside [0, 1] is refused"
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then

@@ -75,10 +75,11 @@ tags:
 
 Each `network_arch` has a sidecar config file named `{network_arch}.config.json`. Resolve the container image as follows:
 
-1. Read `{network_arch}.config.json` and take `api_params.image` (e.g. `COSMOS_RL`). This is a key into `docker_image_defaults.mapping` in `references/service.yaml`.
-2. Look up that key in the mapping. If the host env var `IMAGE_<KEY>` is set (e.g. `IMAGE_COSMOS_RL`), it overrides the mapped default.
-3. The mapped value is normally a dotted key into the repo-root `versions.yaml` manifest (e.g. `tao_toolkit.cosmos_rl`). Resolve it to a concrete `nvcr.io/...` image URI by looking up `versions.yaml` → `images.<group>.<name>`. Absolute URIs pass through unchanged, so an `IMAGE_<KEY>` env-var override that contains a full URI still works. The Python helper for this lives in `references/code-templates.yaml`.
-4. If the config file is missing or `api_params.image` is empty, fall back to the `COSMOS_RL` key.
+1. Read `{network_arch}.config.json` and take `api_params.image` (e.g. `COSMOS_RL`). This selects an entry from `docker_image_defaults` in `references/service.yaml`.
+2. If the host env var `IMAGE_<KEY>` is set (e.g. `IMAGE_COSMOS_RL`), it overrides the packaged default.
+3. For a key under `model_skill_defaults`, call `scripts/resolve_tao_image.py` with its model, action, and backend. This keeps the exact Cosmos image in the Cosmos model skill's `references/skill_info.yaml`.
+4. For a key under `mapping`, resolve the dotted value against the repo-root `versions.yaml` with `scripts/resolve_versions_key.py`. Absolute environment overrides pass through unchanged. The Python examples live in `references/code-templates.yaml`.
+5. If the config file is missing or `api_params.image` is empty, fall back to the `COSMOS_RL` key.
 
 The config file also has `spec_params.inference.model_path` which drives **folder vs file** path semantics: if the value contains the substring `folder`, the container treats the path as a directory.
 

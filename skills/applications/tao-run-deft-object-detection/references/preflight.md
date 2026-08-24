@@ -50,10 +50,10 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    )
    TAO_DS_IMAGE=$(
      <skill_root>/scripts/deft_python.sh \
-       <skill_bank>/scripts/resolve_versions_key.py images.tao_toolkit.data_services_od
+       <skill_bank>/scripts/resolve_versions_key.py images.tao_toolkit.data_services_nightly
    )
    : "${TAO_PYT_IMAGE:?versions key images.tao_toolkit.pyt did not resolve}"
-   : "${TAO_DS_IMAGE:?versions key images.tao_toolkit.data_services_od did not resolve}"
+   : "${TAO_DS_IMAGE:?versions key images.tao_toolkit.data_services_nightly did not resolve}"
    export TAO_PYT_IMAGE TAO_DS_IMAGE
    ```
 
@@ -62,9 +62,9 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    | Env var | versions-key | Used by |
    |---|---|---|
    | `TAO_PYT_IMAGE` | `images.tao_toolkit.pyt` | `train`, `inference` |
-   | `TAO_DS_IMAGE` | `images.tao_toolkit.data_services_od` | `gap_analysis`, `embed`, `mine`, `kpi_analyze` |
+   | `TAO_DS_IMAGE` | `images.tao_toolkit.data_services_nightly` | `gap_analysis`, `embed`, `mine`, `kpi_analyze` |
 
-   The data-services key is `data_services_od`, not `data_services`: the release
+   The data-services key is `data_services_nightly`, not `data_services`: the release
    data-services image carries neither `gap_analysis object_detection` nor
    `tmm unique_neighbor_matching`, so two of this loop's four data-services stages cannot
    run on it at all. Substituting the release image does not degrade the loop — it stops it.
@@ -93,7 +93,7 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    After approval, run the same command without `--plan` to perform the download.
 
    That resolves `nvidia/tao/grounding_dino:grounding_dino_swin_tiny_commercial_trainable_v1.1`
-   (1.93 GB, ~20s) and prints the checkpoint path on stdout. It is idempotent — an existing
+   (1.93 GB) and prints the checkpoint path on stdout. It is idempotent — an existing
    download is reused, so a resumed run re-costs nothing. Use a **`trainable`** release; the
    sibling `deployable` one is for TensorRT export and cannot be fine-tuned.
 
@@ -198,22 +198,58 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
 13. **Spec sanity.** `train.checkpoint_interval` must be `<= train.num_epochs`. `prepare_spec_for_train.py` lowers it automatically when an explicit epoch override would violate this, but flag the adjustment in the Summary so it is not a surprise.
 
-**Required input — `max_iterations`.** No default. Ask if not supplied and do not proceed past Pre-Flight without it.
+**`max_iterations` defaults to `1`.** Confirm it with the user when they have not said how many iterations they want, but do not block on it: an unattended run takes the default.
 
 ## Defaults
 
 - `train.num_epochs` — from the train-spec template
 - `train.optim.lr` — from the train-spec template
 - `multiplier` — `3`
+- `max_iterations` — `1`
 - `allocation_policy` — `class_stratified` when rare classes are given, else `global`
+- `rare_class_list` — every target class holding a below-mean share of the pool's
+  annotations. It is a property of the pool, so on a run that still has to prep it is
+  left unset at init and the prep commit derives it from `pool_report.json`. Supply
+  `--rare-class-list` only to override that.
 - `distance_metric` — `euclidean`
 - `candidate_expansion_factor` — `5`
 - `embedding_model` — `SigLIP`; `embedding_model_path` is **resolved**, not defaulted (check 9)
 - `iou_threshold` — `0.5`
-- `kpi.conf_threshold` — `0.3`
+- `kpi.conf_threshold` — `0.0` (frozen as `config.kpi_conf_threshold`; every phase is scored at it)
 - workspace root — user prompt, else `~/workspace`
 
 ## Container mounts
+
+Export them once, right after init, and use the variable in every launch:
+
+```bash
+EXTRA_MOUNTS=$(<skill_root>/scripts/deft_python.sh -c 'import json,sys
+m=json.load(open(sys.argv[1]))["config"].get("extra_container_mounts") or []
+print(" ".join(f"-v {p}:{p}" for p in m))' "${RESULTS_DIR}/deft_state.json") || exit 1
+export EXTRA_MOUNTS
+echo "EXTRA_MOUNTS=$EXTRA_MOUNTS"
+```
+
+Echo it and read the result. A command substitution that fails leaves `EXTRA_MOUNTS`
+empty and every later launch still runs, mounting nothing extra — the same silent
+failure this block exists to prevent.
+
+`init_deft_state.py` derives this list from the run's own inputs — the checkpoints, the
+KPI images and labels, the class mapping, the encoder repo, the pool, and both COCO
+detection files. A path that none of those name is invisible to it: pass
+`--extra-mount PATH` (repeatable) at init and it joins the list. Files are mounted by
+their parent directory.
+
+Every `docker run` in this skill is written as
+`-v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE"`. With inputs inside the
+workspace it expands to nothing and the command is unchanged; with KPI data or
+checkpoints outside it, it is the difference between a working stage and
+`No .txt label files found`.
+
+A HuggingFace snapshot directory is a tree of symlinks into a sibling `blobs/`, so the
+mount must be the **repo root** (`.../models--org--name/`), not the snapshot. Mounting the
+snapshot alone makes the loader report a missing model file for a model that is present.
+`init_deft_state.py` handles this when it derives the list.
 
 `init_deft_state.py` records `config.extra_container_mounts`: the directories that
 inputs live in outside `$WORKSPACE`. Containers see only `"$WORKSPACE:$WORKSPACE"`,
@@ -271,6 +307,11 @@ Remind the user to enable auto-mode (shift+tab) before approving — the post-ga
 ## Immediately After Approval
 
 Perform the planned pulls and directory creation, then initialize state once:
+**`--pool-report` is the exception: omit it on a prep run.** Unlike the pool artifacts
+and `--source-detection-file`, a `--pool-report` path that does not exist yet is a hard
+error, not a warning — validate_pool_coco.py writes it during prep, so pass the flag
+only when the pool already exists. Omitting it is what downgrades the requirement.
+
 **Order:** `init_deft_state.py` runs first and `prep` is the run's first committed
 stage. On a pool that still needs preparing, the pool artifacts and
 `--source-detection-file` do not exist yet — pass them anyway, as the paths prep
@@ -279,6 +320,40 @@ stage. On a pool that still needs preparing, the pool artifacts and
 produces them. Supplying neither the artifacts nor prep's inputs is still an error:
 nothing would create them.
 
+
+Three groups of flags apply only to some runs. Build them first so the command below
+stays one shape:
+
+```bash
+# class_stratified only. Both are mandatory under that policy — init refuses without
+# them, so a run that omits them here fails at `mine`, several stages later.
+STRATIFIED_FLAGS=""
+if [ "$ALLOCATION_POLICY" = class_stratified ]; then
+  STRATIFIED_FLAGS="--source-detection-file $SOURCE_DETECTION_FILE"
+  STRATIFIED_FLAGS="$STRATIFIED_FLAGS --target-detection-file $TARGET_DETECTION_FILE"
+fi
+
+# Prep runs only: the pool does not exist yet and these are what builds it.
+PREP_FLAGS=""
+if [ -n "${POOL_IMAGES:-}" ]; then
+  PREP_FLAGS="--pool-images $POOL_IMAGES --codetr-checkpoint $CODETR_CHECKPOINT"
+  PREP_FLAGS="$PREP_FLAGS --codetr-classmap $CODETR_CLASSMAP"
+fi
+
+# A pool that already exists must declare what it holds. Under class_stratified both
+# of these are then mandatory: prep is what would otherwise produce the report and
+# derive the rare classes from it, and a prep that is not going to run cannot.
+EXISTING_POOL_FLAGS=""
+if [ -z "${POOL_IMAGES:-}" ] && [ "$ALLOCATION_POLICY" = class_stratified ]; then
+  EXISTING_POOL_FLAGS="--pool-report $POOL_REPORT --rare-class-list $RARE_CLASS_LIST"
+fi
+
+# Any path the run's own inputs do not name. Repeatable; omit when there are none.
+EXTRA_MOUNT_FLAGS=""
+for path in ${EXTRA_MOUNTS_IN:-}; do
+  EXTRA_MOUNT_FLAGS="$EXTRA_MOUNT_FLAGS --extra-mount $path"
+done
+```
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/init_deft_state.py \
@@ -299,7 +374,10 @@ nothing would create them.
   --class-mapping "$CLASS_MAPPING" \
   --ap50-thresholds-json "$AP50_THRESHOLDS_JSON" \
   --multiplier "$MULTIPLIER" \
-  --allocation-policy "$ALLOCATION_POLICY"
+  --allocation-policy "$ALLOCATION_POLICY" \
+  --target-classes "$TARGET_CLASSES" \
+  --kpi-conf-threshold "$KPI_CONF_THRESHOLD" \
+  $STRATIFIED_FLAGS $PREP_FLAGS $EXISTING_POOL_FLAGS $EXTRA_MOUNT_FLAGS
 
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/audit_deft_run.py \
   --results-dir "$RESULTS_DIR"

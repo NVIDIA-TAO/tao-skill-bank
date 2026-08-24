@@ -28,6 +28,11 @@ Rules enforced:
     exempt (JSON cannot carry annotations; pins there are recorded artifacts,
     not templates). The 7.1.0 stray backlog is cleared: CI runs
     ``--check --strict-strays``, so a new unannotated pin fails the pipeline.
+  * Scan scope: ``skills/``, ``templates/``, and ``scripts/`` (so pins embedded
+    in CI helpers and test fixtures are covered too — a stale duplicate there is
+    exactly how a marked pin can drift unnoticed). The versions-key tooling
+    itself (``stamp_versions.py``, ``migrate-to-version-keys.py``) is skipped
+    because its docstrings document the marker format with example pins.
 
 versions.yaml is parsed with a minimal indentation-based reader (2-space
 indents, scalar leaves) so this script has no third-party dependencies and can
@@ -58,6 +63,12 @@ STRAY_WHEEL_RE = re.compile(r"nvidia-tao-[a-z-]+(?:\[[A-Za-z0-9_,-]+\])?==[A-Za-
 DOTTED_KEY_VALUE_RE = re.compile(r"^(\s*[A-Za-z_]+:\s*)([A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+)(\s*#.*)$")
 
 SCAN_EXTENSIONS = {".md", ".yaml", ".yml", ".sh", ".py", ".config", ".json", ".txt"}
+
+# The versions-key tooling documents the marker format with example image URIs
+# and example ``# versions-key:`` comments in its own docstrings. Those examples
+# are not live pins, so scanning them would raise spurious drift/stray reports —
+# skip these files by basename.
+SKIP_BASENAMES = {"stamp_versions.py", "migrate-to-version-keys.py"}
 
 
 def parse_versions(path: str) -> dict[str, str]:
@@ -94,6 +105,8 @@ def iter_skill_files(skills_dir: str):
     for root, dirs, files in os.walk(skills_dir):
         dirs[:] = [d for d in dirs if d != ".git"]
         for fname in files:
+            if fname in SKIP_BASENAMES:
+                continue
             if os.path.splitext(fname)[1] in SCAN_EXTENSIONS:
                 yield os.path.join(root, fname)
 
@@ -120,7 +133,7 @@ def main() -> int:
                     help="unannotated image/wheel pins are errors, not warnings")
     ap.add_argument("--versions-file", default="versions.yaml")
     ap.add_argument("--skills-dir", default="skills",
-                    help="primary tree to scan (templates/ is always scanned too when present)")
+                    help="primary tree to scan (templates/ and scripts/ are scanned too when present)")
     args = ap.parse_args()
 
     versions = parse_versions(args.versions_file)
@@ -132,7 +145,7 @@ def main() -> int:
     strays: list[str] = []
     stamped = 0
 
-    scan_dirs = [args.skills_dir] + (["templates"] if os.path.isdir("templates") else [])
+    scan_dirs = [args.skills_dir] + [d for d in ("templates", "scripts") if os.path.isdir(d)]
     all_files = [p for d in scan_dirs for p in iter_skill_files(d)]
     for path in sorted(all_files):
         try:

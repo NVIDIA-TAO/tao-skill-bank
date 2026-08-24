@@ -104,7 +104,15 @@ Do not use this skill for a single standalone TAO training run, one-off inferenc
 
 ## Base Model
 
-The loop operates on **NVIDIA TAO Visual ChangeNet** classify with the **NVIDIA C-RADIOv2-B** backbone, fine-tuned end-to-end. The architecture is defined in `specs/baseline_spec.yaml` — that file is the source of truth. Pretrained weights originate from HuggingFace (`HF_TOKEN` required for networked fetches); `NGC_KEY` gates container pulls. ChangeNet backbone resolution and the staged-file/HuggingFace-download fallback for `model.backbone.pretrained_backbone_path` are owned by `references/visual-changenet.md`; the spec itself must always point to a local mounted file, never a URL. SigLIP for k-NN mining is owned by `references/tao-mine-aoi-images.md`. AnomalyGen-side checkpoints (Cosmos-Predict2, T5, NVDINOV2, C-RADIO-V3, DINOv2-large, SAM2, Qwen3-VL — ~22 GB for 2B-only, ~140 GB with 14B + T5-11b) live under `<workspace>/augmentation/anomalygen/base_checkpoints/`. Network-mode rules and staged-asset requirements are in `references/air-gap.md`; model-specific bootstrap details are in `references/paidf-anomalygen.md`.
+The loop uses **NVIDIA TAO Visual ChangeNet** classify with either end-to-end
+C-RADIOv2-B or a frozen DINOv3 backbone. `specs/baseline_spec.yaml` defines the
+architecture. Backbone variants, staging, `HF_TOKEN`, and mount rules are owned
+by `references/visual-changenet.md`; the spec always points to a local mounted
+file. `NGC_KEY` gates container pulls. SigLIP mining is owned by
+`references/tao-mine-aoi-images.md`; AnomalyGen assets and network/air-gap rules
+are owned by `references/tao-generate-anomalies.md` and
+`references/air-gap.md`. The container owns its base-asset list; this workflow
+keeps bootstrap on Text2Image 2B by passing `--model_sizes 2B` explicitly.
 
 ## Train AutoML Policy
 
@@ -221,7 +229,7 @@ report hook, stage mapping, direct-container fallback, and path invariants.
 
 ## Stage Reference Modules
 
-Each pipeline stage maps to one underlying skill in the bank; the matching `references/*.md` file layers DEFT-loop conventions (mounts, output dirs, and `commit_stage.py` arguments) on top of the skill's generic instructions. **Read only the current stage's relevant section, then invoke the skill via the Skill tool or the documented direct-container fallback; never preload all stage references.** If a reference file is missing, stop and ask the user to reinstall the plugin. The full stage→reference→skill→ownership table lives in `references/scripts-and-agents.md` → **Stage Reference Modules**. The stages: `train`/`evaluate` (`references/visual-changenet.md`), `anomalygen` (`references/paidf-anomalygen.md`), `rca` (`references/tao-analyze-gaps-visual-changenet.md`), `routing` (`references/tao-route-visual-changenet-samples.md`), and `data_mining` (`references/tao-mine-aoi-images.md`).
+Each pipeline stage maps to one underlying skill in the bank; the matching `references/*.md` file layers DEFT-loop conventions (mounts, output dirs, and `commit_stage.py` arguments) on top of the skill's generic instructions. **Read only the current stage's relevant section, then invoke the skill via the Skill tool or the documented direct-container fallback; never preload all stage references.** If a reference file is missing, stop and ask the user to reinstall the plugin. The full stage→reference→skill→ownership table lives in `references/scripts-and-agents.md` → **Stage Reference Modules**. The stages: `train`/`evaluate` (`references/visual-changenet.md`), `anomalygen` (`references/tao-generate-anomalies.md`), `rca` (`references/tao-analyze-gaps-visual-changenet.md`), `routing` (`references/tao-route-visual-changenet-samples.md`), and `data_mining` (`references/tao-mine-aoi-images.md`).
 
 **Path rule (invariant).** Record absolute host artifact paths under
 `${RESULTS_DIR}`. For ChangeNet direct containers, mount
@@ -248,4 +256,4 @@ directory to `/results/iterN`.
 
 Run the full Pre-Flight (`references/preflight.md`), print the Pre-Flight Summary, then STOP at the one user gate. After approval, run the baseline (with the pre-seed/skip-train logic) and the 7-step iteration Pipeline, all detailed in `references/pipeline-and-state.md`.
 
-Hard-stop and never auto-retry on: any stage `status=error`; train/validation leakage; a missing or zero-row mining pool; a failed CSV existence check; silent-drop; and AMP allocation mismatch. The loop stops when the KPI target is met, `max_iterations` is reached, or an unrecoverable gate fires. Each terminal path commits `loop_stop` through `commit_stage.py`, then follows the loop-end sequence in `references/pipeline-and-state.md`.
+Hard-stop and never auto-retry on: any stage `status=error`; train/validation leakage; a missing or zero-row mining pool; a failed CSV existence check; silent-drop; AMP allocation mismatch; a missing or PAIDF-incompatible AnomalyGen fine-tuned checkpoint; a missing AnomalyGen Guardrail checkpoint; or an SDG log showing disabled screening. The loop stops when the KPI target is met, `max_iterations` is reached, or an unrecoverable gate fires. Each terminal path commits `loop_stop` through `commit_stage.py`, then follows the loop-end sequence in `references/pipeline-and-state.md`.

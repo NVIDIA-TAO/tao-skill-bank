@@ -128,23 +128,31 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    GPU when the selected backend is remote. Probe the three AnomalyGen override
    slots under `augmentation/anomalygen/` (`checkpoints/<project>/`,
    `base_checkpoints/`, `datasets/<project>/`) and report their status in the
-   Summary. In network-enabled mode, empty slots may be a post-approval fetch
-   plan. In air-gap mode every required slot must already be non-empty and a
-   missing asset is a hard stop. NVIDIA publishes the PCB fine-tuned
-   checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset
-   (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on HuggingFace;
-   paidf-anomalygen downloads them automatically on first use. Users who want
-   to provide their own fine-tuned checkpoint or custom dataset can pre-stage
-   the directory to override. Do not ask the user about missing AnomalyGen
-   assets — treat empty slots as `will auto-fetch from HF (default)` and
-   proceed. If `base_checkpoints/` is pre-staged, export its host path as
-   `COSMOS_MODELS_DIR` for downstream mounts. Stage the ChangeNet pretrained
+   Summary. The fine-tuned checkpoint slot must be pre-staged in every network
+   mode. Resolve the single `ag_config.yaml` and `iter_<step>.pt` under
+   `checkpoints/<project>/...`; if either is missing or ambiguous, hard-stop
+   and direct the user to finetune the AnomalyGen LoRA with the container's
+   `texture_ft` recipe using the `uc1_pcb` layout
+   (`dataset_path/<texture>/anomaly_image/` paired with
+   `dataset_path/<texture>/mask/<defect>/`), then stage the resulting
+   `ag_config.yaml` and `iter_<step>.pt` under
+   `augmentation/anomalygen/checkpoints/<project>/...`. Its
+   major.minor must match the pinned AnomalyGen container; never substitute the
+   incompatible 1.0-era HF checkpoint. In network-enabled mode, an empty PCB
+   reference dataset (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) or base-model
+   cache may be a post-approval fetch plan. In air-gap mode both must already
+   be non-empty. The uc1 reference dataset remains auto-downloadable in
+   network-enabled mode. If `base_checkpoints/` is pre-staged, export its host
+   path as `COSMOS_MODELS_DIR` for downstream mounts. Before SDG, use the
+   executable file check in `references/tao-generate-anomalies.md` to gate the
+   AnomalyGen Guardrail safety model; a missing file is a hard stop.
+   Stage the ChangeNet pretrained
    backbone by running `scripts/stage_backbone.py --workspace <workspace>`,
    then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path`
    to the staged file and bind-mount it per `references/visual-changenet.md` →
    *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script
    exits non-zero; there is no URL fallback. See
-   `references/paidf-anomalygen.md` for invocation and mount layout.
+   `references/tao-generate-anomalies.md` for invocation and mount layout.
 9. **GPU memory sanity check.** ChangeNet classify with C-RADIOv2-B (ViT-B) at the spec defaults (`batch_size: 64`, `image_width/height: 224`, `cls_weight: [1.0, 10.0]`, learnable difference modules) OOMs on a single 48GB-class GPU. Inspect `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` and warn if the assembled spec's `dataset.classify.batch_size` is too large for the available memory: as a rule of thumb, **≤ 16 on 48GB GPUs, ≤ 8 on 24GB GPUs**. Surface the recommendation in the Pre-Flight Summary's `GPUs` row — let the user accept or override before launch rather than failing 30 seconds into training.
 10. Run train/validation leakage check before resuming any prior run.
 
@@ -164,9 +172,11 @@ Ask one consolidated question only for missing required inputs. Never ask about 
 - pretrained backbone: first staged weight under `augmentation/backbone/`;
   network-enabled mode may plan the documented post-approval fetch, while
   air-gap mode hard-stops when absent.
-- AnomalyGen checkpoint, dataset, and Cosmos base models: prefer the staged
-  `augmentation/anomalygen/` paths. Missing assets are fetch plans only in
-  network-enabled mode; in air-gap mode they are hard stops.
+- AnomalyGen checkpoint: the PAIDF-compatible package is required under
+  `augmentation/anomalygen/checkpoints/<project>/...` in every network mode;
+  missing or ambiguous files are a hard stop. Dataset and Cosmos base models:
+  prefer staged paths; missing assets are fetch plans only in network-enabled
+  mode and hard stops in air-gap mode.
 
 ## Pre-Flight Summary
 
@@ -201,14 +211,15 @@ Once all checks pass, print this summary and **STOP — wait for explicit user a
 | Mining CSV / image root        | <independent absolute paths; resolver status>                                  |
 
 ### Augmentation
-Show `WILL_FETCH` only in network-enabled mode. In air-gap mode every row must
-be a staged local path and no download fallback may appear.
+Show `WILL_FETCH` only for the dataset and base-model rows in network-enabled
+mode. The AnomalyGen checkpoint row must always be a staged local path. In
+air-gap mode every row must be local and no download fallback may appear.
 
 | Field              | Value                                                                                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| AnomalyGen ckpt    | `<path>` (FOUND, step N) **or** will auto-fetch from HF (`nvidia/Cosmos-AnomalyGen-PCB-2B`, ~5 GB) **[default]** |
+| AnomalyGen ckpt    | `<path>` (PAIDF major.minor compatible; FOUND, step N) **[BYO/pre-staged REQUIRED; missing = HARD STOP]**              |
 | Defect spec        | `<N types: type1, type2, ...>` (from staged dataset) **or** will auto-fetch from HF **[default]**                 |
-| Cosmos base models | `<path>` (FOUND) **or** will auto-download on first container run (~22 GB for 2B, ~140 GB with 14B + T5-11b) **[default]** |
+| Cosmos base models | `<path>` (container check FOUND) **or** will auto-download the 2B workflow set on first container run (~22 GB) **[default]** |
 | SigLIP model       | `<cached / download / local path>`                                                                                 |
 | Backbone           | `<path>` (FOUND) **or** will auto-download from HF (`nvidia/C-RADIOv2-B`, ~393 MB) **[default]**                  |
 
@@ -257,6 +268,6 @@ done
 | train | ~11 min | train rows × epochs |
 | evaluate | ~2 min | KPI-test rows |
 
-`total ≈ baseline + max_iterations × ~33 min` + overhead (10 iters ≈ ~6.5h wall). Add the one-time ~22–140 GB base-checkpoint/image pull separately when image/Cosmos rows are `MISSING`.
+`total ≈ baseline + max_iterations × ~33 min` + overhead (10 iters ≈ ~6.5h wall). Add the one-time ~22 GB base-checkpoint/image pull separately when image/Cosmos rows are `MISSING`.
 
 **Ask the user to confirm before proceeding.** Wait for explicit approval ("looks good", "go", "yes"). Do not start the loop until the user confirms.

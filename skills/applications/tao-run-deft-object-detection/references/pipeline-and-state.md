@@ -163,7 +163,20 @@ Three stage types:
 After every stage, before advancing:
 
 1. Verify the documented required artifacts exist.
-2. Invoke `commit_stage.py` once with the documented artifact flags.
+2. Invoke `commit_stage.py` once with the documented artifact flags, and pass
+   `--duration-sec` with the stage's measured wall clock. Take a timestamp before the
+   stage and subtract:
+
+   ```bash
+   started=$SECONDS
+   # ... run the stage ...
+   commit_stage.py ... --duration-sec "$(( SECONDS - started ))"
+   ```
+
+   The field is in the log schema and the report renders a duration column from it, but
+   nothing populates it unless the flag is passed — every stage then reads 0 and the
+   timeline is empty. If no reliable start time was captured, omit the flag rather than
+   inventing a number.
 3. Run `audit_deft_run.py --results-dir ${RESULTS_DIR}`. If `INVALID`, halt and repair.
 4. If the committed status is `error` — halt, surface the disk evidence, **do not auto-retry**.
 5. If `ok` — print one status line: `[iter <N>/<max> · <stage>] <detail> · <duration> · next: <stage>`. Then advance. Render the HTML report only at iteration end and loop end.

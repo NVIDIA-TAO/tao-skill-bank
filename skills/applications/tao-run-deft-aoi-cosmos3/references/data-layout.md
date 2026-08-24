@@ -13,7 +13,9 @@ workspace/
 ├── augmentation/
 │   └── anomalygen/
 │       ├── base_checkpoints/          # Cosmos base checkpoints cache
-│       ├── checkpoints/<project>/     # ag_config.yaml + fine-tuned checkpoint
+│       ├── checkpoints/<project>/     # User pre-staged PAIDF-1.1-compatible LoRA package.
+│       │                                # BYO required, never auto-downloaded: ag_config.yaml + iter_<step>.pt
+│       │                                # (e.g. nvpcb/nvidia/Cosmos-AnomalyGen-PCB-2B/iter_000015000.pt).
 │       └── datasets/<project>/        # clean boards, cad masks, defect_spec.jsonl
 ├── images/
 │   ├── ... AOI images ...
@@ -32,7 +34,7 @@ stage. `init_deft_state.py` prefers the per-role files, falls back to the
 shared one, and accepts `--train-spec` / `--proxy-spec` / `--benchmark-spec`.
 
 The `augmentation/anomalygen/` tree is required only when the AnomalyGen stage
-runs. Its contents and bootstrap are owned by `references/paidf-anomalygen.md`.
+runs. Its contents and bootstrap are owned by `references/tao-generate-anomalies.md`.
 
 The three `.json` files are the only input annotation sets. Each file contains
 one non-empty JSON array of bare OK/NG ShareGPT records; JSONL is not accepted

@@ -253,7 +253,7 @@ def test_no_aoi_reference_prescribes_a_docker_run_command():
 
 def test_converted_references_use_the_input_env(stage_bundle):
     """A stage arg naming a host path guesses at a layout it cannot see."""
-    body = (AOI_REFS / "paidf-anomalygen.md").read_text(encoding="utf-8")
+    body = (AOI_REFS / "tao-generate-anomalies.md").read_text(encoding="utf-8")
     assert "$TAO_INPUT_DATASET_DIR" in body
     assert "$TAO_RESULTS_ROOT" in body
 

@@ -14,6 +14,19 @@ must not rebuild the plan. Planning and preflight must remain read-only with
 respect to the target compute frame and must not require the
 shared filesystem to be mounted on the SSH launch host. Stage the Framework
 status bridge in the repository-derived image, not as an ad hoc source patch.
+Evaluation consumes the model skill's validated spec-bundle and its declarative
+`execution` lifecycle. The Cosmos producer owns runtime attestation, evaluator
+selection, and metric extraction; this platform owns the standard SBATCH/Pyxis
+envelope, torchrun mapping, mounts, timeout, and child exit preservation. Do
+not re-encode model semantics in a Cosmos-only SLURM renderer or improvise a
+command outside the sealed bundle.
+
+For a single-node exclusive job, request the user's CPU count, resolve granted
+`NumCPUs` inside the allocation, and pass it to the training `srun`. Record
+requested, allocated, and step values; never infer multi-node CPUs this way.
+The platform validates failed or comment-quarantined nodes against current
+eligible-node inventory and owns `#SBATCH --exclude`; the model planner seals
+the validated set in its fresh retry plan. Never edit a rendered directive.
 
 - Cosmos Framework: one Pyxis task/container per node; inside each task set
   `NODE_RANK=$SLURM_PROCID` and launch native torchrun with node count,
@@ -24,9 +37,11 @@ status bridge in the repository-derived image, not as an ad hoc source patch.
 - Cosmos-RL: single-node uses its normal CLI. Validated policy-only multi-node
   SFT starts the controller only on node zero and one policy replica on every
   node; its spec uses global GPU count as shard size and one replicate. Enable
-  CUDA video driver capability and the image's system PyAV/FFmpeg NVDEC path
-  rather than falling back to CPU decoding. Positive DataLoader worker counts
-  require the Cosmos-RL spawned-worker runtime fix.
+  the decoder explicitly. On A100, use the image's checksum-pinned official
+  PyAV wheel and sparse software System-PyAV reader; require generic H.264/HEVC
+  names to resolve to software decoders and ensure spawned workers register the
+  reader without creating a CUDA context. An explicit PyNvVideoCodec/NVDEC path
+  retains the video driver capability and decoder-artifact gates.
 
 For both backends, preserve the real `srun`/torchrun/policy exit code through
 cleanup and any requeue footer. A zero exit from a later shell command must not

@@ -31,6 +31,31 @@ Pre-Flight fallback).
 `BACKBONE_CONTAINER_PATH` is the matching container path written into the
 training spec. Use this resolved pair for every train, evaluate, and inference launch.
 
+For every direct Docker action in the underlying reference, first verify the
+DEFT results root is writable, then compose this application-owned identity
+block:
+
+```bash
+mkdir -p "$RESULTS_DIR"
+probe="$RESULTS_DIR/.tao-write-probe.$$"
+(umask 077 && : >"$probe" && rm -f "$probe") || {
+  echo "FATAL: $RESULTS_DIR is not writable by uid $(id -u)" >&2
+  exit 2
+}
+
+VCN_IDENTITY_ARGS=(
+  --user "$(id -u):$(id -g)"
+  -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp
+  -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro
+)
+```
+
+Insert `"${VCN_IDENTITY_ARGS[@]}"` into the underlying `docker run` command for
+train, evaluate, inference, export, and quantize, including resumed actions.
+Every resulting checkpoint, status file, inference CSV, and export is then
+owned by the submitting host user, so two-checkpoint evaluation and cleanup
+need no sudo.
+
 ```
 -v <workspace>:/data/workspace                                  # combined iter CSVs + staged images
 -v ${RESULTS_DIR}:/results                                      # canonical run root; never /results/iterN
@@ -83,9 +108,11 @@ Before every train launch, validate these coupled spec invariants:
   `epoch 1` must also lower `checkpoint_interval`; otherwise TAO aborts before
   the first epoch.
 - Derive inference/evaluate specs from the exact training spec. Preserve the
-  model/loss block, but set `dataset.classify.augmentation_config.augment=false`,
-  then change only task paths/checkpoint/results overrides. A loss/difference-
-  module mismatch can load the checkpoint and then fail at criterion construction.
+  model architecture, set `dataset.classify.augmentation_config.augment=false`,
+  and change only task paths/checkpoint/results overrides. Keep only the
+  matching `train.classify.loss` compatibility stub while the skill baseline
+  remains TAO 7.1; TAO 7.2 images containing NVIDIA-TAO/tao-pytorch#107 no
+  longer require it.
 - Use the underlying skill's documented `visual_changenet <task> -e <spec>`
   entrypoint. Do not switch to direct package-module/Hydra commands after an
   error; their config-path semantics differ.
@@ -129,6 +156,14 @@ When deriving `iter${N}_spec.yaml` from `baseline_spec.yaml`, **only `train_data
 A bulk `sed 's|/data/datasets/NV_PCB_Siamese/images|/data/workspace|g'` on the spec catches all four and breaks the latter three. Edit `train_dataset.images_dir` surgically.
 
 ## Two-Checkpoint Compare
+
+The baseline template intentionally leaves all downstream checkpoint fields
+empty. After a successful train, discover the concrete `model_epoch_*_step_*.pth`
+files and the `changenet_model_classify_latest.pth` symlink under that
+iteration's `train/` directory. Pass the selected checkpoint as an explicit
+container path to inference, evaluate, or export. Never use
+`${results_dir}/train/...`: Hydra rebases `${results_dir}` to the current
+action's output directory.
 
 Run inference on both the best-val checkpoint (lowest `val_loss`) and the
 latest checkpoint (highest epoch). `val_loss` and the customer's deployment
@@ -243,6 +278,35 @@ model:
 ```
 
 If `HF_TOKEN` is unset or the workspace already has a staged file, Pre-Flight uses the staged file as-is and skips the download. If neither is available, Pre-Flight **hard stops** — there is no working URL fallback in this TAO version, so silently falling through would just produce the FileNotFoundError above after the container starts.
+
+### Frozen DINOv3 profiles
+
+DEFT supports `vit_small_dinov3`, `vit_small_plus_dinov3`,
+`vit_base_dinov3`, `vit_large_dinov3`, `vit_huge_plus_dinov3`, and
+`vit_7b_dinov3`. The baseline spec must use the same type and set
+`model.backbone.freeze_backbone: true`:
+
+```yaml
+model:
+  backbone:
+    type: vit_large_dinov3
+    freeze_backbone: true
+    pretrained_backbone_path: ''
+```
+
+In network mode, accept the DINOv3 license and export `HF_TOKEN`; Pre-Flight
+then stages the matching `timm/vit_*_patch16_dinov3.lvd1689m` file with:
+
+```bash
+STAGED=$(<skill_root>/scripts/deft_python.sh \
+  <skill_root>/scripts/stage_backbone.py \
+  --workspace <workspace> --backbone-type vit_large_dinov3)
+BACKBONE_CONTAINER_PATH="/data/pretrained_models/$(basename "$STAGED")"
+```
+
+Pre-Flight rewrites `pretrained_backbone_path` to that container path and uses
+the same mount for train, evaluate, and inference. In air-gap mode, pre-stage
+the exact profile file; the helper rejects a missing or mismatched checkpoint.
 
 ## Label case rule (CSV assembly)
 

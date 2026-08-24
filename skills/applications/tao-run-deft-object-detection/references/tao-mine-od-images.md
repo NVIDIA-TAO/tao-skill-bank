@@ -21,10 +21,16 @@ Iteration stage 3, after `embed`. Mines the source pool for images resembling th
 
 This is a hard failure, not a warning. TAO DS `load_datasets` raises `FileNotFoundError` when `exclude_path` is set but is not a file — and on iteration 1 no cumulative parquet exists yet. Pointing at the not-yet-written path kills the stage before any mining happens.
 
+A *spent* pool fails differently and worse. When the exclude set already covers every
+pool image, `split_datasets_by_class` raises `TypeError: Series object is not iterable`
+from `selection.py` — an unhandled cudf error naming neither the pool nor the exclude
+set. Count the pool rows not already excluded **before** invoking, and stop the loop
+instead of calling the miner with nothing left to give
+(`commit_stage.py --stage loop_stop --pool-exhausted --pool-remaining N`).
+
 - **Iteration 1**: emit `exclude_path: null`.
 - **Iteration N > 1**: emit the absolute path to `${RESULTS_DIR}/iter$((N-1))/mined_cumulative.parquet`, and confirm the file exists before writing the spec.
 
-> The reference pipeline's miner silently skipped a missing exclude file; TAO DS raises instead. Its KFP wrapper only worked because it pre-guarded with `os.path.exists`. Reproduce that guard, not the bare path.
 
 ## `detection_format` is never inferred
 
@@ -51,7 +57,7 @@ Write per-iteration under `${RESULTS_DIR}/iter${N}/mining/unique_neighbor_matchi
 source_path:            <config.source_pool_embeddings>
 target_path:            <iterations.iter${N}.embeddings_parquet>
 output_dir:             <absolute path to ${RESULTS_DIR}/iter${N}/mining>
-desired_unique_count:   <from prepare_budget_for_mining.py>
+desired_unique_count:   <from prepare_budget_for_mining.py — see below>
 allocation_policy:      class_stratified     # or global — see below
 distance_metric:        euclidean
 candidate_expansion_factor: 5
@@ -70,13 +76,22 @@ visualize:              false
 
 **Allocation policy.** Use `class_stratified` when the user supplied rare classes — budget is apportioned by target class ratio using largest-remainder, with a non-rare fallback pool, and each source is owned by the first class that claims it. Use `global` when no rare classes are configured. The reference pipeline's `class_balanced` mode maps to `class_stratified`.
 
+**`rare_class_list` comes from state, not from this stage.** Read
+`config.rare_class_list` and write it into the spec verbatim. It is derived once, at
+the prep commit, from the pool's own annotation counts — every target class holding a
+below-mean share. Under `class_stratified` the commit refuses a `mine` while it is
+still unset, since allocation apportions the budget by exactly that list.
+
 **`candidate_expansion_factor` is not the loop's iteration count.** It seeds the miner's internal candidate-pool growth (starting at 5, widening each internal retry, capped at 8 internal passes). It is unrelated to `max_iterations`.
 
 ## Invocation
 
 ```bash
+<skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-mine-od-images/scripts/verify_unique_neighbor_matching_spec.py \
+  --spec "$MINE_SPEC"
+
 docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   tmm unique_neighbor_matching -e "$MINE_SPEC"
 ```
@@ -103,5 +118,23 @@ Read `coverage_pct` from `summary.json`:
   --results-dir "${RESULTS_DIR}" --iter-label "iter${N}" --stage mine \
   --mining-output "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
   --mining-summary "${RESULTS_DIR}/iter${N}/mining/summary.json" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "mined <retrieved>/<desired> unique images (<coverage_pct>% coverage)"
 ```
+
+## Computing `desired_unique_count`
+
+The budget is produced before this stage by `prepare_budget_for_mining.py`, and its full
+invocation lives in `references/stage-mined-data.md`. Reading only this overlay leaves
+the field with no documented way to compute it, so the short form is repeated here:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_budget_for_mining.py \
+  --weak-parquet "${RESULTS_DIR}/iter1/gaps/weak_images.parquet" \
+  --multiplier "<multiplier>" --pool-size "<pool rows>" \
+  --already-mined "<cumulative exclude rows, 0 on iteration 1>" \
+  --remaining-iterations "<iterations left, including this one>"
+```
+
+Seed it from **iteration 1's** weak parquet on every iteration, so the amount of data
+added per iteration stays constant as the gap set shrinks.

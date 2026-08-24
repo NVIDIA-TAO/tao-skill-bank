@@ -668,8 +668,8 @@ def test_conversion_requests_memory(monkeypatch):
 def test_conversion_memory_is_caller_settable(monkeypatch):
     """Not every site grants the same ceiling, so it must not be baked in."""
     module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
-    module.prepare({"image": "nvcr.io/x:1"}, {**ctx, "conversion_memory_gb": 64})
-    assert "--mem 64G" in next(c for c in calls if "enroot import" in c)
+    module.prepare({"image": "nvcr.io/x:1"}, {**ctx, "conversion_memory_mb": 16000})
+    assert "--mem 16000M" in next(c for c in calls if "enroot import" in c)
 
 
 # ── A long conversion must be observable while it runs ─────────────────────
@@ -717,8 +717,8 @@ def test_conversion_allocates_cpus_for_enrootss_own_concurrency(monkeypatch):
 
 def test_conversion_cpus_are_caller_settable(monkeypatch):
     module, ctx, calls = _slurm_with(monkeypatch, ["", "hsqs"])
-    module.prepare({"image": "nvcr.io/x:1"}, {**ctx, "conversion_cpus": 4})
-    assert "--cpus-per-task 4" in next(c for c in calls if "enroot import" in c)
+    module.prepare({"image": "nvcr.io/x:1"}, {**ctx, "conversion_cpus_per_task": 8})
+    assert "--cpus-per-task 8" in next(c for c in calls if "enroot import" in c)
 
 
 # ── Rendered files must land where the launcher will look ──────────────────

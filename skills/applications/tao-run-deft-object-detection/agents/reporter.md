@@ -33,7 +33,8 @@ For `trigger="loop-end"`, add `--require-terminal`. It passes only once `loop_st
 1. `${results_dir}/deft_state.json` — config, `max_iterations`, per-iteration artifact paths.
 2. Every line of `${results_dir}/loop_log.jsonl` — stage events, statuses, and durations. Ignore `context_tokens`: it is always 0 and is not a measurement.
 3. Every `${results_dir}/iter*_summary.md` that exists.
-4. Each phase's `kpi/kpi_calc.csv` (baseline and every iteration) for the mAP trend.
+4. Each phase's `kpi/kpi_calc.csv` (baseline and every iteration) for the mAP trend, and
+   its `kpi/kpi_analyze.log` for the class each row belongs to — the csv does not say.
 5. Each iteration's `mining/summary.json` and `tmm/staging_report.json` for the data-growth table.
 
 Trust disk over anything in the prompt except `results_dir`, `skill_root`, and `trigger`.
@@ -63,14 +64,27 @@ Take **Status** from the audit's `--json` report, never from prose and never fro
 
 ## 1. KPI Trend
 
-| Phase | mAP | <per-class AP columns from kpi_calc.csv> |
-|---|---|---|
-| baseline | … | … |
-| iter1 | … | … |
+One row per phase — `baseline`, then every iteration — and one AP50 column per target
+class alongside the mAP. Both are required: the mean can move while an individual class
+moves the other way, and a loop mining for rare classes is judged on those classes.
 
-State the delta from baseline to the latest iteration in one sentence. mAP is
-reported, not gated — do not describe a regression as a failure, and do not
-claim a target was met or missed. There is no target.
+| Phase | mAP | AP50 <class A> | AP50 <class B> | … |
+|---|---|---|---|---|
+| baseline | … | … | … | |
+| iter1 | … | … | … | |
+| iter2 | … | … | … | |
+
+**Resolving which row is which class.** `kpi_calc.csv` has one row per class and *no
+class column* — the names appear only in the table `kpi_analyze` prints to stdout, which
+is why the run tees it to `kpi/kpi_analyze.log` and commits it as `--kpi-log`. Read the
+class order from that log and use it. If the log is missing for a phase, do not guess
+from row order: report the mAP alone for that phase and say the per-class breakdown was
+unavailable.
+
+State the delta from baseline to the latest iteration in one sentence, and name any
+class that moved against the mean. mAP is reported, not gated — do not describe a
+regression as a failure, and do not claim a target was met or missed. There is no
+target.
 
 ## 2. Data Growth
 
@@ -89,7 +103,11 @@ Include the `tokens` column only when the field is present.
 ## 4. Configuration
 
 Encoder, allocation policy, rare classes, mining multiplier, per-class AP50
-thresholds, epochs, learning rate, GPU count.
+thresholds, epochs, learning rate, GPU count, and `kpi_conf_threshold`.
+
+State the KPI confidence threshold whenever it is not `0.0`. Every mAP in the
+report is scored at it, and a run scored anywhere else is not comparable to one
+scored at `0.0` — a reader who cannot see the value cannot know that.
 
 ## 5. Observations
 
@@ -109,7 +127,7 @@ Write `${results_dir}/DEFT_Loop_Report.md.tmp`, then `os.replace` onto `${result
 Print exactly one line, then exit:
 
 ```
-reporter: wrote DEFT_Loop_Report.md (<bytes>B, <N>/<M> iterations complete, baseline mAP <x> -> latest <y>)
+reporter: wrote DEFT_Loop_Report.md (<bytes>B, <N>/<M> iterations complete, baseline mAP <x> -> latest <y>; per-class <class>=<x>-><y>, ...)
 ```
 
 Return non-zero only on hard failure. Do not return prose or echo the file contents to the parent.

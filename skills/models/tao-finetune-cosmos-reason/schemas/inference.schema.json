@@ -9,6 +9,7 @@
     "max_new_tokens": 32,
     "media": "",
     "model_path": "",
+    "num_frames": null,
     "num_gpus": 1,
     "prompt": "Describe this video briefly.",
     "results_dir": "",
@@ -47,6 +48,11 @@
     },
     "num_gpus": {
       "default": 1,
+      "type": "integer"
+    },
+    "num_frames": {
+      "default": null,
+      "minimum": 1,
       "type": "integer"
     },
     "prompt": {

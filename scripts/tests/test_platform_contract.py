@@ -169,6 +169,54 @@ def test_slurm_enroot_conversion_uses_job_unique_node_local_temp():
     assert "--chdir=/tmp" in text
 
 
+def test_slurm_sqsh_conversion_uses_validated_cpu_long_resource_profile():
+    """Keep image conversion under the CS-OCI QOS memory ceiling.
+
+    SLURM job 32370651 established this profile. Inheriting an eight-GPU
+    training job's CPU request multiplies the site's implicit per-CPU memory
+    and leaves conversion pending under ``QOSGrpMemLimit``.
+    """
+    # _skill_docs, not _skill_text: the conversion command moved into
+    # references/slurm-container-execution.md when SKILL.md hit its 20k size
+    # cap. The requirement is that the skill documents the profile, not which
+    # file it sits in.
+    text = _skill_docs("tao-run-on-slurm")
+    info = (PLATFORM_DIR / "tao-run-on-slurm" / "references" /
+            "skill_info.yaml").read_text()
+    assert "sqsh_conversion_partition: cpu_long" in info
+    assert "sqsh_conversion_timeout_minutes: 120" in info
+    assert "sqsh_conversion_cpus_per_task: 4" in info
+    assert "sqsh_conversion_memory_mb: 7200" in info
+    assert "--mem=7200M" in text
+    assert "QOSGrpMemLimit" in text
+
+
+def test_slurm_consumes_model_action_lifecycle_without_private_renderers():
+    text = _skill_text("tao-run-on-slurm") + (
+        PLATFORM_DIR
+        / "tao-run-on-slurm"
+        / "references"
+        / "slurm-container-execution.md"
+    ).read_text(encoding="utf-8")
+    guardrails = (
+        PLATFORM_DIR
+        / "tao-run-on-slurm"
+        / "references"
+        / "cosmos-slurm-guardrails.md"
+    ).read_text(encoding="utf-8")
+    for term in (
+        "pre_commands",
+        "post_commands",
+        "supporting_files",
+        "processes_per_node",
+        "child_exit_code_path",
+    ):
+        assert term in text
+    assert "model-specific retry launcher" in text
+    assert "Cosmos-only SLURM" in guardrails
+    assert "renderer" in guardrails
+
+
 # Required flags of `tao_job_record.py open`, per its argparse definition. A
 # documented invocation missing any of these fails at runtime with exit 2 —
 # which is exactly how this test was born: a hand-written Brev example omitted

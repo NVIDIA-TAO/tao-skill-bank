@@ -49,8 +49,8 @@ SEARCH_ROOTS = ["skills", "templates", "scripts"]
 CONVERSION_KNOB_MARKERS = {
     "sqsh_conversion_partition": "conversion_partition",
     "sqsh_conversion_timeout_minutes": "conversion_minutes",
-    "sqsh_conversion_memory_gb": "conversion_memory_gb",
-    "sqsh_conversion_cpus": "conversion_cpus",
+    "sqsh_conversion_memory_mb": "conversion_memory_mb",
+    "sqsh_conversion_cpus_per_task": "conversion_cpus_per_task",
 }
 
 

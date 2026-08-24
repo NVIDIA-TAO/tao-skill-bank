@@ -221,7 +221,9 @@ Pure agent-only skills (e.g., HF model wrappers driven by a single `docker run`)
 
 ### Version references
 
-Skills reference container images and SDK wheel versions through a single canonical file: `versions.yaml` at the bank's repo root. This is the **only** place to bump TAO container tags, IVA images, or SDK wheel versions when an RC ships.
+Release-managed container images and SDK wheel versions use the repo-root
+`versions.yaml` as their canonical source. Skills carry stamped runtime
+literals so they remain standalone.
 
 `references/skill_info.yaml` carries a stamped literal for `container_image`,
 annotated with the versions.yaml key it is stamped from — skills stay standalone
@@ -293,11 +295,16 @@ To add a new image, edit `versions.yaml`:
 images:
   tao_toolkit:
     pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
-    cosmos_rl:  nvcr.io/nvidia/tao/tao-toolkit:6.26.3-cosmos-rl
+    deploy:     nvcr.io/nvidia/tao/tao-toolkit:6.26.3-deploy
     # ← add new entries here
 ```
 
 To bump an RC, change one line — that's the entire diff.
+
+For a multi-backend model, add one `versions.yaml` key per backend and stamp it
+onto `backend_contracts.<backend>.container_image` in the model skill's
+`references/skill_info.yaml`. Referenced backend contracts must not duplicate
+the image field.
 
 ### Skills that require a Python wheel
 
@@ -358,6 +365,8 @@ actions:
       results_dir: { type: folder }
     upload_excludes:
       - inputs/
+    execution_contract:
+      producer: planner output spec_bundle.execution
 
 # Action mode controls how launch tooling serializes the spec:
 # - config: write a YAML/TOML/JSON spec file and substitute {config_path}
@@ -377,6 +386,13 @@ features: [tracking, multi-node, lustre]
 
 tags: [classification, my-domain]
 ```
+
+An action that needs runtime environment, pre/post commands, distributed-launch
+intent, completion evidence, or checked-in orchestration helpers emits the
+optional `spec_bundle.execution` contract defined by `tao-artifacts`. This
+keeps semantics reusable by every application that routes through the model
+skill. Platforms own launch syntax; do not add a model-specific SLURM/K8s
+renderer.
 
 ## 5. Optional: `example/` reference output
 
@@ -517,7 +533,7 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 - [ ] Optional: `compatibility`, `metadata.author`, `metadata.version`, `allowed-tools` populated.
 - [ ] Body has Quick Start (or scripts/, hooks/, references/skill_info.yaml) — agent-runnable.
 - [ ] If the skill is non-trivial: External Dependencies, CLI Reference, Output Structure, Known Pitfalls sections present.
-- [ ] If using `skill_info.yaml`: `container_image` set, each model/data action has `command`, `mode`, `inputs`, `outputs`, and `upload_excludes`.
+- [ ] If using `skill_info.yaml`: a top-level or per-backend `container_image` is set; each model/data action has `command`, `mode`, `inputs`, `outputs`, and `upload_excludes`.
 - [ ] If a model skill owns training/fine-tuning for a Hugging Face repo ID: add every exact public ID to `huggingface_model_ids`; do not rely only on prose, tags, or human aliases.
 - [ ] Every release-managed image/wheel pin carries a `# versions-key:` marker (or a stamped variable for multi-line commands); one-off images are annotated `# unpinned: <reason>`.
 - [ ] SKILL.md carries the standalone breadcrumb under its title (run `tao-setup` first when the session was not plugin-initialized) — copy it from any existing skill or the skeleton.

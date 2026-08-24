@@ -24,6 +24,46 @@ Image formats accepted by the handler:
 SQSH conversion is cached by image name. For `:latest` images, cached SQSH is
 used unless `force_reconvert_latest` is enabled.
 
+### Model-owned action lifecycle
+
+When the validated spec-bundle declares `execution`, keep its model-owned order
+exactly: `pre_commands` -> primary `command` -> successful-only
+`post_commands`. Bind only `{config_path}`, `{job_id}`, and `{results_dir}` in
+commands, environment, and spec strings after the job record is opened. The
+record-owned results directory is authoritative. Serialize the bound config
+once and persist the producer-bundle and runtime-config SHA256 values. Export
+declared non-secret `environment` plus platform runtime variables. For
+`distributed.launcher=torchrun`, use one Pyxis
+task per node and map `processes_per_node` to `--nproc-per-node`; SLURM owns
+rendezvous and task/rank syntax. Run leader-scoped post-commands only on task
+zero and preserve every failure in `completion.child_exit_code_path`.
+
+For `supporting_files`, resolve sources relative to the producing skill root,
+reject absolute paths and `..`, and stage only the closed set below
+`<job_dir>/inputs/action-helpers/`. Verify every declared SHA256 and persist a
+manifest of source, destination, SHA256, and size. Reuse only a byte-identical
+manifest; never overwrite a different bundle. These are orchestration inputs,
+not permission to shadow packages in the image or add a startup source patch.
+
+### CS-OCI-ORD SQSH conversion profile
+
+Use partition `cpu_long`, not `cpu`; the latter's roughly 30-minute wall can
+kill TAO conversion and leave a truncated file. Request 4 CPUs, 7200M memory,
+no exclusive node, and a timeout of at least 120 minutes. This profile is
+preserved from successful conversion job `32370651` (21m28s elapsed).
+
+Set `TMPDIR=/tmp` and both `ENROOT_TEMP_PATH` and
+`SLURM_ENROOT_TEMP_PATH` to job-unique
+`/tmp/enroot-tao-${SLURM_JOB_ID}`. Direct Enroot and Pyxis may read different
+variables; node-local unique paths avoid cleanup races and unsupported shared
+overlay whiteouts.
+
+Do not inherit a training job's CPU count: omitted memory is charged per CPU on
+this cluster, so oversized requests can remain pending with `QOSGrpMemLimit`.
+Inspect `ReqCPUS` and `ReqMem` with `scontrol`/`sacct`, cancel the pending job,
+and retry with a new job record and the explicit profile above. Do not wait for
+the QOS condition to clear or move conversion into a GPU allocation.
+
 ## Monitoring
 
 - Scheduler status comes from the stored SLURM job id via `squeue` or `sacct`.
@@ -169,6 +209,12 @@ job on `NODE_FAIL` or pre-emption before any agent-level resubmit; set
 `SLURM_USE_REQUEUE=false` to opt out. A workload-specific contract can require
 it off; the Cosmos training planner emits `#SBATCH --no-requeue`.
 
+The launch skill owns classification and opens the new `--retry-of` record.
+This platform snapshots eligible-node inventory, validates evidence-backed
+exclusions, and owns `#SBATCH --exclude`. The producer may restore its sealed
+semantic request but must rebase every writable path under the new record.
+Never use a model-specific retry launcher or patch a rendered SBATCH file.
+
 ## Failure Modes
 
 **SSH auth failure**: Check `SLURM_USER`, `SLURM_HOSTNAME`, `SSH_KEY_PATH`, key
@@ -217,7 +263,8 @@ then point every later job at the file:
 # One-time per image, on CPU. Always pass -t (the partition DEFAULT, not its
 # max, is what truncates a conversion). Note enroot's '#' registry separator.
 ssh $LOGIN "test -e <sqsh>" || \
-  ssh $LOGIN "srun --chdir=/tmp -n1 -p <cpu_partition> -t <minutes> \
+  ssh $LOGIN "srun --chdir=/tmp -n1 -c4 --mem=7200M \
+    -p <cpu_partition> -t <minutes> \
     bash -c 'set -Eeuo pipefail
       export TMPDIR=/tmp
       export ENROOT_TEMP_PATH=/tmp/enroot-tao-\${SLURM_JOB_ID}

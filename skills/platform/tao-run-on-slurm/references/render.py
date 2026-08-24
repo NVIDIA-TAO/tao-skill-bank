@@ -389,13 +389,17 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     # extract stage, after every layer has already been fetched. The scheduler
     # reports "Out Of Memory" against the step, but enroot's own output ends at
     # "Downloading N missing layers...", so it reads as a download failure.
-    argv += ["--mem", f"{int(ctx.get('conversion_memory_gb', 32))}G"]
+    # Megabytes, matching skill_info's sqsh_conversion_memory_mb. Memory is
+    # charged per CPU on some clusters, so an oversized request does not fail
+    # fast -- it sits pending on a QOS group limit. The default is a measured
+    # profile, not a generous guess.
+    argv += ["--mem", f"{int(ctx.get('conversion_memory_mb', 7200))}M"]
     # enroot's final stage runs mksquashfs with `-processors 8`. `srun -n1`
     # allocates ONE core, so the cgroup time-slices all eight compression
     # threads onto it -- the conversion still succeeds, just far slower than
     # the tool was asking to go, and nothing reports the mismatch. Match the
     # allocation to the concurrency enroot actually requests.
-    argv += ["--cpus-per-task", str(int(ctx.get("conversion_cpus", 8)))]
+    argv += ["--cpus-per-task", str(int(ctx.get("conversion_cpus_per_task", 4)))]
     argv += scheduling_srun_flags(ctx)
     argv += ["bash", "-c", script]
     convert = " ".join(shlex.quote(token) for token in argv)

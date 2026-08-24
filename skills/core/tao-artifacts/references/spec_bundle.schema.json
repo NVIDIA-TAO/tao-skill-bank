@@ -104,6 +104,10 @@
       "type": "string",
       "pattern": "^/",
       "description": "Absolute working directory inside the container. Optional. Some images only work from a specific directory (paidf-anomalygen resolves its scripts relative to /workspace/paidf-anomalygen), and each platform spells this differently -- docker -w, srun --container-workdir, kubernetes workingDir -- so it belongs in the bundle rather than being folded into the command as a `cd`, which would hide it from the renderer and from anyone reading the bundle."
+    },
+    "execution": {
+      "$ref": "#/$defs/executionContract",
+      "description": "Optional model-owned lifecycle around the primary command. Platforms consume this declarative contract instead of model-specific launch renderers."
     }
   },
   "allOf": [
@@ -233,6 +237,83 @@
             "folder"
           ]
         }
+      }
+    },
+    "executionContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "environment": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*$" },
+          "additionalProperties": { "type": "string" },
+          "description": "Non-secret container environment. Values may use the documented {job_id}, {results_dir}, and {config_path} placeholders, which the platform binds after opening the job record."
+        },
+        "pre_commands": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Model-owned runtime attestations or preparation commands, executed in order before the primary command in the same allocation/container."
+        },
+        "post_commands": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Model-owned result validation or aggregation commands, executed in order only after the primary command succeeds."
+        },
+        "post_scope": {
+          "enum": ["all", "leader"],
+          "default": "leader",
+          "description": "Whether post_commands run in every platform task or only task/rank zero."
+        },
+        "distributed": {
+          "type": "object",
+          "required": ["launcher", "processes_per_node"],
+          "additionalProperties": false,
+          "properties": {
+            "launcher": { "enum": ["direct", "torchrun"] },
+            "processes_per_node": { "type": "integer", "minimum": 1 },
+            "tasks_per_node": { "const": 1, "default": 1 }
+          }
+        },
+        "supporting_files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/supportingFile" },
+          "description": "Checked-in orchestration helpers to stage as immutable auxiliary inputs. These are not source overlays and must not replace code in the image."
+        },
+        "completion": {
+          "type": "object",
+          "required": ["child_exit_code_path"],
+          "additionalProperties": false,
+          "properties": {
+            "child_exit_code_path": { "type": "string", "minLength": 1 },
+            "structured_status_path": { "type": "string", "minLength": 1 },
+            "success_states": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "supportingFile": {
+      "type": "object",
+      "required": ["source", "destination", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))\\S+$",
+          "description": "Path relative to the producing skill root; absolute paths and parent traversal are forbidden."
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))\\S+$",
+          "description": "Relative path below the platform-owned staged helper directory."
+        },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
       }
     }
   }
