@@ -201,9 +201,10 @@ one is a stop, not a silent regeneration:
 
 ## 7. Plan checkpoint preparation
 
-Read the `Cosmos3 Checkpoint Conversion` section in the model skill and the
-command in `references/cosmos-reason.md`. Before approval, perform read-only
-checks and show:
+Read the `Nano checkpoint model-type choice` section in the model skill, run
+`prepare_cosmos3_vlm_checkpoint.py --help`, and review the command in
+`references/cosmos-reason.md`. Before approval, perform read-only checks and
+show:
 
 - the selected reasoner by name and canonical ID, e.g.
   `Cosmos3 Nano Reasoner (nvidia/Cosmos3-Nano)`;
@@ -211,8 +212,10 @@ checks and show:
   Qwen3-VL checkpoint;
 - whether a complete prepared output can be reused;
 - the exact `prepare_cosmos3_vlm_checkpoint.py` command planned after approval;
-- the resolved Cosmos-RL image passed through `--validate-with-image`;
-- the variant-matched `--vlm-model-name`.
+- the selected backend image passed through `--runtime-image` and its resolved
+  image ID or digest passed through `--runtime-image-digest`;
+- the variant-matched `--vlm-architecture-model-path-or-uri` and, for a model
+  ID or URI, its immutable `--vlm-architecture-model-revision`.
 
 Nano may use the model helper's packaged Qwen3-VL 8B default. Edge and Super
 must have their own validated mapping; never inherit Nano's default. The
