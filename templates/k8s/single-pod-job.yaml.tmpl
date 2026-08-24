@@ -46,7 +46,7 @@ spec:
                 name: "@@CRED_SECRET@@"
           env:
             - name: TAO_RESULTS_ROOT
-              value: "@@RESULTS_DIR@@"
+              value: "@@RESULTS_DIR@@"@@INPUT_ENV@@
           volumeMounts:
             - name: dshm
               mountPath: /dev/shm

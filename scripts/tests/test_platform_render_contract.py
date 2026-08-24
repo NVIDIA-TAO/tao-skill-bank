@@ -934,3 +934,78 @@ def test_slurm_log_glob_tracks_the_template_output_path(monkeypatch):
         f"logs() looks somewhere other than the template's --output: "
         f"template says {expected_dir}, logs() ran {calls[0][2]}"
     )
+
+
+# ── Declared inputs are read-only on every platform that can express it ────
+# docker bound them :ro from the start; slurm did not. The same bundle would
+# therefore fail on docker and silently succeed on slurm, and the divergence
+# only surfaces when a workflow changes platform -- which is exactly what
+# "truly multi-platform" has to rule out. Writes belong under results_dir.
+
+MOUNT_PLATFORMS = ["tao-run-on-docker", "tao-run-on-slurm"]
+
+
+@pytest.mark.parametrize("name", MOUNT_PLATFORMS)
+def test_declared_inputs_are_mounted_read_only(name, tmp_path):
+    module = _load(name)
+    bundle = {**GPU_BUNDLE,
+              "declared_inputs": [{"spec_key": "cosmos", "type": "folder",
+                                   "uri": "/ws/base_checkpoints"}]}
+    rendered = module.render(bundle, _ctx(tmp_path))
+    text = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert "/ws/base_checkpoints:/ws/base_checkpoints:ro" in text, (
+        f"{name} binds a declared input writable; the same bundle behaves "
+        "differently across platforms"
+    )
+
+
+@pytest.mark.parametrize("name", MOUNT_PLATFORMS)
+def test_results_dir_stays_writable(name, tmp_path):
+    """The one path a stage may write. :ro here would break every workflow."""
+    module = _load(name)
+    rendered = module.render(GPU_BUNDLE, _ctx(tmp_path))
+    text = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    results = str(_ctx(tmp_path)["results_dir"])
+    assert f"{results}:{results}:ro" not in text, "results_dir was mounted read-only"
+    assert f"{results}:{results}" in text
+
+
+# ── TAO_INPUT_* on every platform, or bundles are not portable ─────────────
+# It shipped on docker and slurm only, so a bundle written against it silently
+# lost its inputs on kubernetes and virtualenv -- the failure mode being an
+# empty read and a successful exit, not an error.
+
+ALL_INPUT_ENV_PLATFORMS = ["tao-run-on-docker", "tao-run-on-slurm",
+                           "tao-run-on-kubernetes", "tao-run-on-virtualenv"]
+
+
+@pytest.mark.parametrize("name", ALL_INPUT_ENV_PLATFORMS)
+def test_every_platform_can_expose_declared_inputs(name):
+    module = _load(name)
+    assert callable(getattr(module, "input_env", None)), (
+        f"{name} cannot expose declared inputs; a bundle relying on "
+        "TAO_INPUT_* loses them here without erroring"
+    )
+    env = module.input_env(
+        {"declared_inputs": [{"spec_key": "dataset_dir", "uri": "/d/ds"}]}
+    )
+    assert env == {"TAO_INPUT_DATASET_DIR": "/d/ds"}
+
+
+def test_kubernetes_input_env_renders_valid_yaml(tmp_path):
+    """Generated YAML blocks are indentation-sensitive; parse, do not grep."""
+    import yaml
+
+    module = _load("tao-run-on-kubernetes")
+    bundle = {**GPU_BUNDLE, "declared_inputs": [
+        {"spec_key": "dataset_dir", "type": "folder", "uri": "/data/ds"},
+        {"spec_key": "cosmos_models", "type": "folder", "uri": "/data/ckpt"}]}
+    ctx = {**_ctx(tmp_path), "mount_path": "/data",
+           "results_dir": "/data/results/j", "namespace": "tao"}
+    manifest = next(iter(module.render(bundle, ctx)["files"].values()))
+    doc = yaml.safe_load(manifest)
+    env = {e["name"]: e["value"]
+           for e in doc["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["TAO_INPUT_DATASET_DIR"] == "/data/ds"
+    assert env["TAO_INPUT_COSMOS_MODELS"] == "/data/ckpt"
+    assert env["TAO_RESULTS_ROOT"] == "/data/results/j"

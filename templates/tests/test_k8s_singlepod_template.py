@@ -41,7 +41,10 @@ def render(overrides=None):
     text = TEMPLATE.read_text()
     for k, v in {**BASE, **(overrides or {})}.items():
         text = text.replace(f"@@{k}@@", v)
-    return text
+    # Blank placeholders this fixture does not name: the renderer substitutes
+    # every slot, and a leftover @@NAME@@ breaks YAML parsing far from its
+    # cause. Tests that care about a specific slot name it in BASE.
+    return re.sub(r"@@[A-Z][A-Z0-9_]*@@", "", text)
 
 
 def load(overrides=None):

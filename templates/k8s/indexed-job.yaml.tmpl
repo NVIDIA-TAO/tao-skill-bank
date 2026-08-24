@@ -79,7 +79,7 @@ spec:
             - name: MASTER_ADDR
               value: "@@JOB_NAME@@-0.@@JOB_NAME@@"
             - name: TAO_RESULTS_ROOT
-              value: "@@RESULTS_DIR@@"
+              value: "@@RESULTS_DIR@@"@@INPUT_ENV@@
           volumeMounts:
             - name: dshm
               mountPath: /dev/shm

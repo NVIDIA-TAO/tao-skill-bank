@@ -83,7 +83,12 @@ def _mounts(bundle: dict[str, Any], results_dir: str) -> str:
                 f"declared_input {item['spec_key']} must be absolute, got {uri!r}"
             )
         if uri not in seen:
-            pairs.append(f"{uri}:{uri}")
+            # Read-only, matching the docker renderer. A declared INPUT that a
+            # stage can write to is a cross-platform trap: docker already binds
+            # these :ro, so the same bundle would fail there and silently
+            # succeed here, and the divergence only shows up when a workflow
+            # moves platforms. Writes belong under results_dir.
+            pairs.append(f"{uri}:{uri}:ro")
             seen.add(uri)
     pairs.append(f"{results_dir}:{results_dir}")
     return ",".join(pairs)

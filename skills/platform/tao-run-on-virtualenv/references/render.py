@@ -19,6 +19,7 @@ asking for GPUs is refused rather than silently run on whatever the host has.
 from __future__ import annotations
 
 import pathlib
+import re
 import shlex
 from typing import Any
 
@@ -53,6 +54,22 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
             "environment first — this platform never installs packages"
         )
     return {"image": str(interpreter), "notes": ["interpreter present"]}
+
+
+def input_env(bundle: dict[str, Any]) -> dict[str, str]:
+    """Declared inputs as TAO_INPUT_<SPEC_KEY>, mirroring TAO_RESULTS_ROOT.
+
+    A bundle declares inputs by spec_key; the path the WORKLOAD sees is chosen
+    by the platform. Without this a stage command has to name a path directly
+    and guess the layout, and a wrong guess does not fail -- the directory is
+    simply absent, so the stage reads nothing, writes empty output and exits 0.
+    """
+    env: dict[str, str] = {}
+    for item in bundle.get("declared_inputs") or []:
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(item["spec_key"])).strip("_").upper()
+        if key:
+            env[f"TAO_INPUT_{key}"] = str(item["uri"])
+    return env
 
 
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:

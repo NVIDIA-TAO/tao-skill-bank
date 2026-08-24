@@ -59,6 +59,22 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     return {"image": image, "notes": notes}
 
 
+def input_env(bundle: dict[str, Any]) -> dict[str, str]:
+    """Declared inputs as TAO_INPUT_<SPEC_KEY>, mirroring TAO_RESULTS_ROOT.
+
+    A bundle declares inputs by spec_key; the path the WORKLOAD sees is chosen
+    by the platform. Without this a stage command has to name a path directly
+    and guess the layout, and a wrong guess does not fail -- the directory is
+    simply absent, so the stage reads nothing, writes empty output and exits 0.
+    """
+    env: dict[str, str] = {}
+    for item in bundle.get("declared_inputs") or []:
+        key = re.sub(r"[^A-Za-z0-9]+", "_", str(item["spec_key"])).strip("_").upper()
+        if key:
+            env[f"TAO_INPUT_{key}"] = str(item["uri"])
+    return env
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> a rendered Job manifest plus `kubectl apply`."""
     job_id = ctx["job_id"]
@@ -102,6 +118,13 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         "COMMAND": command,
         "MOUNT_PATH": mount_path,
         "RESULTS_DIR": results_dir,
+        # Rendered as additional `env:` list entries at the same indentation as
+        # TAO_RESULTS_ROOT, so a bundle finds its inputs here exactly as it
+        # does on docker and slurm.
+        "INPUT_ENV": "".join(
+            f'\n            - name: {name}\n              value: "{value}"'
+            for name, value in input_env(bundle).items()
+        ),
         "PVC_CLAIM": str(ctx.get("pvc_claim", "")),
         "CRED_SECRET": str(ctx.get("cred_secret", f"tao-creds-{job_id}")),
         "IMAGE_PULL_SECRET": str(ctx.get("image_pull_secret", "")),

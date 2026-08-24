@@ -50,7 +50,11 @@ def render(tmpl, vals):
     text = tmpl.read_text()
     for k, v in vals.items():
         text = text.replace(f"@@{k}@@", v)
-    return text
+    # Blank any placeholder this fixture does not name. The renderer always
+    # substitutes every slot, so a template gaining one should not break these
+    # tests for an unrelated reason -- and an unsubstituted @@NAME@@ left in a
+    # manifest breaks YAML parsing far from its cause.
+    return re.sub(r"@@[A-Z][A-Z0-9_]*@@", "", text)
 
 
 # --------------------------------------------------------------------------- #
