@@ -36,6 +36,9 @@ BASE = {
     "RESUME_KEY": "train.resume_training_checkpoint_path",
     "IMAGE": "/lustre/fsw/sqsh/tao-toolkit-6.26.3-pyt.sqsh",
     "CONTAINER_MOUNTS": "/lustre",
+    # Optional slot: the renderer emits "" when the bundle has no workdir,
+    # so the empty string is the representative fixture value.
+    "CONTAINER_WORKDIR": "",
     "COMMAND": "dino train -e /lustre/fsw/.../specs/dino-train-a1b2c3/spec.yaml",
 }
 

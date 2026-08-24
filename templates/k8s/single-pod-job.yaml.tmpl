@@ -41,6 +41,7 @@ spec:
           resources:
             limits:
               "nvidia.com/gpu": "@@NUM_GPUS@@"
+@@WORKING_DIR@@
           envFrom:
             - secretRef:
                 name: "@@CRED_SECRET@@"

@@ -94,6 +94,7 @@ fi
 rc=0
 timeout "@@TIMEOUT_MINUTES@@m" srun --container-image=@@IMAGE@@ \
      --container-mounts=@@CONTAINER_MOUNTS@@ \
+     @@CONTAINER_WORKDIR@@\
      @@COMMAND@@ $RESUME_OVERRIDE || rc=$?
 
 if [ "$rc" -eq 124 ]; then

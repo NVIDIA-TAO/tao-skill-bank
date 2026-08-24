@@ -129,8 +129,9 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
             for arg in ("-e", f"{name}={value}")]
     env += [arg for name in ctx.get("env_passthrough") or [] for arg in ("-e", name)]
 
+    workdir = ["-w", bundle["workdir"]] if bundle.get("workdir") else []
     argv = ["docker", "run", "--name", job_id, "-d",
-            *resources, *env, *mounts, bundle["image"]]
+            *resources, *env, *mounts, *workdir, bundle["image"]]
     argv += shlex.split(bundle["command"])
     argv += list(bundle.get("args") or [])
     return {"files": {}, "argv": argv, "backend_ref": None}

@@ -117,6 +117,10 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         "NUM_GPUS": str(int(shape["gpus"])),
         "COMMAND": command,
         "MOUNT_PATH": mount_path,
+        "WORKING_DIR": (
+            f'\n          workingDir: "{bundle["workdir"]}"'
+            if bundle.get("workdir") else ""
+        ),
         "RESULTS_DIR": results_dir,
         # Rendered as additional `env:` list entries at the same indentation as
         # TAO_RESULTS_ROOT, so a bundle finds its inputs here exactly as it

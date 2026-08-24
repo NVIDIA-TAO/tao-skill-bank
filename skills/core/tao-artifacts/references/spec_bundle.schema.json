@@ -4,67 +4,148 @@
   "title": "TAO spec-bundle",
   "description": "The typed package a model/data (producer) skill hands to a platform (consumer) skill: everything needed to run one action, nothing platform-specific. Mode-discriminated union: config | args.",
   "type": "object",
-  "required": ["network_arch", "action", "image", "mode", "command", "declared_inputs", "declared_outputs", "compute_shape"],
+  "required": [
+    "network_arch",
+    "action",
+    "image",
+    "mode",
+    "command",
+    "declared_inputs",
+    "declared_outputs",
+    "compute_shape"
+  ],
   "additionalProperties": false,
   "properties": {
-    "network_arch": { "type": "string", "minLength": 1 },
-    "action": { "type": "string", "minLength": 1 },
+    "network_arch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    },
     "image": {
       "type": "string",
       "pattern": "^\\S+/\\S+$",
-      "description": "Resolved container URI (registry/path:tag), carried as data. Never a versions.yaml key — resolve first via scripts/resolve_tao_image.py."
+      "description": "Resolved container URI (registry/path:tag), carried as data. Never a versions.yaml key \u2014 resolve first via scripts/resolve_tao_image.py."
     },
-    "mode": { "enum": ["config", "args"] },
-    "command": { "type": "string", "minLength": 1 },
-    "config_format": { "enum": ["yaml", "toml", "json"] },
+    "mode": {
+      "enum": [
+        "config",
+        "args"
+      ]
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "config_format": {
+      "enum": [
+        "yaml",
+        "toml",
+        "json"
+      ]
+    },
     "spec": {
       "$ref": "#/$defs/nestedDict",
       "description": "The NESTED config dict mirroring the container's spec shape (mode=config only). Dotted keys are the #1 mistake and are rejected at every level."
     },
     "args": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "Argument list (mode=args only)."
     },
     "declared_inputs": {
       "type": "array",
-      "items": { "$ref": "#/$defs/declaredInput" }
+      "items": {
+        "$ref": "#/$defs/declaredInput"
+      }
     },
     "declared_outputs": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/declaredOutput" }
+      "items": {
+        "$ref": "#/$defs/declaredOutput"
+      }
     },
-    "upload_excludes": { "type": "array", "items": { "type": "string" } },
+    "upload_excludes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "compute_shape": {
       "type": "object",
-      "required": ["gpus", "nodes"],
+      "required": [
+        "gpus",
+        "nodes"
+      ],
       "additionalProperties": false,
       "properties": {
-        "gpus": { "type": "integer", "minimum": 0, "description": "GPUs per node" },
-        "nodes": { "type": "integer", "minimum": 1, "description": "nodes > 1 engages the multi-node contract (templates + probes)" }
+        "gpus": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "GPUs per node"
+        },
+        "nodes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "nodes > 1 engages the multi-node contract (templates + probes)"
+        }
       }
     },
     "gpu_spec_key": {
       "type": "string",
       "description": "Dotted pointer to where the GPU count is written in the spec (config mode), e.g. train.num_gpus."
+    },
+    "workdir": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute working directory inside the container. Optional. Some images only work from a specific directory (paidf-anomalygen resolves its scripts relative to /workspace/paidf-anomalygen), and each platform spells this differently -- docker -w, srun --container-workdir, kubernetes workingDir -- so it belongs in the bundle rather than being folded into the command as a `cd`, which would hide it from the renderer and from anyone reading the bundle."
     }
   },
   "allOf": [
     {
-      "if": { "properties": { "mode": { "const": "config" } }, "required": ["mode"] },
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "config"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
       "then": {
-        "required": ["spec", "config_format"],
+        "required": [
+          "spec",
+          "config_format"
+        ],
         "properties": {
           "args": false,
-          "command": { "pattern": "\\{config_path\\}" }
+          "command": {
+            "pattern": "\\{config_path\\}"
+          }
         }
       }
     },
     {
-      "if": { "properties": { "mode": { "const": "args" } }, "required": ["mode"] },
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "args"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
       "then": {
-        "required": ["args"],
+        "required": [
+          "args"
+        ],
         "properties": {
           "spec": false,
           "config_format": false
@@ -75,42 +156,83 @@
   "$defs": {
     "nestedDict": {
       "type": "object",
-      "propertyNames": { "pattern": "^[^.]+$" },
-      "additionalProperties": { "$ref": "#/$defs/nestedValue" }
+      "propertyNames": {
+        "pattern": "^[^.]+$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/nestedValue"
+      }
     },
     "nestedValue": {
       "anyOf": [
-        { "type": ["string", "number", "boolean", "null"] },
-        { "type": "array", "items": { "$ref": "#/$defs/nestedValue" } },
-        { "$ref": "#/$defs/nestedDict" }
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nestedValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/nestedDict"
+        }
       ]
     },
     "declaredInput": {
       "type": "object",
-      "required": ["spec_key", "type", "uri"],
+      "required": [
+        "spec_key",
+        "type",
+        "uri"
+      ],
       "additionalProperties": false,
       "properties": {
         "spec_key": {
           "type": "string",
           "minLength": 1,
-          "description": "Dotted/indexed POINTER into the spec (e.g. dataset.train_data_sources[0].image_dir). Dots are allowed here — this is a pointer, not a spec key."
+          "description": "Dotted/indexed POINTER into the spec (e.g. dataset.train_data_sources[0].image_dir). Dots are allowed here \u2014 this is a pointer, not a spec key."
         },
-        "type": { "enum": ["file", "folder"] },
-        "optional": { "type": "boolean", "default": false },
+        "type": {
+          "enum": [
+            "file",
+            "folder"
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "default": false
+        },
         "uri": {
           "type": "string",
           "minLength": 1,
-          "description": "Source location: s3://, hf://, ngc://, lustre:///, or an absolute compute-frame path (strategy A). NO storage_tier here — the tier is chosen by tao-data-io at stage time and stamped into the job-record."
+          "description": "Source location: s3://, hf://, ngc://, lustre:///, or an absolute compute-frame path (strategy A). NO storage_tier here \u2014 the tier is chosen by tao-data-io at stage time and stamped into the job-record."
         }
       }
     },
     "declaredOutput": {
       "type": "object",
-      "required": ["spec_key", "type"],
+      "required": [
+        "spec_key",
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "spec_key": { "type": "string", "minLength": 1 },
-        "type": { "enum": ["file", "folder"] }
+        "spec_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "enum": [
+            "file",
+            "folder"
+          ]
+        }
       }
     }
   }

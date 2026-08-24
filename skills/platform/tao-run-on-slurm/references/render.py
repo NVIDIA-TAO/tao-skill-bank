@@ -546,6 +546,12 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         "LOG_DIR": f"{job_dir}/logs",
         "IMAGE": bundle["image"],
         "CONTAINER_MOUNTS": _mounts(bundle, results_dir),
+        # Pyxis' spelling of docker's -w. Empty renders nothing, so a bundle
+        # without a workdir keeps the image's own default.
+        "CONTAINER_WORKDIR": (
+            f"--container-workdir={shlex.quote(bundle['workdir'])} "
+            if bundle.get("workdir") else ""
+        ),
         "COMMAND": command,
         # Derived from the same ctx keys as the conversion flags above, so a
         # cluster's scheduling identity is stated once and reaches every
