@@ -521,6 +521,19 @@ def submit_bundle(
                 "--message", "could not place rendered files")
         raise
 
+    # Last gate before argv runs. A platform may refuse a launch its renderer
+    # could legitimately produce -- docker refuses UID 0 for a writable bind,
+    # which must be checked HERE and not at render time, since rendering
+    # creates nothing.
+    guard = getattr(renderer, "preflight_launch", None)
+    if guard is not None:
+        try:
+            guard(bundle, ctx)
+        except Exception:
+            _record("mark", job_id, "--state", "ERROR", "--err-class", "ERR_INFRA",
+                    "--message", "launch refused by the platform")
+            raise
+
     environment = os.environ.copy()
     if ctx["airgap"]:
         environment.update(OFFLINE_ENV)

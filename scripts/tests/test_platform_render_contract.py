@@ -1056,10 +1056,32 @@ def test_docker_redirects_caches_onto_the_writable_mount(tmp_path):
 
 
 def test_docker_refuses_to_launch_as_root(tmp_path):
-    """SKILL.md: refuse UID 0 rather than infer an id from the output owner."""
+    """SKILL.md: refuse UID 0 rather than infer an id from the output owner.
+
+    The gate is preflight_launch, not render. Rendering creates nothing, so a
+    CI container asserting on a command as root is legitimate -- putting this
+    in render() broke 27 render-only tests the first time the suite ran as
+    root, which is how this was found.
+    """
     module = _load("tao-run-on-docker")
     with pytest.raises(ValueError, match="UID 0"):
-        module.render(GPU_BUNDLE, {**_ctx(tmp_path), "uid": 0, "gid": 0})
+        module.preflight_launch(GPU_BUNDLE, {**_ctx(tmp_path), "uid": 0, "gid": 0})
+
+
+def test_docker_renders_as_root_without_raising(tmp_path):
+    """Render-only callers must work wherever they run."""
+    module = _load("tao-run-on-docker")
+    argv = module.render(GPU_BUNDLE, {**_ctx(tmp_path), "uid": 0, "gid": 0})["argv"]
+    assert argv, "render refused a root caller"
+    assert "--user" not in argv, (
+        "emitted `--user 0:0`; there is no safe non-root id to infer here, and "
+        "guessing one from the output-directory owner is forbidden"
+    )
+
+
+def test_docker_launch_gate_allows_a_non_root_identity(tmp_path):
+    module = _load("tao-run-on-docker")
+    module.preflight_launch(GPU_BUNDLE, {**_ctx(tmp_path), "uid": 1000, "gid": 1000})
 
 
 def test_docker_shm_size_is_overridable(tmp_path):

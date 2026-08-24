@@ -17,6 +17,7 @@ cannot recur silently.
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 import pytest
@@ -70,10 +71,16 @@ def test_terminal_immutability_is_real(tmp_path):
     """The prose claim above must match tao_job_record.py's actual behaviour."""
     import subprocess
 
-    env = {"TAO_STATE_DIR": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    # sys.executable, not "python3" on a hand-built PATH: the interpreter is
+    # not always under /usr/bin (it is /usr/local/bin in the CI image), and a
+    # pinned PATH turns that into FileNotFoundError far from its cause.
+    import sys
+
+    env = {"TAO_STATE_DIR": str(tmp_path),
+           "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
     job = subprocess.run(
         [
-            "python3", str(RECORD), "open", "--platform", "docker",
+            sys.executable, str(RECORD), "open", "--platform", "docker",
             "--image", "img:1", "--network-arch", "arch", "--action", "train",
             "--storage-tier", "A", "--results-dir", str(tmp_path / "r"),
         ],
@@ -81,11 +88,11 @@ def test_terminal_immutability_is_real(tmp_path):
     ).stdout.strip()
 
     subprocess.run(
-        ["python3", str(RECORD), "mark", job, "--state", "COMPLETE"],
+        [sys.executable, str(RECORD), "mark", job, "--state", "COMPLETE"],
         capture_output=True, text=True, env=env, check=True,
     )
     repair = subprocess.run(
-        ["python3", str(RECORD), "mark", job, "--state", "ERROR"],
+        [sys.executable, str(RECORD), "mark", job, "--state", "ERROR"],
         capture_output=True, text=True, env=env,
     )
     assert repair.returncode != 0, (

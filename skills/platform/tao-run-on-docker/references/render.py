@@ -75,24 +75,46 @@ def runtime_home(results_dir: str) -> str:
     return f"{results_dir.rstrip('/')}/{RUNTIME_SUBDIR}"
 
 
-def identity_args(ctx: dict[str, Any]) -> list[str]:
-    """--user plus supplementary groups, refusing UID 0.
+def effective_identity(ctx: dict[str, Any]) -> tuple[int, int]:
+    """The uid:gid a launch would use. ctx wins; otherwise this process."""
+    uid, gid = ctx.get("uid"), ctx.get("gid")
+    if uid is None or gid is None:
+        uid, gid = os.getuid(), os.getgid()
+    return int(uid), int(gid)
+
+
+def preflight_launch(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
+    """Refuse to LAUNCH as UID 0. Called immediately before argv runs.
 
     SKILL.md: "Refuse UID 0 for the canonical writable-bind path. If the
     launcher itself is root, obtain the verified non-root submitting UID:GID
-    explicitly; never infer it from the output-directory owner." So a root
-    launcher must pass uid/gid in ctx rather than have one guessed for it.
+    explicitly; never infer it from the output-directory owner."
+
+    This is a launch gate, NOT a render gate. Rendering is not launching: a CI
+    container inspecting or asserting on a command legitimately runs as root,
+    and nothing it does can create a root-owned results tree. Putting the
+    refusal in render() made every render-only test fail the moment the suite
+    ran somewhere as root -- which is exactly what happened.
     """
-    uid = ctx.get("uid")
-    gid = ctx.get("gid")
-    if uid is None or gid is None:
-        uid, gid = os.getuid(), os.getgid()
-    uid, gid = int(uid), int(gid)
+    uid, _ = effective_identity(ctx)
     if uid == 0:
         raise ValueError(
             "refusing a writable docker launch as UID 0; pass the verified "
             "non-root submitting uid/gid in ctx (uid=, gid=)"
         )
+
+
+def identity_args(ctx: dict[str, Any]) -> list[str]:
+    """--user plus supplementary groups.
+
+    Returns [] when the only identity available is root: there is no safe
+    non-root id to infer, and SKILL.md forbids guessing one from the
+    output-directory owner. preflight_launch() is what stops such a launch;
+    this function only has to avoid emitting `--user 0:0`.
+    """
+    uid, gid = effective_identity(ctx)
+    if uid == 0:
+        return []
     args = ["--user", f"{uid}:{gid}"]
     groups = ctx.get("groups")
     if groups is None:
