@@ -43,12 +43,24 @@ scripts/probe_airgap_eligibility.py --all --needs-review
 scripts/probe_airgap_eligibility.py --skill <skill name> --format json
 ```
 
-Then state a goal rather than a module — see `references/intake.md`:
+Then say what you want packaged. Either shape works — a goal, or a named workload:
 
 ```
 > I need to find scratches on painted metal parts, offline.
-> Package TAO for a customer with no internet, running on their SLURM cluster.
+> Package DINOv3 SSL for an air-gapped customer, docker only. Bundle root: /dev/shm/dinov3-airgap.
 ```
+
+**What you will be asked**, and nothing else — everything else is derived:
+
+| | When |
+|---|---|
+| which workload, if the goal matched more than one | only when the answer changes what you get |
+| **which platform(s) the destination runs** | always — it is a fact about the customer's site and decides the form of every asset |
+| where to build the bundle (`$BUNDLE`) | if you did not say |
+| whether a GPU machine is available for the optional verification | at the end, after the delivery is already complete |
+
+You will be shown the selected skills, the target platforms, the estimated size and the
+capability boundary **before anything is downloaded**, while all four can still be changed.
 
 ## External dependencies
 
@@ -110,7 +122,7 @@ at the customer.
 | Phase | What happens | Writes | Detail |
 |---|---|---|---|
 | 1 Intake | goal to candidates; screen; adjudicate; choose platforms; show the boundary | `.delivery/selection.yaml`, `.delivery/eligibility.yaml` | `references/intake.md`, `references/eligibility-rules.md` |
-| 2 Resolve | candidate asset list, six classes, each with provenance | `.delivery/evidence.yaml` | `references/asset-closure.md` |
+| 2 Resolve | candidate asset list, six classes, each with provenance; read any prior-delivery notes | `.delivery/evidence.yaml` | `references/asset-closure.md`, `references/undeclared-knowledge.md` |
 | 3 Prepare | download and stage every asset type in the form each platform consumes | `payload/ weights/ wheels/ specs/ skills/` | `references/platform-payloads.md` |
 | 4 Author | write the bundle's own instructions | the bundle root | `references/bundle-skill-template.md` |
 | 5 Pack | manifest, one archive, checksum by a separate route — **the delivery is now complete** | `MANIFEST.sha256` | `references/verification.md` |
@@ -128,6 +140,9 @@ the contract — and the platform skills own their own execution contracts.
    the capability boundary before downloading anything.
 2. **Resolve.** Build the candidate asset list across all six classes with provenance.
    It is still **open** at the end of this phase, and saying so is part of the output.
+   Then read `skills/<layer>/<skill>/references/airgap-notes.md` under each selected skill, if it exists — a prior
+   delivery may have established something the bank does not declare, such as a deployment
+   path or a weight tier. Check each note's `supersede_when` before using it.
 3. **Prepare.** Stage every asset type the selection needs — images, wheels, model weights,
    code, specs. Confirm before downloading; these are side-effecting and often tens of
    gigabytes. Report each item as it lands, with its size.
@@ -142,10 +157,14 @@ the contract — and the platform skills own their own execution contracts.
 6. **Verify — optional, and only now.** Ask whether a GPU machine is available for it. If not,
    say plainly that the bundle is assembled rather than verified and stop; that is a normal
    outcome, not a failure. If one is available, run phase 6 there against the packed bundle:
-   the shipped instructions, network off, every action. A fix goes into the bundle's
-   instructions and the run restarts — adjusting a command without changing the file converts
-   a caught defect into a shipped one. **Verification must leave the bundle byte-identical**,
-   which `sha256sum -c MANIFEST.sha256` proves once it has cleaned up after itself.
+   the shipped instructions, network off, every action. The smoke run must leave the staged
+   assets byte-identical, which the two integrity commands prove once it has cleaned up.
+
+   **Then act on the outcome — the phase does not end with the run.** A pass is written into
+   the bundle's scope section and the delivery re-packed, so it reads *verified* rather than
+   *assembled*; a defect goes back to phase 4, is re-authored, re-packed, and verified again.
+   Adjusting a command in the terminal without changing the shipped file converts a caught
+   defect into a shipped one.
 
 **Phase 4 precedes phase 6, and that ordering is the guarantee.** Verification executes the
 shipped instructions, so no separate procedure can drift friendlier than the delivery.

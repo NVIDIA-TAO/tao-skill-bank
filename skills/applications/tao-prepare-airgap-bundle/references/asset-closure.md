@@ -24,6 +24,12 @@ Where a skill does declare its weights, the declaration is usually a subset.
 One model skill registers two backbone tiers and documents six; a delivery built
 from the declared pair would omit the tier the customer selected.
 
+**A previous delivery may already have answered part of this.** If the packaged
+skill carries `references/airgap-notes.md` in its own tree, read it here — it records what an
+earlier packaging run established and the bank still does not declare, with the
+evidence and an expiry condition. See `undeclared-knowledge.md`. It supplements
+the declared half; it never replaces asking.
+
 **Do not resolve this by inference.** Reading a spec field and constructing a
 plausible repository id produces a list that looks complete and is wrong, and
 nothing downstream catches it — the bundle ships, and the run fails at the
@@ -127,7 +133,8 @@ assets:
     source_external: <URL>
     verified_on: <date>
     verified_by: <the command that confirmed it, and what it returned>
-    discovered_by: observation      # or: declared, or: operator
+    discovered_by: observation      # declared | observation | operator | airgap-notes
+    note_id: <the airgap-notes entry id, when discovered_by is airgap-notes>
 ```
 
 An asset resolved outside the bank carries `source_external` **with**
