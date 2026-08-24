@@ -82,3 +82,4 @@ After platform selection, run
 `scripts/list_tao_platforms.py --platform <platform> --format text` and ask
 only for credentials relevant to that platform, plus any selected-model
 credentials. Do not ask for unrelated platform credentials.
+
