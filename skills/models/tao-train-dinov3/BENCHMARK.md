@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-train-nvpanoptix3d
+# Skill Benchmark: tao-train-dinov3
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,12 +8,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-train-nvpanoptix3d`
+- Skill: `tao-train-dinov3`
 - Evaluation date: 2026-08-24
 - Evaluator version: `1.3.2`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
-- Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:cc0384d330cc8872298b458fa580905a2ff75afbdaaf1cdf0c3eddef27369244` (skill-evaluator-dataset-snapshot/1)
+- Tasks: 2 evaluation tasks (2 positive)
+- Dataset digest: `sha256:98b0d5d4541134319b23c27e40cd0cbd8cc09fe88f2b03c303fe4735e83e53ce` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 1
 - Environment: `local`
 - Tier 3 evidence: required for publication
@@ -45,12 +45,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 55% → 96% (+40 points) | 51% → 55% (+4 points) |
+| Overall | 63% → 94% (+31 points) | 56% → 58% (+2 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
-| Correctness | 60% → 100% (+40 points) | 100% → 100% (±0 points) |
+| Correctness | 70% → 100% (+30 points) | 100% → 100% (±0 points) |
 | Discoverability | 50% → 100% (+50 points) | 0% → 0% (±0 points) |
-| Effectiveness | 32% → 95% (+63 points) | 53% → 75% (+22 points) |
-| Efficiency | 36% → 83% (+48 points) | 0% → 0% (±0 points) |
+| Effectiveness | 52% → 94% (+41 points) | 80% → 91% (+11 points) |
+| Efficiency | 42% → 75% (+33 points) | 0% → 0% (±0 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Uplift is `skill score - baseline score`, shown in percentage points.
 
@@ -62,18 +62,18 @@ Example: `47% → 92% (+45 points)` means the skill-assisted run scored 92%, 45 
 |---|---|---|---|
 | Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 1 validator(s); 6 finding(s) |
 | Tier 2 | Semantic deduplication | **NOT RUN** | No result was recorded |
-| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
+| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 2 task(s) |
 
 ## Findings and Observations
 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-train-nvpanoptix3d/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-train-nvpanoptix3d`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-train-nvpanoptix3d/SKILL.md`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/models/tao-train-nvpanoptix3d/SKILL.md`)
-- **LOW** SCHEMA/unexpected_file: Unexpected 'schemas' in skill root (`skills/models/tao-train-nvpanoptix3d/schemas`)
+- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-train-dinov3/SKILL.md`)
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-train-dinov3`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-train-dinov3/SKILL.md`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/models/tao-train-dinov3/SKILL.md`)
+- **LOW** SCHEMA/unexpected_file: Unexpected 'schemas' in skill root (`skills/models/tao-train-dinov3/schemas`)
 - 1 additional finding(s) are available in the full evaluation artifacts.
 
 </details>

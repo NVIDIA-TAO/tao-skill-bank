@@ -1,5 +1,5 @@
 ## Description: <br>
-NVPanoptix3D for panoptic 3D scene reconstruction from posed RGB images, producing 3D panoptic segmentation (semantic, instance, and panoptic masks) with occupancy completion. <br>
+DINOv3 continual self-supervised pre-training that domain-adapts public DINOv3 ViT backbones on unlabeled images via teacher-student self-distillation (DINO + iBOT + KoLeo, optional Gram anchoring) and converts the EMA teacher into a timm-format backbone for downstream tasks. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers training, evaluating, exporting, or running inference for TAO NVPanoptix3D panoptic 3D scene reconstruction models using Docker-based workflows. <br>
+Developers and engineers who need to domain-adapt a DINOv3 foundation vision backbone on unlabeled images for downstream computer vision tasks such as detection, segmentation, or classification. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,11 +25,9 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [skill_info.yaml](references/skill_info.yaml) <br>
-- [spec_template_train.yaml](references/spec_template_train.yaml) <br>
-- [spec_template_evaluate.yaml](references/spec_template_evaluate.yaml) <br>
-- [spec_template_export.yaml](references/spec_template_export.yaml) <br>
-- [spec_template_inference.yaml](references/spec_template_inference.yaml) <br>
+- [DINOv3 method and configuration](references/dinov3-method.md) <br>
+- [DINOv3 tuning and evaluation](references/dinov3-recipes.md) <br>
+- [Skill info](references/skill_info.yaml) <br>
 
 
 ## Skill Output: <br>
@@ -45,15 +43,15 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive) from skill-evaluator-dataset-snapshot/1, evaluated in local environment. <br>
+2 evaluation tasks (2 positive) from skill-evaluator-dataset-snapshot/1. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Whether the skill avoids unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Whether the final answer is correct against the reference answer. <br>
-- Discoverability: Whether the expected skill was found and executed when needed. <br>
-- Effectiveness: Whether the skill helps complete the user's goal and follows expected workflow behavior. <br>
-- Efficiency: Whether the skill avoids wasted tool or skill usage. <br>
+- Security: Whether the skill is safe to use (unsafe operations, secret leakage, unauthorized access). <br>
+- Correctness: Whether the answer produced is correct against the reference answer. <br>
+- Discoverability: Whether the right skill was found and executed when needed. <br>
+- Effectiveness: Whether the skill helped complete the user's goal and expected workflow. <br>
+- Efficiency: Whether the skill avoided wasted tool or skill usage. <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
@@ -68,12 +66,12 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 55% → 96% (+40 points) | 51% → 55% (+4 points) |
+| Overall | 63% → 94% (+31 points) | 56% → 58% (+2 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
-| Correctness | 60% → 100% (+40 points) | 100% → 100% (±0 points) |
+| Correctness | 70% → 100% (+30 points) | 100% → 100% (±0 points) |
 | Discoverability | 50% → 100% (+50 points) | 0% → 0% (±0 points) |
-| Effectiveness | 32% → 95% (+63 points) | 53% → 75% (+22 points) |
-| Efficiency | 36% → 83% (+48 points) | 0% → 0% (±0 points) |
+| Effectiveness | 52% → 94% (+41 points) | 80% → 91% (+11 points) |
+| Efficiency | 42% → 75% (+33 points) | 0% → 0% (±0 points) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
