@@ -33,11 +33,12 @@ class ApplicationDockerIdentityTests(unittest.TestCase):
     def test_all_anomalygen_launches_map_the_host_identity(self) -> None:
         reference = SKILL_ROOT / "references/tao-generate-anomalies.md"
         launch_blocks = _docker_blocks(reference)
-        self.assertEqual(len(launch_blocks), 5)
+        self.assertEqual(len(launch_blocks), 4)
         for block in launch_blocks:
             self._assert_mapped_identity(block)
         text = reference.read_text(encoding="utf-8")
         self.assertIn(".tao-write-probe", text)
+        self.assertNotIn("download_anomalygen_checkpoints", text)
 
     def test_consumer_inference_maps_identity_after_write_probe(self) -> None:
         reference = SKILL_ROOT / "references/prepare-for-inference.md"
