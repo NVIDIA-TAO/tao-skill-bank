@@ -133,3 +133,4 @@ and read it in slices rather than scrolling inline.
   via the format's scope-restriction flag; discover the name from the
   leaf `--help`.
 - **CI wants warnings to fail** — add `--strict`.
+

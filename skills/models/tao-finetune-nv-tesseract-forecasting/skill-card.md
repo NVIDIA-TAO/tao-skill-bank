@@ -1,5 +1,5 @@
 ## Description: <br>
-Combines DINO-style detection with a BERT text encoder for language-guided open-set object detection, detecting objects described by text prompts without a fixed class vocabulary. <br>
+NV-Tesseract Forecasting — transformer-based multivariate time series forecasting with DARR (context-enhanced kNN retrieval), interpretability, and fine-tuning. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and ML engineers training, evaluating, exporting, quantizing, or running inference on TAO Grounding DINO models for open-set object detection using natural-language text prompts. <br>
+Developers and engineers who need to perform multivariate time series forecasting, fine-tuning, and interpretability analysis using the NV-Tesseract model. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [Optional] <br>
+**Credential Type(s):** [API key] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -25,14 +25,14 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [TAO Deploy Grounding DINO](references/tao-deploy-grounding-dino.md) <br>
-- [Skill Info (AutoML metadata)](references/skill_info.yaml) <br>
-- [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+- [NV-Tesseract GitHub Repository](https://github.com/NVIDIA/NV-Tesseract) <br>
+- [Forecasting SDK README](https://github.com/NVIDIA/NV-Tesseract/blob/main/forecasting/README.md) <br>
+- [Pretrained Weights (Hugging Face)](https://huggingface.co/nvidia/nv-tesseract-forecasting) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Configuration instructions] <br>
-**Output Format:** [Markdown with inline bash code blocks] <br>
+**Output Type(s):** [Code, Shell commands, Files] <br>
+**Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -43,22 +43,22 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive) against a trusted local host environment. <br>
+1 evaluation task (1 positive) run on the trusted local host. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Verifies final-answer correctness against the reference answer. <br>
-- Discoverability: Whether the expected skill was found and executed when needed. <br>
-- Effectiveness: Whether the skill helped achieve the user's goal and expected workflow. <br>
-- Efficiency: Routing quality, workspace-aware skill reads, and productive tool use. <br>
+- Security: Whether the skill is safe to use (unsafe operations, secret leakage, unauthorized access). <br>
+- Correctness: Whether the answer produced is correct against the reference answer. <br>
+- Discoverability: Whether the right skill was loaded and executed when needed. <br>
+- Effectiveness: Whether the skill helped complete the user’s goal and expected workflow (goal_accuracy 50% + behavior_check 50%). <br>
+- Efficiency: Whether the skill avoided wasted tool or skill usage (routing quality, workspace-aware reads, productive tool use). <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
 - `skill_execution`: Whether the expected skill was found and executed. <br>
 - `skill_efficiency`: Routing quality, workspace-aware skill reads, and productive tool use. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
-- `goal_accuracy`: Whether the user's goal was achieved. <br>
+- `goal_accuracy`: Whether the user’s goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
 
 
@@ -66,12 +66,12 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 49% → 95% (+46 points) | 55% → 58% (+3 points) |
+| Overall | 52% → 97% (+45 points) | 54% → 51% (-3 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
 | Correctness | 40% → 100% (+60 points) | 100% → 100% (±0 points) |
 | Discoverability | 50% → 100% (+50 points) | 0% → 0% (±0 points) |
-| Effectiveness | 17% → 100% (+83 points) | 75% → 92% (+18 points) |
-| Efficiency | 38% → 75% (+38 points) | 0% → 0% (±0 points) |
+| Effectiveness | 27% → 100% (+73 points) | 68% → 53% (-15 points) |
+| Efficiency | 41% → 83% (+42 points) | 0% → 0% (±0 points) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>

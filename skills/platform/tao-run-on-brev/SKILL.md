@@ -283,3 +283,4 @@ causes — distinguish them by login state:
   `unauthorized`**: the key authenticates but its NGC org lacks entitlement
   for the image's org (e.g. a pre-release staging org). Request org access or select an
   image from an org the key can read — re-running login will not help.
+

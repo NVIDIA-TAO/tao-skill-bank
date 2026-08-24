@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-run-inference-service
+# Skill Benchmark: tao-finetune-nv-tesseract-ad-diffusion
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,12 +8,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-run-inference-service`
+- Skill: `tao-finetune-nv-tesseract-ad-diffusion`
 - Evaluation date: 2026-08-24
 - Evaluator version: `1.3.2`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:5ec4eda594f5d0eeda2f3aa6b5018ac7d52381f11b92a4f38cf64323e27c358e` (skill-evaluator-dataset-snapshot/1)
+- Dataset digest: `sha256:a53bedf5393757a2bff7bcef25a3b4519c1289a717c1730301d4f49cb539edd8` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 1
 - Environment: `local`
 - Tier 3 evidence: required for publication
@@ -45,12 +45,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 50% → 96% (+45 points) | 34% → 60% (+26 points) |
+| Overall | 52% → 95% (+43 points) | 43% → 47% (+4 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
-| Correctness | 40% → 100% (+60 points) | 20% → 100% (+80 points) |
+| Correctness | 40% → 100% (+60 points) | 60% → 80% (+20 points) |
 | Discoverability | 50% → 100% (+50 points) | 0% → 0% (±0 points) |
-| Effectiveness | 42% → 95% (+53 points) | 48% → 100% (+52 points) |
-| Efficiency | 20% → 83% (+63 points) | 0% → 0% (±0 points) |
+| Effectiveness | 37% → 100% (+63 points) | 53% → 53% (±0 points) |
+| Efficiency | 35% → 75% (+40 points) | 0% → 0% (±0 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Uplift is `skill score - baseline score`, shown in percentage points.
 
@@ -60,7 +60,7 @@ Example: `47% → 92% (+45 points)` means the skill-assisted run scored 92%, 45 
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 1 validator(s); 4 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 1 validator(s); 6 finding(s) |
 | Tier 2 | Semantic deduplication | **NOT RUN** | No result was recorded |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
 
@@ -69,10 +69,12 @@ Example: `47% → 92% (+45 points)` means the skill-assisted run scored 92%, 45 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/applications/tao-run-inference-service/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/applications/tao-run-inference-service`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/applications/tao-run-inference-service/SKILL.md`)
-- **LOW** SCHEMA/author_format: Author must be of the form 'Name <email@host>' (`skills/applications/tao-run-inference-service/SKILL.md`)
+- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-finetune-nv-tesseract-ad-diffusion/SKILL.md`)
+- **MEDIUM** SCHEMA/metadata_key_style: Metadata key 'requires_external' is not kebab-case (`skills/models/tao-finetune-nv-tesseract-ad-diffusion/SKILL.md`)
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-finetune-nv-tesseract-ad-diffusion`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-finetune-nv-tesseract-ad-diffusion/SKILL.md`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/models/tao-finetune-nv-tesseract-ad-diffusion/SKILL.md`)
+- 1 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 
