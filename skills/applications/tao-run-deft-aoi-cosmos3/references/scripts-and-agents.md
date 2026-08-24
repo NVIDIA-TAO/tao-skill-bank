@@ -18,7 +18,7 @@ paths before invoking a script.
 | `validate_split_contract.py` | Enforce split isolation, monotonic generated-Train lineage, and Benchmark hash. |
 | `check_annotations.py` | Per-role field-contract check over all three workspace annotation files. `ROLE_CONTRACT` is the authoritative field list. |
 | `patch_eval_image_cap.py` | Raises the pinned image's 1-image-per-prompt evaluation cap to what bare_okng needs, and returns the read-only mount. Retires itself once the image is fixed. |
-| `multitask_metrics.py` | Parse and score rich classification/detection outputs with coverage evidence and balanced KPI artifacts. |
+| `multitask_metrics.py` | Parse and score rich classification/counting/detection outputs with coverage evidence and balanced KPI artifacts. |
 | `analyze_gaps.py` | Profile-dispatched Proxy RCCA/selection artifacts or Benchmark metric evidence. |
 | `run_gap_analysis.py` / `replay_gap_analysis.py` | Run or compare deterministic gap-selection profiles against one frozen candidate table. |
 | `route_selected_gaps.py` | Collapse selected rich record gaps into one mining query per physical target. |

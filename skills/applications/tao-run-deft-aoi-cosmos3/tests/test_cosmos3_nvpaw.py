@@ -35,6 +35,7 @@ import validate_split_contract  # noqa: E402
 
 EXPECTED_TASKS = {
     "Component Classification",
+    "Component Count",
     "Component Detection",
     "Defect Classification",
     "Defect Detection",
@@ -51,8 +52,8 @@ class NVPawAnnotationTests(unittest.TestCase):
 
     def test_materializes_all_tasks_with_explicit_image_roles(self) -> None:
         manifest, sharegpt = nvpaw_annotations.materialize_records(self.source)
-        self.assertEqual(len(manifest), 8)
-        self.assertEqual(len(sharegpt), 8)
+        self.assertEqual(len(manifest), 9)
+        self.assertEqual(len(sharegpt), 9)
         self.assertEqual({row["task_type"] for row in manifest}, EXPECTED_TASKS)
         self.assertEqual(set(nvpaw_annotations.TASK_SPECS), EXPECTED_TASKS)
 
@@ -71,6 +72,53 @@ class NVPawAnnotationTests(unittest.TestCase):
         rendered = next(row for row in sharegpt if row["id"] == reference["id"])
         self.assertEqual(rendered["images"], ["images/golden-6.png", "images/board-6.png"])
         self.assertEqual(rendered["image_roles"], ["golden", "target"])
+
+    def test_component_count_materializes_to_a_typed_nonnegative_integer(self) -> None:
+        source = {
+            "id": "board-count#component-count",
+            "dataset": "fixture-count",
+            "split": "proxy",
+            "task_type": "Component Count",
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": "images/board-count.png"},
+                        {
+                            "type": "text",
+                            "text": (
+                                "How many components are visible in this PCBA image?\n"
+                                "Answer with only the integer count."
+                            ),
+                        },
+                    ],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": "34"}]},
+            ],
+        }
+
+        manifest, sharegpt = nvpaw_annotations.materialize_records([source])
+
+        self.assertEqual(manifest[0]["metric_family"], "counting")
+        self.assertEqual(manifest[0]["answer"], {"kind": "count", "value": 34})
+        self.assertEqual(sharegpt[0]["answer"], {"kind": "count", "value": 34})
+
+        zero_source = copy.deepcopy(source)
+        zero_source["id"] = "board-empty#component-count"
+        zero_source["messages"][-1]["content"][0]["text"] = "0"
+        zero_manifest, _ = nvpaw_annotations.materialize_records([zero_source])
+        self.assertEqual(zero_manifest[0]["answer"], {"kind": "count", "value": 0})
+        self.assertEqual(sharegpt[0]["image_roles"], ["target"])
+
+        for invalid in ("-1", "3 components", "1.5"):
+            malformed = copy.deepcopy(source)
+            malformed["id"] = f"bad-count-{invalid.replace(' ', '-')}"
+            malformed["messages"][-1]["content"][0]["text"] = invalid
+            with self.subTest(answer=invalid), self.assertRaisesRegex(
+                ValueError, "count.*non-negative integer"
+            ):
+                nvpaw_annotations.materialize_records([malformed])
 
     def test_prompt_catalog_declares_each_supported_task_once(self) -> None:
         catalog = (SKILL_ROOT / "references" / "nvpaw-prompt-formats.md").read_text()
@@ -157,8 +205,8 @@ class NVPawAnnotationTests(unittest.TestCase):
             annotation_profile="nvpaw_multitask_v1",
         )
         self.assertEqual(summary["mode"], "nvpaw_multitask_v1")
-        self.assertEqual(summary["records"], 8)
-        self.assertEqual(summary["unique_target_images"], 7)
+        self.assertEqual(summary["records"], 9)
+        self.assertEqual(summary["unique_target_images"], 8)
         self.assertEqual(set(summary["tasks"]), EXPECTED_TASKS)
 
     def test_rich_split_contract_uses_target_role_and_allows_prompt_fanout(self) -> None:
@@ -193,8 +241,8 @@ class NVPawAnnotationTests(unittest.TestCase):
                 media_root=root,
                 annotation_profile="nvpaw_multitask_v1",
             )
-            self.assertEqual(summary["records"]["proxy"], 8)
-            self.assertEqual(summary["unique_targets"]["proxy"], 7)
+            self.assertEqual(summary["records"]["proxy"], 9)
+            self.assertEqual(summary["unique_targets"]["proxy"], 8)
 
             leaked = copy.deepcopy(benchmark)
             leaked[0]["target_id"] = proxy[0]["target_id"]
@@ -241,6 +289,66 @@ class NVPawMetricTests(unittest.TestCase):
             ({"Capacitors"}, True),
         )
 
+    def test_component_count_uses_instance_count_f1_and_strict_integer_parsing(self) -> None:
+        annotation = {
+            "id": "count-eval",
+            "source_id": "count-eval",
+            "target_id": "images/count.png",
+            "dataset": "fixture-count",
+            "task_type": "Component Count",
+            "metric_family": "counting",
+            "reference_cohort": "single_target",
+            "prompt_format": "nvpaw.component_count.single.official_v1",
+            "prompt_variant": "official_v1",
+            "image_roles": ["target"],
+            "images": ["images/count.png"],
+            "option_map": {},
+            "answer": {"kind": "count", "value": 4},
+            "conversations": [
+                {"from": "human", "value": "How many components are visible?"},
+                {"from": "gpt", "value": "4"},
+            ],
+        }
+
+        result = multitask_metrics.evaluate(
+            [{"id": "count-eval", "response": "6"}],
+            [annotation],
+            required_tasks={"Component Count"},
+        )
+
+        sample = result["sample_metrics"][0]
+        self.assertEqual((sample["tp"], sample["fp"], sample["fn"]), (4, 2, 0))
+        self.assertEqual(sample["ground_truth_count"], 4)
+        self.assertEqual(sample["prediction_count"], 6)
+        self.assertAlmostEqual(sample["sample_score"], 0.8)
+        metrics = result["task_metrics"]["Component Count"]
+        self.assertEqual(metrics["primary_metric"], "count_micro_f1")
+        self.assertAlmostEqual(metrics["count_micro_f1"], 0.8)
+        self.assertEqual(metrics["exact_count_accuracy"], 0.0)
+        self.assertEqual(metrics["mean_absolute_error"], 2.0)
+
+        zero_annotation = copy.deepcopy(annotation)
+        zero_annotation["id"] = "count-empty"
+        zero_annotation["answer"]["value"] = 0
+        perfect_zero = multitask_metrics.evaluate(
+            [{"id": "count-empty", "response": "0"}],
+            [zero_annotation],
+            required_tasks={"Component Count"},
+        )
+        self.assertEqual(perfect_zero["sample_metrics"][0]["sample_score"], 1.0)
+        self.assertEqual(
+            perfect_zero["task_metrics"]["Component Count"]["count_micro_f1"],
+            1.0,
+        )
+
+        malformed = multitask_metrics.evaluate(
+            [{"id": "count-eval", "response": "about 4"}],
+            [annotation],
+            required_tasks={"Component Count"},
+        )
+        self.assertEqual(malformed["coverage"]["parse_failures"], 1)
+        self.assertEqual(malformed["sample_metrics"][0]["gap_type"], "parse_failure")
+
     def test_perfect_multitask_predictions_have_balanced_score_one(self) -> None:
         result = multitask_metrics.evaluate(
             self.perfect_samples(), self.annotations, evaluation_role="benchmark"
@@ -255,13 +363,13 @@ class NVPawMetricTests(unittest.TestCase):
         )
         self.assertEqual(
             set(result["metric_family_metrics"]),
-            {"classification", "detection"},
+            {"classification", "counting", "detection"},
         )
         self.assertEqual(
             result["coverage"],
             {
-                "expected_predictions": 8,
-                "received_prediction_rows": 8,
+                "expected_predictions": 9,
+                "received_prediction_rows": 9,
                 "missing_predictions": 0,
                 "duplicate_prediction_ids": 0,
                 "unknown_prediction_ids": 0,
@@ -422,6 +530,70 @@ class NVPawMetricTests(unittest.TestCase):
 
 
 class NVPawStateTests(unittest.TestCase):
+    def test_rich_state_uses_frozen_benchmark_observed_tasks_as_required_groups(self) -> None:
+        source = nvpaw_annotations.load_source_records(
+            FIXTURES / "nvpaw_multitask.jsonl"
+        )
+        _, annotations = nvpaw_annotations.materialize_records(source)
+        benchmark = [
+            row for row in annotations if row["task_type"] != "Component Count"
+        ]
+        expected_groups = sorted(EXPECTED_TASKS - {"Component Count"})
+
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = pathlib.Path(temporary) / "workspace"
+            results = pathlib.Path(temporary) / "results"
+            (workspace / "annotations").mkdir(parents=True)
+            (workspace / "specs").mkdir()
+            (workspace / "annotations" / "proxy_kpi.json").write_text(
+                json.dumps(annotations) + "\n"
+            )
+            (workspace / "annotations" / "benchmark_kpi.json").write_text(
+                json.dumps(benchmark) + "\n"
+            )
+            (workspace / "annotations" / "mining_pool.json").write_text(
+                json.dumps(annotations) + "\n"
+            )
+            for name in (
+                "train_spec.toml",
+                "evaluate_spec_proxy.toml",
+                "evaluate_spec_benchmark.toml",
+            ):
+                (workspace / "specs" / name).write_text(
+                    "[policy]\nautoml_policy = \"off\"\n"
+                )
+
+            status = init_deft_state.main(
+                [
+                    "--results-dir",
+                    str(results),
+                    "--workspace",
+                    str(workspace),
+                    "--platform",
+                    "docker",
+                    "--max-iterations",
+                    "1",
+                    "--gpu-model",
+                    "L40S 48GB",
+                    "--cosmos-container",
+                    "example/cosmos:1",
+                    "--mining-container",
+                    "example/mining:1",
+                    "--anomalygen-container",
+                    "example/anomalygen:1",
+                    "--annotation-profile",
+                    "nvpaw_multitask_v1",
+                    "--kpi-profile",
+                    "task_balanced_v1",
+                ]
+            )
+
+            self.assertEqual(status, 0)
+            state = json.loads((results / "deft_state.json").read_text())
+            self.assertEqual(
+                state["metric_contract"]["required_groups"], expected_groups
+            )
+
     def test_rich_state_freezes_annotation_kpi_and_gap_profiles(self) -> None:
         source = nvpaw_annotations.load_source_records(
             FIXTURES / "nvpaw_multitask.jsonl"
@@ -822,6 +994,41 @@ class NVPawDataGrowthTests(unittest.TestCase):
             },
         )
 
+    def test_task_strict_router_keeps_component_count_in_its_own_route(self) -> None:
+        routed, summary = task_mining_router.route_candidates(
+            [
+                {
+                    "filepath": "proxy/count.png",
+                    "target_id": "proxy-count",
+                    "task_types": ["Component Count"],
+                    "embedding": [1.0, 0.0],
+                }
+            ],
+            [
+                {"filepath": "images/board-1.png", "embedding": [1.0, 0.0]},
+                {"filepath": "images/board-8.png", "embedding": [0.9, 0.1]},
+            ],
+            self.records,
+            media_root=pathlib.Path("/dataset"),
+            mode="task_strict",
+            top_k_per_target=1,
+            min_similarity=0.0,
+        )
+
+        self.assertEqual(len(routed), 1)
+        self.assertEqual(routed[0]["filepath"], "images/board-8.png")
+        self.assertEqual(routed[0]["routed_task_types"], ["Component Count"])
+        self.assertEqual(
+            summary["targets"][0]["task_routes"]["Component Count"],
+            {
+                "fallback_selected": 0,
+                "selected": 1,
+                "shortfall": 0,
+                "strict_eligible": 1,
+                "strict_selected": 1,
+            },
+        )
+
     def test_strict_mining_fanout_emits_only_routed_tasks(self) -> None:
         emitted, summary = emit_mined_sharegpt.emit_records(
             [
@@ -1212,7 +1419,7 @@ class NVPawNoDockerIntegrationTests(unittest.TestCase):
             )
             routing_evidence = json.loads(routing_summary.read_text())
             self.assertEqual(routing_evidence["selected_records"], len(records))
-            self.assertEqual(routing_evidence["embedding_queries"], 7)
+            self.assertEqual(routing_evidence["embedding_queries"], 8)
             commit(
                 "iter1",
                 "routing",
@@ -1247,7 +1454,7 @@ class NVPawNoDockerIntegrationTests(unittest.TestCase):
             assemble_summary_path = assemble_dir / "assemble_summary.json"
             combined_json.write_text(json.dumps(combined) + "\n")
             assemble_summary_path.write_text(json.dumps(assemble_summary) + "\n")
-            self.assertEqual(emit_summary["embedding_queries"], 7)
+            self.assertEqual(emit_summary["embedding_queries"], 8)
             self.assertEqual(len(combined), len(records))
             commit(
                 "iter1",
@@ -1293,7 +1500,9 @@ class NVPawNoDockerIntegrationTests(unittest.TestCase):
                 ],
             )
             report = (results / "DEFT_Loop_Report.html").read_text()
-            self.assertIn("NVPaw multi-task classification and detection", report)
+            self.assertIn(
+                "NVPaw multi-task classification, counting, and detection", report
+            )
             self.assertIn("Task KPI attainment", report)
             self.assertIn("Worst-group summary", report)
             self.assertIn("Component Detection", report)

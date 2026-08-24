@@ -271,23 +271,23 @@ def _rich_required_groups(
         raise ValueError(f"rich Benchmark annotations must be one JSON array: {exc}") from exc
     if not isinstance(records, list) or not records:
         raise ValueError("rich Benchmark annotations must be a non-empty JSON array")
-    tasks = {
-        record.get("task_type")
-        for record in records
-        if isinstance(record, dict) and isinstance(record.get("task_type"), str)
-    }
-    missing = set(TASK_SPECS) - tasks
-    if missing:
-        raise ValueError(f"Benchmark is missing required task groups: {sorted(missing)}")
-    if kpi_profile == "task_balanced_v1":
-        return sorted(TASK_SPECS)
-    groups: set[str] = set()
+    tasks: set[str] = set()
     for index, record in enumerate(records):
         if not isinstance(record, dict):
             raise ValueError(f"Benchmark record[{index}] must be an object")
         task_type = record.get("task_type")
+        if task_type not in TASK_SPECS:
+            raise ValueError(
+                f"Benchmark record[{index}] has unsupported task_type {task_type!r}"
+            )
+        tasks.add(task_type)
+    if kpi_profile == "task_balanced_v1":
+        return sorted(tasks)
+    groups: set[str] = set()
+    for index, record in enumerate(records):
+        task_type = record.get("task_type")
         dataset = record.get("dataset")
-        if task_type not in TASK_SPECS or not isinstance(dataset, str) or not dataset:
+        if not isinstance(dataset, str) or not dataset:
             raise ValueError(
                 f"Benchmark record[{index}] requires supported task_type and non-empty dataset"
             )

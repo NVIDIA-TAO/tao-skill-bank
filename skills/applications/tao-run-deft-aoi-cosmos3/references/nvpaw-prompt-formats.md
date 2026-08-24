@@ -7,6 +7,7 @@ Prompt wording may vary only through an explicitly selected, versioned
 | Task type | Image roles | Metric family | Empty answer | Mining | AnomalyGen |
 | --- | --- | --- | --- | --- | --- |
 | Component Classification | target | classification | `[]` | yes | no |
+| Component Count | target | counting | `0` | yes | no |
 | Component Detection | target | detection | `[]` | yes | no |
 | Defect Classification | target | classification | `[]` or the documented no-defect response | yes | yes |
 | Defect Detection | target | detection | `[]` | yes | no |
@@ -29,6 +30,23 @@ Direct defect-presence questions use these canonical responses:
 No, the target image does not contain any defects.
 Yes, the target image contains a defect.
 ```
+
+## Component Count `official_v1`
+
+Use one target image and this wording:
+
+```text
+This is an industrial visual inspection task for PCBA component analysis. Use
+only the provided image.
+How many components are visible in this PCBA image?
+Answer with only the integer count.
+```
+
+The answer is one non-negative base-10 integer with no prose, units, sign, or
+decimal point. `0` is the empty count. Counting KPI uses count-only instance
+F1: `TP=min(ground_truth,prediction)`, excess predictions are FP, and missing
+predictions are FN. Reports also include exact-count accuracy and mean absolute
+error.
 
 ## Detection `official_v1`
 
