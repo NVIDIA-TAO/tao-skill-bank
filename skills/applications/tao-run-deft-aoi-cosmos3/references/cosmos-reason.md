@@ -16,12 +16,12 @@ After the user approves the launch review, prepare the selected checkpoint with
 the helper owned by `tao-finetune-cosmos-reason`:
 
 ```bash
-set -a; source /path/to/.env; set +a   # omit if already exported
+# If credentials are not already exported, source only the user-approved env
+# file selected during Pre-Flight before running this block.
 
-# --checkpoint-path is resolved as a filesystem path by the upstream converter,
-# so it must be a LOCAL DIRECTORY. A bare HuggingFace repo id can never work,
-# and the failure only surfaces after the container's slow `uv sync`. Download
-# first (~33 GB excluding demo assets; the repo is ungated):
+# --base-model-path-or-uri may be a URI or a LOCAL DIRECTORY. This workflow
+# downloads the source first (~33 GB excluding demo assets; the repo is
+# ungated) so the approved conversion has a stable, inspectable local input:
 # Repeat --exclude per pattern. A second bare pattern is parsed as a positional
 # FILENAMES argument, and the whole download fails with "File not found in
 # repository" pointing at .../resolve/main/images/%2A — which reads like a
@@ -37,11 +37,22 @@ probe="$PREPARED_MODEL_PARENT/.tao-write-probe.$$"
   exit 2
 }
 
+# Pre-Flight resolves this packaged Nano mapping to an immutable Hub revision.
+COSMOS3_VLM_ARCHITECTURE_MODEL="${COSMOS3_VLM_ARCHITECTURE_MODEL:-Qwen/Qwen3-VL-8B-Instruct}"
+: "${COSMOS3_VLM_ARCHITECTURE_REVISION:?set the immutable revision resolved by the model planner}"
+COSMOS3_CONVERSION_CACHE_DIR="${COSMOS3_CONVERSION_CACHE_DIR:-$PREPARED_MODEL_PARENT/cache}"
+COSMOS_RL_IMAGE_DIGEST=$(docker image inspect --format '{{.Id}}' "$COSMOS_RL_IMAGE")
+: "${COSMOS_RL_IMAGE_DIGEST:?could not resolve the selected runtime image ID}"
+
 "$PYTHON" \
   "$TAO_SKILL_BANK_PATH/skills/models/tao-finetune-cosmos-reason/scripts/prepare_cosmos3_vlm_checkpoint.py" \
-  --checkpoint-path "$COSMOS3_SOURCE_DIR" \
+  --base-model-path-or-uri "$COSMOS3_SOURCE_DIR" \
+  --vlm-architecture-model-path-or-uri "$COSMOS3_VLM_ARCHITECTURE_MODEL" \
+  --vlm-architecture-model-revision "$COSMOS3_VLM_ARCHITECTURE_REVISION" \
   --output-path "$PREPARED_MODEL_HOST_PATH" \
-  --validate-with-image "$COSMOS_RL_IMAGE"
+  --cache-dir "$COSMOS3_CONVERSION_CACHE_DIR" \
+  --runtime-image "$COSMOS_RL_IMAGE" \
+  --runtime-image-digest "$COSMOS_RL_IMAGE_DIGEST"
 ```
 
 Confirm `$COSMOS3_SOURCE_DIR` exists before launching; that check costs nothing
@@ -50,16 +61,15 @@ and saves several minutes plus a large cache write.
 The model helper owns its internal Docker command and maps the invoking
 UID:GID before writing the prepared checkpoint. Treat any root-owned output as
 a helper regression and hard-stop; never launch a root repair container. A
-valid existing checkpoint is reported as `status=skipped_existing` and reused.
+valid existing checkpoint is reported as `status=reused_verified` and reused.
 
-The helper may clone NVIDIA/cosmos-framework, pull its conversion image, and
-write a large checkpoint, so never run it before approval. It forwards
-whichever of `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` is set in the session, by
-name and without printing values; the second is the legacy alias for the same
-HuggingFace access token, so either one is enough. For `--secrets-env`, see the
-model skill.
+The helper may pull the selected backend image, download the architecture
+checkpoint, and write a large checkpoint, so never run it before approval. It
+forwards whichever of `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` is set in the
+session, by name and without printing values; the second is the legacy alias
+for the same HuggingFace access token, so either one is enough.
 
-Do not convert again when the helper reports `status=skipped_existing`; it has
+Do not convert again when the helper reports `status=reused_verified`; it has
 already verified a complete `qwen3_vl` safetensors directory. Mount or stage
 that directory for the selected platform, then use its compute-frame path for:
 
@@ -68,10 +78,13 @@ that directory for the selected platform, then use its compute-frame path for:
 - LoRA evaluate `model.base_model_path`.
 
 Keep the canonical Cosmos Reason 3 ID (`nvidia/Cosmos3-Nano` by default) as the
-source-model lineage; it names the model, not the Cosmos-RL PTM path. The command above is the Nano default. For Edge or Super, supply the
-selected source checkpoint and a model-skill-approved, variant-matched
-`--vlm-model-name`; if that mapping and the selected Cosmos-RL image have not
-been validated, hard-stop instead of applying Nano's Qwen3-VL 8B default.
+source-model lineage; it names the model, not the Cosmos-RL PTM path. The
+command above is the Nano default. For Edge or Super, supply the selected
+source checkpoint plus a model-skill-approved, variant-matched
+`--vlm-architecture-model-path-or-uri` and immutable
+`--vlm-architecture-model-revision`; if that mapping and the selected runtime
+have not been validated, hard-stop instead of applying Nano's Qwen3-VL 8B
+default.
 
 ## Run containers as the invoking user
 

@@ -15,11 +15,25 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    canonical `<workspace>/images`; accept `<workspace>/kpi/images` only as a
    legacy fallback. Resolve symlinks, export the absolute result as
    `IMAGES_DIR`, and hard-stop if neither directory exists. Run
-   `scripts/validate_training_csv.py` against each base CSV with
-   `--workspace-root "$IMAGES_DIR"` so at least the CSV-declared input and
-   golden paths are proven to resolve on disk. `init_deft_state.py` records the
-   same resolved directory as `config.images_dir`; all ChangeNet containers
-   must mount that state value rather than reconstructing a path from `kpi/`.
+   `scripts/validate_training_csv.py` against each base CSV so at least the
+   CSV-declared input and golden paths are proven to resolve on disk:
+
+   ```bash
+   for BASE_CSV in \
+     "$WORKSPACE/train/base/training_set.csv" \
+     "$WORKSPACE/train/base/validation_set.csv" \
+     "$WORKSPACE/kpi/testing_set.csv"
+   do
+     "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/scripts/deft_python.sh" \
+       "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/scripts/validate_training_csv.py" \
+       --csv "$BASE_CSV" \
+       --workspace-root "$IMAGES_DIR"
+   done
+   ```
+
+   `init_deft_state.py` records the same resolved directory as
+   `config.images_dir`; all ChangeNet containers must mount that state value
+   rather than reconstructing a path from `kpi/`.
 
    **Resolve the mining source independently from its images.** A common staged
    layout places the CSV at
