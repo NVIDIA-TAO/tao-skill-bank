@@ -52,6 +52,10 @@ event. The bundled `commit_stage.py` owns that write.
    with identical prompting and generation settings.
 5. Analyze Proxy results with `--evaluation-role proxy`. Preserve false accepts
    and false rejects as the only RCCA source.
+6. Before committing `proxy_rcca`, write `proxy_rcca/RCCA_Report.md` from the
+   three machine artifacts using `references/RCCA_REPORT_TEMPLATE.md` and pass
+   it with `--rcca-report`; `references/rcca-artifact-manifest.json` is the
+   machine-readable source for artifact requirements and state fields.
 
 Baseline may stop immediately when the Benchmark gate passes. Baseline does not
 count against `max_iterations`.
@@ -115,8 +119,9 @@ hand-edit or reinitialize it. It contains:
 - absolute artifact paths under `${RESULTS_DIR}/<label>`;
 - terminal `final_artifacts` only after validated finalization;
 - an `events` array with a strict, monotonically increasing `seq`, UTC
-  timestamp, iteration, stage, `ok|error`, non-empty summary, measured
-  duration, and context-token placeholder.
+  timestamp, iteration, stage, `ok|error|skipped`, non-empty summary, explicit
+  `skip_reason` on skips, measured positive duration for executed stages,
+  non-negative duration for skips, and context-token placeholder.
 
 Before every stage, re-read `deft_state.json`. Use the latest event plus
 `iterations.<label>.status` and `stage_completed` to resume. A failed stage may
@@ -145,6 +150,18 @@ All paths are absolute.
     "$RESULTS_DIR/baseline/benchmark_metrics/metric_result.json" \
   --duration-sec "$STAGE_DURATION_SEC" \
   --summary "frozen Benchmark KPI analyzed"
+```
+
+```bash
+"$PYTHON" "$SKILL_ROOT/scripts/commit_stage.py" \
+  --results-dir "$RESULTS_DIR" --iter-label "$LABEL" \
+  --stage proxy_rcca \
+  --proxy-gaps-summary "$RESULTS_DIR/$LABEL/proxy_rcca/gaps_summary.json" \
+  --false-accepts "$RESULTS_DIR/$LABEL/proxy_rcca/false_accepts.json" \
+  --false-rejects "$RESULTS_DIR/$LABEL/proxy_rcca/false_rejects.json" \
+  --rcca-report "$RESULTS_DIR/$LABEL/proxy_rcca/RCCA_Report.md" \
+  --duration-sec "$STAGE_DURATION_SEC" \
+  --summary "Proxy RCCA analyzed and next-iteration targets identified"
 ```
 
 Re-read `deft_state.json` before constructing each next command and continue

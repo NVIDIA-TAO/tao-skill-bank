@@ -79,9 +79,10 @@ Treat a run as a disk-backed state machine.
 9. Commit every completed or failed DEFT stage with
    `scripts/commit_stage.py`. It verifies the stage inputs and atomically
    updates both the resume snapshot and ordered `events` array in state. Every
-   commit requires a positive, measured `--duration-sec`: use backend elapsed
-   wall time for submitted jobs and a host wall-clock timer for inline stages.
-   Missing or zero durations are rejected.
+   executed-stage commit requires a positive, measured `--duration-sec`: use
+   backend elapsed wall time for submitted jobs and a host wall-clock timer for
+   inline stages. A documented `--skip` may record `0`; negative durations are
+   always rejected.
 10. Claim completion only after `scripts/finalize_run.py` verifies final
    Benchmark evidence, successfully commits `loop_stop`, and a fresh
    read of `deft_state.json` shows `status == "complete"`,
@@ -283,6 +284,11 @@ base model, which establishes the zero-shot KPI:
 2. `benchmark_metrics` — stop here when the gate already passes.
 3. `evaluate_proxy` — only when the gate is unmet.
 4. `proxy_rcca`
+
+Before every `proxy_rcca` commit, write `proxy_rcca/RCCA_Report.md` from the
+three Proxy RCCA JSON artifacts using `references/RCCA_REPORT_TEMPLATE.md`,
+then pass it with `--rcca-report`. Artifact requirements, section headings,
+and state fields come from `references/rcca-artifact-manifest.json`.
 
 For each `iterN` when the frozen Benchmark gate is unmet:
 

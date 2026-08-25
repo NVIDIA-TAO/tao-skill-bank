@@ -28,11 +28,12 @@ paths before invoking a script.
 
 `init_deft_state.py` requires `--gpu-model` with the exact model string from
 the selected platform's Preflight. `commit_stage.py` requires a positive
-`--duration-sec` on every success, error, skip, and `loop_stop` commit. Use the
-backend's measured elapsed wall time for submitted jobs and a directly measured
-host duration for inline stages; round a measured sub-second stage up to `1`.
-An omitted, zero, or negative duration is rejected rather than recorded as an
-unknown value.
+`--duration-sec` on every executed success, error, and `loop_stop` commit. Use
+the backend's measured elapsed wall time for submitted jobs and a directly
+measured host duration for inline stages; round a measured sub-second executed
+stage up to `1`. A documented `--skip` records `status=skipped`, copies the
+summary into `skip_reason`, and accepts a non-negative duration including `0`.
+An omitted duration or any negative duration is rejected.
 
 Before every stage, call `deft_context.py --state <deft_state.json> --stage
 <stage>`. Wrap local external/container commands with `deft_exec.py --state

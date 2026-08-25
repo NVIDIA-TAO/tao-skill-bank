@@ -509,7 +509,7 @@ def _stage_rows(entries: list[dict[str, Any]]) -> str:
     rows: list[str] = []
     for entry in entries:
         status = str(entry.get("status", "unknown"))
-        badge = "good" if status == "ok" else "error"
+        badge = {"ok": "good", "skipped": "muted"}.get(status, "error")
         rows.append(
             f'<tr><td class="num">{_fmt(entry.get("seq"))}</td><td>{_fmt(entry.get("iter"))}</td><td>{_fmt(entry.get("stage"))}</td>'
             f'<td><span class="badge {badge}">{_escape(status.upper())}</span></td><td class="num">{_escape(_duration(entry.get("duration_sec")))}</td>'
