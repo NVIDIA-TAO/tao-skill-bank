@@ -53,7 +53,7 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    | Variable | Required for | Image prefix it gates |
    |---|---|---|
    | `NGC_KEY` | All nvcr.io image pulls — TAO toolkit (train/infer/deploy/data services) and the paidf-anomalygen SDG container | the registry orgs of the manifest-resolved image URIs in step 5 |
-   | `HF_TOKEN` | Pre-Flight HuggingFace model downloads (ChangeNet backbone, Cosmos diffusion, T5, C-RADIO-V3, DINOv2, SAM2, Qwen-VL, SigLIP) — cached under `augmentation/anomalygen/base_checkpoints/`. Also gates the PCB reference dataset auto-fetch. | huggingface.co |
+   | `HF_TOKEN` | Pre-Flight HuggingFace model downloads (ChangeNet backbone, Cosmos diffusion, T5, C-RADIO-V3, DINOv2, SAM2, Qwen-VL, SigLIP) — cached under `augmentation/anomalygen/base_checkpoints/`. Also gates the PCB fine-tuned checkpoint and reference dataset auto-fetch. | huggingface.co |
 
    For planned network actions both variables must be non-empty in the process
    environment. The single `NGC_KEY` must have read access to every registry
@@ -128,22 +128,18 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    GPU when the selected backend is remote. Probe the three AnomalyGen override
    slots under `augmentation/anomalygen/` (`checkpoints/<project>/`,
    `base_checkpoints/`, `datasets/<project>/`) and report their status in the
-   Summary. The fine-tuned checkpoint slot must be pre-staged in every network
-   mode. Resolve the single `ag_config.yaml` and `iter_<step>.pt` under
-   `checkpoints/<project>/...`; if either is missing or ambiguous, hard-stop
-   and direct the user to finetune the AnomalyGen LoRA with the container's
-   `texture_ft` recipe using the `uc1_pcb` layout
-   (`dataset_path/<texture>/anomaly_image/` paired with
-   `dataset_path/<texture>/mask/<defect>/`), then stage the resulting
-   `ag_config.yaml` and `iter_<step>.pt` under
-   `augmentation/anomalygen/checkpoints/<project>/...`. Its
-   major.minor must match the pinned AnomalyGen container; never substitute the
-   incompatible 1.0-era HF checkpoint. In network-enabled mode, an empty PCB
-   reference dataset (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) or base-model
-   cache may be a post-approval fetch plan. In air-gap mode both must already
-   be non-empty. The uc1 reference dataset remains auto-downloadable in
-   network-enabled mode. If `base_checkpoints/` is pre-staged, export its host
-   path as `COSMOS_MODELS_DIR` for downstream mounts. Before SDG, use the
+   Summary. In network-enabled mode, empty slots may be a post-approval fetch
+   plan. In air-gap mode every required slot must already be non-empty and a
+   missing asset is a hard stop. NVIDIA publishes the PCB fine-tuned
+   checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset
+   (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on Hugging Face; the
+   `tao-generate-anomalies` skill downloads them automatically on first use.
+   Users can pre-stage their own fine-tuned checkpoint or dataset to override
+   the default; a checkpoint override must match the pinned container's PAIDF
+   major.minor. Do not ask about missing AnomalyGen assets in network-enabled
+   mode: report `will auto-fetch from HF (default)` and proceed. If
+   `base_checkpoints/` is pre-staged, export its host path as
+   `COSMOS_MODELS_DIR` for downstream mounts. Before SDG, use the
    executable file check in `references/tao-generate-anomalies.md` to gate the
    AnomalyGen Guardrail safety model; a missing file is a hard stop.
    Stage the ChangeNet pretrained
@@ -172,11 +168,9 @@ Ask one consolidated question only for missing required inputs. Never ask about 
 - pretrained backbone: first staged weight under `augmentation/backbone/`;
   network-enabled mode may plan the documented post-approval fetch, while
   air-gap mode hard-stops when absent.
-- AnomalyGen checkpoint: the PAIDF-compatible package is required under
-  `augmentation/anomalygen/checkpoints/<project>/...` in every network mode;
-  missing or ambiguous files are a hard stop. Dataset and Cosmos base models:
-  prefer staged paths; missing assets are fetch plans only in network-enabled
-  mode and hard stops in air-gap mode.
+- AnomalyGen checkpoint, dataset, and Cosmos base models: prefer the staged
+  `augmentation/anomalygen/` paths. Missing assets are fetch plans only in
+  network-enabled mode; in air-gap mode they are hard stops.
 
 ## Pre-Flight Summary
 
@@ -211,13 +205,12 @@ Once all checks pass, print this summary and **STOP — wait for explicit user a
 | Mining CSV / image root        | <independent absolute paths; resolver status>                                  |
 
 ### Augmentation
-Show `WILL_FETCH` only for the dataset and base-model rows in network-enabled
-mode. The AnomalyGen checkpoint row must always be a staged local path. In
-air-gap mode every row must be local and no download fallback may appear.
+Show `WILL_FETCH` only in network-enabled mode. In air-gap mode every row must
+be a staged local path and no download fallback may appear.
 
 | Field              | Value                                                                                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| AnomalyGen ckpt    | `<path>` (PAIDF major.minor compatible; FOUND, step N) **[BYO/pre-staged REQUIRED; missing = HARD STOP]**              |
+| AnomalyGen ckpt    | `<path>` (FOUND, step N) **or** will auto-fetch from HF (`nvidia/Cosmos-AnomalyGen-PCB-2B`, ~5 GB) **[default]** |
 | Defect spec        | `<N types: type1, type2, ...>` (from staged dataset) **or** will auto-fetch from HF **[default]**                 |
 | Cosmos base models | `<path>` (container check FOUND) **or** will auto-download the 2B workflow set on first container run (~22 GB) **[default]** |
 | SigLIP model       | `<cached / download / local path>`                                                                                 |

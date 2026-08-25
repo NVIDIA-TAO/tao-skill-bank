@@ -21,10 +21,11 @@ template (`references/baseline_spec.yaml`), and offer to scaffold the tree.
 | Process environment | `NGC_KEY` + `HF_TOKEN` for approved network-enabled actions only. Exported in the shell before launch, or sourced from a user-approved env file (`set -a; source /path/to/.env; set +a`) — the loop never creates that file, writes a value into it, or prints one. |
 
 **Auto-fetched on first use (do not pre-stage unless air-gapped):** the
-ChangeNet backbone (`nvidia/C-RADIOv2-B`), the Cosmos/AnomalyGen base
-checkpoints, and the AnomalyGen PCB reference dataset
-(`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) — all gated by `HF_TOKEN`, cached under
-`augmentation/anomalygen/base_checkpoints/`. **Note:** the AnomalyGen PCB
+ChangeNet backbone (`nvidia/C-RADIOv2-B`), the AnomalyGen fine-tuned checkpoint
+(`nvidia/Cosmos-AnomalyGen-PCB-2B`), the Cosmos/AnomalyGen base checkpoints,
+and the AnomalyGen PCB reference dataset
+(`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) — all gated by `HF_TOKEN` and cached
+in their documented locations below. **Note:** the AnomalyGen PCB
 reference dataset is a *generator* fine-tuning set (clean image + mask + defect
 spec) — it is **not** your AOI training data and cannot substitute for it.
 
@@ -55,13 +56,13 @@ creates (paths under `<workspace>` unless absolute):
 ├── augmentation/
 │   ├── mining_pool/
 │   │   └── mining_pool.csv                  # append-only production-line samples; VCN paths resolve against <workspace>/images
-│   └── anomalygen/                          # AnomalyGen assets; required when the stage runs.
-│       │                                    # Fine-tuned checkpoint: user pre-staged PAIDF-1.1-compatible LoRA package.
-│       │                                    # BYO required, never auto-downloaded.
-│       │                                    # Dataset/base assets may auto-fetch in network-enabled mode.
+│   └── anomalygen/                          # [Optional] User override slots for AnomalyGen assets.
+│       │                                    # If pre-staged, the loop uses these host paths verbatim.
+│       │                                    # If absent, the tao-generate-anomalies skill auto-downloads
+│       │                                    # the fine-tuned checkpoint and other assets after approval.
 │       │                                    # `<project>` is the project label (e.g. UC1).
 │       │                                    # See references/tao-generate-anomalies.md for details.
-│       ├── checkpoints/<project>/           # ag_config.yaml + iter_<step>.pt (e.g. nvpcb/nvidia/Cosmos-AnomalyGen-PCB-2B/iter_000015000.pt).
+│       ├── checkpoints/<project>/           # Optional BYO override; HF checkpoint auto-downloads by default.
 │       ├── base_checkpoints/                # Manifest-pinned Cosmos base models cache (~22 GB; Predict2 Text2Image 2B).
 │       └── datasets/<project>/              # PCB reference data override — defect_spec.jsonl + per-texture image/mask subdirs.
 └── results/run_<YYYYMMDD_HHMMSS>/           # created/resumed by this workflow (= ${RESULTS_DIR})

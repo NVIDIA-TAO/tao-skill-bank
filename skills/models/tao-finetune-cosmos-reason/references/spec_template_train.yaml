@@ -9,6 +9,7 @@ train:
   optm_weight_decay: 0.01
   optm_min_lr_factor: 0.0
   optm_grad_norm_clip: 1.0
+  optm_loss_spike_rollback: 0.0
   epsilon: 1.0e-08
   optm_name: AdamW
   optm_betas:
