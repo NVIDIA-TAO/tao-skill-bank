@@ -14,7 +14,7 @@ import pathlib
 import sys
 from itertools import combinations
 
-from validate_sharegpt import load_records
+from validate_sharegpt import load_records, prompt_and_label
 
 
 ROLE_PATHS = {
@@ -67,6 +67,15 @@ def validate(
     counts: dict[str, int] = {}
     for role, path in role_paths.items():
         records = load_records(path)
+        if role == "synthetic":
+            for index, record in enumerate(records):
+                context = f"{path}[{index}]"
+                _, label = prompt_and_label(record, context=context)
+                if label != "NG":
+                    raise ValueError(
+                        f"{context}: synthetic label must be exactly NG, "
+                        f"got {label!r}"
+                    )
         targets = {
             _target(record, path, index, media_root)
             for index, record in enumerate(records)

@@ -124,7 +124,11 @@ def analyze(
     precision_ng = tp / predicted_ng if predicted_ng else 0.0
     false_accept_rate = fn / actual_ng if actual_ng else 0.0
     false_reject_rate = fp / actual_ok if actual_ok else 0.0
-    accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) else 0.0
+    # Unknown predictions are incorrect predictions, not samples to omit from
+    # the reported accuracy. Keep the class-specific metrics based on their
+    # parseable confusion-matrix populations, but use the full evaluation set
+    # for accuracy so unparseable responses cannot inflate it.
+    accuracy = (tp + tn) / len(samples) if samples else 0.0
     f1_ng = (
         2 * precision_ng * recall_ng / (precision_ng + recall_ng)
         if precision_ng + recall_ng
@@ -250,6 +254,9 @@ def main(argv: list[str] | None = None) -> int:
                 "name": args.kpi_metric,
                 "value": summary["metrics"][args.kpi_metric],
                 "unit": "",
+                "samples": summary["samples"],
+                "parseable_samples": summary["parseable_samples"],
+                "unknown_samples": summary["unknown_samples"],
                 "constraints": {
                     "unknown_predictions": summary["unknown_samples"],
                 },
@@ -282,6 +289,9 @@ def main(argv: list[str] | None = None) -> int:
         f"precision_ng={metrics['precision_ng']:.6f} "
         f"false_accepts={confusion['fn_ng_to_ok_false_accept']} "
         f"false_rejects={confusion['fp_ok_to_ng_false_reject']} "
+        f"samples={summary['samples']} "
+        f"parseable_samples={summary['parseable_samples']} "
+        f"unknown_samples={summary['unknown_samples']} "
         f"kpi={kpi_text} "
         f"kpi_met={summary['kpi']['met']}"
     )
