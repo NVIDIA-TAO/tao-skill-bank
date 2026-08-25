@@ -5,7 +5,7 @@ description: >-
   focused on the non-reasoning classification/evaluation path. Use when the user asks for a
   DEFT CR ITS mining workflow, traffic-camera Cosmos Reason improvement loop, collision-identification workflow with data mining, or iterative Cosmos-RL refinement driven by gap analysis.
 license: Apache-2.0
-compatibility: Requires Docker with NVIDIA Container Toolkit, Python 3.11 with pandas, pyarrow, PyYAML, and huggingface_hub, plus the selected platform CLI.
+compatibility: Requires Docker with NVIDIA Container Toolkit, Python 3.11 with venv/ensurepip, numpy, pandas, pyarrow, PyYAML, and huggingface_hub, plus the selected platform CLI.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
