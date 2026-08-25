@@ -216,7 +216,7 @@ The emitted file's single top-level `category_mapping:` key is unwrapped, so its
 value lands directly on `inference.category_mapping`.
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   $CODETR inference -e "$CODETR_SPEC" \
@@ -284,7 +284,7 @@ the targets. `results_dir` is **not** a scratch dir — see below. The overlay p
 step and the ODVG conversion both look for.
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" annotations convert -e "${PREP_DIR}/kitti_to_coco.yaml"
 ```
 
@@ -354,7 +354,7 @@ Pass `--allow-empty-classes` only when a class is listed defensively and its abs
 ```
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" annotations convert -e "${PREP_DIR}/coco_to_odvg.yaml"
 ```
 

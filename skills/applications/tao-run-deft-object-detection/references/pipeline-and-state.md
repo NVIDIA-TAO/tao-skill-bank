@@ -13,6 +13,13 @@ their output owned by the caller.
 Do not substitute a `chown` fixup after each stage. It works, but it is a step every caller
 has to remember and it leaves a window where the artifacts on disk are unreadable.
 
+`--user` is not sufficient on its own. A uid with no `/etc/passwd` entry in the image has
+no name, and the container then crashes at torch import with
+`KeyError: 'getpwuid(): uid not found: <uid>'` before the action starts. Every launch
+therefore carries `$DOCKER_IDENTITY` as well; `references/preflight.md` defines it.
+Removing `--user` is not the way out of that — it reintroduces the root-owned output
+above.
+
 ## Pipeline
 
 All stages run inline in the parent context. For SKILL stages, read the matching `references/*.md` overlay first, then invoke the underlying `tao-skill-bank:*` skill. GLUE stages run a bundled script; there is no leaf skill.

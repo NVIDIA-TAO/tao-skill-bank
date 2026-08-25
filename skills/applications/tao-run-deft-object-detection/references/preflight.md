@@ -218,6 +218,38 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 - `kpi.conf_threshold` — `0.0` (frozen as `config.kpi_conf_threshold`; every phase is scored at it)
 - workspace root — user prompt, else `~/workspace`
 
+## Container identity
+
+Every launch in this skill passes `--user "$(id -u):$(id -g)" $DOCKER_IDENTITY`. A uid that has no
+`/etc/passwd` entry inside the image — which is every uid but 1000 on the TAO images —
+then has no name, and `getpass.getuser()` falls back to `pwd.getpwuid()` and raises.
+torch calls it while setting up the inductor cache directory, so the container dies at
+import with `KeyError: 'getpwuid(): uid not found: <uid>'` before the requested action
+starts. `$HOME` is unset for the same reason and defaults to `/`, which is not writable,
+so matplotlib and cupy fail on their cache directories.
+
+Export the identity beside the mounts and pass it to every launch:
+
+```bash
+DEFT_HOME="$WORKSPACE/.deft_home"
+mkdir -p "$DEFT_HOME"
+DOCKER_IDENTITY="-e USER=deft -e HOME=$DEFT_HOME"
+export DOCKER_IDENTITY
+```
+
+Both are required, and neither is sufficient alone. `USER` satisfies
+`getpass.getuser()`, which reads it before consulting `pwd`; any non-empty value works,
+and a literal keeps container logs identical whoever runs the workflow. `HOME` defaults
+to `/`, which is not writable, so without it matplotlib and cupy fail on their cache
+directories even once the uid has a name.
+
+`HOME` points into the workspace rather than at `/tmp` so the caches are owned by the
+caller and removed with the workspace.
+
+This is invisible on a uid-1000 workstation and fires on every shared or cloud host, so a
+run that works locally proves nothing about it. Dropping `--user` is not the alternative:
+see `references/pipeline-and-state.md`.
+
 ## Container mounts
 
 Export them once, right after init, and use the variable in every launch:
