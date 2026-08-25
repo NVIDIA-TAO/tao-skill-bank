@@ -4,7 +4,7 @@ Thanks for contributing! This guide covers **how we work** — trunk-based devel
 
 ## Trunk-based development and backports
 
-We practice **trunk-based development**: all changes land on **`main`** first, then are backported to release branches as needed.
+We practice **trunk-based development**: all changes land on **`main`** first, then are backported to release branches as needed. `main` is the source of truth for every feature, which also means it is **not** the branch users install from — it can carry work in progress and references to pre-release container builds. Releases are cut onto **`release/X.Y.Z`** branches, which are QA'd and tagged, and that tag is what the [install instructions](README.md#install) point users at. This trunk-plus-release-branch model is the one most large open-source projects use (Kubernetes, Linux, LLVM, Apache Spark, and others).
 
 - **Open your PR against `main`**, not against a `release/*` branch.
 - If a fix should also ship in a release, add a **`release/X.Y.Z`** label to the PR — the label name matches the release branch (e.g. `release/7.1.0`). Add several labels to backport to multiple releases.
