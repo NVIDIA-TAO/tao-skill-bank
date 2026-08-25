@@ -1136,15 +1136,18 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
         )
     feature_cache_override = getattr(args, "video_feature_cache_size", None)
     processor_cache_override = getattr(args, "video_processor_cache_size", None)
+    # The Framework video feature/processor caches preserve singleton generation,
+    # so the evaluator rejects them unless evaluation.batch_size is 1. A
+    # fingerprint-locked profile can legitimately ask for a larger batch (one of
+    # the packaged PEFT profiles uses 8), and in that case the caches must stay
+    # off rather than produce a config the evaluator refuses to load.
+    singleton_batch = int(batch_size) == 1
+    default_media_cache = 1 if (optimized_framework_media_profile and singleton_batch) else None
     feature_cache_size = (
-        1
-        if feature_cache_override is None and optimized_framework_media_profile
-        else feature_cache_override
+        default_media_cache if feature_cache_override is None else feature_cache_override
     )
     processor_cache_size = (
-        1
-        if processor_cache_override is None and optimized_framework_media_profile
-        else processor_cache_override
+        default_media_cache if processor_cache_override is None else processor_cache_override
     )
     if feature_cache_size is not None:
         vision["video_feature_cache_size"] = int(feature_cache_size)
