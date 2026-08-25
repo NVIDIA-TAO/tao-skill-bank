@@ -13,10 +13,10 @@ automl_enabled: true
 backend_contracts:
   cosmos-framework:
     path: references/cosmos-framework-backend.yaml
-    container_image: nvcr.io/nvstaging/tao/cosmos_framework:7.2.0-rc-283-multiarch  # versions-key: images.tao_toolkit.cosmos_framework
+    container_image: nvcr.io/nvstaging/tao/cosmos_framework:7.2.0-rc-290-multiarch  # versions-key: images.tao_toolkit.cosmos_framework
   cosmos-rl:
     path: references/cosmos-rl-backend.yaml
-    container_image: nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-283-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
+    container_image: nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-290-multiarch  # versions-key: images.tao_toolkit.cosmos_rl
 backend_resolver: scripts/cosmos_workflow.py
 backend_selection:
   policy: explicit backend wins; otherwise select by model, action, and workflow and report the rationale

@@ -32,7 +32,7 @@ Docker/platform skill instead when it gives a stricter environment-specific
 command (non-root UID mapping, cache redirects, remote daemons).
 
 ```bash
-TAO_PYT_IMAGE_DEFAULT=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-47-multiarch  # versions-key: images.tao_toolkit.pyt
+TAO_PYT_IMAGE_DEFAULT=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.pyt
 TAO_PYT_IMAGE="${TAO_PYT_IMAGE:-$TAO_PYT_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
 DOCKER_COMMON=(

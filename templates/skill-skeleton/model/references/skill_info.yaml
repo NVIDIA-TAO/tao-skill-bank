@@ -13,7 +13,7 @@ type: model
 # Examples:
 #   container_image: tao_toolkit.pyt
 #   container_image: <literal nvcr.io URI stamped from versions.yaml — see the live line below>
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-47-multiarch  # versions-key: images.tao_toolkit.pyt
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.pyt
 required_credentials:
   - HF_TOKEN
 

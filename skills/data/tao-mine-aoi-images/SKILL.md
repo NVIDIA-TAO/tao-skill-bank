@@ -46,7 +46,7 @@ Use the pinned TAO data-services URI below, then confirm Docker, the NVIDIA cont
 
 ```bash
 # Pinned TAO data-services container URI (stamped from the release manifest)
-DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-46-multiarch  # versions-key: images.tao_toolkit.data_services
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
 echo "DS_IMAGE=$DS_IMAGE"
 
 docker info > /dev/null && echo "OK: docker"

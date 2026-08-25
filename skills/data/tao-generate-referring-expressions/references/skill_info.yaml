@@ -1,6 +1,6 @@
 network_arch: tao-generate-referring-expressions
 type: data
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-47-multiarch  # versions-key: images.tao_toolkit.pyt
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.pyt
 gpu_spec_key: null
 required_credentials: []
 actions:
