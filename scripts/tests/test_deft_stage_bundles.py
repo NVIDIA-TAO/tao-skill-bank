@@ -348,3 +348,48 @@ def test_platform_eval_names_a_stage_the_emitter_knows(eval_config, platform,
         "the eval claims this stage needs no GPU; the table must agree or CI "
         "will queue for an accelerator it was told it did not need"
     )
+
+
+def test_the_full_loop_is_covered_on_more_than_one_platform(eval_config):
+    """A loop that only ever runs on docker is not platform-neutral.
+
+    The stage-level evals prove the machinery; only a full-loop eval proves the
+    nine real stages, with real images, actually run somewhere else.
+    """
+    full_loop = [e["id"] for e in eval_config["evals"]
+                 if "deft-loop" in e["id"]]
+    assert len(full_loop) >= 2, (
+        f"only {full_loop} runs the whole loop; the multi-platform claim rests "
+        "on one platform"
+    )
+
+
+@pytest.mark.parametrize("platform", ["docker", "kubernetes"])
+def test_every_full_loop_eval_names_its_platform(eval_config, platform):
+    """The converted references read $PLATFORM; an eval that never sets it
+    leaves the documented commands with nothing to substitute."""
+    entry = next((e for e in eval_config["evals"]
+                  if "deft-loop" in e["id"] and platform in e["prompt"]), None)
+    assert entry is not None, f"no full-loop eval targets {platform}"
+    assert f"PLATFORM={platform}" in entry["prompt"], (
+        f"{entry['id']} never exports PLATFORM={platform}"
+    )
+
+
+def test_the_kubernetes_loop_provisions_a_gpu(eval_config):
+    """The agent has GPUs; minikube does not inherit them without --gpus.
+
+    Without this the training stages cannot schedule, and the tempting recovery
+    -- skip them and report success -- is exactly what must not happen.
+    """
+    entry = next(e for e in eval_config["evals"]
+                 if e["id"] == "deft-loop-ag-mining-kubernetes")
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "--gpus all" in body, "minikube started without GPU support"
+    assert "nvidia-device-plugin" in body or "gpu-operator" in body, (
+        "nothing advertises nvidia.com/gpu, so a GPU request never schedules"
+    )
+    assert "FAILURE" in body and "no GPU" in body, (
+        "skipping the GPU stages on a CPU-only cluster must be graded a failure, "
+        "not quietly tolerated"
+    )
