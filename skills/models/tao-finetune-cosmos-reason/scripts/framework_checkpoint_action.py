@@ -354,19 +354,38 @@ def prepare_export(args: argparse.Namespace) -> dict[str, Any]:
     completed = subprocess.run(full_command, check=False)
     if completed.returncode:
         raise WorkflowError(f"Framework checkpoint exporter failed with child exit code {completed.returncode}")
-    verified = verify_export(
-        checkpoint_path=plan["checkpoint"]["resolved"],
-        config_file=plan["config"]["resolved"],
-        export_dir=str(temporary),
-        base_model_path_or_uri=args.base_model_path_or_uri,
-        base_model_revision=args.base_model_revision,
-    )
+    try:
+        verified = verify_export(
+            checkpoint_path=plan["checkpoint"]["resolved"],
+            config_file=plan["config"]["resolved"],
+            export_dir=str(temporary),
+            base_model_path_or_uri=args.base_model_path_or_uri,
+            base_model_revision=args.base_model_revision,
+        )
+    except PermissionError as error:
+        raise WorkflowError(
+            f"The exporter wrote {temporary} as a different user, so this "
+            f"process cannot read or finalize it ({error}). Container runners "
+            f"default to root while this helper runs as the invoking user. Add "
+            f"the caller's identity to --command-prefix, for example "
+            f"'--user $(id -u):$(id -g) -e HOME=/tmp -e USER=$(id -un)' for "
+            f"docker, so the export is written with the invoking user's "
+            f"ownership."
+        ) from error
 
     displaced = None
-    if final_output.exists():
-        displaced = final_output.with_name(f"{final_output.name}.invalid-{time.time_ns()}")
-        final_output.rename(displaced)
-    temporary.rename(final_output)
+    try:
+        if final_output.exists():
+            displaced = final_output.with_name(f"{final_output.name}.invalid-{time.time_ns()}")
+            final_output.rename(displaced)
+        temporary.rename(final_output)
+    except PermissionError as error:
+        raise WorkflowError(
+            f"Could not move the verified export into {final_output} ({error}). "
+            f"The exporter most likely ran as root inside a container; pass the "
+            f"caller's identity through --command-prefix, for example "
+            f"'--user $(id -u):$(id -g) -e HOME=/tmp -e USER=$(id -un)'."
+        ) from error
     marker = {
         "schema_version": 1,
         "checkpoint": plan["checkpoint"],
@@ -417,7 +436,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             child.add_argument(
                 "--command-prefix",
                 default="",
-                help="Optional shell-quoted runner prefix, such as a Docker or srun container command",
+                help=(
+                    "Optional shell-quoted runner prefix, such as a Docker or "
+                    "srun container command. The prefix must end at the image "
+                    "or step name because the exporter argv is appended "
+                    "verbatim, and it must run as the invoking user so the "
+                    "export is not written as root, e.g. "
+                    "'docker run --rm --gpus all --user $(id -u):$(id -g) "
+                    "-e HOME=/tmp -e USER=$(id -un) -v ... --entrypoint \"\" IMAGE'."
+                ),
             )
     verify = subparsers.add_parser("verify")
     verify.add_argument("--checkpoint-path", required=True)
