@@ -316,7 +316,7 @@ runner = AutoMLRunner(
 
 result = runner.run(
     workspace_path="<automl_workspace>",   # timestamp it to avoid collisions
-    automl_settings=automl_settings,
+    automl_settings=automl_settings,       # must contain an explicit session_id
     spec_overrides=spec_overrides,
     automl_hyperparameters=automl_hyperparameters,
     custom_param_ranges=custom_param_ranges,
@@ -326,9 +326,18 @@ result = runner.run(
 )
 ```
 
+Every fresh run must set `automl_settings["session_id"]` explicitly. Generate
+it once with `scripts/resolve_automl_session.py new` and retain it in the sealed
+runner configuration. Never rely on the wheel's random per-process default.
+
 Only resume an existing workspace when the user explicitly asks to resume,
 continue, recover, or inspect an existing experiment. Treat a plain "run
-AutoML" request as a fresh run.
+AutoML" request as a fresh run. Before `resume=True`, recover the session with
+`scripts/resolve_automl_session.py resolve --workspace <full-run-path>` and put
+that value in `automl_settings["session_id"]`. The helper deliberately fails
+when state is missing or multiple controller files make the workspace
+ambiguous; do not launch until the intended state is proven. Read the resume
+section of `references/automl-advanced-monitoring.md` for the complete pattern.
 
 ## Monitoring
 

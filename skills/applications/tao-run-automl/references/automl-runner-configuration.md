@@ -170,6 +170,7 @@ print("Best:", automl.get_best().specs)
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `algorithm` | str | **required** | `bayesian`, `hyperband`, `bohb`, `asha`, `bfbo`, `dehb`, `pbt`, `hyperband_es`, `llm`, `hybrid`, `autoresearch` |
+| `session_id` | str | **required by this skill** | Stable controller identity. Generate it once for a fresh run with `scripts/resolve_automl_session.py new`; on resume recover it from the full run workspace. Never rely on the wheel's random default. |
 | `metric` | str | `"loss"` | Metric name. The implicit rule for direction is "contains `'loss'` → minimize, else maximize". Override with `direction`. |
 | `direction` | `"minimize"` \| `"maximize"` | inferred | Explicit direction. Required only when it disagrees with the implicit rule. The runner transparently inverts reported values so callers always see their metric in its original scale. |
 | `automl_max_recommendations` | int | 20 | Max trials (bayesian, bfbo, llm) |
