@@ -2,6 +2,27 @@
 
 Portable agent skills for training, evaluating, and running inference on NVIDIA TAO models. Works with Claude Code, Codex, Gemini CLI, or any coding agent that speaks the [Agent Skills open standard](https://agentskills.io). Most local Docker model/data actions need only Docker plus NVIDIA Container Toolkit; application workflows may declare small host-Python requirements for deterministic state and analysis adapters. Advanced features—job tracking, multi-node, S3 I/O—are built in, not bolted on: platform skills implement a four-verb execution contract over their native CLI with no `nvidia-tao-sdk`. See [Execution: no SDK required](#execution-no-sdk-required).
 
+## Branching strategy
+
+`main` is our **development trunk**, not a stable branch — it moves
+continuously and can reference pre-release container builds. Each release is
+cut onto a **`release/X.Y.Z`** branch, QA'd there, and published as a matching
+Git tag on the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/releases).
+**Install from the latest published tag** — that is what every command below
+pins to — and treat both `main` and an unpublished `release/*` branch as
+work in progress. Contributors: see
+[CONTRIBUTING.md](CONTRIBUTING.md#trunk-based-development-and-backports) for how
+changes flow from `main` into a release.
+
+> **Known issue — internal image gating.** Skills on `main` (and on a
+> `release/*` branch before its tag is published) may pin release-candidate
+> container images under `nvcr.io/nvstaging/*`. Those are internal builds:
+> an external NGC account cannot pull them, however valid its `NGC_KEY`.
+> Publishing a release rewrites those pins to public `nvcr.io/nvidia/tao`
+> images, so **no published tag pins an `nvstaging` image**. We are working on a
+> way to host dev and nightly images publicly; until then, install from the
+> latest published tag.
+
 ## Install
 
 The skill bank works with both Claude Code and Codex. Pick the runtime you use.
