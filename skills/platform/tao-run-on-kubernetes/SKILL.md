@@ -101,10 +101,22 @@ is not sufficient proof.
 
 ## Execution — the four verbs
 
+For the IAA SDG composite action, do not use the ordinary single-pod or
+multi-node-training path. Read [IAA SDG composite action](references/iaa-sdg.md)
+and use `scripts/kubernetes_sdg_action.py`; it owns the independently scheduled
+image-worker pool, two-GPU coordinator, endpoint evidence, and cleanup contract.
+
 `tao-run-on-kubernetes` is a platform **consumer**: it runs a spec-bundle via
 `kubectl`, mutating only the job-record. No nvidia-tao-sdk, no `tao_sdk` import —
 jobs are submitted with plain `kubectl apply`.
 `$BANK` = `${TAO_SKILL_BANK_PATH}`.
+
+For every ordinary typed IAA action, use packaged
+`scripts/kubernetes_action.py` for all four verbs. It reuses
+`render_action_job.py`, preserves explicit GPU cardinality, performs a server
+dry-run, creates the exact owned Job, and binds status, logs, and confirmed
+cancel to that request/job. IAA Airflow envelopes may invoke only this packaged
+lifecycle; the generic examples below are for other workflows.
 
 ### submit
 
@@ -201,11 +213,8 @@ Same four verbs, plus:
 
 ## Local cluster (development, CI, and evals)
 
-A throwaway minikube/kind cluster exercises admission, the four verbs,
-job-record wiring, and log plumbing without cluster quota — and is what an
-agent-driven eval should provision for itself. `kubectl` and `minikube` are
-single static binaries needing no root, so a non-root CI container can install
-them itself.
+A throwaway minikube/kind cluster can exercise admission, the four verbs,
+job-record wiring, and logs without cluster quota.
 
 Two prerequisites keep a rendered Job `Pending`, and the first masks the second:
 the PVC the template mounts must exist (`persistentvolumeclaim "<name>" not

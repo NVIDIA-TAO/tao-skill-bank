@@ -137,6 +137,19 @@ def test_brev_platform_metadata_makes_headless_token_optional():
     )
 
 
+def test_slurm_platform_metadata_uses_packaged_partition_default(monkeypatch):
+    monkeypatch.delenv("SLURM_PARTITION", raising=False)
+    monkeypatch.setenv("SLURM_USER", "user")
+    monkeypatch.setenv("SLURM_HOSTNAME", "login.example")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/test-agent.sock")
+    platform = preflight.resolve_platform(REPO, "slurm")
+
+    assert "SLURM_PARTITION" not in preflight.env_missing(platform)
+    assert platform["resource_defaults"]["partition"] == (
+        "polar,polar3,polar4,grizzly"
+    )
+
+
 def test_slurm_preflight_checks_remote_scheduler_pyxis_and_enroot(monkeypatch, tmp_path):
     key = tmp_path / "id_ed25519"
     key.write_text("fixture")
@@ -170,6 +183,8 @@ def test_slurm_preflight_checks_remote_scheduler_pyxis_and_enroot(monkeypatch, t
     assert preflight.check_slurm(platform, [("data", "/shared/data")], {}, 20, False)
     remote_commands = [command[-1] for command in commands]
     assert any("command -v sbatch" in command for command in remote_commands)
+    assert any("command -v squeue" in command for command in remote_commands)
+    assert any("command -v scancel" in command for command in remote_commands)
     assert any("command -v enroot" in command for command in remote_commands)
     assert any("--container-image" in command for command in remote_commands)
 

@@ -45,6 +45,7 @@ _VALID_STAGES = {
     "gap_analysis",
     "data_mining",
     "history_select",
+    "sdg",
     "visualize",
     "train",
     "loop_stop",

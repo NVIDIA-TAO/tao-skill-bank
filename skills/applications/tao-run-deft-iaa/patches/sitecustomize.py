@@ -17,6 +17,18 @@ import sys
 from importlib.abc import Loader, MetaPathFinder
 
 
+# TAO 7.1 data-services loads the configured SigLIP2 weights correctly via
+# its ``SigLIP`` image-embedding branch but rejects the newer selector name
+# before loading. Preserve immutable legacy action argv/specs and apply only
+# this backend-selector compatibility mapping. New run templates already emit
+# ``model: SigLIP`` and therefore do not need the fallback.
+if (
+    "image_embeddings" in sys.argv
+    and not any(argument.startswith("model=") for argument in sys.argv)
+):
+    sys.argv.append("model=SigLIP")
+
+
 def _register_safe_globals(torch_module):
     try:
         import numpy as np

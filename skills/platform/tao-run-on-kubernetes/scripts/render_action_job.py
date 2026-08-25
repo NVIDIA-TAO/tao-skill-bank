@@ -40,6 +40,30 @@ DNS_SUBDOMAIN_RE = re.compile(
 QUANTITY_RE = re.compile(r"[1-9][0-9]*(?:Ki|Mi|Gi|Ti|Pi|Ei)")
 MAX_JOB_NAME = 52
 REQUEST_SCHEMA_VERSION = "1"
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+IAA_WORKFLOW = "tao-run-deft-iaa"
+IAA_ADAPTER_ACTIONS = frozenset({
+    "dataset_rebuild", "dataset_materialize", "gap_analysis",
+    "mining_postprocess", "history_select", "visualize_prepare",
+    "visualize_finish", "eval_config", "train_config",
+    "publish_checkpoint", "iteration_summary", "metric_parse", "report",
+})
+IAA_ADAPTER_ENVIRONMENT = {
+    "HOME": "/tmp",
+    "PYTHONPATH": "/patches",
+    "HF_HOME": "/cache/huggingface",
+    "XDG_CACHE_HOME": "/cache",
+    "IAA_COMPUTE_FRAME": "kubernetes",
+}
+IAA_VISUALIZE_THREAD_CAPS = {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+}
+IAA_CONTROLLER_RUNTIME_RELATIVE = pathlib.PurePosixPath(
+    "applications/tao-run-deft-iaa/scripts"
+)
 
 
 class RenderError(ValueError):
@@ -151,13 +175,14 @@ def _command_bundle(request: dict[str, Any]) -> tuple[str, list[str], str, int]:
     return command, args, image, gpus
 
 
-def _staged_sources(payload: dict[str, Any]) -> dict[str, str]:
+def _staged_sources(payload: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     if payload.get("schema_version") != "1":
         raise RenderError("staging map schema_version must be '1'")
     rows = payload.get("sources")
     if not isinstance(rows, list) or not rows:
         raise RenderError("staging map sources must be a non-empty array")
     result: dict[str, str] = {}
+    digests: dict[str, str] = {}
     sub_paths: dict[str, str] = {}
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -173,7 +198,167 @@ def _staged_sources(payload: dict[str, Any]) -> dict[str, str]:
             )
         result[source] = sub_path
         sub_paths[sub_path] = source
-    return result
+        digest = row.get("sha256")
+        if digest is not None:
+            if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+                raise RenderError(f"staging sources[{index}].sha256 must be lowercase SHA-256")
+            digests[source] = digest
+    return result, digests
+
+
+def _canonical_request_sha256(request: dict[str, Any]) -> str:
+    unsigned = dict(request)
+    unsigned.pop("request_sha256", None)
+    return hashlib.sha256(
+        json.dumps(
+            unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _python_tree_sha256(root: pathlib.Path) -> str:
+    files = sorted(path for path in root.rglob("*.py") if "__pycache__" not in path.parts)
+    if not files:
+        raise RenderError(f"IAA runtime has no Python files: {root}")
+    digest = hashlib.sha256()
+    for path in files:
+        if path.is_symlink() or not path.is_file():
+            raise RenderError(f"IAA runtime contains an unsafe Python path: {path}")
+        digest.update(str(path.relative_to(root)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _snapshot_manifest(root: pathlib.Path) -> dict[str, Any]:
+    if root.is_symlink() or not root.is_dir():
+        raise RenderError(f"snapshot root is missing or unsafe: {root}")
+    entries: list[dict[str, Any]] = []
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise RenderError(f"snapshot contains a symlink: {path}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise RenderError(f"snapshot contains a non-regular file: {path}")
+        content = path.read_bytes()
+        entries.append({
+            "path": path.relative_to(root).as_posix(),
+            "size": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        })
+    if not entries:
+        raise RenderError(f"snapshot contains no files: {root}")
+    digest = hashlib.sha256(
+        json.dumps(
+            {"entries": entries}, ensure_ascii=False,
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {"root": str(root), "entries": entries, "sha256": digest}
+
+
+def _validate_snapshot(
+    request: dict[str, Any], field: str, root: pathlib.Path,
+    staged_digests: dict[str, str],
+) -> str:
+    approved = request.get(field)
+    actual = _snapshot_manifest(root)
+    if not isinstance(approved, dict) or approved != actual:
+        raise RenderError(f"{field} does not match the complete local snapshot")
+    digest = actual["sha256"]
+    if staged_digests.get(str(root)) != digest:
+        raise RenderError(f"staging receipt does not bind {field} SHA-256")
+    return digest
+
+
+def _validate_zero_gpu_adapter(
+    request: dict[str, Any], staged: dict[str, str], staged_digests: dict[str, str],
+) -> str:
+    """Validate the only signed request class allowed to render with zero GPUs."""
+    if request.get("workflow") != IAA_WORKFLOW:
+        raise RenderError("zero-GPU actions require the signed IAA workflow contract")
+    name = request.get("name")
+    if name not in IAA_ADAPTER_ACTIONS:
+        raise RenderError("zero-GPU action is not an allowlisted IAA adapter")
+    request_digest = request.get("request_sha256")
+    if (not isinstance(request_digest, str) or SHA256_RE.fullmatch(request_digest) is None
+            or request_digest != _canonical_request_sha256(request)):
+        raise RenderError("zero-GPU adapter request signature is missing or invalid")
+    runtime_digest = request.get("runtime_sha256")
+    if not isinstance(runtime_digest, str) or SHA256_RE.fullmatch(runtime_digest) is None:
+        raise RenderError("zero-GPU adapter requires a runtime_sha256 binding")
+    if request.get("gpu_ids") != []:
+        raise RenderError("zero-GPU adapter request must bind gpu_ids=[]")
+    if request.get("passed_hf_token") is not False or request.get("forward_env") != []:
+        raise RenderError("zero-GPU adapters cannot receive model credentials")
+    expected_environment = dict(IAA_ADAPTER_ENVIRONMENT)
+    if name == "visualize_finish":
+        expected_environment.update(IAA_VISUALIZE_THREAD_CAPS)
+    if request.get("environment") != expected_environment:
+        raise RenderError(
+            "zero-GPU adapter environment must match the exact Kubernetes allowlist"
+        )
+    bundle = request.get("spec_bundle")
+    expected_args = [
+        "/iaa-runtime/run_iaa_compute.py", name,
+        "--results-dir", "/results", "--label", request.get("label"),
+    ]
+    if (not isinstance(bundle, dict) or bundle.get("network_arch") != "iaa-adapter"
+            or bundle.get("command") != "python3" or bundle.get("args") != expected_args):
+        raise RenderError("zero-GPU adapter argv is outside the signed allowlist")
+    runtime_mounts = [
+        row for row in request.get("mounts", [])
+        if isinstance(row, dict) and row.get("target") == "/iaa-runtime"
+    ]
+    if len(runtime_mounts) != 1 or runtime_mounts[0].get("read_only") is not True:
+        raise RenderError("zero-GPU adapter requires one read-only /iaa-runtime mount")
+    patches_mounts = [
+        row for row in request.get("mounts", [])
+        if isinstance(row, dict) and row.get("target") == "/patches"
+    ]
+    if len(patches_mounts) != 1 or patches_mounts[0].get("read_only") is not True:
+        raise RenderError("zero-GPU adapter requires one read-only /patches mount")
+    runtime_source = pathlib.Path(
+        _absolute_clean_path(runtime_mounts[0].get("source"), "IAA runtime source")
+    )
+    patches_source = pathlib.Path(
+        _absolute_clean_path(patches_mounts[0].get("source"), "patches source")
+    )
+    controller = request.get("controller_snapshot")
+    patches = request.get("patches_snapshot")
+    if not isinstance(controller, dict):
+        raise RenderError("controller_snapshot must be an object")
+    if not isinstance(patches, dict):
+        raise RenderError("patches_snapshot must be an object")
+    controller_root = pathlib.Path(
+        _absolute_clean_path(controller.get("root"), "controller_snapshot.root")
+    )
+    patches_root = pathlib.Path(
+        _absolute_clean_path(patches.get("root"), "patches_snapshot.root")
+    )
+    if runtime_source != controller_root / IAA_CONTROLLER_RUNTIME_RELATIVE:
+        raise RenderError("/iaa-runtime source must be derived from controller_snapshot.root")
+    if patches_source != patches_root:
+        raise RenderError("/patches source must equal patches_snapshot.root")
+    _validate_snapshot(
+        request, "controller_snapshot", controller_root, staged_digests
+    )
+    _validate_snapshot(request, "patches_snapshot", patches_root, staged_digests)
+    if str(controller_root) not in staged:
+        raise RenderError("staging map does not contain controller_snapshot.root")
+    if str(runtime_source) in staged:
+        raise RenderError(
+            "staging map must derive /iaa-runtime from controller_snapshot.root"
+        )
+    controller_sub_path = staged.pop(str(controller_root))
+    staged[str(runtime_source)] = posixpath.join(
+        controller_sub_path, IAA_CONTROLLER_RUNTIME_RELATIVE.as_posix()
+    )
+    if _python_tree_sha256(runtime_source / "iaa_deft") != runtime_digest:
+        raise RenderError("IAA runtime source does not match request.runtime_sha256")
+    return runtime_digest
 
 
 def _mounts(
@@ -327,7 +512,14 @@ def render_action_job(
         raise RenderError("shm_size must be a positive binary Kubernetes quantity such as 16Gi")
 
     command, args, image, gpus = _command_bundle(request)
-    staged = _staged_sources(staging_map)
+    staged, staged_digests = _staged_sources(staging_map)
+    adapter_runtime_sha256: str | None = None
+    if gpus == 0:
+        adapter_runtime_sha256 = _validate_zero_gpu_adapter(
+            request, staged, staged_digests
+        )
+    elif request.get("workflow") == IAA_WORKFLOW and request.get("name") in IAA_ADAPTER_ACTIONS:
+        raise RenderError("allowlisted IAA adapters must request exactly zero GPUs")
     volume_mounts, source_modes = _mounts(request, staged)
     _require_writable_outputs(request, source_modes)
     environment = _environment(request, credential_secret)
@@ -337,14 +529,20 @@ def render_action_job(
 
     values: dict[str, Any] = {
         "JOB_NAME_JSON": job_name,
-        "JOB_ID_JSON": job_id,
+        "ANNOTATIONS_JSON": {
+            "tao.nvidia.com/job-record-id": job_id,
+            **({"tao.nvidia.com/runtime-sha256": adapter_runtime_sha256}
+               if adapter_runtime_sha256 is not None else {}),
+        },
         "NAMESPACE_JSON": namespace,
         "TTL_SECONDS_JSON": ttl_seconds,
         "IMAGE_PULL_SECRETS_JSON": image_pull_secrets,
         "IMAGE_JSON": image,
         "COMMAND_JSON": [command],
         "ARGS_JSON": args,
-        "NUM_GPUS_JSON": str(gpus),
+        "RESOURCES_JSON": (
+            {"limits": {"nvidia.com/gpu": str(gpus)}} if gpus else {}
+        ),
         "ENV_JSON": environment,
         "VOLUME_MOUNTS_JSON": volume_mounts,
         "SHM_SIZE_JSON": shm_size,

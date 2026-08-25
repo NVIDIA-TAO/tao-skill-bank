@@ -121,9 +121,10 @@ handler via `SSH_AUTH_SOCK`.
 - **SLURM_HOSTNAME** (required): Comma-separated login hostnames for failover.
   Microservices schema stores this as the list field
   `cloud_specific_details.slurm_hostname`.
-- **SLURM_PARTITION** (required): Partition list for GPU job submission. Ask
-  for this in the mandatory SLURM intake list. The packaged default is
-  `polar,polar3,polar4,grizzly`, which are treated as 4-hour queues.
+- **SLURM_PARTITION** (optional): Partition list for GPU job submission. Use
+  the packaged `polar,polar3,polar4,grizzly` default unless the user selects a
+  different partition or the scheduler rejects the default. These are treated
+  as 4-hour queues.
 - **SSH_KEY_PATH** (preferred and expected before launch): private key path for
   non-interactive public-key auth to the login node. If passwordless SSH fails,
   ask the user for `SSH_KEY_PATH=/path/to/private_key` and show the setup steps

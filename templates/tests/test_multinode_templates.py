@@ -30,6 +30,7 @@ SLURM_VALS = {
     "CPUS_PER_TASK": "16", "TIME": "04:00:00",
     "LOG_DIR": "/lustre/fsw/users/me/results/dino-train-a1b2c3/slurm-logs",
     "SBATCH_EXTRA": "#SBATCH --account=edgeai\n#SBATCH --partition=batch",
+    "REQUEUE_DIRECTIVE": "#SBATCH --requeue",
     "ENV_FILE": "", "EXTRA_ENV": "export NCCL_P2P_DISABLE=1",
     "IMAGE": "/lustre/sqsh/tao.sqsh", "CONTAINER_MOUNTS": "/lustre",
     "COMMAND": "dino train -e /lustre/specs/spec.yaml",
@@ -70,10 +71,29 @@ def test_slurm_world_size_is_node_count_not_gpus():
 
 def test_slurm_rendezvous_and_directives():
     t = render(SLURM, SLURM_VALS)
-    for needle in ("#SBATCH --nodes=2", "#SBATCH --wait-all-nodes=1", "#SBATCH --gres=gpu:8",
+    for needle in ("#SBATCH --nodes=2", "#SBATCH --ntasks=2", "#SBATCH --wait-all-nodes=1", "#SBATCH --gres=gpu:8",
                    "#SBATCH --requeue", "scontrol show hostname", "export NODE_RANK=$SLURM_NODEID",
                    "export MASTER_PORT=29500", "export NCCL_P2P_DISABLE=1"):
         assert needle in t, f"missing: {needle}"
+    assert (
+        "--container-env=NCCL_DEBUG,LOGLEVEL,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,"
+        "NCCL_SOCKET_IFNAME,NCCL_IB_HCA,NCCL_NET"
+    ) in t
+
+
+def test_slurm_logs_do_not_require_slurm_to_create_a_job_subdirectory():
+    t = render(SLURM, SLURM_VALS)
+    assert "/%x-%j.out" in t and "/%x-%j.err" in t
+    assert "/%x-%j/" not in t
+
+
+def test_slurm_multinode_requeue_can_be_disabled():
+    t = render(SLURM, {**SLURM_VALS, "REQUEUE_DIRECTIVE": "#SBATCH --no-requeue"})
+    assert "#SBATCH --no-requeue" in t
+    assert "#SBATCH --requeue" not in t
+    assert subprocess.run(
+        ["bash", "-n", "/dev/stdin"], input=t, text=True, capture_output=True
+    ).returncode == 0
 
 
 def test_slurm_lints_clean_and_uses_sidecar():

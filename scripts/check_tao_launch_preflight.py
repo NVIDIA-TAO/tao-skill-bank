@@ -1525,7 +1525,9 @@ def check_slurm(
         runtime_command = (
             "command -v sbatch >/dev/null && "
             "command -v srun >/dev/null && "
+            "command -v squeue >/dev/null && "
             "command -v sacct >/dev/null && "
+            "command -v scancel >/dev/null && "
             "command -v enroot >/dev/null && "
             "srun --help 2>&1 | grep -q -- --container-image"
         )

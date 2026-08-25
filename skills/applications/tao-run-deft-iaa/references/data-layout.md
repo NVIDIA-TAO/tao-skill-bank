@@ -1,5 +1,9 @@
 # Dataset Setup and Layout
 
+For SLURM, Kubernetes, or Brev, dispatch rebuild and materialization as the
+allowlisted `dataset_rebuild` and `dataset_materialize` zero-GPU actions in
+`platform-execution.md`; shell examples below are local-frame examples.
+
 Read during pre-flight and when the audit selects
 `baseline/dataset_setup`.
 
@@ -28,7 +32,36 @@ skill.
 
 ## Approved extraction and rebuild
 
-Only after the pre-flight gate:
+On remote platforms use the exact `dataset_rebuild` adapter prepare/execute/
+finalize pattern in `platform-execution.md`, with `dataset_setup` as the stage
+directory, `rebuild_verify.log` as the fresh output, and label `baseline`.
+The adapter extracts into a deterministic run-scoped staging directory,
+verifies it, and atomically promotes it. A verified final dataset is reused;
+an incomplete final or staging directory is retained and reported instead of
+being merged or deleted.
+
+On a quota-managed remote filesystem, check both byte and per-user file/inode
+quota before approving a new rebuild. A global `df -i` pass is insufficient:
+for Lustre, inspect `quota -s` and `lfs quota -u "$(id -u)" <mount>` without
+printing credentials. If the remaining file quota cannot hold every expected
+caption and image-link entry, block rebuild. When the same archive-provenance
+dataset is already verified on both the controller and SLURM, initialize the
+new run with that existing controller dataset root and give
+`airflow_slurm_action.py` its exact `--backend-dataset-root`. The signed mount
+mapping reuses it read-only. Never infer a sibling dataset, silently hardlink
+one, or delete an older run to make quota.
+
+After a finalized `dataset_rebuild` failure whose synchronized log proves
+`Disk quota exceeded`, inspect the deterministic run-owned staging tree. If
+its diagnostic value is exhausted and deletion was approved, remove only that
+non-promoted tree with `cleanup_failed_dataset_rebuild.py --confirm`. The
+helper requires matching local and remote failure evidence, refuses an
+existing final dataset, derives the exact staging path from immutable state,
+and writes a non-recoverable cleanup receipt. Never issue a broad manual
+recursive delete.
+
+The following direct command is only for local Docker/virtualenv execution
+after the pre-flight gate:
 
 ```bash
 set -e
@@ -76,16 +109,22 @@ DATASET_ROOT/
 
 ## Materialize run splits and pool
 
-Run the deterministic adapter; it calls the bundled
+Run the deterministic adapter through the selected platform; it calls the bundled
 `materialize_iaa_eval_split`, `materialize_iaa_pool_split`, and
 `convert_clip_image_list_to_parquet` with the immutable config:
 
 ```bash
-"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-  "$SKILL_ROOT/scripts/run_iaa_stage.py" dataset-materialize \
-    --results-dir "$RESULTS_DIR" \
-    --deft-config "$RESULTS_DIR/config/deft_config.yaml"
+STAGE_DIR="$RESULTS_DIR/dataset_setup"
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+    --results-dir "$RESULTS_DIR" --image ds \
+    --stage-dir "$STAGE_DIR" --name dataset_materialize \
+    --fresh-output "$STAGE_DIR/dataset-materialize.host.status.json" -- \
+    python3 /iaa-runtime/run_iaa_compute.py dataset_materialize \
+      --results-dir /results --label baseline
 ```
+
+Execute and finalize this request through `platform-execution.md`.
 
 Required outputs are exact, not glob-selected:
 
@@ -116,8 +155,10 @@ fi
     --iaa-splits-dir "$RESULTS_DIR/iaa_splits" \
     --source-pool-parquet "$RESULTS_DIR/embeddings/source/source_pool.parquet" \
     --verify-log "$RESULTS_DIR/dataset_setup/rebuild_verify.log" \
+    --dataset-rebuild-status \
+      "$RESULTS_DIR/dataset_setup/dataset_rebuild.status.json" \
     --dataset-materialize-status \
-      "$RESULTS_DIR/dataset_setup/dataset-materialize.host.status.json" \
+      "$RESULTS_DIR/dataset_setup/dataset_materialize.status.json" \
     "${CHECKSUM_ARGS[@]}" \
     --summary "IAA dataset rebuilt and run splits materialized"
 ```

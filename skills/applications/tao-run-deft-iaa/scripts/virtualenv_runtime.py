@@ -21,6 +21,28 @@ REFERENCE_DIR = pathlib.Path(__file__).resolve().parent.parent / "references"
 MANIFEST_PATH = REFERENCE_DIR / "virtualenv-runtime-manifest.json"
 MANIFEST_SCHEMA_PATH = REFERENCE_DIR / "virtualenv-runtime-manifest.schema.json"
 
+# nvidia-eff 0.6.6 incorrectly publishes build/development requirements as
+# runtime requirements. TAO's own 7.1.0 data-services image has the same
+# black/isort pip-check findings. Keep this exception exact and fail on every
+# other broken requirement.
+_EFF_PIP_CHECK_EXCEPTIONS = {
+    "nvidia-eff 0.6.6 requires black, which is not installed.",
+    "nvidia-eff 0.6.6 requires pyarmor, which is not installed.",
+    "nvidia-eff 0.6.6 requires pyinstaller, which is not installed.",
+    "nvidia-eff 0.6.6 has requirement isort[requirements]<5, but you have isort 8.0.1.",
+}
+
+
+def _allowed_pip_check_finding(finding: str) -> bool:
+    """Allow only known build metadata or an unused TAO hosted-client edge."""
+
+    if finding in _EFF_PIP_CHECK_EXCEPTIONS:
+        return True
+    return re.fullmatch(
+        r"nvidia-tao-core 7\.1\.0 requires [A-Za-z0-9_.-]+, which is not installed\.",
+        finding,
+    ) is not None
+
 
 _ENV_PROBE = r"""
 import importlib
@@ -30,6 +52,7 @@ import pathlib
 import platform
 import re
 import sys
+import tempfile
 
 contract = json.loads(sys.argv[1])
 errors = []
@@ -43,6 +66,7 @@ facts = {
     "distributions": {},
     "entrypoints": {},
     "imports": [],
+    "initialization_probes": [],
 }
 
 def normalized(name):
@@ -79,6 +103,15 @@ for name, expected in contract["entrypoints"].items():
         )
 
 if contract["probe_imports"]:
+    try:
+        torch = importlib.import_module("torch")
+    except Exception:
+        pass
+    else:
+        # Capture before TAO initializes its subtask registry; export helpers
+        # normalize torch.__version__ in-process for compatibility.
+        facts["torch_version"] = str(torch.__version__)
+        facts["torch_cuda_build"] = str(torch.version.cuda)
     for module in contract["imports"]:
         try:
             importlib.import_module(module)
@@ -86,13 +119,51 @@ if contract["probe_imports"]:
             errors.append(f"import {module} failed: {type(exc).__name__}: {exc}")
         else:
             facts["imports"].append(module)
-    try:
-        torch = importlib.import_module("torch")
-    except Exception:
-        pass
-    else:
-        facts["torch_version"] = str(torch.__version__)
-        facts["torch_cuda_build"] = str(torch.version.cuda)
+    clip_actions = [
+        item.split(":", 1)[1]
+        for item in contract.get("initialization_probes", [])
+        if item.startswith("clip:")
+    ]
+    if clip_actions:
+        try:
+            clip_entrypoint = importlib.import_module(
+                "nvidia_tao_pytorch.multimodal.clip.entrypoint.clip"
+            )
+            subtasks = clip_entrypoint.get_subtask_list()
+        except Exception as exc:
+            errors.append(
+                "CLIP CLI initialization failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        else:
+            if not isinstance(subtasks, dict):
+                errors.append("CLIP CLI initialization returned a non-object subtask map")
+            else:
+                for action in clip_actions:
+                    if action not in subtasks:
+                        errors.append(
+                            f"CLIP CLI initialization lacks required subtask {action}"
+                        )
+                        continue
+                    if action == "train":
+                        try:
+                            from pytorch_lightning.loggers import TensorBoardLogger
+
+                            with tempfile.TemporaryDirectory() as save_dir:
+                                logger = TensorBoardLogger(
+                                    save_dir=save_dir,
+                                    version=1,
+                                    name="lightning_logs",
+                                )
+                                _ = logger.log_dir
+                                logger.finalize("success")
+                        except Exception as exc:
+                            errors.append(
+                                "CLIP train logger initialization failed: "
+                                f"{type(exc).__name__}: {exc}"
+                            )
+                            continue
+                    facts["initialization_probes"].append(f"clip:{action}")
 
 print("IAA_VENV_CONTRACT=" + json.dumps({"errors": errors, "facts": facts}, sort_keys=True))
 """
@@ -133,6 +204,7 @@ def validate_tao_virtualenv(
     probe_imports: bool,
     required_cli: str | None = None,
     minimum_gpus: int | None = None,
+    gpu_ids: list[int] | None = None,
 ) -> pathlib.Path:
     """Verify one profile by ABI, package metadata, imports, pip, and CUDA.
 
@@ -190,6 +262,7 @@ def validate_tao_virtualenv(
         "distributions": configured["distributions"],
         "entrypoints": checked_entrypoints,
         "imports": configured["imports"],
+        "initialization_probes": configured.get("initialization_probes", []),
         "probe_imports": probe_imports,
     }
     completed = subprocess.run(
@@ -269,17 +342,44 @@ def validate_tao_virtualenv(
             check=False,
         )
         if checked.returncode != 0:
-            raise ValueError(_completed_error(checked, f"{profile} pip check"))
+            findings = {
+                line.strip()
+                for line in (checked.stderr or checked.stdout).splitlines()
+                if line.strip()
+            }
+            unexpected = sorted(
+                finding
+                for finding in findings
+                if not _allowed_pip_check_finding(finding)
+            )
+            if unexpected:
+                detail = "; ".join(unexpected)
+                raise ValueError(
+                    f"{profile} pip check failed (exit {checked.returncode}): {detail}"
+                )
 
     if minimum_gpus is not None:
         if minimum_gpus < 1:
             raise ValueError("minimum_gpus must be at least 1")
+        if (
+            not isinstance(gpu_ids, list)
+            or len(gpu_ids) != minimum_gpus
+            or any(
+                not isinstance(item, int) or isinstance(item, bool) or item < 0
+                for item in gpu_ids
+            )
+            or len(set(gpu_ids)) != len(gpu_ids)
+        ):
+            raise ValueError(
+                "gpu_ids must contain exactly minimum_gpus unique non-negative integers"
+            )
         cuda_probe = pathlib.Path(__file__).resolve().parent / "check_iaa_cuda_runtime.py"
         command = [str(python), str(cuda_probe), "--min-gpus", str(minimum_gpus)]
         for name in checked_entrypoints:
             command.extend(["--require-cli", name])
         environment = dict(os.environ)
         environment["PATH"] = str(resolved / "bin") + os.pathsep + environment.get("PATH", "")
+        environment["CUDA_VISIBLE_DEVICES"] = ",".join(str(item) for item in gpu_ids)
         probed = subprocess.run(
             command,
             capture_output=True,

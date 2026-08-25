@@ -9,8 +9,7 @@ kind: Job
 metadata:
   name: @@JOB_NAME_JSON@@
   namespace: @@NAMESPACE_JSON@@
-  annotations:
-    tao.nvidia.com/job-record-id: @@JOB_ID_JSON@@
+  annotations: @@ANNOTATIONS_JSON@@
   labels:
     tao-job: @@JOB_NAME_JSON@@
 spec:
@@ -28,9 +27,7 @@ spec:
           image: @@IMAGE_JSON@@
           command: @@COMMAND_JSON@@
           args: @@ARGS_JSON@@
-          resources:
-            limits:
-              nvidia.com/gpu: @@NUM_GPUS_JSON@@
+          resources: @@RESOURCES_JSON@@
           env: @@ENV_JSON@@
           volumeMounts: @@VOLUME_MOUNTS_JSON@@
       volumes:

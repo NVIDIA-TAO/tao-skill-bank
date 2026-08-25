@@ -55,12 +55,16 @@ def test_mining_template_has_no_competing_runtime_defaults():
     assert mining["knn_metric"] == "???"
 
 
-def test_embedding_specs_name_the_same_siglip2_model():
-    models = {
-        yaml.safe_load((IAA_ROOT / "specs" / name).read_text())["model"]
-        for name in ("image_embed_spec.yaml", "text_embed_spec.yaml")
-    }
-    assert models == {"SigLIP2"}
+def test_embedding_specs_use_supported_selectors_for_same_siglip2_weights():
+    image = yaml.safe_load((IAA_ROOT / "specs/image_embed_spec.yaml").read_text())
+    text = yaml.safe_load((IAA_ROOT / "specs/text_embed_spec.yaml").read_text())
+
+    # TAO 7.1 data-services exposes the SigLIP2 text selector, but its image
+    # action accepts only the SigLIP selector while loading the same SigLIP2
+    # checkpoint from model_path.
+    assert image["model"] == "SigLIP"
+    assert text["model"] == "SigLIP2"
+    assert image["model_path"] == text["model_path"]
 
 
 def test_interrupted_wrapper_reconciles_completed_auto_removed_container(

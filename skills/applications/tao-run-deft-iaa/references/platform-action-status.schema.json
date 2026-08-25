@@ -19,7 +19,21 @@
     "kind": {"const": "platform_action"},
     "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
     "attempt": {"type": "integer", "minimum": 1, "maximum": 2},
-    "platform": {"enum": ["docker", "slurm", "kubernetes", "brev", "virtualenv"]},
+    "dispatch_repair": {"const": 1},
+    "launcher_repair": {"const": 1},
+    "unbound_replay": {"const": 1},
+    "unbound_replay_evidence_sha256": {
+      "type": "string", "pattern": "^[0-9a-f]{64}$"
+    },
+    "train_output_replay": {"const": 1},
+    "train_output_replay_evidence_sha256": {
+      "type": "string", "pattern": "^[0-9a-f]{64}$"
+    },
+    "preallocation_cancel_receipt_sha256": {
+      "type": "string", "pattern": "^[0-9a-f]{64}$"
+    },
+    "resume": {"type": "boolean"},
+    "platform": {"enum": ["docker", "slurm", "kubernetes", "brev", "virtualenv", "airflow"]},
     "job_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
     "backend_ref": {"type": "string", "minLength": 1},
     "storage_tier": {"enum": ["A", "B", "C"]},
@@ -54,5 +68,37 @@
       "enum": ["local-mtime-after-prepare", "remote-mirror-with-delete-before-submit"]
     },
     "artifact_error": {"type": ["string", "null"]}
-  }
+  },
+  "allOf": [
+    {
+      "if": {"required": ["unbound_replay"]},
+      "then": {
+        "required": ["unbound_replay_evidence_sha256"],
+        "properties": {"attempt": {"const": 2}}
+      },
+      "else": {"not": {"required": ["unbound_replay_evidence_sha256"]}}
+    },
+    {
+      "if": {"required": ["preallocation_cancel_receipt_sha256"]},
+      "then": {
+        "properties": {
+          "platform": {"const": "slurm"},
+          "backend_state": {"const": "CANCELED"},
+          "status": {"const": "error"}
+        }
+      }
+    },
+    {
+      "if": {"required": ["train_output_replay"]},
+      "then": {
+        "required": ["train_output_replay_evidence_sha256"],
+        "properties": {
+          "attempt": {"const": 2},
+          "platform": {"const": "slurm"},
+          "name": {"const": "train"}
+        }
+      },
+      "else": {"not": {"required": ["train_output_replay_evidence_sha256"]}}
+    }
+  ]
 }

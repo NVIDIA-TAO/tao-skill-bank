@@ -16,6 +16,8 @@ import tempfile
 
 import yaml
 
+from command_contract import expected_container_command, expected_image_kind
+from deft_action_contract import ADAPTER_ACTIONS
 from run_deft_action import _load_request
 
 
@@ -75,7 +77,22 @@ def _request_contract(
     stage = pathlib.Path(stage_dir)
     if stage.resolve() != stage:
         raise ValueError("action request stage_dir must not traverse symlinks")
-    expected_request = stage / f"{name}.action.json"
+    attempt = request.get("attempt")
+    if (
+        not isinstance(attempt, int)
+        or isinstance(attempt, bool)
+        or attempt not in {1, 2}
+    ):
+        raise ValueError("action request attempt must be 1 or 2")
+    dispatch_repair = request.get("dispatch_repair", 0)
+    if dispatch_repair not in {0, 1} or (dispatch_repair and attempt != 2):
+        raise ValueError("action request dispatch repair is invalid")
+    attempt_infix = (
+        ".dispatch-repair"
+        if dispatch_repair
+        else ("" if attempt == 1 else ".attempt-2")
+    )
+    expected_request = stage / f"{name}{attempt_infix}.action.json"
     if request_path != expected_request:
         raise ValueError(f"action request must remain at {expected_request}")
 
@@ -91,13 +108,20 @@ def _request_contract(
         raise ValueError("action request spec_bundle must be an object")
     bundle_command = bundle.get("command")
     bundle_args = bundle.get("args")
-    if (
-        bundle_command not in {"clip", "embedding", "tmm"}
-        or not isinstance(bundle_args, list)
-        or any(not isinstance(item, str) for item in bundle_args)
+    if not isinstance(bundle_args, list) or any(
+        not isinstance(item, str) for item in bundle_args
     ):
         raise ValueError("action request bundle command/args are invalid")
-    expected_kind = "pyt" if bundle_command == "clip" else "ds"
+    adapter = name in ADAPTER_ACTIONS
+    if adapter:
+        expected_adapter = expected_container_command(
+            name, str(request.get("label", "")), {}
+        )
+        if [bundle_command, *bundle_args] != expected_adapter:
+            raise ValueError("action request typed-adapter command is invalid")
+    elif bundle_command not in {"clip", "embedding", "tmm"}:
+        raise ValueError("action request bundle command/args are invalid")
+    expected_kind = expected_image_kind(name)
     if request.get("image_kind") != expected_kind:
         raise ValueError("action request image_kind does not own the TAO CLI")
 
@@ -164,6 +188,22 @@ def _translate_tree(value, aliases: dict[str, str]):
     return value
 
 
+def _approved_config_path(
+    original: str, translated: pathlib.Path, aliases: dict[str, str]
+) -> bool:
+    """Return whether a translated TAO config stays within a declared mount."""
+    if not translated.is_absolute() or translated.resolve() != translated:
+        return False
+    if translated.is_symlink() or not translated.is_file():
+        return False
+    for target in ("/specs", "/results"):
+        if not original.startswith(f"{target}/"):
+            continue
+        approved_root = pathlib.Path(aliases[target])
+        return approved_root in translated.parents
+    return False
+
+
 def _certificate_path(value: str, name: str) -> str:
     """Accept only an existing normalized certificate file/directory path."""
     if not _absolute_normalized(value):
@@ -221,6 +261,52 @@ def _open_verified_entrypoint(
         raise
 
 
+def _open_verified_interpreter(
+    executable: pathlib.Path, expected_sha256: object, approved_python: pathlib.Path
+) -> tuple[int, str]:
+    """Pin the selected profile interpreter while allowing venv symlink layout."""
+    if not isinstance(expected_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_sha256
+    ):
+        raise ValueError("action request lacks the approved virtualenv entrypoint digest")
+    try:
+        resolved = executable.resolve(strict=True)
+        approved = approved_python.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"cannot resolve approved profile interpreter: {exc}") from exc
+    if resolved != approved:
+        raise ValueError("typed adapter interpreter does not bind the selected profile")
+    try:
+        fd = os.open(resolved, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise ValueError(f"cannot open approved profile interpreter: {exc}") from exc
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o111 == 0:
+            raise ValueError("approved profile interpreter is not executable")
+        digest = hashlib.sha256()
+        prefix = bytearray()
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            if len(prefix) < 4:
+                prefix.extend(chunk[: 4 - len(prefix)])
+        if digest.hexdigest() != expected_sha256:
+            raise ValueError("approved profile interpreter changed after action preparation")
+        if bytes(prefix) != b"\x7fELF":
+            raise ValueError("approved profile interpreter is not a Linux executable")
+        pinned = f"/proc/self/fd/{fd}"
+        if not pathlib.Path(pinned).exists():
+            raise ValueError("pinned virtualenv execution requires Linux procfs")
+        os.set_inheritable(fd, True)
+        return fd, pinned
+    except Exception:
+        os.close(fd)
+        raise
+
+
 def _execution_environment(
     request: dict,
     aliases: dict[str, str],
@@ -228,12 +314,24 @@ def _execution_environment(
 ) -> dict[str, str]:
     """Build the exact child environment without inheriting ambient secrets."""
     configured = request.get("environment")
-    if not isinstance(configured, dict) or set(configured) != {
+    expected_environment = {
         "HOME",
         "PYTHONPATH",
         "HF_HOME",
         "XDG_CACHE_HOME",
-    }:
+    }
+    if request.get("name") in ADAPTER_ACTIONS:
+        expected_environment.add("IAA_COMPUTE_FRAME")
+    if request.get("name") == "visualize_finish":
+        expected_environment.update(
+            {
+                "OPENBLAS_NUM_THREADS",
+                "OMP_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS",
+            }
+        )
+    if not isinstance(configured, dict) or set(configured) != expected_environment:
         raise ValueError("action request environment contract is malformed")
     environment = {
         name: _translate(value, aliases)
@@ -242,9 +340,28 @@ def _execution_environment(
     }
     if set(environment) != set(configured):
         raise ValueError("action request environment values must be strings")
-    expected_patch = pathlib.Path(__file__).resolve().parent.parent / "patches"
-    if environment["PYTHONPATH"] != str(expected_patch):
-        raise ValueError("action request PYTHONPATH must bind the packaged patches")
+    if request.get("name") in ADAPTER_ACTIONS and environment.get(
+        "IAA_COMPUTE_FRAME"
+    ) != "virtualenv":
+        raise ValueError("typed adapter compute-frame binding is invalid")
+    if request.get("name") == "visualize_finish" and any(
+        environment.get(name) != "1"
+        for name in (
+            "OPENBLAS_NUM_THREADS",
+            "OMP_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+        )
+    ):
+        raise ValueError("visualization thread-cap binding is invalid")
+    patch_snapshot = request.get("patches_snapshot")
+    expected_patch = aliases.get("/patches")
+    if (
+        not isinstance(patch_snapshot, dict)
+        or patch_snapshot.get("root") != expected_patch
+        or environment["PYTHONPATH"] != expected_patch
+    ):
+        raise ValueError("action request PYTHONPATH must bind its approved patch snapshot")
     environment.update(
         {
             "VIRTUAL_ENV": approved_virtualenv,
@@ -252,7 +369,40 @@ def _execution_environment(
             "PYTHONUNBUFFERED": "1",
         }
     )
+    gpu_ids = request.get("gpu_ids")
+    bundle = request.get("spec_bundle")
+    compute_shape = bundle.get("compute_shape") if isinstance(bundle, dict) else None
+    if not isinstance(gpu_ids, list) or not isinstance(compute_shape, dict):
+        raise ValueError("action request GPU contract is malformed")
+    requested_gpus = compute_shape.get("gpus")
+    if requested_gpus == 0:
+        if gpu_ids != []:
+            raise ValueError("zero-GPU action request must have no gpu_ids")
+        if os.environ.get("CUDA_VISIBLE_DEVICES", "") != "":
+            raise ValueError("platform runner exposed GPUs to a zero-GPU action")
+        environment["CUDA_VISIBLE_DEVICES"] = ""
+    elif (
+        not isinstance(requested_gpus, int)
+        or isinstance(requested_gpus, bool)
+        or not gpu_ids
+        or any(
+            not isinstance(item, int) or isinstance(item, bool) or item < 0
+            for item in gpu_ids
+        )
+        or len(set(gpu_ids)) != len(gpu_ids)
+        or requested_gpus != len(gpu_ids)
+    ):
+        raise ValueError("action request gpu_ids do not match compute_shape.gpus")
+    else:
+        expected_cuda = ",".join(str(item) for item in gpu_ids)
+        if os.environ.get("CUDA_VISIBLE_DEVICES") != expected_cuda:
+            raise ValueError(
+                "platform runner CUDA_VISIBLE_DEVICES does not match the approved gpu_ids"
+            )
+        environment["CUDA_VISIBLE_DEVICES"] = expected_cuda
     for name in _BENIGN_RUNTIME_ENV:
+        if name == "CUDA_VISIBLE_DEVICES":
+            continue
         value = os.environ.get(name)
         if value is not None:
             environment[name] = value
@@ -292,8 +442,8 @@ def main(argv: list[str] | None = None) -> int:
     if not command:
         print("run_deft_cli: command after -- is required", file=sys.stderr)
         return 2
-    if "/" in command[0] or command[0] not in {"clip", "embedding", "tmm"}:
-        print("run_deft_cli: executable must be clip, embedding, or tmm", file=sys.stderr)
+    if "/" in command[0] or command[0] not in {"clip", "embedding", "tmm", "python3"}:
+        print("run_deft_cli: executable is not an approved workflow entrypoint", file=sys.stderr)
         return 2
     venv = os.environ.get("VIRTUAL_ENV")
     if not venv:
@@ -332,17 +482,10 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         original_source = command[index]
         source = pathlib.Path(translated[index])
-        approved_specs = pathlib.Path(aliases["/specs"])
-        if (
-            not original_source.startswith("/specs/")
-            or not source.is_absolute()
-            or source.resolve() != source
-            or approved_specs not in source.parents
-            or source.is_symlink()
-        ):
+        if not _approved_config_path(original_source, source, aliases):
             print(
                 "run_deft_cli: action config must be a regular file below the "
-                "approved /specs mount",
+                "approved /specs or /results mount",
                 file=sys.stderr,
             )
             return 2
@@ -379,11 +522,18 @@ def main(argv: list[str] | None = None) -> int:
     approved_python = pathlib.Path(approved_virtualenv).resolve() / "bin" / "python"
     executable = pathlib.Path(approved_virtualenv).resolve() / "bin" / translated[0]
     try:
-        executable_fd, pinned_executable = _open_verified_entrypoint(
-            executable,
-            request.get("virtualenv_entrypoint_sha256"),
-            approved_python,
-        )
+        if bundle["command"] == "python3":
+            executable_fd, pinned_executable = _open_verified_interpreter(
+                executable,
+                request.get("virtualenv_entrypoint_sha256"),
+                approved_python,
+            )
+        else:
+            executable_fd, pinned_executable = _open_verified_entrypoint(
+                executable,
+                request.get("virtualenv_entrypoint_sha256"),
+                approved_python,
+            )
     except ValueError as exc:
         print(f"run_deft_cli: {exc}", file=sys.stderr)
         return 127

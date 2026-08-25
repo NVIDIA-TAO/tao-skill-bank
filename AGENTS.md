@@ -49,7 +49,11 @@ uses `scripts/cosmos_workflow.py` for this step.
    one platform, treat that contract as the selection. If it supports several
    and the user did not select one, ask once among its supported installed
    platforms. Then open `skills/platform/<chosen>/SKILL.md` and run its
-   Preflight section. If a missing prerequisite is a small Python helper that
+   Preflight section. Airflow is an optional application-scoped orchestrator
+   for `tao-run-deft-iaa`, not a compute-platform alternative. When requested,
+   retain the selected compute platform, read that skill's
+   `references/airflow-execution.md`, and use its bundled orchestration
+   consumer instead of searching for a global Airflow platform skill. If a missing prerequisite is a small Python helper that
    can be installed with `python -m pip install ...` (for example `boto3` for
    `tao-data-io`), install it in the active environment, report it, and rerun
    preflight. Bail on missing non-Python/system prerequisites.
@@ -70,7 +74,9 @@ uses `scripts/cosmos_workflow.py` for this step.
      topology, checkpoint, and structured-status contracts
 
 3. **Read the platform SKILL.md you'll dispatch to** for execution conventions
-   (mounts, env vars, resource shapes, retry behavior, the four verbs).
+   (mounts, env vars, resource shapes, retry behavior, the four verbs). For
+   optional IAA-only Airflow orchestration, also read the application reference
+   named above; Airflow wraps rather than replaces the selected platform.
 
 4. **Resolve `container_image`.** If it's a dotted key (`tao_toolkit.pyt`),
    look it up in `${TAO_SKILL_BANK_PATH}/versions.yaml`. Absolute URIs
@@ -111,8 +117,8 @@ the bank:
   adds docker-free local Python execution.
 
 When an application supports several platforms, all supported installed
-peers—the bank's five plus external platform skills—are equal class with no
-default; ask if the user has not chosen. A single-platform application has
+peers—the bank's five, application-declared scoped platforms, and external
+platform skills—are equal class with no default; ask if the user has not chosen. A single-platform application has
 already made the selection.
 
 > AutoML hyperparameter search (`tao-run-automl`) is the one workflow that

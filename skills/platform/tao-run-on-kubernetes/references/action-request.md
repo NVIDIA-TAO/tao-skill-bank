@@ -32,6 +32,31 @@ contract, also verify every declared absent path and persist its staging
 receipt before opening the record. Never add an undeclared source or use an
 incremental copy that can retain stale outputs.
 
+### Signed IAA CPU adapters
+
+An IAA typed adapter is the only action request allowed to render with
+`compute_shape.gpus=0`. The renderer verifies the signed request digest, fixed
+adapter allowlist and argv, `gpu_ids=[]`, empty credential forwarding, and
+the exact non-secret Kubernetes adapter environment. Stage the complete
+controller root and patches snapshot. Mount only the exact derived
+`<controller root>/applications/tao-run-deft-iaa/scripts` PVC subpath at
+`/iaa-runtime`, and mount patches at `/patches`; both mounts are read-only.
+Each staging row must bind the corresponding producer snapshot digest:
+
+```json
+{"source":"/run/.tao-runtime/input-snapshots/skills","sub_path":"jobs/action-123/controller","sha256":"<request.controller_snapshot.sha256>"}
+{"source":"/run/.tao-runtime/input-snapshots/patches","sub_path":"jobs/action-123/patches","sha256":"<request.patches_snapshot.sha256>"}
+```
+
+The renderer verifies every local manifest path, size, file digest, and
+aggregate digest, including `run_iaa_compute.py`, and requires the staging
+receipt to attest both aggregate digests. A missing/different file or digest,
+writable controller/patches mount, unsigned or
+unknown zero-GPU action, or adapter requesting a GPU fails closed. A valid CPU
+adapter renders `resources: {}` and therefore does not request the NVIDIA
+device plugin. Its Job annotation records the job-record ID and runtime digest;
+ordinary status/log/cancel and output evidence remain unchanged.
+
 ## Record, credentials, and backend name
 
 Open the job-record only after the staging/freshness gate. Job-record ids allow

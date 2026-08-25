@@ -33,6 +33,7 @@ from command_contract import (
     expected_image_kind,
 )
 from deft_action_contract import platform_evidence_error, remote_freshness_attested
+from runtime_binding import active_runtime_sha256, validate_runtime_lineage
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -101,7 +102,8 @@ def _config(path: pathlib.Path, results: pathlib.Path):
         raise ValueError(
             f"imported iaa_deft at {origin} is outside bundled runtime {source}"
         ) from exc
-    if _python_tree_sha256(source) != state_config.get("iaa_deft_bundle_sha256"):
+    validate_runtime_lineage(state, results)
+    if _python_tree_sha256(source) != active_runtime_sha256(state):
         raise ValueError("bundled IAA runtime changed after initialization")
     expected = pathlib.Path(str(state_config.get("deft_config", ""))).resolve()
     if resolved != expected or expected != results / "config" / "deft_config.yaml":
@@ -144,6 +146,48 @@ def _training_checkpoint(cfg, number: int) -> str:
     if not cfg.continual_model or number == 1:
         return cfg.init_checkpoint
     return f"/results/iter_{number - 1}/pretrained/model_state.pth"
+
+
+def _normalize_generated_gpu_ids(path: pathlib.Path, results: pathlib.Path) -> None:
+    """Translate approved host IDs to ordinals in the isolated CUDA frame."""
+    import yaml
+
+    state = _state(results)
+    state_config = state.get("config")
+    if not isinstance(state_config, dict):
+        raise ValueError("state.config must be an object")
+    num_gpus = state_config.get("num_gpus")
+    if not isinstance(num_gpus, int) or isinstance(num_gpus, bool) or num_gpus < 1:
+        raise ValueError("state.config.num_gpus must be a positive integer")
+
+    payload = yaml.safe_load(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError(f"generated TAO config must be an object: {path}")
+    local_ids = list(range(num_gpus))
+    changed = False
+    for name in ("train", "evaluate", "inference"):
+        section = payload.get(name)
+        if not isinstance(section, dict) or "gpu_ids" not in section:
+            continue
+        section["num_gpus"] = num_gpus
+        section["gpu_ids"] = local_ids
+        changed = True
+    if not changed:
+        raise ValueError(f"generated TAO config has no GPU-bearing section: {path}")
+
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w") as handle:
+            yaml.safe_dump(payload, handle, default_flow_style=False, sort_keys=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
 
 
 def dataset_materialize(args: argparse.Namespace) -> dict[str, Any]:
@@ -492,6 +536,7 @@ def train_config(args: argparse.Namespace) -> dict[str, Any]:
         sdg_image_list_file=f"/results/iter_{args.iter_num}/datagen/dataset/sdg_image_list.txt",
         sdg_pairs_file=f"/results/iter_{args.iter_num}/datagen/dataset/sdg_pairs.json",
     )
+    _normalize_generated_gpu_ids(output, results)
     _require([output])
     return {"train_config": str(output), "checkpoint_input": _training_checkpoint(cfg, args.iter_num)}
 
@@ -652,6 +697,7 @@ def eval_config(args: argparse.Namespace) -> dict[str, Any]:
         eval_image_list_file="/results/iaa_splits/eval_list.txt",
         caption_file_suffix=".txt",
     )
+    _normalize_generated_gpu_ids(output, results)
     _require([output])
     return {"eval_config": str(output), "checkpoint": checkpoint}
 
@@ -942,6 +988,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     try:
         results = _results(args.results_dir)
+        state = _state(results)
+        platform = state.get("config", {}).get("platform")
+        if os.environ.get("IAA_COMPUTE_FRAME") != platform:
+            raise ValueError(
+                f"{platform} workflow mutators must run through a platform action"
+            )
         status_dir = _status_directory(args, results)
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         print(f"run_iaa_stage[{args.stage}]: {exc}", file=sys.stderr)

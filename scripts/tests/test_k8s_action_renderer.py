@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -30,6 +32,12 @@ RESULTS = "/localhome/user/workspace/results/run_iaa_k8s"
 CONFIG = RESULTS + "/config"
 PATCHES = "/opt/tao-skill-bank/skills/applications/tao-run-deft-iaa/patches"
 CACHE = "/localhome/user/workspace/cache"
+IAA_RUNTIME = str(
+    REPO / "skills/applications/tao-run-deft-iaa/scripts"
+)
+IAA_PATCHES = str(
+    REPO / "skills/applications/tao-run-deft-iaa/patches"
+)
 
 
 def iaa_pool_embed_request():
@@ -84,6 +92,76 @@ def iaa_staging_map():
     }
 
 
+def iaa_controller_trees(root):
+    root = Path(root)
+    controller = root / "skills"
+    runtime = controller / "applications/tao-run-deft-iaa/scripts"
+    patches = root / "patches"
+    shutil.copytree(IAA_RUNTIME, runtime, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(IAA_PATCHES, patches, ignore=shutil.ignore_patterns("__pycache__"))
+    artifact = controller / "core/tao-artifacts/references/spec_bundle.schema.json"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("{}\n", encoding="utf-8")
+    return controller, runtime, patches
+
+
+def signed_adapter_request(base, name="gap_analysis", controller=None, patches=None):
+    if controller is None or patches is None:
+        fixture = Path(tempfile.mkdtemp(dir=base))
+        controller, runtime, patches = iaa_controller_trees(fixture)
+    else:
+        controller = Path(controller)
+        patches = Path(patches)
+        runtime = controller / "applications/tao-run-deft-iaa/scripts"
+    controller = str(controller)
+    runtime = str(runtime)
+    patches = str(patches)
+    runtime_digest = renderer._python_tree_sha256(Path(runtime) / "iaa_deft")
+    output = RESULTS + "/iter_1/gaps/kpi_gaps.parquet"
+    request = {
+        "schema_version": "1", "workflow": "tao-run-deft-iaa",
+        "platform": "kubernetes", "name": name, "label": "iter1",
+        "runtime_sha256": runtime_digest, "gpu_ids": [],
+        "passed_hf_token": False, "forward_env": [],
+        "workload_image": "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services",
+        "spec_bundle": {
+            "network_arch": "iaa-adapter", "action": "signed-adapter-action",
+            "image": "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services",
+            "mode": "args", "command": "python3",
+            "args": ["/iaa-runtime/run_iaa_compute.py", name,
+                     "--results-dir", "/results", "--label", "iter1"],
+            "compute_shape": {"gpus": 0, "nodes": 1},
+        },
+        "mounts": [
+            {"source": RESULTS, "target": "/results", "read_only": False},
+            {"source": RESULTS, "target": RESULTS, "read_only": False},
+            {"source": CONFIG, "target": "/specs", "read_only": True},
+            {"source": patches, "target": "/patches", "read_only": True},
+            {"source": CACHE, "target": "/cache", "read_only": False},
+            {"source": runtime, "target": "/iaa-runtime", "read_only": True},
+        ],
+        "environment": {
+            "HOME": "/tmp", "PYTHONPATH": "/patches",
+            "HF_HOME": "/cache/huggingface", "XDG_CACHE_HOME": "/cache",
+            "IAA_COMPUTE_FRAME": "kubernetes",
+        },
+        "controller_snapshot": renderer._snapshot_manifest(Path(controller)),
+        "patches_snapshot": renderer._snapshot_manifest(Path(patches)),
+        "fresh_outputs": [output],
+    }
+    request["request_sha256"] = renderer._canonical_request_sha256(request)
+    staging = iaa_staging_map()
+    next(row for row in staging["sources"] if row["source"] == PATCHES)["source"] = patches
+    next(row for row in staging["sources"] if row["source"] == patches).update({
+        "sha256": request["patches_snapshot"]["sha256"],
+    })
+    staging["sources"].append({
+        "source": controller, "sub_path": "jobs/abc123/controller",
+        "sha256": request["controller_snapshot"]["sha256"],
+    })
+    return request, staging
+
+
 def render(request=None, staging=None, **kwargs):
     return renderer.render_action_job(
         request or iaa_pool_embed_request(),
@@ -124,6 +202,115 @@ def test_iaa_five_mount_request_preserves_aliases_and_access_modes():
     assert action["command"] == ["embedding"]
     assert action["args"] == iaa_pool_embed_request()["spec_bundle"]["args"]
     assert action["resources"]["limits"]["nvidia.com/gpu"] == "1"
+
+
+def test_signed_iaa_adapter_is_cpu_only_and_runtime_digest_bound(tmp_path):
+    request, staging = signed_adapter_request(tmp_path)
+    job, action = container(render(request=request, staging=staging))
+    assert action["resources"] == {}
+    assert "nvidia.com/gpu" not in json.dumps(action)
+    mounts = {item["mountPath"]: item for item in action["volumeMounts"]}
+    assert mounts["/iaa-runtime"]["readOnly"] is True
+    assert mounts["/iaa-runtime"]["subPath"].endswith(
+        "controller/applications/tao-run-deft-iaa/scripts"
+    )
+    assert job["metadata"]["annotations"]["tao.nvidia.com/runtime-sha256"] == request["runtime_sha256"]
+
+
+def test_visualize_finish_accepts_fixed_native_math_thread_caps(tmp_path):
+    request, staging = signed_adapter_request(tmp_path, name="visualize_finish")
+    request["environment"].update(renderer.IAA_VISUALIZE_THREAD_CAPS)
+    request["request_sha256"] = renderer._canonical_request_sha256(request)
+
+    _, action = container(render(request=request, staging=staging))
+    environment = {item["name"]: item["value"] for item in action["env"]}
+
+    assert all(
+        environment[name] == value
+        for name, value in renderer.IAA_VISUALIZE_THREAD_CAPS.items()
+    )
+
+
+def test_zero_gpu_non_adapter_is_rejected():
+    request = iaa_pool_embed_request()
+    request["spec_bundle"]["compute_shape"]["gpus"] = 0
+    with pytest.raises(renderer.RenderError, match="zero-GPU actions require"):
+        render(request=request)
+
+
+def test_adapter_requires_valid_signature_and_read_only_bound_runtime(tmp_path):
+    request, staging = signed_adapter_request(tmp_path)
+    request["request_sha256"] = "0" * 64
+    with pytest.raises(renderer.RenderError, match="signature"):
+        render(request=request, staging=staging)
+
+    request, staging = signed_adapter_request(tmp_path)
+    next(row for row in request["mounts"] if row["target"] == "/iaa-runtime")["read_only"] = False
+    request["request_sha256"] = renderer._canonical_request_sha256(request)
+    with pytest.raises(renderer.RenderError, match="read-only"):
+        render(request=request, staging=staging)
+
+    request, staging = signed_adapter_request(tmp_path)
+    controller_root = request["controller_snapshot"]["root"]
+    next(row for row in staging["sources"] if row["source"] == controller_root)["sha256"] = "0" * 64
+    with pytest.raises(renderer.RenderError, match="staging receipt"):
+        render(request=request, staging=staging)
+
+    request, staging = signed_adapter_request(tmp_path)
+    next(
+        row for row in request["mounts"] if row["target"] == "/iaa-runtime"
+    )["source"] = request["controller_snapshot"]["root"]
+    request["request_sha256"] = renderer._canonical_request_sha256(request)
+    with pytest.raises(renderer.RenderError, match="derived"):
+        render(request=request, staging=staging)
+
+
+def test_adapter_rejects_credential_like_environment_extra(tmp_path):
+    request, staging = signed_adapter_request(tmp_path)
+    request["environment"]["AWS_SECRET_ACCESS_KEY"] = "must-not-render"
+    request["request_sha256"] = renderer._canonical_request_sha256(request)
+    with pytest.raises(renderer.RenderError, match="environment"):
+        render(request=request, staging=staging)
+
+
+@pytest.mark.parametrize(
+    ("tree", "operation", "relative"),
+    [
+        ("controller", "mutate", "run_iaa_compute.py"),
+        ("controller", "extra", "unexpected.py"),
+        ("controller", "missing", "run_iaa_compute.py"),
+        (
+            "controller-root", "mutate",
+            "core/tao-artifacts/references/spec_bundle.schema.json",
+        ),
+        ("patches", "mutate", None),
+        ("patches", "extra", "unexpected.patch"),
+        ("patches", "missing", None),
+    ],
+)
+def test_adapter_rejects_complete_snapshot_tree_changes(
+    tmp_path, tree, operation, relative,
+):
+    controller, runtime, patches = iaa_controller_trees(tmp_path)
+    request, staging = signed_adapter_request(
+        tmp_path, controller=controller, patches=patches
+    )
+    target_root = (
+        runtime if tree == "controller"
+        else controller if tree == "controller-root"
+        else patches
+    )
+    files = sorted(path for path in target_root.rglob("*") if path.is_file())
+    target = target_root / relative if relative else files[0]
+    if operation == "mutate":
+        target.write_bytes(target.read_bytes() + b"\nmutation")
+    elif operation == "extra":
+        target.write_text("extra", encoding="utf-8")
+    else:
+        target.unlink()
+    snapshot = "controller" if tree.startswith("controller") else "patches"
+    with pytest.raises(renderer.RenderError, match=f"{snapshot}_snapshot"):
+        render(request=request, staging=staging)
 
 
 def test_no_credentials_or_registry_secret_means_no_dangling_secret_refs():

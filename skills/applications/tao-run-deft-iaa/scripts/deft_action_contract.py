@@ -24,7 +24,9 @@ from virtualenv_runtime import validate_tao_virtualenv
 
 
 WORKFLOW = "tao-run-deft-iaa"
-SUPPORTED_PLATFORMS = ("docker", "slurm", "kubernetes", "brev", "virtualenv")
+SUPPORTED_PLATFORMS = (
+    "docker", "slurm", "kubernetes", "brev", "virtualenv", "airflow",
+)
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
     "sdg_config.yaml",
@@ -38,6 +40,13 @@ PINNED_IMAGES = {
     "pyt": "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt",  # versions-key: images.tao_toolkit.pyt
     "ds": "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services",  # versions-key: images.tao_toolkit.data_services
 }
+ADAPTER_ACTIONS = frozenset({
+    "dataset_rebuild", "dataset_materialize", "gap_analysis",
+    "mining_postprocess", "history_select", "visualize_prepare",
+    "visualize_finish", "eval_config", "train_config",
+    "publish_checkpoint", "iteration_summary", "metric_parse", "report",
+    "sdg_normalize_repair",
+})
 
 
 def safe_absolute_path(
@@ -176,7 +185,7 @@ def _workspace_child(
 
 
 def validate_runtime_paths(
-    results_dir: pathlib.Path, config: dict[str, Any]
+    results_dir: pathlib.Path, config: dict[str, Any], *, allow_missing_dataset: bool = False
 ) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
     """Validate local workflow paths without imposing an execution backend."""
     workspace = safe_absolute_path(
@@ -188,7 +197,7 @@ def validate_runtime_paths(
     dataset_root = _workspace_child(
         pathlib.Path(str(config.get("dataset_root", ""))), workspace, "state dataset_root"
     )
-    if not dataset_root.is_dir():
+    if not dataset_root.is_dir() and not (allow_missing_dataset and not dataset_root.exists()):
         raise ValueError(f"state dataset_root is not an existing directory: {dataset_root}")
     if results_dir in dataset_root.parents or dataset_root in results_dir.parents:
         raise ValueError("state results_dir and dataset_root must not contain one another")
@@ -225,6 +234,14 @@ def validate_runtime_paths(
     if platform not in SUPPORTED_PLATFORMS:
         raise ValueError(
             "state platform must be one of " + ", ".join(SUPPORTED_PLATFORMS)
+        )
+    orchestrator = config.get("orchestrator", "direct")
+    if orchestrator not in {"direct", "airflow"}:
+        raise ValueError("state.config.orchestrator must be direct or airflow")
+    if orchestrator == "airflow" and platform == "airflow":
+        raise ValueError(
+            "composed Airflow state must retain the selected compute platform; "
+            "platform=airflow is compatibility-only"
         )
     docker_remote = config.get("docker_remote", False)
     if not isinstance(docker_remote, bool):
@@ -264,8 +281,10 @@ def reject_sensitive_argv(command: list[str]) -> None:
 
 
 def launch_label(name: str, stage_dir: pathlib.Path, results_dir: pathlib.Path) -> str:
-    if name == "pool_embed":
+    if name in {"pool_embed", "dataset_rebuild", "dataset_materialize"}:
         return "baseline"
+    if name == "report":
+        return "terminal"
     relative = stage_dir.relative_to(results_dir)
     if relative.parts and relative.parts[0] == "zs":
         return "baseline"
@@ -317,7 +336,9 @@ def validate_action(
     image = str(config.get(image_key, "")).strip()
     if image != PINNED_IMAGES[image_kind]:
         raise ValueError(f"state.config.{image_key} must be the pinned {image_kind} image")
-    workspace, dataset_root, config_dir = validate_runtime_paths(results_dir, config)
+    workspace, dataset_root, config_dir = validate_runtime_paths(
+        results_dir, config, allow_missing_dataset=name == "dataset_rebuild"
+    )
     platform = str(config["platform"])
     patches_dir = pathlib.Path(__file__).resolve().parent.parent / "patches"
     if not patches_dir.is_dir():
@@ -377,13 +398,18 @@ def validate_action(
         selected_path = safe_absolute_path(
             pathlib.Path(selected), f"state.config.virtualenvs.{image_kind}"
         )
+        adapter = name in ADAPTER_ACTIONS
         virtualenv = (
             validate_tao_virtualenv(
                 selected_path,
                 profile=image_kind,
                 probe_imports=True,
-                required_cli=command[0],
-                minimum_gpus=required_gpus,
+                # Typed adapters execute the exact signed run_iaa_compute.py
+                # snapshot with the profile interpreter; they are not TAO
+                # console scripts and request zero GPUs.
+                required_cli=None if adapter else command[0],
+                minimum_gpus=None if adapter else required_gpus,
+                gpu_ids=None if adapter else config.get("gpu_ids"),
             )
             if verify_virtualenv_runtime
             else selected_path
@@ -416,6 +442,14 @@ def validate_action(
             f"--fresh-output for {name} must be {[str(p) for p in expected_outputs]}, "
             f"got {[str(p) for p in normalized_outputs]}"
         )
+
+    if name == "sdg_normalize_repair":
+        # This adapter exists only for the typed recovery produced by
+        # repair_sdg_normalize_freshness.py.  In particular, an ordinary SDG
+        # stage may not use the zero-GPU path to bypass endpoint execution.
+        from repair_sdg_normalize_freshness import validate_prepared
+
+        validate_prepared(results_dir, int(label.removeprefix("iter")))
 
     cache_dir = safe_absolute_path(workspace / "cache", "workspace cache")
     # Validate every mutation target before creating any of them.  In
@@ -516,7 +550,9 @@ def remote_freshness_attested(payload: dict[str, Any]) -> bool:
     digest = payload.get("staging_receipt_sha256")
     return (
         payload.get("schema_version") == "2"
-        and payload.get("platform") in {"docker", "slurm", "kubernetes", "brev"}
+        and payload.get("platform") in {
+            "docker", "slurm", "kubernetes", "brev", "airflow",
+        }
         and payload.get("freshness_contract")
         == "remote-mirror-with-delete-before-submit"
         and isinstance(digest, str)

@@ -21,6 +21,7 @@ Stage machine (per iteration label):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -36,11 +37,13 @@ from checkpoint_contract import validate_best_checkpoint
 from command_contract import (
     command_sha256,
     expected_container_command,
+    expected_fresh_outputs,
     expected_hf_forwarding,
     expected_image_kind,
 )
 from deft_action_contract import platform_evidence_error, remote_freshness_attested
 from log_stage import append_stage, next_seq
+from iaa_deft.sdg import validate_image_edit_endpoint_pool, validate_normalized_dataset
 
 try:
     from record_metric_result import commit as commit_metric_result
@@ -216,6 +219,270 @@ def _required_parquet(
     return str(resolved)
 
 
+def _validated_sdg_endpoint_evidence(
+    pool_payload: dict[str, Any], auxiliary: dict[str, Any],
+    sdg_config: dict[str, Any], execution_platform: str,
+) -> None:
+    """Bind the runtime pool and auxiliary services to immutable SDG intent."""
+    pool = validate_image_edit_endpoint_pool(pool_payload)
+    expected_capacity = (
+        sdg_config["generation"]["generation_nodes"]
+        * sdg_config["generation"]["gpus_per_generation_node"]
+    )
+    expected_model = sdg_config["models"]["image_edit"]
+    if pool["platform"] != execution_platform:
+        raise ValueError("--endpoint-pool platform disagrees with workflow platform")
+    active_capacity = pool["required_capacity"]
+    services_per_node = sdg_config["generation"]["gpus_per_generation_node"]
+    if execution_platform == "slurm":
+        if not services_per_node <= active_capacity <= expected_capacity or active_capacity % services_per_node:
+            raise ValueError(
+                "--endpoint-pool active capacity is not a complete-worker subset of "
+                "the immutable SLURM generation topology"
+            )
+        topology = auxiliary.get("image_edit_pool")
+        if not isinstance(topology, dict) or topology.get("requested_capacity") != expected_capacity:
+            raise ValueError("--endpoint-manifest requested capacity disagrees with immutable topology")
+        if topology.get("requested_nodes") != sdg_config["generation"]["generation_nodes"]:
+            raise ValueError("--endpoint-manifest requested nodes disagree with immutable topology")
+        if (
+            topology.get("required_capacity") != active_capacity
+            or topology.get("active_nodes") != active_capacity // services_per_node
+        ):
+            raise ValueError("--endpoint-manifest active topology disagrees with endpoint pool")
+    elif active_capacity != expected_capacity:
+        raise ValueError("--endpoint-pool capacity disagrees with immutable generation topology")
+    if pool["model"] != {"id": expected_model["id"], "revision": expected_model["revision"]}:
+        raise ValueError("--endpoint-pool model disagrees with immutable config")
+    request_sha256 = auxiliary.get("request_sha256")
+    if request_sha256 is not None and request_sha256 != pool["request_sha256"]:
+        raise ValueError("--endpoint-manifest request digest disagrees with endpoint pool")
+
+    records = auxiliary.get("containers") or auxiliary.get("probes") or auxiliary.get("roles")
+    if not isinstance(records, dict):
+        raise ValueError("--endpoint-manifest lacks auxiliary role evidence")
+    for role in ("vlm", "llm"):
+        record = records.get(role)
+        if not isinstance(record, dict) or record.get("model") != sdg_config["models"][role]["id"]:
+            raise ValueError(f"--endpoint-manifest {role} model disagrees with immutable config")
+        if execution_platform in {"docker", "virtualenv"}:
+            ownership = sdg_config["endpoints"]["ownership"]
+            if ownership == "managed" and record.get("owned") is not True:
+                raise ValueError(f"--endpoint-manifest {role} is not run-owned")
+        elif record.get("ready") is not True and record.get("probe", {}).get("models_ok") is not True:
+            raise ValueError(f"--endpoint-manifest {role} lacks readiness evidence")
+
+    component_evidence = auxiliary.get("component_images") or auxiliary.get("components")
+    if not isinstance(component_evidence, dict):
+        raise ValueError("--endpoint-manifest lacks workflow-component provenance")
+    for component in ("augmentation", "auto_labeling"):
+        record = component_evidence.get(component)
+        image = record.get("image") if isinstance(record, dict) else record
+        if image != sdg_config["images"][component]:
+            raise ValueError(f"--endpoint-manifest {component} image disagrees with immutable config")
+        if isinstance(record, dict) and record.get("present") is False:
+            raise ValueError(f"--endpoint-manifest lacks local {component} image evidence")
+
+
+def _endpoint_pool_binding(path: pathlib.Path, payload: dict[str, Any]) -> dict[str, Any]:
+    resolved = path.resolve()
+    return {
+        "path": str(resolved),
+        "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+        "request_sha256": payload["request_sha256"],
+        "required_capacity": payload["required_capacity"],
+    }
+
+
+def _endpoint_pool_binding_matches(
+    recorded: Any, canonical: dict[str, Any], execution_platform: str,
+) -> bool:
+    """Validate a pool binding after an evidence-preserving remote sync.
+
+    Remote execution records the backend-absolute pool path.  Airflow/SLURM
+    then synchronizes that exact artifact into the controller results tree,
+    where its absolute prefix necessarily differs.  Retain strict path
+    equality for local execution.  For remote platforms, accept only an
+    identical content/request/capacity binding whose run/iteration-relative
+    suffix is unchanged.
+    """
+    if not isinstance(recorded, dict):
+        return False
+    for field in ("sha256", "request_sha256", "required_capacity"):
+        if recorded.get(field) != canonical.get(field):
+            return False
+    recorded_path = recorded.get("path")
+    canonical_path = canonical.get("path")
+    if not isinstance(recorded_path, str) or not isinstance(canonical_path, str):
+        return False
+    if pathlib.Path(recorded_path) == pathlib.Path(canonical_path):
+        return True
+    if execution_platform not in {"slurm", "brev"}:
+        return False
+    # run_<id>/iter_<N>/datagen/endpoint_pool.json must survive the sync.
+    return pathlib.PurePosixPath(recorded_path).parts[-4:] == pathlib.Path(
+        canonical_path
+    ).parts[-4:]
+
+
+def _synced_remote_path_matches(
+    recorded: str, local: pathlib.Path, results_root: pathlib.Path,
+) -> bool:
+    """Match one backend-absolute path to its synchronized controller path."""
+    if not isinstance(recorded, str):
+        return False
+    remote = pathlib.PurePosixPath(recorded)
+    if not remote.is_absolute() or ".." in remote.parts:
+        return False
+    local_resolved = local.resolve()
+    root_resolved = results_root.resolve()
+    try:
+        relative = local_resolved.relative_to(root_resolved)
+    except ValueError:
+        return False
+    suffix = (root_resolved.name, *relative.parts)
+    return len(remote.parts) >= len(suffix) and remote.parts[-len(suffix):] == suffix
+
+
+def _coarse_slurm_sdg_freshness_attested(
+    payload: dict[str, Any], outputs: list[pathlib.Path], *,
+    scope: pathlib.Path, status_path: pathlib.Path,
+) -> bool:
+    """Accept whole-second Lustre mtimes only with independently bound evidence."""
+    try:
+        started_ns = payload["started_ns"]
+        finished_ns = payload["finished_ns"]
+        attempt = payload["attempt"]
+        if (
+            payload.get("schema_version") != "1"
+            or payload.get("workflow") != "tao-run-deft-iaa"
+            or payload.get("name") != "sdg-normalize"
+            or payload.get("execution_platform") != "slurm"
+            or not isinstance(started_ns, int) or isinstance(started_ns, bool)
+            or not isinstance(finished_ns, int) or isinstance(finished_ns, bool)
+            or not 1 <= started_ns <= finished_ns
+            or not isinstance(attempt, int) or isinstance(attempt, bool)
+            or not 1 <= attempt <= 2
+        ):
+            return False
+        datagen = status_path.parent.parent.resolve()
+        if status_path.resolve() != datagen / "status" / "sdg-normalize.slurm.status.json":
+            return False
+        datagen.relative_to(scope.resolve())
+
+        expected_paths = [str(path.resolve()) for path in outputs]
+        pre_binding = payload.get("pre_action")
+        if not isinstance(pre_binding, dict) or set(pre_binding) != {"path", "sha256"}:
+            return False
+        pre_path = datagen / "status" / "sdg-normalize.slurm.pre-action.json"
+        if (
+            not _synced_remote_path_matches(
+                pre_binding["path"], pre_path, _results_root_for_scope(scope)
+            )
+            or not pre_path.is_file() or pre_path.is_symlink()
+            or hashlib.sha256(pre_path.read_bytes()).hexdigest() != pre_binding["sha256"]
+        ):
+            return False
+        pre = json.loads(pre_path.read_text())
+        if (
+            set(pre) != {
+                "schema_version", "workflow", "name", "execution_platform",
+                "attempt", "started_ns", "inputs", "outputs",
+            }
+            or pre.get("schema_version") != "1"
+            or pre.get("workflow") != "tao-run-deft-iaa"
+            or pre.get("name") != "sdg-normalize"
+            or pre.get("execution_platform") != "slurm"
+            or pre.get("attempt") != attempt
+            or pre.get("started_ns") != started_ns
+            or pre.get("inputs") != payload.get("inputs")
+        ):
+            return False
+        pre_outputs = pre.get("outputs")
+        if not isinstance(pre_outputs, list) or len(pre_outputs) != len(outputs):
+            return False
+        results_root = _results_root_for_scope(scope)
+        for output, record in zip(outputs, pre_outputs):
+            if (
+                not isinstance(record, dict)
+                or set(record) != {"path", "absent"}
+                or record.get("absent") is not True
+                or not _synced_remote_path_matches(
+                    record.get("path"), output, results_root
+                )
+            ):
+                return False
+
+        evidence = payload.get("output_evidence")
+        if not isinstance(evidence, list) or len(evidence) != len(outputs):
+            return False
+        for path, record in zip(outputs, evidence):
+            stat = path.stat()
+            if (
+                not isinstance(record, dict)
+                or set(record) != {"path", "sha256", "size", "mtime_ns"}
+                or not _synced_remote_path_matches(
+                    record.get("path"), path, results_root
+                )
+                or record.get("size") != stat.st_size or stat.st_size <= 0
+                or record.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest()
+                or not isinstance(record.get("mtime_ns"), int)
+                or isinstance(record.get("mtime_ns"), bool)
+                or record["mtime_ns"] % 1_000_000_000 != 0
+                or record["mtime_ns"] // 1_000_000_000 != started_ns // 1_000_000_000
+                or record["mtime_ns"] > finished_ns
+            ):
+                return False
+
+        endpoint_path = datagen / "endpoint_manifest.json"
+        endpoint = json.loads(endpoint_path.read_text())
+        job_id = endpoint.get("job_id")
+        request_sha256 = endpoint.get("request_sha256")
+        action_id = endpoint.get("action_id")
+        request_attempt = endpoint.get("attempt")
+        if (
+            not isinstance(job_id, str) or not re.fullmatch(r"[A-Za-z0-9.-]+", job_id)
+            or not isinstance(request_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", request_sha256) is None
+            or not isinstance(action_id, str) or not action_id
+            or not isinstance(request_attempt, int) or isinstance(request_attempt, bool)
+        ):
+            return False
+        request_path = datagen / ".tao-runtime" / f"sdg.action.{job_id}.json"
+        terminal_path = datagen / f"slurm_sdg_terminal.{job_id}.json"
+        if any(not path.is_file() or path.is_symlink() for path in (endpoint_path, request_path, terminal_path)):
+            return False
+        request = json.loads(request_path.read_text())
+        unsigned = dict(request)
+        unsigned.pop("request_sha256", None)
+        actual_request_sha256 = hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        terminal = json.loads(terminal_path.read_text())
+        if (
+            actual_request_sha256 != request_sha256
+            or request.get("request_sha256") != request_sha256
+            or request.get("action_id") != action_id
+            or request.get("attempt") != request_attempt
+            or len(request.get("expected_outputs", [])) < len(outputs)
+            or terminal.get("status") != "ok"
+            or terminal.get("job_id") != job_id
+            or terminal.get("request_sha256") != request_sha256
+            or terminal.get("action_id") != action_id
+            or terminal.get("attempt") != request_attempt
+        ):
+            return False
+        for source in (request["expected_outputs"], terminal.get("expected_outputs", [])):
+            if len(source) < len(outputs) or any(
+                not _synced_remote_path_matches(recorded, output, results_root)
+                for recorded, output in zip(source[:len(outputs)], outputs)
+            ):
+                return False
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+    return True
+
+
 def _required_command_status(
     path: pathlib.Path | None,
     name: str,
@@ -230,6 +497,8 @@ def _required_command_status(
     required_image: str | None = None,
     required_hf_forwarding: bool | None = None,
     required_platform: str | None = None,
+    allow_coarse_slurm_sdg: bool = False,
+    allow_remote_coarse_mtime: bool = False,
 ) -> str:
     resolved_text, payload = _required_json(path, name, root_type=dict)
     resolved = pathlib.Path(resolved_text)
@@ -279,7 +548,17 @@ def _required_command_status(
         or not 1 <= attempt <= 2
     ):
         raise ValueError(f"{name}.attempt must be an integer in [1, 2]")
-    log_path = pathlib.Path(str(payload.get("log_path", ""))).expanduser()
+    outputs = list(required_outputs or [])
+    if required_output is not None:
+        outputs.append(required_output)
+    recorded_log_path = str(payload.get("log_path", ""))
+    log_path = pathlib.Path(recorded_log_path).expanduser()
+    if allow_coarse_slurm_sdg:
+        local_log = resolved.parent.parent / "logs" / "sdg-normalize.slurm.log"
+        if _synced_remote_path_matches(
+            recorded_log_path, local_log, _results_root_for_scope(scope)
+        ):
+            log_path = local_log
     if (
         not log_path.is_absolute()
         or not log_path.is_file()
@@ -292,6 +571,7 @@ def _required_command_status(
     if not isinstance(payload.get("fresh_outputs"), list) or not payload["fresh_outputs"]:
         raise ValueError(f"{name}.fresh_outputs must be a non-empty list")
     results_root = _results_root_for_scope(scope)
+    coarse_fresh: set[str] = set()
     for item in payload["fresh_outputs"]:
         if not isinstance(item, str):
             raise ValueError(f"{name}.fresh_outputs entries must be absolute paths")
@@ -301,14 +581,22 @@ def _required_command_status(
             raise ValueError(
                 f"{name}.fresh_outputs entry must be a normalized absolute path: {item}"
             )
-        _require_within(
-            str(absolute_output.resolve()), results_root, f"{name}.fresh_outputs"
-        )
-    outputs = list(required_outputs or [])
-    if required_output is not None:
-        outputs.append(required_output)
+        if allow_coarse_slurm_sdg and outputs:
+            matches = [
+                output for output in outputs
+                if _synced_remote_path_matches(item, output, results_root)
+            ]
+            if len(matches) != 1:
+                raise ValueError(
+                    f"{name}.fresh_outputs does not map to one synchronized output: {item}"
+                )
+            coarse_fresh.add(str(matches[0].resolve()))
+        else:
+            _require_within(
+                str(absolute_output.resolve()), results_root, f"{name}.fresh_outputs"
+            )
     if outputs:
-        fresh = {
+        fresh = coarse_fresh or {
             str(pathlib.Path(str(item)).resolve())
             for item in payload.get("fresh_outputs", [])
         }
@@ -320,15 +608,74 @@ def _required_command_status(
                 raise ValueError(
                     f"{name} does not bind required fresh output {output.resolve()}"
                 )
+            mtime_ns = (output.lstat() if output.is_symlink() else output.stat()).st_mtime_ns
+            coarse_sdg = (
+                allow_coarse_slurm_sdg
+                and _coarse_slurm_sdg_freshness_attested(
+                    payload, outputs, scope=scope, status_path=resolved,
+                )
+            )
+            # Some remote filesystems expose only whole-second mtimes. A file
+            # created after a command starts can therefore appear up to (but
+            # never a full) second older than started_ns. This exception is
+            # enabled only by the adapter bridge after its outer finalized
+            # platform status proves the remote staged-absence contract.
+            coarse_remote_mtime = (
+                allow_remote_coarse_mtime
+                and mtime_ns < started_ns
+                and started_ns - mtime_ns < 1_000_000_000
+            )
             if (
-                output.stat().st_mtime_ns < started_ns
+                mtime_ns < started_ns
                 and not remote_freshness_attested(payload)
                 and not (allow_stale_resume and payload.get("resume") is True)
+                and not coarse_sdg
+                and not coarse_remote_mtime
             ):
                 raise ValueError(
                     f"{output} is older than the command recorded by {name}"
                 )
     return str(resolved)
+
+
+def _required_adapter_status(path, argument: str, *, scope: pathlib.Path,
+                             outputs: list[pathlib.Path], adapter: str,
+                             label: str, config: dict,
+                             allow_stale_resume: bool = False) -> str:
+    """Require finalized platform evidence for one deterministic adapter."""
+    results_root = _results_root_for_scope(scope)
+    action_outputs = expected_fresh_outputs(adapter, label, results_root)
+    platform_status = _required_command_status(
+        path, argument, scope=scope, required_outputs=action_outputs,
+        required_name=adapter, allow_stale_resume=allow_stale_resume,
+        required_command=expected_container_command(adapter, label, config),
+        required_image_kind=expected_image_kind(adapter),
+        required_image=config["pyt_image" if expected_image_kind(adapter) == "pyt" else "ds_image"],
+        required_hf_forwarding=False, required_platform=config["platform"],
+    )
+    required = {str(item.resolve()) for item in outputs}
+    directly_bound = {str(item.resolve()) for item in action_outputs}
+    if required.issubset(directly_bound):
+        return platform_status
+    host_statuses = [
+        item for item in action_outputs if item.name.endswith(".host.status.json")
+    ]
+    if len(host_statuses) != 1:
+        missing = sorted(required - directly_bound)
+        raise ValueError(
+            f"{argument} does not bind required adapter outputs: {missing}"
+        )
+    allow_remote_coarse_mtime = False
+    if adapter == "publish_checkpoint":
+        platform_payload = json.loads(pathlib.Path(platform_status).read_text())
+        allow_remote_coarse_mtime = remote_freshness_attested(platform_payload)
+    _required_command_status(
+        host_statuses[0], f"{argument} nested host status", scope=scope,
+        required_outputs=outputs, required_name=adapter.replace("_", "-"),
+        allow_stale_resume=allow_stale_resume,
+        allow_remote_coarse_mtime=allow_remote_coarse_mtime,
+    )
+    return platform_status
 
 
 def _require_within(path: str, root: pathlib.Path, name: str) -> str:
@@ -552,16 +899,25 @@ def _apply_success(
             results_dir / "dataset_setup" / "rebuild_verify.log",
             "--verify-log",
         )
-        dataset_status = _required_command_status(
+        phase["dataset_rebuild_status"] = _require_exact(
+            _required_adapter_status(
+                args.dataset_rebuild_status, "--dataset-rebuild-status",
+                scope=results_dir, outputs=[pathlib.Path(verify_log)],
+                adapter="dataset_rebuild", label="baseline", config=config,
+            ),
+            results_dir / "dataset_setup" / "dataset_rebuild.status.json",
+            "--dataset-rebuild-status",
+        )
+        dataset_status = _required_adapter_status(
             args.dataset_materialize_status,
             "--dataset-materialize-status",
             scope=results_dir,
-            required_outputs=[*split_outputs, source_pool],
-            required_name="dataset-materialize",
+            outputs=[results_dir / "dataset_setup" / "dataset-materialize.host.status.json"], adapter="dataset_materialize",
+            label="baseline", config=config,
         )
         phase["dataset_materialize_status"] = _require_exact(
             dataset_status,
-            results_dir / "dataset_setup" / "dataset-materialize.host.status.json",
+            results_dir / "dataset_setup" / "dataset_materialize.status.json",
             "--dataset-materialize-status",
         )
         if config.get("checksums_file"):
@@ -625,23 +981,30 @@ def _apply_success(
                 "--eval-config",
             )
         )
-        eval_config_status = _required_command_status(
+        eval_config_status = _required_adapter_status(
             args.eval_config_status,
             "--eval-config-status",
             scope=phase_root,
-            required_output=eval_config,
-            required_name="eval-config",
+            outputs=[eval_config], adapter="eval_config", label=iter_label, config=config,
         )
         phase["eval_config"] = str(eval_config)
         phase["eval_config_status"] = _require_exact(
             eval_config_status,
-            phase_root / "specs" / "eval-config.host.status.json",
+            phase_root / "specs" / "eval_config.status.json",
             "--eval-config-status",
         )
         metrics = _require_exact(
             _required_file(args.metrics_aggregate_csv, "--metrics-aggregate-csv"),
             evaluate_dir / "nvidia_pas_metrics_aggregate.csv",
             "--metrics-aggregate-csv",
+        )
+        detailed_metrics = _required_file(
+            evaluate_dir / "nvidia_pas_metrics.csv",
+            "detailed evaluation metrics",
+        )
+        weighted_metrics = _required_file(
+            evaluate_dir / "nvidia_pas_metrics_weighted_aggregate.csv",
+            "weighted evaluation metrics",
         )
         eval_status = _require_exact(
             _require_marker(
@@ -657,7 +1020,12 @@ def _apply_success(
                 args.eval_command_status,
                 "--eval-command-status",
                 scope=phase_root,
-                required_outputs=[pathlib.Path(metrics), pathlib.Path(eval_status)],
+                required_outputs=[
+                    pathlib.Path(detailed_metrics),
+                    pathlib.Path(metrics),
+                    pathlib.Path(weighted_metrics),
+                    pathlib.Path(eval_status),
+                ],
                 required_name="evaluate",
                 required_command=expected_container_command(
                     "evaluate", iter_label, config
@@ -670,8 +1038,18 @@ def _apply_success(
             evaluate_dir / "evaluate.status.json",
             "--eval-command-status",
         )
+        phase["metrics_detailed_csv"] = str(detailed_metrics)
         phase["metrics_aggregate_csv"] = metrics
+        phase["metrics_weighted_aggregate_csv"] = str(weighted_metrics)
         phase["eval_status_json"] = eval_status
+        phase["metric_parse_status"] = _require_exact(
+            _required_adapter_status(
+                args.metric_parse_status, "--metric-parse-status",
+                scope=phase_root, outputs=[evaluate_dir / "metric_result.json"],
+                adapter="metric_parse", label=iter_label, config=config,
+            ),
+            evaluate_dir / "metric_parse.status.json", "--metric-parse-status",
+        )
         required = ("metric_result",)
         missing = [field for field in required if not phase.get(field)]
         if missing or phase.get("status") != "complete":
@@ -690,16 +1068,16 @@ def _apply_success(
                 "--iteration-summary",
             )
             phase["iteration_summary"] = summary
-            summary_status = _required_command_status(
+            summary_status = _required_adapter_status(
                 args.iteration_summary_status,
                 "--iteration-summary-status",
                 scope=phase_root,
-                required_output=pathlib.Path(summary),
-                required_name="iteration-summary",
+                outputs=[pathlib.Path(summary)], adapter="iteration_summary",
+                label=iter_label, config=config,
             )
             phase["iteration_summary_status"] = _require_exact(
                 summary_status,
-                phase_root / "iteration-summary.host.status.json",
+                phase_root / "iteration_summary.status.json",
                 "--iteration-summary-status",
             )
     elif stage == "gap_analysis":
@@ -722,19 +1100,19 @@ def _apply_success(
             results_dir / "caption_selection_history.json",
             "--caption-history",
         )
-        gap_status = _required_command_status(
+        gap_status = _required_adapter_status(
             args.gap_analysis_status,
             "--gap-analysis-status",
             scope=results_dir / f"iter_{feed_number}",
-            required_output=pathlib.Path(phase["gaps_parquet"]),
-            required_name="gap-analysis",
+            outputs=[pathlib.Path(phase["gaps_parquet"])], adapter="gap_analysis",
+            label=f"iter{feed_number}", config=config,
         )
         phase["gap_analysis_status"] = _require_exact(
             gap_status,
             results_dir
             / f"iter_{feed_number}"
             / "gaps"
-            / "gap-analysis.host.status.json",
+            / "gap_analysis.status.json",
             "--gap-analysis-status",
         )
         entries = history_payload.get("entries")
@@ -817,16 +1195,16 @@ def _apply_success(
             phase_root / "mining" / "knn.status.json",
             "--knn-command-status",
         )
-        postprocess_status = _required_command_status(
+        postprocess_status = _required_adapter_status(
             args.mining_postprocess_status,
             "--mining-postprocess-status",
             scope=phase_root,
-            required_output=pathlib.Path(phase["candidate_pairs"]),
-            required_name="mining-postprocess",
+            outputs=[pathlib.Path(phase["candidate_pairs"])], adapter="mining_postprocess",
+            label=iter_label, config=config,
         )
         phase["mining_postprocess_status"] = _require_exact(
             postprocess_status,
-            phase_root / "mining" / "mining-postprocess.host.status.json",
+            phase_root / "mining" / "mining_postprocess.status.json",
             "--mining-postprocess-status",
         )
     elif stage == "history_select":
@@ -884,19 +1262,16 @@ def _apply_success(
                 "cumulative_names",
             )
         ]
-        if phase.get("mining_history"):
-            history_outputs.append(pathlib.Path(phase["mining_history"]))
-        history_status = _required_command_status(
+        history_status = _required_adapter_status(
             args.history_select_status,
             "--history-select-status",
             scope=phase_root,
-            required_outputs=history_outputs,
-            required_name="history-select",
+            outputs=history_outputs, adapter="history_select", label=iter_label, config=config,
             allow_stale_resume=True,
         )
         phase["history_select_status"] = _require_exact(
             history_status,
-            phase_root / "mining" / "history-select.host.status.json",
+            phase_root / "mining" / "history_select.status.json",
             "--history-select-status",
         )
     elif stage == "sdg":
@@ -922,6 +1297,11 @@ def _apply_success(
             _required_file(args.sdg_image_list, "--sdg-image-list"),
             dataset / "sdg_image_list.txt", "--sdg-image-list",
         )
+        validate_normalized_dataset(
+            pathlib.Path(phase["sdg_manifest"]),
+            pathlib.Path(phase["sdg_pairs"]),
+            pathlib.Path(phase["sdg_image_list"]),
+        )
         execution_path, execution = _required_json(
             args.sdg_execution_manifest, "--sdg-execution-manifest", root_type=dict
         )
@@ -930,44 +1310,37 @@ def _apply_success(
         )
         if execution.get("accepted_crops", 0) < 1 or execution.get("accepted_sources", 0) < 1:
             raise ValueError("--sdg-execution-manifest records no accepted generated data")
+        sdg_config_path = pathlib.Path(str(config.get("sdg_config", "")))
+        sdg_config = yaml.safe_load(
+            pathlib.Path(
+                _required_file(sdg_config_path, "state.config.sdg_config")
+            ).read_text()
+        )
+        pool_path, pool_payload = _required_json(
+            args.endpoint_pool, "--endpoint-pool", root_type=dict
+        )
+        phase["endpoint_pool"] = _require_exact(
+            pool_path, datagen / "endpoint_pool.json", "--endpoint-pool"
+        )
         endpoint_path, endpoint_payload = _required_json(
             args.endpoint_manifest, "--endpoint-manifest", root_type=dict
         )
         phase["endpoint_manifest"] = _require_exact(
-            endpoint_path, results_dir / "endpoints" / "manifest.json", "--endpoint-manifest"
+            endpoint_path, datagen / "endpoint_manifest.json", "--endpoint-manifest"
         )
-        if endpoint_payload.get("ownership") not in {"managed", "external"}:
-            raise ValueError("--endpoint-manifest has invalid ownership")
-        sdg_config_path = pathlib.Path(str(config.get("sdg_config", "")))
-        sdg_config = yaml.safe_load(_required_file(sdg_config_path, "state.config.sdg_config").read_text())
-        expected_ownership = sdg_config["endpoints"]["ownership"]
-        if endpoint_payload["ownership"] != expected_ownership:
-            raise ValueError("--endpoint-manifest ownership disagrees with immutable config")
-        component_evidence = endpoint_payload.get("component_images")
-        if not isinstance(component_evidence, dict):
-            raise ValueError("--endpoint-manifest lacks workflow-component provenance")
-        for component in ("augmentation", "auto_labeling"):
-            record = component_evidence.get(component)
-            expected = sdg_config["images"][component]
-            if not isinstance(record, dict) or record.get("present") is not True:
-                raise ValueError(f"--endpoint-manifest lacks local {component} image evidence")
-            if record.get("image") != expected:
-                raise ValueError(f"--endpoint-manifest {component} image disagrees with immutable config")
-        evidence = (
-            endpoint_payload.get("containers")
-            if expected_ownership == "managed"
-            else endpoint_payload.get("probes")
+        _validated_sdg_endpoint_evidence(
+            pool_payload, endpoint_payload, sdg_config, config["platform"]
         )
-        if not isinstance(evidence, dict):
-            raise ValueError("--endpoint-manifest lacks per-role evidence")
-        for role in ("image_edit", "vlm", "llm"):
-            record = evidence.get(role)
-            if not isinstance(record, dict):
-                raise ValueError(f"--endpoint-manifest lacks {role} evidence")
-            if record.get("model") != sdg_config["models"][role]["id"]:
-                raise ValueError(f"--endpoint-manifest {role} model disagrees with immutable config")
-            if expected_ownership == "managed" and record.get("owned") is not True:
-                raise ValueError(f"--endpoint-manifest {role} is not run-owned")
+        execution_pool = execution.get("endpoint_pool")
+        expected_pool_binding = _endpoint_pool_binding(
+            pathlib.Path(phase["endpoint_pool"]), pool_payload
+        )
+        if not _endpoint_pool_binding_matches(
+            execution_pool, expected_pool_binding, config["platform"]
+        ):
+            raise ValueError(
+                "--sdg-execution-manifest endpoint_pool does not bind the canonical pool"
+            )
         status = _required_command_status(
             args.sdg_status, "--sdg-status", scope=phase_root,
             required_outputs=[
@@ -976,10 +1349,20 @@ def _apply_success(
                 pathlib.Path(phase["sdg_image_list"]),
             ],
             required_name="sdg-normalize",
+            allow_coarse_slurm_sdg=config["platform"] == "slurm",
         )
-        phase["sdg_status"] = _require_exact(
-            status, datagen / "status" / "sdg-normalize.host.status.json", "--sdg-status"
-        )
+        status_platforms = {config["platform"]}
+        if config["platform"] in {"docker", "virtualenv"}:
+            status_platforms.add("host")
+        expected_statuses = {
+            (datagen / "status" / f"sdg-normalize.{platform}.status.json").resolve()
+            for platform in status_platforms
+        }
+        if pathlib.Path(status).resolve() not in expected_statuses:
+            raise ValueError(
+                "--sdg-status must be the canonical platform-specific sdg-normalize status"
+            )
+        phase["sdg_status"] = status
     elif stage == "visualize":
         if args.skip:
             # Documented branch skip: the loop config disabled visualization,
@@ -1079,29 +1462,29 @@ def _apply_success(
                         )
                     )
                 phase["visualize_command_statuses"] = checked_statuses
-            prepare_status = _required_command_status(
+            prepare_status = _required_adapter_status(
                 args.visualize_prepare_status,
                 "--visualize-prepare-status",
                 scope=phase_root,
-                required_outputs=prepare_outputs,
-                required_name="visualize-prepare",
+                outputs=prepare_outputs, adapter="visualize_prepare",
+                label=iter_label, config=config,
             )
             phase["visualize_prepare_status"] = _require_exact(
                 prepare_status,
-                phase_root / "visualization" / "visualize-prepare.host.status.json",
+                phase_root / "visualization" / "visualize_prepare.status.json",
                 "--visualize-prepare-status",
             )
             if config.get("visualize_embeddings"):
-                finish_status = _required_command_status(
+                finish_status = _required_adapter_status(
                     args.visualize_finish_status,
                     "--visualize-finish-status",
                     scope=phase_root,
-                    required_output=pathlib.Path(phase["tsne_plot"]),
-                    required_name="visualize-finish",
+                    outputs=[pathlib.Path(phase["tsne_plot"])], adapter="visualize_finish",
+                    label=iter_label, config=config,
                 )
                 phase["visualize_finish_status"] = _require_exact(
                     finish_status,
-                    phase_root / "visualization" / "visualize-finish.host.status.json",
+                    phase_root / "visualization" / "visualize_finish.status.json",
                     "--visualize-finish-status",
                 )
     elif stage == "train":
@@ -1118,16 +1501,16 @@ def _apply_success(
             phase_root / "specs" / "train_config.yaml",
             "--train-config",
         )
-        train_config_status = _required_command_status(
+        train_config_status = _required_adapter_status(
             args.train_config_status,
             "--train-config-status",
             scope=phase_root,
-            required_output=pathlib.Path(phase["train_config"]),
-            required_name="train-config",
+            outputs=[pathlib.Path(phase["train_config"])], adapter="train_config",
+            label=iter_label, config=config,
         )
         phase["train_config_status"] = _require_exact(
             train_config_status,
-            phase_root / "specs" / "train-config.host.status.json",
+            phase_root / "specs" / "train_config.status.json",
             "--train-config-status",
         )
         train_tao_status = _require_exact(
@@ -1166,22 +1549,28 @@ def _apply_success(
             ),
         )
         phase.update(provenance)
-        publish_status = _required_command_status(
+        publish_host_status = phase_root / "train" / "publish-checkpoint.host.status.json"
+        publish_status = _required_adapter_status(
             args.publish_checkpoint_status,
             "--publish-checkpoint-status",
             scope=phase_root,
-            required_outputs=[
-                pathlib.Path(phase["pretrained_state"]),
+            outputs=[
+                pathlib.Path(phase["best_ckpt_path"]),
                 pathlib.Path(phase["best_ckpt_metadata"]),
+                pathlib.Path(phase["pretrained_state"]),
             ],
-            required_name="publish-checkpoint",
+            adapter="publish_checkpoint", label=iter_label, config=config,
         )
         phase["publish_checkpoint_status"] = _require_exact(
             publish_status,
-            phase_root / "train" / "publish-checkpoint.host.status.json",
+            phase_root / "train" / "publish_checkpoint.status.json",
             "--publish-checkpoint-status",
         )
-        publish_payload = json.loads(pathlib.Path(publish_status).read_text())
+        # The finalized platform status binds the adapter's host-status file;
+        # that nested status binds the checkpoints produced by the adapter.
+        # Inspecting the outer status here would incorrectly require it to
+        # flatten outputs that belong to the signed nested command.
+        publish_payload = json.loads(publish_host_status.read_text())
         publish_fresh = {
             str(pathlib.Path(os.path.abspath(pathlib.Path(str(item)).expanduser())))
             for item in publish_payload.get("fresh_outputs", [])
@@ -1410,6 +1799,7 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--iaa-splits-dir", type=pathlib.Path)
+    parser.add_argument("--dataset-rebuild-status", type=pathlib.Path)
     parser.add_argument("--dataset-materialize-status", type=pathlib.Path)
     parser.add_argument("--source-pool-parquet", type=pathlib.Path)
     parser.add_argument(
@@ -1427,6 +1817,7 @@ def _parser() -> argparse.ArgumentParser:
         help=f'evaluate status artifact; must contain "{_EVAL_SUCCESS_MARKER}".',
     )
     parser.add_argument("--metric-result", type=pathlib.Path)
+    parser.add_argument("--metric-parse-status", type=pathlib.Path)
     parser.add_argument("--eval-command-status", type=pathlib.Path)
     parser.add_argument("--eval-config", type=pathlib.Path)
     parser.add_argument("--eval-config-status", type=pathlib.Path)
@@ -1451,6 +1842,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--sdg-pairs", type=pathlib.Path)
     parser.add_argument("--sdg-image-list", type=pathlib.Path)
     parser.add_argument("--sdg-execution-manifest", type=pathlib.Path)
+    parser.add_argument("--endpoint-pool", type=pathlib.Path)
     parser.add_argument("--endpoint-manifest", type=pathlib.Path)
     parser.add_argument("--sdg-status", type=pathlib.Path)
     parser.add_argument("--samples-dir", type=pathlib.Path)

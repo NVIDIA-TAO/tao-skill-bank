@@ -1,11 +1,11 @@
 ---
 name: tao-run-on-virtualenv
-description: Run a Python training/eval script directly in an existing local virtualenv — no docker, no container. Implements the four-verb consumer contract (submit/status/logs/cancel) over a vendored process-lifecycle runner with durable on-disk state, PID-reuse-safe identity, and process-group cleanup. Use for docker-free local execution, plain-Python model scripts, fast HPO/AutoML trial smokes, or hosts where containers are unavailable. Trigger phrases include "run in my venv", "no docker", "virtualenv execution", "local python training", "run this training script directly".
+description: Run a Python training/eval script or a packaged TAO workflow action directly in compatible existing local virtualenv profiles — no docker or container. Implements the four-verb consumer contract (submit/status/logs/cancel) over a vendored process-lifecycle runner with durable on-disk state, PID-reuse-safe identity, and process-group cleanup. Use for docker-free local execution, verified TAO workflow profiles, plain-Python model scripts, fast HPO/AutoML trial smokes, or hosts where containers are unavailable. Trigger phrases include "run in my venv", "no docker", "virtualenv execution", "local Python training", and "run this TAO workflow in virtualenv".
 license: Apache-2.0
 compatibility: Requires a local Python virtualenv (pyvenv.cfg + bin/python) with the training script's dependencies installed. Linux with procfs and pidfd signaling is required for active job cancellation; other POSIX hosts can run jobs and prove empty groups but fail closed rather than signal numeric process IDs. No nvidia-tao-sdk, no docker.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.1.1"
 allowed-tools: Read Bash
 tags:
 - platform
@@ -25,14 +25,34 @@ shell, never activating anything. The vendored runner
 lifecycle. Job records stay with `tao_job_record.py`; specs are authored by the
 agent, exactly like every other platform.
 
+## Full IAA workflow boundary
+
+This platform is Docker-free only for actions whose complete dependency set is
+present in the approved virtualenv. The current full `tao-run-deft-iaa`
+workflow is **not platform-pure virtualenv execution**: its TAO and typed CPU
+adapter actions can execute natively, but managed image-edit/VLM/LLM serving
+and the augmentation/auto-labeling components use pinned containers. Treat that
+workflow as `native TAO + container-backed SDG`, require Docker plus the NVIDIA
+runtime during its launch preflight, and disclose the hybrid boundary in the
+approval summary.
+
+Fail closed when a user requires a container-free full IAA run. External model
+endpoints do not make it pure because the PAIDF components remain
+container-backed. Do not install speculative `vllm`, PAIDF, or image-derived
+packages into the TAO profiles: no supported hash-locked native artifacts for
+those roles are currently shipped. A typed CPU adapter request is not an SDG
+endpoint or PAIDF component and must remain on its signed zero-GPU allowlist.
+
 ## When to use
 
-- The workload is a **plain Python script** (its dependencies pip-installed in
-  a venv), not a TAO container action.
+- The workload is a **plain Python script** with its dependencies installed in
+  a venv, or a packaged workflow such as IAA that emits a platform-neutral TAO
+  action and names compatible, preflight-verified execution profiles.
 - **No docker** on the host, or container startup cost isn't worth it (fast
   smokes, AutoML trial loops over lightweight models).
-- Single node only. For TAO container actions use `tao-run-on-docker`; for
-  clusters use `-slurm` / `-kubernetes`.
+- Single node only. A workflow action is executable here only when its producer
+  explicitly supports virtualenv and verifies the required profiles; otherwise
+  use `tao-run-on-docker`. For clusters use `-slurm` / `-kubernetes`.
 
 ## Preflight
 
@@ -132,5 +152,9 @@ finished before the cancel — mark the record with the status it reports instea
   members returns `UNKNOWN` instead of risking a reused numeric PID or PGID.
 - **No multi-node, no image resolution** — there is no container. The "image"
   recorded is the venv's interpreter path.
+- **Workflow composition still matters.** The no-container statement applies
+  to work consumed by this platform. Full IAA currently composes those native
+  actions with container-backed SDG and must never be described as
+  platform-pure virtualenv execution.
 - The runner never downloads anything. Remote inputs are the agent's job to
   stage first (`tao-data-io`).

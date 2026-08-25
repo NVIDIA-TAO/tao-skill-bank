@@ -151,9 +151,10 @@ handler via `SSH_AUTH_SOCK`.
 - **SLURM_HOSTNAME** (required): Comma-separated login hostnames for failover.
   Microservices schema stores this as the list field
   `cloud_specific_details.slurm_hostname`.
-- **SLURM_PARTITION** (required): Partition list for GPU job submission. Ask
-  for this in the mandatory SLURM intake list. The packaged default is
-  `polar,polar3,polar4,grizzly`, which are treated as 4-hour queues.
+- **SLURM_PARTITION** (optional): Partition list for GPU job submission. Use
+  the packaged `polar,polar3,polar4,grizzly` default unless the user selects a
+  different partition or the scheduler rejects the default. These are treated
+  as 4-hour queues.
 - **SSH_KEY_PATH** (preferred and expected before launch): private key path for
   non-interactive public-key auth to the login node. If passwordless SSH fails,
   ask the user for `SSH_KEY_PATH=/path/to/private_key` and show the setup steps
@@ -216,6 +217,20 @@ ssh -o BatchMode=yes <SLURM_USER>@<working-login-host> \
 If the remote `test -e` fails, stop and ask for corrected paths or for the data
 to be staged onto shared cluster storage. Do not create runner scripts that will
 fail inside the first training job.
+
+For workflows that create many files, validate the user's quota as well as
+filesystem-wide capacity. `df -h` and `df -i` do not expose a Lustre user's
+file limit:
+
+```bash
+ssh -o BatchMode=yes <SLURM_USER>@<working-login-host> \
+  'quota -s 2>/dev/null || true; lfs quota -u "$(id -u)" <LUSTRE_MOUNT>'
+```
+
+Compare both remaining bytes and remaining files with the workflow's declared
+output estimate. Block launch when either is insufficient. Never delete older
+runs automatically to make quota, and never treat a filesystem-wide inode pass
+as evidence that a per-user file quota will pass.
 
 ## SSH Failure Remediation Prompt
 

@@ -22,6 +22,14 @@ _MODEL_COMMANDS = {
     "evaluate",
 }
 
+_ADAPTERS = {
+    "dataset_rebuild", "dataset_materialize", "gap_analysis",
+    "mining_postprocess", "history_select", "visualize_prepare",
+    "visualize_finish", "eval_config", "train_config",
+    "publish_checkpoint", "iteration_summary", "metric_parse", "report",
+    "sdg_normalize_repair",
+}
+
 
 def command_sha256(command: list[str]) -> str:
     """Return a stable digest for an argv vector (without shell parsing)."""
@@ -42,6 +50,17 @@ def expected_container_command(
     name: str, label: str, config: dict[str, Any]
 ) -> list[str]:
     """Build the one allowed argv vector for a named workflow launch."""
+    if name in _ADAPTERS:
+        if name == "sdg_normalize_repair":
+            return [
+                "python3", "/iaa-runtime/repair_sdg_normalize_freshness.py",
+                "recompute", "--results-dir", "/results",
+                "--iteration", str(_iteration_number(label)),
+            ]
+        return [
+            "python3", "/iaa-runtime/run_iaa_compute.py", name,
+            "--results-dir", "/results", "--label", label,
+        ]
     if name == "pool_embed":
         if label != "baseline":
             raise ValueError("pool_embed is valid only for baseline")
@@ -113,6 +132,8 @@ def expected_container_command(
 
 
 def expected_image_kind(name: str) -> str:
+    if name in _ADAPTERS:
+        return "pyt" if name == "publish_checkpoint" else "ds"
     if name in {"train", "evaluate"}:
         return "pyt"
     if name in {
@@ -136,6 +157,10 @@ def expected_stage_directory(
     name: str, label: str, results_dir: pathlib.Path
 ) -> pathlib.Path:
     """Return the exact host directory that owns a container status."""
+    if name in {"dataset_rebuild", "dataset_materialize"}:
+        return results_dir / "dataset_setup"
+    if name == "report":
+        return results_dir
     if name == "pool_embed":
         if label != "baseline":
             raise ValueError("pool_embed is valid only for baseline")
@@ -147,6 +172,21 @@ def expected_stage_directory(
     )
     if name == "evaluate":
         return phase / "evaluate"
+    adapter_suffixes = {
+        "gap_analysis": pathlib.Path("gaps"),
+        "mining_postprocess": pathlib.Path("mining"),
+        "history_select": pathlib.Path("mining"),
+        "visualize_prepare": pathlib.Path("visualization"),
+        "visualize_finish": pathlib.Path("visualization"),
+        "eval_config": pathlib.Path("specs"),
+        "train_config": pathlib.Path("specs"),
+        "publish_checkpoint": pathlib.Path("train"),
+        "iteration_summary": pathlib.Path("."),
+        "metric_parse": pathlib.Path("evaluate"),
+        "sdg_normalize_repair": pathlib.Path("datagen"),
+    }
+    if name in adapter_suffixes:
+        return phase / adapter_suffixes[name]
     _iteration_number(label)
     suffixes = {
         "target_embed": pathlib.Path("embeddings/target"),
@@ -166,6 +206,12 @@ def expected_fresh_outputs(
     name: str, label: str, results_dir: pathlib.Path
 ) -> list[pathlib.Path]:
     """Return the exact files whose recreation proves a container stage."""
+    if name == "dataset_rebuild":
+        return [results_dir / "dataset_setup" / "rebuild_verify.log"]
+    if name == "dataset_materialize":
+        return [results_dir / "dataset_setup" / "dataset-materialize.host.status.json"]
+    if name == "report":
+        return [results_dir / "DEFT_Loop_Report.html"]
     if name == "pool_embed":
         return [results_dir / "embeddings" / "source" / "embeddings.parquet"]
     phase = (
@@ -175,10 +221,40 @@ def expected_fresh_outputs(
     )
     if name == "evaluate":
         return [
+            phase / "evaluate" / "nvidia_pas_metrics.csv",
             phase / "evaluate" / "nvidia_pas_metrics_aggregate.csv",
+            phase / "evaluate" / "nvidia_pas_metrics_weighted_aggregate.csv",
             phase / "evaluate" / "status.json",
         ]
+    if name == "eval_config" and label == "baseline":
+        return [phase / "specs" / "eval_config.yaml"]
+    if name == "metric_parse" and label == "baseline":
+        return [phase / "evaluate" / "metric_result.json"]
     number = _iteration_number(label)
+    adapter_fixed = {
+        "gap_analysis": [phase / "gaps" / "kpi_gaps.parquet"],
+        "mining_postprocess": [phase / "mining" / "history_candidates" / "mined_pairs.json"],
+        "history_select": [
+            phase / "mining" / "mined_image_list.txt",
+            phase / "mining" / "mined_pairs.json",
+            phase / "mining" / "mined_dataset.json",
+            phase / "mining" / "cumulative_mined_unique_names.json",
+        ],
+        "visualize_prepare": [phase / "visualization" / "visualize-prepare.host.status.json"],
+        "visualize_finish": [phase / "visualization" / "visualize-finish.host.status.json"],
+        "eval_config": [phase / "specs" / "eval_config.yaml"],
+        "train_config": [phase / "specs" / "train_config.yaml"],
+        "publish_checkpoint": [phase / "train" / "publish-checkpoint.host.status.json"],
+        "iteration_summary": [phase / "iteration_summary.json"],
+        "metric_parse": [phase / "evaluate" / "metric_result.json"],
+        "sdg_normalize_repair": [
+            phase / "datagen" / "dataset" / "sdg_manifest.json",
+            phase / "datagen" / "dataset" / "sdg_pairs.json",
+            phase / "datagen" / "dataset" / "sdg_image_list.txt",
+        ],
+    }
+    if name in adapter_fixed:
+        return adapter_fixed[name]
     fixed = {
         "target_embed": phase / "embeddings" / "target" / "embeddings.parquet",
         "knn": phase / "mining" / "mined_samples.parquet",

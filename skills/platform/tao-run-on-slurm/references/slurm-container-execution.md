@@ -4,15 +4,61 @@ Container execution steps, monitoring, status mapping, cancellation, multi-node 
 
 ## Container Execution
 
+### Atomic tree and IAA snapshot staging
+
+For a directory with hundreds of thousands of small files or symlinks, avoid
+per-entry `rsync`. Use `scripts/slurm_stage_tree.py` with one explicit local
+source, login, absolute run-owned shared-filesystem target, and local receipt.
+It hashes one tar stream, extracts into a target-scoped temporary directory,
+atomically promotes only the named target, and persists matching local/remote
+receipts. Matching source inventory and remote receipt make a rerun a no-op.
+Never target `/`, a shared-storage root, a home directory, or anything not
+owned by the current run.
+
+When an application supplies a digest-bound subset, pass its manifest with
+`--manifest`; missing, duplicate, traversing, special-file, or source-escaping
+entries are rejected. For IAA training/evaluation, first run
+`prepare_slurm_dataset_subset.py` against the immutable action request and
+stage only the validated training/evaluation images, captions, provenance-bound
+targets, and canonical validation list. Generated SDG data remains in the
+separately staged results tree. An unexpected mapping or convention is a hard
+failure, not permission to stage the full mining pool.
+
+For every IAA action, separately stage the request-owned
+`controller_snapshot` and `patches_snapshot` with:
+
+```text
+slurm_stage_tree.py --action-request <request> --snapshot-field <field> ...
+```
+
+This validates the signed request and complete per-file size/digest manifest,
+rejecting extra, missing, or changed files. Mount the promoted controller
+target's `skills/applications/tao-run-deft-iaa/scripts` subdirectory at
+`/iaa-runtime` and the promoted patch target at `/patches`. Never mount the
+current plugin cache.
+
 `tao-core` uses the SLURM handler to run TAO containers through Pyxis/Enroot:
 
 1. Stage compact JSON files for specs, environment, and cloud metadata under
    `<job_dir>/specs`, `<job_dir>/env`, and `<job_dir>/meta`.
-2. Optionally convert the Docker image to a cached SQSH image with
-   `srun -n1 -p <conversion_partition> enroot import`.
+2. Convert the Docker image to a cached SQSH image on a CPU partition with
+   `srun -n1 -p <conversion_partition> enroot import` before any GPU allocation.
+   A failed or truncated conversion is fatal; never fall back to a registry
+   pull inside the GPU job. Use job-unique node-local `ENROOT_TEMP_PATH` and
+   `SLURM_ENROOT_TEMP_PATH`, validate SquashFS `hsqs` magic, and choose a CPU
+   queue whose wall time covers conversion (CS-OCI-ORD uses `cpu_long` and at
+   least 120 minutes).
 3. Write an sbatch script under `<job_dir>/sbatch/job_<job_id>.sbatch`.
 4. Submit `sbatch --export=ALL <script>`.
 5. Run the container with `srun --container-image=<image> --container-mounts=<RUNTIME_SUPPLIED_MOUNTS>`.
+
+The vendored templates also pass the fixed non-secret NCCL/runtime name
+allowlist through Pyxis `--container-env`. This is required for a cluster knob
+exported in the batch shell to control NCCL inside the container. Do not use a
+generic environment passthrough or add credential names.
+If the image's external NCCL network plugin continues selecting IB after
+`NCCL_IB_DISABLE=1`, use the allowlisted `NCCL_NET=Socket` override and verify
+that exact value inside the container before the bounded transport probe.
 
 Image formats accepted by the handler:
 
@@ -38,9 +84,13 @@ used unless `force_reconvert_latest` is enabled.
 - Logs are read over SSH from:
 
 ```text
-<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>/main.out
-<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>/main.err
+<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>.out
+<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>.err
 ```
+
+Create `<job_dir>/slurm-logs` before submission. Do not put `%x-%j` in an
+additional path component: SLURM expands those tokens but does not create that
+intermediate directory before opening the output files.
 
 Status mapping:
 

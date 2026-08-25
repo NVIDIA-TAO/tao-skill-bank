@@ -18,10 +18,27 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import virtualenv_runner as vr  # noqa: E402
 import virtualenv_group_supervisor as vgs  # noqa: E402
+
+
+def test_full_iaa_is_structurally_declared_hybrid_and_fail_closed():
+    skill_root = Path(__file__).resolve().parents[2]
+    info = yaml.safe_load((skill_root / "references/skill_info.yaml").read_text())
+    constraint = info["workflow_constraints"]["tao-run-deft-iaa"]
+    assert constraint["full_workflow_platform_pure"] is False
+    assert constraint["execution_mode"] == "native-tao-plus-container-backed-sdg"
+    assert set(constraint["requires"]) == {"docker", "nvidia-container-runtime"}
+    assert set(constraint["unavailable_native_artifacts"]) == {
+        "image-edit-vllm-omni-runtime", "text-vllm-runtime",
+        "paidf-augmentation-runtime", "paidf-auto-labeling-runtime",
+    }
+    skill_text = (skill_root / "SKILL.md").read_text()
+    assert "not platform-pure virtualenv execution" in skill_text
+    assert "Fail closed" in skill_text
 
 
 # ---------------------------------------------------------------------------
@@ -212,8 +229,10 @@ def test_cancel_running_job_kills_group_and_reports_canceled(capsys, venv, job_d
     # CANCELED status is sticky.
     paths = vr.RunnerPaths(job_dir)
     launcher = json.loads(paths.launcher_status.read_text())
-    assert not vr._process_matches(
-        pid, launcher.get("process_start_marker"), str(paths.wrapper)
+    assert wait_for(
+        lambda: not vr._process_matches(
+            pid, launcher.get("process_start_marker"), str(paths.wrapper)
+        )
     ), "wrapper still alive after cancel"
     rc, again = run_verb(capsys, "status", "--job-dir", str(job_dir))
     assert again["status"] == "CANCELED"

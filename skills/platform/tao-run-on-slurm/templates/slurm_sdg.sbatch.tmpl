@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Single-node coordinator for auxiliary endpoints and SDG components. Image
+# editing runs only in separately owned eight-GPU worker jobs.
+#SBATCH --job-name=@@JOB_NAME@@
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task=@@CPUS_PER_TASK@@
+#SBATCH --time=@@TIME@@
+#SBATCH --output=@@LOG_DIR@@/%x-%j.out
+#SBATCH --error=@@LOG_DIR@@/%x-%j.err
+#SBATCH --open-mode=append
+#SBATCH --no-requeue
+@@SBATCH_ACCOUNT@@
+@@SBATCH_PARTITION@@
+@@DEPENDENCY@@
+set -Eeuo pipefail
+umask 077
+
+if [ -n "@@ENV_FILE@@" ]; then
+  set -a
+  source "@@ENV_FILE@@"
+  set +a
+fi
+set -a
+source "@@AUTH_FILE@@"
+set +a
+
+worker_pid=""
+cleanup_worker() {
+  rc=$?
+  trap - EXIT INT TERM
+  if [ -n "$worker_pid" ] && kill -0 "$worker_pid" 2>/dev/null; then
+    kill -TERM "$worker_pid" 2>/dev/null || true
+    wait "$worker_pid" 2>/dev/null || true
+  fi
+  exit "$rc"
+}
+trap cleanup_worker EXIT INT TERM
+
+python3 "@@WORKER@@" coordinator --request "@@REQUEST@@" --job-id "@@BASE_JOB_ID@@" --job-group "@@JOB_GROUP@@" &
+worker_pid=$!
+wait "$worker_pid"
+worker_pid=""

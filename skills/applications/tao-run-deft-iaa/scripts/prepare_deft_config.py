@@ -39,6 +39,16 @@ SPEC_NAMES = (
 )
 PINNED_PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"  # versions-key: images.tao_toolkit.pyt
 PINNED_DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"  # versions-key: images.tao_toolkit.data_services
+DISTRIBUTED_GENERATION_PLATFORMS = {
+    "slurm", "kubernetes", "brev", "airflow",
+}
+DISTRIBUTED_GENERATION_GPUS_PER_NODE = 8
+SUPPORTED_ORCHESTRATORS = ("direct", "airflow")
+
+
+def _tao_uses_control_host_gpus(platform: str, docker_remote: bool) -> bool:
+    """Whether TAO actions execute against the control host GPU inventory."""
+    return platform == "virtualenv" or (platform == "docker" and not docker_remote)
 
 
 def _bool(value: str) -> bool:
@@ -187,6 +197,17 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(f"--workspace must be an existing non-root directory: {workspace}")
     results_dir = _workspace_child(args.results_dir, workspace, "--results-dir")
     dataset_root = _workspace_child(args.dataset_root, workspace, "--dataset-root")
+    orchestrator = getattr(args, "orchestrator", "direct")
+    if orchestrator not in SUPPORTED_ORCHESTRATORS:
+        raise ValueError(
+            "--orchestrator must be one of " + ", ".join(SUPPORTED_ORCHESTRATORS)
+        )
+    if orchestrator == "airflow" and args.platform == "airflow":
+        raise ValueError(
+            "new Airflow-orchestrated runs must select the compute backend with "
+            "--platform docker|slurm|kubernetes|brev|virtualenv; platform=airflow is "
+            "reserved for resuming the legacy direct-Airflow contract"
+        )
     virtualenvs = resolve_virtualenv_profiles(
         platform=args.platform,
         legacy=args.virtualenv,
@@ -235,6 +256,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "mining_topn": args.mining_topn,
         "target_query_count": args.target_query_count,
         "sdg_max_samples": args.sdg_max_samples,
+        "generation_nodes": args.generation_nodes,
     }
     invalid = {key: value for key, value in positive.items() if value < 1}
     if invalid:
@@ -249,7 +271,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     gpu_ids = _gpu_ids(args.gpu_ids, args.num_gpus)
     visible_gpu_ids = _gpu_id_list(args.visible_gpu_ids, "--visible-gpu-ids")
     unavailable = sorted(set(gpu_ids) - set(visible_gpu_ids))
-    if unavailable:
+    if unavailable and _tao_uses_control_host_gpus(args.platform, args.docker_remote):
         raise ValueError(
             "--gpu-ids contains device(s) absent from --visible-gpu-ids: "
             + ", ".join(str(item) for item in unavailable)
@@ -322,6 +344,15 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         tao[action].update({"num_gpus": args.num_gpus, "gpu_ids": gpu_ids})
 
     sdg["endpoints"]["ownership"] = args.sdg_endpoint_mode
+    if args.sdg_endpoint_mode == "external" and not args.reuse_external_endpoints:
+        raise ValueError(
+            "external endpoint mode requires --reuse-external-endpoints after the user "
+            "explicitly requests reuse"
+        )
+    if args.sdg_endpoint_mode == "managed" and args.reuse_external_endpoints:
+        raise ValueError("--reuse-external-endpoints is valid only with external endpoint mode")
+    sdg["endpoints"]["reuse_requested"] = args.reuse_external_endpoints
+    sdg["endpoints"]["forward_hf_token"] = args.requires_hf_token
     for role in ("image_edit", "vlm", "llm"):
         port = getattr(args, f"{role}_port")
         if not 1024 <= port <= 65535:
@@ -338,7 +369,72 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             for role in ("image_edit", "vlm", "llm")
         }
         sdg["endpoints"]["external_urls"] = {role: "" for role in ("image_edit", "vlm", "llm")}
+        image_gpu_ids = sdg["endpoints"]["gpu_ids"]["image_edit"]
+        single_host_brev = args.platform == "brev" and args.generation_nodes == 1
+        single_host_airflow = args.platform == "airflow" and args.generation_nodes == 1
+        single_host_orchestrated = (
+            orchestrator == "airflow"
+            and args.platform in {"docker", "virtualenv"}
+            and args.generation_nodes == 1
+        )
+        if single_host_brev:
+            expected_roles = {
+                "image_edit": [0, 1, 2, 3], "vlm": [4], "llm": [5],
+            }
+            if sdg["endpoints"]["gpu_ids"] != expected_roles:
+                raise ValueError(
+                    "single-host Brev requires --image-edit-gpu-ids 0,1,2,3, "
+                    "--vlm-gpu-ids 4, and --llm-gpu-ids 5"
+                )
+            if gpu_ids != [6, 7] or args.num_gpus != 2:
+                raise ValueError(
+                    "single-host Brev requires TAO --num-gpus 2 --gpu-ids 6,7"
+                )
+            if not set(range(8)).issubset(visible_gpu_ids):
+                raise ValueError(
+                    "single-host Brev requires --visible-gpu-ids to include 0..7"
+                )
+        elif single_host_airflow or single_host_orchestrated:
+            role_ids = sdg["endpoints"]["gpu_ids"]
+            if len(role_ids["vlm"]) != 1 or len(role_ids["llm"]) != 1:
+                raise ValueError(
+                    "single-host Airflow orchestration requires exactly one explicit VLM GPU and "
+                    "one explicit LLM GPU"
+                )
+            role_sets = {role: set(values) for role, values in role_ids.items()}
+            if (
+                role_sets["image_edit"] & role_sets["vlm"]
+                or role_sets["image_edit"] & role_sets["llm"]
+                or role_sets["vlm"] & role_sets["llm"]
+            ):
+                raise ValueError(
+                    "single-host Airflow-orchestrated image-edit, VLM, and LLM GPU IDs must be disjoint"
+                )
+            if set(gpu_ids) & set().union(*role_sets.values()):
+                raise ValueError(
+                    "single-host Airflow-orchestrated TAO GPU IDs must be disjoint from managed SDG GPU IDs"
+                )
+        elif args.platform in DISTRIBUTED_GENERATION_PLATFORMS:
+            if image_gpu_ids != list(range(DISTRIBUTED_GENERATION_GPUS_PER_NODE)):
+                raise ValueError(
+                    "distributed managed image generation requires --image-edit-gpu-ids "
+                    "0,1,2,3,4,5,6,7 so every GPU on each independent worker is explicit"
+                )
+            if set(sdg["endpoints"]["gpu_ids"]["vlm"]) & set(
+                sdg["endpoints"]["gpu_ids"]["llm"]
+            ):
+                raise ValueError("managed coordinator VLM and LLM GPU IDs must be disjoint")
+        elif args.generation_nodes != 1:
+            raise ValueError(
+                "--generation-nodes must be 1 for docker and virtualenv; their image "
+                "capacity is the number of explicit --image-edit-gpu-ids"
+            )
     else:
+        if args.generation_nodes != 1:
+            raise ValueError(
+                "--generation-nodes is valid only for managed distributed endpoints; "
+                "external endpoint reuse has its own explicitly validated capacity"
+            )
         sdg["endpoints"]["gpu_ids"] = {role: [] for role in ("image_edit", "vlm", "llm")}
         urls = {
             role: getattr(args, f"{role}_url")
@@ -357,20 +453,44 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         sdg["endpoints"]["external_urls"] = urls
     sdg["generation"].update(
         {
+            "generation_nodes": args.generation_nodes,
+            "gpus_per_generation_node": (
+                len(sdg["endpoints"]["gpu_ids"].get("image_edit", []))
+                if args.platform in {"brev", "airflow"} and args.generation_nodes == 1
+                else DISTRIBUTED_GENERATION_GPUS_PER_NODE
+                if args.platform in DISTRIBUTED_GENERATION_PLATFORMS
+                else len(sdg["endpoints"]["gpu_ids"].get("image_edit", [])) or 1
+            ),
             "max_samples_per_iteration": args.sdg_max_samples,
             "verification_max_attempts": args.sdg_verification_attempts,
             "caption_policy": args.sdg_caption_policy,
         }
     )
+    last_image_edit_port = (
+        sdg["models"]["image_edit"]["port"]
+        + sdg["generation"]["gpus_per_generation_node"]
+        - 1
+    )
+    if last_image_edit_port > 65535:
+        raise ValueError(
+            "--image-edit-port plus the approved per-node generation GPU count "
+            "exceeds port 65535"
+        )
+    image_edit_ports = set(
+        range(sdg["models"]["image_edit"]["port"], last_image_edit_port + 1)
+    )
+    auxiliary_ports = {sdg["models"][role]["port"] for role in ("vlm", "llm")}
+    if image_edit_ports & auxiliary_ports:
+        raise ValueError(
+            "--image-edit-port range must not overlap --vlm-port or --llm-port"
+        )
 
     _atomic_yaml(config_dir / "deft_config.yaml", deft)
     _atomic_yaml(config_dir / "sdg_config.yaml", sdg)
     _atomic_yaml(config_dir / "tao_spec.yaml", tao)
     for name in SPEC_NAMES[3:]:
         _copy_atomic(templates / name, config_dir / name)
-    _atomic_json(
-        config_dir / "approval.json",
-        {
+    approval = {
             "schema_version": "3",
             "workflow": "tao-run-deft-iaa",
             "platform": args.platform,
@@ -395,6 +515,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "ds_image": PINNED_DS_IMAGE,
             "sdg": {
                 "endpoint_mode": args.sdg_endpoint_mode,
+                "reuse_requested": args.reuse_external_endpoints,
                 "images": sdg["images"],
                 "models": sdg["models"],
                 "gpu_ids": sdg["endpoints"]["gpu_ids"],
@@ -402,11 +523,15 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
                 "ports": {role: sdg["models"][role]["port"] for role in ("image_edit", "vlm", "llm")},
                 "cache_dir": sdg["endpoints"]["cache_dir"],
                 "max_samples_per_iteration": args.sdg_max_samples,
+                "generation_nodes": args.generation_nodes,
+                "gpus_per_generation_node": sdg["generation"]["gpus_per_generation_node"],
                 "verification_max_attempts": args.sdg_verification_attempts,
                 "caption_policy": args.sdg_caption_policy,
             },
-        },
-    )
+        }
+    if orchestrator != "direct":
+        approval["orchestrator"] = orchestrator
+    _atomic_json(config_dir / "approval.json", approval)
 
     return {
         "config_dir": str(config_dir),
@@ -419,6 +544,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "visible_gpu_count": len(visible_gpu_ids),
         "visible_gpu_ids": visible_gpu_ids,
         "platform": args.platform,
+        "orchestrator": orchestrator,
         "docker_remote": args.docker_remote,
         "virtualenvs": (
             {name: str(path) for name, path in virtualenvs.items()}
@@ -441,6 +567,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--metadata-archive", required=True, type=pathlib.Path)
     parser.add_argument("--checksums-file", type=pathlib.Path)
     parser.add_argument("--platform", required=True, choices=SUPPORTED_PLATFORMS)
+    parser.add_argument(
+        "--orchestrator",
+        default="direct",
+        choices=SUPPORTED_ORCHESTRATORS,
+        help=(
+            "Optional IAA orchestration layer. With airflow, --platform remains the "
+            "authoritative compute backend and owns staging, GPUs, status, logs, and cancel."
+        ),
+    )
     parser.add_argument(
         "--docker-remote",
         action="store_true",
@@ -495,6 +630,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--metric-op", default=">=", choices=(">=", ">", "<=", "<"))
     parser.add_argument("--metric-target", type=float)
     parser.add_argument("--sdg-endpoint-mode", choices=("managed", "external"), default="managed")
+    parser.add_argument(
+        "--reuse-external-endpoints",
+        action="store_true",
+        help=(
+            "Confirm that the user explicitly requested reuse of the three supplied local "
+            "endpoints. Never infer this from listening ports or discovered services."
+        ),
+    )
     parser.add_argument("--image-edit-gpu-ids")
     parser.add_argument("--vlm-gpu-ids")
     parser.add_argument("--llm-gpu-ids")
@@ -506,6 +649,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--llm-port", type=int, default=8001)
     parser.add_argument("--sdg-cache-dir", type=pathlib.Path)
     parser.add_argument("--sdg-max-samples", type=int, default=1000)
+    parser.add_argument(
+        "--generation-nodes",
+        type=int,
+        default=1,
+        help=(
+            "Number of independent 8-GPU image-generation workers for SLURM, "
+            "Kubernetes, or Brev. Docker and virtualenv must use 1 and derive "
+            "capacity from --image-edit-gpu-ids."
+        ),
+    )
     parser.add_argument("--sdg-verification-attempts", type=int, choices=range(1, 6), default=2)
     parser.add_argument("--sdg-caption-policy", choices=("all", "easy", "medium", "hard"), default="all")
     return parser

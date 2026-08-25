@@ -4,8 +4,8 @@ enabled: true
 images:
   augmentation: "nvcr.io/nvstaging/tao/paidf-augmentation:1.0.1-40d081d@sha256:bdd15f5b1e572419c8563ceebbccc9794564a5203134eaa375e7ca27a9908922"
   auto_labeling: "nvcr.io/nvstaging/tao/paidf-auto-labeling:1.0.0-4e96482@sha256:468739d76b55a2b577ffacb87467b4eb4ff4d3656c038b605fe0781996411ef6"
-  text_serving: "vllm/vllm-openai:v0.11.0"
-  image_edit_serving: "vllm/vllm-omni:v0.24.0"
+  text_serving: "vllm/vllm-openai:v0.11.0@sha256:014a95f21c9edf6abe0aea6b07353f96baa4ec291c427bb1176dc7c93a85845c"
+  image_edit_serving: "vllm/vllm-omni:v0.24.0@sha256:566d89d7eaba08dd313dab2464e67fe984825d281c77437582e3008a917bbf7c"
 
 models:
   image_edit:
@@ -13,7 +13,9 @@ models:
     revision: "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
     backend: "vllm-omni"
     port: 8002
-    min_vram_mib: 76000
+    # Conservative planning floor per TP=1 worker; readiness/inference smoke
+    # remains authoritative for the selected GPU and serving image.
+    min_vram_mib: 38000
   vlm:
     id: "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"
     revision: "d9748a51ae66354c4dad665aab2c71f26cf2c8cd"
@@ -29,6 +31,11 @@ models:
 
 endpoints:
   ownership: managed
+  # Materialization sets this true only for an explicitly user-requested
+  # external-endpoint reuse path.
+  reuse_requested: false
+  # Materialization binds this to the approved credential-forwarding choice.
+  forward_hf_token: false
   startup_timeout_s: 1800
   request_timeout_s: 180
   retry_interval_s: 15
@@ -44,6 +51,12 @@ endpoints:
     llm: ""
 
 generation:
+  # Distributed platforms materialize N independent 8-GPU worker machines.
+  # Docker and virtualenv keep generation_nodes=1 and set this GPU count from
+  # the explicitly selected local image-edit devices.
+  generation_nodes: 1
+  gpus_per_generation_node: 1
+  image_edit_request_timeout_s: 600
   scale_factor: 1.0
   max_samples_per_iteration: 1000
   augmentations_per_source: 1

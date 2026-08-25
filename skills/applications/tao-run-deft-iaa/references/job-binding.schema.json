@@ -22,7 +22,7 @@
     "schema_version": {"const": "1"},
     "workflow": {"const": "tao-run-deft-iaa"},
     "platform": {
-      "enum": ["docker", "slurm", "kubernetes", "brev", "virtualenv"]
+      "enum": ["docker", "slurm", "kubernetes", "brev", "virtualenv", "airflow"]
     },
     "request_path": {"type": "string", "pattern": "^/"},
     "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},

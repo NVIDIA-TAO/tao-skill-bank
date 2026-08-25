@@ -1,5 +1,9 @@
 # CLIP Train and Evaluate
 
+On a remote platform, eval/train configuration, checkpoint publication, metric
+parsing, and iteration summary are allowlisted zero-GPU actions. Only commit
+and audit metadata remain controller-local.
+
 Read with `metric-contract.md` when the audit selects `train` or `evaluate`.
 The IAA workflow uses plain TAO CLIP train/evaluate commands. There is no
 AutoML branch and no hand-authored per-stage YAML.
@@ -19,24 +23,36 @@ publishing, or committing its outputs.
 The baseline uses the public SigLIP2 base weights and the `zs/` directory.
 Iteration N uses its freshly published best checkpoint and `iter_N/`.
 
-1. Generate the exact eval config:
+1. Generate the exact eval config through the selected platform's signed
+   zero-GPU adapter action:
 
    ```bash
-   "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-     "$SKILL_ROOT/scripts/run_iaa_stage.py" eval-config \
-       --results-dir "$RESULTS_DIR" \
-       --deft-config "$RESULTS_DIR/config/deft_config.yaml" \
-       --iter-label "$LABEL"
+   PHASE_DIR="$RESULTS_DIR/zs"
+   [ "$LABEL" = baseline ] || PHASE_DIR="$RESULTS_DIR/iter_${LABEL#iter}"
+   "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+     "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+       --results-dir "$RESULTS_DIR" --image ds \
+       --stage-dir "$PHASE_DIR/specs" --name eval_config \
+       --fresh-output "$PHASE_DIR/specs/eval_config.yaml" -- \
+       python3 /iaa-runtime/run_iaa_compute.py eval_config \
+         --results-dir /results --label "$LABEL"
    ```
+
+   Execute and finalize this request through `platform-execution.md`. Its
+   `eval_config.status.json`, not a controller-host status, is commit evidence.
 
 2. Set `PHASE_DIR="$RESULTS_DIR/zs"` and `CONTAINER_PHASE=zs` for `baseline`;
    otherwise set `PHASE_DIR="$RESULTS_DIR/iter_$N"` and
-   `CONTAINER_PHASE="iter_$N"`. Launch evaluation with both canonical outputs
-   marked fresh:
+   `CONTAINER_PHASE="iter_$N"`. Launch evaluation with every canonical metric
+   output marked fresh. The detailed metrics CSV is a required input to the
+   next gap-analysis stage, so omitting it from the platform output contract is
+   a hard workflow error:
 
    ```bash
    EVAL_DIR="$PHASE_DIR/evaluate"
+   DETAIL_METRICS="$EVAL_DIR/nvidia_pas_metrics.csv"
    METRICS="$EVAL_DIR/nvidia_pas_metrics_aggregate.csv"
+   WEIGHTED_METRICS="$EVAL_DIR/nvidia_pas_metrics_weighted_aggregate.csv"
    TAO_STATUS="$EVAL_DIR/status.json"
    HF_ARGS=()
    if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
@@ -48,21 +64,27 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
        --results-dir "$RESULTS_DIR" --image pyt \
        --stage-dir "$EVAL_DIR" --name evaluate \
        "${HF_ARGS[@]}" \
-       --fresh-output "$METRICS" --fresh-output "$TAO_STATUS" -- \
+       --fresh-output "$DETAIL_METRICS" \
+       --fresh-output "$METRICS" \
+       --fresh-output "$WEIGHTED_METRICS" \
+       --fresh-output "$TAO_STATUS" -- \
        clip evaluate -e "/results/$CONTAINER_PHASE/specs/eval_config.yaml"
    ```
 
-   The native backend exit must be zero, the aggregate CSV must be non-empty, and the
-   TAO status must contain `Evaluate finished successfully`. A stale CSV next
-   to a failed status is not evidence.
+   The native backend exit must be zero, all three metric CSVs must be
+   non-empty, and the TAO status must contain `Evaluate finished successfully`.
+   A stale CSV next to a failed status is not evidence.
 3. Parse the approved metric contract exactly as shown in
    `metric-contract.md`. For an iteration, also bind the canonical summary:
 
    ```bash
-   "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-     "$SKILL_ROOT/scripts/run_iaa_stage.py" iteration-summary \
-       --results-dir "$RESULTS_DIR" \
-       --deft-config "$RESULTS_DIR/config/deft_config.yaml" --iter-num "$N"
+     "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+       "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+         --results-dir "$RESULTS_DIR" --image ds \
+         --stage-dir "$PHASE_DIR" --name iteration_summary \
+         --fresh-output "$PHASE_DIR/iteration_summary.json" -- \
+         python3 /iaa-runtime/run_iaa_compute.py iteration_summary \
+           --results-dir /results --label "iter$N"
    ```
 
    Do not run `iteration-summary` for baseline.
@@ -74,7 +96,7 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
      SUMMARY_ARGS=(
        --iteration-summary "$PHASE_DIR/iteration_summary.json"
        --iteration-summary-status \
-         "$PHASE_DIR/iteration-summary.host.status.json"
+         "$PHASE_DIR/iteration_summary.status.json"
      )
    fi
 
@@ -84,26 +106,35 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
        --metrics-aggregate-csv "$METRICS" \
        --eval-status-json "$TAO_STATUS" \
        --metric-result "$EVAL_DIR/metric_result.json" \
+       --metric-parse-status "$EVAL_DIR/metric_parse.status.json" \
        --eval-command-status "$EVAL_DIR/evaluate.status.json" \
        --eval-config "$PHASE_DIR/specs/eval_config.yaml" \
-       --eval-config-status "$PHASE_DIR/specs/eval-config.host.status.json" \
+       --eval-config-status "$PHASE_DIR/specs/eval_config.status.json" \
        "${SUMMARY_ARGS[@]}" \
        --summary "$LABEL IAA evaluation completed"
    ```
+
+   The commit also binds the detailed and weighted CSVs at their canonical
+   paths. They need no additional user arguments because their filenames are
+   fixed by TAO and by the action contract.
 
 The commit reopens the CSV and re-derives the metric. It rejects a result from
 another label/path even when its numeric value is plausible.
 
 ## Train
 
-1. Generate the canonical train config:
+1. Generate the canonical train config through the selected platform's signed
+   zero-GPU adapter action:
 
    ```bash
    ITER_DIR="$RESULTS_DIR/iter_$N"
-   "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-     "$SKILL_ROOT/scripts/run_iaa_stage.py" train-config \
-       --results-dir "$RESULTS_DIR" \
-       --deft-config "$RESULTS_DIR/config/deft_config.yaml" --iter-num "$N"
+   "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+     "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+       --results-dir "$RESULTS_DIR" --image ds \
+       --stage-dir "$ITER_DIR/specs" --name train_config \
+       --fresh-output "$ITER_DIR/specs/train_config.yaml" -- \
+       python3 /iaa-runtime/run_iaa_compute.py train_config \
+         --results-dir /results --label "iter$N"
    ```
 
    In the default continual-dataset/continual-model mode, each iteration uses
@@ -140,11 +171,13 @@ another label/path even when its numeric value is plausible.
    checkpoint and create the normalized warm-start state:
 
    ```bash
-   "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-     "$SKILL_ROOT/scripts/run_iaa_stage.py" publish-checkpoint \
-       --results-dir "$RESULTS_DIR" \
-       --deft-config "$RESULTS_DIR/config/deft_config.yaml" --iter-num "$N" \
-       --train-command-status "$TRAIN_DIR/train.status.json"
+   "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+     "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+       --results-dir "$RESULTS_DIR" --image pyt \
+       --stage-dir "$TRAIN_DIR" --name publish_checkpoint \
+       --fresh-output "$TRAIN_DIR/publish-checkpoint.host.status.json" -- \
+       python3 /iaa-runtime/run_iaa_compute.py publish_checkpoint \
+         --results-dir /results --label "iter$N"
    ```
 
    This must produce both:
@@ -170,11 +203,11 @@ another label/path even when its numeric value is plausible.
        --best-ckpt "$BEST" \
        --pretrained-state "$ITER_DIR/pretrained/model_state.pth" \
        --train-config "$ITER_DIR/specs/train_config.yaml" \
-       --train-config-status "$ITER_DIR/specs/train-config.host.status.json" \
+       --train-config-status "$ITER_DIR/specs/train_config.status.json" \
        --train-command-status "$TRAIN_DIR/train.status.json" \
        --train-tao-status-json "$TRAIN_TAO_STATUS" \
        --publish-checkpoint-status \
-         "$TRAIN_DIR/publish-checkpoint.host.status.json" \
+         "$TRAIN_DIR/publish_checkpoint.status.json" \
        --summary "iter$N TAO CLIP training and checkpoint publication completed"
    ```
 

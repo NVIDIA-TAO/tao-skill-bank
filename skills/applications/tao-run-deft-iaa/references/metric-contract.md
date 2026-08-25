@@ -1,5 +1,8 @@
 # IAA Metric Contract
 
+On every platform, execute parsing through the allowlisted `metric_parse`
+zero-GPU action, then commit its finalized platform evidence.
+
 The immutable metric contract controls evaluation parsing, KPI stopping, and
 best-iteration reporting:
 
@@ -44,13 +47,17 @@ if [ -n "${METRIC_TARGET:-}" ]; then
 fi
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-  "$SKILL_ROOT/scripts/parse_iaa_metrics.py" \
-    --metrics-csv "$PHASE_DIR/evaluate/nvidia_pas_metrics_aggregate.csv" \
-    --metric-name "$METRIC_NAME" --query-type "$QUERY_TYPE" \
-    --op "$METRIC_OP" "${TARGET_ARGS[@]}" \
-    --iter-label "$LABEL" \
-    --output "$PHASE_DIR/evaluate/metric_result.json"
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+    --results-dir "$RESULTS_DIR" --image ds \
+    --stage-dir "$PHASE_DIR/evaluate" --name metric_parse \
+    --fresh-output "$PHASE_DIR/evaluate/metric_result.json" -- \
+    python3 /iaa-runtime/run_iaa_compute.py metric_parse \
+      --results-dir /results --label "$LABEL"
 ```
+
+Execute and finalize this request through `platform-execution.md`. The adapter
+reads the immutable metric contract from state; do not pass or rederive metric
+arguments on the controller.
 
 `LABEL` is exactly `baseline` or `iterN`; `PHASE_DIR` is exactly `zs` or
 `iter_N`. The parser rejects missing files, absent/duplicate query rows,

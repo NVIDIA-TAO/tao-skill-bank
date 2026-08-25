@@ -7,6 +7,8 @@
   "required": [
     "schema_version",
     "workflow",
+    "controller_snapshot",
+    "patches_snapshot",
     "platform",
     "name",
     "attempt",
@@ -14,6 +16,7 @@
     "image_kind",
     "record_image",
     "workload_image",
+    "gpu_ids",
     "passed_hf_token",
     "forward_env",
     "spec_bundle",
@@ -40,18 +43,37 @@
   "properties": {
     "schema_version": {"const": "1"},
     "workflow": {"const": "tao-run-deft-iaa"},
+    "runtime_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "controller_snapshot": {"$ref": "#/$defs/snapshot"},
+    "patches_snapshot": {"$ref": "#/$defs/snapshot"},
     "platform": {
-      "enum": ["docker", "slurm", "kubernetes", "brev", "virtualenv"]
+      "enum": ["docker", "slurm", "kubernetes", "brev", "virtualenv", "airflow"]
     },
     "name": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9_.-]*$"
     },
     "attempt": {"type": "integer", "minimum": 1, "maximum": 2},
-    "label": {"type": "string", "pattern": "^(baseline|iter[1-9][0-9]*)$"},
+    "dispatch_repair": {"const": 1},
+    "launcher_repair": {"const": 1},
+    "unbound_replay": {"const": 1},
+    "unbound_replay_evidence_sha256": {
+      "type": "string", "pattern": "^[0-9a-f]{64}$"
+    },
+    "train_output_replay": {"const": 1},
+    "train_output_replay_evidence_sha256": {
+      "type": "string", "pattern": "^[0-9a-f]{64}$"
+    },
+    "label": {"type": "string", "pattern": "^(baseline|terminal|iter[1-9][0-9]*)$"},
     "image_kind": {"enum": ["pyt", "ds"]},
     "record_image": {"type": "string", "minLength": 1},
     "workload_image": {"type": "string", "minLength": 1},
+    "gpu_ids": {
+      "type": "array",
+      "minItems": 0,
+      "uniqueItems": true,
+      "items": {"type": "integer", "minimum": 0}
+    },
     "passed_hf_token": {"type": "boolean"},
     "forward_env": {
       "type": "array",
@@ -63,7 +85,7 @@
     "mounts": {
       "type": "array",
       "minItems": 5,
-      "maxItems": 7,
+      "maxItems": 9,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -83,7 +105,38 @@
         "HOME": {"type": "string", "pattern": "^/"},
         "PYTHONPATH": {"type": "string", "pattern": "^/"},
         "HF_HOME": {"type": "string", "pattern": "^/"},
-        "XDG_CACHE_HOME": {"type": "string", "pattern": "^/"}
+        "XDG_CACHE_HOME": {"type": "string", "pattern": "^/"},
+        "LD_LIBRARY_PATH": {
+          "const": "/usr/local/cuda/compat/lib.real:/usr/local/cuda/lib64"
+        },
+        "IAA_COMPUTE_FRAME": {
+          "enum": ["docker", "slurm", "kubernetes", "brev", "virtualenv", "airflow"]
+        },
+        "OPENBLAS_NUM_THREADS": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "OMP_NUM_THREADS": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "MKL_NUM_THREADS": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "NUMEXPR_NUM_THREADS": {"type": "string", "pattern": "^[1-9][0-9]*$"}
+      }
+    },
+    "cache_subset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "entries", "sha256"],
+      "properties": {
+        "root": {"type": "string", "pattern": "^/"},
+        "entries": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "size", "sha256"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "size": {"type": "integer", "minimum": 0},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        },
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
       }
     },
     "virtualenv": {"type": ["string", "null"]},
@@ -122,7 +175,63 @@
     "started_ns": {"type": "integer", "minimum": 1},
     "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
+  "$defs": {
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "entries", "sha256"],
+      "properties": {
+        "root": {"type": "string", "pattern": "^/"},
+        "entries": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "size", "sha256"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "size": {"type": "integer", "minimum": 0},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        },
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  },
   "allOf": [
+    {
+      "if": {"required": ["train_output_replay"]},
+      "then": {
+        "required": ["train_output_replay_evidence_sha256"],
+        "properties": {
+          "attempt": {"const": 2},
+          "platform": {"const": "slurm"},
+          "name": {"const": "train"}
+        },
+        "not": {
+          "anyOf": [
+            {"required": ["dispatch_repair"]},
+            {"required": ["launcher_repair"]},
+            {"required": ["unbound_replay"]}
+          ]
+        }
+      },
+      "else": {"not": {"required": ["train_output_replay_evidence_sha256"]}}
+    },
+    {
+      "if": {"required": ["unbound_replay"]},
+      "then": {
+        "required": ["unbound_replay_evidence_sha256"],
+        "properties": {"attempt": {"const": 2}},
+        "not": {
+          "anyOf": [
+            {"required": ["dispatch_repair"]},
+            {"required": ["launcher_repair"]}
+          ]
+        }
+      },
+      "else": {"not": {"required": ["unbound_replay_evidence_sha256"]}}
+    },
     {
       "if": {"properties": {"platform": {"const": "virtualenv"}}},
       "then": {
@@ -137,6 +246,29 @@
         "properties": {
           "virtualenv": {"type": "null"},
           "virtualenv_entrypoint_sha256": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"name": {"enum": [
+        "dataset_rebuild", "dataset_materialize", "gap_analysis",
+        "mining_postprocess", "history_select", "visualize_prepare",
+        "visualize_finish", "eval_config", "train_config",
+        "publish_checkpoint", "iteration_summary", "metric_parse", "report",
+        "sdg_normalize_repair"
+      ]}}},
+      "then": {
+        "properties": {
+          "environment": {"required": [
+            "HOME", "PYTHONPATH", "HF_HOME", "XDG_CACHE_HOME", "IAA_COMPUTE_FRAME"
+          ]},
+          "gpu_ids": {"maxItems": 0}
+        }
+      },
+      "else": {
+        "properties": {
+          "environment": {"not": {"required": ["IAA_COMPUTE_FRAME"]}},
+          "gpu_ids": {"minItems": 1}
         }
       }
     },

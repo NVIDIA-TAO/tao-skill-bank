@@ -51,7 +51,15 @@ import tempfile
 import yaml
 
 from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
+
+
+SUPPORTED_ORCHESTRATORS = ("direct", "airflow")
 from virtualenv_runtime import resolve_virtualenv_profiles
+
+
+def _tao_uses_control_host_gpus(platform: str, docker_remote: bool) -> bool:
+    """Whether TAO actions execute against the control host GPU inventory."""
+    return platform == "virtualenv" or (platform == "docker" and not docker_remote)
 
 from metric_contract import validate_contract
 
@@ -255,6 +263,7 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         raise ValueError("prepared sdg_config endpoints.ownership is invalid")
     args.approved_sdg = {
         "endpoint_mode": ownership,
+        "reuse_requested": endpoints.get("reuse_requested", False),
         "images": sdg.get("images"),
         "models": sdg.get("models"),
         "gpu_ids": endpoints.get("gpu_ids"),
@@ -262,9 +271,21 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "ports": {role: sdg.get("models", {}).get(role, {}).get("port") for role in ("image_edit", "vlm", "llm")},
         "cache_dir": endpoints.get("cache_dir"),
         "max_samples_per_iteration": generation.get("max_samples_per_iteration"),
+        "generation_nodes": generation.get("generation_nodes"),
+        "gpus_per_generation_node": generation.get("gpus_per_generation_node"),
         "verification_max_attempts": generation.get("verification_max_attempts"),
         "caption_policy": generation.get("caption_policy"),
     }
+    orchestrator = getattr(args, "orchestrator", "direct")
+    if orchestrator not in SUPPORTED_ORCHESTRATORS:
+        raise ValueError(
+            "--orchestrator must be one of " + ", ".join(SUPPORTED_ORCHESTRATORS)
+        )
+    if orchestrator == "airflow" and args.platform == "airflow":
+        raise ValueError(
+            "Airflow orchestration requires a distinct compute --platform; "
+            "platform=airflow is compatibility-only"
+        )
     expected_approval = {
         "schema_version": "3",
         "workflow": WORKFLOW,
@@ -289,6 +310,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "ds_image": args.ds_image,
         "sdg": args.approved_sdg,
     }
+    if orchestrator != "direct":
+        expected_approval["orchestrator"] = orchestrator
     if "virtualenvs" in approval:
         expected_approval["virtualenvs"] = (
             {name: str(path) for name, path in args.virtualenvs.items()}
@@ -328,7 +351,7 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         raise ValueError("prepared tao_spec train.gpu_ids must be a list")
     parsed_gpu_ids = _parse_gpu_ids(",".join(str(item) for item in gpu_ids), num_gpus)
     unavailable = sorted(set(parsed_gpu_ids) - set(visible_gpu_ids))
-    if unavailable:
+    if unavailable and _tao_uses_control_host_gpus(args.platform, args.docker_remote):
         raise ValueError(
             "prepared GPU IDs were not visible during preflight: "
             + ", ".join(str(item) for item in unavailable)
@@ -461,6 +484,8 @@ def build_state(args: argparse.Namespace) -> dict:
         "_completed_step_values": list(_COMPLETED_STEP_VALUES),
         "_status_values": list(_STATUS_VALUES),
     }
+    if getattr(args, "orchestrator", "direct") != "direct":
+        state["config"]["orchestrator"] = args.orchestrator
     return state
 
 
@@ -536,6 +561,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--platform",
         required=True,
         choices=SUPPORTED_PLATFORMS,
+    )
+    parser.add_argument(
+        "--orchestrator",
+        default="direct",
+        choices=SUPPORTED_ORCHESTRATORS,
+        help="Optional IAA orchestrator; --platform remains the compute backend.",
     )
     parser.add_argument(
         "--docker-remote",

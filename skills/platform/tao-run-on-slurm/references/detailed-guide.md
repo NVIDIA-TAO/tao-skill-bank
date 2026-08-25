@@ -9,3 +9,4 @@ If a split reference conflicts with `SKILL.md`, `skill_info.yaml`, schemas, or p
 - `slurm-preflight-storage.md` — SSH access, enroot preflight, credentials, storage, or SSH remediation
 - `slurm-container-execution.md` — container execution, resources, monitoring, cancellation, multi-node, retries, or failures
 - `slurm-ssh-credentials.md` — SSH/key setup, credential list, backend details, storage rules, SSH remediation prompt
+- `slurm-sdg-action.md` — DEFT IAA SDG composite action, image-worker fan-out, coordinator, endpoint pool, four verbs, resume, and cleanup

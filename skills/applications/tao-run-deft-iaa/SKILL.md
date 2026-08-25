@@ -16,10 +16,10 @@ description: >
   Do not use for standalone CLIP training, one-off evaluation or embedding,
   generic k-NN mining, or AOI/ChangeNet DEFT workflows.
 license: Apache-2.0 AND CC-BY-4.0
-compatibility: Requires one supported TAO execution platform (Docker, SLURM, Kubernetes, Brev, or virtualenv), accessible NVIDIA GPUs, the two IAA dataset export archives, and Python 3.9+ for control; virtualenv execution additionally requires the documented CPython 3.12 pyt and ds profiles.
+compatibility: Requires one supported TAO compute platform (Docker, SLURM, Kubernetes, Brev, or virtualenv), accessible NVIDIA GPUs, the two IAA dataset export archives, and Python 3.9+ for control; virtualenv execution additionally requires the documented CPython 3.12 pyt and ds profiles. Airflow is an optional IAA-only orchestrator over any supported compute platform.
 metadata:
   author: NVIDIA Corporation
-  version: "0.4.0"
+  version: "0.6.0"
 allowed-tools: Read Bash Write
 tags:
 - application
@@ -33,38 +33,36 @@ tags:
 
 # IAA DEFT Workflow
 
-> **Standalone install?** If this session was not initialized by the TAO skill
-> bank plugin, run the `tao-setup` skill first for host preflight, credential
-> checks, and cross-skill discovery.
+Run IAA as one resumable, disk-backed workflow. All logic and adapters ship
+here; no separate source checkout or remote generation service is required.
 
-Run the canonical IAA flow as one resumable, disk-backed workflow. All IAA
-workflow logic, templates, and host adapters ship with this skill; customers do
-not need a separate source checkout or remote generation service. The bundled scripts make stage calls
-deterministic without adding another orchestration layer.
-
-This skill supports every packaged TAO execution platform: Docker, SLURM,
-Kubernetes, Brev, and virtualenv. The workflow produces a platform-neutral,
-schema-validated action bundle; the selected platform skill owns native
-`submit`/`status`/`logs`/`cancel` and the job-record.
+Docker, SLURM, Kubernetes, Brev, and virtualenv consume platform-neutral action
+bundles through four verbs and job-records. Airflow optionally orchestrates any
+of those five backends; it is not a sixth compute platform. The immutable
+state keeps `config.platform` as the backend and adds
+`config.orchestrator=airflow` only when requested. Read
+`references/airflow-execution.md`.
 Virtualenv execution uses separate immutable `pyt` and `ds` runtime profiles;
 the workspace control `.venv` is not an execution runtime.
 
-The selected TAO platform and the generation execution frame are distinct
-facts. Mining, train, evaluate, and TAO embedding actions use the selected
-platform. The current SDG component and managed-endpoint helpers use the
-control host's Docker daemon and local GPU/ports; their accepted outputs are
-then covered by the normal remote staging contract for SLURM, Kubernetes, or
-Brev. Show this control-host requirement during platform intake. Do not imply
-that a remote platform consumer starts the SDG services, and block before
-approval if the control host cannot provide Docker or the approved endpoint
-URLs and component-image execution.
+Every workload runs in the selected platform's compute frame; the control host
+only prepares, monitors, synchronizes, and audits. Distributed generation uses
+at most `generation_nodes=N` eight-GPU workers and a coordinator. Image-edit
+endpoints are single-request slots, one per GPU.
+Evidence records active versus approved `8*N` capacity; zero ready workers
+fail. Docker and virtualenv use this contract on one machine. See
+`references/platform-execution.md`.
 
 ## Entry Contract
 
 `tao-deft-iaa` and `tao-run-deft-iaa` select this same workflow. If the user
 did not choose a platform, ask once among Docker, SLURM, Kubernetes, Brev, and
-virtualenv; never default to Docker. On resume, the immutable platform in
-`deft_state.json` is already the selection and must not be changed.
+virtualenv; never default to Docker. If the user requests Airflow, retain the
+selected backend and record Airflow separately as the orchestrator. On resume,
+the immutable platform and optional orchestrator in `deft_state.json` are
+already selected and must not be changed. Legacy runs whose platform is
+`airflow` remain resumable through the compatibility contract, but new runs
+must not use that overloaded representation.
 
 Use two intake phases:
 
@@ -109,8 +107,12 @@ After required intake is resolved, discover and validate:
 - metric name, query type, operator, and optional target;
 - whether the deployment requires authenticated Hugging Face model access;
 - selected TAO execution platform and its platform-specific prerequisites;
-- managed local endpoints with explicit GPU IDs for image edit, VLM, and LLM,
-  or three already-running compatible local endpoint URLs;
+- optional IAA-only Airflow orchestration and its API, DAG, shared-storage,
+  credential-presence, and backend-consumer prerequisites;
+- managed platform-local endpoints with explicit GPU allocation for image edit,
+  VLM, and LLM; for distributed platforms also record `generation_nodes`;
+- only when the user explicitly requests endpoint reuse, three user-supplied,
+  already-running compatible local endpoint URLs;
 - any explicit epoch, GPU, mining, continual-learning, or visualization
   overrides.
 
@@ -124,6 +126,12 @@ unspecified values and must be identified as defaults in the pre-flight
 summary. `max_iterations` has no default. An absent metric target means an
 ungated run that stops after `max_iterations`. Hugging Face token forwarding
 defaults to disabled because the bundled model is public.
+
+Managed deployment is the default customer path. Never discover listening
+ports and switch to external mode, infer reuse from existing containers, or
+offer endpoint reuse merely because a compatible service is present. External
+mode requires the user's explicit reuse request, all three URLs, and the
+materializer's `--reuse-external-endpoints` evidence flag.
 
 If required information remains missing after full discovery, ask one
 consolidated follow-up. A normal invocation should need no knowledge of stage
@@ -174,13 +182,18 @@ already-approved stages.
    terminal `FAILED`, report the failure and launch no more work. For
    `COMPLETE`, do not rerun a stage.
 3. Read only the current stage reference named by `read_before_action`. Use
-   `run_iaa_stage.py` for bundled IAA host stages. For every TAO action, use
+   `run_iaa_stage.py` directly only in a local compute frame. For remote runs,
+   dispatch deterministic adapters through `run_deft_action.py` as zero-GPU
+   platform actions. For every TAO action, use
    `run_deft_action.py prepare`, reconcile any interrupted launch, bind the
    exact request-owned job-record before native submit, dispatch the emitted
    bundle through the selected platform's four verbs, synchronize remote
    outputs, capture native logs, then use `run_deft_action.py finalize`. Follow
-   `references/platform-execution.md`; never assemble an untracked launch. For
-   `sdg`, use
+   `references/platform-execution.md`; never assemble an untracked launch. If
+   Airflow orchestration is selected, wrap those exact four verbs with the
+   signed application-local envelope in `references/airflow-execution.md`;
+   Airflow must not reinterpret backend GPUs, staging, ownership, or topology.
+   For `sdg`, use
    `manage_sdg_endpoints.py` for prebuilt-image checks and endpoint lifecycle,
    then `run_sdg_stage.py`, as documented in `references/local-sdg.md`. These
    helpers reconstruct paths and images from immutable state; do not depend on
@@ -230,7 +243,7 @@ stage is next:
 | evaluate and train | `references/clip-train-eval.md`, `references/metric-contract.md` | successful TAO status, bound metric evidence; for train, a fresh best and normalized checkpoint |
 | gap analysis | `references/gap-analysis.md` | non-empty iteration-scoped gaps parquet |
 | history selection | `references/mining.md` | budgeted mined set, cumulative/history entry, zero eval leakage |
-| local generation | `references/local-sdg.md` | accepted provenance-bound crops, validated open QA, normalized image-text pairs, endpoint evidence |
+| platform-local generation | `references/local-sdg.md` | accepted provenance-bound crops, validated open QA, normalized image-text pairs, endpoint evidence |
 | visualization | `references/visualization.md` | enabled artifacts and command evidence, or a config-authorized skip |
 
 `visualize` is the only optional stage. Commit it with `--skip` only when both
@@ -253,6 +266,28 @@ failing visualization mid-run without revising and reapproving the config.
 - A transient registry/network interruption or GPU contention may be retried
   once after evidence shows the condition changed. A second equivalent failure
   is terminal for the run.
+- The platform producer's `dispatch-repair` verb is not a third workload
+  retry. Use it only when both normal virtualenv attempts are finalized and
+  the helper proves that each stopped inside an allowlisted shim check before
+  the TAO CLI ran. It preserves both attempts, refuses any workload output,
+  runtime/data/model failure, unknown log, active job, or second repair, and
+  emits one distinct request/job lineage. Never use it to bypass an ordinary
+  exhausted retry budget.
+- The producer's `launcher-repair` verb is the equally narrow SLURM training
+  counterpart. Use it only after both normal `clip train` attempts are
+  terminal and the helper proves, in order, the exact one-task Lightning
+  device mismatch and the canceled rank-0 `MEMBER: 1/2` initialization hang.
+  It is forbidden after rank 1, a first batch, any output/checkpoint,
+  runtime/data/model or unknown failure, an active job, or a prior repair.
+  Dispatch its single distinct request normally through the SLURM skill; do
+  not create another workload attempt.
+- The producer's `unbound-replay` verb is the one bounded recovery for an
+  allowlisted deterministic SLURM adapter whose terminal attempt-1 job lacks
+  its pre-submit binding. It requires exactly one owned COMPLETE job, no
+  platform status or binding, quarantines and hashes every untrusted output,
+  preserves request/job/log evidence, and emits a distinct attempt-2 action.
+  Never retroactively create a binding, accept the quarantined output, use the
+  verb for GPU or mutating adapters, or run it more than once.
 - Never retry checksum or rebuild verification failure, zero-row mining,
   schema/cardinality failure, missing eval-split evidence, eval leakage,
   history conflict that fails documented resume, metric-contract mismatch,
@@ -313,11 +348,12 @@ HTML file, or assistant statement alone is not completion evidence.
 | read-only checks, approval summary, initialization | `references/preflight.md` |
 | stage commands and script interfaces | `references/scripts-and-agents.md` |
 | platform staging, four verbs, job records, finalization | `references/platform-execution.md` |
+| optional IAA-only Airflow orchestration over all five compute backends | `references/airflow-execution.md` |
 | state transitions and resume behavior | `references/pipeline-and-state.md` |
 | dataset/archive contract | `references/data-layout.md` |
 | KPI parsing and evidence | `references/metric-contract.md` |
 | gap generation | `references/gap-analysis.md` |
 | embeddings, k-NN, selection | `references/mining.md` |
-| local endpoints, augmentation, labeling, normalization | `references/local-sdg.md` |
+| platform-local endpoints, augmentation, labeling, normalization | `references/local-sdg.md` |
 | contact sheets and t-SNE | `references/visualization.md` |
 | train/evaluate/checkpoints | `references/clip-train-eval.md` |

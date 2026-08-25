@@ -20,6 +20,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import math
@@ -50,6 +51,8 @@ from metric_contract import (
     validate_contract,
 )
 from parse_iaa_metrics import build_result
+from runtime_binding import active_runtime_sha256, validate_runtime_lineage
+from iaa_deft.sdg import validate_image_edit_endpoint_pool, validate_normalized_dataset
 
 
 WORKFLOW = "tao-run-deft-iaa"
@@ -69,12 +72,76 @@ VALID_STAGES = {
     "train",
     "loop_stop",
 }
+
+
+def _synced_remote_local_path(
+    recorded: Any, results_root: pathlib.Path,
+) -> pathlib.Path | None:
+    """Resolve a backend path only through its exact run-relative suffix."""
+    if not isinstance(recorded, str):
+        return None
+    remote = pathlib.PurePosixPath(recorded)
+    if not remote.is_absolute() or ".." in remote.parts:
+        return None
+    root = results_root.resolve()
+    positions = [index for index, part in enumerate(remote.parts) if part == root.name]
+    if not positions:
+        return None
+    suffix = remote.parts[positions[-1] + 1:]
+    candidate = root.joinpath(*suffix)
+    try:
+        candidate.resolve().relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _synced_remote_path_matches(
+    recorded: Any, local: pathlib.Path, results_root: pathlib.Path,
+) -> bool:
+    mapped = _synced_remote_local_path(recorded, results_root)
+    return mapped is not None and mapped.resolve() == local.resolve()
+
+
+def _endpoint_pool_binding_matches(
+    recorded: Any, canonical: dict[str, Any], execution_platform: str,
+) -> bool:
+    if not isinstance(recorded, dict):
+        return False
+    if any(
+        recorded.get(field) != canonical.get(field)
+        for field in ("sha256", "request_sha256", "required_capacity")
+    ):
+        return False
+    recorded_path = recorded.get("path")
+    canonical_path = canonical.get("path")
+    if not isinstance(recorded_path, str) or not isinstance(canonical_path, str):
+        return False
+    if pathlib.Path(recorded_path) == pathlib.Path(canonical_path):
+        return True
+    if execution_platform not in {"slurm", "brev"}:
+        return False
+    return pathlib.PurePosixPath(recorded_path).parts[-4:] == pathlib.Path(
+        canonical_path
+    ).parts[-4:]
 VALID_COMPLETED_STAGES = VALID_STAGES - {"loop_stop"}
 LOOP_STOP_REASONS = ("kpi_met", "max_iterations", "hard_stop")
 COMPLETION_REASONS = ("kpi_met", "max_iterations")
 VERIFY_MARKER = "VERIFY: PASS"
 CHECKSUM_MARKER = "CHECKSUM_VERIFY: PASS"
 EVAL_SUCCESS_MARKER = "Evaluate finished successfully"
+
+
+def _status_command_label(field: str, label: str) -> str:
+    """Return the action label that owns a committed status artifact."""
+    if field != "gap_analysis_status":
+        return label
+    if label == "baseline":
+        return "iter1"
+    match = re.fullmatch(r"iter([1-9][0-9]*)", label)
+    if match is None:
+        raise ValueError(f"invalid gap-analysis evaluation label: {label!r}")
+    return f"iter{int(match.group(1)) + 1}"
 TRAIN_SUCCESS_MARKER = "Train finished successfully."
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
@@ -108,11 +175,14 @@ RESULTS_SCOPED_FILE_FIELDS = {
     "verify_log",
     "checksum_verify_log",
     "dataset_materialize_status",
+    "dataset_rebuild_status",
     "gap_analysis_status",
     "endpoint_manifest",
 }
 PHASE_SCOPED_FILE_FIELDS = {
+    "metrics_detailed_csv",
     "metrics_aggregate_csv",
+    "metrics_weighted_aggregate_csv",
     "eval_status_json",
     "best_ckpt_path",
     "best_ckpt_metadata",
@@ -129,6 +199,7 @@ PHASE_SCOPED_FILE_FIELDS = {
     "train_config",
     "eval_config",
     "eval_config_status",
+    "metric_parse_status",
     "iteration_summary_status",
     "mining_postprocess_status",
     "history_select_status",
@@ -136,6 +207,7 @@ PHASE_SCOPED_FILE_FIELDS = {
     "sdg_pairs",
     "sdg_image_list",
     "sdg_execution_manifest",
+    "endpoint_pool",
     "sdg_status",
     "train_config_status",
     "publish_checkpoint_status",
@@ -160,15 +232,19 @@ FIELD_STAGE = {
     "verify_log": "dataset_setup",
     "checksum_verify_log": "dataset_setup",
     "dataset_materialize_status": "dataset_setup",
+    "dataset_rebuild_status": "dataset_setup",
     "pool_embeddings_parquet": "pool_embed",
     "pool_embed_command_status": "pool_embed",
+    "metrics_detailed_csv": "evaluate",
     "metrics_aggregate_csv": "evaluate",
+    "metrics_weighted_aggregate_csv": "evaluate",
     "eval_status_json": "evaluate",
     "metric_result": "evaluate",
     "eval_command_status": "evaluate",
     "iteration_summary": "evaluate",
     "eval_config": "evaluate",
     "eval_config_status": "evaluate",
+    "metric_parse_status": "evaluate",
     "iteration_summary_status": "evaluate",
     "gaps_parquet": "gap_analysis",
     "caption_history": "gap_analysis",
@@ -186,6 +262,7 @@ FIELD_STAGE = {
     "mining_history": "history_select",
     "history_select_status": "history_select",
     "endpoint_manifest": "sdg",
+    "endpoint_pool": "sdg",
     "sdg_manifest": "sdg",
     "sdg_pairs": "sdg",
     "sdg_image_list": "sdg",
@@ -214,16 +291,20 @@ STAGE_REQUIRED_FIELDS = {
         "iaa_splits_dir",
         "source_pool_parquet",
         "verify_log",
+        "dataset_rebuild_status",
         "dataset_materialize_status",
     ),
     "pool_embed": ("pool_embeddings_parquet", "pool_embed_command_status"),
     "evaluate": (
+        "metrics_detailed_csv",
         "metrics_aggregate_csv",
+        "metrics_weighted_aggregate_csv",
         "eval_status_json",
         "metric_result",
         "eval_command_status",
         "eval_config",
         "eval_config_status",
+        "metric_parse_status",
     ),
     "gap_analysis": ("gaps_parquet", "caption_history", "gap_analysis_status"),
     "data_mining": (
@@ -243,6 +324,7 @@ STAGE_REQUIRED_FIELDS = {
     ),
     "sdg": (
         "endpoint_manifest",
+        "endpoint_pool",
         "sdg_manifest",
         "sdg_pairs",
         "sdg_image_list",
@@ -468,16 +550,20 @@ def _expected_artifact_path(
         "source_pool_parquet": results_dir / "embeddings" / "source" / "source_pool.parquet",
         "verify_log": results_dir / "dataset_setup" / "rebuild_verify.log",
         "checksum_verify_log": results_dir / "dataset_setup" / "checksum_verify.log",
-        "dataset_materialize_status": results_dir / "dataset_setup" / "dataset-materialize.host.status.json",
+        "dataset_rebuild_status": results_dir / "dataset_setup" / "dataset_rebuild.status.json",
+        "dataset_materialize_status": results_dir / "dataset_setup" / "dataset_materialize.status.json",
         "pool_embeddings_parquet": results_dir / "embeddings" / "source" / "embeddings.parquet",
         "pool_embed_command_status": results_dir / "embeddings" / "source" / "pool_embed.status.json",
+        "metrics_detailed_csv": phase / "evaluate" / "nvidia_pas_metrics.csv",
         "metrics_aggregate_csv": phase / "evaluate" / "nvidia_pas_metrics_aggregate.csv",
+        "metrics_weighted_aggregate_csv": phase / "evaluate" / "nvidia_pas_metrics_weighted_aggregate.csv",
         "eval_status_json": phase / "evaluate" / "status.json",
         "eval_command_status": phase / "evaluate" / "evaluate.status.json",
         "iteration_summary": phase / "iteration_summary.json",
         "eval_config": phase / "specs" / "eval_config.yaml",
-        "eval_config_status": phase / "specs" / "eval-config.host.status.json",
-        "iteration_summary_status": phase / "iteration-summary.host.status.json",
+        "eval_config_status": phase / "specs" / "eval_config.status.json",
+        "metric_parse_status": phase / "evaluate" / "metric_parse.status.json",
+        "iteration_summary_status": phase / "iteration_summary.status.json",
         "target_embeddings_parquet": phase / "embeddings" / "target" / "embeddings.parquet",
         "target_embed_command_status": phase / "embeddings" / "target" / "target_embed.status.json",
         "mined_parquet": phase / "mining" / "mined_samples.parquet",
@@ -490,31 +576,31 @@ def _expected_artifact_path(
         "caption_history": results_dir / "caption_selection_history.json",
         "samples_dir": phase / "visualization" / "samples",
         "tsne_plot": phase / "visualization" / "tsne_plot.png",
-        "visualize_prepare_status": phase / "visualization" / "visualize-prepare.host.status.json",
-        "visualize_finish_status": phase / "visualization" / "visualize-finish.host.status.json",
+        "visualize_prepare_status": phase / "visualization" / "visualize_prepare.status.json",
+        "visualize_finish_status": phase / "visualization" / "visualize_finish.status.json",
         "best_ckpt_path": phase / "train" / "best" / "clip_best_val_t2i_mAP.pth",
         "best_ckpt_metadata": phase / "train" / "best" / "clip_best_val_t2i_mAP.json",
         "train_tao_status_json": phase / "train" / "status.json",
         "train_command_status": phase / "train" / "train.status.json",
         "pretrained_state": phase / "pretrained" / "model_state.pth",
         "train_config": phase / "specs" / "train_config.yaml",
-        "mining_postprocess_status": phase / "mining" / "mining-postprocess.host.status.json",
-        "history_select_status": phase / "mining" / "history-select.host.status.json",
-        "endpoint_manifest": results_dir / "endpoints" / "manifest.json",
+        "mining_postprocess_status": phase / "mining" / "mining_postprocess.status.json",
+        "history_select_status": phase / "mining" / "history_select.status.json",
+        "endpoint_manifest": phase / "datagen" / "endpoint_manifest.json",
+        "endpoint_pool": phase / "datagen" / "endpoint_pool.json",
         "sdg_manifest": phase / "datagen" / "dataset" / "sdg_manifest.json",
         "sdg_pairs": phase / "datagen" / "dataset" / "sdg_pairs.json",
         "sdg_image_list": phase / "datagen" / "dataset" / "sdg_image_list.txt",
         "sdg_execution_manifest": phase / "datagen" / "sdg_execution_manifest.json",
-        "sdg_status": phase / "datagen" / "status" / "sdg-normalize.host.status.json",
-        "train_config_status": phase / "specs" / "train-config.host.status.json",
-        "publish_checkpoint_status": phase / "train" / "publish-checkpoint.host.status.json",
+        "train_config_status": phase / "specs" / "train_config.status.json",
+        "publish_checkpoint_status": phase / "train" / "publish_checkpoint.status.json",
     }
     if field == "gaps_parquet":
         feed = 1 if label == "baseline" else int(label[4:]) + 1
         return results_dir / f"iter_{feed}" / "gaps" / "kpi_gaps.parquet"
     if field == "gap_analysis_status":
         feed = 1 if label == "baseline" else int(label[4:]) + 1
-        return results_dir / f"iter_{feed}" / "gaps" / "gap-analysis.host.status.json"
+        return results_dir / f"iter_{feed}" / "gaps" / "gap_analysis.status.json"
     if field == "candidate_pairs":
         candidate = phase / "mining"
         if config.get("history_aware"):
@@ -639,6 +725,47 @@ def _results_root_for_scope(scope: pathlib.Path) -> pathlib.Path:
     return resolved
 
 
+def _legacy_local_dataset_candidate(
+    state: dict[str, Any], entries: list[dict[str, Any]], results_dir: pathlib.Path
+) -> tuple[dict[str, Any], pathlib.Path] | None:
+    """Select only the pre-adapter local-Docker dataset evidence window."""
+    config = state.get("config")
+    baseline = state.get("iterations", {}).get("baseline")
+    lineage = state.get("runtime_lineage")
+    event = next(
+        (
+            entry for entry in entries
+            if entry.get("iteration") == "baseline"
+            and entry.get("stage") == "dataset_setup"
+            and entry.get("status") == "ok"
+        ),
+        None,
+    )
+    if not (
+        isinstance(config, dict)
+        and config.get("platform") == "docker"
+        and config.get("docker_remote", False) is False
+        and isinstance(lineage, list)
+        and lineage
+        and isinstance(baseline, dict)
+        and isinstance(event, dict)
+    ):
+        return None
+    status = results_dir / "dataset_setup" / "dataset-materialize.host.status.json"
+    try:
+        committed_at = dt.datetime.fromisoformat(str(event["ts"]).replace("Z", "+00:00"))
+        rebound_at = dt.datetime.fromisoformat(str(lineage[0]["rebound_at"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (
+        committed_at >= rebound_at
+        or baseline.get("dataset_materialize_status") != str(status)
+        or baseline.get("dataset_rebuild_status")
+    ):
+        return None
+    return baseline, status
+
+
 def _validate_command_status(
     path: pathlib.Path,
     field: str,
@@ -650,6 +777,7 @@ def _validate_command_status(
     required_image: str | None = None,
     required_hf_forwarding: bool | None = None,
     required_platform: str | None = None,
+    allow_synced_slurm_sdg: bool = False,
 ) -> dict[str, Any] | None:
     payload = _validate_json_shape(path, field, errors, dict)
     if payload is None:
@@ -723,14 +851,25 @@ def _validate_command_status(
                     f"absolute path: {item}"
                 )
                 continue
+            mapped = (
+                _synced_remote_local_path(item, results_root)
+                if allow_synced_slurm_sdg else None
+            )
             try:
                 absolute_output.resolve().relative_to(results_root)
             except ValueError:
+                if mapped is not None:
+                    continue
                 errors.append(
                     f"{field}.fresh_outputs entry must resolve under "
                     f"{results_root}: {item}"
                 )
-    log_path = pathlib.Path(str(payload.get("log_path", ""))).expanduser()
+    recorded_log = str(payload.get("log_path", ""))
+    log_path = pathlib.Path(recorded_log).expanduser()
+    if allow_synced_slurm_sdg:
+        mapped_log = _synced_remote_local_path(recorded_log, results_root)
+        if mapped_log is not None:
+            log_path = mapped_log
     if (
         not log_path.is_absolute()
         or not log_path.is_file()
@@ -952,11 +1091,13 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         workspace_path = pathlib.Path(str(config.get("workspace", ""))).expanduser()
         iaa_runtime_path = pathlib.Path(__file__).resolve().parent / "iaa_deft"
         try:
+            validate_runtime_lineage(state, results_dir.resolve())
+            approved_runtime = active_runtime_sha256(state)
             runtime_digest = _python_tree_sha256(iaa_runtime_path)
         except (OSError, ValueError) as exc:
-            errors.append(f"bundled IAA runtime cannot be hashed: {exc}")
+            errors.append(f"bundled IAA runtime binding is invalid: {exc}")
         else:
-            if config.get("iaa_deft_bundle_sha256") != runtime_digest:
+            if approved_runtime != runtime_digest:
                 errors.append("bundled IAA runtime changed after initialization")
         if workspace_path.is_absolute() and workspace_path.is_dir():
             workspace_path = workspace_path.resolve()
@@ -1157,6 +1298,10 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         expected_approval["docker_remote"] = config.get(
                             "docker_remote", False
                         )
+                        if "orchestrator" in approval:
+                            expected_approval["orchestrator"] = config.get(
+                                "orchestrator", "direct"
+                            )
                         if "virtualenvs" in approval:
                             expected_approval["virtualenvs"] = config.get("virtualenvs")
                         else:
@@ -1297,6 +1442,14 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 "state.config.platform must be one of "
                 + ", ".join(SUPPORTED_PLATFORMS)
             )
+        orchestrator = config.get("orchestrator", "direct")
+        if orchestrator not in {"direct", "airflow"}:
+            errors.append("state.config.orchestrator must be direct or airflow")
+        elif orchestrator == "airflow" and config.get("platform") == "airflow":
+            errors.append(
+                "Airflow-orchestrated state must retain its compute platform; "
+                "platform=airflow is compatibility-only"
+            )
         docker_remote = config.get("docker_remote", False)
         if not isinstance(docker_remote, bool):
             errors.append("state.config.docker_remote must be boolean")
@@ -1370,8 +1523,16 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 errors.append(
                     "state.config.visible_gpu_ids must be unique non-negative integers"
                 )
-            elif isinstance(gpu_ids, list) and not set(gpu_ids).issubset(
-                visible_gpu_ids
+            elif (
+                isinstance(gpu_ids, list)
+                and (
+                    config.get("platform") == "virtualenv"
+                    or (
+                        config.get("platform") == "docker"
+                        and config.get("docker_remote", False) is not True
+                    )
+                )
+                and not set(gpu_ids).issubset(visible_gpu_ids)
             ):
                 errors.append("state.config.gpu_ids must be a subset of visible_gpu_ids")
             if config.get("visible_gpu_count") != (
@@ -1519,6 +1680,53 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     f"{label}/{stage}; expected one of "
                     f"[{rendered or 'end-of-log'}]"
                 )
+
+    # One bounded compatibility bridge exists for runs that committed local
+    # Docker dataset setup before deterministic adapters became platform
+    # actions, then recorded a valid runtime rebind. It never applies to a
+    # remote frame or to later/new stages, and it validates the original host
+    # evidence instead of rerunning dataset mutation.
+    legacy_local_dataset_setup = False
+    candidate = _legacy_local_dataset_candidate(state, entries, results_dir)
+    if candidate is not None:
+        baseline_info, legacy_status = candidate
+        before = len(errors)
+        payload = _validate_command_status(
+            legacy_status,
+            "state.iterations.baseline.dataset_materialize_status",
+            errors,
+            results_dir,
+            required_name="dataset-materialize",
+        )
+        required_outputs = {
+            str(pathlib.Path(str(baseline_info[field])).resolve())
+            for field in ("source_pool_parquet", "iaa_splits_dir")
+            if baseline_info.get(field)
+        }
+        fresh = {
+            str(pathlib.Path(str(item)).resolve())
+            for item in (payload or {}).get("fresh_outputs", [])
+        }
+        split_root = pathlib.Path(str(baseline_info.get("iaa_splits_dir", "")))
+        expected_split_files = {
+            str((split_root / name).resolve())
+            for name in (
+                "eval_list.txt", "eval_pairs.json", "val_list.txt",
+                "aug_pool_list.txt", "aug_pool_pairs.json",
+            )
+        }
+        required_outputs.discard(str(split_root.resolve()))
+        required_outputs.update(expected_split_files)
+        if not required_outputs.issubset(fresh):
+            errors.append(
+                "legacy local dataset materialization status does not bind all committed outputs"
+            )
+        legacy_local_dataset_setup = len(errors) == before
+        if legacy_local_dataset_setup:
+            warnings.append(
+                "accepted pre-adapter local Docker dataset_setup host evidence; "
+                "all subsequent stages require platform action statuses"
+            )
 
     iter_numbers_in_log = sorted(
         {
@@ -1705,7 +1913,25 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 actual_path = pathlib.Path(str(value)).expanduser()
                 actual_absolute = pathlib.Path(os.path.abspath(actual_path))
                 expected_absolute = pathlib.Path(os.path.abspath(expected_path))
-                if actual_absolute != expected_absolute:
+                legacy_endpoint = (
+                    field == "endpoint_manifest"
+                    and not info.get("endpoint_pool")
+                    and actual_absolute
+                    == pathlib.Path(os.path.abspath(results_dir / "endpoints" / "manifest.json"))
+                )
+                if legacy_endpoint:
+                    warnings.append(
+                        f"state.iterations.{label} uses legacy global endpoint evidence; "
+                        "new SDG commits require iteration-local endpoint pool and manifest"
+                    )
+                elif (
+                    legacy_local_dataset_setup
+                    and field == "dataset_materialize_status"
+                    and actual_absolute
+                    == (results_dir / "dataset_setup" / "dataset-materialize.host.status.json").resolve()
+                ):
+                    pass
+                elif actual_absolute != expected_absolute:
                     errors.append(
                         f"state.iterations.{label}.{field} must be "
                         f"{expected_absolute}, got {actual_absolute}"
@@ -1736,6 +1962,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             "cumulative_names": list,
             "iteration_summary": dict,
             "endpoint_manifest": dict,
+            "endpoint_pool": dict,
             "sdg_manifest": dict,
             "sdg_pairs": list,
             "sdg_execution_manifest": dict,
@@ -1755,6 +1982,13 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 manifest = json.loads(pathlib.Path(str(info.get("sdg_manifest", ""))).read_text())
                 pairs = json.loads(pathlib.Path(str(info.get("sdg_pairs", ""))).read_text())
                 endpoint = json.loads(pathlib.Path(str(info.get("endpoint_manifest", ""))).read_text())
+                execution = json.loads(
+                    pathlib.Path(str(info.get("sdg_execution_manifest", ""))).read_text()
+                )
+                pool = (
+                    json.loads(pathlib.Path(str(info["endpoint_pool"])).read_text())
+                    if info.get("endpoint_pool") else None
+                )
                 immutable_sdg = yaml.safe_load(pathlib.Path(str(config.get("sdg_config", ""))).read_text())
                 image_names = [
                     line.strip()
@@ -1764,6 +1998,16 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             except (OSError, AttributeError, TypeError, json.JSONDecodeError, yaml.YAMLError) as exc:
                 errors.append(f"state.iterations.{label} SDG evidence is unreadable: {exc}")
             else:
+                try:
+                    validate_normalized_dataset(
+                        pathlib.Path(str(info["sdg_manifest"])),
+                        pathlib.Path(str(info["sdg_pairs"])),
+                        pathlib.Path(str(info["sdg_image_list"])),
+                    )
+                except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                    errors.append(
+                        f"state.iterations.{label} normalized SDG dataset is invalid: {exc}"
+                    )
                 if manifest.get("dataset_format_version") != 3:
                     errors.append(f"state.iterations.{label}.sdg_manifest has the wrong format version")
                 if manifest.get("rejected_samples_included") != 0:
@@ -1780,20 +2024,134 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     errors.append(f"state.iterations.{label}.sdg_pairs has malformed rows at {malformed[:3]}")
                 if any(row.get("source_split") != "train" or row.get("is_augmented") is not True for row in pairs if isinstance(row, dict)):
                     errors.append(f"state.iterations.{label}.sdg_pairs contains non-training or non-generated rows")
-                expected_ownership = immutable_sdg.get("endpoints", {}).get("ownership")
-                if endpoint.get("ownership") != expected_ownership:
-                    errors.append(f"state.iterations.{label}.endpoint_manifest ownership changed")
-                endpoint_records = endpoint.get("containers") if expected_ownership == "managed" else endpoint.get("probes")
-                if not isinstance(endpoint_records, dict):
-                    errors.append(f"state.iterations.{label}.endpoint_manifest lacks role evidence")
+                status_platforms = {str(config.get("platform"))}
+                if config.get("platform") in {"docker", "virtualenv"} or pool is None:
+                    status_platforms.add("host")
+                allowed_statuses = {
+                    (phase_root / "datagen" / "status" / f"sdg-normalize.{platform}.status.json").resolve()
+                    for platform in status_platforms
+                }
+                actual_status = pathlib.Path(str(info.get("sdg_status", ""))).resolve()
+                if actual_status not in allowed_statuses:
+                    errors.append(f"state.iterations.{label}.sdg_status is not canonical for its platform")
+                if pool is None:
+                    # Compatibility is deliberately limited to the old exact
+                    # global path; path validation above rejects any other
+                    # pool-less endpoint evidence.
+                    expected_ownership = immutable_sdg.get("endpoints", {}).get("ownership")
+                    if endpoint.get("ownership") != expected_ownership:
+                        errors.append(f"state.iterations.{label}.endpoint_manifest ownership changed")
+                    endpoint_records = endpoint.get("containers") if expected_ownership == "managed" else endpoint.get("probes")
+                    if not isinstance(endpoint_records, dict):
+                        errors.append(f"state.iterations.{label}.endpoint_manifest lacks role evidence")
+                    else:
+                        for role in ("image_edit", "vlm", "llm"):
+                            record = endpoint_records.get(role)
+                            expected_model = immutable_sdg.get("models", {}).get(role, {}).get("id")
+                            if not isinstance(record, dict) or record.get("model") != expected_model:
+                                errors.append(f"state.iterations.{label}.endpoint_manifest {role} model changed")
+                            elif expected_ownership == "managed" and record.get("owned") is not True:
+                                errors.append(f"state.iterations.{label}.endpoint_manifest {role} is not run-owned")
                 else:
-                    for role in ("image_edit", "vlm", "llm"):
-                        record = endpoint_records.get(role)
-                        expected_model = immutable_sdg.get("models", {}).get(role, {}).get("id")
-                        if not isinstance(record, dict) or record.get("model") != expected_model:
-                            errors.append(f"state.iterations.{label}.endpoint_manifest {role} model changed")
-                        elif expected_ownership == "managed" and record.get("owned") is not True:
-                            errors.append(f"state.iterations.{label}.endpoint_manifest {role} is not run-owned")
+                    try:
+                        validated_pool = validate_image_edit_endpoint_pool(pool)
+                    except (TypeError, ValueError) as exc:
+                        errors.append(f"state.iterations.{label}.endpoint_pool is invalid: {exc}")
+                    else:
+                        pool_path = pathlib.Path(str(info["endpoint_pool"])).resolve()
+                        expected_capacity = (
+                            immutable_sdg.get("generation", {}).get("generation_nodes", 0)
+                            * immutable_sdg.get("generation", {}).get("gpus_per_generation_node", 0)
+                        )
+                        expected_model = immutable_sdg.get("models", {}).get("image_edit", {})
+                        if validated_pool["platform"] != config.get("platform"):
+                            errors.append(f"state.iterations.{label}.endpoint_pool platform changed")
+                        active_capacity = validated_pool["required_capacity"]
+                        services_per_node = immutable_sdg.get("generation", {}).get(
+                            "gpus_per_generation_node", 0
+                        )
+                        if config.get("platform") == "slurm":
+                            if (
+                                not services_per_node <= active_capacity <= expected_capacity
+                                or active_capacity % services_per_node
+                            ):
+                                errors.append(
+                                    f"state.iterations.{label}.endpoint_pool active capacity is not "
+                                    "a complete-worker subset of the immutable SLURM topology"
+                                )
+                            topology = endpoint.get("image_edit_pool")
+                            if not isinstance(topology, dict):
+                                errors.append(
+                                    f"state.iterations.{label}.endpoint_manifest lacks image-edit topology"
+                                )
+                            else:
+                                expected_nodes = immutable_sdg.get("generation", {}).get(
+                                    "generation_nodes", 0
+                                )
+                                if (
+                                    topology.get("requested_capacity") != expected_capacity
+                                    or topology.get("requested_nodes") != expected_nodes
+                                ):
+                                    errors.append(
+                                        f"state.iterations.{label}.endpoint_manifest requested topology changed"
+                                    )
+                                if (
+                                    topology.get("required_capacity") != active_capacity
+                                    or topology.get("active_nodes")
+                                    != active_capacity // services_per_node
+                                ):
+                                    errors.append(
+                                        f"state.iterations.{label}.endpoint_manifest active topology changed"
+                                    )
+                        elif active_capacity != expected_capacity:
+                            errors.append(f"state.iterations.{label}.endpoint_pool capacity changed")
+                        if validated_pool["model"] != {
+                            "id": expected_model.get("id"), "revision": expected_model.get("revision")
+                        }:
+                            errors.append(f"state.iterations.{label}.endpoint_pool model changed")
+                        if endpoint.get("request_sha256") is not None and endpoint.get("request_sha256") != validated_pool["request_sha256"]:
+                            errors.append(f"state.iterations.{label} endpoint request digests disagree")
+                        expected_binding = {
+                            "path": str(pool_path),
+                            "sha256": hashlib.sha256(pool_path.read_bytes()).hexdigest(),
+                            "request_sha256": validated_pool["request_sha256"],
+                            "required_capacity": validated_pool["required_capacity"],
+                        }
+                        if not _endpoint_pool_binding_matches(
+                            execution.get("endpoint_pool"), expected_binding,
+                            str(config.get("platform")),
+                        ):
+                            errors.append(
+                                f"state.iterations.{label}.sdg_execution_manifest endpoint_pool binding changed"
+                            )
+                    endpoint_records = endpoint.get("containers") or endpoint.get("probes") or endpoint.get("roles")
+                    if not isinstance(endpoint_records, dict):
+                        errors.append(f"state.iterations.{label}.endpoint_manifest lacks auxiliary role evidence")
+                    else:
+                        for role in ("vlm", "llm"):
+                            record = endpoint_records.get(role)
+                            expected_model = immutable_sdg.get("models", {}).get(role, {}).get("id")
+                            if not isinstance(record, dict) or record.get("model") != expected_model:
+                                errors.append(f"state.iterations.{label}.endpoint_manifest {role} model changed")
+                            elif config.get("platform") in {"docker", "virtualenv"}:
+                                if (
+                                    immutable_sdg.get("endpoints", {}).get("ownership") == "managed"
+                                    and record.get("owned") is not True
+                                ):
+                                    errors.append(f"state.iterations.{label}.endpoint_manifest {role} is not run-owned")
+                            elif record.get("ready") is not True and record.get("probe", {}).get("models_ok") is not True:
+                                errors.append(f"state.iterations.{label}.endpoint_manifest {role} lacks readiness evidence")
+                    components = endpoint.get("component_images") or endpoint.get("components")
+                    if not isinstance(components, dict):
+                        errors.append(f"state.iterations.{label}.endpoint_manifest lacks component evidence")
+                    else:
+                        for component in ("augmentation", "auto_labeling"):
+                            record = components.get(component)
+                            actual_image = record.get("image") if isinstance(record, dict) else record
+                            if actual_image != immutable_sdg.get("images", {}).get(component):
+                                errors.append(f"state.iterations.{label}.endpoint_manifest {component} image changed")
+                            elif isinstance(record, dict) and record.get("present") is False:
+                                errors.append(f"state.iterations.{label}.endpoint_manifest {component} was unavailable")
 
         if (label, "train") in successful_keys and phase_root is not None:
             try:
@@ -1839,6 +2197,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
 
         status_scopes = {
             "pool_embed_command_status": results_dir,
+            "dataset_rebuild_status": results_dir,
             "dataset_materialize_status": results_dir,
             "gap_analysis_status": results_dir,
         }
@@ -1850,9 +2209,12 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     "eval_command_status": phase_root,
                     "train_command_status": phase_root,
                     "eval_config_status": phase_root,
+                    "metric_parse_status": phase_root,
                     "iteration_summary_status": phase_root,
                     "mining_postprocess_status": phase_root,
                     "history_select_status": phase_root,
+                    "visualize_prepare_status": phase_root,
+                    "visualize_finish_status": phase_root,
                     "sdg_status": phase_root,
                     "train_config_status": phase_root,
                     "publish_checkpoint_status": phase_root,
@@ -1860,13 +2222,20 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             )
         status_outputs = {
             "pool_embed_command_status": ("pool_embeddings_parquet",),
-            "dataset_materialize_status": ("source_pool_parquet",),
+            "dataset_rebuild_status": ("verify_log",),
+            "dataset_materialize_status": (),
             "gap_analysis_status": ("gaps_parquet",),
             "target_embed_command_status": ("target_embeddings_parquet",),
             "knn_command_status": ("mined_parquet",),
-            "eval_command_status": ("metrics_aggregate_csv", "eval_status_json"),
+            "eval_command_status": (
+                "metrics_detailed_csv",
+                "metrics_aggregate_csv",
+                "metrics_weighted_aggregate_csv",
+                "eval_status_json",
+            ),
             "train_command_status": ("train_tao_status_json",),
             "eval_config_status": ("eval_config",),
+            "metric_parse_status": ("metric_result",),
             "iteration_summary_status": ("iteration_summary",),
             "mining_postprocess_status": ("candidate_pairs",),
             "history_select_status": (
@@ -1874,49 +2243,47 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 "mined_pairs",
                 "mined_manifest",
                 "cumulative_names",
-                "mining_history",
             ),
+            "visualize_prepare_status": (),
+            "visualize_finish_status": (),
             "sdg_status": ("sdg_manifest", "sdg_pairs", "sdg_image_list"),
             "train_config_status": ("train_config",),
-            "publish_checkpoint_status": (
-                "pretrained_state",
-                "best_ckpt_metadata",
-            ),
+            "publish_checkpoint_status": (),
         }
         status_names = {
             "pool_embed_command_status": "pool_embed",
-            "dataset_materialize_status": "dataset-materialize",
-            "gap_analysis_status": "gap-analysis",
+            "dataset_rebuild_status": "dataset_rebuild",
+            "dataset_materialize_status": "dataset_materialize",
+            "gap_analysis_status": "gap_analysis",
             "target_embed_command_status": "target_embed",
             "knn_command_status": "knn",
             "eval_command_status": "evaluate",
             "train_command_status": "train",
-            "eval_config_status": "eval-config",
-            "iteration_summary_status": "iteration-summary",
-            "mining_postprocess_status": "mining-postprocess",
-            "history_select_status": "history-select",
+            "eval_config_status": "eval_config",
+            "metric_parse_status": "metric_parse",
+            "iteration_summary_status": "iteration_summary",
+            "mining_postprocess_status": "mining_postprocess",
+            "history_select_status": "history_select",
+            "visualize_prepare_status": "visualize_prepare",
+            "visualize_finish_status": "visualize_finish",
             "sdg_status": "sdg-normalize",
-            "train_config_status": "train-config",
-            "publish_checkpoint_status": "publish-checkpoint",
+            "train_config_status": "train_config",
+            "publish_checkpoint_status": "publish_checkpoint",
         }
         for field, scope in status_scopes.items():
             value = info.get(field)
             if not value or not pathlib.Path(str(value)).is_file():
                 continue
+            if legacy_local_dataset_setup and field == "dataset_materialize_status":
+                continue
             required_command = None
             required_kind = None
             required_image = None
             required_hf = None
-            if field in {
-                "pool_embed_command_status",
-                "target_embed_command_status",
-                "knn_command_status",
-                "eval_command_status",
-                "train_command_status",
-            }:
+            if field != "sdg_status":
                 try:
                     required_command = expected_container_command(
-                        status_names[field], label, config
+                        status_names[field], _status_command_label(field, label), config
                     )
                     required_kind = expected_image_kind(status_names[field])
                     required_image = config.get(f"{required_kind}_image")
@@ -1936,40 +2303,47 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 required_image=required_image,
                 required_hf_forwarding=required_hf,
                 required_platform=config.get("platform"),
+                allow_synced_slurm_sdg=(
+                    field == "sdg_status" and config.get("platform") == "slurm"
+                ),
             )
             output_fields = status_outputs[field]
             if payload is not None:
-                fresh = {
-                    str(pathlib.Path(str(item)).resolve())
-                    for item in payload.get("fresh_outputs", [])
-                }
                 started_ns = payload.get("started_ns")
                 output_paths: list[tuple[str, pathlib.Path]] = []
                 for output_field in output_fields:
                     output_value = info.get(output_field)
+                    if output_field == "metric_result" and isinstance(output_value, dict):
+                        output_value = output_value.get("evidence_path")
                     if not output_value:
                         continue
                     output_paths.append(
                         (output_field, pathlib.Path(str(output_value)).resolve())
                     )
                 if field == "dataset_materialize_status":
-                    split_root = pathlib.Path(str(info.get("iaa_splits_dir", "")))
-                    output_paths.extend(
-                        (f"iaa_splits_dir/{name}", (split_root / name).resolve())
-                        for name in (
-                            "eval_list.txt",
-                            "eval_pairs.json",
-                            "val_list.txt",
-                            "aug_pool_list.txt",
-                            "aug_pool_pairs.json",
-                        )
-                    )
+                    output_paths.append((field, results_dir / "dataset_setup" / "dataset-materialize.host.status.json"))
+                if field == "publish_checkpoint_status":
+                    output_paths.append((field, phase_root / "train" / "publish-checkpoint.host.status.json"))
+                if field == "visualize_prepare_status":
+                    output_paths.append((field, phase_root / "visualization" / "visualize-prepare.host.status.json"))
+                if field == "visualize_finish_status":
+                    output_paths.append((field, phase_root / "visualization" / "visualize-finish.host.status.json"))
                 if field == "history_select_status" and not isinstance(
                     payload.get("resume"), bool
                 ):
                     errors.append(
                         f"state.iterations.{label}.{field}.resume must be a boolean"
                     )
+                fresh: set[str] = set()
+                for item in payload.get("fresh_outputs", []):
+                    if not isinstance(item, str):
+                        continue
+                    if field == "sdg_status" and config.get("platform") == "slurm":
+                        mapped = _synced_remote_local_path(item, results_dir)
+                        if mapped is not None:
+                            fresh.add(str(mapped.resolve()))
+                            continue
+                    fresh.add(str(pathlib.Path(item).resolve()))
                 for output_field, output_path in output_paths:
                     if str(output_path) not in fresh:
                         errors.append(
@@ -1979,7 +2353,12 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     if (
                         isinstance(started_ns, int)
                         and output_path.is_file()
-                        and output_path.stat().st_mtime_ns < started_ns
+                        and (
+                            output_path.lstat()
+                            if output_path.is_symlink()
+                            else output_path.stat()
+                        ).st_mtime_ns
+                        < started_ns
                         and not remote_freshness_attested(payload)
                         and not (
                             field == "history_select_status"
@@ -2024,11 +2403,18 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                             "checkpoint publication evidence"
                         )
                 publish_value = info.get("publish_checkpoint_status")
+                publish_host_status = (
+                    phase_root / "train" / "publish-checkpoint.host.status.json"
+                )
                 try:
-                    publish_payload = json.loads(
+                    # The platform action binds the nested host status, and the
+                    # nested status binds the checkpoint artifacts themselves.
+                    # Revalidate both layers instead of expecting the outer
+                    # status to flatten the adapter's output set.
+                    publish_platform_payload = json.loads(
                         pathlib.Path(str(publish_value)).read_text()
                     )
-                    if not isinstance(publish_payload, dict):
+                    if not isinstance(publish_platform_payload, dict):
                         raise ValueError(
                             "publish checkpoint status root must be an object"
                         )
@@ -2038,6 +2424,15 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         f"cannot be checked against best checkpoint: {exc}"
                     )
                 else:
+                    publish_payload = _validate_command_status(
+                        publish_host_status,
+                        f"state.iterations.{label}.publish_checkpoint_host_status",
+                        errors,
+                        phase_root,
+                        required_name="publish-checkpoint",
+                    )
+                    if publish_payload is None:
+                        publish_payload = {}
                     publish_outputs = publish_payload.get("fresh_outputs")
                     if not isinstance(publish_outputs, list):
                         publish_outputs = []
@@ -2055,6 +2450,15 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                             f"state.iterations.{label}.publish_checkpoint_status "
                             "does not bind the canonical best checkpoint"
                         )
+                    for required_output in (
+                        provenance["best_ckpt_metadata"],
+                        info.get("pretrained_state"),
+                    ):
+                        if required_output and str(pathlib.Path(str(required_output)).resolve()) not in publish_fresh:
+                            errors.append(
+                                f"state.iterations.{label}.publish_checkpoint_status "
+                                f"does not bind required output {required_output}"
+                            )
 
         visual_statuses = info.get("visualize_command_statuses")
         if visual_statuses is not None and phase_root is not None:
@@ -2153,7 +2557,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                                 )
 
         if phase_root is not None and info.get("visualize_prepare_status"):
-            prepare_path = pathlib.Path(str(info["visualize_prepare_status"]))
+            prepare_path = phase_root / "visualization" / "visualize-prepare.host.status.json"
             prepare_payload = _validate_command_status(
                 prepare_path,
                 f"state.iterations.{label}.visualize_prepare_status",
@@ -2215,7 +2619,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         )
 
         if phase_root is not None and info.get("visualize_finish_status"):
-            finish_path = pathlib.Path(str(info["visualize_finish_status"]))
+            finish_path = phase_root / "visualization" / "visualize-finish.host.status.json"
             finish_payload = _validate_command_status(
                 finish_path,
                 f"state.iterations.{label}.visualize_finish_status",
@@ -2500,6 +2904,14 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         required = STAGE_REQUIRED_FIELDS.get(stage)
         if required:
             missing = [field for field in required if not info.get(field)]
+            if legacy_local_dataset_setup and stage == "dataset_setup":
+                missing = [field for field in missing if field != "dataset_rebuild_status"]
+            if (
+                stage == "sdg" and missing == ["endpoint_pool"]
+                and pathlib.Path(str(info.get("endpoint_manifest", ""))).resolve()
+                == (results_dir / "endpoints" / "manifest.json").resolve()
+            ):
+                missing = []
             if missing:
                 errors.append(
                     f"loop_log commits {label}/{stage} but state lacks "
@@ -2839,6 +3251,39 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
     last = entries[-1] if entries else None
     terminal = bool(last and str(last.get("stage")) == "loop_stop")
     error_entries = [entry for entry in entries if entry.get("status") == "error"]
+    if require_complete and terminal and last.get("status") == "ok":
+        report_status = results_dir / "report.status.json"
+        report_output = results_dir / "DEFT_Loop_Report.html"
+        if not report_status.is_file():
+            errors.append(
+                "complete audit requires terminal report platform evidence: "
+                f"{report_status}"
+            )
+        else:
+            payload = _validate_command_status(
+                report_status,
+                "terminal.report_status",
+                errors,
+                results_dir,
+                required_name="report",
+                required_command=expected_container_command("report", "terminal", config),
+                required_image_kind=expected_image_kind("report"),
+                required_image=config.get("ds_image"),
+                required_hf_forwarding=expected_hf_forwarding("report", config),
+                required_platform=config.get("platform"),
+            )
+            if payload is not None:
+                expected_output = str(report_output.resolve())
+                fresh = {
+                    str(pathlib.Path(str(item)).resolve())
+                    for item in payload.get("fresh_outputs", [])
+                }
+                if fresh != {expected_output}:
+                    errors.append(
+                        "terminal.report_status must bind only DEFT_Loop_Report.html"
+                    )
+        if not report_output.is_file() or report_output.is_symlink() or report_output.stat().st_size == 0:
+            errors.append(f"terminal report is missing, empty, or unsafe: {report_output}")
     if (
         terminal
         and last.get("status") == "ok"

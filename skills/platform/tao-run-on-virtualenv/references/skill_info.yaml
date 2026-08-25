@@ -16,3 +16,14 @@ cloud_storage:
   uri_format: /{absolute_path}
   metadata_key: local
 features: [tracking, local, no-docker]
+workflow_constraints:
+  tao-run-deft-iaa:
+    full_workflow_platform_pure: false
+    execution_mode: native-tao-plus-container-backed-sdg
+    requires: [docker, nvidia-container-runtime]
+    fail_closed_when: container-free full workflow is required
+    unavailable_native_artifacts:
+    - image-edit-vllm-omni-runtime
+    - text-vllm-runtime
+    - paidf-augmentation-runtime
+    - paidf-auto-labeling-runtime

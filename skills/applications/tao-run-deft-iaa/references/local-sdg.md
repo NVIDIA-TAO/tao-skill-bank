@@ -1,4 +1,4 @@
-# Local Image Attribute Augmentation
+# Platform-local Image Attribute Augmentation
 
 Read this reference only when `iterN/sdg` is the audited next action. The stage
 extends the existing iteration transaction; it does not introduce another
@@ -6,23 +6,28 @@ workflow engine or state file.
 
 ## Execution frame
 
-This reference governs the control-host generation frame, not the selected TAO
-action platform. The prebuilt augmentation and auto-labeling images, and any
-skill-managed model endpoints, run through the control host's Docker daemon.
-TAO embedding, mining, train, and evaluate actions continue through the
-selected Docker, SLURM, Kubernetes, Brev, or virtualenv consumer and its four
-verbs. For a remote TAO platform, the platform staging receipt must include the
-committed generated dataset before a downstream action is submitted.
+All inference, component execution, and dataset mutation run in the selected
+platform's compute frame. The control host may provision, submit, monitor,
+synchronize completed outputs, and audit evidence only. It must not become a
+fallback data plane for a remote SLURM, Kubernetes, or Brev run. Optional
+Airflow orchestration does not change that compute boundary.
 
-Do not silently point the Docker CLI at a remote daemon: bind paths, loopback
-endpoint URLs, output synchronization, and ownership checks in this helper are
-defined in the control-host frame. If control-host Docker is unavailable, stop
-during intake. An external endpoint replaces only skill-managed model serving;
-it does not remove the prebuilt component-image requirement.
+Managed distributed generation uses one platform-local coordinator and up to
+`generation_nodes=N` independent single-node image workers. Each image worker
+has exactly eight GPUs and starts eight independent, single-GPU image-edit
+microservices. These are capacity-one endpoints: each GPU accepts one image
+request at a time. The coordinator validates an ordered runtime pool selected from
+the approved `8*N` maximum, runs the VLM and LLM on separately approved GPUs,
+and dispatches each attempt to a free node/GPU slot. At least one complete
+worker must be ready; requested and active capacities remain explicit in
+evidence. Docker and virtualenv use the same
+dispatcher on one machine and derive capacity from their explicit image-edit
+GPU IDs. An external-endpoint request replaces only managed model serving; it
+does not remove the prebuilt component-runtime requirement.
 
 ## Stage map
 
-| Functional operation | Local operation | Endpoint | Input | Validated output | Retry or recovery | State result |
+| Functional operation | Skill operation | Endpoint | Input | Validated output | Retry or recovery | State result |
 |---|---|---|---|---|---|---|
 | remaining-gap plan | `prepare` | none | committed mined pairs, evaluation exclusion list | bounded `sdg_plan.json`, staged person folders | one corrected host-adapter retry; zero selections is terminal | uncommitted `sdg` work |
 | endpoint deployment | `plan`, then `start` or `validate-external` | all roles | immutable `sdg_config.yaml` | ownership manifest and successful model probes | bounded readiness deadline; preserve owned containers on failure | endpoint evidence |
@@ -66,15 +71,29 @@ mutable `latest` tags are rejected throughout the materialized configuration.
 
 Choose exactly one mode:
 
-- `managed`: provide non-empty explicit GPU ID lists for all three roles. IDs
-  may be shared only when aggregate free VRAM satisfies the summed allocation.
-- `external`: provide three already-running local HTTP(S) base URLs. GPU IDs
-  are empty because the skill does not own those processes.
+- `managed` (default): provide explicit GPU allocations for all three roles.
+  For SLURM, Kubernetes, and Brev, also provide `generation_nodes`; each node is
+  an independent eight-GPU worker, while VLM/LLM use the coordinator allocation.
+  For Docker and virtualenv, `generation_nodes` is 1 and the number of explicit
+  image-edit GPU IDs is the generation capacity.
+- `external`: use only after the user explicitly requests reuse and supplies
+  three already-running local HTTP(S) base URLs. Materialize it with
+  `--sdg-endpoint-mode external --reuse-external-endpoints`; GPU IDs are empty
+  because the skill does not own those processes.
 
-Before approval, inspect only Docker/runtime availability, GPU inventory,
-ports, disk capacity, local image presence, and environment-variable presence.
+Never discover a listening port or compatible service and switch away from
+managed mode. Do not ask about endpoint reuse unless the user brings it into
+scope. Existing services are not implicit authorization to inspect or use
+them.
+
+Before approval, inspect only the selected platform runtime, GPU inventory or
+available shapes/partitions, ports or service reachability, disk capacity,
+image presence, and environment-variable presence.
 Do not create the cache directory, pull an image, download a model, or start a
-container. The planning command is read-only:
+container. After approval materializes the proposed run configuration but
+before `init_deft_state.py`, the following read-only plan is mandatory. This
+ordering gives the deterministic helper the exact approved configuration while
+keeping a failed proposal uninitialized and safe to replace:
 
 ```bash
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
@@ -84,11 +103,34 @@ container. The planning command is read-only:
   --output "$RESULTS_DIR/endpoints/plan.json"
 ```
 
-For a strictly read-only pre-approval plan, omit `--output`; writing the plan
-belongs after approval. The helper checks Docker's NVIDIA runtime, compute
-capability, aggregate free VRAM, at least 150 GiB model-cache disk space,
+Omit `--output` for the pre-initialization gate; writing the plan belongs after
+approval and is optional evidence. The helper checks Docker's NVIDIA runtime, compute
+capability, aggregate free VRAM, and at least 150 GiB usable model-cache
+capacity (free bytes plus files already present under the exact configured
+model revisions),
 deterministic container-name conflicts, and port collisions. It never emits a
 credential value or widens an explicit device list.
+
+For an operator-managed remote platform, execute its equivalent endpoint plan
+in the platform compute frame. An Airflow-orchestrated Docker or virtualenv
+backend executes this exact local plan on its compute worker; Airflow does not
+allocate or reinterpret the GPUs. A port collision
+must be resolved by proposing a new explicit port set before state
+initialization; never edit an initialized run or treat a foreign listener as
+implicit endpoint reuse.
+
+On resume, the manager may record `disposition=reuse_no_acquisition` and skip
+only the prospective 150-GiB model-acquisition capacity gate. This is legal
+only when a read-only reconciliation proves every required service is running,
+healthy, exactly run-owned, and matches the immutable image, model revision,
+served model, GPU, and port allocation; every exact model-revision cache
+receipt must also be present, and current `/v1/models` plus the role's minimal
+readiness inference must pass. The image-edit inference gate remains the first
+bounded augmentation smoke immediately after endpoint reconciliation. The
+reuse path performs no pull, download, container create/restart, or cache
+write. Missing, stale, unhealthy, mismatched, or incomplete evidence falls
+back to the full acquisition-capacity check before any mutation. Normal
+workspace/output free-space checks are unchanged.
 
 ## Launch approval rows
 
@@ -97,6 +139,8 @@ Add these rows to the consolidated preflight summary:
 ```text
 Generation
   endpoint mode: <managed | external> (source=<user | default>)
+  generation nodes: <up to N independent 8-GPU workers; distributed only>
+  generation capacity: <8*N maximum distributed | explicit local image-edit GPU count>
   image edit: model=<id>@<revision>; endpoint=<managed port | URL>;
               gpu_ids=<explicit list | user-managed>; VRAM estimate=<MiB>
   VLM:        model=<id>@<revision>; endpoint=<managed port | URL>;
@@ -118,17 +162,31 @@ cleanup-policy change requires a changed-row approval.
 
 ## Endpoint lifecycle
 
-After approval, managed mode starts or resumes only deterministic run-owned
-containers:
+After approval, Docker and virtualenv managed mode start or resume only
+deterministic run-owned services. Set `DATAGEN` to the current iteration's
+`$RESULTS_DIR/iter_${N}/datagen`; the iteration-local pool is immutable input
+to dispatch and commit:
 
 ```bash
-mkdir -p "$RESULTS_DIR/endpoints"
+mkdir -p "$DATAGEN"
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
   "$SKILL_ROOT/scripts/manage_sdg_endpoints.py" start \
   --config "$RESULTS_DIR/config/sdg_config.yaml" \
   --run-id "$(basename "$RESULTS_DIR")" \
-  --output "$RESULTS_DIR/endpoints/manifest.json"
+  --platform "$PLATFORM" \
+  --image-edit-pool "$DATAGEN/endpoint_pool.json" \
+  --output "$DATAGEN/endpoint_manifest.json"
 ```
+
+The manager starts one image-edit service per explicit image-edit GPU, with a
+deterministic container name, base port plus ordinal, TP=1, and capacity 1.
+VLM and LLM remain singleton services. SLURM, Kubernetes, and Brev must use
+their platform composite action instead; do not run this lifecycle on the
+control host for those platforms. With Airflow orchestration, wrap that same
+platform composite consumer as documented in `airflow-execution.md`.
+Docker/virtualenv use `airflow_sdg_action.py prepare-request` plus
+`local_sdg_action.py`; Airflow itself does not run mapped GPU tasks. Never
+hand-build DAG `conf`.
 
 External mode substitutes `validate-external` and writes the same manifest
 path. Model discovery plus minimal inference is bounded by
@@ -136,10 +194,32 @@ path. Model discovery plus minimal inference is bounded by
 augmentation is the image-edit inference smoke test and must pass verification
 before the batch proceeds.
 
-A same-name container is reusable only when all workflow, run, and role labels
-match. A stopped matching container may be restarted. Any other same-name
+Image editing has a separate bounded
+`generation.image_edit_request_timeout_s` (600 seconds by default) because a
+validated 50-step diffusion request can legitimately take several minutes.
+This does not widen readiness or text-model smoke-test deadlines.
+
+A same-name service is reusable only when all workflow, run, role, and GPU
+labels match. A stopped matching service may be restarted. Any other same-name
 container or occupied managed port is a hard conflict. User-managed endpoints
 are validated but never started, restarted, stopped, or replaced.
+
+A successful managed manifest is reusable only while every matching owned
+service remains running. If one later crashes during an uncommitted SDG stage,
+`start` permits at most two owned-container restarts and repeats all readiness
+probes, recording the bounded `restart_count` in the same manifest. A third
+later crash exhausts the endpoint restart budget; it never widens a per-source
+generation bound. Managed image-edit containers receive a fixed 16 GiB shared
+memory allocation because the diffusion server is not safe with
+Docker's 64 MiB default. A stopped, exactly run-owned image-edit container
+created without that allocation is captured as recovery evidence, removed,
+and recreated; running or non-owned containers are never replaced.
+
+If an older installed helper left the exact run-owned image-edit container in
+Docker's never-started `created` state with the known multi-GPU parser error,
+use `repair-created` before a runtime rebind. It captures sanitized state/log
+evidence and removes only that unusable container; it does not start a model.
+All other owned states and every non-owned container are preserved.
 
 On failure, keep run-owned containers and report the sanitized status plus the
 recorded `docker logs --tail 200 <name>` command. Cleanup is explicit:
@@ -148,10 +228,38 @@ recorded `docker logs --tail 200 <name>` command. Cleanup is explicit:
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
   "$SKILL_ROOT/scripts/manage_sdg_endpoints.py" stop \
   --config "$RESULTS_DIR/config/sdg_config.yaml" \
-  --run-id "$(basename "$RESULTS_DIR")"
+  --run-id "$(basename "$RESULTS_DIR")" \
+  --roles image_edit,vlm,llm \
+  --output "$DATAGEN/endpoint_manifest.json"
 ```
 
-This stops matching owned containers without removing them or their cache.
+This stops matching owned containers without removing them or their cache and
+persists sanitized intentional-shutdown evidence in the endpoint manifest. A
+later iteration may restart that exact cleanly stopped owned set without
+consuming the bounded unexpected-crash restart budget. A missing, foreign,
+mixed, nonzero-exit, OOM-killed, or errored role is never classified as an
+intentional shutdown. Runs created by an older helper are accepted only when a
+successful prior readiness manifest and the same complete clean owned set are
+both present.
+
+One older helper could overwrite that successful manifest with an exact
+restart-budget error after a planned clean stop. Use the following recovery
+only for that signature; it preserves the error manifest, validates immutable
+model/image/GPU identity, requires a committed successful SDG execution
+receipt, records recovery lineage, and does not start a container:
+
+```bash
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/manage_sdg_endpoints.py" recover-overwritten-stop \
+  --config "$RESULTS_DIR/config/sdg_config.yaml" \
+  --run-id "$(basename "$RESULTS_DIR")" \
+  --output "$RESULTS_DIR/endpoints/manifest.json" \
+  --execution-receipt "$RESULTS_DIR/deft_state.json"
+```
+
+Do not use this action for another error, absent or uncommitted execution
+evidence, changed configuration, missing/mixed ownership, or a nonzero, OOM, or
+errored container exit. It never performs a generic retry-budget reset.
 
 ## Generation execution
 
@@ -166,7 +274,8 @@ DATAGEN="$RESULTS_DIR/iter_${N}/datagen"
   --gaps-parquet "$RESULTS_DIR/iter_${N}/gaps/kpi_gaps.parquet" \
   --attribute-vocab "$DATASET_ROOT/attribute_vocab.json" \
   --dataset-root "$DATASET_ROOT" \
-  --eval-list "$RESULTS_DIR/iaa_splits/eval_list.txt"
+  --eval-list "$RESULTS_DIR/iaa_splits/eval_list.txt" \
+  --eval-pairs "$RESULTS_DIR/iaa_splits/eval_pairs.json"
 ```
 
 Then run the bounded sequence. It performs the first-item smoke gates, full
@@ -178,6 +287,8 @@ work.
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
   "$SKILL_ROOT/scripts/run_sdg_stage.py" execute \
   --config "$RESULTS_DIR/config/sdg_config.yaml" --output-root "$DATAGEN" \
+  --execution-platform "$PLATFORM" \
+  --image-edit-endpoint-pool "$DATAGEN/endpoint_pool.json" \
   --eval-list "$RESULTS_DIR/iaa_splits/eval_list.txt" \
   --attribute-vocab "$DATASET_ROOT/attribute_vocab.json"
 ```
@@ -185,20 +296,35 @@ work.
 Inspect the smoke image, `augmentation_smoke.json`, verification metadata, and
 `auto_label_smoke_open_qa.json` before accepting the stage. A component exit 0
 is insufficient without these artifacts and the final normalization checks.
+For remote platforms, synchronization must copy and digest-verify the complete
+normalized `dataset/` tree—not only its manifest, pairs, and image list. The
+commit and audit require the exact listed image and caption files plus the
+attribute vocabulary, preventing a metadata-only SDG success from reaching
+training.
 
 Commit the stage once:
+
+If a successful legacy SLURM normalization is blocked only because its three
+metadata files have a same-second, whole-second Lustre timestamp, use
+`repair_sdg_normalize_freshness.py prepare`, dispatch the signed
+`sdg_normalize_repair` adapter through the selected SLURM four verbs, then run
+`verify` before commit. This recomputes metadata only and proves that the
+result is byte-identical; it never repeats generation, verification, splitting,
+or labeling. If the adapter fails, use `restore` to put back the exact journaled
+files. The producer rejects this path without the exact prepared repair journal.
 
 ```bash
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
   "$SKILL_ROOT/scripts/commit_stage.py" \
   --results-dir "$RESULTS_DIR" --iter-label "iter${N}" --stage sdg \
-  --endpoint-manifest "$RESULTS_DIR/endpoints/manifest.json" \
+  --endpoint-pool "$DATAGEN/endpoint_pool.json" \
+  --endpoint-manifest "$DATAGEN/endpoint_manifest.json" \
   --sdg-execution-manifest "$DATAGEN/sdg_execution_manifest.json" \
   --sdg-manifest "$DATAGEN/dataset/sdg_manifest.json" \
   --sdg-pairs "$DATAGEN/dataset/sdg_pairs.json" \
   --sdg-image-list "$DATAGEN/dataset/sdg_image_list.txt" \
-  --sdg-status "$DATAGEN/status/sdg-normalize.host.status.json" \
-  --summary "verified local generation normalized for iteration ${N}"
+  --sdg-status "$DATAGEN/status/sdg-normalize.${PLATFORM}.status.json" \
+  --summary "verified platform-local generation normalized for iteration ${N}"
 ```
 
 The subsequent `train-config` adapter adds this generated dataset alongside

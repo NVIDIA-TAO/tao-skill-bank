@@ -25,9 +25,16 @@ through deterministic scripts.
 | `init_deft_state.py` | validate config/metric inputs and create schema-v3 state once | IAA runtime |
 | `audit_deft_run.py` | read-only state, transition, evidence, and artifact audit | IAA runtime (parquet/YAML validation) |
 | `run_deft_action.py` | prepare one platform-neutral TAO bundle and finalize native job/output evidence | control Python |
+| `airflow_action.py` | IAA-only Airflow API/DAG preflight and legacy direct-Airflow compatibility consumer | control Python |
+| `airflow_orchestrator.py` | bind a backend-native request/job to the IAA DAG, execute its exact four verbs, and reconcile the delegation receipt | control Python and Airflow worker |
+| `airflow_slurm_action.py` | advance one audit-selected ordinary action through staging, signed Airflow orchestration, SLURM execution, output synchronization, and finalization | control Python plus Airflow worker and SLURM |
+| `cleanup_failed_dataset_rebuild.py` | remove only a proven non-promoted run-owned SLURM rebuild tree after finalized quota failure and write a cleanup receipt | control Python plus SLURM login storage |
+| `airflow_sdg_action.py` | prepare legacy or Airflow-orchestrated local Docker/virtualenv composite SDG requests | control Python |
+| `local_sdg_action.py` | durable four-verb composite SDG lifecycle for Airflow-orchestrated Docker/virtualenv | Airflow compute worker |
+| `docker_action.py` | typed Docker four-verb consumer for ordinary IAA actions | Docker compute frame |
 | `run_deft_cli.py` | verified TAO CLI/path adapter used only by the virtualenv platform | action-selected `pyt` or `ds` profile |
 | `run_deft_container.py` | legacy Docker-only compatibility adapter for schema-v1 runs | control Python |
-| `run_iaa_stage.py` | expose bundled IAA host operations as named subcommands | IAA runtime |
+| `run_iaa_stage.py` | internal named mutators invoked only by signed platform actions | selected platform IAA runtime |
 | `manage_sdg_endpoints.py` | inspect prebuilt workflow images; plan, start/validate, inspect, and stop only run-owned local model endpoints | control Python |
 | `run_sdg_stage.py` | bounded generation preparation, component execution, validation, resume, and normalization | IAA runtime |
 | `iaa_deft/` | bundled IAA gap, mining, selection, generation, visualization, config, and checkpoint implementation | imported only through stage adapters |
@@ -120,7 +127,9 @@ Required stable names are `pool_embed`, `target_embed`, `knn`,
 
 ## Bundled adapter contract
 
-`run_iaa_stage.py` is the only supported entry to bundled IAA host operations:
+`run_iaa_stage.py` is the internal entry to bundled IAA operations. The
+controller must reach it only through `run_deft_action.py` and the selected
+platform consumer, including for local Docker and virtualenv:
 
 ```text
 dataset-materialize  create eval/val/pool splits and source_pool.parquet
@@ -182,15 +191,11 @@ journal by hand.
 `history-select` records iteration N in `mining_selection_history.json` before
 the outer stage transaction. If a process dies in that narrow window, state
 still reports the stage uncommitted while the history entry and selection
-outputs exist. Run:
-
-```bash
-"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-  "$SKILL_ROOT/scripts/run_iaa_stage.py" history-select \
-    --results-dir "$RESULTS_DIR" \
-    --deft-config "$RESULTS_DIR/config/deft_config.yaml" \
-    --iter-num "$N" --resume
-```
+outputs exist. Prepare and execute the same signed `history_select` platform
+action from `mining.md`. Inside the selected compute frame,
+`run_iaa_compute.py` detects the unique iteration entry and passes `--resume`
+to the internal mutator. Finalized platform evidence records `resume: true`;
+the controller never runs the mutator.
 
 Then run the audit and commit normally. The adapter verifies the saved
 selection and leakage. If resume rejects the history or artifacts, hard-stop;

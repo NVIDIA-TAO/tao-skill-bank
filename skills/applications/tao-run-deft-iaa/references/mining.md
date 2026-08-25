@@ -1,5 +1,31 @@
 # Pool Embedding, Mining, and History Selection
 
+On a remote platform, dispatch `mining_postprocess` and `history_select` as
+allowlisted zero-GPU actions; the controller only finalizes and commits them.
+For Airflow-orchestrated SLURM, the bridge additionally synchronizes the full
+history-selection input trio (`mined_image_list.txt`, `mined_pairs.json`, and
+`mined_dataset.json`) with remote size/digest evidence. If a completed legacy
+action synchronized only the pairs file, use `recover-mining-candidates-sync`;
+do not rerun mining or copy its outputs manually.
+
+If a later results-tree stage already removed those undeclared remote files,
+the recovery preflight hard-stops instead of guessing. Retry `history_select`
+once through its normal platform action. Attempt 2 validates the archived
+attempt-1 missing-file evidence, regenerates the candidate inputs and performs
+selection in the same selected-platform job. No third attempt is permitted.
+
+The Airflow-SLURM bridge also synchronizes the nested
+`history-select.host.status.json` before finalizing selection, because that
+status binds the boolean resume decision. If native selection and all four data
+outputs completed before this evidence was fetched, use the bounded
+`recover-history-finalization` operation; it validates the exact terminal job,
+fetches only that status, and reruns finalization without launching compute.
+
+The same bridge synchronizes the run-wide `mining_selection_history.json`
+with exact remote digest evidence and archives the prior ledger before later
+iterations replace it. A finalized action whose ledger was not yet fetched is
+recovered with `recover-mining-history-sync`; never edit this ledger manually.
+
 Read only when the audit selects `pool_embed`, `data_mining`, or
 `history_select`. Every `run_deft_action.py prepare` call only writes the action
 request. Immediately execute and finalize it through
@@ -104,10 +130,13 @@ them between iterations without starting a separately approved run.
 ### 3. Convert candidates
 
 ```bash
-"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-  "$SKILL_ROOT/scripts/run_iaa_stage.py" mining-postprocess \
-    --results-dir "$RESULTS_DIR" \
-    --deft-config "$RESULTS_DIR/config/deft_config.yaml" --iter-num "$N"
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+    --results-dir "$RESULTS_DIR" --image ds \
+    --stage-dir "$MINING_DIR" --name mining_postprocess \
+    --fresh-output "$MINING_DIR/history_candidates/mined_pairs.json" -- \
+    python3 /iaa-runtime/run_iaa_compute.py mining_postprocess \
+      --results-dir /results --label "iter$N"
 ```
 
 With history enabled, uncapped candidates live under
@@ -133,7 +162,7 @@ fi
     --knn-command-status "$MINING_DIR/knn.status.json" \
     --candidate-pairs "$CANDIDATE_DIR/mined_pairs.json" \
     --mining-postprocess-status \
-      "$MINING_DIR/mining-postprocess.host.status.json" \
+      "$MINING_DIR/mining_postprocess.status.json" \
     --summary "iter$N gap captions embedded and neighbors mined"
 ```
 
@@ -142,11 +171,16 @@ fi
 Run the adapter without `--resume` on a clean attempt:
 
 ```bash
-"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-  "$SKILL_ROOT/scripts/run_iaa_stage.py" history-select \
-    --results-dir "$RESULTS_DIR" \
-    --deft-config "$RESULTS_DIR/config/deft_config.yaml" \
-    --iter-num "$N"
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+    --results-dir "$RESULTS_DIR" --image ds \
+    --stage-dir "$MINING_DIR" --name history_select \
+    --fresh-output "$MINING_DIR/mined_image_list.txt" \
+    --fresh-output "$MINING_DIR/mined_pairs.json" \
+    --fresh-output "$MINING_DIR/mined_dataset.json" \
+    --fresh-output "$MINING_DIR/cumulative_mined_unique_names.json" -- \
+    python3 /iaa-runtime/run_iaa_compute.py history_select \
+      --results-dir /results --label "iter$N"
 ```
 
 It partitions candidates into novel/replay samples, spends the configured
@@ -174,7 +208,7 @@ fi
     --mined-pairs "$MINING_DIR/mined_pairs.json" \
     --mined-manifest "$MINING_DIR/mined_dataset.json" \
     --cumulative-names "$MINING_DIR/cumulative_mined_unique_names.json" \
-    --history-select-status "$MINING_DIR/history-select.host.status.json" \
+    --history-select-status "$MINING_DIR/history_select.status.json" \
     "${HISTORY_ARGS[@]}" \
     --summary "iter$N history-aware mining selection completed"
 ```

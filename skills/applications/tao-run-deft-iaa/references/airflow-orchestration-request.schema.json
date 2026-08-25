@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://developer.nvidia.com/tao/schemas/deft-iaa/airflow-orchestration-request-v1.json",
+  "title": "IAA Airflow compute orchestration envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "workflow",
+    "kind",
+    "contract",
+    "orchestrator",
+    "compute_platform",
+    "compute_kind",
+    "orchestration_id",
+    "job_id",
+    "compute_request_path",
+    "compute_request_sha256",
+    "job_record_path",
+    "job_identity_sha256",
+    "job_binding_path",
+    "job_binding_sha256",
+    "commands",
+    "consumer_sha256",
+    "expected_outputs",
+    "poll_interval_s",
+    "deadline_s",
+    "unknown_status_limit",
+    "retain_on_failure",
+    "forward_env",
+    "receipt_path",
+    "log_path",
+    "created_at",
+    "envelope_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "workflow": {"const": "tao-run-deft-iaa"},
+    "kind": {"const": "airflow_compute_orchestration"},
+    "contract": {"const": "tao-deft-iaa-airflow-orchestration-v1"},
+    "orchestrator": {"const": "airflow"},
+    "compute_platform": {
+      "enum": ["docker", "slurm", "kubernetes", "brev", "virtualenv"]
+    },
+    "compute_kind": {"enum": ["action", "sdg"]},
+    "orchestration_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.~-]{0,249}$"},
+    "job_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.~-]{0,249}$"},
+    "compute_request_path": {"type": "string", "pattern": "^/"},
+    "compute_request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "job_record_path": {"type": "string", "pattern": "^/"},
+    "job_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "job_binding_path": {"type": ["string", "null"], "pattern": "^/"},
+    "job_binding_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["submit", "status", "logs", "cancel"],
+      "properties": {
+        "submit": {"$ref": "#/$defs/argv"},
+        "status": {"$ref": "#/$defs/argv"},
+        "logs": {"$ref": "#/$defs/argv"},
+        "cancel": {"$ref": "#/$defs/argv"}
+      }
+    },
+    "consumer_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "expected_outputs": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^/"},
+      "uniqueItems": true
+    },
+    "poll_interval_s": {"type": "integer", "minimum": 1, "maximum": 3600},
+    "deadline_s": {"type": "integer", "minimum": 30, "maximum": 604800},
+    "unknown_status_limit": {"type": "integer", "minimum": 1, "maximum": 20},
+    "retain_on_failure": {"type": "boolean"},
+    "forward_env": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": ["HF_TOKEN", "NGC_KEY", "BREV_API_TOKEN", "KUBECONFIG", "SLURM_JWT", "SSH_AUTH_SOCK"]
+      }
+    },
+    "receipt_path": {"type": "string", "pattern": "^/"},
+    "log_path": {"type": "string", "pattern": "^/"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "envelope_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "argv": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}

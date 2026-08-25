@@ -103,6 +103,9 @@ below, with the raw state carried in the transition `message`. `$BANK` =
 A submit that skipped step 3 has no id, so it cannot launch — that is the
 record-then-launch invariant.
 
+IAA actions use their [CPU](references/iaa-adapters.md) or
+[GPU](references/iaa-model-actions.md) renderer; skip examples below.
+
 ### status
 
 ```bash

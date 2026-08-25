@@ -4,8 +4,6 @@ required_credentials:
   source: env_var
 - name: SLURM_HOSTNAME
   source: env_var
-- name: SLURM_PARTITION
-  source: env_var
 credential_groups:
 - name: ssh_identity
   require_one_of:
@@ -13,6 +11,9 @@ credential_groups:
   - SSH_AUTH_SOCK
   preferred: SSH_KEY_PATH
 optional_credentials:
+- name: SLURM_PARTITION
+  source: env_var
+  only_when: user wants a partition other than the packaged default
 - name: SLURM_BASE_RESULTS_DIR
   source: env_var
   only_when: user wants a custom results/staging root instead of the platform default

@@ -10,7 +10,7 @@ NVIDIA <br>
 Apache-2.0 AND CC-BY-4.0 <br>
 
 ## Use Case: <br>
-Developers and engineers use this skill to execute or resume the IAA DEFT workflow on Docker, SLURM, Kubernetes, Brev, or a TAO-capable virtualenv. The workflow establishes a zero-shot baseline, analyzes weak attributes, mines a caption pool, generates and verifies targeted image variants, creates query captions, selects samples without reusing evaluation data, retrains, and repeats until the approved metric target passes or the finite iteration budget is exhausted. A target-free run executes its approved budget and reports the best result. <br>
+Developers and engineers use this skill to execute or resume the IAA DEFT workflow on Docker, SLURM, Kubernetes, Brev, or a TAO-capable virtualenv, optionally orchestrated by its IAA-only Airflow contract. The workflow establishes a zero-shot baseline, analyzes weak attributes, mines a caption pool, generates and verifies targeted image variants, creates query captions, selects samples without reusing evaluation data, retrains, and repeats until the approved metric target passes or the finite iteration budget is exhausted. A target-free run executes its approved budget and reports the best result. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -45,7 +45,7 @@ Mitigation: The skill uses one explicit approval boundary before side effects, d
 - Static validation: compile all bundled Python scripts, syntax-check the shell wrapper and metadata, and run the repository skill validator. <br>
 - Synthetic state-machine smoke: render and initialize immutable inputs, complete a two-iteration max-budget path, require the completion audit, and render the report twice deterministically. <br>
 - Branch/recovery checks: exercise disabled and enabled visualization, optional checksum evidence, nonterminal failure to terminal hard-stop, journaled state/log recovery, native job ownership, and persisted two-attempt limits. <br>
-- Cross-platform action checks: validate equivalent bundles and terminal native evidence for Docker, SLURM, Kubernetes, Brev, and virtualenv, including per-action `pyt`/`ds` profile selection, fake-runtime rejection, exact-profile shim binding, real detached-process execution, and compute-path translation. <br>
+- Cross-platform action checks: validate equivalent bundles and terminal native evidence for Docker, SLURM, Kubernetes, Brev, and virtualenv, plus IAA-only Airflow orchestration over each backend, including per-action `pyt`/`ds` profile selection, fake-runtime rejection, exact-profile shim binding, real detached-process execution, and compute-path translation. <br>
 - Synthetic workflow smoke: render and initialize immutable inputs; plan the residual attribute distribution; validate accepted/rejected generation, DAFT open-QA output, generated-to-mining normalization, resume reuse, state transitions, and deterministic reporting. <br>
 - Branch/recovery checks: exercise endpoint ownership/reuse, readiness success and timeout, port/VRAM/compute failures, interrupted operation reuse, rejected-sample exclusion, and persisted command and verification attempt limits. <br>
 - Negative-path checks: reject cross-iteration artifacts, zero-row mining, false KPI stops, duplicate metric rows, unsupported KPI query types, stale/unbound outputs, command tampering, stale or cross-iteration checkpoint targets, symlink chains/escapes, and malformed state/log labels. <br>
@@ -56,10 +56,10 @@ Mitigation: The skill uses one explicit approval boundary before side effects, d
 - Expected rejection of tested invalid inputs and transitions. <br>
 
 ## Evaluation Results: <br>
-Repository/static checks and the synthetic two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, clean bundled-runtime import, five-platform action-contract, and generation-contract tests passed. Generation coverage includes explicit GPU command construction, endpoint ownership, readiness, port and capacity failures, residual planning, bounded verification, DAFT open-QA validation, rejected-sample exclusion, normalization, resume, and the `history_select -> sdg -> visualize` transition. The listed invalid evidence, transition, provenance, platform ownership, and path cases were rejected as expected. Live backend results are reported separately and must not be inferred from deterministic tests. <br>
+Repository/static checks and the synthetic two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, clean bundled-runtime import, six-platform action-contract, and generation-contract tests passed. Generation coverage includes explicit GPU command construction, endpoint ownership, readiness, port and capacity failures, residual planning, bounded verification, DAFT open-QA validation, rejected-sample exclusion, normalization, resume, and the `history_select -> sdg -> visualize` transition. The listed invalid evidence, transition, provenance, platform ownership, and path cases were rejected as expected. Live backend results are reported separately and must not be inferred from deterministic tests. <br>
 
 ## Skill Version(s): <br>
-0.4.0 (source: frontmatter) <br>
+0.5.0 (source: frontmatter) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

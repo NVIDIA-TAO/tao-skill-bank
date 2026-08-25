@@ -15,14 +15,17 @@
 #SBATCH --job-name=@@JOB_NAME@@
 #SBATCH --nodes=@@NUM_NODES@@
 #SBATCH --ntasks-per-node=1
+#SBATCH --ntasks=@@NUM_NODES@@
 #SBATCH --gres=gpu:@@GPUS_PER_NODE@@
 #SBATCH --cpus-per-task=@@CPUS_PER_TASK@@
 #SBATCH --time=@@TIME@@
 #SBATCH --wait-all-nodes=1
-#SBATCH --output=@@LOG_DIR@@/%x-%j/main.out
-#SBATCH --error=@@LOG_DIR@@/%x-%j/main.err
+# SLURM expands %x/%j but does not create intermediate directories. Keep the
+# files directly under the pre-created LOG_DIR so the batch step can open them.
+#SBATCH --output=@@LOG_DIR@@/%x-%j.out
+#SBATCH --error=@@LOG_DIR@@/%x-%j.err
 #SBATCH --open-mode=append
-#SBATCH --requeue
+@@REQUEUE_DIRECTIVE@@
 @@SBATCH_EXTRA@@
 set -euo pipefail
 export NCCL_DEBUG=INFO
@@ -47,5 +50,6 @@ export MASTER_ADDR=$(scontrol show hostname "$SLURM_JOB_NODELIST" | head -1)
 export NODE_RANK=$SLURM_NODEID
 
 srun --container-image=@@IMAGE@@ \
+     --container-env=NCCL_DEBUG,LOGLEVEL,NCCL_P2P_DISABLE,NCCL_IB_DISABLE,NCCL_SOCKET_IFNAME,NCCL_IB_HCA,NCCL_NET \
      --container-mounts=@@CONTAINER_MOUNTS@@ \
      @@COMMAND@@

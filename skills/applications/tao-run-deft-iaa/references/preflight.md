@@ -16,9 +16,11 @@ run creation occur only after approval.
 ## Initial intake
 
 IAA supports Docker (a local daemon or an approved remote `DOCKER_HOST`),
-SLURM, Kubernetes, Brev, and virtualenv. If the user did not select one,
-include that single platform choice with the other missing intake; never
-default to Docker. When Docker is selected, resolve whether its compute frame
+SLURM, Kubernetes, Brev, and virtualenv as compute platforms. Airflow is an
+optional IAA-only orchestrator over any of them. If the user did not select a
+compute platform, include that single choice with the other missing intake;
+never default to Docker. Ask about Airflow only when the user requested it.
+When Docker is selected, resolve whether its compute frame
 is local or remote before approval and persist that choice; never infer local
 filesystem semantics merely because the platform name is `docker`. Before full
 preflight, do only bounded, lightweight discovery that can reduce user
@@ -147,8 +149,11 @@ Run this section only after required intake is resolved.
    Record the presence of adjacent `SHA256SUMS`. Its absence is a warning, not
    a blocker; verification by the skill's bundled dataset rebuild remains
    mandatory.
-4. Read the selected platform skill and run its read-only access preflight.
-   For Docker, SLURM, Kubernetes, and Brev, also run the shared checker with
+4. Read the selected compute-platform skill and run its read-only access
+   preflight. When Airflow orchestration was requested, additionally read
+   `airflow-execution.md` and run `airflow_action.py preflight`; do not look for
+   or create a global Airflow platform skill. For Docker, SLURM, Kubernetes,
+   and Brev, also run the shared checker with
    the exact platform, pinned image, and approved GPU requirements. Do not pass
    local archive paths to a remote platform check; validate their staged
    compute paths after the approved staging step. Do not use
@@ -172,7 +177,10 @@ Run this section only after required intake is resolved.
    target-instance reachability. Remote Docker/GPU compatibility is not
    inferred from the launcher's inventory: the approved compute-frame probe in
    step 2 verifies it. Virtualenv checks the venv interpreter, CUDA, and that
-   `clip`, `embedding`, and `tmm` resolve under `<venv>/bin`. Missing
+   `clip`, `embedding`, and `tmm` resolve under `<venv>/bin`. Optional Airflow
+   orchestration separately validates TLS/authentication, the exact unpaused
+   versioned DAG contract, shared evidence storage, one coordinator pool, and
+   selected-backend access from the worker. Missing
    system/native prerequisites are blockers, not reasons to choose another
    platform. Image acquisition and CUDA jobs remain planned actions until
    approval.
@@ -182,7 +190,7 @@ Run this section only after required intake is resolved.
    shell as the consuming check or command; never print, grep, copy, or inspect
    its contents and never echo a value. This can include `NGC_KEY`, `HF_TOKEN`,
    `BREV_API_TOKEN`, SLURM connection variables, Kubernetes context variables,
-   or tier-C storage variables. `NGC_KEY` is required only if the selected
+   Airflow API authentication variables, or tier-C storage variables. `NGC_KEY` is required only if the selected
    platform must acquire an image. The default SigLIP2 model is public, so
    `HF_TOKEN` is optional unless authenticated access is required.
    Include every pinned prebuilt component and serving image from
@@ -200,10 +208,12 @@ Run this section only after required intake is resolved.
    roughly 30–45 GB free per selected GPU at the bundled batch size. Treat this
    as a planning estimate, not a capability guarantee. Surface occupied GPUs;
    do not silently reshape `gpu_ids`.
-   For managed generation, also require explicit non-empty GPU lists for image
+   Managed generation is the default. Also require explicit non-empty GPU lists for image
    edit, VLM, and LLM. Account for aggregate VRAM when roles share a GPU. For
-   external endpoints, validate the three explicit URLs and do not claim,
-   inspect, or control their GPU allocation.
+   external endpoints, proceed only when the user explicitly asked to reuse
+   endpoints and supplied all three URLs. Record that request with
+   `--reuse-external-endpoints`, validate the URLs, and do not claim, inspect,
+   or control their GPU allocation. Never probe ports to infer or suggest reuse.
 7. Resolve all run values and their sources. Validate the metric contract
    vocabulary against `references/metric-contract.md`. Do not create a config
    to discover defaults; read the bundled templates.
@@ -241,7 +251,8 @@ hardware, pool size, and accumulated data can change this substantially.
 | Hugging Face token forwarding | disabled; enable only when the approved model/environment requires it |
 | PyTorch image | `nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt` | <!-- versions-key: images.tao_toolkit.pyt -->
 | data-services image | `nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services` | <!-- versions-key: images.tao_toolkit.data_services -->
-| endpoint mode | managed local containers; external compatible endpoints are supported |
+| endpoint mode | managed platform-local services; external reuse only when explicitly requested with three user-supplied URLs |
+| generation nodes | `1`; distributed platforms may approve more independent eight-GPU workers |
 | generation models | pinned role defaults from `sdg_config.yaml` |
 | generation budget | `1000` source people per iteration |
 | verification attempts | `2` per source; approved range `1..5` |
@@ -261,8 +272,9 @@ launch confirmation into separate prompts.
 IAA DEFT pre-flight
 
 Workflow
-  skill: tao-run-deft-iaa 0.4.0 (source=SKILL.md frontmatter)
-  platform: <docker | slurm | kubernetes | brev | virtualenv> (source=<user | resume state>)
+  skill: tao-run-deft-iaa 0.6.0 (source=SKILL.md frontmatter)
+  compute platform: <docker | slurm | kubernetes | brev | virtualenv> (source=<user | resume state>)
+  orchestrator: <direct | airflow> (source=<user | default | resume state>)
   Docker endpoint: <local daemon | remote DOCKER_HOST | n/a> (source=<user | environment | resume state>)
   workspace: <absolute path> (source=<user | default>)
   monitoring: attached=true; interval=5 minutes (source=default)
@@ -305,16 +317,24 @@ Inputs
                  (source=versions.yaml; status=<available | acquire after approval>)
   data-services image: nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
                        (source=versions.yaml; status=<available | acquire after approval>)
+  TAO SigLIP cache: google/siglip2-so400m-patch16-256;
+                    integrity=<verified manifest SHA | acquire/stage after approval>
   virtualenv profiles: pyt=<absolute path | n/a>; ds=<absolute path | n/a>;
                        ABI/packages/entrypoints/imports/pip/CUDA=<pass | fail | n/a>
   control environment: <absolute path>; distinct from execution profiles=<true | false>
   storage/staging: tier=<A | B | C>; compute targets=<resolved platform paths>
   GPUs: <selected IDs or platform allocation> (source=<user | default>);
         memory=<free/total or platform inventory>
+  Airflow: base_url=<credential-free origin | n/a>; dag=<id | n/a>;
+           contract=<tao-deft-iaa-action-v1 | n/a>; paused=<false | n/a>;
+           storage_scope=<shared evidence scope | n/a>; coordinator_pool=<summary | n/a>;
+           backend_consumer=<exact script/digest | n/a>
 
 Generation
-  execution frame: control-host Docker (source=fixed by workflow);
-                   distinct from selected TAO platform=<true | false>
+  execution frame: selected platform for every workload (source=fixed by workflow);
+  generation nodes: <up to N independent 8-GPU workers for distributed platforms;
+                     1 for Docker/virtualenv>;
+  generation slots: <8*N maximum distributed | explicit local image-edit GPU count>;
   endpoint mode: <managed | external> (source=<user | default>)
   image edit: <model@revision>; endpoint=<port | URL>; gpu_ids=<list | user-managed>
   VLM: <model@revision>; endpoint=<port | URL>; gpu_ids=<list | user-managed>
@@ -346,6 +366,24 @@ after approval, show only the changed rows and wait for approval again.
 
 For a new run, perform the following in order.
 
+Before dataset extraction or any submitted action, validate the exact TAO
+SigLIP cache on every compute frame that will stage actions:
+
+```bash
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" cache-preflight \
+  --cache-dir "$WORKSPACE/cache"
+```
+
+The helper hashes the same bounded cache subset later signed into each action.
+If it is absent, acquire the public
+`google/siglip2-so400m-patch16-256` snapshot at revision
+`e8708ab72d125807e45b36fb7d4e0aacbb59f379` after approval, or copy that
+exact verified cache from an approved shared cache, then rerun this check.
+For SLURM, Brev, and Kubernetes this must pass on the staged compute frame—not
+only on the controller—before dataset setup begins. Never defer discovery to
+`pool_embed` or `target_embed`.
+
 1. Follow the selected platform skill's approved image/runtime acquisition.
    Docker and Brev acquire the pinned images through Docker; SLURM converts and
    caches both images as SQSH before allocating GPUs; Kubernetes makes both
@@ -370,12 +408,15 @@ For a new run, perform the following in order.
    read-only verification does not depend on an installation lock and never
    mutates the supplied environment. Creating a new profile is different: it
    is allowed only from the same complete, reviewed, hash-locked transitive
-   requirements file. The packaged manifest currently marks lock generation
-   as required, so `install` fails before creating anything and reports the
-   exact missing approved resolver step, while `verify` remains available for
-   a supplied compatible profile. Do not install unpinned packages, infer
-   hashes, use a source checkout as runtime, or weaken the acquisition
-   boundary. Never expose credentials or silently substitute a platform.
+   requirements file. The packaged combined lock selects one HTTPS artifact
+   and SHA-256 for every transitive dependency for CPython 3.12/Linux x86_64;
+   its three source-only public dependencies are content-hashed and built by
+   pip at the approved final path. Both profiles may use the resulting shared
+   environment because verification independently enforces each profile's
+   distribution, entrypoint, import, CUDA, and dependency contract. Do not
+   install unpinned packages, infer hashes, use a source checkout as runtime,
+   or weaken the acquisition boundary. Never expose credentials or silently
+   substitute a platform.
 
 2. Run an image-specific CUDA framework smoke using the exact approved resource
    shape. GPU enumeration or `nvidia-smi` inside a container is not sufficient:
@@ -398,21 +439,53 @@ For a new run, perform the following in order.
    probe only that image; a normal DEFT loop must probe both. For virtualenv,
    perform the complete profile verification, including the same real probe:
 
+   For Docker-backed platforms, use `scripts/run_iaa_cuda_gate.py` to invoke
+   the probe. It first tests the pinned image normally. Only when the output
+   contains both the NVIDIA driver-insufficient diagnostic and the failed
+   PyTorch CUDA availability check may it verify and retry with the image's
+   `/usr/local/cuda/compat/lib.real` bundle. A missing bundle, an unrelated CUDA
+   error, or a failed compatibility retry is terminal. Write each passing
+   receipt as `config/cuda-runtime-<image-kind>.json`; the signed action producer
+   binds the receipt to the exact image and GPU IDs and forwards only the
+   allowlisted compatibility loader path when required. The receipt records the
+   selected mode/path, never inherited environment or credential values.
+
    ```bash
    python3 "$SKILL_ROOT/scripts/manage_iaa_virtualenv.py" verify \
-     --profile pyt --virtualenv "$IAA_PYT_VIRTUALENV" --min-gpus "$NUM_GPUS"
+     --profile pyt --virtualenv "$IAA_PYT_VIRTUALENV" \
+     --min-gpus "$NUM_GPUS" --gpu-ids "$GPU_IDS"
    python3 "$SKILL_ROOT/scripts/manage_iaa_virtualenv.py" verify \
-     --profile ds --virtualenv "$IAA_DS_VIRTUALENV" --min-gpus "$NUM_GPUS"
+     --profile ds --virtualenv "$IAA_DS_VIRTUALENV" \
+     --min-gpus "$NUM_GPUS" --gpu-ids "$GPU_IDS"
    ```
 
    The verifier rejects a fake executable unless pinned distribution metadata
    owns the exact console script, and checks the Python/platform ABI, package
    versions, action imports, `pip check`, PyTorch CUDA build, and then tensor
-   allocation. The probe must allocate
+   allocation. Virtualenv verification binds the approved host selection via
+   `CUDA_VISIBLE_DEVICES`, then the probe must allocate
    and synchronize a CUDA tensor on every requested visible device. Any
    framework initialization failure, missing TAO CLI entrypoint, insufficient
    visible GPU count, or unsupported architecture is a hard stop before state,
    data staging, or action submission.
+
+   If verification of an already approved profile fails only because a
+   packaged action import is absent or has the wrong locked version, do not run
+   an ad-hoc `pip install`. After the launch review authorizes package mutation,
+   synchronize that exact profile to the manifest-bound combined lock and
+   verify it again:
+
+   ```bash
+   python3 "$SKILL_ROOT/scripts/manage_iaa_virtualenv.py" repair \
+     --profile ds --virtualenv "$IAA_DS_VIRTUALENV" --approve-repair
+   ```
+
+   Use the failing profile (`pyt` or `ds`). The repair preserves the existing
+   environment on failure, installs only hash-bound artifacts from the
+   packaged lock with dependency resolution disabled, and passes only after
+   the full profile import, metadata, `pip check`, and initialization probes.
+   Do not use it for an ABI, CUDA, GPU-count, unsupported-architecture, unknown
+   environment, or unrelated runtime failure.
 3. Reuse a complete **control** workspace venv if the bundled-runtime import
    passes. This is separate from the two TAO execution profiles above and may
    use CPU PyTorch because it runs host-side analysis, not TAO actions. Otherwise
@@ -440,6 +513,9 @@ For a new run, perform the following in order.
    ```bash
    PREP_OPTIONAL_ARGS=()
    PLATFORM_ARGS=(--platform "$PLATFORM")
+   if [ "${ORCHESTRATOR:-direct}" = airflow ]; then
+     PLATFORM_ARGS+=(--orchestrator airflow)
+   fi
    if [ "$PLATFORM" = docker ] && [ "${DOCKER_REMOTE:-false}" = true ]; then
      PLATFORM_ARGS+=(--docker-remote)
    fi
@@ -468,6 +544,7 @@ For a new run, perform the following in order.
      )
    else
      SDG_ENDPOINT_ARGS+=(
+       --reuse-external-endpoints
        --image-edit-url "$IMAGE_EDIT_URL"
        --vlm-url "$VLM_URL" --llm-url "$LLM_URL"
      )
@@ -482,6 +559,7 @@ For a new run, perform the following in order.
        "${PLATFORM_ARGS[@]}" \
        "${PREP_OPTIONAL_ARGS[@]}" \
        "${SDG_ENDPOINT_ARGS[@]}" \
+       --generation-nodes "$GENERATION_NODES" \
        --sdg-max-samples "$SDG_MAX_SAMPLES" \
        --sdg-verification-attempts "$SDG_VERIFICATION_ATTEMPTS" \
        --sdg-caption-policy "$SDG_CAPTION_POLICY" \
@@ -500,12 +578,41 @@ For a new run, perform the following in order.
        --metric-op "$METRIC_OP"
    ```
 
-5. Initialize state once. Omit checksum, target, and token flags when they are
+5. Before state initialization, run the deterministic endpoint plan against
+   the just-materialized configuration. This is a mandatory read-only gate for
+   managed endpoints. For Airflow-orchestrated Docker/virtualenv, run it in the
+   Airflow compute-worker frame; the packaged local service uses that same
+   host. It catches
+   exact port ownership, GPU/VRAM, runtime, image-presence, and cache-capacity
+   conflicts while the proposed run is still safe to abandon. Do not initialize
+   state and then change ports or another immutable endpoint value to recover.
+   For an operator-managed remote platform, run the corresponding plan in that
+   platform's compute frame; never treat the controller host as evidence.
+
+   ```bash
+   "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+     "$SKILL_ROOT/scripts/manage_sdg_endpoints.py" plan \
+       --config "$RESULTS_DIR/config/sdg_config.yaml" \
+       --run-id "$(basename "$RESULTS_DIR")" \
+       --platform "$PLATFORM"
+   ```
+
+   The command must exit zero before continuing. Report an occupied port as a
+   conflict, not as an endpoint-reuse opportunity; never stop, replace, or
+   inspect the application behind a foreign listener. With the user's approval,
+   choose a different explicit port set, materialize a new proposed run, and
+   repeat this gate. Write `--output "$RESULTS_DIR/endpoints/plan.json"` only
+   after approval when a durable plan receipt is useful.
+
+6. Initialize state once. Omit checksum, target, and token flags when they are
    not approved:
 
    ```bash
    INIT_OPTIONAL_ARGS=()
    PLATFORM_ARGS=(--platform "$PLATFORM")
+   if [ "${ORCHESTRATOR:-direct}" = airflow ]; then
+     PLATFORM_ARGS+=(--orchestrator airflow)
+   fi
    if [ "$PLATFORM" = docker ] && [ "${DOCKER_REMOTE:-false}" = true ]; then
      PLATFORM_ARGS+=(--docker-remote)
    fi

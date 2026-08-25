@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login. Instance provisioning is handled by the official brev-cli agent skill or the Brev MCP server.
 metadata:
   author: NVIDIA Corporation
-  version: "0.2.1"
+  version: "0.3.0"
 allowed-tools: Read Bash
 tags:
 - gpu
@@ -89,37 +89,219 @@ before deleting the instance**. Instance-local `~/` persists across stop/start b
 
 Brev is a **compound consumer**: `submit` reaches an instance, then **defers the
 container-how to the four docker verbs** (`tao-run-on-docker`) run over
-`brev exec`. It is not a symmetric peer — teardown must additionally delete the
+`brev exec`. Use the packaged `brev_action.py`; do not reconstruct Docker or
+`brev exec` quoting from prose. It validates the immutable action digest,
+requires every staged mount, preserves the request's exact `gpu_ids`, runs as
+the remote non-root UID/GID, forwards only approved credential names, labels
+the container with the job id, and refuses to replace an existing container.
+The only zero-GPU exception is a signed, allowlisted `tao-run-deft-iaa` adapter
+request. For that exception it omits `--gpus`, inventories the complete staged
+controller skills-root and `/patches` trees against their signed per-file
+manifests and aggregate digests before submit, and separately checks the IAA
+runtime digest. The `/iaa-runtime` mount must be the fixed
+`applications/tao-run-deft-iaa/scripts` subdirectory of that skills-root. This
+covers the controller entry point, application references, core artifact
+schemas, and all code imported through `PYTHONPATH`. It adds the action,
+request, and runtime digests as container labels. Zero-GPU TAO actions and
+arbitrary Python requests fail closed. The adapter environment must equal the
+producer's five-entry non-secret environment contract; the request digest is
+an integrity check, not authorization for added or changed variables.
+It is not a symmetric peer — teardown must additionally delete an ephemeral
 instance to stop billing. `$BANK` = `${TAO_SKILL_BANK_PATH}`.
+
+For a workflow action, first follow the producer's remote staging contract:
+mirror every declared input to instance-local absolute paths, delete every
+`staging_absent_paths` item, persist the producer's staging attestation, open
+the job-record against that exact remote results scope, and bind it before
+native submit. Build one `--mount COMPUTE_TARGET=/remote/source` argument for
+every request mount target. Do not omit absolute-path aliases.
+For an IAA adapter, stage the declared controller skills-root and patches
+snapshots to instance-local directories. Map the derived application scripts
+subdirectory to `/iaa-runtime` and the patches root to `/patches`;
+`brev_action.py` inventories the complete roots and rejects any mutated,
+extra, missing, symlinked, or non-regular file before starting Docker. Result
+mirroring, fresh-output deletion, the staging receipt, and job binding remain
+owned by the producer's remote staging/finalization contract.
+
+When an IAA request contains `cache_subset`, do not mirror the shared cache
+root. Materialize it with the packaged IAA `stage_action_cache.py` helper,
+then transfer that directory to the instance's `/cache` source with delete
+semantics. The helper verifies the manifest and source digests, rejects
+traversal and unrelated output, and is idempotent. The staging receipt's
+request digest transitively binds the cache manifest. This excludes unrelated
+model and Xet caches from TAO-only remote actions.
 
 - **submit** — reach an instance (provision/reuse via the official Brev skill or
   MCP; reuse an existing instance by its `instance_id`; wait for readiness, above).
-  Lint the assembled command, open the record to mint `$JOB_ID` **before** launch,
-  then run the docker `submit` verb *inside* the instance and mark RUNNING:
+  Open the record to mint `$JOB_ID` **before** launch, bind it through the
+  producer, then run the Docker `submit` verb inside the instance and mark
+  RUNNING:
 
   ```bash
-  redact_secrets.py lint <<<"$REMOTE_CMD"     # no inline secrets; creds as -e VAR
+  BREV_ACTION="$BANK/skills/platform/tao-run-on-brev/scripts/brev_action.py"
   JOB_ID=$("$BANK/scripts/tao_job_record.py" open \
     --platform brev --image "$IMG" \
     --network-arch "$ARCH" --action "$ACTION" \
-    --storage-tier "$TIER" --results-root "$RESULTS_ROOT")
-  brev exec <instance> "docker run -d --name $JOB_ID ..."
+    --storage-tier "$TIER" --results-dir "$BACKEND_SCOPE" \
+    "${UPLOAD_EXCLUDE_ARGS[@]}")
+  # Bind this exact record with the producing workflow before submit.
+  SUBMIT_JSON=$(python3 "$BREV_ACTION" submit --json --request "$ACTION_REQUEST" \
+    --instance <instance> --job-id "$JOB_ID" \
+    "${REMOTE_MOUNT_ARGS[@]}")  # one --mount target=source per request mount
+  BACKEND_REF=$(python3 -c \
+    'import json,sys; print(json.load(sys.stdin)["backend_ref"])' <<<"$SUBMIT_JSON")
   "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING \
-    --backend-ref "<instance>/$JOB_ID"       # instance is part of the ref: the
+    --backend-ref "$BACKEND_REF"              # instance is part of the ref: the
                                              # container is unreachable without it
   ```
-- **status / logs** — `brev exec <instance> "docker inspect $JOB_ID"` /
-  `brev exec <instance> "docker logs $JOB_ID"`, mapped to the vocab exactly as
-  the docker verbs do. Recover `<instance>` from the record's `backend-ref`.
+  Optional IAA Airflow plans add `--reconcile`; that mode adopts only an
+  existing container whose job and signed-request labels both match after a
+  lost task response. Direct repeated submit retains its fail-closed behavior.
+- **status / logs** — run `python3 "$BREV_ACTION" status --instance <instance>
+  --job-id "$JOB_ID"` and `python3 "$BREV_ACTION" logs --instance <instance>
+  --job-id "$JOB_ID"`. Status returns the fixed vocabulary. Capture complete
+  logs at the producer's immutable action log path. Recover `<instance>` from
+  the record's `backend-ref`.
 - **cancel / teardown** — remove the container, then for an ephemeral instance
   delete it (stops billing), then mark the record. Never leave an ephemeral
   instance running:
 
   ```bash
-  brev exec <instance> "docker rm -f $JOB_ID"
+  python3 "$BREV_ACTION" cancel --instance <instance> \
+    --job-id "$JOB_ID" --confirm
   brev delete <instance>                      # ephemeral instances only
   "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state CANCELED --source agent
   ```
+
+### IAA generation topology
+
+IAA synthetic-data generation is a specialized compound Brev job. Use the
+packaged `brev_sdg_action.py`; do not translate this topology into independent
+generic Docker submissions. For `generation_nodes=1`, the canonical and fully
+supported layout is one existing, exec-ready Brev host with exactly eight
+visible GPUs of at least 80000 MiB each. All work stays on that host:
+
+- GPUs 0-3 each serve one independent image-edit endpoint;
+- GPU 4 serves the verification VLM;
+- GPU 5 serves the query-generation LLM;
+- GPUs 6-7 are reserved for TAO mining, training, and evaluation.
+
+The image-edit services are reached at `127.0.0.1`; no control-host relay,
+tunnel, cross-instance route, or locally running endpoint is part of this
+topology. The signed hardware inventory, request, endpoint plans, readiness
+evidence, and manager ownership must all agree with these exact GPU IDs. Any
+`--gpus all`, missing slot, wrong model, insufficient VRAM, or foreign ownership
+fails closed.
+
+The existing multi-host layout remains available only for
+`generation_nodes>1`: one distinct coordinator using exactly two explicitly
+selected GPUs (VLM GPU 0 and LLM GPU 1; any additional coordinator GPUs remain
+unused during SDG) plus exactly `N` distinct eight-GPU workers. The coordinator must directly
+reach all `8*N` worker endpoints. The adapter never proxies, tunnels, or relays
+image payloads through the machine running Codex; routing or firewall failure
+is actionable and never silently shrinks the pool.
+
+Do not hand-assemble the composite request. After `history_select` is committed,
+have the Brev provisioning layer write a resolved inventory with exactly these
+fields and a canonical `inventory_sha256` over the object excluding that digest:
+
+```json
+{
+  "schema_version": "1", "platform": "brev", "status": "resolved",
+  "topology": "single_host",
+  "coordinator": {
+    "instance": "<instance>", "gpu_count": 8,
+    "gpu_memory_mib": [81920, 81920, 81920, 81920, 81920, 81920, 81920, 81920]
+  },
+  "workers": [
+    {"id": "worker-0", "instance": "<instance>", "address": "127.0.0.1"}
+  ],
+  "inventory_sha256": "<lowercase-sha256>"
+}
+```
+
+Then run the adapter's read-only preparation command before launch review:
+
+```bash
+BREV_SDG="$BANK/skills/platform/tao-run-on-brev/scripts/brev_sdg_action.py"
+python3 "$BREV_SDG" prepare-request \
+  --state "$RESULTS_DIR/deft_state.json" --iteration "$ITERATION" \
+  --inventory "$BREV_INVENTORY" --remote-root "$REMOTE_ROOT" \
+  --remote-cache "$REMOTE_CACHE" \
+  --remote-controller-python "$REMOTE_ROOT/.venv/bin/python" \
+  --output "$SDG_REQUEST"
+```
+
+`--remote-root` is the coordinator/worker mirror of the initialized local
+workspace; `--remote-cache` is the approved remote model cache. Provision the
+documented SDG controller dependencies in the run-scoped virtualenv named by
+`--remote-controller-python` on every selected instance. The adapter binds that
+absolute interpreter path into the signed request and probes that it is a real
+virtualenv with `yaml`, `pandas`, and `pyarrow` before any endpoint starts.
+It uses the same interpreter for endpoint management, SDG prepare, and SDG
+execute; bare system `python3` is never a fallback. Preparation is
+not an execution verb: it reads no credentials, reaches no instance, and starts
+no service. It derives and binds the ordered workers, exact GPU roles and ports,
+models, limits, canonical local/remote paths, expected outputs, state/config/
+inventory digests, action identity, and request digest. The provisioning layer
+must populate GPU memory from read-only inventory evidence, not an assumed SKU
+label. Repeating preparation with
+unchanged inputs reuses the byte-identical request. It rejects a wrong-platform,
+duplicate, malformed, or topology-inconsistent inventory; a worker-count mismatch; an
+already committed SDG stage; changed state/config; or a different existing
+output.
+
+On each `submit`, generate an ephemeral endpoint key and forward it only through
+the process environment. Workers receive the same value under
+`IMAGE_EDIT_API_KEY` and `VLLM_API_KEY`; the coordinator receives
+the same ephemeral value under both `IMAGE_EDIT_API_KEY` and `VLLM_API_KEY`.
+Only the environment variable names may appear in the
+request, pool manifest, argv, state, logs, or report. A resume generates a new
+key and may use the shared endpoint manager's `--recreate-owned` operation only
+after exact run ownership has been reconciled. It must never replace or stop a
+user-managed endpoint.
+
+Each worker must first report every signed, owned, running, unit-capacity endpoint
+(four in the canonical single-host layout; eight per multi-host worker).
+The coordinator then directly validates `/v1/models` and a minimal image-edit
+request against every slot. Commit the strict endpoint-pool manifest only after
+the exact signed capacity passes; the runtime consumes that committed manifest through
+`--image-edit-endpoint-pool`. A partial or stale pool is not runnable.
+
+The public four verbs operate on the composite job:
+
+- **submit** stages the signed request and shared helpers, reconciles the named
+  instances in parallel, starts the exact-owned worker pools, proves direct
+  coordinator readiness, starts the two coordinator services, and launches the
+  SDG runtime. Pass `--resume` only for the same bound job and request.
+- **status** aggregates the coordinator and every worker; it cannot report the
+  composite job ready while any required worker is missing or unhealthy.
+- **logs** returns the coordinator's canonical action log. The sanitized
+  submit/status evidence carries each worker manager result and its evidence
+  paths.
+- **cancel** stops the coordinator and then only the exactly owned worker
+  services. Confirmation remains required.
+
+The lifecycle is bounded. Resume gets at most two controller attempts and does
+not repeat committed stages. COMPLETE and CANCELED jobs stop exactly owned
+services; ERROR retains them when useful for diagnosis, with cleanup made
+explicit in the result. Instance deletion remains a separate, approved Brev
+provisioning action.
+
+### Large result-tree transfer and cache evidence
+
+Do not use file-by-file `rsync` for a high-member-count tree. Always use the
+packaged receipt-bound archive helper for immutable request/controller/patches
+snapshots: their mode-`0500` directories can make recursive copy apply a
+non-writable destination mode before children exist. Do not chmod or manually
+reshape a signed snapshot. When a measured single-stream bottleneck requires
+chunking, use the helper's deterministic `split`/`transfer-chunks`/`join` path
+with at most four manifest-owned streams; it disables SSH ControlMaster so the
+streams cannot silently share one connection. Never hand-build a tar, `xargs`,
+or reassembly pipeline. Read
+`references/archive-transfer.md` before approval or execution. It defines the
+limits, atomic promotion, interruption recovery, symlink policy, cleanup, and
+model-cache evidence contracts.
 
 ### `brev exec` argument form
 
@@ -158,13 +340,17 @@ brev exec <instance> "docker manifest inspect $IMG >/dev/null && echo AUTH_OK ||
 # a training failure in the logs.
 brev exec <instance> "docker image inspect $IMG >/dev/null 2>&1 || docker pull $IMG"
 
-# Run a TAO job (the docker `submit` verb, over brev exec)
-brev exec <instance> "docker run -d --name $JOB_ID --gpus all -v ~/data:/data -e NGC_KEY $IMG visual_changenet train -e /data/spec.yaml"
+# Submit only through brev_action.py after staging, job open, and producer bind.
+# GPU actions render `--gpus '"device=<approved ids>"'`; the typed CPU adapter
+# omits `--gpus`. Neither path ever widens GPU selection to all GPUs.
+python3 "$BREV_ACTION" submit --request "$ACTION_REQUEST" \
+  --instance <instance> --job-id "$JOB_ID" "${REMOTE_MOUNT_ARGS[@]}"
 ```
 
 ## Multi-GPU and multi-node
 
-**Multi-node is not supported on Brev** — instance-based, no cross-instance
-coordination. Multi-GPU **on a single instance** is supported (up to 8× H100 /
-A100 / L40S); `torchrun --nproc-per-node=N` or PyTorch DDP work within the
-instance.
+Distributed TAO training is not supported on Brev. Multi-GPU training **on a
+single instance** is supported (up to 8× H100 / A100 / L40S); `torchrun
+--nproc-per-node=N` or PyTorch DDP work within the instance. The IAA generation
+pool above is the narrow cross-instance exception: its workers are independent
+model-serving nodes coordinated through HTTP, not a distributed training job.

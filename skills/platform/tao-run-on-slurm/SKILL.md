@@ -64,7 +64,27 @@ read through Pyxis; never fetch S3 inside the allocation (the scheduler-idle
 timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
 `${TAO_SKILL_BANK_PATH}`; `$LOGIN` = a resolved `SLURM_HOSTNAME`.
 
+Ordinary typed IAA actions and IAA Airflow envelopes use packaged
+`scripts/slurm_action.py` for all four verbs. It delegates submit to the
+hardened gate and proves exact native ownership for every other verb; do not
+substitute the freehand examples below.
+
 ### submit
+
+For a DEFT IAA SDG action, `generation_nodes=N` selects the maximum service
+pool, not a multi-node batch allocation. Submit **N independent one-node/eight-GPU image
+worker jobs**; each owns eight TP=1, one-GPU image-edit services. Submit one
+separate one-node/two-GPU coordinator for the VLM, LLM, shared SDG runtime, and
+component steps. Use only the packaged `slurm_sdg_action.py` four-verb consumer
+for this composite action. Before the launch review, use its deterministic
+`prepare-request` operation to derive and sign JSON from initialized DEFT state;
+never hand-author the action request. It records exact native job ownership,
+requires at least one complete eight-service worker, and records the selected
+active capacity separately from the approved `8 * N` maximum.
+Read `references/slurm-sdg-action.md` for the signed request, endpoint-pool,
+serialized-submit, bounded duplicate-submit recovery, resume, authentication,
+status, and cleanup contracts before approval or launch. Do not route this
+action through the ordinary multi-node template.
 
 1. **Reuse what's already staged — never redo (tier A):**
    - *Image:* `@@IMAGE@@` is a Lustre `.sqsh` — **reuse an existing one if present**
@@ -75,11 +95,17 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
      that is not there yet — never re-stage existing data, and never the training
      set inside the allocation.
    Then author the spec at `<job_dir>/specs/spec.yaml` on Lustre with those paths.
+   For large trees, digest-bound subsets, and IAA controller/patch snapshots,
+   follow the atomic `slurm_stage_tree.py` contracts in
+   `references/slurm-container-execution.md`. Stage only request-declared
+   inputs, never a plugin-cache path or the full mining-pool tree.
 2. **Credentials → sidecar (never inline):** if the run needs session creds
    (e.g. `HF_TOKEN`), write them to a mode-600 sidecar on Lustre and let the
    template shred it on exit; NGC image pulls use the one-time
    `~/.config/enroot/.credentials` (see `references/slurm-ssh-credentials.md`),
-   not the job env:
+   not the job env. For a platform-neutral action request, write exactly the
+   variable names listed in `request.forward_env`; never copy a whole launching
+   environment or credentials file into the sidecar:
    ```bash
    set -a; source /path/to/.env; set +a   # omit if already exported
    printf 'export HF_TOKEN=%s\n' "$HF_TOKEN" | ssh $LOGIN "umask 077; cat > <job_dir>/job_$JOB_ID.env"
@@ -93,12 +119,69 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    `@@<NAME>@@` (`JOB_NAME=$JOB_ID`, `NUM_GPUS`, `CPUS_PER_TASK`, `TIME`, `LOG_DIR`,
    `IMAGE`, `CONTAINER_MOUNTS=<RUNTIME_SUPPLIED_MOUNTS>`, `COMMAND=<bundle command reading the shared-storage
    spec>`, `SBATCH_EXTRA=` account/partition lines, `ENV_FILE=` the sidecar path or
-   empty, `EXTRA_ENV=` any cluster NCCL knobs) → `<job_dir>/sbatch/job_$JOB_ID.sbatch`.
-   **Lint + syntax-check before submit:** `redact_secrets.py lint <sbatch>` must
-   pass and `bash -n <sbatch>` must succeed.
+   empty, `EXTRA_ENV=` any cluster NCCL knobs, and `REQUEUE_DIRECTIVE=` exactly
+   `#SBATCH --requeue` or `#SBATCH --no-requeue` from the approved setting) →
+   `<job_dir>/sbatch/job_$JOB_ID.sbatch`. Create `LOG_DIR` before submit; the
+   template intentionally writes flat `%x-%j.out` and `%x-%j.err` files because
+   SLURM does not create intermediate directories in output paths.
+   For an IAA action request, require `len(request.gpu_ids)` to equal
+   `spec_bundle.compute_shape.gpus`, reject duplicates or negative IDs, and
+   render that count as `NUM_GPUS`. Those IDs bind the user's approved GPU
+   quantity; they are not login-host device ordinals. Do not export them as
+   `CUDA_VISIBLE_DEVICES`: SLURM selects physical devices and Pyxis exposes only
+   the allocation inside the container. This preserves the explicit selection
+   without widening the request to every cluster GPU.
+   For only an IAA `clip train` bundle, prefix the exact bundle argv with the
+   request-mounted `/patches/run_clip_train_slurm.sh`. Keep the single parent
+   `srun` task: TAO owns the per-GPU launcher, while the wrapper removes only
+   `SLURM_NTASKS`, `SLURM_NTASKS_PER_NODE`, `SLURM_PROCID`, `SLURM_LOCALID`,
+   `SLURM_NODEID`, and the inherited single-parent distributed frame
+   (`WORLD_SIZE`, `RANK`, `LOCAL_RANK`, `NODE_RANK`, `MASTER_ADDR`,
+   `MASTER_PORT`, `NUM_GPU_PER_NODE`) inside that container process so TAO and Lightning do not
+   mistake the scheduler's one parent task for externally launched DDP ranks.
+   It retains job/account variables and GPU visibility. Do not fake topology
+   counts, apply the wrapper to evaluate/embedding, or change the request argv.
+   Both single- and multi-node templates bind only the fixed non-secret
+   `NCCL_DEBUG`, `LOGLEVEL`, `NCCL_P2P_DISABLE`, `NCCL_IB_DISABLE`,
+   `NCCL_SOCKET_IFNAME`, `NCCL_IB_HCA`, and `NCCL_NET` names through Pyxis
+   `--container-env`; a host-shell export alone does not prove the setting is
+   visible inside the container. Never add a credential, whole environment,
+   or user-supplied arbitrary name to this allowlist.
+   If both normal IAA training attempts have already terminated in the two
+   exact pre-workload topology failures recognized by the application
+   producer, use its one-shot `launcher-repair` verb. Submit only the emitted
+   repair request through this same path. Never hand-edit or reuse an earlier
+   request, and never use this exception for a runtime/data/model failure, an
+   unknown log, a started batch, an output/checkpoint, or a second repair.
+   Submit the rendered file only through packaged
+   `scripts/slurm_submit_action.py`. It secret-lints and syntax-checks the local
+   input. For every typed IAA action, pass its immutable `--request` and
+   request-owned `--job-binding`; the gate validates their digests, action/job
+   ownership, staged-absence receipt, fresh PENDING record, and exact ordered
+   Pyxis mount, environment, model/adapter, and scheduler GPU contracts before any
+   scheduler submit. It then proves the exact job name is absent, copies to a target-scoped
+   temporary file, verifies non-emptiness plus byte-identical SHA-256 before
+   and after atomic promotion, runs remote `bash -n` and `sbatch --test-only`,
+   rechecks exact-name absence, then submits and returns the parsed native
+   handle. A lost or malformed submit reply triggers exact-name reconciliation
+   every two seconds for at most 60 seconds. Treat any rejection as blocking;
+   in particular, an explicit-account error means request `SLURM_ACCOUNT`, add
+   only its `#SBATCH --account` directive, and rerun lint, syntax, and test-only.
+   `--test-only` validates the scheduler contract without submitting a job.
+   A signed action with `spec_bundle.compute_shape.gpus=0` is an IAA
+   compute-frame adapter, not permission to run it on the controller. Render
+   `templates/slurm/cpu.sbatch.tmpl`, use an approved CPU partition, omit every
+   GPU/GRES directive, and preserve the same staging receipt, job binding,
+   exact mounts, four verbs, synchronization, and finalization. Reject
+   `--gres=gpu:0` and controller-local execution.
 5. **Submit + record RUNNING:**
    ```bash
-   SLURM_ID=$(ssh $LOGIN "sbatch --parsable <job_dir>/sbatch/job_$JOB_ID.sbatch")
+   SUBMIT_JSON=$(python3 "$BANK/skills/platform/tao-run-on-slurm/scripts/slurm_submit_action.py" \
+     --login "$LOGIN" --job-id "$JOB_ID" --rendered-script <local-rendered.sbatch> \
+     --remote-script <job_dir>/sbatch/job_$JOB_ID.sbatch \
+     --request "$ACTION_REQUEST" --job-binding "$JOB_BINDING")
+   SLURM_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["backend_ref"])' \
+     <<<"$SUBMIT_JSON")
    "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING --backend-ref "$SLURM_ID"
    ```
 
@@ -131,7 +214,7 @@ long queue waits are normal — do not stop on elapsed time.
 ### logs
 
 ```bash
-ssh $LOGIN "tail -n ${N:-200} <log_dir>/$JOB_ID-$SLURM_ID/main.out"   # SLURM auto-creates the %x-%j subdir
+ssh $LOGIN "tail -n ${N:-200} <log_dir>/$JOB_ID-$SLURM_ID.out"
 ```
 
 ### cancel
@@ -142,6 +225,11 @@ ssh $LOGIN "scancel $SLURM_ID"
 ```
 
 Treat an already-terminated SLURM job as a successful cancel.
+For a bound IAA job canceled while still pending, SLURM may create no native
+log. Use the application producer's packaged `capture-preallocation-cancel`
+verb on the login frame; it accepts only exact zero-runtime/no-node `sacct`
+evidence and writes the typed receipt required by finalization. Never create a
+placeholder log by hand.
 
 ### Multi-node (nodes > 1)
 
@@ -161,7 +249,10 @@ Same four verbs, with three additions at submit:
    **Timed out** (the collective hung)
    → set the cluster's NCCL knob in `EXTRA_ENV` and re-probe — on CS-OCI-ORD that
    is `export NCCL_P2P_DISABLE=1` (the intra-node P2P hang), often with
-   `NCCL_SOCKET_IFNAME=eth0` / `NCCL_IB_DISABLE=1`. **Cache the working env per
+   `NCCL_SOCKET_IFNAME=eth0` / `NCCL_IB_DISABLE=1`. When an external NCCL
+   network plugin still selects IB despite that setting, bind
+   `NCCL_NET=Socket` and prove its in-container value before the bounded
+   re-probe. **Cache the working env per
    cluster** so later jobs skip the probe. Gate on **`gpus_per_node > 1` too** —
    the P2P hang triggers on a single node with 2+ GPUs.
 3. Tier-A Lustre, sidecar creds, record, and lint are unchanged.
@@ -191,112 +282,27 @@ direct-spec modes, backend details, and the results-dir default.
 
 ## Container execution
 
-`tao-core` runs TAO containers through Pyxis/Enroot:
+Stage compact specs and metadata on Lustre, acquire and validate cached `.sqsh`
+images on a CPU partition before allocation, render the run-owned batch file,
+and execute it through Pyxis/Enroot with explicit mounts. Never fall back to a
+registry pull inside a GPU allocation after conversion failure. Read
+`references/slurm-container-execution.md` for accepted image forms, conversion
+cache and node-local temporary-directory rules, NCCL environment forwarding,
+multi-node rendezvous, and failure recovery.
 
-1. Stage compact JSON files for specs, environment, and cloud metadata under
-   `<job_dir>/specs`, `<job_dir>/env`, and `<job_dir>/meta`.
-2. Convert the Docker image to a cached SQSH image **before** the GPU job, with
-   `srun -n1 -p <conversion_partition> enroot import`. This is a one-time cost
-   per image, not an optional optimization — see *Acquire the image off the GPU
-   allocation* below.
-3. Write an sbatch script under `<job_dir>/sbatch/job_<job_id>.sbatch`.
-4. Submit `sbatch --export=ALL <script>`.
-5. Run the container with `srun --container-image=<image> --container-mounts=<RUNTIME_SUPPLIED_MOUNTS>`.
-
-Accepted image formats: `/path/to/image.sqsh`, `registry#image:tag`,
-`docker://registry#image:tag`, and ordinary `registry/image:tag` (converted to
-Pyxis form when needed). SQSH conversion is cached by image name; for `:latest`
-images the cached SQSH is reused unless `force_reconvert_latest` is enabled.
-
-### Acquire the image off the GPU allocation
-
-**The GPU is yours from the moment the allocation starts, not from when compute
-begins.** Anything the job does before training — pulling a registry image,
-converting it, fetching a dataset — runs on GPUs that are idle, billed, and
-visible to the cluster's GPU-idle reaper. A first-time TAO pull plus enroot
-conversion is minutes of that, which is long enough to be killed and long enough
-to be expensive.
-
-So the image must already be a local `.sqsh` when the GPU job starts. Passing a
-`docker://` or `registry#image:tag` URI straight to `srun --container-image=`
-makes Pyxis pull *and* convert inside the allocation — the exact trap. Convert
-once on a **CPU partition**, then point every later job at the resulting file:
-
-```bash
-# One-time per image, on CPU — costs no GPU time.
-ssh $LOGIN "test -e <sqsh>" || \
-  ssh $LOGIN "srun --chdir=/tmp -n1 -p <cpu_partition> -t <minutes> \
-    bash -c 'set -Eeuo pipefail
-      export TMPDIR=/tmp
-      export ENROOT_TEMP_PATH=/tmp/enroot-tao-\${SLURM_JOB_ID}
-      export SLURM_ENROOT_TEMP_PATH=\${ENROOT_TEMP_PATH}
-      mkdir -p \"\${ENROOT_TEMP_PATH}\"
-      cd /tmp
-      enroot import -o <sqsh> docker://<registry>#<image>:<tag>'"
-
-# Every GPU job then references the file, never the registry.
-srun --container-image=<sqsh> ...
-```
-
-The same rule governs data: stage it to Lustre before submit (tier A) rather
-than fetching inside the allocation.
-
-**Cluster-specific values — CS-OCI-ORD.** The general rule above is portable;
-these numbers are not, and are recorded because each cost real allocations:
-
-- Conversion partition `cpu_long`, **not** the default `cpu` — `cpu` has a
-  ~30-minute wall-time cap, shorter than a TAO conversion, so the conversion job
-  is killed partway and leaves a truncated file.
-- Set both `ENROOT_TEMP_PATH` and `SLURM_ENROOT_TEMP_PATH` to a job-unique
-  `/tmp/enroot-tao-${SLURM_JOB_ID}` and force `TMPDIR=/tmp`. Direct
-  Enroot uses the first variable and Pyxis may use the second. The directory
-  must be node-local and unique; shared paths can fail on cleanup races or
-  unsupported overlay whiteouts.
-- Conversion timeout ≥ 120 minutes.
-
-Partial conversions are self-detecting: the SQSH is validated by `hsqs` magic,
-so a truncated file is rejected rather than silently used. Conversion runs once
-and is then cached by image name.
-
-**A failed conversion must not fall back to the registry image.** The tempting
-recovery — pass `docker://…` to `srun` and let Pyxis handle it — puts the pull
-back inside the GPU allocation, which is the cost the conversion existed to
-avoid, and it does so precisely when something is already wrong. Treat a failed
-or truncated conversion as fatal: fix it on the CPU partition and resubmit.
-
-Diagnostic: if a job is unexpectedly slow to produce output, check what
-`--container-image=` actually received. A registry URI there — rather than a
-`.sqsh` path — means the pull happened on the GPUs.
+Direct Enroot conversion must use a job-unique node-local directory and a
+stable working directory. Preserve these exact submission settings:
+`ENROOT_TEMP_PATH=/tmp/enroot-tao-\${SLURM_JOB_ID}`,
+`SLURM_ENROOT_TEMP_PATH=\${ENROOT_TEMP_PATH}`, and `--chdir=/tmp`.
 
 ## Monitoring and cancellation
 
-- Scheduler status comes from the stored SLURM job id via `squeue`/`sacct`;
-  TAO terminal status comes from `status.json` in the shared results folder.
-- While chat monitoring is enabled, keep polling at the requested interval for
-  any non-terminal job (`PENDING`, `RUNNING`, or otherwise). Do not stop after a
-  fixed elapsed time such as 30 minutes; long queue waits are normal on shared
-  GPU partitions.
-- Do not send a final response for a non-terminal SLURM job when chat
-  monitoring is enabled. A final response is a detach action; use it only if the
-  user asked to detach/stop or the job reached terminal state.
-- Logs are read over SSH from
-  `<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>/main.out` and `.err`.
-- Cancel by looking up `backend_details.slurm_metadata.slurm_job_id` and running
-  `scancel <slurm_job_id>` over SSH. Treat missing or already terminated jobs as
-  successful cancellation.
-
-Status mapping:
-
-- `PENDING` -> `Pending`
-- `RUNNING` or `COMPLETING` -> `Running`
-- `COMPLETED` -> check `status.json`
-- `FAILED`, `BOOT_FAIL`, `DEADLINE`, `OUT_OF_MEMORY`, `NODE_FAIL` -> retry if
-  logs match retriable infrastructure patterns, otherwise `Error`
-- `CANCELLED`, `PREEMPTED`, `REVOKED` -> `Canceled`
-- `TIMEOUT` -> `Error`
-- `SUSPENDED`, `STOPPED` -> `Running` (still scheduler-owned and may resume;
-  the native sub-state rides in the transition message — same convention as
-  docker `paused`)
+Poll the stored native ID through `squeue`/`sacct`, bind completion to terminal
+evidence in shared results, and continue requested monitoring across normal
+queue waits. Read logs and cancel only after exact ownership resolution. The
+full state map, terminal-evidence rules, log paths, detach behavior, and
+infrastructure retry classification are in
+`references/slurm-container-execution.md`.
 
 ## Required inputs
 
@@ -305,8 +311,10 @@ for the full credential list, microservices schema keys, and defaults.
 
 - **SLURM_USER** (required): SSH username for the login node.
 - **SLURM_HOSTNAME** (required): Comma-separated login hostnames for failover.
-- **SLURM_PARTITION** (required): Partition list for GPU submission. Packaged
-  default `polar,polar3,polar4,grizzly`, treated as 4-hour queues.
+- **SLURM_PARTITION** (optional): Partition list for GPU submission. The
+  packaged default is `polar,polar3,polar4,grizzly`, treated as 4-hour queues.
+  Ask only when the user wants a different partition or the scheduler rejects
+  the default.
 - **SSH_KEY_PATH** (preferred, expected before launch): private key for
   non-interactive public-key auth. Ask for this first in remediation; prefer it
   over the `SSH_AUTH_SOCK` agent-socket fallback.
@@ -320,73 +328,20 @@ results root, or the workflow cannot proceed without overriding defaults.
 
 ## Resource defaults
 
-Defaults from `tao-core`:
-
-- `num_nodes`: 1
-- `num_gpus`: 4
-- `max_num_gpus_per_node`: 8
-- `cpus_per_task`: 16
-- `time_hours`: 4
-- `timeout_hours`: 3.8
-- `max_time_hours`: 4
-- `container_mounts`: explicit source-to-target mounts supplied at runtime
-- `use_requeue`: true
-- `use_sqsh`: true
-
-When generating launchers or wrapper scripts for SLURM, set the wall-time
-defaults explicitly from the packaged platform resource defaults:
-
-```bash
-export SLURM_TIME_HOURS="${SLURM_TIME_HOURS:-4}"
-export SLURM_TIMEOUT_HOURS="${SLURM_TIMEOUT_HOURS:-3.8}"
-```
-
-Do not default to 12 hours on SLURM. If the user supplies a longer
-`SLURM_TIME_HOURS`, verify that the selected partition supports it before
-submitting. For the packaged default partition list
-`polar,polar3,polar4,grizzly`, reject requests above 4 hours and ask for a
-different partition only if the user actually wants a longer wall time.
-
-When `num_gpus` is greater than or equal to `max_num_gpus_per_node`, the
-handler treats the request as exclusive per node and computes additional nodes
-from total GPU count when necessary.
+Use `references/skill_info.yaml` as the packaged source for node, GPU, CPU,
+wall-time, partition, mount, SQSH, and conversion defaults. Do not substitute a
+12-hour default: verify any override against the selected partition before
+approval. The SDG composite topology is the explicit exception documented in
+`references/slurm-sdg-action.md`.
 
 ## Multi-node and retries
 
-For multi-node jobs (`num_nodes > 1`), the rendered
-`templates/slurm/multinode.sbatch.tmpl` sets the sbatch directives and exports
-the PyTorch-distributed rendezvous env vars: `WORLD_SIZE`, `NUM_GPU_PER_NODE`,
-`NODE_RANK`, `MASTER_ADDR`, and `MASTER_PORT` (29500). TAO entrypoints read
-`WORLD_SIZE` + `NUM_GPU_PER_NODE` and build torchrun internally. Cosmos-RL has
-special multi-node role handling for controller, policy, and rollout workers.
-See the `### Multi-node (nodes > 1)` submit subsection above for the NCCL-probe
-gate and per-cluster env caching.
-
-**Use Lustre, not S3, for SLURM job inputs.** The GPU allocation starts the
-moment the job is dispatched, so a long `s3://` download at the top of the
-script burns the allocation, can get the job killed for GPU-idle, and is billed
-either way. Stage training data on the shared filesystem first and reference it
-as `lustre:///...`. S3/HF/NGC pre-fetch is fine for small auxiliary inputs
-(checkpoints, configs), not training datasets. K8s/Brev do not share this
-scheduler-idle constraint.
-
-On an infrastructure failure (`NODE_FAIL`, `BOOT_FAIL`, NCCL transport timeouts,
-CUDA driver init failures, GPU/IB link-down, OOM-killer node reaping, Xid
-errors), classify infra-vs-program from the logs and create a new retry record
-with `--retry-of` before re-submitting the staged workload (M6). Plain training
-failures surface immediately so a broken spec does not consume the retry
-budget. `#SBATCH --requeue` is enabled by default via
-`SLURM_USE_REQUEUE=true`, so SLURM itself re-queues the job on `NODE_FAIL` or
-pre-emption before any agent-level resubmit; workload contracts such as Cosmos
-may require `--no-requeue`.
-
-Treat an empty `sbatch --parsable` response or SSH disconnect as ambiguous:
-reconcile by exact job name, never submit blindly, and validate inherited node
-exclusions. The referenced execution guide defines the full decision table.
-
-See `references/slurm-container-execution.md` for the full multi-node
-env-var/sbatch directive detail and table, cluster requirements, the
-Lustre-not-S3 rule in full, and the failure-mode checklist.
+Ordinary distributed training uses the multi-node template, bounded NCCL probe,
+and TAO rendezvous contract described above. Stage large inputs on Lustre before
+allocation. On failure, classify infrastructure versus program errors, honor
+workload-specific requeue policy, create a new retry record when agent-level
+resubmission is justified, and reconcile ambiguous submission by exact name.
+The complete decision table is in `references/slurm-container-execution.md`.
 
 ## References
 
@@ -397,6 +352,9 @@ Lustre-not-S3 rule in full, and the failure-mode checklist.
   monitoring, status mapping, cancellation, multi-node detail,
   Lustre-not-S3, retries, failure modes.
 - `references/slurm-preflight-storage.md` — extended preflight/storage notes.
+- `references/slurm-sdg-action.md` — DEFT IAA SDG fan-out topology, signed
+  request, serialized four-verb execution, duplicate-submit recovery,
+  readiness, endpoint pool, resume, authentication, and exact-owned cleanup.
 - `references/cosmos-slurm-guardrails.md` — Cosmos Framework and Cosmos-RL
   launch and status guardrails.
 - `references/detailed-guide.md` — navigation map for the split references.

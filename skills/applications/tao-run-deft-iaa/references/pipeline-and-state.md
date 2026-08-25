@@ -1,5 +1,8 @@
 # Pipeline, State, and Resume
 
+For a remote workflow, render reports through the allowlisted zero-GPU
+`report` action. State commit and audit remain controller metadata operations.
+
 The workflow is a linear transaction log with KPI/max-iteration branching. It
 does not require a general graph engine, scheduler, or multiple agents.
 
@@ -23,7 +26,7 @@ baseline/dataset_setup
 
 iterN/data_mining
   -> iterN/history_select
-  -> iterN/sdg                                bounded local generation
+  -> iterN/sdg                                bounded platform-local generation
   -> iterN/visualize                          real or config-approved skip
   -> iterN/train
   -> iterN/evaluate
@@ -130,6 +133,25 @@ If an existing run's config hashes, inputs, metric, or requested parameters no
 longer match, do not mutate it. Preserve the directory and initialize a new,
 separately approved run.
 
+A refreshed installed skill may change the bundled runtime digest during a
+long run. Never bypass that audit error or edit state by hand. At a clean,
+committed stage boundary, after explicit approval of the refresh, use the
+bounded rebind transaction:
+
+```bash
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
+  "$SKILL_ROOT/scripts/rebind_iaa_runtime.py" \
+    --results-dir "$RESULTS_DIR" --reason "<approved QA fix>"
+```
+
+It refuses active/unfinalized actions, an unfinished stage transaction, and
+running or created endpoints. It validates the current skill tree, records a
+digest-bound evidence file and append-only old-to-new lineage, preserves the
+initial approved digest and all prior action requests, and atomically selects
+the new digest for future host operations and action requests. The limit is
+three non-repeating rebinds per run; a plugin-base or skill-version change
+requires a new run. Audit immediately after the transaction.
+
 ## Terminal paths
 
 ### KPI or iteration budget
@@ -147,12 +169,20 @@ Use the label of the evaluation that selected the stop:
 `max_iterations` only after final iteration evaluation. The validator rejects
 premature or false stop reasons.
 
-Render and prove completion:
+Prepare, execute, and finalize the terminal report through the selected
+platform using `platform-execution.md`, then prove completion:
 
 ```bash
-"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-  "$SKILL_ROOT/scripts/render_deft_report.py" \
-    --results-dir "$RESULTS_DIR" --trigger loop-end
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+    --results-dir "$RESULTS_DIR" --image ds \
+    --stage-dir "$RESULTS_DIR" --name report \
+    --fresh-output "$RESULTS_DIR/DEFT_Loop_Report.html" -- \
+    python3 /iaa-runtime/run_iaa_compute.py report \
+      --results-dir /results --label terminal
+
+# Execute/finalize the emitted request with the selected platform. It writes:
+#   $RESULTS_DIR/report.status.json
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
   "$SKILL_ROOT/scripts/audit_deft_run.py" \
@@ -173,9 +203,15 @@ After a committed stage error, commit the only legal transition:
     --results-dir "$RESULTS_DIR" --iter-label "$LABEL" --stage loop_stop \
     --reason hard_stop --summary "run stopped after $LABEL/$STAGE failure"
 
-"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-  "$SKILL_ROOT/scripts/render_deft_report.py" \
-    --results-dir "$RESULTS_DIR" --trigger loop-end
+"$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
+    --results-dir "$RESULTS_DIR" --image ds \
+    --stage-dir "$RESULTS_DIR" --name report \
+    --fresh-output "$RESULTS_DIR/DEFT_Loop_Report.html" -- \
+    python3 /iaa-runtime/run_iaa_compute.py report \
+      --results-dir /results --label terminal
+
+# Execute/finalize the emitted request through the selected platform.
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
   "$SKILL_ROOT/scripts/audit_deft_run.py" \
