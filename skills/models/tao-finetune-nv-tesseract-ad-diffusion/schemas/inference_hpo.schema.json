@@ -1,14 +1,14 @@
 {
   "automl_default_parameters": [
-    "inference.nsample"
+    "hpo.nsample"
   ],
   "automl_disabled_parameters": [
     "dataset.csv",
     "dataset.label_col",
     "dataset.eval_rows",
-    "inference.threshold_strategy",
-    "inference.model_path",
-    "inference.config_path",
+    "hpo.threshold_strategy",
+    "hpo.model_path",
+    "hpo.config_path",
     "train.output_dir"
   ],
   "default": {
@@ -17,7 +17,7 @@
       "label_col": "label",
       "eval_rows": 2000
     },
-    "inference": {
+    "hpo": {
       "nsample": 15,
       "threshold_strategy": "scs",
       "model_path": "",
@@ -64,12 +64,12 @@
         }
       }
     },
-    "inference": {
-      "automl_default_parameters": ["inference.nsample"],
+    "hpo": {
+      "automl_default_parameters": ["hpo.nsample"],
       "automl_disabled_parameters": [
-        "inference.threshold_strategy",
-        "inference.model_path",
-        "inference.config_path"
+        "hpo.threshold_strategy",
+        "hpo.model_path",
+        "hpo.config_path"
       ],
       "automl_enabled": false,
       "description": "Inference hyperparameters to tune.",

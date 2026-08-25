@@ -4,7 +4,7 @@ dataset:
   timestamp_col: timestamp
   target_cols: ""
   label_horizon: 72   # how many future rows to hold back as ground truth
-inference:
+hpo:
   alpha: 0.01
   k: 64
   temperature: 0.05
