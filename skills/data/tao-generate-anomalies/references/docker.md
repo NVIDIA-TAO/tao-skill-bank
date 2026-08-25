@@ -10,8 +10,9 @@ on the **parent** dir. This surfaces early at Phase 0 (HF writes
 `<name>/amp/<sample>/…` under `ag_inference/`). Any single host-owned ancestor
 in a runtime-created subtree breaks creation.
 
-**Recommended: run as your host uid (`--user`).** Outputs end up owned by you,
-no host `chmod` needed. Two companions are mandatory for *this* image:
+**Recommended: run with your full host identity.** Outputs end up owned by you,
+no host `chmod` needed. The identity variables, passwd/group mappings, and
+writable cache redirects are mandatory for *this* image:
 
 ```bash
 set -a; source /path/to/.env; set +a   # omit if already exported
@@ -19,8 +20,9 @@ WORK=/abs/path/to/run        # holds home/, checkpoints/, results/, ag_inference
 mkdir -p "$WORK"/{home,checkpoints,results,ag_inference,ag_configs}
 docker run -d --name agrun --gpus all \
   --user "$(id -u):$(id -g)" \
+  -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \   `# ① uid must resolve to a name`\
-  -e HOME=/work/home -e HF_HOME=/work/home/hf \                 `# ② redirect all caches to a writable mount`\
+  -e HF_HOME=/work/home/hf \                                    `# ② redirect all caches to a writable mount`\
   -e XDG_CACHE_HOME=/work/home/.cache -e TRITON_CACHE_DIR=/work/home/.triton \
   -e TORCHINDUCTOR_CACHE_DIR=/work/home/.inductor -e MPLCONFIGDIR=/work/home/.mpl \
   -e HF_TOKEN \
@@ -37,14 +39,19 @@ Both companions are load-bearing — verified by smoke test:
 | Flag | Omit it and… |
 |---|---|
 | `--user $(id -u):$(id -g)` | container stays uid 10000 → can't write host mounts (the original error). |
+| `-e USER="$(id -un)" -e LOGNAME="$(id -un)"` | user-discovery code does not receive the submitting host identity. |
 | `-v /etc/passwd:/etc/passwd:ro` (+`/etc/group`) | your uid has no name in the image → **Phase 4 eval crashes** in `torch.compile` (`getpass.getuser()` → `KeyError: getpwuid(): uid not found`). |
-| `-e HOME=…` + cache vars | real `HOME` (`/home/anomalygen`) is uid 10000's → HF / triton / inductor / matplotlib caches hit a fresh `EACCES`. |
+| `-e HOME=/tmp` + cache vars | real `HOME` (`/home/anomalygen`) is uid 10000's → HF / triton / inductor / matplotlib caches hit a fresh `EACCES`. |
 
 **Fail-fast preflight** (run before Phase 0 — catches the mismatch in seconds
 instead of mid-Phase 2):
 
 ```bash
-docker run --rm --user "$(id -u):$(id -g)" -v "$WORK/ag_inference:/mnt" <image> \
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
+  -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
+  -v "$WORK/ag_inference:/mnt" <image> \
   bash -lc 'mkdir -p /mnt/.wtest/a/b && rm -rf /mnt/.wtest && echo OK \
             || { echo "mount not writable by uid $(id -u)"; exit 1; }'
 ```

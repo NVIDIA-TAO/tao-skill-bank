@@ -90,11 +90,12 @@ The `paidf-anomalygen` image runs as a non-root baked-in user (`USER
 anomalygen`, `uid=10000`), independent of your host uid. Docker does not remap
 uids on bind mounts, so a host directory owned by your uid is not writable by
 uid 10000 and the container fails the instant it tries to create a file there.
-Run as your host uid with `--user "$(id -u):$(id -g)"` plus the mandatory
-`/etc/passwd`+`/etc/group` and `HOME`/cache-redirect companions, and run the
-fail-fast write preflight before Phase 0. See `references/docker.md` for the
-full `docker run` command, the load-bearing-flag table, the preflight snippet,
-and the uid-10000 `chown`/`chmod` fallback.
+Run with the full host identity: `--user "$(id -u):$(id -g)"`, matching
+`USER`/`LOGNAME`, `HOME=/tmp`, and read-only `/etc/passwd`+`/etc/group`
+mounts, plus the cache redirects. Run the fail-fast write preflight before
+Phase 0. See `references/docker.md` for the full `docker run` command, the
+load-bearing-flag table, the preflight snippet, and the uid-10000
+`chown`/`chmod` fallback.
 
 ## Reference files — read before executing phases
 
