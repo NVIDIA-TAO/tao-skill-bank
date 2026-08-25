@@ -66,9 +66,14 @@ def emit_from_ds(module: str, image: str, workdir: Path) -> str:
     # one", and a leftover would otherwise be returned as a fresh success.
     spec.unlink(missing_ok=True)
 
+    # --user with a uid the image has no /etc/passwd entry for leaves the process
+    # nameless, and getpass.getuser() then raises before `default_specs` runs. USER is
+    # read before pwd is consulted, so any non-empty value settles it. HOME would
+    # default to "/", which is not writable; the workdir is already mounted.
     cmd = [
         "docker", "run", "--rm", "--gpus", "all", "--ipc=host",
         "--user", f"{os.getuid()}:{os.getgid()}",
+        "-e", "USER=deft", "-e", f"HOME={workdir}",
         "-v", f"{workdir}:{workdir}", "-w", str(workdir),
         image, module, "default_specs", f"results_dir={workdir}",
     ]
