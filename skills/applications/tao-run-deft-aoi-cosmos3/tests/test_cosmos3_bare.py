@@ -91,6 +91,20 @@ def write_json(path: pathlib.Path, payload: object) -> pathlib.Path:
     return path
 
 
+def write_rcca_report(path: pathlib.Path) -> pathlib.Path:
+    path.write_text(
+        "# Cosmos3 Proxy RCCA Report\n\n"
+        "## 1. Verdict\nFixture verdict.\n\n"
+        "## 2. False-Accept Breakdown\nFixture false accepts.\n\n"
+        "## 3. False-Reject Breakdown\nFixture false rejects.\n\n"
+        "## 4. Top-K Worst Samples\nFixture worst samples.\n\n"
+        "## 5. Per-Defect Analysis\nFixture defect analysis.\n\n"
+        "## 6. Recommended Actions\nFixture actions.\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def write_sdg_output(sdg_dir: pathlib.Path, stems: list[str]) -> pathlib.Path:
     """Fake one AnomalyGen SDG run: paired reconstructed/original images + CSV."""
     rows = ["reconstructed_image,original_image,psnr"]
@@ -620,7 +634,7 @@ class IsolationAndMetricTests(unittest.TestCase):
 
 
 class StateMachineTests(unittest.TestCase):
-    def test_stage_commit_requires_positive_measured_duration(self) -> None:
+    def test_stage_commit_validates_duration_by_skip_contract(self) -> None:
         base = [
             "--results-dir",
             "/tmp/cosmos3-duration-contract",
@@ -633,7 +647,22 @@ class StateMachineTests(unittest.TestCase):
         ]
         with self.assertRaises(SystemExit):
             commit_stage._parser().parse_args(base)
-        self.assertEqual(commit_stage.main([*base, "--duration-sec", "0"]), 2)
+        for duration in ("0", "-1"):
+            self.assertEqual(
+                commit_stage.main([*base, "--duration-sec", duration]), 2
+            )
+        skip = [
+            "--results-dir",
+            "/tmp/cosmos3-duration-contract",
+            "--iter-label",
+            "iter1",
+            "--stage",
+            "anomalygen",
+            "--skip",
+            "--summary",
+            "driving RCCA has zero false accepts",
+        ]
+        self.assertEqual(commit_stage.main([*skip, "--duration-sec", "-1"]), 2)
 
     def test_baseline_commit_to_completion(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1115,7 +1144,9 @@ class StateMachineTests(unittest.TestCase):
                 0,
             )
 
-            def commit(label: str, stage: str, *extra: str) -> int:
+            def commit(
+                label: str, stage: str, *extra: str, duration: str = "1"
+            ) -> int:
                 return commit_stage.main(
                     [
                         "--results-dir",
@@ -1125,7 +1156,7 @@ class StateMachineTests(unittest.TestCase):
                         "--stage",
                         stage,
                         "--duration-sec",
-                        "1",
+                        duration,
                         "--summary",
                         f"{label} {stage}",
                         *extra,
@@ -1196,6 +1227,7 @@ class StateMachineTests(unittest.TestCase):
             self.assertEqual(
                 json.loads((proxy_dir / "false_accepts.json").read_text()), []
             )
+            rcca_report = write_rcca_report(proxy_dir / "RCCA_Report.md")
             self.assertEqual(
                 commit(
                     "baseline",
@@ -1206,6 +1238,8 @@ class StateMachineTests(unittest.TestCase):
                     str(proxy_dir / "false_accepts.json"),
                     "--false-rejects",
                     str(proxy_dir / "false_rejects.json"),
+                    "--rcca-report",
+                    str(rcca_report),
                 ),
                 0,
             )
@@ -1216,15 +1250,21 @@ class StateMachineTests(unittest.TestCase):
             self.assertEqual(
                 commit("iter1", "routing", "--mining-targets", str(targets)), 0
             )
-            self.assertEqual(commit("iter1", "anomalygen", "--skip"), 0)
-            phase = json.loads(
-                (results / "deft_state.json").read_text()
-            )["iterations"]["iter1"]
-            self.assertTrue(phase["anomalygen_skipped"])
-            self.assertNotIn("anomalygen_sdg_csv", phase)
+            skip_reason = "iter1 anomalygen"
+            self.assertEqual(
+                commit("iter1", "anomalygen", "--skip", duration="0"), 0
+            )
             state = json.loads((results / "deft_state.json").read_text())
+            phase = state["iterations"]["iter1"]
+            self.assertTrue(phase["anomalygen_skipped"])
+            self.assertEqual(phase["anomalygen_skip_reason"], skip_reason)
+            self.assertNotIn("anomalygen_sdg_csv", phase)
             self.assertEqual(state["status"], "in_progress")
-            self.assertEqual(state["events"][-1]["stage"], "anomalygen")
+            event = state["events"][-1]
+            self.assertEqual(event["stage"], "anomalygen")
+            self.assertEqual(event["status"], "skipped")
+            self.assertEqual(event["skip_reason"], skip_reason)
+            self.assertEqual(event["duration_sec"], 0)
 
     def test_unmet_baseline_runs_iteration_to_max(self) -> None:
         import pyarrow as pa
@@ -1368,6 +1408,9 @@ class StateMachineTests(unittest.TestCase):
                     ),
                     0,
                 )
+                rcca_report = write_rcca_report(
+                    proxy_dir / "RCCA_Report.md"
+                )
                 commit(
                     label,
                     "proxy_rcca",
@@ -1377,6 +1420,8 @@ class StateMachineTests(unittest.TestCase):
                     str(proxy_dir / "false_accepts.json"),
                     "--false-rejects",
                     str(proxy_dir / "false_rejects.json"),
+                    "--rcca-report",
+                    str(rcca_report),
                 )
 
             evaluate_arc("baseline", correct=False, continuing=True)

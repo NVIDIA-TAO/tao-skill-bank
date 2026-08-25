@@ -64,7 +64,8 @@ Treat this as a disk-backed state machine, not as a prose recipe.
    fabricate state. For evaluate, pass the metric result,
    checkpoint, inference CSV, and threshold directly to `commit_stage.py`.
    Pass positive measured `--duration-sec` from backend elapsed time or a host
-   timer; missing/zero durations are rejected.
+   timer for executed stages. A documented `--skip` may record `0`; negative
+   durations are always rejected.
 7. Claim the loop complete only after `scripts/finalize_run.py` creates the
    handoff artifacts, successfully commits `loop_stop`, and a
    fresh read of `deft_state.json` shows `status == "complete"`,
