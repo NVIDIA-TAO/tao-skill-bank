@@ -351,7 +351,7 @@ output, or overlapping Proxy/Benchmark; a changed Benchmark hash; any Benchmark
 error used for routing; missing/empty mining output; a failed or empty
 AnomalyGen run while Proxy false accepts remain outstanding; an `anomalygen`
 skip not backed by zero false accepts in the driving RCCA; a synthetic record
-whose label is not `NG` or whose paired image is missing; a missing or
+whose label is not `NG` or whose paired image is missing; a
 PAIDF-incompatible AnomalyGen fine-tuned checkpoint; a missing AnomalyGen
 Guardrail checkpoint or an SDG log showing disabled screening; a checkpoint outside
 the iteration result tree; an invalid nested TOML spec; unknown evaluator
