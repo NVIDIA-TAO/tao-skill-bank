@@ -14,31 +14,16 @@ and the per-iteration `docker run` pair. Its download command explicitly
 requests Text2Image 2B for both loops. Do not duplicate them here — read that
 file for the commands and apply the Cosmos3 values below.
 
-## The pre-staged PAIDF 1.1 checkpoint is flat — normalize it first
+## The published checkpoint is flat — normalize it first
 
-The fine-tuned checkpoint is **BYO/pre-staged REQUIRED**. It must match the
-major.minor version of the container resolved from
-`images.metropolis_sdg.paidf_anomalygen`: the GB-scale, full-finetune
-`iter_000014000.pt` from the 1.0-era Hugging Face repo
-`nvidia/Cosmos-AnomalyGen-PCB-2B` is incompatible with PAIDF 1.1's per-defect
-LoRA recipe on a Cosmos3 backbone. Finetune the AnomalyGen LoRA with the
-container's `texture_ft` recipe using the `uc1_pcb` layout
-(`dataset_path/<texture>/anomaly_image/` paired with
-`dataset_path/<texture>/mask/<defect>/`), then stage the resulting
-`ag_config.yaml` and `iter_<step>.pt` in the layout below. The uc1 reference
-dataset remains auto-downloadable; there is no fine-tuned checkpoint download
-fallback.
+In network-enabled mode, the shared bootstrap auto-downloads the fine-tuned
+checkpoint from `nvidia/Cosmos-AnomalyGen-PCB-2B` (~5 GB, iter 14000) by
+default; a pre-staged BYO checkpoint overrides it. The published checkpoint is
+compatible with the pinned `paidf-anomalygen:1.0.1` container, and any override
+must match the container's PAIDF major.minor.
 
-Stage the known PCB package in this exact layout:
-
-```text
-augmentation/anomalygen/checkpoints/nvpcb/
-└── nvidia/Cosmos-AnomalyGen-PCB-2B/
-    ├── ag_config.yaml
-    └── iter_000015000.pt
-```
-
-The package has no
+The official HF repo ships `iter_000014000.pt` and `ag_config.yaml` side by
+side, with no
 `checkpoints/latest_checkpoint.txt` and no `checkpoints/model/`, while the
 container loads the nested layout. Every run hits it.
 
@@ -47,7 +32,7 @@ cache, then take `step` from the view:
 
 ```bash
 CKPT=$(find -L "$AG_CHECKPOINT_DIR" -path '*/ag_config.yaml' -print -quit | xargs -r dirname)
-: "${CKPT:?HARD STOP: PAIDF-compatible AnomalyGen checkpoint missing; finetune the AnomalyGen LoRA with the container texture_ft recipe using the uc1_pcb dataset layout to produce ag_config.yaml + iter_<step>.pt, then stage them under augmentation/anomalygen/checkpoints/<project>/...}"
+: "${CKPT:?FATAL: checkpoint auto-fetch or BYO staging did not produce ag_config.yaml under $AG_CHECKPOINT_DIR}"
 if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ]; then
   mapfile -t staged < <(
     find -L "$CKPT" -maxdepth 1 -type f -name 'iter_[0-9]*.pt' ! -name '*_reg_model.pt' | sort
@@ -66,9 +51,7 @@ STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' "$CKPT/checkpoints/latest_checkpoint.
 
 This is a path adapter, not a download. Requiring exactly one root checkpoint
 is deliberate — several means the intended one is ambiguous, and silently
-picking is worse than stopping. The staged example resolves the nested
-directory and produces `STEP=15000`; a missing package is a hard stop in every
-network mode.
+picking is worse than stopping. The published checkpoint produces `STEP=14000`.
 
 ## Why the stage exists
 
