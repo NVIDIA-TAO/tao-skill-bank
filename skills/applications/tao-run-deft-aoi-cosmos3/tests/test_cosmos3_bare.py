@@ -19,13 +19,28 @@ import yaml
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
-MODEL_ROOT = (
-    SKILL_ROOT.parents[1] / "models" / "tao-finetune-cosmos-reason"
-)
+
+
+def companion_skill_root(category: str, name: str) -> pathlib.Path:
+    """Resolve a companion in a source checkout or flattened plugin install."""
+    candidates = (
+        SKILL_ROOT.parents[1] / category / name,
+        SKILL_ROOT.parent / name,
+    )
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise FileNotFoundError(
+        f"required companion skill {name!r} not found in: "
+        + ", ".join(str(candidate) for candidate in candidates)
+    )
+
+
+MODEL_ROOT = companion_skill_root("models", "tao-finetune-cosmos-reason")
 sys.path.insert(0, str(SCRIPTS))
-DATA_MINING_SCRIPTS = (
-    SKILL_ROOT.parents[1] / "data" / "tao-mine-aoi-images" / "scripts"
-)
+DATA_MINING_SCRIPTS = companion_skill_root(
+    "data", "tao-mine-aoi-images"
+) / "scripts"
 sys.path.insert(0, str(DATA_MINING_SCRIPTS))
 
 # The ChangeNet DEFT skill has scripts with the same top-level module names.
