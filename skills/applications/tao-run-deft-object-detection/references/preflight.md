@@ -359,7 +359,24 @@ export TAO_PYT_IMAGE TAO_DS_IMAGE EXTRA_MOUNTS DOCKER_IDENTITY
 
 # Prep runs only
 export POOL_IMAGES CODETR_CHECKPOINT CODETR_CLASSMAP CLASSES_YAML
+
+# Read by the init block below; unset ones simply drop out of it
+export TARGET_CLASSES KPI_CONF_THRESHOLD
+export SOURCE_DETECTION_FILE TARGET_DETECTION_FILE   # class_stratified only
+export POOL_REPORT RARE_CLASS_LIST                   # an already-prepared pool only
+export EXTRA_MOUNTS_IN                               # space-separated extra mounts, if any
 ```
+
+Two more are set per iteration rather than once, and every stage reference uses them:
+
+```bash
+N=<current iteration number>       # 1, 2, ... — the loop counter; paths read iter${N}
+PHASE=<baseline|iter${N}>          # which phase's output tree this stage writes to
+```
+
+`N` is the iteration being run. `PHASE` is `baseline` for the zero-shot pass and
+`iter${N}` inside the loop; the two differ only because the baseline is not an
+iteration. Re-export both at the top of each iteration.
 
 An unset variable is not an error in a `docker run`: it expands to empty, so
 `-e ""` reaches TAO as a blank spec path and the failure reads as a spec problem rather
