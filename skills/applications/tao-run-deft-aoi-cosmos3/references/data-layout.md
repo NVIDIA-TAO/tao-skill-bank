@@ -13,9 +13,8 @@ workspace/
 ├── augmentation/
 │   └── anomalygen/
 │       ├── base_checkpoints/          # Cosmos base checkpoints cache
-│       ├── checkpoints/<project>/     # User pre-staged PAIDF-1.1-compatible LoRA package.
-│       │                                # BYO required, never auto-downloaded: ag_config.yaml + iter_<step>.pt
-│       │                                # (e.g. nvpcb/nvidia/Cosmos-AnomalyGen-PCB-2B/iter_000015000.pt).
+│       ├── checkpoints/<project>/     # HF checkpoint auto-downloads by default; optional BYO override
+│       │                                # holds ag_config.yaml + fine-tuned checkpoint.
 │       └── datasets/<project>/        # clean boards, cad masks, defect_spec.jsonl
 ├── images/
 │   ├── ... AOI images ...

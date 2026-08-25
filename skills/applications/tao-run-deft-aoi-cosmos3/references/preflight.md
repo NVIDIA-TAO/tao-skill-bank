@@ -137,20 +137,13 @@ rather than discovering them on the first GPU job:
   writing anything, which is what this gate requires. Run it again with
   `--output-dir` after approval to produce the mount.
 
-Probe the AnomalyGen assets read-only. The fine-tuned checkpoint directory must
-contain one `ag_config.yaml` and one `iter_<step>.pt` in every network mode; it
-must match the pinned container's PAIDF major.minor. If it is missing or
-ambiguous, hard-stop and direct the user to finetune the AnomalyGen LoRA with
-the container's `texture_ft` recipe using the `uc1_pcb` layout
-(`dataset_path/<texture>/anomaly_image/` paired with
-`dataset_path/<texture>/mask/<defect>/`), then stage the resulting
-`ag_config.yaml` and `iter_<step>.pt` under
-`augmentation/anomalygen/checkpoints/<project>/...`. Never substitute the
-incompatible 1.0-era HF checkpoint. The dataset directory with
-`defect_spec.jsonl` and `semantic_segmentation_labels.json` and the Cosmos
-base-checkpoints cache may be `WILL_AUTO_FETCH` only in network-enabled mode;
-the uc1 reference dataset remains auto-downloadable.
-Probing only — their bootstrap is post-gate and is owned by
+Probe the AnomalyGen assets read-only and report each as present or
+`WILL_AUTO_FETCH`: the fine-tuned checkpoint directory holding `ag_config.yaml`,
+the dataset directory with `defect_spec.jsonl` and
+`semantic_segmentation_labels.json`, and the Cosmos base-checkpoints cache.
+The default fine-tuned checkpoint is `nvidia/Cosmos-AnomalyGen-PCB-2B`; a BYO
+override must match the pinned container's PAIDF major.minor. Probing only —
+the bootstrap that populates missing assets is post-gate and is owned by
 `references/tao-generate-anomalies.md`. In air-gapped runs every asset must be
 pre-staged; report a missing one instead of planning a download. Before Phase
 3, use the executable file check in that reference to gate the AnomalyGen
@@ -322,7 +315,7 @@ record-then-launch ordering must be explicit.
 | Iterations | <N> | user |
 | Train shape | <nodes x GPUs; exact GPU model/memory; epochs; batch; LR; LoRA> | user/spec/platform |
 | Mining | <top-K, default 5; cosine floor; history-aware filepath dedup> | user/default |
-| AnomalyGen | <project; num_SDG; asset status> | user/default |
+| AnomalyGen | <project; num_SDG; each asset path or will auto-fetch from HF (default)> | user/default |
 | Cosmos-RL image | <resolved URI> | versions.yaml |
 | Data-services image | <resolved URI> | versions.yaml |
 | AnomalyGen image | <resolved URI> | versions.yaml |
@@ -343,9 +336,8 @@ lines below the table instead:
 
 - the variant-matched VLM base for the prepared PTM (Edge and Super never
   inherit Nano's default; see step 7);
-- which AnomalyGen assets are staged; the fine-tuned checkpoint must be a
-  local PAIDF-compatible path, while dataset/base-cache `WILL_AUTO_FETCH` is
-  legal only in network-enabled mode, plus their commercial-training approval.
+- which AnomalyGen assets are staged; `WILL_AUTO_FETCH` is legal only in
+  network-enabled mode, plus their commercial-training approval.
 
 Then stop. Remind the user that approval permits checkpoint preparation,
 post-gate spec/state creation, any network-enabled AnomalyGen bootstrap, and GPU
