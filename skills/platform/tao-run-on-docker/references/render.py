@@ -146,6 +146,38 @@ def runtime_env(results_dir: str, ctx: dict[str, Any]) -> list[str]:
     return env
 
 
+def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[str, str]:
+    """Serialize a mode=config spec and return (path, content).
+
+    The contract says the CONSUMER writes the spec file and substitutes its
+    compute-frame path into `{config_path}`. No renderer did, so every
+    mode=config bundle -- train, evaluate, inference, rca and all three mining
+    stages -- reached its container with a literal `{config_path}` argument and
+    failed on a file of that name.
+
+    The file goes into the rendered `files` map, so it is placed by the same
+    mechanism as every other rendered file: locally for docker and kubernetes,
+    over ssh for slurm. That keeps ONE placement path rather than a per-platform
+    write.
+    """
+    import json as _json
+
+    fmt = str(bundle.get("config_format") or "yaml").lower()
+    spec = bundle.get("spec") or {}
+    if fmt == "json":
+        return f"{config_root.rstrip('/')}/configs/{job_id}.json", _json.dumps(spec, indent=2)
+    if fmt == "toml":
+        raise ValueError("config_format=toml has no writer in this renderer")
+    import yaml as _yaml
+
+    return (f"{config_root.rstrip('/')}/configs/{job_id}.yaml",
+            _yaml.safe_dump(spec, sort_keys=False))
+
+
+def substitute_config_path(tokens: list[str], config_path: str) -> list[str]:
+    return [t.replace("{config_path}", config_path) for t in tokens]
+
+
 def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Make the image locally available. Pull only when it is missing.
 
@@ -264,12 +296,20 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     # Docker's 64MB /dev/shm default is what makes this necessary; slurm and
     # kubernetes each solve it their own way, so it is rendered, not declared.
     shm = ["--shm-size", str(ctx.get("shm_size", "8g"))]
+    tokens = [*shlex.split(bundle["command"]), *(bundle.get("args") or [])]
+    files: dict[str, str] = {}
+    if bundle.get("mode") == "config":
+        # results_dir is bind-mounted at the SAME absolute path, so a path
+        # written here resolves identically inside the container.
+        config_path, content = config_file(bundle, job_id, results_dir)
+        files[config_path] = content
+        tokens = substitute_config_path(tokens, config_path)
+
     argv = ["docker", "run", "--name", job_id, "-d", *shm,
             *identity_args(ctx), *runtime_env(results_dir, ctx),
             *resources, *env, *mounts, *workdir, bundle["image"]]
-    argv += shlex.split(bundle["command"])
-    argv += list(bundle.get("args") or [])
-    return {"files": {}, "argv": argv, "backend_ref": None}
+    argv += tokens
+    return {"files": files, "argv": argv, "backend_ref": None}
 
 
 def status(backend_ref: str, ctx: dict[str, Any]) -> tuple[str, int]:

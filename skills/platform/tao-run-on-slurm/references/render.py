@@ -476,6 +476,39 @@ def _limit_minutes(time_limit: str) -> int:
     return int(days) * 1440 + hours * 60 + minutes + (1 if seconds else 0)
 
 
+def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[str, str]:
+    """Serialize a mode=config spec and return (path, content).
+
+    The contract says the CONSUMER writes the spec file and substitutes its
+    compute-frame path into `{config_path}`. No renderer did, so every
+    mode=config bundle -- train, evaluate, inference, rca and all three mining
+    stages -- reached its container with a literal `{config_path}` argument and
+    failed on a file of that name.
+
+    The file goes into the rendered `files` map, so it is placed by the same
+    mechanism as every other rendered file: locally for docker and kubernetes,
+    over ssh for slurm. That keeps ONE placement path rather than a per-platform
+    write.
+    """
+    import json as _json
+
+    fmt = str(bundle.get("config_format") or "yaml").lower()
+    spec = bundle.get("spec") or {}
+    if fmt == "json":
+        return f"{config_root.rstrip('/')}/configs/{job_id}.json", _json.dumps(spec, indent=2)
+    if fmt == "toml":
+        raise ValueError("config_format=toml has no writer in this renderer")
+    import yaml as _yaml
+
+    return (f"{config_root.rstrip('/')}/configs/{job_id}.yaml",
+            _yaml.safe_dump(spec, sort_keys=False))
+
+
+def substitute_config_path(tokens: list[str], config_path: str) -> list[str]:
+    return [t.replace("{config_path}", config_path) for t in tokens]
+
+
+
 def place_files(files: dict[str, str], ctx: dict[str, Any]) -> None:
     """Write the rendered files on the CLUSTER, not on the launch host.
 
@@ -522,11 +555,18 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
             "NCCL probe; render() covers the single-node template only"
         )
 
-    command = " ".join(
-        shlex.quote(token)
-        for token in [*shlex.split(bundle["command"]), *(bundle.get("args") or [])]
-    )
     job_dir = ctx.get("job_dir") or results_dir
+    tokens = [*shlex.split(bundle["command"]), *(bundle.get("args") or [])]
+    extra_files: dict[str, str] = {}
+    if bundle.get("mode") == "config":
+        # Written under results_dir, which is bind-mounted into the container at
+        # the same path, and placed on the CLUSTER by place_files() -- the same
+        # route the sbatch script itself takes.
+        config_path, content = config_file(bundle, job_id, results_dir)
+        extra_files[config_path] = content
+        tokens = substitute_config_path(tokens, config_path)
+
+    command = " ".join(shlex.quote(token) for token in tokens)
     time_limit = str(ctx.get("time_limit", "04:00:00"))
     # `timeout` must fire before SLURM's own --time or the job dies in TIMEOUT,
     # which --requeue does not cover. The SDK used 3.8h against a 4h limit; 95%
@@ -587,7 +627,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     script = f"{job_dir}/sbatch/job_{job_id}.sbatch"
     login = ctx["login"]
     return {
-        "files": {script: body},
+        "files": {script: body, **extra_files},
         "argv": ["ssh", login, f"sbatch --parsable {shlex.quote(script)}"],
         "backend_ref": None,  # sbatch --parsable prints the id
     }

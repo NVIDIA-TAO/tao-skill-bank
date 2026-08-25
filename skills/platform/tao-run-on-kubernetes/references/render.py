@@ -76,6 +76,39 @@ def input_env(bundle: dict[str, Any]) -> dict[str, str]:
     return env
 
 
+def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[str, str]:
+    """Serialize a mode=config spec and return (path, content).
+
+    The contract says the CONSUMER writes the spec file and substitutes its
+    compute-frame path into `{config_path}`. No renderer did, so every
+    mode=config bundle -- train, evaluate, inference, rca and all three mining
+    stages -- reached its container with a literal `{config_path}` argument and
+    failed on a file of that name.
+
+    The file goes into the rendered `files` map, so it is placed by the same
+    mechanism as every other rendered file: locally for docker and kubernetes,
+    over ssh for slurm. That keeps ONE placement path rather than a per-platform
+    write.
+    """
+    import json as _json
+
+    fmt = str(bundle.get("config_format") or "yaml").lower()
+    spec = bundle.get("spec") or {}
+    if fmt == "json":
+        return f"{config_root.rstrip('/')}/configs/{job_id}.json", _json.dumps(spec, indent=2)
+    if fmt == "toml":
+        raise ValueError("config_format=toml has no writer in this renderer")
+    import yaml as _yaml
+
+    return (f"{config_root.rstrip('/')}/configs/{job_id}.yaml",
+            _yaml.safe_dump(spec, sort_keys=False))
+
+
+def substitute_config_path(tokens: list[str], config_path: str) -> list[str]:
+    return [t.replace("{config_path}", config_path) for t in tokens]
+
+
+
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> a rendered Job manifest plus `kubectl apply`."""
     job_id = ctx["job_id"]
@@ -108,10 +141,23 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
                 f"the mounted volume {mount_path!r}; a pod cannot bind it"
             )
 
-    command = " ".join(
-        shlex.quote(token)
-        for token in [*shlex.split(bundle["command"]), *(bundle.get("args") or [])]
-    )
+    tokens = [*shlex.split(bundle["command"]), *(bundle.get("args") or [])]
+    extra_files: dict[str, str] = {}
+    if bundle.get("mode") == "config":
+        # A pod sees ONE bound volume, so the spec has to land under it or the
+        # container cannot read the path we substitute.
+        config_path, content = config_file(
+            bundle, job_id, str(ctx.get("job_dir") or results_dir))
+        if not config_path.startswith(str(mount_path).rstrip("/")):
+            raise ValueError(
+                f"config path {config_path} is outside the mounted volume "
+                f"{mount_path!r}; set --ctx job_dir to a path under it, or the "
+                "pod cannot read its spec"
+            )
+        extra_files[config_path] = content
+        tokens = substitute_config_path(tokens, config_path)
+
+    command = " ".join(shlex.quote(token) for token in tokens)
     substitutions = {
         "JOB_NAME": job_id,
         "IMAGE": bundle["image"],
@@ -161,7 +207,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
 
     manifest = f"{ctx.get('job_dir') or results_dir}/manifests/job_{job_id}.yaml"
     return {
-        "files": {manifest: body},
+        "files": {manifest: body, **extra_files},
         "argv": ["kubectl", "apply", "-n", namespace, "-f", manifest],
         "backend_ref": f"{namespace}/{job_id}",
     }

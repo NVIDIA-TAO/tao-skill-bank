@@ -195,8 +195,11 @@ def test_a_bundle_without_workdir_renders_nothing_for_it(stage_bundle, platform,
         {"target_embeddings": "/ws/t", "pool_embeddings": "/ws/p"},
         results_dir="/ws/results/x", bank=REPO, spec={"topn": 5})
     assert "workdir" not in bundle
+    # job_dir under mount_path: kubernetes now refuses a config written outside
+    # the single bound volume, because the pod could not read it.
+    job_dir = "/ws/work" if platform == "kubernetes" else str(tmp_path)
     ctx = {"job_id": "k-1", "results_dir": "/ws/results/x", "bank": str(REPO),
-           "job_dir": str(tmp_path), **PLATFORM_CTX[platform]}
+           "job_dir": job_dir, **PLATFORM_CTX[platform]}
     rendered = _renderer(platform).render(bundle, ctx)
     text = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
     assert "--container-workdir= " not in text and 'workingDir: ""' not in text
@@ -393,3 +396,82 @@ def test_the_kubernetes_loop_provisions_a_gpu(eval_config):
         "skipping the GPU stages on a CPU-only cluster must be graded a failure, "
         "not quietly tolerated"
     )
+
+
+# ── mode=config bundles must actually reach their spec ─────────────────────
+# The contract says the CONSUMER writes the spec file and substitutes its
+# compute-frame path into {config_path}. No renderer did. Every mode=config
+# stage -- train, evaluate, inference, rca and all three mining stages, 7 of
+# the 12 -- therefore reached its container with a literal "{config_path}"
+# argument and failed on a file of that name. The k8s full-loop eval could not
+# have passed, and neither could the docker one.
+
+CONFIG_MODE_PLATFORMS = ["docker", "slurm", "kubernetes"]
+
+
+def _config_ctx(platform, tmp_path):
+    base = {"job_id": "train-1", "results_dir": "/ws/results/base",
+            "bank": str(REPO), "job_dir": "/ws/work",
+            "uid": 1000, "gid": 1000, "groups": [1000], "user_name": "ci"}
+    return {**base, **PLATFORM_CTX[platform]}
+
+
+def _train_bundle(stage_bundle):
+    return stage_bundle.build(
+        "train", {"dataset_dir": "/ws/data", "backbone": "/ws/ptm/b.safetensors"},
+        results_dir="/ws/results/base", bank=REPO,
+        spec={"train": {"num_epochs": 2}})
+
+
+@pytest.mark.parametrize("platform", CONFIG_MODE_PLATFORMS)
+def test_config_path_is_substituted(stage_bundle, platform, tmp_path):
+    rendered = _renderer(platform).render(_train_bundle(stage_bundle),
+                                          _config_ctx(platform, tmp_path))
+    blob = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert "{config_path}" not in blob, (
+        f"{platform} left the placeholder in the command; the container would "
+        "try to read a file literally named {config_path}"
+    )
+
+
+@pytest.mark.parametrize("platform", CONFIG_MODE_PLATFORMS)
+def test_the_spec_file_is_actually_written(stage_bundle, platform, tmp_path):
+    """Substituting a path that nothing writes is the same failure, later."""
+    import yaml
+
+    rendered = _renderer(platform).render(_train_bundle(stage_bundle),
+                                          _config_ctx(platform, tmp_path))
+    configs = {p: c for p, c in rendered.get("files", {}).items() if "configs/" in p}
+    assert configs, f"{platform} substituted a config path but wrote no file"
+    content = yaml.safe_load(next(iter(configs.values())))
+    assert content == {"train": {"num_epochs": 2}}, "spec content did not survive"
+
+
+@pytest.mark.parametrize("platform", CONFIG_MODE_PLATFORMS)
+def test_the_substituted_path_is_the_one_written(stage_bundle, platform, tmp_path):
+    """A path mismatch fails at runtime, not at render."""
+    rendered = _renderer(platform).render(_train_bundle(stage_bundle),
+                                          _config_ctx(platform, tmp_path))
+    written = [p for p in rendered.get("files", {}) if "configs/" in p]
+    blob = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert any(p in blob for p in written), (
+        f"{platform} wrote {written} but the command references a different path"
+    )
+
+
+def test_kubernetes_refuses_a_config_outside_the_mounted_volume(stage_bundle, tmp_path):
+    """A pod sees ONE volume; a spec outside it is unreadable at runtime."""
+    module = _renderer("kubernetes")
+    ctx = {**_config_ctx("kubernetes", tmp_path), "job_dir": "/somewhere/else"}
+    with pytest.raises(ValueError, match="outside the mounted volume"):
+        module.render(_train_bundle(stage_bundle), ctx)
+
+
+@pytest.mark.parametrize("platform", CONFIG_MODE_PLATFORMS)
+def test_args_mode_writes_no_config(stage_bundle, platform, tmp_path):
+    """Only mode=config materializes a spec."""
+    bundle = stage_bundle.build("anomalygen.amp", AMP_PARAMS,
+                                results_dir="/ws/results/base", bank=REPO,
+                                args=["true"])
+    rendered = _renderer(platform).render(bundle, _config_ctx(platform, tmp_path))
+    assert not [p for p in rendered.get("files", {}) if "configs/" in p]

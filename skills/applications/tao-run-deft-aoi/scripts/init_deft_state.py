@@ -124,16 +124,28 @@ def _resolve_anomalygen_checkpoint_dir(ws: pathlib.Path, project: str) -> pathli
 
 
 def _resolve_workspace_images_dir(ws: pathlib.Path) -> pathlib.Path:
-    """Resolve the canonical real-image root with legacy-layout fallback."""
-    canonical = ws / "images"
-    if canonical.is_dir():
-        return canonical.resolve()
-    legacy = ws / "kpi" / "images"
-    if legacy.is_dir():
-        return legacy.resolve()
-    # Keep a deterministic canonical path so Pre-Flight reports the missing
-    # input instead of silently recording the obsolete legacy location.
-    return canonical.resolve()
+    """Resolve the real-image root, preferring the one CSV rows resolve against.
+
+    Two layouts exist and both can be present. Picking `images/` merely because
+    it exists records a root the training CSVs do not resolve against, and the
+    failure surfaces later as missing files rather than as a bad root.
+
+    Every ChangeNet CSV pairs an `input_path` with a `golden_path` under the
+    SAME media root, so the presence of `golden/` is the discriminator: it is
+    what a row actually dereferences. A directory without it cannot satisfy a
+    single row, whatever its name. (Observed: a workspace whose real root is
+    `kpi/images/`, carrying the board trees and `golden/images/`.)
+    """
+    candidates = [ws / "images", ws / "kpi" / "images"]
+    for candidate in candidates:
+        if candidate.is_dir() and (candidate / "golden").is_dir():
+            return candidate.resolve()
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    # Neither exists. Return the canonical path deterministically so Pre-Flight
+    # reports the missing input instead of silently recording the legacy one.
+    return candidates[0].resolve()
 
 
 def build_state(args: argparse.Namespace) -> dict:
