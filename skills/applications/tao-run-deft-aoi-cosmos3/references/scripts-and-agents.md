@@ -16,9 +16,9 @@ paths before invoking a script.
 | `validate_sharegpt.py` | Enforce two-image, exact bare OK/NG ShareGPT records. |
 | `validate_split_contract.py` | Enforce split isolation, monotonic generated-Train lineage, and Benchmark hash. |
 | `check_annotations.py` | Per-role field-contract check over all three workspace annotation files. `ROLE_CONTRACT` is the authoritative field list. |
-| `patch_eval_image_cap.py` | Raises the pinned image's 1-image-per-prompt evaluation cap to what bare_okng needs, and returns the read-only mount. Retires itself once the image is fixed. |
+| `patch_eval_image_cap.py` | Source-classifies the selected image's evaluation cap, raises a recognized undersized literal, and returns the read-only mount only when required. |
 | `analyze_gaps.py` | Proxy RCCA artifacts or Benchmark aggregate metric evidence. |
-| `emit_sdg_sharegpt.py` | AnomalyGen SDG output as bare `NG` ShareGPT records. |
+| `emit_sdg_sharegpt.py` | Resolve documented or PAIDF 1.0.1 SDG path forms and emit bare `NG` ShareGPT records. |
 | `filter_mined_by_cosine.py` | Recompute max cosine to Proxy targets and enforce the floor. |
 | `emit_mined_sharegpt.py` | Align filtered paths to Mining prompts, golden images, and labels. |
 | `assemble_training_json.py` | Monotonic bare training-data merge with dedupe/leakage checks. |

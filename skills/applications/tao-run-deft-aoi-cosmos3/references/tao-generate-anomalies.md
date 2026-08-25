@@ -138,6 +138,23 @@ record whose assistant response is exactly `NG`:
   --summary "$RESULTS_DIR/$LABEL/anomalygen/emit_sdg_summary.json"
 ```
 
+The emitter supports both producer contracts without editing the CSV:
+
+- documented paths relative to the CSV/output directory, such as
+  `reconstructed_image/X.png` and `original_image/X.png`;
+- PAIDF 1.0.1 `output_filename` values that echo the repo-root-relative
+  `--output_dir`, such as `results/run/sdg/reconstructed_image/X.png`, plus its
+  `image_filename` clean-source column.
+
+For a relative path it tries the CSV parent, the CSV parent with an echoed
+output prefix removed, then the optional `--sdg-root <paidf-repo-root>`. Use
+`--sdg-root` when the CSV was moved away from the producer tree. If the
+recorded clean source is unavailable, it derives
+`original_image/<generated-name>` beside the resolved reconstructed directory.
+Missing/empty failures list every attempted path. A future schema with no
+recognized generated-image column fails with its available columns instead of
+silently guessing.
+
 `--prompt-from` inherits the single inspection prompt recorded in the Mining
 pool so synthetic and mined records ask the model the same question; it
 hard-stops when the pool carries more than one distinct prompt. Use `--prompt`
@@ -146,7 +163,7 @@ records, and never emit a label other than `NG` — the defect was painted on
 deliberately.
 
 The emitter hard-stops on a missing or empty image on either side of a pair,
-and de-duplicates by generated image.
+and de-duplicates by resolved generated image.
 
 Wrap Phase 3 with these two one-line hard gates, using the shared VCN
 reference's `$COSMOS` and `$SDG_LOG` values:

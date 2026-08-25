@@ -219,14 +219,14 @@ annotation, bound output directory, and save-folder label differ. For a LoRA
 export, set `model.enable_lora=true` and keep `model.base_model_path` aligned
 with Train's prepared Qwen3-VL PTM.
 
-### Lift the image's 1-image-per-prompt cap
+### Classify and, when needed, lift the evaluation image cap
 
-`cosmos_rl/evaluation/base.py` hardcodes
-`limit_mm_per_prompt={"video": 1, "image": 1}` when it builds the vLLM engine.
-Every AOI record carries two images, so both evaluation stages fail with
-`ValueError: At most 1 image(s) may be provided in one prompt` until that cap
-is raised. There is no spec key and no environment override; the rest of the
-file is already multi-image correct.
+Some `cosmos-rl` images build vLLM with
+`limit_mm_per_prompt={"video": 1, "image": 1}`. Every AOI record carries two
+images, so those images fail evaluation until the cap is raised. Other images,
+including framework-evaluator builds, contain neither that literal nor a vLLM
+engine construction and need no patch. Image tags are not a stable way to tell
+the two apart.
 
 Run this once per run, before the first evaluate job:
 
@@ -237,16 +237,21 @@ Run this once per run, before the first evaluate job:
   --summary "$RESULTS_DIR/patches/cosmos_rl_eval/summary.json"
 ```
 
-It reads `base.py` out of the image actually pinned, rewrites only that
-literal, and prints `MOUNT_ARG=<host>:<container>:ro`. Add that as a read-only
-mount to every `cosmos-rl-evaluate` job. Nothing is vendored into the skill, so
-the patch cannot mask a newer image.
+It reads `base.py` out of the selected image and reports one source-driven
+classification, independent of whether the tag is semver, a custom build name,
+or a future tag:
 
-When the image already allows enough images the script writes no file and
-prints `no patch needed` — drop the mount in that case rather than overriding a
-file that no longer needs it. If it reports the cap was not found, the image
-changed shape: re-verify the defect instead of forcing a rewrite. Train jobs
-never need this mount; only evaluation builds the vLLM engine.
+- `patch_required`: the recognized cap is below two; the script rewrites only
+  that literal and prints `MOUNT_ARG=<host>:<container>:ro`. Add it as a
+  read-only mount to every `cosmos-rl-evaluate` job.
+- `already_sufficient`: the recognized cap is at least two; no file or mount.
+- `cap_absent`: the source contains neither the cap nor vLLM engine evidence;
+  no file or mount.
+
+If the source still references `limit_mm_per_prompt` or vLLM without the
+recognized literal, the script fails with `classification=unknown`; verify the
+new evaluator shape instead of guessing. Nothing is vendored into the skill,
+and Train jobs never need this mount.
 
 The evaluator writes `results.json` with per-sample `video_id`, `response`,
 `question`, and `gt`. Run `analyze_gaps.py` afterward:
