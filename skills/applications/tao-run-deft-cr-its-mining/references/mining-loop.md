@@ -146,13 +146,27 @@ Only run specs that exist. KPI specs follow `mining.embeddings_modality`; train 
 
 Read `inference.num_gpus` from each generated spec and request exactly that many GPUs from the selected platform. The bundled template defaults to 8 GPUs. The preparation script prints the count for every generated modality; stop before launch if the platform cannot satisfy it.
 
-Keep the exact container image selected by `tao-finetune-cosmos-embed` as `COSMOS_EMBED_IMAGE`. After each Cosmos Embed container exits, restore host write access if needed with that same image:
+Use the registered inference action exactly as `cosmos-embed1 inference -e <generated-spec>`. Do not append a `results_dir=...` CLI override: OmegaConf would replace the generated spec's modality-specific output path. Before submission, inspect the rendered command and require the selected platform to make the spec's absolute workspace paths visible and writable at those same paths inside the container. Do not infer output location from the container working directory.
+
+Keep the exact container image selected by `tao-finetune-cosmos-embed` as `COSMOS_EMBED_IMAGE`. Handle every generated spec independently. Set `INFERENCE_SPEC` to that spec's absolute path and `DATASET` to its `kpi` or `train` parent dataset. Run the inference action through `tao-finetune-cosmos-embed` and the selected platform. Monitor it to a terminal state and record its exact numeric exit code as `COSMOS_EMBED_EXIT_CODE`, including when the platform classifies the job as failed. After the container exits, restore host write access if needed with the same image and the dataset directory containing that spec:
 
 ```bash
 "$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/restore_docker_mount_permissions.py" \
-  --path "$RUN_DIR/cosmos_embed_output/kpi" \
+  --path "$RUN_DIR/cosmos_embed_output/$DATASET" \
   --docker-image "$COSMOS_EMBED_IMAGE"
 ```
+
+Then validate the terminal result and existing outputs:
+
+```bash
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/validate_cosmos_embed_output.py" \
+  --inference-spec "$INFERENCE_SPEC" \
+  --exit-code "$COSMOS_EMBED_EXIT_CODE"
+```
+
+The validator reads `results_dir` from the generated spec and requires metadata and a finite two-dimensional NPY array there, exact input/output counts and identifiers, and one unique `npy_row` for every embedding. Exit `0` passes only when those checks pass. Exit `130` is the one permitted nonzero code because the affected runtime can return it during `torchrun` teardown after successful output; the validation artifact records `ok_with_teardown_warning`. Every other nonzero exit fails. Existing outputs remain reusable when they still match the unchanged inference spec. If the platform cannot report an exact numeric code, do not infer `130` from logs or files; stop and ask how the user wants to proceed.
+
+After every generated spec passes `check` or `complete`, log one `cosmos_embed` `ok` event with every `completion_validation.json` as an artifact. If there are no generated specs because both combined Parquets were supplied, log the stage as skipped. Do not log this stage complete from platform status alone.
 
 Convert completed outputs only for datasets that generated inference specs:
 
@@ -168,7 +182,7 @@ Convert completed outputs only for datasets that generated inference specs:
   --embedding-modality both
 ```
 
-These commands write `$RUN_DIR/embedding_parquets/kpi/embeddings.parquet` and `$RUN_DIR/embedding_parquets/train/embeddings.parquet`. Skip the corresponding command when preparation already staged a supplied combined Parquet at that path. The KPI file contains the selected modality or modalities. The train file always contains both, and each row records its `modality` alongside `filepath` and `embedding`.
+These commands write `$RUN_DIR/embedding_parquets/kpi/embeddings.parquet` and `$RUN_DIR/embedding_parquets/train/embeddings.parquet`. The converter reads each modality's `results_dir` from its generated spec; it never reconstructs the producer path or searches for misplaced files. Skip the corresponding command when preparation already staged a supplied combined Parquet at that path. The KPI file contains the selected modality or modalities. The train file always contains both, and each row records its `modality` alongside `filepath` and `embedding`.
 
 For text outputs, conversion matches each Cosmos Embed metadata `text` value to the corresponding lookup question. Repeated questions consume their lookup rows in occurrence order. `npy_row` selects only the embedding vector; it is not treated as a lookup-row index. Conversion fails if Cosmos Embed returns missing, extra, or unmatched text occurrences.
 
@@ -302,7 +316,7 @@ This writes `$RUN_DIR/bcq_accuracy_report.md` and `$RUN_DIR/bcq_accuracy_summary
 | `initialize_workflow` | `$RUN_DIR/workflow.yaml` and `$RUN_DIR/deft_state.json` exist. |
 | `baseline_evaluate` | The evaluate job exits successfully, exactly one baseline `results.json` is found, and `baseline/evaluate/bcq_accuracy_metrics.json` exists. |
 | `prepare_cosmos_embed_inference` | Each dataset has a lookup parquet and either all required Cosmos Embed specs or a staged combined embedding Parquet. |
-| `cosmos_embed` | Every generated Cosmos Embed inference spec has completed successfully through the underlying skill. |
+| `cosmos_embed` | Every generated inference spec has a current `completion_validation.json`; validated exit `130` is recorded as a teardown warning, and all other nonzero exits fail. |
 | `convert_embeddings` | `embedding_parquets/{kpi,train}/embeddings.parquet` exist with the required modalities. |
 | `gap_analysis` | `$RUN_DIR/iter_<N>/gaps/predictions.json` exists and the container exits successfully. The workflow counts valid rows directly from `kpi_gaps.jsonl`; missing or empty output after successful completion means zero weak samples. |
 | `prepare_nearest_neighbor_mining` | The target, optional filtered source, and nearest-neighbor spec exist. |

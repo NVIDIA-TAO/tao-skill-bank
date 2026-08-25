@@ -31,6 +31,7 @@ KNOWN_STDLIB_IMPORTS = {
     "collections",
     "copy",
     "datetime",
+    "hashlib",
     "json",
     "os",
     "pathlib",
