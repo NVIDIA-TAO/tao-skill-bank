@@ -129,7 +129,14 @@ def identity_args(ctx: dict[str, Any]) -> list[str]:
 def runtime_env(results_dir: str, ctx: dict[str, Any]) -> list[str]:
     """HOME, USER/LOGNAME and cache redirects onto the writable mount."""
     home = runtime_home(results_dir)
-    name = str(ctx.get("user_name") or getpass.getuser() or "tao")
+    try:
+        name = str(ctx.get("user_name") or getpass.getuser() or "tao")
+    except (KeyError, OSError):
+        # getpass.getuser() RAISES when the uid has no passwd entry -- KeyError
+        # on <=3.12, OSError on 3.13+ -- so the `or "tao"` fallback below it was
+        # unreachable in the one case it existed for. Any non-empty name
+        # satisfies the getpass.getuser() call torch makes at import.
+        name = "tao"
     env = ["-e", f"HOME={home}",
            # Any non-empty name satisfies getpass.getuser(); it need not exist
            # in the image.
@@ -152,18 +159,22 @@ def prepare(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     # once the container is running, and a framework that cannot write its
     # cache fails deep inside an import rather than at startup.
     results_dir = ctx.get("results_dir")
-    if results_dir and pathlib.Path(results_dir).is_dir():
+    if results_dir:
+        # Create the bind source ourselves. `docker run -v` creates a missing
+        # one as ROOT, which is precisely the root-owned tree --user exists to
+        # prevent, and the job record binds results_dir without creating it.
         home = pathlib.Path(runtime_home(str(results_dir)))
-        for leaf in CACHE_ENV.values():
-            target = home / ".cache" / leaf if leaf else home / ".cache"
+        targets = [pathlib.Path(str(results_dir))]
+        targets += [home / ".cache" / leaf if leaf else home / ".cache"
+                    for leaf in CACHE_ENV.values()]
+        for target in targets:
             try:
                 target.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:
-                raise ValueError(
-                    f"cannot prepare the runtime cache dir {target}: {exc}. "
-                    "results_dir must be writable by the submitting user "
-                    "before launch"
-                ) from exc
+            except OSError:
+                # A render-only caller may pass a notional path. Do not fail
+                # here: if this was a real launch onto an unwritable parent,
+                # docker reports it against the actual bind.
+                break
 
     image = bundle["image"]
     present = subprocess.run(

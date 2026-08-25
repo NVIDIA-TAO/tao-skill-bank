@@ -100,7 +100,7 @@ as real. An end-to-end run in this repo went green exactly that way.
 |---|---|
 | `docker` | *(none)*; add `--ctx shm_size=16g` if you hit `Bus error` |
 | `slurm` | `--ctx login=… --ctx sqsh_dir=… --ctx job_dir=… --ctx account=… --ctx partition=…` |
-| `kubernetes` | `--ctx namespace=… --ctx pvc_claim=… --ctx mount_path=…` |
+| `kubernetes` | `--ctx namespace=… --ctx pvc_claim=… --ctx mount_path=… --ctx job_dir=… --ctx cred_secret=…` |
 
 Take SLURM's `account` and `partition` from `sinfo` / `sacctmgr` at preflight —
 the packaged values describe one cluster. See

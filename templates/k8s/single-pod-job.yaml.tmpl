@@ -45,6 +45,10 @@ spec:
           envFrom:
             - secretRef:
                 name: "@@CRED_SECRET@@"
+                # Without this the kubelet refuses to start the pod when the
+                # Secret is absent, so a stage needing no credentials cannot
+                # run at all -- including every CI smoke test.
+                optional: true
           env:
             - name: TAO_RESULTS_ROOT
               value: "@@RESULTS_DIR@@"@@INPUT_ENV@@

@@ -16,6 +16,7 @@ prints a confirmation, not an id — so `backend_ref` is returned directly as
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import shlex
@@ -115,7 +116,12 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         "JOB_NAME": job_id,
         "IMAGE": bundle["image"],
         "NUM_GPUS": str(int(shape["gpus"])),
-        "COMMAND": command,
+        # The template places this inside command: ["/bin/sh", "-c", "@@…@@"],
+        # a double-quoted JSON scalar. A quote or backslash in the command --
+        # ordinary in a `bash -lc "…"` stage -- would terminate the string and
+        # produce an unparseable manifest. json.dumps escapes it; the slice
+        # drops the quotes the template already supplies.
+        "COMMAND": json.dumps(command)[1:-1],
         "MOUNT_PATH": mount_path,
         "WORKING_DIR": (
             f'\n          workingDir: "{bundle["workdir"]}"'
@@ -166,12 +172,16 @@ def status(backend_ref: str, ctx: dict[str, Any]) -> tuple[str, int]:
     namespace, _, job = backend_ref.partition("/")
     probe = subprocess.run(
         ["kubectl", "get", "job", job, "-n", namespace, "-o",
-         "jsonpath={.status.succeeded} {.status.failed} {.status.active}"],
+         # '|' delimited, NOT space. jsonpath renders an unset counter as an
+         # empty string, so a failed Job prints " 1 " and .split() collapses it
+         # to ["1"] -- which lands in `succeeded` and reports COMPLETE for a
+         # job that FAILED. An explicit delimiter keeps the fields positional.
+         "jsonpath={.status.succeeded}|{.status.failed}|{.status.active}"],
         capture_output=True, text=True, check=False,
     )
     if probe.returncode != 0:
         return "UNKNOWN", 0
-    succeeded, failed, active = (probe.stdout.split() + ["", "", ""])[:3]
+    succeeded, failed, active = (probe.stdout.split("|") + ["", "", ""])[:3]
     if succeeded and int(succeeded or 0) > 0:
         return "COMPLETE", 0
     if failed and int(failed or 0) > 0:
