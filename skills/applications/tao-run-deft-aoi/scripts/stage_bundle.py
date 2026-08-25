@@ -63,17 +63,23 @@ def _stage(image, command, *, gpus, mode="args", inputs=(), outputs=(), workdir=
 # and never has to guess the platform's mount layout.
 STAGES: dict[str, dict[str, Any]] = {
     # ---- Visual ChangeNet: train / evaluate / inference -------------------
+    # Commands and inputs mirror tao-train-visual-changenet's skill_info.yaml,
+    # which OWNS these facts. The subtask lives in the spec (`task: classify`),
+    # not on the CLI -- `visual_changenet classify train` is not a valid
+    # invocation, and evaluate/inference need the backbone just as train does
+    # because the model is built from the spec before the checkpoint loads.
+    # test_vcn_stage_commands_match_the_model_skill keeps these in step.
     "train": _stage(
-        PYT, "visual_changenet classify train -e {config_path}", gpus=1, mode="config",
+        PYT, "visual_changenet train -e {config_path}", gpus=1, mode="config",
         inputs=("dataset_dir", "backbone"), outputs=("checkpoint",),
     ),
     "evaluate": _stage(
-        PYT, "visual_changenet classify evaluate -e {config_path}", gpus=1, mode="config",
-        inputs=("dataset_dir", "checkpoint"), outputs=("metrics",),
+        PYT, "visual_changenet evaluate -e {config_path}", gpus=1, mode="config",
+        inputs=("dataset_dir", "checkpoint", "backbone"), outputs=("metrics",),
     ),
     "inference": _stage(
-        PYT, "visual_changenet classify inference -e {config_path}", gpus=1, mode="config",
-        inputs=("dataset_dir", "checkpoint"), outputs=("inference_csv",),
+        PYT, "visual_changenet inference -e {config_path}", gpus=1, mode="config",
+        inputs=("dataset_dir", "checkpoint", "backbone"), outputs=("inference_csv",),
     ),
 
     # ---- Root-cause analysis on baseline inference ------------------------

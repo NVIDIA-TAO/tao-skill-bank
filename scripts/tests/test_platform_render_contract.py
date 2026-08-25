@@ -140,12 +140,28 @@ def test_renders_a_gpu_bundle_or_refuses_with_a_reason(name, tmp_path):
 
 @pytest.mark.parametrize("name", PLATFORMS)
 def test_names_the_backend_object_after_the_job_id(name, tmp_path):
-    """The later verbs locate the job by name; anything else is unreachable."""
+    """The later verbs locate the job by its handle; anything else is unreachable.
+
+    A platform may have to ADAPT the id -- kubernetes names must be RFC1123
+    subdomains, and stage actions carry underscores (mining.embed_pool). What
+    must hold is that the recorded backend_ref matches the object actually
+    created, since that is the only handle status/logs/cancel get.
+    """
     module = _load(name)
     ctx = _ctx(tmp_path)
     out = module.render(_for(module, GLUE_BUNDLE), ctx)
-    rendered = " ".join(out["argv"]) + " ".join(out["files"].values()) + str(out["backend_ref"])
-    assert ctx["job_id"] in rendered, f"{name} does not name the object after job_id"
+    rendered = " ".join(out["argv"]) + " ".join(out["files"].values())
+    handle = str(out["backend_ref"] or ctx["job_id"]).rsplit("/", 1)[-1]
+    assert handle in rendered, (
+        f"{name} recorded handle {handle!r} but created an object under a "
+        "different name; the later verbs cannot find it"
+    )
+    # An adapted id must DERIVE from the original, not be invented: identical
+    # once separators are stripped.
+    strip = lambda text: re.sub(r"[^a-z0-9]", "", text.lower())
+    assert strip(handle) == strip(ctx["job_id"]), (
+        f"{name} handle {handle!r} is not derived from job_id {ctx['job_id']!r}"
+    )
 
 
 @pytest.mark.parametrize("name", PLATFORMS)
@@ -881,16 +897,29 @@ def test_verbs_share_one_signature(name, verb):
     )
 
 
-def test_docker_cancel_keeps_the_container_inspectable(monkeypatch):
-    """`docker rm -f` would destroy the exit code status() reads."""
+def test_docker_cancel_removes_the_container(monkeypatch):
+    """SKILL.md defines cancel as `docker rm -f`, and the eval grades it gone.
+
+    An earlier version stopped instead, to keep the exit code readable. That
+    was wrong: cancel_job() marks the record CANCELED itself and a terminal
+    record is immutable, so status() is never consulted again.
+    """
     module, calls = _load("tao-run-on-docker"), []
     monkeypatch.setattr(module.subprocess, "run",
                         lambda cmd, *a, **k: (calls.append(cmd), _Done(""))[1])
     module.cancel("job-1", {})
-    assert calls[0][:2] == ["docker", "stop"], (
-        "cancel must stop, not remove: removing loses the exit code and the "
-        "job goes permanently UNKNOWN instead of settling at CANCELED"
+    assert calls[0][:3] == ["docker", "rm", "-f"], (
+        "cancel must remove the container; the platform eval confirms it is gone"
     )
+
+
+def test_docker_cancel_targets_the_job_id(monkeypatch):
+    """The container is NAMED after the job id -- the handle the other verbs use."""
+    module, calls = _load("tao-run-on-docker"), []
+    monkeypatch.setattr(module.subprocess, "run",
+                        lambda cmd, *a, **k: (calls.append(cmd), _Done(""))[1])
+    module.cancel("some-backend-ref", {"job_id": "vcn-train-abc123"})
+    assert calls[0][-1] == "vcn-train-abc123"
 
 
 def test_slurm_logs_rejects_an_implausible_job_id(monkeypatch):

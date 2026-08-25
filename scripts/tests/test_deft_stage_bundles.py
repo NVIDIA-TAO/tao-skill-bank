@@ -475,3 +475,45 @@ def test_args_mode_writes_no_config(stage_bundle, platform, tmp_path):
                                 args=["true"])
     rendered = _renderer(platform).render(bundle, _config_ctx(platform, tmp_path))
     assert not [p for p in rendered.get("files", {}) if "configs/" in p]
+
+
+# ── The stage table must not restate what the model skill owns ─────────────
+# The table carried `visual_changenet classify train`. There is no `classify`
+# subcommand -- the subtask lives in the spec (`task: classify`) -- so all three
+# VCN stages would have failed on argument parsing. The model skill's
+# skill_info.yaml declares the real command, and the table simply disagreed
+# with it. Couple them so the copy cannot drift again.
+
+VCN_SKILL_INFO = REPO / "skills/models/tao-train-visual-changenet/references/skill_info.yaml"
+
+
+@pytest.mark.parametrize("stage", ["train", "evaluate", "inference"])
+def test_vcn_stage_commands_match_the_model_skill(stage_bundle, stage):
+    import yaml
+
+    owned = yaml.safe_load(VCN_SKILL_INFO.read_text(encoding="utf-8"))
+    expected = owned["actions"][stage]["command"]
+    assert stage_bundle.STAGES[stage]["command"] == expected, (
+        f"the stage table says {stage_bundle.STAGES[stage]['command']!r} but "
+        f"tao-train-visual-changenet declares {expected!r}; that skill owns the "
+        "command and this table must not disagree with it"
+    )
+
+
+@pytest.mark.parametrize("stage", ["train", "evaluate", "inference"])
+def test_vcn_stages_declare_the_backbone(stage_bundle, stage):
+    """All three build the model from the spec before loading a checkpoint.
+
+    An unstaged backbone does not always error -- a null path silently degrades
+    held-out evaluation quality -- so a missing declaration is worse than a
+    crash: the run completes and the number is wrong.
+    """
+    import yaml
+
+    owned = yaml.safe_load(VCN_SKILL_INFO.read_text(encoding="utf-8"))
+    declared = owned["actions"][stage].get("inputs") or []
+    needs_backbone = any("pretrained_backbone_path" in k for k in declared)
+    assert needs_backbone, f"fixture drift: {stage} no longer declares a backbone"
+    assert "backbone" in stage_bundle.STAGES[stage]["inputs"], (
+        f"{stage} omits the backbone the model skill declares"
+    )

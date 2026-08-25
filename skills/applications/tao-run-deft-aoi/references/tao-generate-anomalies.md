@@ -315,7 +315,9 @@ python3 "$SB" anomalygen.amp --results-dir "$RUN_DIR" \
   --param dataset_dir="$DS" \
   --param defect_spec="$DS/defect_spec.jsonl" \
   --param cosmos_models="$COSMOS" \
-  --arg "\${ANOMALYGEN_SCRIPTS}/prep_testcase.sh \
+  --arg "export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=/workspace/paidf-anomalygen && \
+    ln -sfn $TAO_INPUT_COSMOS_MODELS /workspace/paidf-anomalygen/checkpoints && \
+    \${ANOMALYGEN_SCRIPTS}/prep_testcase.sh \
     --name iter${N} --num-sdg $NUM_SDG \
     --dataset-dir \$TAO_INPUT_DATASET_DIR --clean-dir \$TAO_INPUT_DATASET_DIR \
     --defect-spec \$TAO_INPUT_DEFECT_SPEC \
@@ -334,7 +336,9 @@ python3 "$SB" anomalygen.sdg --results-dir "$RUN_DIR" \
   --param testcase_jsonl="$RUN_DIR/testcase.jsonl" \
   --param checkpoint_dir="$CKPT" \
   --param cosmos_models="$COSMOS" \
-  --arg "\${ANOMALYGEN_SCRIPTS}/run_sdg.sh \
+  --arg "export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=/workspace/paidf-anomalygen && \
+    ln -sfn $TAO_INPUT_COSMOS_MODELS /workspace/paidf-anomalygen/checkpoints && \
+    \${ANOMALYGEN_SCRIPTS}/run_sdg.sh \
     --checkpoint_dir \$TAO_INPUT_CHECKPOINT_DIR --step $STEP \
     --input_jsonl \$TAO_INPUT_TESTCASE_JSONL \
     --output_dir \$TAO_RESULTS_ROOT/sdg \
@@ -356,6 +360,19 @@ if [ "$sdg_rc" -ne 0 ]; then
 fi
 
 test -s "$SDG_LOG" && ! grep -Fqi "post-generation image checks are DISABLED" "$SDG_LOG" || { echo "FATAL: AnomalyGen Guardrail log missing or screening disabled; guardrail=not_run" >&2; exit 2; }
+
+The `export` and `ln -sfn` in front of each call replace three things the old
+`docker run` supplied as flags. `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` and
+`PYTHONPATH` were `-e` flags; the symlink stands in for
+`-v $COSMOS:/workspace/paidf-anomalygen/checkpoints:ro`, because a bundle mounts
+a declared input at its OWN path while the container resolves its base
+checkpoints relative to its working directory. Without the link the phase runs
+and finds no checkpoints — it does not fail on a missing mount.
+
+If `/workspace/paidf-anomalygen` is not writable by the launching identity the
+`ln` fails loudly, which is the right outcome: silently proceeding would use
+whatever the image shipped.
+
 ```
 
 Both one-line checks are hard gates. On failure, end the `anomalygen` stage as

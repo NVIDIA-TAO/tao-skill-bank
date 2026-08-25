@@ -48,6 +48,7 @@ spec:
       labels:
         tao-job: "@@JOB_NAME@@"
     spec:
+      securityContext:@@RUN_AS_USER@@
       restartPolicy: Never
       subdomain: "@@JOB_NAME@@"          # pods get FQDN <job>-<index>.<svc>.<ns>.svc.cluster.local
       imagePullSecrets:

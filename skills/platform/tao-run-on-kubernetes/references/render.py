@@ -111,7 +111,13 @@ def substitute_config_path(tokens: list[str], config_path: str) -> list[str]:
 
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     """Bundle -> a rendered Job manifest plus `kubectl apply`."""
-    job_id = ctx["job_id"]
+    # A Job name must be an RFC1123 subdomain: lowercase alphanumerics, '-'
+    # and '.' only. Stage actions carry underscores (mining.embed_pool), which
+    # the API server rejects at apply time with a validation error that names
+    # the field rather than the offending character.
+    job_id = re.sub(r"[^a-z0-9.-]+", "-", str(ctx["job_id"]).lower()).strip("-.")
+    if not job_id:
+        raise ValueError(f"job_id {ctx['job_id']!r} has no RFC1123-safe characters")
     results_dir = ctx["results_dir"]
     namespace = ctx.get("namespace", "default")
     bank = pathlib.Path(ctx["bank"])
@@ -169,6 +175,15 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         # drops the quotes the template already supplies.
         "COMMAND": json.dumps(command)[1:-1],
         "MOUNT_PATH": mount_path,
+        # Parity with docker's --user. A TAO image running as its own non-root
+        # user cannot write a PVC owned by someone else; fsGroup makes the
+        # mounted volume group-writable for the pod.
+        "RUN_AS_USER": (
+            f'\n        runAsUser: {int(ctx["uid"])}'
+            f'\n        runAsGroup: {int(ctx.get("gid", ctx["uid"]))}'
+            f'\n        fsGroup: {int(ctx.get("fs_group", ctx.get("gid", ctx["uid"])))}'
+            if ctx.get("uid") is not None else ""
+        ),
         "WORKING_DIR": (
             f'\n          workingDir: "{bundle["workdir"]}"'
             if bundle.get("workdir") else ""

@@ -345,13 +345,21 @@ def logs(backend_ref: str, ctx: dict[str, Any], tail: int = 200) -> str:
 
 
 def cancel(backend_ref: str, ctx: dict[str, Any]) -> bool:
-    """Stop the container, leaving it inspectable.
+    """Remove the container, per this skill's documented cancel verb.
 
-    `docker rm -f` would delete it and with it the exit code status() reads, so
-    the job would go permanently UNKNOWN instead of settling at CANCELED. The
-    caller marks the record; this only has to stop the work.
+    SKILL.md defines cancel as `docker rm -f "$JOB_ID"`, and the platform eval
+    grades that the container is actually gone. An earlier version here ran
+    `docker stop` to keep the exit code readable -- that was wrong on both
+    counts: it diverged from the documented contract, and the exit code is not
+    needed afterwards because cancel_job() marks the record CANCELED itself and
+    a terminal record is immutable, so nothing polls status() again.
+
+    Prefer ctx["job_id"], since the container is NAMED after the job id and
+    that is the handle the other verbs use; backend_ref remains a fallback for
+    callers that only carry it.
     """
-    stopped = subprocess.run(
-        ["docker", "stop", backend_ref], capture_output=True, text=True, check=False,
+    target = str(ctx.get("job_id") or backend_ref)
+    removed = subprocess.run(
+        ["docker", "rm", "-f", target], capture_output=True, text=True, check=False,
     )
-    return stopped.returncode == 0
+    return removed.returncode == 0

@@ -113,10 +113,16 @@ def logs(backend_ref: str, ctx: dict[str, Any], tail: int = 200) -> str:
 
 
 def cancel(backend_ref: str, ctx: dict[str, Any]) -> bool:
-    """Stop the container, not remove it -- see the docker renderer's cancel."""
-    stopped = subprocess.run(
+    """Remove the container, matching this skill's documented cancel verb.
+
+    SKILL.md: `brev exec <instance> "docker rm -f $JOB_ID"`. Deleting an
+    ephemeral INSTANCE (which stops billing) is a separate teardown step the
+    caller owns; this verb only has to end the job.
+    """
+    target = str(ctx.get("job_id") or backend_ref)
+    removed = subprocess.run(
         ["brev", "exec", ctx["instance"],
-         f"docker stop {shlex.quote(backend_ref)}"],
+         f"docker rm -f {shlex.quote(target)}"],
         capture_output=True, text=True, check=False,
     )
-    return stopped.returncode == 0
+    return removed.returncode == 0

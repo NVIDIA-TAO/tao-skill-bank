@@ -137,9 +137,17 @@ def _resolve_workspace_images_dir(ws: pathlib.Path) -> pathlib.Path:
     `kpi/images/`, carrying the board trees and `golden/images/`.)
     """
     candidates = [ws / "images", ws / "kpi" / "images"]
-    for candidate in candidates:
-        if candidate.is_dir() and (candidate / "golden").is_dir():
-            return candidate.resolve()
+    with_golden = [c for c in candidates if c.is_dir() and (c / "golden").is_dir()]
+    if with_golden:
+        # Both an incomplete subset and the full media root can carry golden/,
+        # so presence alone is not enough -- prefer the one holding more image
+        # files, since that is the root whose rows actually resolve. Counted
+        # once at init; the extension set covers the layouts this bank ships.
+        exts = ("*.jpg", "*.jpeg", "*.png")
+        def _image_count(root: pathlib.Path) -> int:
+            return sum(1 for ext in exts for _ in root.rglob(ext))
+
+        return max(with_golden, key=_image_count).resolve()
     for candidate in candidates:
         if candidate.is_dir():
             return candidate.resolve()

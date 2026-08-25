@@ -31,6 +31,7 @@ spec:
       labels:
         tao-job: "@@JOB_NAME@@"
     spec:
+      securityContext:@@RUN_AS_USER@@
       restartPolicy: Never
       imagePullSecrets:
         - name: "@@IMAGE_PULL_SECRET@@"
