@@ -1,5 +1,20 @@
 [
   {
+    "id": "tao-run-deft-iaa-attached-loop-liveness",
+    "question": "While planning an approved IAA DEFT run, explain what happens after a long pool_embed stage is backgrounded and you post a progress update. May you end the turn and rely on a future poll to resume the loop? This is planning only: do not run commands or tools.",
+    "expected_skill": "tao-run-deft-iaa",
+    "expected_script": null,
+    "ground_truth": "Attached monitoring is the default. A progress update is not a final response. The driving agent must keep the same turn alive, poll the stage's durable status with an explicit terminal condition, finalize and commit it, re-audit, and immediately execute the single next action until the whole bounded loop reaches COMPLETE, terminal FAILED, or INVALID. A final response ends monitoring and no future poll can wake an ended turn. Detach is allowed only on explicit user request or a genuine runtime limitation, in which case provide the exact durable audit/resume command and do not promise unattended continuation.",
+    "expected_behavior": [
+      "States that attached monitoring is enabled by default and keeps the driving turn alive while the run is nonterminal",
+      "Treats progress updates as in-progress commentary rather than final responses",
+      "Uses terminal-condition polling, then finalize, commit, audit, and immediate continuation to the audit-selected next action",
+      "Does not claim that a timer or future poll can resume an ended chat turn",
+      "Allows detach only when explicitly requested or forced by a runtime limitation, with an exact durable audit/resume command and no unattended-monitoring claim",
+      "Does not run commands or tools"
+    ]
+  },
+  {
     "id": "tao-run-deft-iaa-basic",
     "question": "A user says: \"Use the tao-run-deft-iaa skill to plan an IAA DEFT run.\" Identify the applicable skill and outline its documented workflow. This is a planning evaluation: do not run commands, scripts, containers, installs, web searches, audits, or any other tools.",
     "expected_skill": "tao-run-deft-iaa",
