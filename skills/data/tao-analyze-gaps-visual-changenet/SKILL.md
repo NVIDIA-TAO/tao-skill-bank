@@ -31,7 +31,7 @@ docker run --rm -v "$SPEC_DIR:/w:ro" "$DS_IMAGE" gap_analysis vcn_aoi \
     -e /w/vcn_aoi_spec.yaml --cfg=job
 ```
 
-The `-e` path must resolve inside the container, so the spec must live under the directory mounted at `/w`. Reconcile any renamed keys (e.g. `inference_csv` vs `inference_results_dir`, `output_dir` vs `results_dir`) before retrying. Output parquet name is `kpi_gaps.parquet`. Current data-services builds reject bare-override invocation with `requires the following argument: -e/--experiment_spec_file` — the entrypoint requires `-e` for every subtask before any Hydra override is parsed (an entrypoint contract at tao-data-services HEAD, not a build-specific quirk; verified on both `7.1.0-data-services` and the pinned 7.2 build); keep path values as trailing Hydra overrides during the real run.
+The `-e` path must resolve inside the container, so the spec must live under the directory mounted at `/w`. Reconcile any renamed keys (e.g. `inference_csv` vs `inference_results_dir`, `output_dir` vs `results_dir`) before retrying. Output parquet name is `kpi_gaps.parquet`. Current data-services builds reject bare-override invocation with `requires the following argument: -e/--experiment_spec_file` — the entrypoint requires `-e` for every subtask before any Hydra override is parsed; keep path values as trailing Hydra overrides during the real run.
 
 ---
 
