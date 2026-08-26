@@ -53,7 +53,7 @@ if [ "$runtime" = true ] && [ ! -f "$script_dir/iaa_deft/__init__.py" ]; then
   exit 2
 fi
 
-runtime_probe='import sys; assert sys.version_info >= (3, 9); import pandas,numpy,pyarrow,PIL,yaml,matplotlib,omegaconf,sklearn,torch'
+runtime_probe='import sys; assert sys.version_info >= (3, 9); import pandas,numpy,pyarrow,PIL,yaml,matplotlib,sklearn,torch'
 candidates=(
   "${DEFT_PYTHON:-}"
   "${workspace_arg:+$workspace_arg/.venv/bin/python}"
@@ -86,7 +86,7 @@ done
 
 if [ -z "$selected" ]; then
   if [ "$runtime" = true ]; then
-    echo "deft_python: no installed Python provides the bundled IAA runtime dependencies (pandas,numpy,pyarrow,PIL,yaml,matplotlib,omegaconf,sklearn,torch)" >&2
+    echo "deft_python: no installed Python provides the bundled IAA runtime dependencies (pandas,numpy,pyarrow,PIL,yaml,matplotlib,sklearn,torch)" >&2
     echo "deft_python: provision the approved workspace venv, then retry" >&2
   else
     echo "deft_python: Python 3.9+ not found" >&2

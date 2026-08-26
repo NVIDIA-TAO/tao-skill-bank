@@ -5,8 +5,9 @@
 
 The schema is adapted from the PAS reference notebook. Every supported field
 is a dataclass member whose metadata documents its meaning and, where
-applicable, its bounds or choices. OmegaConf enforces required fields, types,
-and unknown-key rejection before a stage can consume the configuration.
+applicable, its bounds or choices. The bundled structured loader enforces
+required fields, types, and unknown-key rejection before a stage can consume
+the configuration without adding a host-side configuration-library dependency.
 """
 
 from __future__ import annotations
@@ -16,10 +17,9 @@ import json
 import os
 import pathlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, get_type_hints
 
 import yaml
-from omegaconf import MISSING, OmegaConf
 
 from iaa_deft.config_fields import (
     BOOL_FIELD,
@@ -37,6 +37,10 @@ QUERY_TYPES = (
     "natural_caption",
     "original_captions",
 )
+
+# Match the missing-value spelling used by the notebook's structured config
+# while keeping the host-side skill runtime self-contained.
+MISSING = "???"
 
 
 def bool_str(value: Any) -> str:
@@ -545,6 +549,103 @@ def _validate_field_constraints(instance: Any, path: str = "") -> None:
                 raise ValueError(f"{field_path}={value!r} must be one of: {valid_options}")
 
 
+def _coerce_scalar(value: Any, expected_type: type, path: str) -> Any:
+    """Apply the notebook config's safe scalar conversions without OmegaConf."""
+    if value == MISSING:
+        raise ValueError(f"{path} is missing a mandatory value")
+    if value is None:
+        raise ValueError(f"{path} cannot be null")
+
+    if expected_type is bool:
+        if type(value) is bool:
+            return value
+        if type(value) is int:
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "yes", "y", "on", "1"}:
+                return True
+            if normalized in {"false", "no", "n", "off", "0"}:
+                return False
+        raise ValueError(f"{path}={value!r} cannot be converted to bool")
+
+    if expected_type is int:
+        if type(value) is int:
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                pass
+        raise ValueError(f"{path}={value!r} cannot be converted to int")
+
+    if expected_type is float:
+        if type(value) in {int, float}:
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                pass
+        raise ValueError(f"{path}={value!r} cannot be converted to float")
+
+    if expected_type is str:
+        if isinstance(value, (Mapping, list, tuple, set)):
+            raise ValueError(f"{path}={value!r} cannot be converted to str")
+        return str(value)
+
+    if isinstance(value, expected_type):
+        return value
+    raise ValueError(
+        f"{path}={value!r} has type {type(value).__name__}; "
+        f"expected {expected_type.__name__}"
+    )
+
+
+def _materialize_dataclass(
+    config_type: type,
+    source: Mapping[str, Any],
+    path: str = "",
+) -> Any:
+    """Recursively construct a typed config from a normalized source mapping."""
+    if not isinstance(source, Mapping):
+        location = path or config_type.__name__
+        raise ValueError(f"{location} must be an object")
+
+    fields = {field.name: field for field in dataclasses.fields(config_type)}
+    unknown = sorted(set(source) - set(fields))
+    if unknown:
+        location = path or config_type.__name__
+        raise ValueError(f"{location} contains unknown key(s): {', '.join(unknown)}")
+
+    type_hints = get_type_hints(config_type)
+    values: dict[str, Any] = {}
+    for name, field in fields.items():
+        field_path = f"{path}.{name}" if path else name
+        if name in source:
+            value = source[name]
+        elif field.default is not dataclasses.MISSING:
+            value = field.default
+        elif field.default_factory is not dataclasses.MISSING:
+            value = field.default_factory()
+        else:
+            raise ValueError(f"{field_path} is missing a mandatory value")
+
+        expected_type = type_hints[name]
+        if dataclasses.is_dataclass(expected_type):
+            if dataclasses.is_dataclass(value):
+                values[name] = value
+            else:
+                values[name] = _materialize_dataclass(
+                    expected_type,
+                    value,
+                    field_path,
+                )
+        else:
+            values[name] = _coerce_scalar(value, expected_type, field_path)
+    return config_type(**values)
+
+
 def _abs_or_missing(value: Any) -> Any:
     return value if value == MISSING else _abs_data_path(value)
 
@@ -740,10 +841,11 @@ class PasDeftConfig:
 
         source = _build_source_dict(raw, mining_spec)
         try:
-            schema = OmegaConf.structured(DeftExperimentConfig)
-            merged = OmegaConf.merge(schema, OmegaConf.create(source))
-            self.cfg: DeftExperimentConfig = OmegaConf.to_object(merged)
-        except Exception as exc:
+            self.cfg: DeftExperimentConfig = _materialize_dataclass(
+                DeftExperimentConfig,
+                source,
+            )
+        except (TypeError, ValueError) as exc:
             raise ValueError(f"invalid typed DEFT configuration: {exc}") from exc
         _validate_field_constraints(self.cfg)
 

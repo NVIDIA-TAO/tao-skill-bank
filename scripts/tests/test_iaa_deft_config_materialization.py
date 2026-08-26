@@ -339,6 +339,94 @@ def test_dataclass_schema_documents_all_runtime_fields_and_constraints():
     )
 
 
+def test_typed_runtime_does_not_require_omegaconf(tmp_path):
+    _, results, _ = _materialize(tmp_path)
+    config_path = results / "config" / "deft_config.yaml"
+    probe = """
+import importlib.abc
+import sys
+
+class BlockOmegaConf(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "omegaconf" or fullname.startswith("omegaconf."):
+            raise ModuleNotFoundError("omegaconf intentionally unavailable")
+        return None
+
+sys.meta_path.insert(0, BlockOmegaConf())
+sys.path.insert(0, sys.argv[1])
+from iaa_deft.config import PasDeftConfig
+
+config = PasDeftConfig(sys.argv[2])
+assert config.iteration.start == 1
+assert config.mining.knn_metric == "cosine"
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", probe, str(IAA_SCRIPTS), str(config_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_runtime_interpreter_probe_does_not_require_omegaconf(tmp_path, monkeypatch):
+    fake_python = tmp_path / "python-without-omegaconf"
+    fake_python.write_text(
+        """#!/usr/bin/python3
+import sys
+
+code = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "-c" else ""
+if "import pandas,numpy,pyarrow" in code:
+    raise SystemExit(9 if "omegaconf" in code else 0)
+print("FAKE_PYTHON_SELECTED")
+"""
+    )
+    fake_python.chmod(0o755)
+    monkeypatch.setenv("DEFT_PYTHON", str(fake_python))
+
+    completed = subprocess.run(
+        [
+            str(IAA_SCRIPTS / "deft_python.sh"),
+            "--runtime",
+            "--workspace",
+            str(tmp_path),
+            "-c",
+            "print('fallback interpreter was selected')",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "FAKE_PYTHON_SELECTED"
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value", "expected"),
+    [
+        ("iteration", "start", 1.5, "cannot be converted to int"),
+        ("training", "continual_model", "sometimes", "cannot be converted to bool"),
+        ("gap_analysis", "metric_name", None, "cannot be null"),
+    ],
+)
+def test_typed_runtime_rejects_values_outside_declared_scalar_types(
+    tmp_path,
+    section,
+    field,
+    value,
+    expected,
+):
+    _, results, _ = _materialize(tmp_path)
+    config_path = results / "config" / "deft_config.yaml"
+    payload = _yaml(config_path)
+    payload[section][field] = value
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    with pytest.raises(ValueError, match=expected):
+        PasDeftConfig(str(config_path))
+
+
 @pytest.mark.parametrize(
     ("section_path", "key"),
     [

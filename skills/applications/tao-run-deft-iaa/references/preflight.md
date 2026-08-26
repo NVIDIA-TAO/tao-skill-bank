@@ -344,7 +344,7 @@ For a new run, perform the following in order.
    ```bash
    python3 -m venv "$WORKSPACE/.venv"
    "$WORKSPACE/.venv/bin/pip" install \
-     pandas numpy matplotlib omegaconf pyarrow pillow pyyaml scikit-learn
+     pandas numpy matplotlib pyarrow pillow pyyaml scikit-learn
    "$WORKSPACE/.venv/bin/pip" install torch \
      --index-url https://download.pytorch.org/whl/cpu
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
