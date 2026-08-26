@@ -1085,7 +1085,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     errors.append(f"approval manifest is invalid JSON: {exc}")
                 else:
                     expected_approval = {
-                        "schema_version": "2",
+                        "schema_version": "3",
                         "workflow": WORKFLOW,
                         "workspace": str(pathlib.Path(str(config.get("workspace", ""))).resolve()),
                         "results_dir": str(results_dir.resolve()),
@@ -1100,6 +1100,8 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         ),
                         "requires_hf_token": config.get("requires_hf_token"),
                         "max_iterations": max_iterations,
+                        "host_gpu_ids": config.get("gpu_ids"),
+                        "container_gpu_ids": config.get("container_gpu_ids"),
                         "metric_contract": gate,
                         "pyt_image": config.get("pyt_image"),
                         "ds_image": config.get("ds_image"),
@@ -1151,7 +1153,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         derived = {
                             "training_epochs": tao_train.get("num_epochs"),
                             "num_gpus": tao_train.get("num_gpus"),
-                            "gpu_ids": tao_train.get("gpu_ids"),
+                            "container_gpu_ids": tao_train.get("gpu_ids"),
                             "history_aware": history.get("enabled"),
                             "replay_fraction": history.get("replay_fraction"),
                             "mining_topn": mining.get("topn"),
@@ -1229,6 +1231,23 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         gpu_ids = config.get("gpu_ids")
         if not isinstance(gpu_ids, list) or len(gpu_ids) != config.get("num_gpus"):
             errors.append("state.config.gpu_ids must match state.config.num_gpus")
+        container_gpu_ids = config.get("container_gpu_ids")
+        num_gpus = config.get("num_gpus")
+        expected_container_gpu_ids = (
+            list(range(num_gpus))
+            if isinstance(num_gpus, int)
+            and not isinstance(num_gpus, bool)
+            and num_gpus >= 1
+            else None
+        )
+        if (
+            expected_container_gpu_ids is None
+            or container_gpu_ids != expected_container_gpu_ids
+        ):
+            errors.append(
+                "state.config.container_gpu_ids must be a dense zero-based list "
+                "matching state.config.num_gpus"
+            )
         for field in (
             "history_aware",
             "continual_dataset",
