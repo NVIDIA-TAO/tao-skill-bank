@@ -1284,6 +1284,10 @@ def _framework_spec(
             "callbacks": {
                 "compile_tokenizer": {"compile_after_iterations": 3, "enabled": False},
                 "grad_clip": {"clip_norm": args.gradient_clip, "force_finite": False},
+                # Rewind past gradient-norm spikes. Enabled for PEFT only: the snapshot
+                # ring scales with the trainable parameter count, so it is about 1.2GB for
+                # a rank-64 adapter but hundreds of GB for a dense run.
+                "loss_spike_rollback": {"enabled": args.training_mode == "peft"},
                 "tao": {
                     "enabled": True,
                     "experiment_name": args.experiment_id,
