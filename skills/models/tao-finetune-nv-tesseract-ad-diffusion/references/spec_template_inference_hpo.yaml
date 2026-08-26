@@ -2,7 +2,7 @@ dataset:
   csv: ""
   label_col: label
   eval_rows: 2000
-inference:
+hpo:
   nsample: 15
   threshold_strategy: scs
   model_path: ""
