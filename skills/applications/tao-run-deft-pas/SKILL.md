@@ -250,9 +250,8 @@ failing visualization mid-run without revising and reapproving the config.
 ## Metric and Stop Semantics
 
 The approved metric contract is immutable for the run. Evaluation must parse
-the exact iteration's evaluator-owned `nvidia_iaa_metrics_aggregate.csv` (the
-external artifact name is retained for compatibility); the result records its
-source path and is re-derived during commit and audit. Checkpoint ranking
+the exact iteration's evaluator-owned `nvidia_pas_metrics_aggregate.csv`; the
+result records its source path and is re-derived during commit and audit. Checkpoint ranking
 and best-run reporting follow the approved operator (`>=`/`>` chooses the
 higher value, `<=`/`<` the lower), not a hard-coded metric convention.
 

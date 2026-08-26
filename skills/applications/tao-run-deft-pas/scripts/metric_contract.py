@@ -27,15 +27,14 @@ _OPERATOR_ALIASES = {
     "gte": ">=",
 }
 
-# The evaluator-owned nvidia_iaa_metrics_aggregate.csv filename is an external
-# artifact contract retained for compatibility; PAS is the workflow name.
-# All gate-able metrics are higher-is-better except Zero@5 (fraction of queries
+# Gate-able metrics from nvidia_pas_metrics_aggregate.csv. All are
+# higher-is-better except Zero@5 (fraction of queries
 # with zero hits in the top five results), which is lower-is-better.
 METRIC_NAMES = ("mAP", "Rank-1", "Rank-5", "Separability", "Match@5", "Zero@5")
 LOWER_IS_BETTER_METRICS = {"Zero@5"}
 # The PAS aggregate evaluator emits one row for each of these three
 # gate-able splits. Broader caption categories remain valid gap-analysis input
-# filters, but they are not KPI rows in nvidia_iaa_metrics_aggregate.csv.
+# filters, but they are not KPI rows in nvidia_pas_metrics_aggregate.csv.
 QUERY_TYPES = ("easy", "medium", "hard")
 
 

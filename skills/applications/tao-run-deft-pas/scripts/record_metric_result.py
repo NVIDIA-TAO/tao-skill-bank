@@ -136,7 +136,7 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
     metrics_path = _required_file(args.metrics_csv, name="metrics CSV")
     expected_metrics_path = pathlib.Path(
         os.path.abspath(
-            phase_dir / "evaluate" / "nvidia_iaa_metrics_aggregate.csv"
+            phase_dir / "evaluate" / "nvidia_pas_metrics_aggregate.csv"
         )
     )
     if metrics_path != expected_metrics_path:

@@ -175,7 +175,7 @@ def expected_fresh_outputs(
     )
     if name == "evaluate":
         return [
-            phase / "evaluate" / "nvidia_iaa_metrics_aggregate.csv",
+            phase / "evaluate" / "nvidia_pas_metrics_aggregate.csv",
             phase / "evaluate" / "status.json",
         ]
     number = _iteration_number(label)

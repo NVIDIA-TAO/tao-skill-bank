@@ -40,6 +40,22 @@ def test_pas_workflow_and_package_names_are_canonical():
     assert "./skills/applications/tao-run-deft-iaa" not in marketplace
 
 
+def test_metric_contract_uses_the_pas_evaluator_filenames():
+    pas_root = PAS_SCRIPTS.parent
+    relevant_suffixes = {".py", ".md", ".json"}
+    text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in pas_root.rglob("*")
+        if path.is_file()
+        and path.suffix in relevant_suffixes
+        and "__pycache__" not in path.parts
+    )
+
+    assert "nvidia_iaa_metrics" not in text
+    assert "nvidia_pas_metrics.csv" in text
+    assert "nvidia_pas_metrics_aggregate.csv" in text
+
+
 def test_docker_gpu_args_use_exact_approved_devices():
     assert container._docker_gpu_args(  # noqa: SLF001
         {"gpu_ids": [0, 2], "num_gpus": 2}

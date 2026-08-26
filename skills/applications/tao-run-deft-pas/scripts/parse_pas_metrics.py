@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Extract one PAS metric from nvidia_iaa_metrics_aggregate.csv into JSON.
+"""Extract one PAS metric from nvidia_pas_metrics_aggregate.csv into JSON.
 
 TAO ``clip evaluate`` writes a CSV with one row per QueryType:
 
@@ -174,7 +174,7 @@ def _parser() -> argparse.ArgumentParser:
         "--metrics-csv",
         required=True,
         type=pathlib.Path,
-        help="Path to nvidia_iaa_metrics_aggregate.csv",
+        help="Path to nvidia_pas_metrics_aggregate.csv",
     )
     parser.add_argument(
         "--metric-name",

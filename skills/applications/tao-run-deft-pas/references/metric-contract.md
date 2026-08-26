@@ -3,9 +3,9 @@
 The immutable metric contract controls evaluation parsing, KPI stopping, and
 best-iteration reporting:
 
-The TAO evaluator's external CSV filenames remain
-`nvidia_iaa_metrics.csv` and `nvidia_iaa_metrics_aggregate.csv` for artifact
-compatibility. They are inputs to the PAS workflow, not its public name.
+The TAO evaluator emits `nvidia_pas_metrics.csv` and
+`nvidia_pas_metrics_aggregate.csv`; every workflow stage consumes those
+producer-owned filenames directly.
 
 ```json
 {
@@ -49,7 +49,7 @@ fi
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
   "$SKILL_ROOT/scripts/parse_pas_metrics.py" \
-    --metrics-csv "$PHASE_DIR/evaluate/nvidia_iaa_metrics_aggregate.csv" \
+    --metrics-csv "$PHASE_DIR/evaluate/nvidia_pas_metrics_aggregate.csv" \
     --metric-name "$METRIC_NAME" --query-type "$QUERY_TYPE" \
     --op "$METRIC_OP" "${TARGET_ARGS[@]}" \
     --iter-label "$LABEL" \
