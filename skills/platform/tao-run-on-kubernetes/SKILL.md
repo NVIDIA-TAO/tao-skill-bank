@@ -124,7 +124,20 @@ jobs are submitted with plain `kubectl apply`.
    or a first-time multi-GB image pull — is billed and reaper-eligible idle GPU
    time, exactly like pulling inside a SLURM allocation. Prefer tier A when the
    data is already on a PVC; choose tier C knowingly, for small inputs.
-3. **Credentials → a per-job Secret (never inline in the manifest** — it lands on
+3. **Open the record — mints the id, binds `results_dir`, before launch:**
+   ```bash
+   # RESULTS_ROOT is a mounted (surviving) volume path or an S3 prefix.
+   JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform kubernetes --image "$IMAGE" \
+     --network-arch "$ARCH" --action "$ACTION" --storage-tier "$TIER" \
+     --results-root "$RESULTS_ROOT")
+   ```
+   `open` takes exactly one of `--results-root` or `--results-dir`. Use
+   `--results-root`: it derives `results_dir` as `$RESULTS_ROOT/$JOB_ID` from the
+   id it mints, so the path can contain the id. `--results-dir` is for a FULL
+   path already fixed and not needing the not-yet-minted `$JOB_ID` in it.
+
+   This step comes FIRST because everything below is named after `$JOB_ID`.
+4. **Credentials → a per-job Secret (never inline in the manifest** — it lands on
    disk and is readable via `kubectl get job -o yaml`). Create it from an env-file
    on **stdin** so no value hits a command line:
    ```bash
@@ -134,12 +147,10 @@ jobs are submitted with plain `kubectl apply`.
      | kubectl create secret generic "tao-creds-$JOB_ID" --from-env-file=/dev/stdin
    ```
    The template references it via `envFrom.secretRef` — only the Secret *name* is
-   in the manifest.
-4. **Open the record — mints the id, binds `results_dir`, before launch:**
-   ```bash
-   JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform kubernetes --image "$IMAGE" \
-     --network-arch "$ARCH" --action "$ACTION" --storage-tier "$TIER" --results-dir "$RESULTS_DIR")
-   ```
+   in the manifest. The Secret is declared `optional`, so a NAME MISMATCH does not
+   fail the pod: it starts with no credentials and the workload fails later on an
+   auth error that names the registry, not the Secret. Create it after `open`, from
+   the same `$JOB_ID` the manifest will reference.
    `results_dir` must be a **mounted (surviving) volume path or an S3 prefix** —
    `ttlSecondsAfterFinished` deletes the Job and its logs after it ends, so
    nothing is recoverable from the Job object later.

@@ -80,8 +80,10 @@ minikube. The order matters — the first masks the second:
 
 1. **The PVC must exist.** The templates mount `@@PVC_CLAIM@@`; without it the
    scheduler reports `persistentvolumeclaim "<name>" not found`, and that fires
-   *before* any GPU complaint. minikube's default StorageClass binds a plain
-   claim immediately:
+   *before* any GPU complaint. Create the claim, then WAIT for it to bind
+   before submitting -- a dynamic provisioner can lag even on minikube, and a
+   Job created against an unbound claim reports the same "not found"-shaped
+   scheduling failure as a missing one:
    ```bash
    kubectl create -f - <<'EOF'
    apiVersion: v1
@@ -89,6 +91,8 @@ minikube. The order matters — the first masks the second:
    metadata: {name: edgeai-datasets}
    spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
    EOF
+   kubectl wait --for=jsonpath='{.status.phase}'=Bound \
+     pvc/edgeai-datasets --timeout=120s
    ```
 2. **GPU capacity must be advertised.** With the PVC satisfied, a Job requesting
    `nvidia.com/gpu` on a GPU-less cluster reports

@@ -314,3 +314,37 @@ def test_directly_invoked_scripts_are_executable():
     assert not stale_mode, (
         f"executable on disk but not in the git index, so the bit will not "
         f"travel — run `git update-index --chmod=+x <path>`: {stale_mode}")
+
+
+# ── The documented open snippet must be runnable as written ────────────────
+# The kubernetes SKILL.md created a per-job Secret named tao-creds-$JOB_ID one
+# step BEFORE the step that mints JOB_ID, so the Secret was named tao-creds-
+# while the manifest referenced the real id. Nothing caught it, and the
+# `optional: true` on the secretRef makes the mismatch SILENT: the pod starts
+# with no credentials and fails later on an auth error naming the registry.
+#
+# It also passed --results-dir "$RESULTS_DIR" for a variable the page never
+# defines, where every other platform passes --results-root.
+
+OPEN_PLATFORMS = ["tao-run-on-docker", "tao-run-on-kubernetes",
+                  "tao-run-on-slurm", "tao-run-on-brev", "tao-run-on-virtualenv"]
+
+
+@pytest.mark.parametrize("platform", OPEN_PLATFORMS)
+def test_job_id_is_minted_before_it_is_used(platform):
+    """`open` mints the id; anything named after it must come later."""
+    text = _skill_text(platform)
+    # Fenced code only: prose legitimately mentions $JOB_ID while explaining
+    # that `open` mints it.
+    code = "\n".join(
+        block for block in re.findall(r"```bash\n(.*?)```", text, re.S)
+    )
+    mint = re.search(r"JOB_ID=\$\(", code)
+    if mint is None:
+        pytest.skip(f"{platform} documents no open snippet in a code block")
+    first_use = re.search(r"\$JOB_ID|\$\{JOB_ID", code)
+    assert first_use is not None
+    assert mint.start() < first_use.start(), (
+        f"{platform} uses $JOB_ID at offset {first_use.start()} but only mints "
+        f"it at {mint.start()}; everything named after the id gets an empty one"
+    )

@@ -93,16 +93,17 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    (e.g. `HF_TOKEN`), write them to a mode-600 sidecar on Lustre and let the
    template shred it on exit; NGC image pulls use the one-time
    `~/.config/enroot/.credentials` (see `references/slurm-ssh-credentials.md`),
-   not the job env:
-   ```bash
-   set -a; source /path/to/.env; set +a   # omit if already exported
-   printf 'export HF_TOKEN=%s\n' "$HF_TOKEN" | ssh $LOGIN "umask 077; cat > <job_dir>/job_$JOB_ID.env"
-   ```
-3. **Open the record — mints the id, binds `results_dir` on Lustre, before launch:**
+   not the job env. **Open the record first** — the sidecar is named after the
+   id, so writing it earlier produces `job_.env` while the sbatch script
+   references `job_$JOB_ID.env`:
    ```bash
    JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform slurm --image "$IMAGE" \
      --network-arch "$ARCH" --action "$ACTION" --storage-tier A --results-root "$SLURM_BASE_RESULTS_DIR")
+
+   set -a; source /path/to/.env; set +a   # omit if already exported
+   printf 'export HF_TOKEN=%s\n' "$HF_TOKEN" | ssh $LOGIN "umask 077; cat > <job_dir>/job_$JOB_ID.env"
    ```
+3. **The record is open** — `results_dir` is bound on Lustre before any launch.
 4. **Consume the optional model lifecycle.** If the validated spec-bundle has
    `execution`, preserve its order and semantics while mapping distributed
    intent to native SLURM/Pyxis. Stage only its checksum-closed
