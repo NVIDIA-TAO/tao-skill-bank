@@ -122,7 +122,7 @@ BASELINE_RESULTS_JSON="$("$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/find_cosmos_re
   --output-json "$RUN_DIR/baseline/evaluate/bcq_accuracy_metrics.json"
 ```
 
-The metrics script reads `response`/`gt` and also accepts `answer`/`ground_truth`. It extracts `yes` and `no` defensively from capitalization, punctuation, and short free-form answers. An unparseable prediction is reported and counted as incorrect; an unparseable ground truth is a hard error. Report the printed accuracy, balanced accuracy, false-positive count, false-negative count, and unparseable count in the baseline stage update. Log both `results.json` and `bcq_accuracy_metrics.json` as `baseline_evaluate` artifacts. The stage is not complete until the metrics file exists.
+Ignore metrics emitted by Cosmos-RL evaluate; `compute_bcq_accuracy_metrics.py` and its `bcq_accuracy_metrics.json` output are the source of truth for this workflow. The metrics script reads `response`/`gt` and also accepts `answer`/`ground_truth`. It extracts `yes` and `no` defensively from capitalization, punctuation, and short free-form answers. An unparseable prediction is reported and counted as incorrect; an unparseable ground truth is a hard error. Report the printed accuracy, balanced accuracy, false-positive count, false-negative count, and unparseable count in the baseline stage update. Log both `results.json` and `bcq_accuracy_metrics.json` as `baseline_evaluate` artifacts. The stage is not complete until the metrics file exists.
 
 ## Mining Embeddings
 
