@@ -354,3 +354,66 @@ def test_nothing_in_the_skill_restates_the_hook_path():
         f"{offenders} prescribe the hardcoded hook path; the model skill computes "
         "it from cosmos_rl.__file__"
     )
+
+
+# ── Contracts the cosmos3 scripts actually enforce ─────────────────────────
+
+def test_the_rcca_template_passes_its_own_validator():
+    """An error message pointing at a template that fails the check would send
+    the reader in a circle. This is the check the branch kept finding: a
+    documented artifact that does not exist or does not satisfy its own rule."""
+    sys.path.insert(0, str(C3))
+    commit = _load(C3 / "commit_stage.py", "cosmos3_commit_stage")
+    template = REPO / ("skills/applications/tao-run-deft-aoi-cosmos3/references/"
+                       "RCCA_REPORT_TEMPLATE.md")
+    assert template.is_file(), "the validator's error names a template that is absent"
+    commit._required_rcca_report(template, "--rcca-report")
+
+
+def test_an_incomplete_rcca_report_names_the_missing_sections(tmp_path):
+    sys.path.insert(0, str(C3))
+    commit = _load(C3 / "commit_stage.py", "cosmos3_commit_stage2")
+    partial = tmp_path / "rcca.md"
+    partial.write_text("# RCCA\n\n## Verdict\n\nfine\n", encoding="utf-8")
+    with pytest.raises(ValueError) as excinfo:
+        commit._required_rcca_report(partial, "--rcca-report")
+    message = str(excinfo.value)
+    assert "Per-Defect Analysis" in message and "RCCA_REPORT_TEMPLATE.md" in message
+
+
+def test_proxy_rcca_requires_the_report():
+    body = (C3 / "commit_stage.py").read_text(encoding="utf-8")
+    assert "--rcca-report" in body and "_required_rcca_report" in body
+
+
+def test_the_image_cap_patcher_distinguishes_lifted_from_moved():
+    """Absent has two causes. A newer image that lifted the cap must not block
+    the loop; a file that moved the cap must not be waved through into
+    `ValueError: At most 1 image(s) may be provided in one prompt`."""
+    patcher = _load(C3 / "patch_eval_image_cap.py", "cosmos3_cap_patcher")
+
+    _, current = patcher.apply_cap('engine = LLM(model=path)', 2)
+    assert current == 2, "a genuinely lifted cap should report no patch needed"
+
+    with pytest.raises(ValueError, match="present but its image cap did not match"):
+        patcher.apply_cap('limit_mm_per_prompt=DEFAULT_CAPS', 2)
+
+    _, current = patcher.apply_cap('limit_mm_per_prompt={"image": 1}', 2)
+    assert current == 1, "a real cap must still be detected and patched"
+
+
+def test_the_manifest_key_is_documented_exactly():
+    """A flat manifest is rejected by a message naming the nested key; the docs
+    have to say which key, or the reader guesses."""
+    root = REPO / "skills/applications/tao-run-deft-aoi-cosmos3"
+    # SKILL.md is size-capped, so prose migrates into references/. What matters
+    # is that the skill documents the key SOMEWHERE, not which file.
+    documented = any(
+        "evaluation_contract.benchmark.annotations_sha256" in path.read_text(encoding="utf-8")
+        for path in [root / "SKILL.md", *sorted((root / "references").glob("*.md"))]
+    )
+    validator = (C3 / "validate_split_contract.py").read_text(encoding="utf-8")
+    assert documented, "the manifest's nested key is documented nowhere"
+    assert '["evaluation_contract"]["benchmark"]["annotations_sha256"]' in validator, (
+        "the documented key no longer matches what the validator reads"
+    )

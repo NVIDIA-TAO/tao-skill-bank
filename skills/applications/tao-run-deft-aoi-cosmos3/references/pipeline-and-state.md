@@ -86,9 +86,22 @@ count against `max_iterations`.
    seed and write `train_iter_<N>.json`. Dedupe by the two-image pair and
    exclude Proxy and Benchmark targets.
 7. Run `validate_sharegpt.py --require-files` and
-   `validate_split_contract.py` against the assembled Train file, passing
+   `validate_split_contract.py --train train_iter_<N>.json
+   --manifest <benchmark manifest> --summary <validation>/split_contract_summary.json`
+   against the assembled Train file, passing
    `--synthetic` when AnomalyGen produced records this iteration and
-   `--previous-train train_iter_<N-1>.json` for N>1. The latter makes historical
+   `--previous-train train_iter_<N-1>.json` for N>1. **`--manifest` is
+   required**: without it the Benchmark hash is compared against the value
+   recorded alongside it, which is self-referential, and
+   `benchmark_hash_verified` stays false.
+
+   The manifest is a JSON file whose **exact nested key**
+   `evaluation_contract.benchmark.annotations_sha256` holds the frozen
+   Benchmark SHA-256 that `init_deft_state.py` recorded under
+   `config.evaluation.benchmark.sha256`. A flat or differently-keyed file is
+   rejected with `missing evaluation_contract.benchmark.annotations_sha256`,
+   which names the key rather than the file, so the shape has to be written
+   down somewhere — here. The latter makes historical
    records eligible while proving that the current Train retained all of them.
 8. Retrain, then Benchmark-evaluate/gate. Stop when the gate passes or
    `N = max_iterations`. Only when the loop continues, Proxy-evaluate and run

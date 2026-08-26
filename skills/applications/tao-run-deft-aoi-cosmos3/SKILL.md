@@ -144,9 +144,8 @@ credential value.
   `scripts/resolve_tao_image.py`; never copy a Cosmos image pin into this
   application skill.
 - Train action: resolved by `scripts/stage_bundle.py` from the model skill's
-  current `cosmos-rl` backend contract. Do not restate the hook path here — the
-  model skill computes it from `cosmos_rl.__file__`, so a literal
-  `/opt/cosmos_rl/tao_sft_example.py` points at a file that does not exist.
+  `cosmos-rl` backend contract. Never restate the hook path; see
+  `references/stage-execution.md`.
 - The pinned image caps vLLM evaluation at one image per prompt, which this
   two-image contract cannot satisfy. Run `scripts/patch_eval_image_cap.py`
   before the first evaluate job and mount its output read-only into every
@@ -199,7 +198,9 @@ Run `scripts/validate_sharegpt.py` on Proxy, Benchmark, Mining, and each
 generated iteration training file. There is no input Train annotation.
 Run `scripts/validate_split_contract.py` to prove that Proxy, Benchmark, and
 Mining targets are disjoint and that the frozen Benchmark annotation hash has
-not changed. When a generated Train file is supplied, the same validator
+not changed. `--manifest` is required for a real hash check; its key is in
+`references/pipeline-and-state.md`. When a generated Train file is supplied,
+the same validator
 requires its targets to come from Mining, the immediate `--previous-train`
 seed, or the current iteration's `--synthetic` AnomalyGen output, and to remain
 disjoint from Proxy and Benchmark. For iteration N>1, `--previous-train` is
