@@ -39,7 +39,7 @@ TAO task **`video_clip`** wraps OpenGVLab **InternVideo2-CLIP L14**. The PyTorch
 
 Container images and per-action commands are in `references/skill_info.yaml` and `references/tao-deploy-video-clip.skill_info.yaml`. Starting specs are in `references/spec_template_*.yaml`.
 
-> **Release note:** The pinned PyTorch image is the TAO 7.2 FC build validated for Video-CLIP. It includes PyAV 17.1.0 as the primary decoder and ONNXScript 0.7.1 for export, with decord absent. The TAO Deploy image is pinned independently because `gen_trt_engine` and TensorRT-backed actions do not run in the PyTorch image.
+> **Release note:** The pinned PyTorch image is the TAO 7.2 FC build validated for Video-CLIP. The pinned tag resolves to OCI digest `sha256:faeb58559e1d87afd16453580999c178feb345f9dc87e35b8f40098e9604dd09`; it includes PyAV 17.1.0 as the primary decoder and ONNXScript 0.7.1 for export, with decord absent. The TAO Deploy image is pinned independently because `gen_trt_engine` and TensorRT-backed actions do not run in the PyTorch image.
 >
 > **Known-broken images:** interim builds cut before tao-pytorch commit `0cc31de4` ship a `video_clip` package with no `model.backbones` submodule, so `train`/`evaluate`/`inference` die at import while `video_clip --help` still exits 0. Images without PyAV also fail at data loading. Run both import checks in the preflight below before pulling data or launching a run.
 
@@ -52,7 +52,7 @@ AutoML is not packaged for this model skill. Always use direct `video_clip` acti
 Use the pinned TAO container declared in `references/skill_info.yaml`. Pull with `NGC_KEY` when the image is not cached locally.
 
 ```bash
-VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-04"  # versions-key: images.tao_toolkit.video_clip
+VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-06"  # versions-key: images.tao_toolkit.video_clip
 VIDEO_CLIP_IMAGE="${VIDEO_CLIP_IMAGE:-$VIDEO_CLIP_IMAGE_DEFAULT}"
 docker pull "$VIDEO_CLIP_IMAGE"
 ```
@@ -84,7 +84,7 @@ workspace/
 Docker options for all actions (skill-eval CI uses the same `$WORKSPACE_DIR` bind-mount pattern):
 
 ```bash
-VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-04"  # versions-key: images.tao_toolkit.video_clip
+VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-06"  # versions-key: images.tao_toolkit.video_clip
 VIDEO_CLIP_IMAGE="${VIDEO_CLIP_IMAGE:-$VIDEO_CLIP_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
 DOCKER_COMMON=(
@@ -194,10 +194,11 @@ video_clip export -e /path/to/export.yaml
 ## Credentials
 
 - **NGC_KEY** — pull the pinned TAO container from `nvcr.io` when it is not cached locally.
-- **HF_TOKEN** (only when weights are not already cached on the host):
-  HuggingFace read token used to resolve the InternVideo2 snapshot named by
-  `model.internvideo2clip_hf_id`. With `HF_HUB_OFFLINE=1` and local MobileCLIP +
-  InternVideo2 weights already on disk, no token is required.
+- **HF_TOKEN** (online Hugging Face download only): Hugging Face read token used
+  when `model.vision_encoder` and `model.clip_head` are `null` and the resolver
+  downloads the InternVideo2 snapshot named by `model.internvideo2clip_hf_id`.
+  For offline CI/eval, stage the complete S3/local snapshot and point both fields
+  at the local files; no Hugging Face token is then required.
 
 Treat tokens as secrets. Export them into the environment or pass them through an
 `--env-file` of bare `KEY=value` lines, rather than inlining values into generated
@@ -237,7 +238,7 @@ Use `dataset.metrics.mode: retrieval` only when `dataset.val.video_text.relevanc
 
 ## Export
 
-`export.encoder_type: combined` produces the image-and-text ONNX consumed by the Video-CLIP deploy workflow. Export also writes matching `*_config.yaml` and `*_tokenizer/` sidecars; preserve all three artifacts. Default opset is **23** on the vendor branch. Export requires a trained `.pth` at `export.checkpoint`.
+`export.encoder_type: combined` produces the image-and-text ONNX consumed by the Video-CLIP deploy workflow. Keep `export.batch_size: -1` for symbolic/dynamic batch dimensions; a positive value produces a fixed-batch ONNX. Export also writes matching `*_config.yaml` and `*_tokenizer/` sidecars; preserve all three artifacts. Default opset is **23** on the vendor branch. Export requires a trained `.pth` at `export.checkpoint`.
 
 ## LoRA
 

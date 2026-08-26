@@ -32,6 +32,17 @@ def test_decode_contract_requires_pyav_without_decord_install_workaround():
     assert "decord==" not in combined.lower()
 
 
+def test_eval_data_staging_uses_the_provisioned_smoke_pack():
+    eval_config = (MODEL_ROOT / "eval.config").read_text()
+
+    assert "--profile seanlin" in eval_config
+    assert "s3://computex/skill-eval-ci/iv2clip/*" in eval_config
+    assert "team-tao" not in eval_config
+    assert "s3://tao-skill-eval-ci/iv2clip/" not in eval_config
+    assert "s3://skill_eval/test_data/tao-finetune-video-clip/" not in eval_config
+    assert "s3://bucket/skill_eval/test_data/tao-finetune-video-clip/" not in eval_config
+
+
 def test_deploy_actions_and_templates_match_video_clip_contract():
     base_info = _load_yaml(MODEL_ROOT / "references" / "skill_info.yaml")
     deploy_info = _load_yaml(
@@ -78,6 +89,7 @@ def test_deploy_actions_and_templates_match_video_clip_contract():
 
     export_spec = _load_yaml(MODEL_ROOT / "references" / "spec_template_export.yaml")
     assert export_spec["export"]["encoder_type"] == "combined"
+    assert export_spec["export"]["batch_size"] == -1
 
 
 def test_deploy_eval_case_is_registered():

@@ -39,7 +39,7 @@ images:
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
     cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
     # Video-CLIP uses release-candidate images until the TAO 7.2 artifacts reach GA.
-    video_clip:         nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-04
+    video_clip:         nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-06
     video_clip_deploy:  nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-47-multiarch
     vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 

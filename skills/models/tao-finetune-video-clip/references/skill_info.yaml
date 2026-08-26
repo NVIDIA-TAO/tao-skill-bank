@@ -1,6 +1,6 @@
 network_arch: video-clip
 automl_enabled: false
-container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-04  # versions-key: images.tao_toolkit.video_clip
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-06  # versions-key: images.tao_toolkit.video_clip
 required_credentials:
 - HF_TOKEN
 - NGC_KEY
