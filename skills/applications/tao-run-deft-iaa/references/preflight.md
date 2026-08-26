@@ -144,9 +144,23 @@ Run this section only after required intake is resolved.
 
    ```bash
    docker version --format '{{.Server.Version}}'
+<<<<<<< HEAD
    docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.pyt
    docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.data_services
    nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
+=======
+   docker image inspect nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt >/dev/null 2>&1  # versions-key: images.tao_toolkit.pyt
+   docker image inspect nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services >/dev/null 2>&1  # versions-key: images.tao_toolkit.data_services
+   TARGET_GPU_ARGS=()
+   IFS=, read -r -a GPU_ID_LIST <<< "$GPU_IDS"
+   for GPU_ID in "${GPU_ID_LIST[@]}"; do
+     TARGET_GPU_ARGS+=(--target-gpu-index "$GPU_ID")
+   done
+   "${TAO_SKILL_BANK_PATH:?}/scripts/check_tao_launch_preflight.py" \
+     --skill-bank "$TAO_SKILL_BANK_PATH" --platform docker \
+     --container-image nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt \
+     --gpu-min-count "$NUM_GPUS" "${TARGET_GPU_ARGS[@]}"
+>>>>>>> 661a7f9 ([Bugfix] GPU preflight treated physical inventory as CUDA-visible capacity (#156))
    ```
 
    Missing local images are planned pulls. Do not run a CUDA container probe
@@ -160,7 +174,12 @@ Run this section only after required intake is resolved.
    If the user explicitly asks for a permissions check, `stat` only that named
    file, warn about group/other readability, and still require credentials to
    be exported in the launching environment.
-6. Resolve the approved GPU shape. SigLIP2-so400m training commonly needs
+6. Resolve the approved GPU shape. The shared preflight intersects physical
+   `nvidia-smi` inventory with `CUDA_VISIBLE_DEVICES`, then compares the
+   process-visible count with `num_gpus` and verifies every requested host
+   index is visible. Its summary must show `physical`, `visible`, and
+   `requested`; a request larger than the visible set is blocking. Keep using
+   `nvidia-smi` for utilization and memory on the selected devices. SigLIP2-so400m training commonly needs
    roughly 30–45 GB free per selected GPU at the bundled batch size. Treat this
    as a planning estimate, not a capability guarantee. Surface occupied GPUs;
    do not silently reshape `gpu_ids`.
@@ -257,7 +276,8 @@ Inputs
                  (source=versions.yaml; status=<local | pull after approval>)
   data-services image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
                        (source=versions.yaml; status=<local | pull after approval>)
-  GPUs: <selected IDs> (source=<user | default>);
+  GPUs: <selected host IDs> (source=<user | default>);
+        physical=<count>; visible=<CUDA-visible count>; requested=<num_gpus>;
         memory=<free/total discovery result>
 
 Planned writes/actions
