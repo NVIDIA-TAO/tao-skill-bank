@@ -187,13 +187,94 @@ def run(state_path: pathlib.Path, command: list[str]) -> int:
     return subprocess.run(command, env=environment, check=False).returncode
 
 
+def _launcher():
+    """The bank's shared four-verb launcher.
+
+    submit/status/logs/cancel over a spec-bundle are identical for every DEFT
+    workflow -- nothing in them mentions a stage, a state file or a network
+    architecture -- so they live at bank root beside tao_job_record.py rather
+    than being copied into each workflow. This module keeps what IS specific to
+    Cosmos3: its air-gap policy and its state file.
+    """
+    import importlib.util
+
+    path = _bank() / "scripts" / "tao_launch.py"
+    if not path.is_file():
+        raise ValueError(
+            f"the shared launcher is missing at {path}; set TAO_SKILL_BANK_PATH "
+            "to a bank that ships scripts/tao_launch.py"
+        )
+    spec = importlib.util.spec_from_file_location("tao_launch", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["tao_launch"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _bank() -> pathlib.Path:
+    env = os.environ.get("TAO_SKILL_BANK_PATH")
+    if env:
+        return pathlib.Path(env).expanduser().resolve()
+    return pathlib.Path(__file__).resolve().parents[4]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state", required=True, type=pathlib.Path)
+    # The four verbs, delegated to the shared launcher. Which backend to ask
+    # comes from the job RECORD, not a flag, so a job can be awaited, read or
+    # cancelled from a session that never launched it.
+    parser.add_argument("--submit", action="store_true",
+                        help="launch a spec-bundle and print the job id")
+    parser.add_argument("--bundle", type=pathlib.Path)
+    parser.add_argument("--await-job", metavar="JOB_ID",
+                        help="poll to a terminal state and close the record")
+    parser.add_argument("--logs", metavar="JOB_ID")
+    parser.add_argument("--cancel", metavar="JOB_ID")
+    parser.add_argument("--platform", default="docker")
+    parser.add_argument("--ctx", action="append", metavar="KEY=VALUE", default=[])
+    parser.add_argument("--tail", type=int, default=200)
+    parser.add_argument("--poll-seconds", type=float, default=10.0)
+    parser.add_argument("--timeout-seconds", type=float, default=0.0)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
+
     try:
+        verbs = [name for name in ("submit", "await_job", "logs", "cancel")
+                 if getattr(args, name)]
+        if len(verbs) > 1:
+            raise ValueError(
+                f"{', '.join('--' + v.replace('_', '-') for v in verbs)} are "
+                "separate steps"
+            )
+        if verbs and command:
+            raise ValueError(
+                "a verb and a trailing command are different modes: the verbs "
+                "launch a bundle, `-- <cmd>` runs one command under the policy"
+            )
+        if verbs:
+            launcher = _launcher()
+            ctx_extra = dict(item.split("=", 1) for item in args.ctx)
+            if args.logs:
+                return launcher.job_logs(args.logs, args.tail, ctx_extra)
+            if args.cancel:
+                return launcher.cancel_job(args.cancel, ctx_extra)
+            if args.await_job:
+                return launcher.await_job(
+                    args.await_job, poll_seconds=args.poll_seconds,
+                    timeout_seconds=args.timeout_seconds, ctx_extra=ctx_extra)
+            if not args.bundle:
+                raise ValueError("--submit needs --bundle")
+            bundle = launcher.load_bundle(args.bundle, _policy(args.state))
+            state = json.loads(args.state.expanduser().read_text())
+            results_dir = state.get("results_dir")
+            if not results_dir:
+                raise ValueError(f"{args.state} has no results_dir")
+            print(launcher.submit_bundle(
+                args.state, bundle, results_dir=results_dir,
+                platform=args.platform, ctx_extra=ctx_extra))
+            return 0
         return run(args.state, command)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"deft_exec: {exc}", file=sys.stderr)

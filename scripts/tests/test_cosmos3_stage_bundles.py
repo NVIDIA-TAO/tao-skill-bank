@@ -255,3 +255,102 @@ def test_the_bundled_tests_do_reach_into_sibling_skills():
         "the bundled tests no longer reach outside the skill; the working-"
         "directory requirement in SKILL.md can be relaxed"
     )
+
+
+# ── The documented verbs must exist ────────────────────────────────────────
+# stage-execution.md documented `deft_exec.py --submit/--await-job/--logs` for
+# Cosmos3 while that script accepted only `--state` and a trailing command. The
+# emitter was useless: an agent following the page hit "unrecognized arguments".
+#
+# Copying AOI's ~400 lines would have created the fork this work exists to
+# remove -- DEFT AOI, IAA and Cosmos3 already ship three commit_stage.py. The
+# verbs are workflow-agnostic (no stage name, state file or network arch
+# anywhere in them), so they live at bank root and both workflows delegate.
+
+DEFT_EXECS = {
+    "aoi": REPO / "skills/applications/tao-run-deft-aoi/scripts/deft_exec.py",
+    "cosmos3": REPO / "skills/applications/tao-run-deft-aoi-cosmos3/scripts/deft_exec.py",
+}
+
+
+def test_the_shared_launcher_exists():
+    assert (REPO / "scripts/tao_launch.py").is_file(), (
+        "the shared four-verb launcher is missing; each workflow would need its "
+        "own copy"
+    )
+
+
+@pytest.mark.parametrize("verb", ["submit_bundle", "await_job", "job_logs", "cancel_job"])
+def test_the_launcher_implements_every_verb(verb):
+    module = _load(REPO / "scripts/tao_launch.py", "tao_launch_probe")
+    assert callable(getattr(module, verb, None))
+
+
+@pytest.mark.parametrize("workflow", sorted(DEFT_EXECS))
+@pytest.mark.parametrize("flag", ["--submit", "--await-job", "--logs", "--cancel"])
+def test_every_workflow_exposes_the_documented_verbs(workflow, flag):
+    """A reference documenting a flag the script rejects is worse than no doc."""
+    done = subprocess.run([sys.executable, str(DEFT_EXECS[workflow]), "--help"],
+                          capture_output=True, text=True)
+    assert flag in done.stdout, f"{workflow} deft_exec has no {flag}"
+
+
+def test_cosmos3_keeps_its_policy_gate(tmp_path):
+    """The verbs are additive: `-- <cmd>` still enforces air-gap policy."""
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps(
+        {"results_dir": str(tmp_path), "execution_policy": {"network_mode": "airgap"}}))
+    done = subprocess.run(
+        [sys.executable, str(DEFT_EXECS["cosmos3"]), "--state", str(state),
+         "--", "pip", "install", "torch"],
+        capture_output=True, text=True)
+    assert done.returncode != 0 and "air-gap" in done.stdout + done.stderr
+
+
+def test_a_verb_and_a_trailing_command_are_refused_together(tmp_path):
+    """Two different modes; silently preferring one would hide the other."""
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"results_dir": str(tmp_path)}))
+    done = subprocess.run(
+        [sys.executable, str(DEFT_EXECS["cosmos3"]), "--state", str(state),
+         "--logs", "job-1", "--", "echo", "hi"],
+        capture_output=True, text=True)
+    assert done.returncode != 0
+    assert "different modes" in done.stdout + done.stderr
+
+
+def test_the_launcher_is_workflow_agnostic():
+    """If it starts naming a workflow in CODE, it has stopped being shared.
+
+    The module docstring names the workflows deliberately -- it explains which
+    forks this exists to prevent -- so only the code below it is scanned.
+    """
+    import ast
+
+    source = (REPO / "scripts/tao_launch.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    body = ast.unparse(ast.Module(body=[
+        node for node in tree.body
+        if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))
+    ], type_ignores=[])).lower()
+    for term in ("deft_state", "changenet", "cosmos3", "iter_label"):
+        assert term not in body, f"the shared launcher references {term!r} in code"
+
+
+def test_nothing_in_the_skill_restates_the_hook_path():
+    """The literal points at a file that does not exist, wherever it appears."""
+    root = REPO / "skills/applications/tao-run-deft-aoi-cosmos3"
+    offenders = []
+    for path in sorted(root.rglob("*.md")) + sorted(root.rglob("*.toml")):
+        body = path.read_text(encoding="utf-8")
+        if "/opt/cosmos_rl/tao_sft_example.py" not in body:
+            continue
+        # Naming it to say it is WRONG is the point; prescribing it is not.
+        if any(k in body for k in ("does not exist", "NOT /opt/cosmos_rl",
+                                   "points at a file that does not exist")):
+            continue
+        offenders.append(str(path.relative_to(root)))
+    assert not offenders, (
+        f"{offenders} prescribe the hardcoded hook path; the model skill computes "
+        "it from cosmos_rl.__file__"
+    )

@@ -143,8 +143,10 @@ credential value.
   `tao-finetune-cosmos-reason/references/skill_info.yaml` with
   `scripts/resolve_tao_image.py`; never copy a Cosmos image pin into this
   application skill.
-- Train action: `cosmos-rl --config <spec.toml>
-  /opt/cosmos_rl/tao_sft_example.py`.
+- Train action: resolved by `scripts/stage_bundle.py` from the model skill's
+  current `cosmos-rl` backend contract. Do not restate the hook path here — the
+  model skill computes it from `cosmos_rl.__file__`, so a literal
+  `/opt/cosmos_rl/tao_sft_example.py` points at a file that does not exist.
 - The pinned image caps vLLM evaluation at one image per prompt, which this
   two-image contract cannot satisfy. Run `scripts/patch_eval_image_cap.py`
   before the first evaluate job and mount its output read-only into every
