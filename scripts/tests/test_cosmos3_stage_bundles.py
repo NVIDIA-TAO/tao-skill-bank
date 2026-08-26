@@ -417,3 +417,45 @@ def test_the_manifest_key_is_documented_exactly():
     assert '["evaluation_contract"]["benchmark"]["annotations_sha256"]' in validator, (
         "the documented key no longer matches what the validator reads"
     )
+
+
+# ── eval.config is the LIVE-EXECUTION lane ─────────────────────────────────
+# docs/skill-requirements.md draws the line: evals/evals.json is the required,
+# no-execution routing check; eval.config is the optional layer that "pulls real
+# datasets, runs real docker run, measures real" behaviour. A plan-only entry in
+# eval.config occupies a Colossus GPU shard (x2 backends) to exercise nothing,
+# and duplicates a check the free lane already runs -- more strictly, as
+# individually gradable expected_behavior items rather than one prose paragraph.
+
+def test_no_plan_only_eval_sits_in_the_execution_lane():
+    cfg = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+        .read_text(encoding="utf-8"))
+    plan_only = [
+        e["id"] for e in cfg["evals"]
+        if "do not execute" in e["prompt"].lower()
+        or "plan-only" in e["prompt"].lower()
+    ]
+    assert not plan_only, (
+        f"{plan_only} are plan-only but sit in eval.config, which is the "
+        "live-execution lane. Routing checks belong in evals/evals.json, which "
+        "is required, free, and graded per behaviour"
+    )
+
+
+def test_the_routing_coverage_still_exists():
+    """Removing the duplicate must not remove the coverage."""
+    entries = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/evals/evals.json")
+        .read_text(encoding="utf-8"))
+    planning = [e for e in entries if "plan" in e["question"].lower()]
+    assert planning, "no routing/plan check survives in evals.json"
+    # Both fields: expected_behavior lists gradable items, ground_truth carries
+    # the narrative the grader compares against. A claim in either is covered.
+    behaviours = " ".join(
+        str(e.get("expected_behavior", "")) + " " + str(e.get("ground_truth", ""))
+        for e in planning
+    ).lower()
+    # The things the removed eval asserted, still asserted here.
+    for claim in ("does not default to a platform", "submit/status/logs/cancel"):
+        assert claim in behaviours, f"lost coverage: {claim!r}"
