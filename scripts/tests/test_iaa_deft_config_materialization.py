@@ -370,19 +370,24 @@ assert config.mining.knn_metric == "cosine"
 
 
 def test_runtime_interpreter_probe_does_not_require_omegaconf(tmp_path, monkeypatch):
-    fake_python = tmp_path / "python-without-omegaconf"
-    fake_python.write_text(
-        """#!/usr/bin/python3
-import sys
-
-code = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "-c" else ""
-if "import pandas,numpy,pyarrow" in code:
-    raise SystemExit(9 if "omegaconf" in code else 0)
-print("FAKE_PYTHON_SELECTED")
-"""
+    stubs = tmp_path / "runtime-dependencies"
+    stubs.mkdir()
+    for module_name in (
+        "pandas",
+        "numpy",
+        "pyarrow",
+        "PIL",
+        "yaml",
+        "matplotlib",
+        "sklearn",
+        "torch",
+    ):
+        (stubs / f"{module_name}.py").write_text("")
+    (stubs / "omegaconf.py").write_text(
+        'raise ModuleNotFoundError("omegaconf intentionally unavailable")\n'
     )
-    fake_python.chmod(0o755)
-    monkeypatch.setenv("DEFT_PYTHON", str(fake_python))
+    monkeypatch.setenv("DEFT_PYTHON", sys.executable)
+    monkeypatch.setenv("PYTHONPATH", str(stubs))
 
     completed = subprocess.run(
         [
@@ -391,7 +396,7 @@ print("FAKE_PYTHON_SELECTED")
             "--workspace",
             str(tmp_path),
             "-c",
-            "print('fallback interpreter was selected')",
+            "print('RUNTIME_INTERPRETER_SELECTED')",
         ],
         check=False,
         capture_output=True,
@@ -399,7 +404,7 @@ print("FAKE_PYTHON_SELECTED")
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "FAKE_PYTHON_SELECTED"
+    assert completed.stdout.strip() == "RUNTIME_INTERPRETER_SELECTED"
 
 
 @pytest.mark.parametrize(
