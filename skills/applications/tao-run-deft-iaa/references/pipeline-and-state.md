@@ -86,6 +86,15 @@ For each stage:
 4. Validate and commit once with the exact artifact and command-status flags.
 5. Audit again. Advance only when the committed event is accepted.
 6. Tell the user one line: `[label · stage] outcome · next: <action>`.
+7. When the audit remains nonterminal, continue with step 1 for its selected
+   next action in the same attached turn. Do not convert the progress line into
+   a final response or wait for a human `continue` message.
+
+The driver stays attached from the first approved launch through a terminal
+audit by default. Backgrounding a long container changes only how its status is
+polled; it does not detach the driving turn. If the user explicitly requests a
+detach, report the exact `audit_deft_run.py` resume command and make no promise
+that the workflow will advance without a new driver invocation.
 
 If execution fails and the documented single correction also fails, record
 the expected current stage as an error when canonical state is still valid:
