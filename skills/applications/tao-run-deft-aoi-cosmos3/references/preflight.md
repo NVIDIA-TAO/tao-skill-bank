@@ -92,11 +92,17 @@ test -f "$TAO_SKILL_BANK_PATH/versions.yaml" || { echo "missing $TAO_SKILL_BANK_
 test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" >&2; exit 2; }
 test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" >&2; exit 2; }
 COSMOS_MODEL_ID="${COSMOS_MODEL_ID:-nvidia/Cosmos3-Nano}"
+COSMOS_FRAMEWORK_IMAGE=$(
+  "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
+    images.tao_toolkit.cosmos_framework
+)
+# Evaluation remains exactly on cosmos-rl vLLM; resolve it separately.
 COSMOS_RL_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" \
     --skill-bank "$TAO_SKILL_BANK_PATH" \
     --model "$COSMOS_MODEL_ID" \
-    --action train \
+    --action evaluate \
     --backend cosmos-rl \
     --format json \
   | "$PYTHON" -c 'import json, sys; image = json.load(sys.stdin).get("image"); assert image; print(image)'
@@ -113,7 +119,8 @@ AG_IMAGE=$(
 )
 ```
 
-Use image inspection through the chosen platform. If an image is absent and
+Use image inspection through the chosen platform. Record the Framework Train
+image as an immutable repository digest in the job-record and DEFT state. If an image is absent and
 pulling requires a credential, report the missing variable name only. A
 `DENIED` error on a public image usually means a stale `nvcr.io` entry in
 `~/.docker/config.json`, not a missing key — retry once with a throwaway empty
@@ -151,8 +158,9 @@ Read:
 
 - `skills/models/tao-finetune-cosmos-reason/SKILL.md`;
 - its `references/skill_info.yaml`;
-- its `references/spec_template_train.yaml` and
-  `references/spec_template_evaluate.yaml`;
+- its `references/spec_template_evaluate.yaml`;
+- this application's `references/cosmos_framework_sft_smoke.toml` and
+  `references/cosmos_framework_sft_full.toml`;
 - `references/cosmos-reason.md`.
 
 Reuse an existing spec, generate an absent one. When
@@ -161,9 +169,9 @@ tuning — validate it against the invariants below and keep it; never overwrite
 it with a freshly generated file. Generate only what is missing.
 
 Build separate Proxy and Benchmark nested spec dictionaries in memory from the
-model skill's same evaluate template. Validate the model skill's Train template
-plus the workspace's initial Mining Pool annotation path and requested
-hyperparameters. Show every override and its source, and report per spec
+model skill's same evaluate template. Render the application-owned Framework
+Train profile with the prepared model, current generated Train JSON, media
+root, and requested hyperparameters. Show every override and its source, and report per spec
 whether it was reused or generated. Do not write staged TOML files until
 approval. Required invariants hold for both paths — a reused spec that violates
 one is a stop, not a silent regeneration:
@@ -180,14 +188,15 @@ one is a stop, not a silent regeneration:
 - identify the published Cosmos Reason 3 checkpoint as the conversion source
   (recognizable by `model_type="cosmos3_omni"`) and plan a prepared Qwen3-VL
   PTM path;
-- prove the selected Cosmos-RL image can load the prepared PTM and train the
-  selected variant, and derive its conversion and compute requirements
-  independently;
+- prove the selected Framework image can load the prepared PTM and train the
+  selected variant; separately prove the cosmos-rl image can evaluate the
+  exported HF artifact;
 - `automl_policy=off` is a workflow argument, never a spec key;
-- `policy.model_name_or_path` uses the prepared Qwen3-VL PTM path while the
-  selected Cosmos3 ID remains the source-model lineage;
-- `policy.model_max_length >= 40960`;
-- `train.train_policy.type="sft"`;
+- Framework `[model.backbone].model_name` and `safetensors_path` use the
+  prepared Qwen3-VL PTM path while the selected Cosmos3 ID remains lineage;
+- the Framework adapter sets VLM `model_max_length=40960`;
+- `[model].lora_enabled=true`, `optimizer.keys_to_select=["lora_"]`, BF16,
+  FSDP2, single-node replication, and a positive synchronous DCP cadence;
 - the workspace Train template initially points to `mining_pool.json`;
 - baseline evaluates the frozen Benchmark gate first, and no Train job runs
   before the gate is shown unmet and zero-shot Proxy plus Proxy RCA follow;
@@ -225,10 +234,10 @@ single approval gate and before the baseline frozen Benchmark evaluation.
 ## 8. Credentials
 
 Check only variables required for confirmed missing assets and the chosen
-platform. Neither token is required by default: the Cosmos-RL, data-services,
-and AnomalyGen images this workflow uses are public on `nvcr.io`, so `NGC_KEY`
-matters only for a registry that actually rejects an anonymous pull. Report
-`UNSET` as the normal case, not as a finding.
+platform. Neither token is required by default: check Framework Train,
+Cosmos-RL evaluate, data-services, and AnomalyGen pulls directly. `NGC_KEY`
+matters only when the selected registry rejects an anonymous pull. Report
+`UNSET` as the normal case when all required images are already accessible.
 
 A required variable is either already exported in the session or comes from a
 user-approved env file (see AGENTS.md). Load such a file in the same command as
@@ -267,7 +276,8 @@ Record:
   the selected platform. Preserve that exact string for
   `init_deft_state.py --gpu-model`; never report the local host's accelerator
   for a remote Docker, Kubernetes, SLURM, Brev, or external-platform run;
-- `policy.parallelism.dp_shard_size` and `dp_replicate_size`;
+- Framework `data_parallel_shard_degree` and
+  `data_parallel_replicate_degree`;
 - LoRA rank/alpha/target modules;
 - epochs, batch size, learning rate;
 - Proxy and Benchmark sample counts;
@@ -312,10 +322,11 @@ record-then-launch ordering must be explicit.
 | Next Train | `train_iter_<N>.json`, created after Proxy RCA and Mining selection | workflow |
 | KPI | <metric operator target> + unknown_predictions <= 0 | user/default |
 | Iterations | <N> | user |
-| Train shape | <nodes x GPUs; exact GPU model/memory; epochs; batch; LR; LoRA> | user/spec/platform |
+| Train shape | <cosmos-framework; nodes x GPUs; exact GPU model/memory; steps; batch; LR; LoRA> | user/spec/platform |
 | Mining | <top-K, default 5; cosine floor; history-aware filepath dedup> | user/default |
 | AnomalyGen | <project; num_SDG; each asset path or will auto-fetch from HF (default)> | user/default |
-| Cosmos-RL image | <resolved URI> | versions.yaml |
+| Framework Train image | <resolved URI + immutable digest> | versions.yaml/image inspect |
+| Cosmos-RL evaluate image | <resolved URI> | versions.yaml |
 | Data-services image | <resolved URI> | versions.yaml |
 | AnomalyGen image | <resolved URI> | versions.yaml |
 | Credential status | <names with SET/UNSET only> | environment |

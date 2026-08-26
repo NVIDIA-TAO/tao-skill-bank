@@ -103,6 +103,43 @@ only newly mined and newly generated, validated records; `train_iter_<N>.json`
 for `N > 1` starts from the preceding Train artifact and adds only newly mined
 and newly generated, validated records.
 
+## Train backend boundary
+
+Train alone uses the resolver-selected `images.tao_toolkit.cosmos_framework`
+image and `python -m cosmos_framework.scripts.train --sft-toml=<config>`.
+Proxy and Benchmark evaluate remain on the existing cosmos-rl vLLM action.
+The Framework stage consumes the prepared HF Qwen3-VL snapshot directly,
+trains native VLM LoRA through BF16 single-node FSDP2, writes DCP on the
+profile's cadence, and runs the image-owned exact-key DCP exporter before the
+next evaluate stage. Evaluation receives only the verified merged HF
+safetensors directory.
+
+The pinned image does not yet natively accept CR3's two-image ShareGPT rows.
+The Train submission therefore mounts the skill-owned interim adapter as one
+read-only experiment module; no generated annotation is rewritten. Remove
+that mount only after source inspection proves a native equivalent.
+
+Assembled annotations retain absolute host image paths, matching the evaluate
+stages' identity-mount convention. `submit_cfw_train.py` therefore always adds
+a read-only same-path mount for the host media root and a read-only same-path
+mount for each containing directory referenced outside that root.
+Relative annotation paths continue to resolve through the configured
+compute-frame media mount. Operators do not need to discover or add these
+identity mounts by hand.
+
+Every Train submission records all of the following before launch:
+
+- job-record `image`: immutable `repository@sha256:...`, not a mutable tag;
+- `train_submission.json`: `train_backend=cosmos-framework`, versions key,
+  resolved URI, immutable image digest, job id, config, and exact argv;
+- `deft_state.json` `config.training`: `backend`, `image`, and `image_digest`;
+- Train terminal transition message/DEFT stage summary: backend plus the same
+  immutable digest.
+
+Treat disagreement among those four evidence surfaces as a hard stop. Continue
+to poll Docker/Kubernetes/SLURM/Brev rather than reading runtime state from the
+submission manifest or DEFT state.
+
 ## State
 
 `deft_state.json` is the only persistent loop record. Initialize it once with
@@ -113,6 +150,8 @@ hand-edit or reinitialize it. It contains:
   policy, selected Python, and maximum iterations;
 - platform, model, image, spec, annotation, media-root, compute, and mining
   configuration;
+- separate `cosmos_framework_train` and `cosmos_rl_evaluate` container
+  identities, plus the Framework Train backend and immutable image digest;
 - the frozen Benchmark SHA-256;
 - one `iterations.<label>` object whose `stage_completed` matches the latest
   successful event for that label;
@@ -134,10 +173,11 @@ All paths are absolute.
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/commit_stage.py" \
   --results-dir "$RESULTS_DIR" --iter-label iter1 --stage train \
-  --best-ckpt "$RESULTS_DIR/iter1/train/safetensors/epoch_10" \
+  --best-ckpt "$RESULTS_DIR/iter1/train/eval_model" \
+  --export-verification "$RESULTS_DIR/iter1/train/export_action.json" \
   --training-spec "$WORKSPACE/specs/train_spec.toml" \
   --duration-sec "$STAGE_DURATION_SEC" \
-  --summary "first mined-data Cosmos3 LoRA SFT completed"
+  --summary "cosmos-framework LoRA SFT completed; image=$COSMOS_FRAMEWORK_IMAGE_DIGEST"
 ```
 
 ```bash

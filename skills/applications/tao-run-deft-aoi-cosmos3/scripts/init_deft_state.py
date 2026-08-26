@@ -72,6 +72,9 @@ def _resolve_image_from_versions_yaml(*path: str) -> str | None:
 DEFAULT_COSMOS_IMAGE = os.environ.get(
     "COSMOS_RL_IMAGE"
 ) or _resolve_image_from_versions_yaml("images", "tao_toolkit", "cosmos_rl")
+DEFAULT_FRAMEWORK_IMAGE = os.environ.get(
+    "COSMOS_FRAMEWORK_IMAGE"
+) or _resolve_image_from_versions_yaml("images", "tao_toolkit", "cosmos_framework")
 DEFAULT_MINING_IMAGE = os.environ.get(
     "TAO_DS_IMAGE"
 ) or _resolve_image_from_versions_yaml("images", "tao_toolkit", "data_services")
@@ -171,6 +174,8 @@ def _metric_contract(
     results_dir: pathlib.Path,
     metric: str,
     threshold: float,
+    floor_metric: str | None = None,
+    floor_threshold: float | None = None,
 ) -> dict[str, Any]:
     display_names = {
         "recall_ng": "NG recall",
@@ -178,6 +183,25 @@ def _metric_contract(
         "f1_ng": "NG F1",
         "accuracy": "Accuracy",
     }
+    constraints = [
+        {
+            "name": "unknown_predictions",
+            "display_name": "Unknown predictions",
+            "operator": "<=",
+            "target": 0,
+            "unit": "",
+        }
+    ]
+    if floor_metric is not None and floor_threshold is not None:
+        constraints.append(
+            {
+                "name": floor_metric,
+                "display_name": display_names[floor_metric],
+                "operator": ">=",
+                "target": floor_threshold,
+                "unit": "",
+            }
+        )
     return validate_contract(
         {
             "name": metric,
@@ -195,15 +219,7 @@ def _metric_contract(
                     / "metric_result.json"
                 ),
             },
-            "constraints": [
-                {
-                    "name": "unknown_predictions",
-                    "display_name": "Unknown predictions",
-                    "operator": "<=",
-                    "target": 0,
-                    "unit": "",
-                }
-            ],
+            "constraints": constraints,
         }
     )
 
@@ -250,6 +266,8 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         results_dir=results_dir,
         metric=args.kpi_metric,
         threshold=args.kpi_threshold,
+        floor_metric=args.kpi_floor_metric,
+        floor_threshold=args.kpi_floor_threshold,
     )
     benchmark_hash = _sha256(annotations["benchmark"])
     media_root = (args.media_root or workspace).expanduser().resolve()
@@ -312,10 +330,14 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             },
             "specs": {role: str(path) for role, path in specs.items()},
             "containers": {
-                "cosmos_rl": args.cosmos_container,
+                "cosmos_framework_train": args.train_container,
+                "cosmos_rl_evaluate": args.cosmos_container,
                 "data_services": args.mining_container,
             },
             "training": {
+                "backend": "cosmos-framework",
+                "image": args.train_container,
+                "image_digest": args.train_image_digest,
                 "annotation_source": "generated_from_mining_and_anomalygen",
                 "num_gpus": args.num_gpus,
                 "num_nodes": args.num_nodes,
@@ -431,6 +453,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--kpi-threshold", type=float, default=1.0)
     parser.add_argument(
+        "--kpi-floor-metric",
+        choices=("recall_ng", "precision_ng", "f1_ng", "accuracy"),
+        help="Optional secondary Benchmark metric that must also clear a floor.",
+    )
+    parser.add_argument(
+        "--kpi-floor-threshold",
+        type=float,
+        help="Required >= threshold for --kpi-floor-metric.",
+    )
+    parser.add_argument(
         "--base-model",
         default="nvidia/Cosmos3-Nano",
         help="Cosmos3 base model; Nano is default, Edge/Super require explicit selection.",
@@ -470,7 +502,21 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--top-k-per-target", type=int, default=5)
     parser.add_argument("--min-similarity", type=float, default=0.9)
-    parser.add_argument("--cosmos-container", default=DEFAULT_COSMOS_IMAGE)
+    parser.add_argument(
+        "--train-container",
+        default=DEFAULT_FRAMEWORK_IMAGE,
+        help="Resolver-selected images.tao_toolkit.cosmos_framework URI.",
+    )
+    parser.add_argument(
+        "--train-image-digest",
+        required=True,
+        help="Immutable sha256 digest or repository@sha256 digest from the Train job-record.",
+    )
+    parser.add_argument(
+        "--cosmos-container",
+        default=DEFAULT_COSMOS_IMAGE,
+        help="Unchanged cosmos-rl evaluate image.",
+    )
     parser.add_argument("--mining-container", default=DEFAULT_MINING_IMAGE)
     parser.add_argument("--anomalygen-container", default=DEFAULT_ANOMALYGEN_IMAGE)
     parser.add_argument(
@@ -551,15 +597,41 @@ def main(argv: list[str] | None = None) -> int:
     if not 0.0 <= args.kpi_threshold <= 1.0:
         print("init_deft_state: --kpi-threshold must be in [0, 1]", file=sys.stderr)
         return 2
+    if (args.kpi_floor_metric is None) != (args.kpi_floor_threshold is None):
+        print(
+            "init_deft_state: --kpi-floor-metric and --kpi-floor-threshold "
+            "must be supplied together",
+            file=sys.stderr,
+        )
+        return 2
+    if args.kpi_floor_metric == args.kpi_metric:
+        print(
+            "init_deft_state: --kpi-floor-metric must differ from --kpi-metric",
+            file=sys.stderr,
+        )
+        return 2
+    if (
+        args.kpi_floor_threshold is not None
+        and not 0.0 <= args.kpi_floor_threshold <= 1.0
+    ):
+        print(
+            "init_deft_state: --kpi-floor-threshold must be in [0, 1]",
+            file=sys.stderr,
+        )
+        return 2
     if not -1.0 <= args.min_similarity <= 1.0:
         print("init_deft_state: --min-similarity must be in [-1, 1]", file=sys.stderr)
         return 2
-    if not args.cosmos_container or not args.mining_container:
+    if not args.train_container or not args.cosmos_container or not args.mining_container:
         print(
-            "init_deft_state: both container images are required; resolve "
-            "images.tao_toolkit.{cosmos_rl,data_services} from versions.yaml",
+            "init_deft_state: Train, evaluate, and data-services images are required; resolve "
+            "images.tao_toolkit.{cosmos_framework,cosmos_rl,data_services} from versions.yaml",
             file=sys.stderr,
         )
+        return 2
+    digest = args.train_image_digest.rsplit("@", 1)[-1].removeprefix("sha256:")
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest.lower()):
+        print("init_deft_state: --train-image-digest must be a sha256 digest", file=sys.stderr)
         return 2
     output = args.results_dir.expanduser().resolve() / "deft_state.json"
     if output.exists():

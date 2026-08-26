@@ -25,7 +25,7 @@ REQUIRED_PUBLIC_FLAGS = {
     "--runtime-image",
     "--runtime-image-digest",
 }
-STALE_PUBLIC_FLAGS = {
+STALE_CONVERTER_FLAGS = {
     "--checkpoint-path",
     "--framework-image",
     "--framework-image-digest",
@@ -33,6 +33,7 @@ STALE_PUBLIC_FLAGS = {
     "--validate-with-image",
     "--vlm-model-name",
 }
+STALE_APPLICATION_FLAGS = STALE_CONVERTER_FLAGS - {"--checkpoint-path"}
 
 
 def cli_flags(script: pathlib.Path) -> set[str]:
@@ -66,14 +67,14 @@ class CheckpointConversionCliContractTests(unittest.TestCase):
 
         self.assertLessEqual(REQUIRED_PUBLIC_FLAGS, documented)
         self.assertLessEqual(documented, supported)
-        self.assertTrue(documented.isdisjoint(STALE_PUBLIC_FLAGS))
+        self.assertTrue(documented.isdisjoint(STALE_CONVERTER_FLAGS))
 
     def test_application_guidance_has_no_stale_public_flags(self) -> None:
         documents = [SKILL_ROOT / "SKILL.md", SKILL_ROOT / "eval.config"]
         documents.extend(sorted((SKILL_ROOT / "references").glob("*.md")))
         text = "\n".join(path.read_text(encoding="utf-8") for path in documents)
 
-        self.assertTrue(set(FLAG_PATTERN.findall(text)).isdisjoint(STALE_PUBLIC_FLAGS))
+        self.assertTrue(set(FLAG_PATTERN.findall(text)).isdisjoint(STALE_APPLICATION_FLAGS))
 
     def test_preflight_points_to_existing_model_section(self) -> None:
         preflight = PREFLIGHT.read_text(encoding="utf-8")

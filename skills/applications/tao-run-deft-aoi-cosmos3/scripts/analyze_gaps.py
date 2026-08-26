@@ -72,6 +72,8 @@ def analyze(
     *,
     kpi_metric: str = "recall_ng",
     kpi_threshold: float = 1.0,
+    kpi_floor_metric: str | None = None,
+    kpi_floor_threshold: float | None = None,
     evaluation_role: str = "proxy",
     report_only: bool = False,
 ) -> tuple[dict, list[dict], list[dict], list[dict]]:
@@ -147,6 +149,27 @@ def analyze(
         raise ValueError(
             f"kpi_metric must be one of {sorted(metrics)}, got {kpi_metric!r}"
         )
+    if (kpi_floor_metric is None) != (kpi_floor_threshold is None):
+        raise ValueError(
+            "kpi_floor_metric and kpi_floor_threshold must be supplied together"
+        )
+    if kpi_floor_metric is not None and kpi_floor_metric not in metrics:
+        raise ValueError(
+            f"kpi_floor_metric must be one of {sorted(metrics)}, got "
+            f"{kpi_floor_metric!r}"
+        )
+    if kpi_floor_metric == kpi_metric:
+        raise ValueError("kpi_floor_metric must differ from kpi_metric")
+    floor = (
+        {
+            "metric": kpi_floor_metric,
+            "threshold": kpi_floor_threshold,
+            "value": metrics[kpi_floor_metric],
+            "met": metrics[kpi_floor_metric] >= kpi_floor_threshold,
+        }
+        if kpi_floor_metric is not None and kpi_floor_threshold is not None
+        else None
+    )
 
     summary = {
         "evaluation_role": evaluation_role,
@@ -167,10 +190,13 @@ def analyze(
             "threshold": kpi_threshold if gate_eligible else None,
             "value": metrics[kpi_metric],
             "met": (
-                metrics[kpi_metric] >= kpi_threshold and len(unknowns) == 0
+                metrics[kpi_metric] >= kpi_threshold
+                and (floor is None or floor["met"])
+                and len(unknowns) == 0
                 if gate_eligible
                 else None
             ),
+            "floor": floor,
             "primary": kpi_metric,
             "tie_breaker": "precision_ng" if gate_eligible else None,
             "gate_eligible": gate_eligible,
@@ -223,6 +249,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="KPI threshold compared as metric >= threshold. Default 1.0.",
     )
     parser.add_argument(
+        "--kpi-floor-metric",
+        choices=(
+            "recall_ng",
+            "precision_ng",
+            "f1_ng",
+            "false_accept_rate",
+            "false_reject_rate",
+            "accuracy",
+        ),
+        help="Optional secondary metric that must also meet a >= floor.",
+    )
+    parser.add_argument(
+        "--kpi-floor-threshold",
+        type=float,
+        help="Required >= threshold for --kpi-floor-metric.",
+    )
+    parser.add_argument(
         "--evaluation-role",
         choices=("proxy", "benchmark"),
         default="proxy",
@@ -244,12 +287,20 @@ def main(argv: list[str] | None = None) -> int:
             samples,
             kpi_metric=args.kpi_metric,
             kpi_threshold=args.kpi_threshold,
+            kpi_floor_metric=args.kpi_floor_metric,
+            kpi_floor_threshold=args.kpi_floor_threshold,
             evaluation_role=args.evaluation_role,
             report_only=args.report_only,
         )
         args.output_dir.mkdir(parents=True, exist_ok=True)
         if summary["aggregate_only"]:
             _write_json(args.output_dir / "metrics_summary.json", summary)
+            constraints = {
+                "unknown_predictions": summary["unknown_samples"],
+            }
+            floor = summary["kpi"]["floor"]
+            if floor is not None:
+                constraints[floor["metric"]] = floor["value"]
             metric_result = {
                 "name": args.kpi_metric,
                 "value": summary["metrics"][args.kpi_metric],
@@ -257,9 +308,7 @@ def main(argv: list[str] | None = None) -> int:
                 "samples": summary["samples"],
                 "parseable_samples": summary["parseable_samples"],
                 "unknown_samples": summary["unknown_samples"],
-                "constraints": {
-                    "unknown_predictions": summary["unknown_samples"],
-                },
+                "constraints": constraints,
                 "metrics": summary["metrics"],
                 "confusion": summary["confusion"],
             }
@@ -280,6 +329,9 @@ def main(argv: list[str] | None = None) -> int:
     kpi_text = summary["kpi"]["metric"]
     if summary["kpi"]["threshold"] is not None:
         kpi_text += f">={summary['kpi']['threshold']:.6f}"
+    floor = summary["kpi"]["floor"]
+    if floor is not None:
+        kpi_text += f" AND {floor['metric']}>={floor['threshold']:.6f}"
     print(
         "analyze_gaps: "
         f"role={summary['evaluation_role']} "

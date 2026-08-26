@@ -69,6 +69,10 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
             "1",
             "--gpu-model",
             "NVIDIA H100 80GB",
+            "--train-container",
+            "example/framework:1",
+            "--train-image-digest",
+            "sha256:" + "a" * 64,
             "--cosmos-container",
             "example/cosmos:1",
             "--mining-container",
@@ -88,6 +92,46 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             state = json.loads((root / "results/deft_state.json").read_text())
             self.assertEqual(state["config"]["base_model"], "nvidia/Cosmos3-Edge")
+
+    def test_repository_digest_is_accepted_and_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            argv = self._argv(root, workspace)
+            digest_index = argv.index("sha256:" + "a" * 64)
+            immutable = "example/framework@sha256:" + "a" * 64
+            argv[digest_index] = immutable
+
+            self.assertEqual(init_deft_state.main(argv), 0)
+            state = json.loads((root / "results/deft_state.json").read_text())
+            self.assertEqual(state["config"]["training"]["image_digest"], immutable)
+
+    def test_compound_gate_is_frozen_into_metric_constraints(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+
+            rc = init_deft_state.main(
+                self._argv(
+                    root,
+                    workspace,
+                    "--kpi-metric",
+                    "recall_ng",
+                    "--kpi-threshold",
+                    "1.0",
+                    "--kpi-floor-metric",
+                    "accuracy",
+                    "--kpi-floor-threshold",
+                    "0.9",
+                )
+            )
+
+            self.assertEqual(rc, 0)
+            state = json.loads((root / "results/deft_state.json").read_text())
+            accuracy = state["metric_contract"]["constraints"][1]
+            self.assertEqual(accuracy["name"], "accuracy")
+            self.assertEqual(accuracy["operator"], ">=")
+            self.assertEqual(accuracy["target"], 0.9)
 
     def test_unknown_base_model_is_rejected_with_allowed_values(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

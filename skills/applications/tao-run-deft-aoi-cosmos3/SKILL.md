@@ -5,7 +5,7 @@ description: >
   Cosmos3 models, using Nano by default and Edge or Super when explicitly
   requested: evaluate the base model on Proxy and frozen Benchmark splits,
   mine real image pairs from Proxy gaps, assemble a per-iteration Train JSON
-  from selected Mining samples, train with cosmos-rl LoRA SFT, and repeat
+  from selected Mining samples, train with native cosmos_framework VLM LoRA SFT, and repeat
   through the selected platform's submit/status/logs/cancel contract.
   This migration supports bare labels only: the assistant response must be
   exactly OK or NG. Use for "run Cosmos3 DEFT AOI", "CR3 AOI loop", or
@@ -113,28 +113,23 @@ credential value.
   recommendation based on hardware or workload, recommend one with the
   tradeoff, but require an explicit selection before state initialization.
   Never silently switch or fall back to another variant.
-- Keep the selected canonical ID as source-model lineage, but do not pass the
-  native online checkpoint directly to Cosmos-RL.
-- The published Cosmos Reason 3 reasoners ship in Cosmos3's own native Omni
-  format (`model_type="cosmos3_omni"`), which Cosmos-RL cannot load. After
-  launch approval and before baseline evaluation, run the model skill's
-  `scripts/prepare_cosmos3_vlm_checkpoint.py` to convert the selected reasoner
-  into a Qwen3-VL safetensors PTM, or validate and reuse an existing prepared
-  output.
-- Use the prepared PTM consistently for zero-shot evaluation, Train
-  `policy.model_name_or_path`, and LoRA `model.base_model_path`. The model
-  being trained is still the selected Cosmos Reason 3 reasoner — keep its
-  canonical ID as checkpoint lineage; the Qwen3-VL PTM is only the on-disk
-  format Cosmos-RL consumes.
-- Nano may use the helper's packaged Qwen3-VL default. Edge and Super require
-  a variant-specific, validated VLM base; never reuse Nano's conversion
-  arguments.
-- Container image: resolve the `cosmos-rl` backend from
-  `tao-finetune-cosmos-reason/references/skill_info.yaml` with
-  `scripts/resolve_tao_image.py`; never copy a Cosmos image pin into this
-  application skill.
-- Train action: `cosmos-rl --config <spec.toml>
-  /opt/cosmos_rl/tao_sft_example.py`.
+- Keep the canonical ID as lineage. Framework Train and cosmos-rl evaluate
+  cannot consume its native `model_type="cosmos3_omni"` directory, so after
+  approval use the model skill's `scripts/prepare_cosmos3_vlm_checkpoint.py` to create
+  or verify a Qwen3-VL HF snapshot. Use that path for Framework
+  `[model.backbone]` and zero-shot evaluate. Edge/Super require their own
+  validated VLM base; never reuse Nano conversion arguments.
+- Train container image: resolve `images.tao_toolkit.cosmos_framework` with
+  `scripts/resolve_versions_key.py`; never copy its tag into this skill.
+- Train with `python -m cosmos_framework.scripts.train --sft-toml=<config>`.
+  Render the smoke/full profile with `render_cfw_sft.py`; submit only through
+  `submit_cfw_train.py`. Because the image has native VLM LoRA but no native
+  two-image ShareGPT loader, that helper mounts `cfw_cr3_aoi_adapter.py` and
+  identity-mounts absolute annotations; see pipeline-and-state.
+- Export with `export_cfw_checkpoint.py`, which calls the image-owned exact-key
+  `cosmos_framework.scripts.export_vlm_dcp`. The unchanged cosmos-rl vLLM
+  evaluate consumes its verified merged HF output with `model.enable_lora=false`.
+  Train commit requires the matching verified shard/tokenizer manifest.
 - Before the first evaluate job, run `scripts/patch_eval_image_cap.py` to
   source-classify the selected image. Mount its output read-only into every
   evaluation container only when it reports `patch_required`; no mount is
@@ -142,15 +137,13 @@ credential value.
   shape is a hard stop; see `references/cosmos-reason.md`.
 - Workflow override: `automl_policy: off`. DEFT owns iteration and checkpoint
   selection; this is a workflow argument, not a TOML key.
-- Default adaptation: LoRA over the language-side projections
+- Default adaptation: Framework-native VLM LoRA over language projections
   `["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj",
   "down_proj"]`, leaving the vision tower's pretrained weights untouched. The
-  schema also accepts `"all-linear"`, which additionally adapts the vision
-  linear layers; use it only when the user explicitly requests it. Derive all
-  other Train defaults from the model skill's current template.
+  schema also accepts `"all-linear"`; use it only when explicitly requested.
 - Every spec is a nested dictionary serialized to TOML. Never write literal
   flat dotted keys into a spec.
-- Do not mount user data over `/workspace`; cosmos-rl is installed there.
+- Do not mount user data over `/workspace`; both backends install code there.
 - Run every Docker container with a writable host mount as the invoking
   UID:GID with `USER`, `LOGNAME`, `HOME=/tmp`, and the read-only host
   passwd/group databases; never fall back to a root repair container. This
@@ -159,13 +152,14 @@ credential value.
   `references/tao-mine-aoi-images.md`.
 
 Read `skills/models/tao-finetune-cosmos-reason/SKILL.md` and its
-`references/skill_info.yaml` before authoring a spec. Start from the model
-skill's current packaged template for the selected action and apply only the
-AOI workflow overrides in `references/cosmos-reason.md`. Replace every
-dataset/output path with the chosen platform's compute-frame path. Prove that
-the selected Cosmos-RL image can load the prepared PTM and train the requested
-variant; do not reuse Nano conversion, parallelism, or memory assumptions for
-Edge or Super.
+`references/skill_info.yaml` before authoring an evaluate spec. Start Train
+from this application's current Framework profile and evaluate from the model
+skill's current packaged template; apply only the AOI overrides in
+`references/cosmos-reason.md`. Replace every dataset/output path with the
+chosen platform's compute-frame path. Prove that the selected Framework image
+can load and train the prepared PTM, and separately that the selected cosmos-rl
+image can evaluate the exported HF artifact. Do not reuse Nano conversion,
+parallelism, or memory assumptions for Edge or Super.
 
 ## Bare OK/NG Contract
 
@@ -205,6 +199,7 @@ retained.
   sample errors never feed routing or mining.
 - Default gate: `recall_ng >= 1.0`. If the user asks for accuracy, use
   `accuracy >= <target>`.
+- Compound gate: pass matching `--kpi-floor-metric accuracy` and floor flags.
 - Unknown model responses block the gate through the
   `unknown_predictions <= 0` metric constraint.
 
@@ -255,11 +250,13 @@ Read `references/preflight.md` and run every ordered check:
 2. resolve workspace, annotations, media root, and `max_iterations`;
 3. validate bare ShareGPT and Proxy/Benchmark/Mining target isolation;
 4. hash and freeze Benchmark annotations;
-5. resolve current Cosmos-RL and data-services images from `versions.yaml`;
+5. resolve the current Framework Train, cosmos-rl evaluate, and data-services
+   images from `versions.yaml`;
 6. plan conversion of the selected Cosmos Reason 3 reasoner into a Qwen3-VL
    PTM, and that output's platform-visible path;
 7. check only required environment-variable presence;
-8. construct Proxy / Benchmark TOML specs and validate the Train template;
+8. construct Proxy / Benchmark TOML specs and render/validate the Framework
+   Train template;
 9. verify compute shape and path visibility from the selected platform;
 10. run the model/platform launch preflight;
 11. show the full Pre-Flight Summary and stop for approval.
@@ -339,7 +336,7 @@ report rendering.
 
 | Stage | Producer | Read first |
 |---|---|---|
-| Train | `tao-finetune-cosmos-reason` train, `automl_policy: off` | `references/cosmos-reason.md`, `references/example_lora_config.toml` |
+| Train | native `cosmos_framework` VLM LoRA, `automl_policy: off` | `references/cosmos-reason.md`, `references/cosmos_framework_sft_full.toml` |
 | Proxy / Benchmark evaluate | `tao-finetune-cosmos-reason` evaluate | `references/cosmos-reason.md` |
 | Proxy RCCA / Benchmark metric | bundled `analyze_gaps.py` | `references/gap-analysis.md` |
 | Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
@@ -352,7 +349,7 @@ report rendering.
 Commit an error stage and do not auto-retry for: invalid disk state; a rich or
 non-exact training label; a JSONL or non-array annotation input; an
 an unconverted Cosmos Reason 3 checkpoint still in native Omni format at a
-Cosmos-RL boundary;
+Framework Train or cosmos-rl evaluate boundary;
 missing/ambiguous mined-to-source alignment; missing/tampered mining history,
 cross-iteration mined filepath duplication; target overlap among
 Proxy/Benchmark/Mining; a generated Train target outside Mining and AnomalyGen

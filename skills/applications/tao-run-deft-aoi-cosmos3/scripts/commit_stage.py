@@ -26,6 +26,7 @@ RCCA_ARTIFACT_MANIFEST = (
     / "rcca-artifact-manifest.json"
 )
 
+from export_cfw_checkpoint import verify_hf_artifact
 from record_metric_result import commit as commit_metric_result
 from render_report import render as render_html_report
 
@@ -317,6 +318,53 @@ def _required_checkpoint(value: pathlib.Path | None, flag: str) -> str:
     return str(path.resolve())
 
 
+def _required_verified_export(
+    value: pathlib.Path | None, checkpoint: pathlib.Path
+) -> str:
+    path = pathlib.Path(_required_file(value, "--export-verification"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"--export-verification must be valid JSON: {path} ({exc})"
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("status") != "VERIFIED":
+        raise ValueError(
+            "--export-verification must record status=VERIFIED from "
+            "export_cfw_checkpoint.py"
+        )
+    action_model = payload.get("action_model_path")
+    if (
+        not isinstance(action_model, str)
+        or pathlib.Path(action_model).resolve() != checkpoint
+    ):
+        raise ValueError(
+            "--export-verification action_model_path must exactly match "
+            f"--best-ckpt: {checkpoint}"
+        )
+    if payload.get("train_backend") != "cosmos-framework" or payload.get(
+        "evaluation_backend"
+    ) != "cosmos-rl-vllm":
+        raise ValueError(
+            "--export-verification has the wrong train/evaluation backend contract"
+        )
+
+    artifact = verify_hf_artifact(checkpoint)
+    if payload.get("weight_files") != artifact["weight_files"] or payload.get(
+        "expected_shard_count"
+    ) != artifact["expected_shard_count"]:
+        raise ValueError(
+            "--export-verification shard manifest does not match --best-ckpt; "
+            "rerun export_cfw_checkpoint.py --verify-only"
+        )
+    if payload.get("required_runtime_files") != artifact["required_runtime_files"]:
+        raise ValueError(
+            "--export-verification runtime-file manifest is incomplete; rerun "
+            "export_cfw_checkpoint.py --verify-only"
+        )
+    return str(path)
+
+
 def _within(path: str, root: pathlib.Path, flag: str) -> str:
     resolved = pathlib.Path(path).resolve()
     try:
@@ -369,11 +417,19 @@ def _apply_success(
     stage = args.stage
     phase_root = results_dir / args.iter_label
     if stage == "train":
-        phase["best_ckpt_path"] = _within(
+        best_ckpt = _within(
             _required_checkpoint(args.best_ckpt, "--best-ckpt"),
             phase_root / "train",
             "--best-ckpt",
         )
+        phase["export_verification"] = _within(
+            _required_verified_export(
+                args.export_verification, pathlib.Path(best_ckpt)
+            ),
+            phase_root / "train",
+            "--export-verification",
+        )
+        phase["best_ckpt_path"] = best_ckpt
         phase["training_spec"] = _required_file(
             args.training_spec, "--training-spec"
         )
@@ -704,6 +760,14 @@ def _parser() -> argparse.ArgumentParser:
         help="Measured wall-clock seconds; must be positive, or >= 0 with --skip",
     )
     parser.add_argument("--best-ckpt", type=pathlib.Path)
+    parser.add_argument(
+        "--export-verification",
+        type=pathlib.Path,
+        help=(
+            "Required train-stage VERIFIED JSON from export_cfw_checkpoint.py; "
+            "the stage revalidates its shard/tokenizer contract before commit"
+        ),
+    )
     parser.add_argument("--training-spec", type=pathlib.Path)
     parser.add_argument("--proxy-results", type=pathlib.Path)
     parser.add_argument("--proxy-gaps-summary", type=pathlib.Path)

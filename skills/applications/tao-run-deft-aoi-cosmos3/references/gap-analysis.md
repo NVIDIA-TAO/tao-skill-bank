@@ -54,10 +54,15 @@ Proxy means the gap row came from somewhere it should not have.
   --kpi-threshold "$KPI_THRESHOLD"
 ```
 
+For an approved compound gate, append
+`--kpi-floor-metric accuracy --kpi-floor-threshold "$KPI_FLOOR_THRESHOLD"`
+to this command (and use the same pair at state initialization).
+
 Benchmark writes aggregate `metrics_summary.json` and
-`metric_result.json`. The metric result contains the configured primary value
-and `unknown_predictions`; `record_metric_result.py` compares both with the
-approved contract. Benchmark does not write routing artifacts.
+`metric_result.json`. The metric result contains the configured primary value,
+`unknown_predictions`, and the optional floor metric value;
+`record_metric_result.py` compares all of them with the approved contract.
+Benchmark does not write routing artifacts.
 
 ## Normalization and confusion matrix
 

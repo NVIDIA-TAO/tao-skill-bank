@@ -29,6 +29,13 @@ The contract is the source of truth for stop decisions and best-iteration
 selection. Proxy metrics are diagnostic and never committed as the iteration
 metric result.
 
+When the approved gate is compound, pass
+`--kpi-floor-metric accuracy --kpi-floor-threshold <floor>` to both
+`init_deft_state.py` and Benchmark `analyze_gaps.py`. Initialization adds an
+`accuracy >= <floor>` constraint, and analysis copies the measured accuracy
+into `metric_result.constraints.accuracy`; no state or result post-processing
+is permitted.
+
 Supported primary metrics in this migration are `recall_ng`,
 `precision_ng`, `f1_ng`, and `accuracy`, all compared with `>=`. Values and
 targets are fractions in `[0, 1]`.

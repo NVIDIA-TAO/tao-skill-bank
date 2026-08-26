@@ -91,6 +91,46 @@ def write_json(path: pathlib.Path, payload: object) -> pathlib.Path:
     return path
 
 
+def write_verified_export(output: pathlib.Path) -> pathlib.Path:
+    output.mkdir(parents=True, exist_ok=True)
+    shard = "model-00001-of-00001.safetensors"
+    (output / shard).write_bytes(b"weights")
+    write_json(
+        output / "model.safetensors.index.json",
+        {"weight_map": {"model.layer.weight": shard}},
+    )
+    for name in (
+        "config.json",
+        "checkpoint.json",
+        "export_manifest.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+    ):
+        write_json(output / name, {})
+    verification = output.parent / "export_action.json"
+    return write_json(
+        verification,
+        {
+            "status": "VERIFIED",
+            "train_backend": "cosmos-framework",
+            "evaluation_backend": "cosmos-rl-vllm",
+            "action_model_path": str(output.resolve()),
+            "weight_files": [shard],
+            "expected_shard_count": 1,
+            "required_runtime_files": [
+                "config.json",
+                "checkpoint.json",
+                "export_manifest.json",
+                "model.safetensors.index.json",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "preprocessor_config.json",
+            ],
+        },
+    )
+
+
 def write_rcca_report(path: pathlib.Path) -> pathlib.Path:
     path.write_text(
         "# Cosmos3 Proxy RCCA Report\n\n"
@@ -337,6 +377,24 @@ class BareAnnotationTests(unittest.TestCase):
         self.assertEqual(output[0]["images"], ["pool/a.png", "golden/g.png"])
         self.assertEqual(output[0]["conversations"][-1]["value"], "NG")
 
+    def test_mined_alignment_prefers_full_path_over_colliding_basename(self) -> None:
+        source = [
+            record("pool/board-a/U77@1_SolderLight.jpg", "golden/a.jpg", "NG"),
+            record("pool/board-b/U77@1_SolderLight.jpg", "golden/b.jpg", "OK"),
+        ]
+        output, summary = emit_mined_sharegpt.emit_records(
+            ["pool/board-b/U77@1_SolderLight.jpg"],
+            source,
+            media_root=pathlib.Path("/dataset"),
+            relative=True,
+        )
+        self.assertEqual(
+            output[0]["images"],
+            ["pool/board-b/U77@1_SolderLight.jpg", "golden/b.jpg"],
+        )
+        self.assertEqual(output[0]["conversations"][-1]["value"], "OK")
+        self.assertEqual(summary["match_modes"], {"exact": 1})
+
     def test_first_train_is_mined_then_assembly_is_monotonic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -397,7 +455,7 @@ class IsolationAndMetricTests(unittest.TestCase):
             "/models/custom-cosmos3",
         )
 
-    def test_model_skill_owns_train_and_evaluate_templates(self) -> None:
+    def test_model_evaluate_and_application_framework_train_templates(self) -> None:
         info = yaml.safe_load(
             (MODEL_ROOT / "references/skill_info.yaml").read_text()
         )
@@ -412,6 +470,18 @@ class IsolationAndMetricTests(unittest.TestCase):
             self.assertEqual(info["actions"][action]["config_format"], "toml")
         self.assertIn("train_dataset", train["custom"])
         self.assertIn("dataset", evaluate)
+        self.assertTrue(
+            (SKILL_ROOT / "references/cosmos_framework_sft_smoke.toml").is_file()
+        )
+        self.assertTrue(
+            (SKILL_ROOT / "references/cosmos_framework_sft_full.toml").is_file()
+        )
+        self.assertFalse(
+            (SKILL_ROOT / "references/example_lora_config.toml").exists()
+        )
+        self.assertFalse(
+            (SKILL_ROOT / "references/example_sft_config.toml").exists()
+        )
         self.assertFalse(
             (SKILL_ROOT / "references/train_spec.toml").exists()
         )
@@ -632,6 +702,63 @@ class IsolationAndMetricTests(unittest.TestCase):
         self.assertFalse(unknown["kpi"]["met"])
         self.assertEqual(unknown["unknown_samples"], 1)
 
+    def test_compound_gate_emits_and_enforces_accuracy_floor(self) -> None:
+        samples = [
+            {"gt": "NG", "response": "NG"},
+            {"gt": "OK", "response": "NG"},
+        ]
+        summary, *_ = analyze_gaps.analyze(
+            samples,
+            evaluation_role="benchmark",
+            kpi_metric="recall_ng",
+            kpi_threshold=1.0,
+            kpi_floor_metric="accuracy",
+            kpi_floor_threshold=0.9,
+        )
+        self.assertEqual(summary["metrics"]["recall_ng"], 1.0)
+        self.assertFalse(summary["kpi"]["floor"]["met"])
+        self.assertFalse(summary["kpi"]["met"])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            results = write_json(root / "results.json", samples)
+            output = root / "metrics"
+            self.assertEqual(
+                analyze_gaps.main(
+                    [
+                        "--results-json",
+                        str(results),
+                        "--output-dir",
+                        str(output),
+                        "--evaluation-role",
+                        "benchmark",
+                        "--kpi-metric",
+                        "recall_ng",
+                        "--kpi-threshold",
+                        "1.0",
+                        "--kpi-floor-metric",
+                        "accuracy",
+                        "--kpi-floor-threshold",
+                        "0.9",
+                    ]
+                ),
+                0,
+            )
+            metric_result = json.loads(
+                (output / "metric_result.json").read_text()
+            )
+            self.assertEqual(metric_result["constraints"]["accuracy"], 0.5)
+
+        contract = init_deft_state._metric_contract(
+            results_dir=pathlib.Path("/results"),
+            metric="recall_ng",
+            threshold=1.0,
+            floor_metric="accuracy",
+            floor_threshold=0.9,
+        )
+        self.assertEqual(contract["constraints"][1]["name"], "accuracy")
+        self.assertEqual(contract["constraints"][1]["target"], 0.9)
+
 
 class StateMachineTests(unittest.TestCase):
     def test_stage_commit_validates_duration_by_skip_contract(self) -> None:
@@ -663,6 +790,78 @@ class StateMachineTests(unittest.TestCase):
             "driving RCCA has zero false accepts",
         ]
         self.assertEqual(commit_stage.main([*skip, "--duration-sec", "-1"]), 2)
+
+    def test_train_stage_refuses_truncated_verified_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            results = root / "results"
+            results.mkdir()
+            state_path = write_json(
+                results / "deft_state.json",
+                {
+                    "version": 5,
+                    "status": "in_progress",
+                    "iterations": {},
+                    "events": [],
+                },
+            )
+            output = results / "iter1/train/eval_model"
+            output.mkdir(parents=True)
+            (output / "config.json").write_text("{}\n")
+            (output / "checkpoint.json").write_text("{}\n")
+            (output / "export_manifest.json").write_text("{}\n")
+            (output / "model-00001-of-00002.safetensors").write_bytes(b"partial")
+            write_json(
+                output / "model.safetensors.index.json",
+                {
+                    "weight_map": {
+                        "model.a": "model-00001-of-00002.safetensors",
+                        "model.b": "model-00002-of-00002.safetensors",
+                    }
+                },
+            )
+            verification = write_json(
+                output.parent / "export_action.json",
+                {
+                    "status": "VERIFIED",
+                    "train_backend": "cosmos-framework",
+                    "evaluation_backend": "cosmos-rl-vllm",
+                    "action_model_path": str(output.resolve()),
+                    "weight_files": [
+                        "model-00001-of-00002.safetensors",
+                        "model-00002-of-00002.safetensors",
+                    ],
+                    "expected_shard_count": 2,
+                    "required_runtime_files": [],
+                },
+            )
+            training_spec = root / "train.toml"
+            training_spec.write_text("value = 1\n")
+            original = state_path.read_text()
+            self.assertEqual(
+                commit_stage.main(
+                    [
+                        "--results-dir",
+                        str(results),
+                        "--iter-label",
+                        "iter1",
+                        "--stage",
+                        "train",
+                        "--best-ckpt",
+                        str(output),
+                        "--export-verification",
+                        str(verification),
+                        "--training-spec",
+                        str(training_spec),
+                        "--duration-sec",
+                        "1",
+                        "--summary",
+                        "must fail closed",
+                    ]
+                ),
+                2,
+            )
+            self.assertEqual(state_path.read_text(), original)
 
     def test_baseline_commit_to_completion(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -699,6 +898,10 @@ class StateMachineTests(unittest.TestCase):
                     "NVIDIA H100 80GB HBM3",
                     "--max-iterations",
                     "1",
+                    "--train-container",
+                    "example/framework:1",
+                    "--train-image-digest",
+                    "sha256:" + "a" * 64,
                     "--cosmos-container",
                     "example/cosmos:1",
                     "--mining-container",
@@ -715,6 +918,15 @@ class StateMachineTests(unittest.TestCase):
                 state["execution_policy"]["allow_package_install"]
             )
             self.assertNotIn("train", state["config"]["annotations"])
+            self.assertEqual(state["config"]["training"]["backend"], "cosmos-framework")
+            self.assertEqual(
+                state["config"]["training"]["image_digest"],
+                "sha256:" + "a" * 64,
+            )
+            self.assertEqual(
+                state["config"]["containers"]["cosmos_rl_evaluate"],
+                "example/cosmos:1",
+            )
             self.assertTrue(state["config"]["evaluation"]["proxy"]["drives_rcca"])
             self.assertFalse(
                 state["config"]["evaluation"]["proxy"]["drives_loop_stop"]
@@ -854,6 +1066,10 @@ class StateMachineTests(unittest.TestCase):
                         "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "2",
+                        "--train-container",
+                        "example/framework:1",
+                        "--train-image-digest",
+                        "sha256:" + "a" * 64,
                         "--cosmos-container",
                         "example/cosmos:1",
                         "--mining-container",
@@ -954,6 +1170,10 @@ class StateMachineTests(unittest.TestCase):
                 "NVIDIA H100 80GB HBM3",
                 "--max-iterations",
                 "1",
+                "--train-container",
+                "example/framework:1",
+                "--train-image-digest",
+                "sha256:" + "a" * 64,
                 "--cosmos-container",
                 "example/cosmos:1",
                 "--mining-container",
@@ -999,6 +1219,10 @@ class StateMachineTests(unittest.TestCase):
                             "NVIDIA H100 80GB HBM3",
                             "--max-iterations",
                             "1",
+                            "--train-container",
+                            "example/framework:1",
+                            "--train-image-digest",
+                            "sha256:" + "a" * 64,
                             "--cosmos-container",
                             "example/cosmos:1",
                             "--mining-container",
@@ -1069,6 +1293,10 @@ class StateMachineTests(unittest.TestCase):
                         "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "1",
+                        "--train-container",
+                        "example/framework:1",
+                        "--train-image-digest",
+                        "sha256:" + "a" * 64,
                         "--cosmos-container",
                         "example/cosmos:1",
                         "--mining-container",
@@ -1135,6 +1363,10 @@ class StateMachineTests(unittest.TestCase):
                         "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "2",
+                        "--train-container",
+                        "example/framework:1",
+                        "--train-image-digest",
+                        "sha256:" + "a" * 64,
                         "--cosmos-container",
                         "example/cosmos:1",
                         "--mining-container",
@@ -1303,6 +1535,10 @@ class StateMachineTests(unittest.TestCase):
                         "NVIDIA H100 80GB HBM3",
                         "--max-iterations",
                         "2",
+                        "--train-container",
+                        "example/framework:1",
+                        "--train-image-digest",
+                        "sha256:" + "a" * 64,
                         "--cosmos-container",
                         "example/cosmos:1",
                         "--mining-container",
@@ -1333,14 +1569,15 @@ class StateMachineTests(unittest.TestCase):
                 )
 
             def train(label: str) -> None:
-                checkpoint = results / label / "train/safetensors/epoch_1"
-                checkpoint.mkdir(parents=True)
-                (checkpoint / "adapter_model.safetensors").write_bytes(b"x")
+                checkpoint = results / label / "train/eval_model"
+                verification = write_verified_export(checkpoint)
                 commit(
                     label,
                     "train",
                     "--best-ckpt",
                     str(checkpoint),
+                    "--export-verification",
+                    str(verification),
                     "--training-spec",
                     str(workspace / "specs/train_spec.toml"),
                 )

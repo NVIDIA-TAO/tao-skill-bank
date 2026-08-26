@@ -37,16 +37,16 @@ runs. Its contents and bootstrap are owned by `references/tao-generate-anomalies
 
 The three `.json` files are the only input annotation sets. Each file contains
 one non-empty JSON array of bare OK/NG ShareGPT records; JSONL is not accepted
-by the Cosmos-RL dataset loaders. There is no input Train annotation. Relative
-image paths resolve from the workspace root. Ignore legacy `.jsonl` siblings
-when both formats are present.
+by either the Framework Train adapter or the Cosmos-RL evaluate loaders. There
+is no input Train annotation. Relative image paths resolve from the workspace
+root. Ignore legacy `.jsonl` siblings when both formats are present.
 
 The workspace TOML files are concrete or staged job specs, not application
 reference templates. They must exist before `init_deft_state.py` runs — it
 refuses to write state without them, because state is initialized exactly once
 and may never be hand-edited, so a state pointing at absent specs would leave
 the run unable to proceed. Build them from
-the current templates owned by `tao-finetune-cosmos-reason`:
+the current action templates:
 
 - Give Proxy and Benchmark their own evaluate spec, each already pointed at its
   own annotation and bound output path. Only when a single shared
@@ -58,9 +58,11 @@ the current templates owned by `tao-finetune-cosmos-reason`:
   when that gate is unmet. After Proxy RCA selects Mining samples, write
   `train_iter_<N>.json` and point the next staged Train job at that file.
 
-`references/example_lora_config.toml` and `references/example_sft_config.toml`
-show what a staged Train spec looks like at iteration N — with placeholder
-paths rather than a workspace's absolute ones.
+This application owns the Framework Train profiles
+`references/cosmos_framework_sft_smoke.toml` and
+`references/cosmos_framework_sft_full.toml`; render one with
+`scripts/render_cfw_sft.py`. The `tao-finetune-cosmos-reason` model skill still
+owns the unchanged Cosmos-RL evaluate template.
 
 Explicit non-default paths are valid. Record every path as an absolute path in
 the selected platform's compute frame.

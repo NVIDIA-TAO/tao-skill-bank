@@ -8,7 +8,7 @@ infer the mode.
 Air-gap mode is valid only when every selected platform input is already
 visible from the compute frame:
 
-- Cosmos-RL and data-services images;
+- Cosmos Framework Train, Cosmos-RL evaluate, and data-services images;
 - Cosmos3 base model / tokenizer cache;
 - Proxy, Benchmark, Mining JSON and all referenced images;
 - the AnomalyGen image, its fine-tuned checkpoint (`ag_config.yaml` plus the

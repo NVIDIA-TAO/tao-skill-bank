@@ -17,6 +17,10 @@ paths before invoking a script.
 | `validate_split_contract.py` | Enforce split isolation, monotonic generated-Train lineage, and Benchmark hash. |
 | `check_annotations.py` | Per-role field-contract check over all three workspace annotation files. `ROLE_CONTRACT` is the authoritative field list. |
 | `patch_eval_image_cap.py` | Source-classifies the selected image's evaluation cap, raises a recognized undersized literal, and returns the read-only mount only when required. |
+| `render_cfw_sft.py` | Render and validate the native Framework smoke/full Train profile. |
+| `submit_cfw_train.py` | Resolve the pinned Framework image and compose or execute the identity-preserving single-node Docker Train submission. |
+| `cfw_cr3_aoi_adapter.py` | Interim two-image ShareGPT dataset/processor mounted into the pinned Framework runtime. |
+| `export_cfw_checkpoint.py` | Invoke and verify the image-owned exact-key DCP-to-HF VLM exporter. |
 | `analyze_gaps.py` | Proxy RCCA artifacts or Benchmark aggregate metric evidence. |
 | `emit_sdg_sharegpt.py` | Resolve documented or PAIDF 1.0.1 SDG path forms and emit bare `NG` ShareGPT records. |
 | `filter_mined_by_cosine.py` | Recompute max cosine to Proxy targets and enforce the floor. |
@@ -40,10 +44,10 @@ Before every stage, call `deft_context.py --state <deft_state.json> --stage
 <deft_state.json> -- <command>`; the selected remote platform must enforce the
 same policy when it constructs a job.
 
-Train, Proxy evaluate, and Benchmark evaluate reuse the current
-`tao-finetune-cosmos-reason` action commands. Mining reuses
-`tao-mine-aoi-images`. The application owns only the DEFT-specific state,
-isolation, OK/NG analysis, filtering, and assembly scripts.
+Train uses this application's native Framework renderer, submission helper,
+interim dataset adapter, and export wrapper. Proxy/Benchmark evaluate reuse
+the unchanged `tao-finetune-cosmos-reason` cosmos-rl action, and Mining reuses
+`tao-mine-aoi-images`.
 
 ## Automatic report hook
 
@@ -72,4 +76,4 @@ command and contains no HTML-generation logic.
 - Train checkpoints are under `${RESULTS_DIR}/<label>/train`.
 - Proxy artifacts never contain Benchmark paths.
 - Mining, routing, and assembly never consume Benchmark per-sample errors.
-- User data is never mounted over the cosmos-rl `/workspace` package root.
+- User data is never mounted over either backend's `/workspace` package root.
