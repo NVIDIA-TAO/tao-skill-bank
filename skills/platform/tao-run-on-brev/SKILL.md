@@ -51,8 +51,8 @@ target instance — poll with a **two-word** command until it succeeds before
 issuing real work (a fresh instance reports `RUNNING` before sshd is up):
 
 ```bash
-for i in $(seq 1 60); do [ "$(brev exec <instance> "echo ok" 2>/dev/null)" = ok ] && break; sleep 5; done
-[ "$(brev exec <instance> "echo ok" 2>/dev/null)" = ok ] || { echo "instance not exec-ready"; exit 1; }
+for i in $(seq 1 60); do brev exec <instance> "echo ok" 2>/dev/null | grep -qx ok && break; sleep 5; done
+brev exec <instance> "echo ok" 2>/dev/null | grep -qx ok || { echo "instance not exec-ready"; exit 1; }
 ```
 
 The probe must be **two words, quoted as one argument**. A single-token probe
@@ -141,7 +141,7 @@ brev exec <instance> "docker manifest inspect $IMG >/dev/null && echo AUTH_OK ||
 brev exec <instance> "docker image inspect $IMG >/dev/null 2>&1 || docker pull $IMG"
 
 # Run a TAO job (the docker `submit` verb, over brev exec)
-brev exec <instance> "docker run -d --name $JOB_ID --gpus all -v ~/data:/data -e NGC_KEY $IMG visual_changenet train -e /data/spec.yaml"
+brev exec <instance> "docker inspect '$JOB_ID' >/dev/null 2>&1 && { echo '$JOB_ID already submitted'; exit 0; }; docker run -d --name '$JOB_ID' --label 'tao-job=$JOB_ID' --gpus all -v ~/data:/data -e NGC_KEY '$IMG' visual_changenet train -e /data/spec.yaml"
 ```
 
 ## Multi-GPU and multi-node

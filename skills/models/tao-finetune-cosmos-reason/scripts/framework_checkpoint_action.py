@@ -84,8 +84,23 @@ def infer_config_file(checkpoint: Path) -> Path:
 
 
 def _normalized_source(value: str) -> str:
+    if value.startswith("hf_model://"):
+        return value.removeprefix("hf_model://").strip("/")
+    if value.startswith("hf://"):
+        return value.removeprefix("hf://").removeprefix("models/").strip("/")
     candidate = Path(value).expanduser()
     return str(candidate.resolve()) if candidate.exists() else value
+
+
+def _indexed_tensor_keys(root: Path) -> set[str] | None:
+    index = root / "model.safetensors.index.json"
+    if not index.is_file():
+        return None
+    payload = _read_json(index, "safetensors index")
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, dict) or not weight_map:
+        raise WorkflowError(f"safetensors index has no weight_map: {index}")
+    return set(weight_map)
 
 
 def _base_model_fingerprint(path: Path) -> str:
@@ -180,6 +195,15 @@ def verify_export(
             recorded_fingerprint = manifest.get("base_model_fingerprint", {}).get("sha256")
             if recorded_fingerprint != _base_model_fingerprint(local_base.resolve()):
                 raise WorkflowError("Framework export base model fingerprint is stale")
+            base_keys = _indexed_tensor_keys(local_base.resolve())
+            export_keys = _indexed_tensor_keys(output)
+            if base_keys is not None and export_keys is not None and base_keys != export_keys:
+                missing = sorted(base_keys - export_keys)[:10]
+                unexpected = sorted(export_keys - base_keys)[:10]
+                raise WorkflowError(
+                    "Framework export tensor key set differs from the base checkpoint: "
+                    f"missing={missing}, unexpected={unexpected}"
+                )
     if base_model_revision and manifest.get("base_model_revision") != base_model_revision:
         raise WorkflowError("Framework export base model revision does not match the requested revision")
     return {
@@ -263,7 +287,9 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         args.dtype,
     ]
     if args.base_model_path_or_uri:
-        export_command.extend(["--base-model-path-or-uri", args.base_model_path_or_uri])
+        export_command.extend(
+            ["--base-model-path-or-uri", _normalized_source(args.base_model_path_or_uri)]
+        )
     if args.base_model_revision:
         export_command.extend(["--base-model-revision", args.base_model_revision])
 

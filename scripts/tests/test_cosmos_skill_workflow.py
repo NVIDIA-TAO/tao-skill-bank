@@ -2018,7 +2018,7 @@ def test_arbitrary_task_uses_declared_metric_instead_of_dataset_name(tmp_path):
                 "items": [
                     {
                         "id": "item-1",
-                        "video": "clip.mp4",
+                        "video_id": "clip.mp4",
                         "conversations": [
                             {"from": "human", "value": "question"},
                             {"from": "gpt", "value": "safe"},
@@ -3128,3 +3128,128 @@ def test_rl_spec_preserves_top_level_and_dataloader_seed_contract() -> None:
     assert spec["train"]["train_policy"]["dataloader_seed"] == 42
     assert spec["train"]["train_policy"]["dataloader_num_workers"] == 0
     assert "dataloader_prefetch_factor" not in spec["train"]["train_policy"]
+
+
+def test_nvbug_comma_joined_lora_modules_are_normalized():
+    args = workflow.parse_args([
+        "resolve", "--model", "nvidia/Cosmos3-Nano",
+        "--lora-target-modules", "q_proj,k_proj",
+        "--lora-modules-to-save", "lm_head, embed_tokens",
+    ])
+    assert args.lora_target_modules == ["q_proj", "k_proj"]
+    assert args.lora_modules_to_save == ["lm_head", "embed_tokens"]
+
+
+def test_nvbug_conversion_command_has_nonroot_identity_env(tmp_path):
+    args = SimpleNamespace(
+        base_model_path_or_uri="nvidia/Cosmos3-Nano", base_model_revision="a" * 40,
+        vlm_architecture_model_path_or_uri="Qwen/Qwen3-VL-8B-Instruct",
+        vlm_architecture_model_revision="b" * 40, runtime_image="image",
+    )
+    joined = " ".join(checkpoint_preparation.command(args, tmp_path / "out", tmp_path / "cache"))
+    assert "USER=" in joined and "LOGNAME=" in joined
+    assert "HOME=/cache/tao-home" in joined
+    assert "TORCHINDUCTOR_CACHE_DIR=/cache/torchinductor" in joined
+
+
+def test_nvbug_task_aware_alias_media_key_fails_closed(tmp_path):
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "x.mp4").write_bytes(b"x")
+    annotation = tmp_path / "items.json"
+    annotation.write_text(json.dumps({
+        "metadata": {"task": "mcq", "metric": "accuracy"},
+        "items": [{"video": "x.mp4", "question": "Q", "answer": "A"}],
+    }))
+    with pytest.raises(common.WorkflowError, match="canonical video_id or image_id"):
+        common.inspect_dataset(dataset_family="auto", annotations=[str(annotation)], media_roots=[str(media)])
+
+
+def test_nvbug_framework_edge_dimensions_reach_environment(tmp_path):
+    args = args_for(tmp_path, dataset_family="task_aware_video_reasoning", model_name="nvidia/Cosmos3-Edge")
+    plan = workflow.build_plan(args)
+    assert plan["environment"]["TAO_VIDEO_FRAME_WIDTH"] == "1280"
+    assert plan["environment"]["TAO_VIDEO_FRAME_HEIGHT"] == "720"
+
+
+def test_nvbug_local_preflight_rejects_undecodable_media(monkeypatch, tmp_path):
+    args = args_for(tmp_path)
+    plan = workflow.build_plan(args)
+    def fail(path):
+        raise common.WorkflowError(f"cannot decode {path}")
+    monkeypatch.setattr(workflow, "decode_media", fail)
+    result = workflow.local_preflight(args, plan)
+    assert not result["ok"]
+    assert any("cannot decode" in error for error in result["errors"])
+
+
+def test_nvbug_framework_checkpoint_action_normalizes_hf_model_uri(tmp_path):
+    checkpoint, config, base_model = make_framework_dcp(tmp_path)
+    args = framework_action_args(checkpoint, config, base_model)
+    args.base_model_path_or_uri = "hf_model://nvidia/Cosmos3-Nano"
+    argv = framework_action.build_plan(args)["pre_action"]["argv"]
+    assert argv[argv.index("--base-model-path-or-uri") + 1] == "nvidia/Cosmos3-Nano"
+
+
+def test_nvbug_terminal_success_average_does_not_displace_weighted_event():
+    records = [
+        {"status": "RUNNING", "phase": "training_complete", "kpi": {
+            "train/avg_loss": .5, "train/loss_numerator": 5, "train/valid_label_count": 10}},
+        {"status": "RUNNING", "phase": "validation_complete", "kpi": {
+            "val/avg_loss": .4, "val/loss_numerator": 4, "val/valid_label_count": 10}},
+        {"status": "SUCCESS", "kpi": {"train/avg_loss": .5}},
+    ]
+    result = metric.summarize_records(records, require_complete=False)
+    assert result["average_training_loss"]["numerator"] == 5
+
+
+def test_nvbug_brev_and_video_clip_contracts_are_retry_safe():
+    brev = (ROOT / "skills" / "platform" / "tao-run-on-brev" / "SKILL.md").read_text()
+    assert "grep -qx ok" in brev
+    assert "docker inspect '$JOB_ID'" in brev
+    spec = yaml.safe_load((ROOT / "skills" / "models" / "tao-finetune-video-clip" / "references" / "spec_template_export.yaml").read_text())
+    assert spec["export"]["batch_size"] == -1
+
+
+def test_nvbug_framework_export_rejects_tensor_key_drift(tmp_path):
+    checkpoint, config, base_model = make_framework_dcp(tmp_path)
+    export = tmp_path / "exports" / "epoch_1"
+    write_framework_export(export, checkpoint, config, base_model)
+    (base_model / "model.safetensors.index.json").write_text(json.dumps({
+        "weight_map": {"base.layer.weight": "model.safetensors"}
+    }))
+    (export / "model.safetensors.index.json").write_text(json.dumps({
+        "weight_map": {"export.layer.weight": "model.safetensors"}
+    }))
+    manifest = json.loads((export / "export_manifest.json").read_text())
+    manifest["base_model_fingerprint"]["sha256"] = framework_action._base_model_fingerprint(base_model)
+    (export / "export_manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(common.WorkflowError, match="tensor key set differs"):
+        framework_action.verify_export(
+            checkpoint_path=str(checkpoint), config_file=str(config),
+            export_dir=str(export), base_model_path_or_uri=str(base_model),
+            base_model_revision="immutable-test-revision",
+        )
+
+
+def test_nvbug_render_docker_has_identity_and_idempotency_guard(tmp_path):
+    args = SimpleNamespace(
+        tao_job_id="job-123", results_dir=str(tmp_path),
+        container_results_dir="/results", container_mount=[f"{tmp_path}:/results"],
+    )
+    plan = {
+        "compute": {"platform": "docker", "nodes": 1},
+        "image": {"tag": "example.invalid/cosmos:immutable"},
+        "paths": {"results_dir": {"original": str(tmp_path)}},
+        "environment": {"TAO_JOB_ID": "job-123"},
+        "command": "python -m cosmos_framework.scripts.train --sft-toml=/spec.toml",
+    }
+    rendered = workflow.render_docker(args, plan)
+    assert "docker inspect job-123" in rendered
+    assert "HOME=" in rendered and "USER=" in rendered and "LOGNAME=" in rendered
+    assert "TORCHINDUCTOR_CACHE_DIR=" in rendered
+
+
+def test_nvbug_docker_gpu_count_is_not_hardcoded():
+    args = workflow.parse_args(["resolve", "--model", "nvidia/Cosmos3-Nano"])
+    assert args.gpus_per_node == 0
