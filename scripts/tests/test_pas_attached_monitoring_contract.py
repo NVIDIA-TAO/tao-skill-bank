@@ -1,19 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Contract regression tests for unattended IAA loop liveness."""
+"""Contract regression tests for unattended PAS loop liveness."""
 
 import json
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-IAA = ROOT / "skills" / "applications" / "tao-run-deft-iaa"
+PAS = ROOT / "skills" / "applications" / "tao-run-deft-pas"
 
 
 def test_skill_forbids_final_response_while_run_is_nonterminal():
-    skill = (IAA / "SKILL.md").read_text()
-    pipeline = (IAA / "references" / "pipeline-and-state.md").read_text()
+    skill = (PAS / "SKILL.md").read_text()
+    pipeline = (PAS / "references" / "pipeline-and-state.md").read_text()
     compact_skill = " ".join(skill.split())
     compact_pipeline = " ".join(pipeline.split())
     assert "Never send a final response while an approved run is nonterminal" in compact_skill
@@ -25,9 +25,9 @@ def test_skill_forbids_final_response_while_run_is_nonterminal():
 
 
 def test_behavioral_eval_covers_ended_turn_liveness():
-    cases = json.loads((IAA / "evals" / "evals.json").read_text())
+    cases = json.loads((PAS / "evals" / "evals.json").read_text())
     case = next(
-        item for item in cases if item["id"] == "tao-run-deft-iaa-attached-loop-liveness"
+        item for item in cases if item["id"] == "tao-run-deft-pas-attached-loop-liveness"
     )
     assert "future poll" in case["question"]
     assert "no future poll can wake an ended turn" in case["ground_truth"]
