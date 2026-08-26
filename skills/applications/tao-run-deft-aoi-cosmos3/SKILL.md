@@ -330,6 +330,7 @@ report rendering.
 
 | Stage | Producer | Read first |
 |---|---|---|
+| **Launching any container stage** | platform contract — `stage_bundle.py` emits, `deft_exec.py` submits | `references/stage-execution.md` |
 | Train | `tao-finetune-cosmos-reason` train, `automl_policy: off` | `references/cosmos-reason.md`, `references/example_lora_config.toml` |
 | Proxy / Benchmark evaluate | `tao-finetune-cosmos-reason` evaluate | `references/cosmos-reason.md` |
 | Proxy RCCA / Benchmark metric | bundled `analyze_gaps.py` | `references/gap-analysis.md` |

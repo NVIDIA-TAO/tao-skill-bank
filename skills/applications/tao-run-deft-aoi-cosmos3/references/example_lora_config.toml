@@ -16,7 +16,10 @@
 # job runs before zero-shot Proxy.
 #
 # Run with:
-#   cosmos-rl --config <this>.toml /opt/cosmos_rl/tao_sft_example.py
+#   python3 scripts/stage_bundle.py train --spec-file <this> ... | deft_exec.py --submit
+# The hook path is NOT /opt/cosmos_rl/tao_sft_example.py: the model skill
+# computes it from cosmos_rl.__file__ and guards it with `test -f`. Resolve
+# the command rather than transcribing it -- see references/stage-execution.md.
 # with workflow argument `automl_policy: off` (a workflow argument, never a
 # spec key). Mount the workspace at /tao-workspace — NEVER over /workspace,
 # which is where cosmos-rl itself is installed.

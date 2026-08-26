@@ -156,3 +156,76 @@ def test_every_stage_emits_a_schema_valid_bundle(sb, tmp_path):
         done = subprocess.run([sys.executable, str(validator), "validate", str(path)],
                               capture_output=True, text=True)
         assert done.returncode == 0, f"{name}: {done.stdout}{done.stderr}"
+
+
+# ── The cosmos3 references must stay on the contract ───────────────────────
+# The reference used to state the train command as
+#   cosmos-rl --config {config_path} /opt/cosmos_rl/tao_sft_example.py
+# while the model skill computes the hook from cosmos_rl.__file__, landing at
+# .../tools/custom_hooks/tao_sft_example.py. Different files: the restated form
+# passed cosmos-rl a script that does not exist.
+
+C3_REFS = REPO / "skills/applications/tao-run-deft-aoi-cosmos3/references"
+
+
+def test_stage_execution_reference_exists():
+    assert (C3_REFS / "stage-execution.md").is_file()
+
+
+def test_the_skill_points_at_it():
+    body = (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/SKILL.md").read_text(
+        encoding="utf-8")
+    assert "references/stage-execution.md" in body
+
+
+def test_no_reference_restates_the_stale_hook_path():
+    """The old literal is wrong AND unresolvable; it must not come back."""
+    offenders = [
+        path.name for path in sorted(C3_REFS.glob("*"))
+        if path.is_file()
+        and "/opt/cosmos_rl/tao_sft_example.py" in path.read_text(encoding="utf-8")
+        and "does not exist" not in path.read_text(encoding="utf-8")
+        and "NOT /opt/cosmos_rl" not in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders, (
+        f"{offenders} restate the hardcoded hook path; the model skill computes "
+        "it from cosmos_rl.__file__, so the literal points at nothing"
+    )
+
+
+def test_the_workspace_target_is_documented():
+    body = (C3_REFS / "stage-execution.md").read_text(encoding="utf-8")
+    assert "/tao-workspace" in body and "NEVER mount over `/workspace`" in body
+
+
+@pytest.mark.parametrize("platform", ["docker", "kubernetes"])
+def test_a_full_loop_eval_names_its_platform(platform):
+    """The converted references read $PLATFORM; an eval that never sets it
+    leaves the documented commands with nothing to substitute."""
+    cfg = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+        .read_text(encoding="utf-8"))
+    entry = next((e for e in cfg["evals"]
+                  if "loop" in e["id"] and f"PLATFORM={platform}" in e["prompt"]), None)
+    assert entry is not None, f"no cosmos3 loop eval exports PLATFORM={platform}"
+
+
+def test_the_kubernetes_loop_provisions_a_gpu():
+    cfg = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+        .read_text(encoding="utf-8"))
+    entry = next(e for e in cfg["evals"] if e["id"].endswith("-kubernetes"))
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "--gpus all" in body
+    assert "nvidia-device-plugin" in body or "gpu-operator" in body
+    assert "FAILURE" in body
+
+
+def test_host_side_stages_are_not_graded_as_platform_violations():
+    """RCCA and friends run locally by design; grading them as fallbacks would
+    fail every correct run."""
+    cfg = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+        .read_text(encoding="utf-8"))
+    entry = next(e for e in cfg["evals"] if e["id"].endswith("-kubernetes"))
+    assert "Host-side stages" in entry["expected_outcome"]

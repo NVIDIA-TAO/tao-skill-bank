@@ -89,15 +89,16 @@ CR3_IDENTITY_ARGS=(
 )
 ```
 
-Insert `"${CR3_IDENTITY_ARGS[@]}"` into every Docker Train, Proxy evaluate,
-and Benchmark evaluate launch, including resumed actions, and use the
-stage-local writable working directory:
+**When launching through the platform contract, do not paste these.** The
+docker renderer emits `--user`/`--group-add`, sets `USER`/`LOGNAME`/`HOME`,
+redirects the framework caches onto the results mount, and refuses to launch as
+UID 0 for a writable bind. SLURM needs none of it — enroot is rootless — and
+Kubernetes uses a `securityContext`. Pasting the flags into a stage pins the
+loop to docker, which is exactly what the bundle exists to avoid.
 
-```bash
--w "$RESULTS_DIR/<label>/<stage>/cwd"
-```
-
-All four parts are one unit; dropping any of them fails.
+The block above remains correct for a standalone `docker run` outside the loop,
+where nothing else supplies the identity. In that case all four parts are one
+unit; dropping any of them fails.
 
 `HOME=/tmp` matters: a mapped uid has no home inside the image, and libraries
 that write caches to `$HOME` fail or scatter files otherwise.
@@ -124,12 +125,17 @@ the selected platform's equivalent rather than copying these flags blindly.
 Read the current `tao-finetune-cosmos-reason` model skill and
 `references/skill_info.yaml`. The action contract is:
 
-- image: resolve the `cosmos-rl` backend image from the Cosmos model skill's
-  `references/skill_info.yaml` with `scripts/resolve_tao_image.py`;
-- command: `cosmos-rl --config {config_path}
-  /opt/cosmos_rl/tao_sft_example.py`;
-- mode/format: `config` / TOML;
+- image, command, mode and config_format: **resolved** from the model skill's
+  `references/skill_info.yaml` by `scripts/stage_bundle.py`. Do not restate the
+  command here. It used to read `cosmos-rl --config {config_path}
+  /opt/cosmos_rl/tao_sft_example.py`, while the model skill computes the hook
+  path from `cosmos_rl.__file__` — landing at
+  `…/tools/custom_hooks/tao_sft_example.py` — and guards it with `test -f`
+  first. Those are different files, so the restated form passed cosmos-rl a
+  script that does not exist;
 - output: `train.output_dir`.
+
+See `references/stage-execution.md` for the emit → submit → await loop.
 
 Use `nvidia/Cosmos3-Nano` by default. Accept `nvidia/Cosmos3-Edge` or
 `nvidia/Cosmos3-Super` only when the user explicitly selects that variant.
