@@ -76,6 +76,50 @@ def input_env(bundle: dict[str, Any]) -> dict[str, str]:
     return env
 
 
+
+def _toml_value(value: Any) -> str:
+    """Serialize one TOML scalar or array. Booleans BEFORE ints on purpose:
+    bool is a subclass of int in Python, so the order matters."""
+    import json as _json
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return _json.dumps(value)          # TOML basic strings match JSON escaping
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    raise ValueError(f"no TOML representation for {type(value).__name__}")
+
+
+def dumps_toml(spec: dict[str, Any], _prefix: str = "") -> str:
+    """Minimal TOML writer for a nested spec dict.
+
+    Python ships tomllib to READ toml and nothing to write it, and this bank
+    keeps its dependency set to pyyaml/jsonschema. Cosmos-RL specs are
+    config_format=toml, so without this every cosmos train stage would fail at
+    render. The supported shape is exactly what those specs contain: scalars,
+    homogeneous arrays, and nested tables.
+
+    Scalars are emitted before sub-tables at each level -- a key written after a
+    [table] header would silently belong to that table instead of its parent,
+    which is the classic way a hand-rolled TOML writer corrupts a config.
+    """
+    scalars, tables = [], []
+    for key, value in spec.items():
+        if isinstance(value, dict):
+            tables.append((key, value))
+        else:
+            scalars.append(f"{key} = {_toml_value(value)}")
+    out = "\n".join(scalars)
+    for key, value in tables:
+        name = f"{_prefix}{key}"
+        body = dumps_toml(value, f"{name}.")
+        out += f"\n\n[{name}]\n{body}" if out else f"[{name}]\n{body}"
+    return out.strip() + "\n"
+
+
 def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[str, str]:
     """Serialize a mode=config spec and return (path, content).
 
@@ -97,7 +141,7 @@ def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[
     if fmt == "json":
         return f"{config_root.rstrip('/')}/configs/{job_id}.json", _json.dumps(spec, indent=2)
     if fmt == "toml":
-        raise ValueError("config_format=toml has no writer in this renderer")
+        return f"{config_root.rstrip('/')}/configs/{job_id}.toml", dumps_toml(spec)
     import yaml as _yaml
 
     return (f"{config_root.rstrip('/')}/configs/{job_id}.yaml",
@@ -175,6 +219,18 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         # drops the quotes the template already supplies.
         "COMMAND": json.dumps(command)[1:-1],
         "MOUNT_PATH": mount_path,
+        # A pod sees ONE bound volume, so an input needing a fixed in-container
+        # path becomes an extra volumeMount of the SAME claim with a subPath --
+        # the claim-relative portion of its uri. That is how a single PVC can
+        # appear at both its natural location and, say, /tao-workspace.
+        "EXTRA_MOUNTS": "".join(
+            f'\n            - name: data'
+            f'\n              mountPath: "{item["target"]}"'
+            f'\n              subPath: "{str(item["uri"])[len(str(mount_path).rstrip("/")):].lstrip("/")}"'
+            f'\n              readOnly: true'
+            for item in (bundle.get("declared_inputs") or [])
+            if item.get("target") and str(item["target"]) != str(item["uri"])
+        ),
         # Parity with docker's --user. A TAO image running as its own non-root
         # user cannot write a PVC owned by someone else; fsGroup makes the
         # mounted volume group-writable for the pod.

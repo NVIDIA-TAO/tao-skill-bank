@@ -70,7 +70,7 @@ def input_env(bundle: dict[str, Any]) -> dict[str, str]:
 def _mounts(bundle: dict[str, Any], results_dir: str) -> str:
     """Pyxis --container-mounts: src:dst pairs, same path on both sides."""
     pairs: list[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for item in bundle.get("declared_inputs") or []:
         uri = str(item["uri"])
         if "://" in uri:
@@ -82,14 +82,14 @@ def _mounts(bundle: dict[str, Any], results_dir: str) -> str:
             raise ValueError(
                 f"declared_input {item['spec_key']} must be absolute, got {uri!r}"
             )
-        if uri not in seen:
-            # Read-only, matching the docker renderer. A declared INPUT that a
-            # stage can write to is a cross-platform trap: docker already binds
-            # these :ro, so the same bundle would fail there and silently
-            # succeed here, and the divergence only shows up when a workflow
-            # moves platforms. Writes belong under results_dir.
-            pairs.append(f"{uri}:{uri}:ro")
-            seen.add(uri)
+        # Read-only, matching the docker renderer. A declared INPUT a stage can
+        # write to is a cross-platform trap: docker binds these :ro, so the same
+        # bundle would fail there and silently succeed here. Writes belong under
+        # results_dir. `target` overrides the in-container path.
+        target = str(item.get("target") or uri)
+        if (uri, target) not in seen:
+            pairs.append(f"{uri}:{target}:ro")
+            seen.add((uri, target))
     pairs.append(f"{results_dir}:{results_dir}")
     return ",".join(pairs)
 
@@ -476,6 +476,50 @@ def _limit_minutes(time_limit: str) -> int:
     return int(days) * 1440 + hours * 60 + minutes + (1 if seconds else 0)
 
 
+
+def _toml_value(value: Any) -> str:
+    """Serialize one TOML scalar or array. Booleans BEFORE ints on purpose:
+    bool is a subclass of int in Python, so the order matters."""
+    import json as _json
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return _json.dumps(value)          # TOML basic strings match JSON escaping
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    raise ValueError(f"no TOML representation for {type(value).__name__}")
+
+
+def dumps_toml(spec: dict[str, Any], _prefix: str = "") -> str:
+    """Minimal TOML writer for a nested spec dict.
+
+    Python ships tomllib to READ toml and nothing to write it, and this bank
+    keeps its dependency set to pyyaml/jsonschema. Cosmos-RL specs are
+    config_format=toml, so without this every cosmos train stage would fail at
+    render. The supported shape is exactly what those specs contain: scalars,
+    homogeneous arrays, and nested tables.
+
+    Scalars are emitted before sub-tables at each level -- a key written after a
+    [table] header would silently belong to that table instead of its parent,
+    which is the classic way a hand-rolled TOML writer corrupts a config.
+    """
+    scalars, tables = [], []
+    for key, value in spec.items():
+        if isinstance(value, dict):
+            tables.append((key, value))
+        else:
+            scalars.append(f"{key} = {_toml_value(value)}")
+    out = "\n".join(scalars)
+    for key, value in tables:
+        name = f"{_prefix}{key}"
+        body = dumps_toml(value, f"{name}.")
+        out += f"\n\n[{name}]\n{body}" if out else f"[{name}]\n{body}"
+    return out.strip() + "\n"
+
+
 def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[str, str]:
     """Serialize a mode=config spec and return (path, content).
 
@@ -497,7 +541,7 @@ def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[
     if fmt == "json":
         return f"{config_root.rstrip('/')}/configs/{job_id}.json", _json.dumps(spec, indent=2)
     if fmt == "toml":
-        raise ValueError("config_format=toml has no writer in this renderer")
+        return f"{config_root.rstrip('/')}/configs/{job_id}.toml", dumps_toml(spec)
     import yaml as _yaml
 
     return (f"{config_root.rstrip('/')}/configs/{job_id}.yaml",

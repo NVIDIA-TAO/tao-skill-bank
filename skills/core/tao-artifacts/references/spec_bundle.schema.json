@@ -216,6 +216,11 @@
           "type": "string",
           "minLength": 1,
           "description": "Source location: s3://, hf://, ngc://, lustre:///, or an absolute compute-frame path (strategy A). NO storage_tier here \u2014 the tier is chosen by tao-data-io at stage time and stamped into the job-record."
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Absolute path this input must appear at INSIDE the container. Optional; the default is the same absolute path as `uri`, which keeps a path written into a CSV or spec resolving identically on both sides. Set it only when the image requires a fixed location: cosmos-rl specs address everything under /tao-workspace, and paidf-anomalygen resolves its base checkpoints relative to its own install directory. Without this the input is mounted somewhere the workload does not look, which does not raise -- the directory is simply absent and the stage reads nothing."
         }
       }
     },
@@ -245,52 +250,92 @@
       "properties": {
         "environment": {
           "type": "object",
-          "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*$" },
-          "additionalProperties": { "type": "string" },
+          "propertyNames": {
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": "string"
+          },
           "description": "Non-secret container environment. Values may use the documented {job_id}, {results_dir}, and {config_path} placeholders, which the platform binds after opening the job record."
         },
         "pre_commands": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Model-owned runtime attestations or preparation commands, executed in order before the primary command in the same allocation/container."
         },
         "post_commands": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Model-owned result validation or aggregation commands, executed in order only after the primary command succeeds."
         },
         "post_scope": {
-          "enum": ["all", "leader"],
+          "enum": [
+            "all",
+            "leader"
+          ],
           "default": "leader",
           "description": "Whether post_commands run in every platform task or only task/rank zero."
         },
         "distributed": {
           "type": "object",
-          "required": ["launcher", "processes_per_node"],
+          "required": [
+            "launcher",
+            "processes_per_node"
+          ],
           "additionalProperties": false,
           "properties": {
-            "launcher": { "enum": ["direct", "torchrun"] },
-            "processes_per_node": { "type": "integer", "minimum": 1 },
-            "tasks_per_node": { "const": 1, "default": 1 }
+            "launcher": {
+              "enum": [
+                "direct",
+                "torchrun"
+              ]
+            },
+            "processes_per_node": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "tasks_per_node": {
+              "const": 1,
+              "default": 1
+            }
           }
         },
         "supporting_files": {
           "type": "array",
-          "items": { "$ref": "#/$defs/supportingFile" },
+          "items": {
+            "$ref": "#/$defs/supportingFile"
+          },
           "description": "Checked-in orchestration helpers to stage as immutable auxiliary inputs. These are not source overlays and must not replace code in the image."
         },
         "completion": {
           "type": "object",
-          "required": ["child_exit_code_path"],
+          "required": [
+            "child_exit_code_path"
+          ],
           "additionalProperties": false,
           "properties": {
-            "child_exit_code_path": { "type": "string", "minLength": 1 },
-            "structured_status_path": { "type": "string", "minLength": 1 },
+            "child_exit_code_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "structured_status_path": {
+              "type": "string",
+              "minLength": 1
+            },
             "success_states": {
               "type": "array",
               "minItems": 1,
               "uniqueItems": true,
-              "items": { "type": "string", "minLength": 1 }
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         }
@@ -298,7 +343,11 @@
     },
     "supportingFile": {
       "type": "object",
-      "required": ["source", "destination", "sha256"],
+      "required": [
+        "source",
+        "destination",
+        "sha256"
+      ],
       "additionalProperties": false,
       "properties": {
         "source": {
@@ -313,7 +362,10 @@
           "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))\\S+$",
           "description": "Relative path below the platform-owned staged helper directory."
         },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
       }
     }
   }
