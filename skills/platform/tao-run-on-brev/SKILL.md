@@ -90,7 +90,7 @@ instance to stop billing. `$BANK` = `${TAO_SKILL_BANK_PATH}`.
     --platform brev --image "$IMG" \
     --network-arch "$ARCH" --action "$ACTION" \
     --storage-tier "$TIER" --results-root "$RESULTS_ROOT")
-  brev exec <instance> "docker run -d --name $JOB_ID ..."
+  brev exec <instance> "docker inspect '$JOB_ID' >/dev/null 2>&1 && { echo '$JOB_ID already submitted'; exit 0; }; docker run -d --name '$JOB_ID' --label 'tao-job=$JOB_ID' ..."
   "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING \
     --backend-ref "<instance>/$JOB_ID"       # instance is part of the ref: the
                                              # container is unreachable without it
