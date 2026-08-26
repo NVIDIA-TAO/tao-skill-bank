@@ -144,8 +144,10 @@ Run this section only after required intake is resolved.
 
    ```bash
    docker version --format '{{.Server.Version}}'
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.pyt
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.data_services
+   TAO_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.pyt
+   TAO_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
+   docker image inspect "$TAO_PYT_IMAGE" >/dev/null 2>&1
+   docker image inspect "$TAO_DS_IMAGE" >/dev/null 2>&1
    TARGET_GPU_ARGS=()
    IFS=, read -r -a GPU_ID_LIST <<< "$GPU_IDS"
    for GPU_ID in "${GPU_ID_LIST[@]}"; do
@@ -153,7 +155,7 @@ Run this section only after required intake is resolved.
    done
    "${TAO_SKILL_BANK_PATH:?}/scripts/check_tao_launch_preflight.py" \
      --skill-bank "$TAO_SKILL_BANK_PATH" --platform docker \
-     --container-image nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch \
+     --container-image "$TAO_PYT_IMAGE" \
      --gpu-min-count "$NUM_GPUS" "${TARGET_GPU_ARGS[@]}"
    ```
 
