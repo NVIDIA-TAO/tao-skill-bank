@@ -35,9 +35,20 @@ the companion skill folders: `TAO_SKILL_BANK_PATH` must point at a directory
 containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
 Cosmos model resolver `scripts/resolve_tao_image.py`, plus the
 `skills/{applications,models,data,platform,core}/...` tree listed in
-`eval.config`. Run bundled validation with the skill Python so dependencies
-match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
-tests.test_cosmos3_bare`. Resolve network mode first. Missing air-gap imports
+`eval.config`. Run bundled validation from this skill's directory **inside the
+bank root** — the tests import sibling `data/` and `models/` skills via
+`SKILL_ROOT.parents[1]`, which only resolves there — using the skill Python so
+dependencies match runtime:
+
+```bash
+cd "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi-cosmos3"
+PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest tests.test_cosmos3_bare
+```
+
+From a standalone `~/.claude/skills` copy this fails with
+`ModuleNotFoundError: No module named 'filter_mined_history'`, which names the
+module rather than the missing sibling skill. Resolve network mode first.
+Missing air-gap imports
 are a hard stop; network-enabled setup lives only in
 `references/network-bootstrap.md`.
 

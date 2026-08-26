@@ -229,3 +229,29 @@ def test_host_side_stages_are_not_graded_as_platform_violations():
         .read_text(encoding="utf-8"))
     entry = next(e for e in cfg["evals"] if e["id"].endswith("-kubernetes"))
     assert "Host-side stages" in entry["expected_outcome"]
+
+
+def test_the_documented_test_command_names_its_working_directory():
+    """The bundled tests import sibling skills via SKILL_ROOT.parents[1].
+
+    Run from a standalone ~/.claude/skills copy they fail with
+    `ModuleNotFoundError: No module named 'filter_mined_history'` -- which names
+    the module, not the missing sibling skill, so the documented command has to
+    say where to run it from.
+    """
+    body = (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/SKILL.md").read_text(
+        encoding="utf-8")
+    assert "unittest tests.test_cosmos3_bare" in body
+    assert "TAO_SKILL_BANK_PATH" in body and "cd " in body, (
+        "the documented command does not say which directory to run it from"
+    )
+
+
+def test_the_bundled_tests_do_reach_into_sibling_skills():
+    """Guard the premise: if the imports become self-contained, the cd is stale."""
+    body = (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/tests/test_cosmos3_bare.py"
+            ).read_text(encoding="utf-8")
+    assert "parents[1]" in body, (
+        "the bundled tests no longer reach outside the skill; the working-"
+        "directory requirement in SKILL.md can be relaxed"
+    )
