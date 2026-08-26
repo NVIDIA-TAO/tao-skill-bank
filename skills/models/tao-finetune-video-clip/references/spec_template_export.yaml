@@ -22,7 +22,7 @@ model:
 export:
   checkpoint: /results/train/video_clip_latest.pth
   onnx_file: /results/export/internvideo2clip.onnx
-  encoder_type: separate
+  encoder_type: combined
   input_height: 224
   input_width: 224
   input_channel: 3
