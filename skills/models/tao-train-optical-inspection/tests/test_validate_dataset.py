@@ -95,6 +95,26 @@ class ValidateDatasetTests(unittest.TestCase):
         for column in ("input_path", "golden_path", "label", "object_name"):
             self.assertIn(column, csv_description)
 
+    def test_single_class_training_set_fails(self) -> None:
+        result = self._run("single_class.csv")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("training set is single-class (PASS=2, non-PASS=0)", result.stderr)
+        self.assertIn("ZeroDivisionError", result.stderr)
+
+    def test_single_class_allowed_outside_train_mode(self) -> None:
+        result = self._run("single_class.csv", "valid", "--mode", "evaluate")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_batch_size_larger_than_dataset_fails(self) -> None:
+        result = self._run("valid/dataset.csv", "valid", "--batch-size", "8")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("batch_size=8 exceeds the dataset limit", result.stderr)
+        self.assertIn("Set dataset.batch_size <= 2", result.stderr)
+
+    def test_batch_size_within_dataset_passes(self) -> None:
+        result = self._run("valid/dataset.csv", "valid", "--batch-size", "2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

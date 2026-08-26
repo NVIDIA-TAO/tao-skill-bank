@@ -100,6 +100,9 @@ def validate(
     grid_x: int,
     grid_y: int,
     image_ext: str,
+    mode: str = "train",
+    batch_size: int | None = None,
+    num_gpus: int = 1,
 ) -> tuple[list[str], int, int]:
     """Return validation errors, data-row count, and readable file-slot count."""
     errors = _config_errors(input_map, num_input, concat_type, grid_x, grid_y)
@@ -198,6 +201,38 @@ def validate(
                     f"row {row_number}: {column} has unreadable image(s): "
                     + ", ".join(str(path) for path in unreadable)
                 )
+    if mode == "train":
+        labels = [(row.get("label") or "").strip() for row in rows]
+        labelled = [label for label in labels if label]
+        num_pass = sum(1 for label in labelled if label == "PASS")
+        num_fail = len(labelled) - num_pass
+        if labelled and (num_pass == 0 or num_fail == 0):
+            errors.append(
+                f"training set is single-class (PASS={num_pass}, "
+                f"non-PASS={num_fail}); the classify loader computes "
+                "pf_ratio = num_pass / len(fail_indices) and raises "
+                "ZeroDivisionError at epoch 1. Provide both PASS and defect rows."
+            )
+
+    if batch_size is not None:
+        if batch_size <= 0 or num_gpus <= 0:
+            errors.append(
+                f"batch_size and num_gpus must be positive; got "
+                f"batch_size={batch_size}, num_gpus={num_gpus}"
+            )
+        else:
+            per_replica = len(rows) / num_gpus
+            if batch_size > per_replica:
+                suggested = max(1, int(per_replica) if num_gpus > 1 else len(rows))
+                errors.append(
+                    f"batch_size={batch_size} exceeds the dataset limit: "
+                    f"{len(rows)} row(s) / {num_gpus} GPU(s) = {per_replica:g} "
+                    "per replica; the loader raises 'Dataset size "
+                    f"({len(rows)}) is smaller than the total batch size' at "
+                    f"launch. Set dataset.batch_size <= {suggested} "
+                    "(or reduce num_gpus)."
+                )
+
     return errors, len(rows), readable_files
 
 
@@ -219,6 +254,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--grid-x", type=int, default=2)
     parser.add_argument("--grid-y", type=int, default=2)
     parser.add_argument("--image-ext", default=".jpg")
+    parser.add_argument(
+        "--mode",
+        choices=("train", "evaluate", "inference"),
+        default="train",
+        help="train additionally requires both PASS and defect rows",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="when set, check the dataset holds at least one batch per replica",
+    )
+    parser.add_argument("--num-gpus", type=int, default=1)
     return parser
 
 
@@ -238,6 +286,9 @@ def main(argv: list[str] | None = None) -> int:
         grid_x=args.grid_x,
         grid_y=args.grid_y,
         image_ext=args.image_ext,
+        mode=args.mode,
+        batch_size=args.batch_size,
+        num_gpus=args.num_gpus,
     )
     if errors:
         print(
