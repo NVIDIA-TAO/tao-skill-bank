@@ -150,5 +150,6 @@ RESULTS_DIR/
 ```
 
 The caption mining pool comes from training pairs. The eval split comes from
-validation pairs. History selection still rechecks basename disjointness
-before every training iteration; source assumptions never replace that gate.
+the approved `val_pairs.json` or `test_pairs.json` selection. History selection
+still rechecks basename disjointness before every training iteration; source
+assumptions never replace that gate.

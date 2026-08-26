@@ -51,10 +51,10 @@ Mitigation: The skill uses one explicit approval boundary before side effects, a
 - Expected rejection of tested invalid inputs and transitions. <br>
 
 ## Evaluation Results: <br>
-Repository/static checks and the synthetic two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, and clean bundled-runtime import tests passed. The listed invalid evidence, transition, provenance, and path cases were rejected as expected. The checkpoint contract was also checked against a real IAA reference-run relative-symlink artifact shape. A live end-to-end run through the revised wrapper was not performed as part of this review. <br>
+Repository/static checks and 375 regression tests (2 skipped) passed, together with the synthetic two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, and clean bundled-runtime import checks. The listed invalid evidence, transition, provenance, and path cases were rejected as expected. <br>
 
 ## Skill Version(s): <br>
-0.3.3 (source: frontmatter) <br>
+0.3.7 (source: frontmatter) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
