@@ -1237,7 +1237,10 @@ def _framework_spec(
                 "context_parallel_shard_degree": 1,
                 "cfg_parallel_shard_degree": 1,
             },
-            "compile": {"enabled": False, "compile_dynamic": True},
+            "compile": {
+                "enabled": getattr(args, "torch_compile", "on") == "on",
+                "compile_dynamic": True,
+            },
             "activation_checkpointing": {
                 "mode": "full",
                 "save_ops_regex": ["fmha"],
@@ -5602,6 +5605,17 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--video-override-workers", type=int, default=16)
     parser.add_argument("--system-prompt", default="")
     parser.add_argument("--attention-implementation", default="auto")
+    parser.add_argument(
+        "--torch-compile",
+        choices=("on", "off"),
+        default="on",
+        help=(
+            "Compile the backbone with torch.compile (framework backend). "
+            "Measured on a GB300 Cosmos3-Nano LoRA SFT: 3.42s/step to 2.94s/step "
+            "with training loss preserved. Compilation warmup costs roughly 40 "
+            "steps, so use off for runs shorter than that."
+        ),
+    )
     parser.add_argument("--processor-revision", default="packaged")
     parser.add_argument(
         "--run-mode", choices=("smoke", "diagnostic", "full"), default="full"
