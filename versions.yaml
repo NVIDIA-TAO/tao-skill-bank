@@ -32,7 +32,6 @@ images:
     pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
     deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-53-multiarch
     data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
-    data_services_nightly: nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.8.10-rc-26-multiarch
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
     cosmos_framework:   nvcr.io/nvstaging/tao/cosmos_framework:7.2.0-rc-290-multiarch
     cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-290-multiarch
