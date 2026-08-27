@@ -33,8 +33,8 @@ For `trigger="loop-end"`, add `--require-terminal`. It passes only once `loop_st
 1. `${results_dir}/deft_state.json` — config, `max_iterations`, per-iteration artifact paths.
 2. Every line of `${results_dir}/loop_log.jsonl` — stage events, statuses, and durations. Ignore `context_tokens`: it is always 0 and is not a measurement.
 3. Every `${results_dir}/iter*_summary.md` that exists.
-4. Each phase's `kpi/kpi_calc.csv` (baseline and every iteration) for the mAP trend, and
-   its `kpi/kpi_analyze.log` for the class each row belongs to — the csv does not say.
+4. Each phase's `kpi/kpi_summary.json` for the mAP and the resolved per-class APs, falling
+   back to `kpi/kpi_calc.csv` plus `kpi/kpi_analyze.log` when the summary is absent.
 5. Each iteration's `mining/summary.json` and `tmm/staging_report.json` for the data-growth table.
 
 Trust disk over anything in the prompt except `results_dir`, `skill_root`, and `trigger`.
@@ -74,12 +74,17 @@ moves the other way, and a loop mining for rare classes is judged on those class
 | iter1 | … | … | … | |
 | iter2 | … | … | … | |
 
-**Resolving which row is which class.** `kpi_calc.csv` has one row per class and *no
-class column* — the names appear only in the table `kpi_analyze` prints to stdout, which
-is why the run tees it to `kpi/kpi_analyze.log` and commits it as `--kpi-log`. Read the
-class order from that log and use it. If the log is missing for a phase, do not guess
-from row order: report the mAP alone for that phase and say the per-class breakdown was
-unavailable.
+**Resolving which row is which class.** Prefer `kpi/kpi_summary.json`, which
+`summarize_kpi.py` writes beside the CSV: it carries `per_class` already resolved, and
+`class_names_source` says where the names came from.
+
+Failing that, read `kpi_calc.csv` directly. It gained a `class_name` column in
+tao-data-services#31; when the column is there, use it. On an image built before that the
+rows are unlabeled and the names appear only in the table `kpi_analyze` prints to stdout,
+which is why the run captures it as `kpi/kpi_analyze.log` and commits it as `--kpi-log` —
+read the class order from that log and use it. If neither the column nor the log is
+available for a phase, do not guess from row order: report the mAP alone for that phase
+and say the per-class breakdown was unavailable.
 
 State the delta from baseline to the latest iteration in one sentence, and name any
 class that moved against the mean. mAP is reported, not gated — do not describe a
