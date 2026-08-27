@@ -25,8 +25,8 @@ import yaml
 from metric_contract import validate_contract
 
 
-PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_iaa_pyt
-PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_iaa_data_services
+PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
+PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
 
 
 def _bool(value: str) -> bool:

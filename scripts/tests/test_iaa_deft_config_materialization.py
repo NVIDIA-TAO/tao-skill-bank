@@ -174,11 +174,11 @@ def test_mining_spec_is_the_only_materialized_mining_parameter_authority(tmp_pat
     assert "knn_metric" not in deft["mining"]
 
 
-def test_iaa_uses_workflow_scoped_tao_7_2_image_contract():
+def test_pas_uses_workflow_scoped_tao_7_2_image_contract():
     versions = _yaml(REPO_ROOT / "versions.yaml")
     tao_images = versions["images"]["tao_toolkit"]
-    assert prepare.PINNED_PYT_IMAGE == tao_images["deft_iaa_pyt"]
-    assert prepare.PINNED_DS_IMAGE == tao_images["deft_iaa_data_services"]
+    assert prepare.PINNED_PYT_IMAGE == tao_images["deft_pas_pyt"]
+    assert prepare.PINNED_DS_IMAGE == tao_images["deft_pas_data_services"]
     assert ":7.2.0-" in prepare.PINNED_PYT_IMAGE
     assert ":7.2.0-" in prepare.PINNED_DS_IMAGE
 

@@ -144,8 +144,10 @@ Run this section only after required intake is resolved.
 
    ```bash
    docker version --format '{{.Server.Version}}'
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.deft_pas_pyt
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.deft_pas_data_services
+   PAS_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
+   PAS_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
+   docker image inspect "$PAS_PYT_IMAGE" >/dev/null 2>&1
+   docker image inspect "$PAS_DS_IMAGE" >/dev/null 2>&1
    TARGET_GPU_ARGS=()
    IFS=, read -r -a GPU_ID_LIST <<< "$GPU_IDS"
    for GPU_ID in "${GPU_ID_LIST[@]}"; do
@@ -153,7 +155,7 @@ Run this section only after required intake is resolved.
    done
    "${TAO_SKILL_BANK_PATH:?}/scripts/check_tao_launch_preflight.py" \
      --skill-bank "$TAO_SKILL_BANK_PATH" --platform docker \
-     --container-image nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch \
+     --container-image "$PAS_PYT_IMAGE" \
      --gpu-min-count "$NUM_GPUS" "${TARGET_GPU_ARGS[@]}"
    ```
 
@@ -220,8 +222,8 @@ hardware, pool size, and accumulated data can change this substantially.
 | continual behavior | dataset `true`, model `false` |
 | visualization | contact sheets `true`, embedding plot `true` |
 | Hugging Face token forwarding | disabled; enable only when the approved model/environment requires it |
-| PyTorch image | `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch` | <!-- versions-key: images.tao_toolkit.deft_iaa_pyt -->
-| data-services image | `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch` | <!-- versions-key: images.tao_toolkit.deft_iaa_data_services -->
+| PyTorch image | `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch` | <!-- versions-key: images.tao_toolkit.deft_pas_pyt -->
+| data-services image | `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch` | <!-- versions-key: images.tao_toolkit.deft_pas_data_services -->
 | monitoring | attached, poll every `5 minutes` |
 
 An ungated run evaluates every allowed iteration and completes with
@@ -282,9 +284,9 @@ Inputs
   credentials: NGC_KEY=<set | not needed | missing>;
                HF_TOKEN=<set | optional/unset | missing>
   token forwarding: requires_hf_token=<bool> (source=<user | default>)
-  PyTorch image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_iaa_pyt
+  PyTorch image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
                  (source=versions.yaml; status=<local | pull after approval>)
-  data-services image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_iaa_data_services
+  data-services image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
                        (source=versions.yaml; status=<local | pull after approval>)
   GPUs: <selected host IDs> (source=<user | default>);
         physical=<count>; visible=<CUDA-visible count>; requested=<num_gpus>;
@@ -319,8 +321,8 @@ For a new run, perform the following in order.
      printf '%s' "$NGC_KEY" | docker login nvcr.io \
        --username '$oauthtoken' --password-stdin >/dev/null
    )
-   docker pull nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_iaa_pyt
-   docker pull nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_iaa_data_services
+   docker pull nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
+   docker pull nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
    ```
 
    Never print, persist, or place the credential value in argv.
@@ -331,7 +333,7 @@ For a new run, perform the following in order.
    : "${GPU_IDS:?approved comma-separated GPU ids are required}"
    DOCKER_GPU_REQUEST="\"device=${GPU_IDS}\""
    docker run --rm --gpus "$DOCKER_GPU_REQUEST" \
-     nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch python3 -c 'import torch; torch.zeros(1).cuda()'  # versions-key: images.tao_toolkit.deft_iaa_pyt
+     nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch python3 -c 'import torch; torch.zeros(1).cuda()'  # versions-key: images.tao_toolkit.deft_pas_pyt
    ```
 
    `GPU_IDS` is the exact approved host `gpu_ids` list (for example `0` or
@@ -413,8 +415,8 @@ For a new run, perform the following in order.
      INIT_OPTIONAL_ARGS+=(--requires-hf-token)
    fi
 
-   IAA_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_iaa_pyt
-   IAA_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_iaa_data_services
+   PAS_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
+   PAS_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
      "$SKILL_ROOT/scripts/init_deft_state.py" \
@@ -427,8 +429,8 @@ For a new run, perform the following in order.
        --metric-name "$METRIC_NAME" --metric-query-type "$QUERY_TYPE" \
        --metric-op "$METRIC_OP" \
        --platform docker \
-       --pyt-image "$IAA_PYT_IMAGE" \
-       --ds-image "$IAA_DS_IMAGE" \
+       --pyt-image "$PAS_PYT_IMAGE" \
+       --ds-image "$PAS_DS_IMAGE" \
        --deft-config "$RESULTS_DIR/config/deft_config.yaml" \
        --tao-spec "$RESULTS_DIR/config/tao_spec.yaml"
    ```
