@@ -15,6 +15,17 @@ Every command below uses `${PREP_DIR}`. Export it before the first step:
 ```bash
 export PREP_DIR="${RESULTS_DIR}/prep"
 mkdir -p "$PREP_DIR"
+
+export CLASSES_YAML="<path to the run's classes.yaml>"
+export POOL_IMAGES="<config.pool_images>"   # the raw images this prep labels
+export CODETR_SPEC="${PREP_DIR}/codetr_inference.yaml"
+```
+
+Emit `$CODETR_SPEC` before step 3 overrides it:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
+  --stage codetr_inference --pyt-image "$TAO_PYT_IMAGE" --out "$CODETR_SPEC"
 ```
 
 `${RESULTS_DIR}/prep` is the layout the rest of the workflow expects: the output tree
@@ -232,16 +243,26 @@ Runtime scales with pool size, so on a large pool this is the longest stage in t
 workflow. Wait on its artifacts, not on the process:
 
 ```bash
+LAUNCH_MARKER="${PREP_DIR}/.codetr_launched"
+mkdir -p "$(dirname "$LAUNCH_MARKER")" && touch "$LAUNCH_MARKER"
+# ... launch the container ...
+
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
-  --artifact "${PREP_DIR}/inference/labels" \
+  --newer-than "$LAUNCH_MARKER" \
   --status-json "${PREP_DIR}/inference/status.json" \
   --status-contains "finished successfully"
 ```
 
 TAO appends the action name to `results_dir`, so passing `results_dir=${PREP_DIR}`
 puts every output under `${PREP_DIR}/inference/`. A wait pointed at
-`${PREP_DIR}/status.json` never matches and times out while the stage runs
-normally.
+`${PREP_DIR}/status.json` never matches and times out while the stage runs normally.
+
+Do not add `--artifact "${PREP_DIR}/inference/labels"` here. `await_stage.py` returns on
+the first condition that holds, and TAO creates the labels directory when it starts, so
+the wait would return within seconds and prep would convert a fraction of the pool as
+though it were complete. Wait on `status.json` alone for any stage whose outputs appear
+before it finishes, and use `--newer-than` so a previous attempt's status cannot satisfy
+it.
 
 `dataset.infer_data_sources.classmap` is the detector's **own** vocabulary — one class name per line in `category_id` order starting at 1, COCO-80 for a COCO-trained checkpoint. It is not the target list; `category_mapping` names are matched against it. `results_dir` auto-appends the action, so labels land in `${PREP_DIR}/inference/labels/` already carrying target class names.
 
@@ -372,8 +393,40 @@ First build the input list. Do not hand-write it:
   --out        "${PREP_DIR}/pool_input.parquet"
 ```
 
-Then invoke `tao-skill-bank:tao-generate-image-embeddings` over it, writing
-`source_pool/source_embeddings.parquet`, with the encoder resolved in Pre-Flight check 9.
+Then embed it. `tao-skill-bank:tao-generate-image-embeddings` covers this stage, but its
+spec block is written for an iteration — `weak_images.parquet` in, embeddings for the weak
+set out. Prep embeds the **pool**, so the two paths differ and the encoder fields do not:
+
+```bash
+EMBED_SPEC="${PREP_DIR}/image_embeddings.yaml"
+
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
+  --stage embedding --ds-image "$TAO_DS_IMAGE" --out "$EMBED_SPEC"
+
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
+  --spec "$EMBED_SPEC" \
+  --set input_parquet="${PREP_DIR}/pool_input.parquet" \
+  --set output_parquet="<workspace>/source_pool/source_embeddings.parquet" \
+  --set model="$EMBEDDING_MODEL" \
+  --set model_path="$EMBEDDING_MODEL_PATH" \
+  --set model_config_path='""' \
+  --set batch_size=64
+```
+
+```bash
+docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
+  "$TAO_DS_IMAGE" \
+  embedding image_embeddings -e "$EMBED_SPEC"
+```
+
+The encoder is whatever Pre-Flight check 9 resolved, and it must be the same one every
+iteration uses: mining compares an iteration's embeddings against this pool parquet, so
+two encoders produce vectors that are not comparable and the failure is silent — mining
+succeeds and returns confidently wrong neighbours.
+
+`model_config_path` needs the doubled quoting shown above; see
+`references/tao-generate-image-embeddings.md` for why.
 
 **Embed the whole pool, not just what reached the COCO.** Step 3 skips images with no surviving
 box — 35 of 5,000 on the reference pool — so `coco.json` is not the image list. Mining searches
