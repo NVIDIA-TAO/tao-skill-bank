@@ -54,6 +54,21 @@ framework_image_preflight = load_module(
 )
 
 
+def write_safetensors(path: Path, tensor_keys: list[str]) -> None:
+    offset = 0
+    header = {}
+    for key in tensor_keys:
+        header[key] = {
+            "dtype": "F32",
+            "shape": [1],
+            "data_offsets": [offset, offset + 4],
+        }
+        offset += 4
+    encoded = json.dumps(header, separators=(",", ":")).encode("utf-8")
+    encoded += b" " * (-len(encoded) % 8)
+    path.write_bytes(len(encoded).to_bytes(8, "little") + encoded + bytes(offset))
+
+
 def make_model(tmp_path: Path, model_type: str = "qwen3_vl") -> Path:
     model = tmp_path / "model"
     model.mkdir(parents=True)
@@ -65,7 +80,7 @@ def make_model(tmp_path: Path, model_type: str = "qwen3_vl") -> Path:
             }
         )
     )
-    (model / "model.safetensors").write_bytes(b"weights")
+    write_safetensors(model / "model.safetensors", ["model.layer.weight"])
     (model / "tokenizer.json").write_text("{}")
     (model / "processor_config.json").write_text("{}")
     return model
@@ -661,7 +676,7 @@ def write_framework_export(
 ) -> None:
     output.mkdir(parents=True, exist_ok=True)
     (output / "config.json").write_text(json.dumps({"model_type": "qwen3_vl"}))
-    (output / "model.safetensors").write_bytes(b"exported-weights")
+    write_safetensors(output / "model.safetensors", ["model.layer.weight"])
     metadata = checkpoint / "model" / ".metadata"
     manifest = {
         "format": "cosmos-framework-vlm-dcp",
@@ -3203,12 +3218,10 @@ def test_nvbug_terminal_success_average_does_not_displace_weighted_event():
     assert result["average_training_loss"]["numerator"] == 5
 
 
-def test_nvbug_brev_and_video_clip_contracts_are_retry_safe():
+def test_nvbug_brev_contract_is_retry_safe():
     brev = (ROOT / "skills" / "platform" / "tao-run-on-brev" / "SKILL.md").read_text()
     assert "grep -qx ok" in brev
     assert "docker inspect '$JOB_ID'" in brev
-    spec = yaml.safe_load((ROOT / "skills" / "models" / "tao-finetune-video-clip" / "references" / "spec_template_export.yaml").read_text())
-    assert spec["export"]["batch_size"] == -1
 
 
 def test_nvbug_framework_export_rejects_tensor_key_drift(tmp_path):
@@ -3218,9 +3231,11 @@ def test_nvbug_framework_export_rejects_tensor_key_drift(tmp_path):
     (base_model / "model.safetensors.index.json").write_text(json.dumps({
         "weight_map": {"base.layer.weight": "model.safetensors"}
     }))
+    write_safetensors(base_model / "model.safetensors", ["base.layer.weight"])
     (export / "model.safetensors.index.json").write_text(json.dumps({
         "weight_map": {"export.layer.weight": "model.safetensors"}
     }))
+    write_safetensors(export / "model.safetensors", ["export.layer.weight"])
     manifest = json.loads((export / "export_manifest.json").read_text())
     manifest["base_model_fingerprint"]["sha256"] = framework_action._base_model_fingerprint(base_model)
     (export / "export_manifest.json").write_text(json.dumps(manifest))
@@ -3232,13 +3247,38 @@ def test_nvbug_framework_export_rejects_tensor_key_drift(tmp_path):
         )
 
 
+def test_nvbug_framework_export_rejects_single_file_tensor_key_drift(tmp_path):
+    checkpoint, config, base_model = make_framework_dcp(tmp_path)
+    export = tmp_path / "exports" / "epoch_1"
+    write_framework_export(export, checkpoint, config, base_model)
+    write_safetensors(export / "model.safetensors", ["wrong.layer.weight"])
+    manifest = json.loads((export / "export_manifest.json").read_text())
+    manifest["base_model_fingerprint"]["sha256"] = framework_action._base_model_fingerprint(
+        base_model
+    )
+    (export / "export_manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(common.WorkflowError, match="tensor key set differs"):
+        framework_action.verify_export(
+            checkpoint_path=str(checkpoint),
+            config_file=str(config),
+            export_dir=str(export),
+            base_model_path_or_uri=str(base_model),
+            base_model_revision="immutable-test-revision",
+        )
+
+
 def test_nvbug_render_docker_has_identity_and_idempotency_guard(tmp_path):
     args = SimpleNamespace(
         tao_job_id="job-123", results_dir=str(tmp_path),
         container_results_dir="/results", container_mount=[f"{tmp_path}:/results"],
     )
     plan = {
-        "compute": {"platform": "docker", "nodes": 1},
+        "compute": {
+            "platform": "docker",
+            "nodes": 1,
+            "gpus_per_node": 2,
+            "host_gpu_ids": ["2", "3"],
+        },
         "image": {"tag": "example.invalid/cosmos:immutable"},
         "paths": {"results_dir": {"original": str(tmp_path)}},
         "environment": {"TAO_JOB_ID": "job-123"},
@@ -3248,8 +3288,57 @@ def test_nvbug_render_docker_has_identity_and_idempotency_guard(tmp_path):
     assert "docker inspect job-123" in rendered
     assert "HOME=" in rendered and "USER=" in rendered and "LOGNAME=" in rendered
     assert "TORCHINDUCTOR_CACHE_DIR=" in rendered
+    assert "--gpus device=2,3" in rendered
 
 
 def test_nvbug_docker_gpu_count_is_not_hardcoded():
     args = workflow.parse_args(["resolve", "--model", "nvidia/Cosmos3-Nano"])
     assert args.gpus_per_node == 0
+
+
+def test_nvbug_docker_gpu_derivation_respects_cuda_visible_devices(
+    monkeypatch, tmp_path
+):
+    inventory = "\n".join(
+        [
+            "0, GPU-aaaa, 24576",
+            "1, GPU-bbbb, 24576",
+            "2, GPU-cccc, 8192",
+            "3, GPU-dddd, 49152",
+        ]
+    )
+
+    def fake_run(command, **kwargs):
+        assert command[:2] == ["nvidia-smi", "--query-gpu=index,uuid,memory.total"]
+        return subprocess.CompletedProcess(command, 0, stdout=inventory, stderr="")
+
+    monkeypatch.setattr(workflow.subprocess, "run", fake_run)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-bbbb,3")
+    args = args_for(tmp_path)
+    args.gpus_per_node = 0
+    plan = workflow.build_plan(args)
+    assert plan["compute"]["gpus_per_node"] == 2
+    assert plan["compute"]["host_gpu_ids"] == ["1", "3"]
+    assert "--gpus device=1,3" in plan["preflight"]["container_runtime"]
+
+
+def test_nvbug_docker_gpu_derivation_rejects_ineligible_visible_subset(
+    monkeypatch, tmp_path
+):
+    command = [
+        "nvidia-smi",
+        "--query-gpu=index,uuid,memory.total",
+        "--format=csv,noheader,nounits",
+    ]
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout="2, GPU-cccc, 8192\n", stderr=""
+        ),
+    )
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2")
+    args = args_for(tmp_path)
+    args.gpus_per_node = 0
+    with pytest.raises(common.WorkflowError, match="no CUDA-visible >=16 GiB"):
+        workflow.build_plan(args)

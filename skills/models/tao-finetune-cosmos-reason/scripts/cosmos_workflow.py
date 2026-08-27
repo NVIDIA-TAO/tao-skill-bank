@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import copy
 import hashlib
 import json
@@ -23,6 +24,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -3178,7 +3180,16 @@ def _preflight_contract(
         )
     else:
         allocation = path_checks
-        container = f"docker run --rm --gpus all {shlex.quote(plan_image['tag'])} bash -lc {shlex.quote(container_check)}"
+        docker_gpu_ids = list(getattr(args, "docker_gpu_ids", []))
+        gpu_request = (
+            f"device={','.join(docker_gpu_ids)}"
+            if docker_gpu_ids
+            else str(args.gpus_per_node)
+        )
+        container = (
+            f"docker run --rm --gpus {shlex.quote(gpu_request)} "
+            f"{shlex.quote(plan_image['tag'])} bash -lc {shlex.quote(container_check)}"
+        )
     return {
         "submission_host": host,
         "target_compute_node": allocation,
@@ -3523,6 +3534,81 @@ def _slurm_node_exclusion_contract(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _docker_visible_gpu_inventory(
+    cuda_visibility: str | None,
+) -> list[dict[str, str | int]]:
+    """Return physical Docker GPUs allowed by the CUDA visibility contract."""
+    detected = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,uuid,memory.total",
+            "--format=csv,noheader,nounits",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if detected.returncode:
+        raise WorkflowError(
+            "could not inventory Docker host GPUs with nvidia-smi; "
+            "correct host access before resolving GPU resources"
+        )
+    inventory: list[dict[str, str | int]] = []
+    for row in csv.reader(detected.stdout.splitlines()):
+        if len(row) != 3:
+            raise WorkflowError("nvidia-smi returned malformed Docker GPU inventory")
+        index, gpu_uuid, memory = (value.strip() for value in row)
+        try:
+            memory_mib = int(memory)
+        except ValueError as exc:
+            raise WorkflowError(
+                f"nvidia-smi returned invalid GPU memory for index {index!r}: {memory!r}"
+            ) from exc
+        if not index or not gpu_uuid:
+            raise WorkflowError("nvidia-smi returned incomplete Docker GPU inventory")
+        inventory.append(
+            {"index": index, "uuid": gpu_uuid, "memory_mib": memory_mib}
+        )
+    if not inventory:
+        raise WorkflowError("nvidia-smi found no Docker host GPUs")
+    if cuda_visibility is None:
+        return inventory
+
+    raw = cuda_visibility.strip()
+    if not raw or raw == "-1":
+        raise WorkflowError("CUDA_VISIBLE_DEVICES exposes no Docker training GPUs")
+    tokens = [token.strip() for token in raw.split(",")]
+    if any(not token for token in tokens):
+        raise WorkflowError("CUDA_VISIBLE_DEVICES contains an empty device token")
+    by_index = {str(gpu["index"]): gpu for gpu in inventory}
+    visible: list[dict[str, str | int]] = []
+    selected_indices: set[str] = set()
+    for token in tokens:
+        match = by_index.get(token) if token.isdigit() else None
+        if match is None and token.upper().startswith("GPU-"):
+            matches = [
+                gpu
+                for gpu in inventory
+                if str(gpu["uuid"]).upper().startswith(token.upper())
+            ]
+            if len(matches) == 1:
+                match = matches[0]
+        if match is None:
+            raise WorkflowError(
+                "CUDA_VISIBLE_DEVICES cannot be resolved against Docker host "
+                f"inventory: token={token!r}"
+            )
+        index = str(match["index"])
+        if index in selected_indices:
+            raise WorkflowError(
+                "CUDA_VISIBLE_DEVICES selects the same Docker host GPU more than "
+                f"once: index={index}"
+            )
+        selected_indices.add(index)
+        visible.append(match)
+    return visible
+
+
 def build_plan(
     args: argparse.Namespace,
     *,
@@ -3539,30 +3625,33 @@ def build_plan(
         raise WorkflowError(
             "base_model_path_or_uri is required for every Cosmos training request"
         )
-    if args.gpus_per_node <= 0:
+    docker_gpu_ids: list[str] = []
+    cuda_visibility = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if args.platform == "docker" and (
+        args.gpus_per_node <= 0 or cuda_visibility is not None
+    ):
+        visible_gpus = _docker_visible_gpu_inventory(cuda_visibility)
+        eligible = [gpu for gpu in visible_gpus if gpu["memory_mib"] >= 16 * 1024]
+        requested = args.gpus_per_node if args.gpus_per_node > 0 else len(eligible)
+        if len(eligible) < requested:
+            raise WorkflowError(
+                "Docker GPU selection has fewer CUDA-visible >=16 GiB devices "
+                f"than requested: requested={requested}, eligible={len(eligible)}"
+            )
+        selected = eligible[:requested]
+        if not selected:
+            raise WorkflowError(
+                "no CUDA-visible >=16 GiB training GPU was detected; "
+                "specify --gpus-per-node explicitly only after correcting GPU visibility"
+            )
+        args.gpus_per_node = len(selected)
+        docker_gpu_ids = [str(gpu["index"]) for gpu in selected]
+    elif args.gpus_per_node <= 0:
         if args.platform != "docker":
             raise WorkflowError(
                 "--gpus-per-node is required when the target platform is not docker"
             )
-        detected = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if detected.returncode:
-            raise WorkflowError(
-                "could not derive --gpus-per-node from the Docker host; specify it explicitly"
-            )
-        eligible = [
-            line for line in detected.stdout.splitlines()
-            if line.strip().isdigit() and int(line.strip()) >= 16 * 1024
-        ]
-        if not eligible:
-            raise WorkflowError(
-                "no eligible >=16 GiB training GPU was detected; specify --gpus-per-node explicitly"
-            )
-        args.gpus_per_node = len(eligible)
+    args.docker_gpu_ids = docker_gpu_ids
     try:
         runtime_model_hint = resolve_model_name(args.model, args.base_model_path_or_uri)
     except WorkflowError:
@@ -4039,6 +4128,7 @@ def build_plan(
             "gpus_per_node": args.gpus_per_node,
             "total_gpus": total_gpus,
             "cpus_per_task": args.cpus_per_task,
+            "host_gpu_ids": docker_gpu_ids,
         },
         "slurm_node_exclusions": node_exclusions,
         "cache_prewarm": {
@@ -4523,9 +4613,22 @@ def render_docker(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         f"docker inspect {shlex.quote(args.tao_job_id)} >/dev/null 2>&1 && "
         f"{{ echo {shlex.quote(args.tao_job_id + ' already submitted')}; exit 0; }}",
     ]
+    compute = plan.get("compute", {})
+    host_gpu_ids = compute.get("host_gpu_ids", [])
+    if not isinstance(host_gpu_ids, list) or not all(
+        isinstance(value, str) and value for value in host_gpu_ids
+    ):
+        raise WorkflowError("Docker plan has invalid compute.host_gpu_ids")
+    gpu_request = (
+        f"device={','.join(host_gpu_ids)}"
+        if host_gpu_ids
+        else str(int(compute.get("gpus_per_node", 0)))
+    )
+    if gpu_request == "0":
+        raise WorkflowError("Docker plan has no resolved GPU allocation")
     command = [
         "docker", "run", "-d", "--name", args.tao_job_id,
-        "--label", f"tao-job={args.tao_job_id}", "--gpus", "all", "--ipc=host",
+        "--label", f"tao-job={args.tao_job_id}", "--gpus", gpu_request, "--ipc=host",
         "--shm-size=32g", '"${HOST_IDENTITY_ARGS[@]}"',
     ]
     for mount in args.container_mount:
@@ -5186,12 +5289,21 @@ def local_preflight(
     errors: list[str] = []
     warnings: list[str] = []
     if plan.get("input_frame", {}).get("kind") != "slurm_remote":
-        for split in ("train", "validation"):
-            for media in plan.get("datasets", {}).get(split, {}).get("media_manifest", []):
-                try:
-                    decode_media(Path(media["path"]))
-                except WorkflowError as exc:
-                    errors.append(str(exc))
+        media_paths = [
+            Path(media["path"])
+            for split in ("train", "validation")
+            for media in plan.get("datasets", {}).get(split, {}).get(
+                "media_manifest", []
+            )
+        ]
+        if media_paths:
+            with ThreadPoolExecutor(max_workers=min(8, len(media_paths))) as executor:
+                futures = [executor.submit(decode_media, path) for path in media_paths]
+                for future in futures:
+                    try:
+                        future.result()
+                    except WorkflowError as exc:
+                        errors.append(str(exc))
     decoder_artifact = plan["decoder_artifact"]
     if decoder_artifact["required"] and not decoder_artifact["enabled"]:
         errors.append(

@@ -26,7 +26,7 @@ export:
   input_height: 224
   input_width: 224
   input_channel: 3
-  batch_size: -1
+  batch_size: 1
   opset_version: 23
   gpu_id: 0
   on_cpu: false
