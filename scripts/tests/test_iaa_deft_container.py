@@ -182,7 +182,9 @@ def test_interrupted_wrapper_reconciles_completed_auto_removed_container(
     output = stage / "embeddings.parquet"
     output.write_bytes(b"completed parquet")
     log = stage / "pool_embed.log"
-    log.write_text("work complete\nExecution status: PASS\n")
+    log.write_text(
+        "work complete\nExecution status: PASS\n" + "trailing diagnostics\n" * 6000
+    )
     command = expected_container_command("pool_embed", "baseline", state_config)
     identity = hashlib.sha256(
         f"{results}\0{stage.relative_to(results)}\0pool_embed".encode()
@@ -242,6 +244,18 @@ def test_interrupted_wrapper_reconciles_completed_auto_removed_container(
     assert reconciled["exit_code"] == 0
     assert reconciled["reconciled_after_wrapper_exit"] is True
     assert reconciled["reconciliation_source"] == "container_log"
+
+
+def test_complete_log_scan_returns_the_final_status_beyond_tail_boundaries(tmp_path):
+    log = tmp_path / "stage.log"
+    log.write_text(
+        "Execution status: PASS\n"
+        + "later diagnostic output\n" * 6000
+        + "Execution status: FAIL\n"
+    )
+
+    assert log.stat().st_size > 64 * 1024
+    assert container._last_execution_status(log) == "FAIL"  # noqa: SLF001
 
 
 def test_interrupted_wrapper_does_not_trust_pass_log_without_fresh_output(

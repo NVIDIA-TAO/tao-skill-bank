@@ -287,15 +287,21 @@ def _container_exit_code(container_name: str) -> int | None:
 
 
 def _last_execution_status(log_path: pathlib.Path) -> str | None:
-    """Read only the bounded log tail and return its final TAO status marker."""
-    with log_path.open("rb") as handle:
-        size = log_path.stat().st_size
-        handle.seek(max(0, size - 64 * 1024))
-        tail = handle.read().decode("utf-8", errors="replace")
-    statuses = re.findall(
-        r"(?m)^Execution status:\s*(PASS|FAIL)\s*$", tail, flags=re.IGNORECASE
-    )
-    return statuses[-1].upper() if statuses else None
+    """Stream the complete log and return its final TAO status marker.
+
+    Reconciliation is an exceptional recovery path, so a linear scan is a
+    better tradeoff than a fixed tail: it uses bounded memory and cannot lose
+    durable success evidence merely because later diagnostics made the log
+    larger than an arbitrary window.
+    """
+    final_status = None
+    pattern = re.compile(r"^Execution status:\s*(PASS|FAIL)\s*$", re.IGNORECASE)
+    with log_path.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            match = pattern.match(line)
+            if match:
+                final_status = match.group(1).upper()
+    return final_status
 
 
 def _validate_interrupted_identity(
