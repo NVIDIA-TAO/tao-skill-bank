@@ -118,12 +118,11 @@ credential value.
 - Normalize the user aliases `nano`, `edge`, and `super` to those canonical
   IDs. Preserve any variant selected in the prompt. When no variant is
   selected, use Nano.
-- Give hardware recommendations for the selected variant and report when the
-  available compute is insufficient. If the prompt asks for a variant
-  recommendation based on hardware or workload, recommend one with the
-  tradeoff, but require an explicit selection before state initialization.
-  Never silently switch or fall back to another variant.
-- Keep the selected canonical ID as source-model lineage, but do not pass the
+- Recommend a variant when asked (with the tradeoff) and report insufficient
+  compute, but require an explicit selection before state initialization. Never
+  silently switch or fall back to another variant.
+- Keep the selected canonical ID as source-model lineage; `evaluated_model` may
+  name the adapter path (see `references/pipeline-and-state.md`). Do not pass the
   native online checkpoint directly to Cosmos-RL.
 - The published Cosmos Reason 3 reasoners ship in Cosmos3's own native Omni
   format (`model_type="cosmos3_omni"`), which Cosmos-RL cannot load. After

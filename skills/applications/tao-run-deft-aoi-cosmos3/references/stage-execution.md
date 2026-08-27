@@ -24,7 +24,24 @@ JOB=$(python3 "$C3/deft_exec.py" --state "$STATE" --submit \
 # 3. Poll to a terminal state, then read logs if it failed.
 python3 "$C3/deft_exec.py" --state "$STATE" --await-job "$JOB" $PLATFORM_CTX
 python3 "$C3/deft_exec.py" --state "$STATE" --logs "$JOB" --tail 100 $PLATFORM_CTX
+
+# 4. Preserve the launch evidence under the run results, per container stage.
+#    Without these a grader has only transcript snippets and state.platform to
+#    infer from, which cannot distinguish "launched on kubernetes" from
+#    "claimed to have launched on kubernetes".
+STAGE_EVIDENCE="$RUN_DIR/launch/$JOB"; mkdir -p "$STAGE_EVIDENCE"
+"$BANK/scripts/tao_job_record.py" show "$JOB" > "$STAGE_EVIDENCE/job_record.json"
+cp "$RUN_DIR/train.bundle.json" "$STAGE_EVIDENCE/bundle.json"
+# the rendered platform artifact: the sbatch script, the k8s manifest, or the
+# docker argv -- whatever this platform produced for THIS job
+cp "$RUN_DIR"/../*/manifests/job_"$JOB".yaml "$STAGE_EVIDENCE/" 2>/dev/null || true
+python3 "$C3/deft_exec.py" --state "$STATE" --logs "$JOB" --tail 500 \
+  $PLATFORM_CTX > "$STAGE_EVIDENCE/tail.log" 2>&1 || true
 ```
+
+The job record is the load-bearing one: it carries `platform` and
+`backend_ref`, so it shows which backend actually ran the stage rather than
+which one the transcript talked about.
 
 `--list` prints the stage table, each stage's required `--param` names, and the
 host-side stages with the script that owns each. Every `mode=config` stage --

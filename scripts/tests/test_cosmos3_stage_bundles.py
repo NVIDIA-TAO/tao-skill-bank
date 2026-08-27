@@ -639,3 +639,31 @@ def test_grader_artifacts_are_listed_separately(eval_id):
     entry = next(e for e in _cosmos3_evals() if e["id"] == eval_id)
     assert "Grading-phase outputs" in entry["prompt"]
     assert "produced by the grader, not by this run" in entry["prompt"]
+
+
+def test_launch_evidence_is_documented_per_stage():
+    """A grader given only transcript snippets cannot distinguish "launched on
+    kubernetes" from "claimed to have launched on kubernetes"."""
+    body = (C3_REFS / "stage-execution.md").read_text(encoding="utf-8")
+    assert "tao_job_record.py" in body and "job_record.json" in body
+    assert "backend_ref" in body, (
+        "the job record is what proves which backend ran the stage; say so"
+    )
+
+
+def test_the_consistency_check_names_its_fields():
+    """"Configuration is consistent" is graded differently by every reader."""
+    body = (C3_REFS / "pipeline-and-state.md").read_text(encoding="utf-8")
+    for field in ("config.platform", "benchmark_hash_verified", "annotation paths"):
+        assert field in body, f"the consistency check does not name {field}"
+
+
+def test_the_adapter_lineage_rule_is_unambiguous():
+    """Both fields appearing is correct; a strict reader could grade it either
+    way without this."""
+    # Collapse whitespace: prose wraps, and a doc assertion that breaks on a
+    # line break tests the formatter, not the content.
+    body = " ".join(
+        (C3_REFS / "pipeline-and-state.md").read_text(encoding="utf-8").split())
+    assert "evaluated_model" in body and "config.base_model" in body
+    assert "must not be graded as a contradiction" in body

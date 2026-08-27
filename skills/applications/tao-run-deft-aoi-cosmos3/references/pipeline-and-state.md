@@ -101,6 +101,28 @@ count against `max_iterations`.
    recorded alongside it, which is self-referential, and
    `benchmark_hash_verified` stays false.
 
+   Preserve enough CONCRETE configuration evidence for a grader to compare
+   rather than infer — name the fields, or "configuration is consistent" is
+   graded differently by every reader:
+
+   | Evidence | Where |
+   |---|---|
+   | `config.platform` | `deft_state.json` |
+   | Platform | the rendered `DEFT_Loop_Report.html` |
+   | the stage specs actually launched | copied under the run results |
+   | annotation paths | Proxy / Benchmark / Train, as recorded |
+   | `benchmark_hash_verified` | this split-contract summary |
+
+   The first two must agree: a report naming a platform the state does not
+   record means one of them was written from something other than the run.
+
+   **Lineage vs. the evaluated model.** An iteration's `evaluated_model` MAY
+   point at the trained adapter or export path — that is precisely what iter1
+   evaluates — while `config.base_model` and the recorded lineage stay the
+   selected Cosmos3 ID. Both appearing together is correct and must not be
+   graded as a contradiction; what would be wrong is lineage drifting off the
+   selected ID, or a baseline evaluate pointing at an adapter.
+
    The manifest is a JSON file whose **exact nested key**
    `evaluation_contract.benchmark.annotations_sha256` holds the frozen
    Benchmark SHA-256 that `init_deft_state.py` recorded under
