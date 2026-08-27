@@ -588,3 +588,54 @@ def test_every_eval_grades_evidence_provenance(config):
         assert "THIS run" in entry["expected_outcome"], (
             f"{entry['id']} does not require evidence from this run"
         )
+
+
+# ── What the evals grade, beyond "did it finish" ───────────────────────────
+# Three assertions that close gaps a live run exposed: an action name resolving
+# is not the same as its contract being runnable; a first-attempt failure that a
+# retry papers over is still a readiness failure; and grader-produced artifacts
+# must not be mistaken for outputs of the run.
+
+COSMOS3_EVAL = REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config"
+
+
+def _cosmos3_evals():
+    return json.loads(COSMOS3_EVAL.read_text(encoding="utf-8"))["evals"]
+
+
+@pytest.mark.parametrize("eval_id", [e["id"] for e in json.loads(
+    (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+    .read_text(encoding="utf-8"))["evals"]])
+def test_stages_must_be_submittable_not_merely_named(eval_id):
+    """The observed failure was an action whose NAME resolved but whose
+    contract would not run without a spec file."""
+    entry = next(e for e in _cosmos3_evals() if e["id"] == eval_id)
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "bundleable and submittable" in body
+    assert "stage_bundle.py" in body and "deft_exec.py" in body
+
+
+@pytest.mark.parametrize("eval_id", [e["id"] for e in json.loads(
+    (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+    .read_text(encoding="utf-8"))["evals"]])
+def test_a_retry_does_not_erase_a_first_attempt_failure(eval_id):
+    """Otherwise every skill looks runnable, because a capable agent fixes it."""
+    entry = next(e for e in _cosmos3_evals() if e["id"] == eval_id)
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "readiness" in body.lower()
+    assert "self-correction" in body.lower()
+
+
+@pytest.mark.parametrize("eval_id", [e["id"] for e in json.loads(
+    (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+    .read_text(encoding="utf-8"))["evals"]])
+def test_grader_artifacts_are_listed_separately(eval_id):
+    """grading.json and fix_suggestions.json are produced BY the grader.
+
+    Listed beside the run's own artifacts they read as things the run should
+    have written -- which is how a request arrived to apply "exact replacements
+    from artifacts/fix_suggestions.json", a file no run produces.
+    """
+    entry = next(e for e in _cosmos3_evals() if e["id"] == eval_id)
+    assert "Grading-phase outputs" in entry["prompt"]
+    assert "produced by the grader, not by this run" in entry["prompt"]
