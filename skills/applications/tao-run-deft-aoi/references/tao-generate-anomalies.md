@@ -335,6 +335,7 @@ python3 "$SB" anomalygen.sdg --results-dir "$RUN_DIR" \
   --param testcase_jsonl="$RUN_DIR/testcase.jsonl" \
   --param checkpoint_dir="$CKPT" \
   --param cosmos_models="$COSMOS" \
+  --param clean_dir="$DS" \
   --arg "export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=/workspace/paidf-anomalygen && \
     \${ANOMALYGEN_SCRIPTS}/run_sdg.sh \
     --checkpoint_dir \$TAO_INPUT_CHECKPOINT_DIR --step $STEP \
@@ -445,3 +446,12 @@ The current container CSV schema cannot represent `not_run` and may write `1`
 when initialization failed. The disabled-marker log check above blocks that
 contradiction. The paired container follow-up must add the tri-state schema and
 stop emitting safety-passed values for unscreened content.
+
+`clean_dir` is what Phase 2 resolved the clean images from — `$DS` unless they
+live elsewhere. SDG needs it because `testcase.jsonl` records their PATHS and
+Phase 3 opens them; the AMP masks it also references sit under
+`$TAO_RESULTS_ROOT/amp`, which is already the stage's writable results mount, so
+they need no extra input. If a JSONL ever points outside both, widen this to the
+directory that contains everything it names — the failure is a FileNotFoundError
+on a path the JSONL supplied, not a mount error.
+
