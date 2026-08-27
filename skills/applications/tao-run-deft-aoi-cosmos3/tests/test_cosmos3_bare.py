@@ -2039,6 +2039,25 @@ class SkillContractTests(unittest.TestCase):
         self.assertLess(iopath_index, converter_index)
         self.assertIn("uv pip install --python .venv/bin/python iopath", source)
 
+    def test_checkpoint_conversion_disables_training_flag_for_storage_backends(
+        self,
+    ) -> None:
+        # cosmos_framework.utils.flags.TRAINING defaults to True and, when
+        # set, easy_io.backends.registry_utils unconditionally imports
+        # MSCBackend, which needs `multistorageclient` — absent from the
+        # pinned cu130 dependency group (a second ModuleNotFoundError,
+        # distinct from the iopath one, discovered after fixing the first).
+        # Checkpoint conversion is not a training job and needs none of the
+        # training-only storage backends, so the conversion container is run
+        # with COSMOS_TRAINING=false instead of installing more packages —
+        # this also sidesteps `assert TRAINING` in
+        # inference.common.config.load_config, which conversion never calls.
+        prepare_module_path = (
+            MODEL_ROOT / "scripts" / "prepare_cosmos3_vlm_checkpoint.py"
+        )
+        source = prepare_module_path.read_text()
+        self.assertIn('"-e", "COSMOS_TRAINING=false"', source)
+
 
 if __name__ == "__main__":
     unittest.main()

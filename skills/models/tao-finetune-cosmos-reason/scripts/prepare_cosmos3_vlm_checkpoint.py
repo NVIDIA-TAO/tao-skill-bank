@@ -307,6 +307,13 @@ export LD_LIBRARY_PATH=
         "-e", "HOME=/cache/home", "-e", "XDG_CACHE_HOME=/cache/xdg",
         "-e", "UV_CACHE_DIR=/cache/uv", "-e", "HF_HOME=/cache/huggingface",
         "-e", "UV_LINK_MODE=copy", "-e", "PYTHONUNBUFFERED=1",
+        # cosmos_framework.utils.flags.TRAINING defaults to True and gates an
+        # unconditional `from multistorageclient import ...` in
+        # easy_io.backends.registry_utils, which the pinned dependency group
+        # doesn't include. Checkpoint conversion needs none of the training
+        # (S3/MSC) storage backends, so disable it for this container only —
+        # the pinned lockfile and checkout are untouched.
+        "-e", "COSMOS_TRAINING=false",
         "-v", f"{framework_checkout}:/workspace/cosmos-framework",
         "-v", f"{output.parent}:/output", "-v", f"{cache}:/cache",
         *source_mount, *donor_mount,
