@@ -23,8 +23,8 @@ The IAA TAO-FT export contains:
 There is no download branch. Preserve the archives in place; extraction goes
 to the approved `DATASET_ROOT`. Do not copy multi-gigabyte archives into the
 dataset tree. If an export also contains a legacy `rebuild.py`, leave it
-unused; the workflow always executes the hash-bound copy bundled with this
-skill.
+unused; the workflow always executes the version-controlled, reviewed copy
+bundled with this skill.
 
 ## Approved extraction and rebuild
 

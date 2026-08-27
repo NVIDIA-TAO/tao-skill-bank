@@ -22,28 +22,55 @@ def _shard(rows, out_root: Path):
     """Create one relative image symlink and caption for each pair row."""
     made_links = made_caps = skipped = 0
     for unique_name, source_split, image_path, caption in rows:
-        link = out_root / "images" / unique_name
-        target = Path("..") / "images_raw" / source_split / image_path
+        unique_path = _relative_path(unique_name, "unique_name")
+        source_path = (
+            out_root
+            / "images_raw"
+            / _relative_path(source_split, "source_split")
+            / _relative_path(image_path, "image_path")
+        )
+        link = out_root / "images" / unique_path
+        link.parent.mkdir(parents=True, exist_ok=True)
+        target = Path(os.path.relpath(source_path, start=link.parent))
         try:
             link.symlink_to(target)
             made_links += 1
         except FileExistsError:
             skipped += 1
 
-        cap = out_root / "captions" / (Path(unique_name).stem + ".txt")
+        cap = out_root / "captions" / unique_path.with_suffix(".txt")
+        cap.parent.mkdir(parents=True, exist_ok=True)
         cap.write_text(caption + "\n", encoding="utf-8")
         made_caps += 1
     return made_links, made_caps, skipped
+
+
+def _relative_path(value: str, field: str) -> Path:
+    """Return a non-empty relative path that cannot escape its owned root."""
+    path = Path(value)
+    if (
+        not value
+        or path.is_absolute()
+        or path == Path(".")
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError(f"{field} must be a non-empty relative path: {value!r}")
+    return path
 
 
 def load_rows(split: str, metadata_root: Path):
     """Project a pair JSON document down to the fields the rebuild needs."""
     with (metadata_root / f"{split}_pairs.json").open(encoding="utf-8") as handle:
         data = json.load(handle)
-    rows = [
-        (row["unique_name"], row["source_split"], row["image_path"], row["caption"])
-        for row in data
-    ]
+    rows = []
+    for row in data:
+        unique_name = str(_relative_path(row["unique_name"], "unique_name"))
+        source_split = str(_relative_path(row["source_split"], "source_split"))
+        image_path = str(_relative_path(row["image_path"], "image_path"))
+        caption = row["caption"]
+        if not isinstance(caption, str):
+            raise ValueError("caption must be a string")
+        rows.append((unique_name, source_split, image_path, caption))
     del data
     return rows
 
@@ -75,33 +102,87 @@ def rebuild(splits, workers: int, metadata_root: Path, out_root: Path) -> int:
 
 
 def verify(splits, metadata_root: Path, out_root: Path, sample: int = 2000) -> bool:
-    """Check exact counts, then sample-resolve rebuilt links and captions."""
-    expected = 0
-    names = []
+    """Check requested metadata coverage, then sample link provenance."""
+    rows_by_name = {}
+    listed_names = []
     for split in splits:
-        names_for_split = (metadata_root / f"{split}_list.txt").read_text().split()
-        expected += len(names_for_split)
-        names.extend(names_for_split)
+        names_for_split = [
+            str(_relative_path(name.strip(), f"{split}_list.txt entry"))
+            for name in (metadata_root / f"{split}_list.txt").read_text().splitlines()
+            if name.strip()
+        ]
+        listed_names.extend(names_for_split)
+        for row in load_rows(split, metadata_root):
+            name = row[0]
+            if name in rows_by_name:
+                raise ValueError(f"duplicate unique_name across requested splits: {name}")
+            rows_by_name[name] = row
 
-    image_count = len(list((out_root / "images").iterdir()))
-    caption_count = len(list((out_root / "captions").iterdir()))
-    print(f"expected {expected:,} images/ {image_count:,} captions/ {caption_count:,}")
+    expected_images = set(listed_names)
+    if len(expected_images) != len(listed_names):
+        raise ValueError("split list metadata contains duplicate unique_name values")
+    if expected_images != set(rows_by_name):
+        missing_from_pairs = sorted(expected_images - set(rows_by_name))
+        missing_from_lists = sorted(set(rows_by_name) - expected_images)
+        raise ValueError(
+            "pair/list metadata disagree; "
+            f"missing from pairs={missing_from_pairs[:5]}, "
+            f"missing from lists={missing_from_lists[:5]}"
+        )
+    expected_captions = {
+        str(Path(name).with_suffix(".txt")) for name in expected_images
+    }
+    if len(expected_captions) != len(expected_images):
+        raise ValueError("unique_name values collide after conversion to caption paths")
+
+    image_root = out_root / "images"
+    caption_root = out_root / "captions"
+    actual_images = {
+        str(path.relative_to(image_root))
+        for path in image_root.rglob("*")
+        if path.is_symlink() and path.exists()
+    }
+    actual_captions = {
+        str(path.relative_to(caption_root))
+        for path in caption_root.rglob("*")
+        if path.is_file()
+    }
+    complete_run = set(splits) == set(SPLITS)
+    counts_ok = (
+        actual_images == expected_images and actual_captions == expected_captions
+        if complete_run
+        else expected_images.issubset(actual_images)
+        and expected_captions.issubset(actual_captions)
+    )
+    print(
+        f"expected {len(expected_images):,} requested entries; "
+        f"images/ {len(actual_images):,} total captions/ {len(actual_captions):,} total"
+    )
 
     random.seed(11)
     bad = []
-    for name in random.sample(names, min(sample, len(names))):
+    sampled_names = random.sample(
+        sorted(expected_images), min(sample, len(expected_images))
+    )
+    for name in sampled_names:
         link = out_root / "images" / name
-        if not link.exists():
+        if not link.is_symlink() or not link.exists():
             bad.append((name, "dangling or missing"))
             continue
-        cap = out_root / "captions" / (Path(name).stem + ".txt")
+        _, source_split, image_path, _ = rows_by_name[name]
+        expected_source = (
+            out_root / "images_raw" / source_split / image_path
+        ).resolve()
+        if link.resolve() != expected_source:
+            bad.append((name, "points at the wrong source image"))
+        cap = out_root / "captions" / Path(name).with_suffix(".txt")
         if not cap.is_file():
             bad.append((name, "missing caption"))
-    print(f"sampled {min(sample, len(names)):,} entries, problems {len(bad)}")
+    print(f"sampled {len(sampled_names):,} entries, problems {len(bad)}")
     for problem in bad[:10]:
         print("  BAD", problem)
 
-    ok = image_count == expected and caption_count == expected and not bad
+    ok = counts_ok and not bad
     print("VERIFY:", "PASS" if ok else "FAIL")
     return ok
 
