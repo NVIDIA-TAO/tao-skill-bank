@@ -2017,6 +2017,28 @@ class SkillContractTests(unittest.TestCase):
         self.assertNotIn("--validate-with-image", combined)
         self.assertNotIn("<RESOLVE_AFTER_CLEAN_BUILD>", combined)
 
+    def test_checkpoint_conversion_script_installs_iopath_without_touching_lockfile(
+        self,
+    ) -> None:
+        # cosmos_framework.scripts.convert_model_to_vlm_safetensors pulls in
+        # iopath via its inference.common.config import chain, but the pinned
+        # cu130 uv dependency group omits it (ModuleNotFoundError at runtime).
+        # The conversion script must patch this into the already-synced venv
+        # without running `uv sync` again, so the frozen lockfile and pinned
+        # cosmos-framework checkout stay untouched.
+        prepare_module_path = (
+            MODEL_ROOT / "scripts" / "prepare_cosmos3_vlm_checkpoint.py"
+        )
+        source = prepare_module_path.read_text()
+        uv_sync_index = source.index('uv sync --frozen --no-default-groups')
+        converter_index = source.index(
+            '.venv/bin/python -m cosmos_framework.scripts.convert_model_to_vlm_safetensors'
+        )
+        iopath_index = source.index("import iopath")
+        self.assertGreater(iopath_index, uv_sync_index)
+        self.assertLess(iopath_index, converter_index)
+        self.assertIn("uv pip install --python .venv/bin/python iopath", source)
+
 
 if __name__ == "__main__":
     unittest.main()

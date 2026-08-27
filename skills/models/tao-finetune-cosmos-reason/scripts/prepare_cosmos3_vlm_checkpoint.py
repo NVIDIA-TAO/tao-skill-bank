@@ -249,6 +249,14 @@ cd /workspace/cosmos-framework
 if ! .venv/bin/python -c 'import cosmos_framework, torch' >/dev/null 2>&1; then
   uv sync --frozen --no-default-groups --group "$DEPENDENCY_GROUP"
 fi
+# The pinned "$DEPENDENCY_GROUP" lockfile omits iopath, which
+# cosmos_framework.scripts.convert_model_to_vlm_safetensors needs via its
+# inference.common.config -> utils.lazy_config import chain. Installing it
+# into the already-synced venv (not via `uv sync`) keeps the frozen lockfile
+# and pinned cosmos-framework checkout untouched.
+if ! .venv/bin/python -c 'import iopath' >/dev/null 2>&1; then
+  uv pip install --python .venv/bin/python iopath
+fi
 source_value="$BASE_MODEL"
 architecture_value="$ARCHITECTURE_MODEL"
 if [[ "$BASE_MODEL_KIND" == "uri" ]]; then
