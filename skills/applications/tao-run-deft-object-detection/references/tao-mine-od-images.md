@@ -96,7 +96,7 @@ still unset, since allocation apportions the budget by exactly that list.
 <skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-mine-od-images/scripts/verify_unique_neighbor_matching_spec.py \
   --spec "$MINE_SPEC"
 
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+docker run --rm --name "deft_iter${N}_mine" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   tmm unique_neighbor_matching -e "$MINE_SPEC"
