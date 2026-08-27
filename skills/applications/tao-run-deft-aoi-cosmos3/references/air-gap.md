@@ -1,47 +1,20 @@
-# Air-Gapped Cosmos3 DEFT AOI
+# Air-gapped execution
 
-Enable air-gap mode when `AIR_GAPPED=1` is present, the user explicitly asks
-for offline/air-gapped execution, or the harness reports restricted
-networking. Resolve this before dependency checks; never probe the network to
-infer the mode.
+Select this path only when the user or environment explicitly declares an air
+gap. Before approval, verify locally without pulling:
 
-Air-gap mode is valid only when every selected platform input is already
-visible from the compute frame:
+- the Framework and data-services images resolved from `versions.yaml`, with
+  repository digests;
+- the complete HF-format VLM base under the workspace `models/` directory;
+- all Proxy, Benchmark, Mining, and image files;
+- the selected platform CLI and the dependency-complete skill Python.
 
-- Cosmos Framework Train, Cosmos-RL evaluate, and data-services images;
-- Cosmos3 base model / tokenizer cache;
-- Proxy, Benchmark, Mining JSON and all referenced images;
-- the AnomalyGen image, its fine-tuned checkpoint (`ag_config.yaml` plus the
-  iteration checkpoint), its dataset directory (`defect_spec.jsonl`,
-  `semantic_segmentation_labels.json`, clean images, cad masks), and the Cosmos
-  base-checkpoints cache — required only when the AnomalyGen stage will run;
-- selected platform native CLI and GPU runtime;
-- host Python with `pyarrow` and `yaml`.
+After approval, set `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` in every
+model container, prohibit registry login/pull and package or asset fetches, and
+use `scripts/deft_exec.py` for host commands. A missing image, model file, or
+Python dependency is a hard stop; do not retry through network access.
 
-In air-gap mode:
-
-- initialize state with `--network-mode airgap` and its activation source;
-  after initialization run local external commands through
-  `scripts/deft_exec.py`, which injects offline variables and enforces
-  `--pull=never` for direct Docker/Podman runs;
-- do not run image pulls, package installs, Hugging Face downloads, S3 staging,
-  or credential login. This explicitly prohibits `pip`, `pip3`, `uv`, `conda`,
-  `apt`, and package-manager commands from an existing virtual environment,
-  even as a probe or retry. This also includes the AnomalyGen post-gate
-  bootstrap, whose checkpoint/dataset/base-cache fetchers must all be
-  pre-staged instead;
-- use `scripts/deft_python.sh` to select an already-provisioned interpreter; if
-  no candidate provides `pyarrow` and `yaml`, report those imports and stop;
-- keep `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` set for AnomalyGen runs;
-- leave both `HF_TOKEN` and its legacy alias `HUGGING_FACE_HUB_TOKEN` unset
-  when local assets are sufficient; clearing only one still leaves a usable
-  token in the environment for `huggingface_hub` to pick up;
-- use storage tier A and verify every mount/path before the launch review;
-- stop on a missing asset instead of substituting a model, image, evaluator, or
-  reduced workflow.
-
-The same user gate, job-record ordering, four verbs, state contract, frozen
-Benchmark hash, and bare annotation contract still apply.
-Never read `references/network-bootstrap.md` in this mode.
-
-When AnomalyGen will run, its base cache and Guardrail safety model must be fully pre-staged, and the base cache must be verified offline with the container's own check before SDG.
+DCP evaluation may materialize an action-local model inside its recorded
+writable directory. That is local checkpoint handling, not a network fetch.
+Keep the workspace mounted read-only except for explicit results and
+action-model directories.

@@ -1,22 +1,14 @@
 ---
 name: tao-run-deft-aoi-cosmos3
 description: >
-  Run the disk-backed DEFT AOI improvement loop for NVIDIA Cosmos Reason 3 /
-  Cosmos3 models, using Nano by default and Edge or Super when explicitly
-  requested: evaluate the base model on Proxy and frozen Benchmark splits,
-  mine real images from Proxy gaps, assemble a per-iteration Train JSON
-  from selected Mining samples, train with native cosmos_framework VLM LoRA SFT, and repeat
-  through the selected platform's submit/status/logs/cancel contract.
-  This migration supports bare labels only: the assistant response must be
-  exactly OK or NG. Use for "run Cosmos3 DEFT AOI", "CR3 AOI loop", or
-  "improve Cosmos3 PCB inspection with bare OK/NG"; do not use for
-  rich/reasoning annotation, one-off Cosmos training, or generic anomaly
-  generation.
+  Run the disk-backed DEFT AOI improvement loop for NVIDIA Cosmos Reason 3
+  models with exact OK/NG labels: evaluate a frozen Benchmark, diagnose Proxy
+  errors, mine labeled real images, train with Cosmos Framework, and repeat.
 license: Apache-2.0 AND CC-BY-4.0
-compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python with `pyarrow` and `yaml`, and the selected platform's native CLI.
+compatibility: Requires the companion skills named in eval.config, host Python with pyarrow and yaml, and the selected platform native CLI.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.2.0"
 allowed-tools: Read Task Bash Write
 tags:
 - application
@@ -28,355 +20,229 @@ tags:
 
 # Skill: tao-run-deft-aoi-cosmos3
 
-## Installation
+This is the canonical Cosmos3 DEFT AOI application. It is a disk-backed,
+gate-first loop. Training data comes only from labeled real images selected
+from the Mining split. The base model is a complete local HF-format VLM
+snapshot under the workspace and is consumed directly. There is no model
+preparation stage and no explicit checkpoint export stage.
 
-Install this application as part of the full TAO skill-bank root, not as only
-the companion skill folders: `TAO_SKILL_BANK_PATH` must point at a directory
-containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
-Cosmos model resolver `scripts/resolve_tao_image.py`, plus the
-`skills/{applications,models,data,platform,core}/...` tree listed in
-`eval.config`. Run bundled validation with the skill Python so dependencies
-match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
-tests.test_cosmos3_bare`. Resolve network mode first. Missing air-gap imports
-are a hard stop; network-enabled setup lives only in
-`references/network-bootstrap.md`.
+## Required reading and model-first routing
 
-## Execution Contract
+Before planning an action:
 
-Treat a run as a disk-backed state machine.
+1. Read this file and the reference for the next durable stage.
+2. Resolve the supplied model ID before choosing a workflow:
 
-1. Preserve every explicit user value and show the source of each effective
-   value (`user`, `spec`, or `default`) in the Pre-Flight Summary.
-2. Ask which installed platform to use. Do not select Docker, SLURM,
-   Kubernetes, Brev, virtualenv, or an external platform by default.
-3. Resolve network mode, then read exactly one of `references/air-gap.md` or
-   `references/network-bootstrap.md`. Run the selected platform skill's
-   Preflight and stop on a missing system/native-CLI prerequisite.
-4. Before any mutation or launch, invoke `tao-launch-workflow` and show its
-   launch review plus this skill's Pre-Flight Summary. Wait for one explicit
-   approval.
-5. After approval, initialize `${RESULTS_DIR}/deft_state.json` exactly once
-   with `scripts/init_deft_state.py`. Pass the exact GPU model reported by the
-   selected platform's Preflight through `--gpu-model` (include accelerator
-   memory when available), plus the resolved network mode/source and selected
-   absolute Python. Never reinitialize a resumed run or edit
-   `deft_state.json` by hand.
-6. Before every stage, after context compaction, and before a completion claim,
-   run `scripts/deft_context.py --state ... --stage ...`. Use its durable
-   `next_stage` and the state file's `status`,
-   `current_iteration`, `iterations.*.status`, `stage_completed`, and latest
-   `events` entry to resume. Do not infer progress from assistant prose or
-   from an artifact that is not recorded in state.
-7. Run every command that can install, fetch, log in, or launch a local
-   container through `scripts/deft_exec.py --state ... -- <command>`. In an
-   air-gap it rejects egress/package operations and enforces no-pull. Remote
-   platforms must apply the equivalent immutable no-pull/offline policy.
-8. Submit each GPU stage through the chosen platform's four verbs:
-   `submit` / `status` / `logs` / `cancel`. The `submit` verb must open the
-   job-record before native launch; the returned id is the only launch handle.
-   Poll the backend, not the job-record, and map state to
-   `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`.
-9. Commit every completed or failed DEFT stage with
-   `scripts/commit_stage.py`. It verifies the stage inputs and atomically
-   updates both the resume snapshot and ordered `events` array in state. Every
-   executed-stage commit requires a positive, measured `--duration-sec`: use
-   backend elapsed wall time for submitted jobs and a host wall-clock timer for
-   inline stages. A documented `--skip` may record `0`; negative durations are
-   always rejected.
-10. Claim completion only after `scripts/finalize_run.py` verifies final
-   Benchmark evidence, successfully commits `loop_stop`, and a fresh
-   read of `deft_state.json` shows `status == "complete"`,
-   `iterations.baseline.status == "complete"`, and the final iteration's
-   `status == "complete"`.
+   ```bash
+   python "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_model.py" \
+     --model nvidia/Cosmos3-Nano --action evaluate \
+     --backend cosmos-framework --workload deft-aoi
+   ```
 
-Never place secrets in a spec, command, transcript, job-record, or chat. Check
-credential presence only, for example
-`[ -n "$HF_TOKEN" ] && echo SET || echo UNSET`. Credentials come from the
-user's exported shell environment or from a user-approved env file —
-`~/.tao/secrets.env`, `~/.config/tao/.env`, or a path the user points at, never
-one merely found in the workspace — loaded with
-`set -a; source /path/to/.env; set +a`. Never print the file's contents or any
-credential value.
+3. Resolve the shared Cosmos frontend with the explicit supported backend:
 
-## Cosmos3 Model Contract
+   ```bash
+   python "$TAO_SKILL_BANK_PATH/skills/models/tao-finetune-cosmos-reason/scripts/cosmos_workflow.py" \
+     --backend cosmos-framework --action evaluate --workload deft-aoi
+   ```
 
-- Model skill: `tao-finetune-cosmos-reason`.
-- Supported canonical base models:
-  - `nvidia/Cosmos3-Nano` — default;
-  - `nvidia/Cosmos3-Edge` — only when explicitly requested;
-  - `nvidia/Cosmos3-Super` — only when explicitly requested.
-- Normalize the user aliases `nano`, `edge`, and `super` to those canonical
-  IDs. Preserve any variant selected in the prompt. When no variant is
-  selected, use Nano.
-- Give hardware recommendations for the selected variant and report when the
-  available compute is insufficient. If the prompt asks for a variant
-  recommendation based on hardware or workload, recommend one with the
-  tradeoff, but require an explicit selection before state initialization.
-  Never silently switch or fall back to another variant.
-- Keep the canonical ID as lineage. Framework Train and cosmos-rl evaluate
-  cannot consume its native `model_type="cosmos3_omni"` directory, so after
-  approval use the model skill's `scripts/prepare_cosmos3_vlm_checkpoint.py` to create
-  or verify a Qwen3-VL HF snapshot. Use that path for Framework
-  `[model.backbone]` and zero-shot evaluate. Edge/Super require their own
-  validated VLM base; never reuse Nano conversion arguments.
-- Nano automatically uses the helper's checked-in immutable source revision,
-  Qwen3-VL donor revision, Framework converter commit, and conversion-image
-  digest (`references/cosmos3-conversion-defaults.json` in the model skill).
-  Do not ask the user to select any of them. Edge and Super require a
-  variant-specific policy owned by the model skill; never reuse Nano's
-  conversion defaults.
-- Train container image: resolve `images.tao_toolkit.cosmos_framework` with
-  `scripts/resolve_versions_key.py`; never copy its tag into this skill.
-- Train with `python -m cosmos_framework.scripts.train --sft-toml=<config>`.
-  Render the smoke/full profile with `render_cfw_sft.py`; submit only through
-  `submit_cfw_train.py`. Because the image has native VLM LoRA but no native
-  two-image ShareGPT loader, that helper mounts `cfw_cr3_aoi_adapter.py` and
-  identity-mounts absolute annotations; see pipeline-and-state.
-- Export with `export_cfw_checkpoint.py`, which calls the image-owned exact-key
-  `cosmos_framework.scripts.export_vlm_dcp`. The unchanged cosmos-rl vLLM
-  evaluate consumes its verified merged HF output with `model.enable_lora=false`.
-  Train commit requires the matching verified shard/tokenizer manifest.
-- Before the first evaluate job, run `scripts/patch_eval_image_cap.py` to
-  source-classify the selected image. Mount its output read-only into every
-  evaluation container only when it reports `patch_required`; no mount is
-  needed for `already_sufficient` or `cap_absent`. An unrecognized cap/vLLM
-  shape is a hard stop; see `references/cosmos-reason.md`.
-- Also before the first evaluate job, run `scripts/patch_eval_video_decoder.py`
-  against the same image. This skill's records are single-image and never
-  carry video, but `cosmos-rl`'s evaluator unconditionally registers a
-  PyNvVideoCodec GPU video decoder anyway, which hard-fails on GPUs with no
-  NVENC engine (e.g. H200). Mount its output read-only when it reports
-  `patch_required`, and pass `-e TAO_SKIP_PYNV_VIDEO_DECODER=1` to every
-  evaluate job; no mount is needed for `already_sufficient` or
-  `pattern_absent`. An unrecognized shape is a hard stop; see
-  `references/cosmos-reason.md`.
-- Workflow override: `automl_policy: off`. DEFT owns iteration and checkpoint
-  selection; this is a workflow argument, not a TOML key.
-- Default adaptation: Framework-native VLM LoRA over language projections
-  `["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj",
-  "down_proj"]`, leaving the vision tower's pretrained weights untouched. The
-  schema also accepts `"all-linear"`; use it only when explicitly requested.
-- Every spec is a nested dictionary serialized to TOML. Never write literal
-  flat dotted keys into a spec.
-- Do not mount user data over `/workspace`; both backends install code there.
-- Run every Docker container with a writable host mount as the invoking
-  UID:GID with `USER`, `LOGNAME`, `HOME=/tmp`, and the read-only host
-  passwd/group databases; never fall back to a root repair container. This
-  covers checkpoint preparation, Train, Proxy/Benchmark evaluate, AnomalyGen,
-  and mining. See `references/cosmos-reason.md` and
-  `references/tao-mine-aoi-images.md`.
+   Repeat with `--action train` or `--action inference` for those actions.
+   Use the returned `cosmos-framework` implementation because it owns native
+   VLM training, evaluation, inference, DCP handling, and the image pin used by
+   this application.
 
-Read `skills/models/tao-finetune-cosmos-reason/SKILL.md` and its
-`references/skill_info.yaml` before authoring an evaluate spec. Start Train
-from this application's current Framework profile and evaluate from the model
-skill's current packaged template; apply only the AOI overrides in
-`references/cosmos-reason.md`. Replace every dataset/output path with the
-chosen platform's compute-frame path. Prove that the selected Framework image
-can load and train the prepared PTM, and separately that the selected cosmos-rl
-image can evaluate the exported HF artifact. Do not reuse Nano conversion,
-parallelism, or memory assumptions for Edge or Super.
+4. Read `skills/models/tao-finetune-cosmos-reason/SKILL.md`, its
+   `references/skill_info.yaml`, and the selected Framework contract before
+   resolving the image or building a nested TOML spec.
 
-## Bare OK/NG Contract
+Supported canonical IDs are `nvidia/Cosmos3-Nano`,
+`nvidia/Cosmos3-Edge`, and `nvidia/Cosmos3-Super`. Aliases `nano`, `edge`, and
+`super` normalize to those IDs. Nano is the application default; never switch
+an explicitly selected variant.
 
-This migration supports one annotation mode: `bare_okng`.
+## Fixed validation profile
 
-- Each record is ShareGPT JSON with exactly one image.
-- The first human/user turn contains the inspection prompt.
-- The final assistant/gpt response is exactly `OK` or `NG`; reasoning,
-  prefixes, explanations, and final-answer wrappers are invalid training
-  labels.
-- `NG` is the positive class. `NG -> OK` is a false accept; `OK -> NG` is a
-  false reject.
-- Evaluation may normalize a model response by its last standalone `OK`/`NG`
-  token, but training labels remain exact.
-- Rich, reasoning, BCQ/MCQ, and task fan-out modes are outside this migration.
-  Stop instead of silently accepting them.
+For the fresh validation run on this machine, use these explicit values:
 
-Run `scripts/validate_sharegpt.py` on Proxy, Benchmark, Mining, and each
-generated iteration training file. There is no input Train annotation.
-Run `scripts/validate_split_contract.py` to prove that Proxy, Benchmark, and
-Mining targets are disjoint and that the frozen Benchmark annotation hash has
-not changed. When a generated Train file is supplied, the same validator
-requires its targets to come from Mining, the immediate `--previous-train`
-seed, or the current iteration's `--synthetic` AnomalyGen output, and to remain
-disjoint from Proxy and Benchmark. For iteration N>1, `--previous-train` is
-required and the validator proves that every preceding Train record was
-retained.
+- platform: Docker;
+- compute: one NVIDIA H200 GPU, one node;
+- iterations: 5 maximum;
+- training: 10 epochs per iteration;
+- mining: `topk=15`, cosine distance, `filter_by_label`, with `OK` and `NG`
+  queried separately;
+- evaluation: frozen Benchmark at baseline and after every trained iteration;
+- target: `accuracy >= 0.99` and `unknown_predictions <= 0`;
+- assistant label: exactly `OK` or `NG`.
 
-## KPI Isolation
+For other requests, preserve explicit user values. If the application is
+available on several installed supported platforms and none was selected, ask
+once among those peers; never invent a default. The profile above already
+selects Docker and therefore does not require a platform question.
 
-- **Proxy:** `annotations/proxy_kpi.json`. It is the only error source
-  for RCCA, routing, mining targets, and data-mixture decisions. It never stops
-  the loop.
-- **Benchmark:** `annotations/benchmark_kpi.json`. It is frozen, evaluated
-  at baseline and every iteration, and is the only stop-gate source. Benchmark
-  sample errors never feed routing or mining.
-- Default gate: `recall_ng >= 1.0`. If the user asks for accuracy, use
-  `accuracy >= <target>`.
-- Compound gate: pass matching `--kpi-floor-metric accuracy` and floor flags.
-- Unknown model responses block the gate through the
-  `unknown_predictions <= 0` metric constraint.
+## Preflight and approval
 
-`scripts/analyze_gaps.py` writes Proxy RCCA artifacts or Benchmark aggregate
-metrics plus `metric_result.json`. `scripts/record_metric_result.py` binds the
-Benchmark metric evidence to the configured metric contract.
+Run `references/preflight.md` in order. In particular:
 
-## Workspace Contract
+- validate Docker, the H200, disk space, host UID/GID, and the skill Python;
+- resolve `images.tao_toolkit.cosmos_framework` and
+  `images.tao_toolkit.data_services` from `versions.yaml`;
+- locate a complete local HF VLM snapshot beneath `${WORKSPACE}/models` with
+  `config.json` and safetensor weights;
+- validate Proxy, frozen Benchmark, and Mining JSON arrays with
+  `scripts/validate_sharegpt.py` and `scripts/validate_split_contract.py`;
+- require exactly one image per record and a unique safe `id` on evaluation
+  records;
+- construct nested Train and per-role Evaluate TOML files;
+- show effective values, their sources, planned commands, immutable image
+  digest, mounts, results directory, and checkpoint handoff.
 
-```text
-workspace/
-├── annotations/                 # user-supplied
-│   ├── benchmark_kpi.json
-│   ├── proxy_kpi.json
-│   └── mining_pool.json
-├── images/                      # user-supplied
-└── specs/                       # produced by this workflow, after approval
-    ├── train_spec.toml
-    ├── evaluate_spec_proxy.toml
-    └── evaluate_spec_benchmark.toml
+Do not create specs/state/results, pull or log into a registry, download an
+asset, or submit a container before the user confirms the launch review. A
+missing small Python helper may be installed under the bank-wide exception;
+report it and rerun preflight.
+
+## Direct model and checkpoint contract
+
+`--base-model-path` is an absolute workspace path to a complete local
+HF-format VLM snapshot. Use it unchanged for baseline evaluation, iteration-1
+training, and standalone inference. Do not copy, translate, or reserialize its
+weights.
+
+Framework Train writes a native DCP checkpoint. Record the selected DCP
+directory and the rendered SFT TOML in the `train` stage. For iteration N:
+
+- evaluate the DCP directly by setting Evaluate `model.model_name` to the DCP
+  path, `model.config_file` to that iteration's SFT TOML,
+  `model.export_dir` to a writable action-model directory, and
+  `model.vit_checkpoint_path` to the original HF base directory;
+- infer from that DCP with the equivalent `--config_file`, `--export_dir`, and
+  `--vit_checkpoint_path` arguments;
+- warm-start iteration N+1 by rendering its SFT TOML with
+  `checkpoint.load_path` equal to iteration N's DCP path. Keep
+  `checkpoint.keys_to_skip_loading=[]` so LoRA keys are restored.
+
+The public evaluation and inference commands perform their required local DCP
+materialization internally. Do not add an app-level conversion or export
+stage.
+
+## Native Framework actions
+
+All three GPU model actions use the same immutable Framework image and its
+public console scripts:
+
+- Train: `cosmos-framework-train --sft-toml=/tao/config/train.toml`
+- Evaluate: `cosmos-framework-evaluate --config /tao/config/evaluate.toml`
+- Inference: `cosmos-framework-inference --model_path ... --type image
+  --media ... --prompt ... --results_dir ...`
+
+Use the bundled render/submit helpers:
+
+- `scripts/render_cfw_sft.py` and `scripts/submit_cfw_train.py`;
+- `scripts/render_cfw_evaluate.py` and `scripts/submit_cfw_evaluate.py`;
+- `scripts/submit_cfw_inference.py`.
+
+The evaluate renderer fixes a one-GPU BF16 profile with
+`vision.video_decoder="torchcodec-cuda-on-demand"`, one frame, batch size 1,
+and four output tokens. Do not patch installed image source. Training uses
+native VLM LoRA on language projections and one image per record.
+
+Every actual spec is a nested dictionary serialized to TOML. Never send flat
+dotted keys across a container boundary. Do not mount user data over
+`/workspace`; mount data and results at their absolute compute-frame paths.
+Run writable containers as the invoking UID:GID with `USER`, `LOGNAME`,
+`HOME=/tmp`, and read-only `/etc/passwd` and `/etc/group` mounts.
+
+## Bare-label and split contract
+
+- Each ShareGPT record has exactly one image.
+- The first human/user turn is the inspection prompt.
+- The final assistant/gpt value is exactly `OK` or `NG`.
+- `NG` is positive; `NG -> OK` is a false accept and `OK -> NG` a false
+  reject.
+- Output parsing may select the last standalone OK/NG token, but training
+  labels are never normalized.
+- Proxy, Benchmark, and Mining targets are disjoint.
+- Benchmark is frozen at initialization and its SHA-256 must never change.
+- Only Proxy results drive RCCA, routing, and mining. Benchmark results only
+  drive the stop gate.
+- `train_iter_1.json` contains current real Mining selections. Later Train
+  JSON files preserve the preceding Train JSON and add only newly selected
+  real Mining records, deduplicated by target path.
+
+## Durable workflow
+
+After approval, initialize state exactly once with
+`scripts/init_deft_state.py`. Record version 6, the absolute local base path,
+single Framework image/digest, platform, compute, split paths and hash, metric
+contract, five-iteration budget, 10 epochs, and mining top-K 15. Never edit
+`deft_state.json` manually.
+
+Before every stage and after context compaction, run:
+
+```bash
+scripts/deft_context.py --state "$RESULTS_DIR/deft_state.json" --stage STAGE
 ```
 
-Per-role evaluate specs are preferred over one shared `evaluate_spec.toml`;
-both are accepted. See `references/data-layout.md`.
-
-The user supplies annotations and images. The specs are **not** an input to
-ask for: build them from the `tao-finetune-cosmos-reason` templates plus the
-AOI overrides, and write them after the approval gate and before
-`init_deft_state.py`, which refuses to initialize without them. A workspace
-carrying its own specs is still valid — reuse them rather than overwriting —
-but their absence is normal and is never a reason to stop and ask the user for
-a TOML file.
-
-Non-default paths are valid when passed explicitly to
-`scripts/init_deft_state.py`; downstream stages must read the recorded paths
-instead of re-inferring conventions. Record absolute host/compute-frame
-artifact paths under `${RESULTS_DIR}/baseline` or
-`${RESULTS_DIR}/iterN`.
-
-Read `references/data-layout.md` for the dataset roles, allowed source
-categories, and commercial-training eligibility.
-
-## Launch Intake and Pre-Flight
-
-Read `references/preflight.md` and run every ordered check:
-
-1. select and preflight the platform;
-2. resolve workspace, annotations, media root, and `max_iterations`;
-3. validate bare ShareGPT and Proxy/Benchmark/Mining target isolation;
-4. hash and freeze Benchmark annotations;
-5. resolve the current Framework Train, cosmos-rl evaluate, and data-services
-   images from `versions.yaml`;
-6. plan conversion of the selected Cosmos Reason 3 reasoner into a Qwen3-VL
-   PTM, and that output's platform-visible path;
-7. check only required environment-variable presence;
-8. construct Proxy / Benchmark TOML specs and render/validate the Framework
-   Train template;
-9. verify compute shape and path visibility from the selected platform;
-10. run the model/platform launch preflight;
-11. show the full Pre-Flight Summary and stop for approval.
-
-No results directory, state file, spec mutation, dependency install, image
-pull, or native launch is allowed before this gate, except the TAO policy's
-small-Python-helper remediation.
-
-## Workflow
-
-The full transition graph is in `references/pipeline-and-state.md`.
-
-The frozen Benchmark gate is always evaluated before any Proxy work. Proxy
-evaluate and RCCA exist only to seed the next iteration's mining, so they run
-only when the gate is unmet. A run that passes the gate stops without spending
-a Proxy evaluation.
-
-Baseline starts with zero-shot frozen Benchmark evaluation of the unmodified
-base model, which establishes the zero-shot KPI:
+Baseline:
 
 1. `evaluate_benchmark`
-2. `benchmark_metrics` — stop here when the gate already passes.
-3. `evaluate_proxy` — only when the gate is unmet.
+2. `benchmark_metrics`; finalize immediately if the target passes.
+3. `evaluate_proxy`
 4. `proxy_rcca`
 
-Before every `proxy_rcca` commit, write `proxy_rcca/RCCA_Report.md` from the
-three Proxy RCCA JSON artifacts using `references/RCCA_REPORT_TEMPLATE.md`,
-then pass it with `--rcca-report`. Artifact requirements, section headings,
-and state fields come from `references/rcca-artifact-manifest.json`.
+Each iteration while the gate is unmet:
 
-For each `iterN` when the frozen Benchmark gate is unmet:
+1. `routing`: derive target rows only from Proxy false accepts/rejects.
+2. `data_mining`: call `tao-mine-aoi-images`; run `filter_by_label` separately
+   for OK and NG with top-K 15, apply the cosine floor, then apply the durable
+   filepath history so earlier selections cannot re-enter.
+3. `assemble_data`: map selections back to Mining prompts and exact labels
+   with `scripts/emit_mined_sharegpt.py`, then call
+   `scripts/assemble_training_json.py --mined-json ...`; add
+   `--previous-json` from iteration 2 onward.
+4. `validate_data`: validate files, exact labels, lineage, deduplication,
+   monotonic retention, split isolation, and frozen Benchmark hash.
+5. `train`: iteration 1 uses the local HF base; later iterations also load the
+   preceding DCP.
+6. `evaluate_benchmark` directly from the new DCP.
+7. `benchmark_metrics`; finalize on pass or after iteration 5.
+8. `evaluate_proxy` and `proxy_rcca` only when another iteration is needed.
 
-1. `routing` — derive mining targets from Proxy false accepts/rejects only.
-   Write both formats from the same rows: `mining_targets.json` for state
-   (`--mining-targets` takes the JSON) and a `filepath[,label]` parquet for the
-   embedding container. Gap rows carry no image paths, so join back to Proxy by
-   `id` — see `references/gap-analysis.md`.
-2. `anomalygen` — generate synthetic defects with `tao-generate-anomalies` in
-   `inference_only` mode, then turn each generated pair into a bare `NG`
-   record with `scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
-   the driving Proxy RCCA recorded zero false accepts, and even then generating
-   is often still worthwhile. The emitter accepts PAIDF 1.0.1 repo-root-relative
-   and documented output-dir-relative paths, with `--sdg-root` as an explicit
-   additional base — see `references/tao-generate-anomalies.md`.
-3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
-   floor with `scripts/filter_mined_by_cosine.py`, then run the mapped skill's
-   history-aware post-processing so a filepath selected by a prior iteration
-   cannot enter Train again. The default top-K remains 5; preserve an explicit
-   user value and increase it only when the history summary shows low novelty.
-4. `assemble_data` — align mined target paths to Mining source prompts and
-   exact labels with `scripts/emit_mined_sharegpt.py`;
-   create `train_iter_1.json` from the mined and synthetic records only after
-   Proxy RCA and Mining selection, then append monotonically into
-   `train_iter_N.json` in later iterations with
-   `scripts/assemble_training_json.py`.
-5. `validate_data` — validate exact bare labels, files, duplicates, and
-   generated-Train lineage plus Proxy/Benchmark leakage.
-6. `train`
-7. `evaluate_benchmark`
-8. `benchmark_metrics` — stop here when the gate passes or
-   `N = max_iterations`.
-9. `evaluate_proxy` — only when the loop continues.
-10. `proxy_rcca`
+Write the Proxy RCCA Markdown artifact from
+`references/RCCA_REPORT_TEMPLATE.md` before committing `proxy_rcca`. Commit
+every success or error through `scripts/commit_stage.py` with measured positive
+duration. Finish only through `scripts/finalize_run.py`, then verify fresh
+state says `status == "complete"` and render the terminal report.
 
-`init_deft_state.py` writes the first `DEFT_Loop_Report.html`; every successful
-`commit_stage.py` call then refreshes it through the deterministic
-`scripts/render_report.py` post-commit hook. Stop when the Benchmark contract
-passes, `max_iterations` is reached, or a hard stop occurs. For an ordinary
-stop, run `scripts/finalize_run.py` with the explicit reason, then run
-`render_report.py --require-terminal` after optional token alignment.
-The Cosmos-only report addition is a bounded prompt showcase sourced from
-recorded annotations; keep every other visual convention aligned with
-ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or hand-author
-report rendering.
+## Platform and job-record contract
 
-## Stage References
+Every GPU action is submitted with the selected platform's native four verbs:
+`submit`, `status`, `logs`, and `cancel`. Before native launch,
+`tao-launch-workflow` opens a job-record and binds its `results_dir`; its id is
+the only handle. Poll Docker for live state and map it to
+`PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`. Records are audit evidence,
+not a live scheduler. Never launch an unrecorded container.
 
-| Stage | Producer | Read first |
-|---|---|---|
-| Train | native `cosmos_framework` VLM LoRA, `automl_policy: off` | `references/cosmos-reason.md`, `references/cosmos_framework_sft_full.toml` |
-| Proxy / Benchmark evaluate | `tao-finetune-cosmos-reason` evaluate | `references/cosmos-reason.md` |
-| Proxy RCCA / Benchmark metric | bundled `analyze_gaps.py` | `references/gap-analysis.md` |
-| Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
-| AnomalyGen | `tao-generate-anomalies`, `mode=inference_only` | `references/tao-generate-anomalies.md` |
-| Assemble / validate | bundled bare ShareGPT scripts | `references/aoi-annotation.md` |
-| State/report | bundled state commit + deterministic report hook | `references/scripts-and-agents.md` |
+## References by stage
 
-## Hard Stops
+| Concern | Reference |
+|---|---|
+| Ordered preflight | `references/preflight.md` |
+| State transitions and artifact fields | `references/pipeline-and-state.md` |
+| Framework action specs and DCP handoff | `references/cosmos-reason.md` |
+| Annotation and mining-only assembly | `references/aoi-annotation.md` |
+| Mining invocation | `references/tao-mine-aoi-images.md` |
+| Data layout and split isolation | `references/data-layout.md` |
+| State/report helpers | `references/scripts-and-agents.md` |
+| Report evidence | `references/REPORT_RENDERING.md` |
 
-Commit an error stage and do not auto-retry for: invalid disk state; a rich or
-non-exact training label; a JSONL or non-array annotation input; an
-an unconverted Cosmos Reason 3 checkpoint still in native Omni format at a
-Framework Train or cosmos-rl evaluate boundary;
-missing/ambiguous mined-to-source alignment; missing/tampered mining history,
-cross-iteration mined filepath duplication; target overlap among
-Proxy/Benchmark/Mining; a generated Train target outside Mining and AnomalyGen
-output, or overlapping Proxy/Benchmark; a changed Benchmark hash; any Benchmark
-error used for routing; missing/empty mining output; a failed or empty
-AnomalyGen run while Proxy false accepts remain outstanding; an `anomalygen`
-skip not backed by zero false accepts in the driving RCCA; a synthetic record
-whose label is not `NG` or whose paired image is missing; a
-PAIDF-incompatible AnomalyGen fine-tuned checkpoint; a missing AnomalyGen
-Guardrail checkpoint or an SDG log showing disabled screening; a checkpoint outside
-the iteration result tree; an invalid nested TOML spec; unknown evaluator
-ground truth; or a program error.
+## Hard stops
 
-Infrastructure errors may follow the chosen platform skill's bounded retry
-policy with a new job-record linked by `--retry-of`; the DEFT stage is committed
-only once, after a successful terminal backend result.
+Commit an error and stop for invalid state; missing local HF model files;
+unsupported model/backend/action; non-array JSON; non-exact labels; anything
+other than one image; split leakage; changed Benchmark hash; missing or
+ambiguous Mining alignment; reused mined filepath; missing DCP metadata;
+missing rendered SFT TOML; unpinned image; path not visible in the compute
+frame; insufficient H200 memory; a native backend error; or final evidence
+that does not satisfy the metric contract. Do not silently fall back to a
+different model, backend, platform, checkpoint, dataset, or label format.

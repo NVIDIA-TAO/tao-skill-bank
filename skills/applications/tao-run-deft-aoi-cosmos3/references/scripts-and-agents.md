@@ -1,80 +1,34 @@
-# Cosmos3 DEFT Scripts and Agents
+# Bundled scripts and ownership
 
-Run host Python through `scripts/deft_python.sh`. Resolve all paths to absolute
-paths before invoking a script.
+Run Python commands with `PYTHON=$(scripts/deft_python.sh)`.
 
-## Available scripts
-
-| Script | Purpose |
+| Script | Responsibility |
 |---|---|
-| `init_deft_state.py` | Initialize version-5 Cosmos3 state once; freeze Benchmark hash, bare mode, media root, and immutable execution policy. |
-| `deft_context.py` | Re-read state and print the deterministic next stage plus network/Python policy; reject a requested-stage mismatch. |
-| `deft_exec.py` | Enforce state-backed offline/no-install/no-pull policy for external commands. |
-| `commit_stage.py` | Validate one stage's inputs and atomically update state. AnomalyGen skip requires an empty recorded false-accept array; terminal commits require reason/report evidence. |
-| `metric_contract.py` | Validate/compare the Benchmark KPI contract. |
-| `record_metric_result.py` | Bind `benchmark_metrics/metric_result.json` to an iteration. |
-| `validate_sharegpt.py` | Enforce two-image, exact bare OK/NG ShareGPT records. |
-| `validate_split_contract.py` | Enforce split isolation, monotonic generated-Train lineage, and Benchmark hash. |
-| `check_annotations.py` | Per-role field-contract check over all three workspace annotation files. `ROLE_CONTRACT` is the authoritative field list. |
-| `patch_eval_image_cap.py` | Source-classifies the selected image's evaluation cap, raises a recognized undersized literal, and returns the read-only mount only when required. |
-| `patch_eval_video_decoder.py` | Source-classifies the selected image's unconditional GPU video decoder registration and makes it opt-out via `TAO_SKIP_PYNV_VIDEO_DECODER=1` for this skill's video-free single-image records. |
-| `render_cfw_sft.py` | Render and validate the native Framework smoke/full Train profile. |
-| `submit_cfw_train.py` | Resolve the pinned Framework image and compose or execute the identity-preserving single-node Docker Train submission. |
-| `cfw_cr3_aoi_adapter.py` | Interim two-image ShareGPT dataset/processor mounted into the pinned Framework runtime. |
-| `export_cfw_checkpoint.py` | Invoke and verify the image-owned exact-key DCP-to-HF VLM exporter. |
-| `analyze_gaps.py` | Proxy RCCA artifacts or Benchmark aggregate metric evidence. |
-| `emit_sdg_sharegpt.py` | Resolve documented or PAIDF 1.0.1 SDG path forms and emit bare `NG` ShareGPT records. |
-| `filter_mined_by_cosine.py` | Recompute max cosine to Proxy targets and enforce the floor. |
-| `emit_mined_sharegpt.py` | Align filtered paths to Mining prompts, golden images, and labels. |
-| `assemble_training_json.py` | Monotonic bare training-data merge with dedupe/leakage checks. |
-| `align_token_usage.py` | Backfill stage token accounting after a run when a transcript is available. |
-| `render_report.py` | Deterministically render the self-contained NVIDIA-styled HTML report from state and recorded artifacts, including escaped annotation prompt examples; validate required sections/placeholders and replace atomically. |
-| `finalize_run.py` | Render final evidence, validate the explicit stop reason, commit `loop_stop`, and record the report path. |
+| `init_deft_state.py` | Validate immutable run inputs and create version-6 state once. |
+| `deft_context.py` | Print the deterministic next stage from durable state. |
+| `deft_exec.py` | Enforce recorded network policy for host commands. |
+| `commit_stage.py` | Validate stage evidence and atomically commit snapshot plus event. |
+| `finalize_run.py` | Verify terminal Benchmark evidence and commit `loop_stop`. |
+| `validate_sharegpt.py` | Enforce one-image, exact OK/NG JSON-array records. |
+| `validate_split_contract.py` | Enforce split isolation, frozen Benchmark, and Mining-only Train lineage. |
+| `analyze_gaps.py` | Produce Proxy RCCA or Benchmark aggregate metrics. |
+| `record_metric_result.py` | Bind Benchmark metrics to the frozen KPI contract. |
+| `render_cfw_sft.py` | Render native Framework SFT TOML with optional previous DCP. |
+| `submit_cfw_train.py` | Compose/execute recorded Docker Train submission. |
+| `render_cfw_evaluate.py` | Render one-H200 bare-label evaluation TOML. |
+| `submit_cfw_evaluate.py` | Compose/execute recorded Docker Evaluate submission. |
+| `submit_cfw_inference.py` | Compose/execute recorded Docker Inference submission. |
+| `emit_mined_sharegpt.py` | Align selected real paths to Mining prompt and label. |
+| `assemble_training_json.py` | Append current Mining records to the prior Train JSON. |
+| `filter_mined_by_cosine.py` | Apply the recorded similarity floor. |
+| `render_report.py` | Render the evidence-backed HTML report. |
 
-`init_deft_state.py` requires `--gpu-model` with the exact model string from
-the selected platform's Preflight. `commit_stage.py` requires a positive
-`--duration-sec` on every executed success, error, and `loop_stop` commit. Use
-the backend's measured elapsed wall time for submitted jobs and a directly
-measured host duration for inline stages; round a measured sub-second executed
-stage up to `1`. A documented `--skip` records `status=skipped`, copies the
-summary into `skip_reason`, and accepts a non-negative duration including `0`.
-An omitted duration or any negative duration is rejected.
+The application agent owns ordering, confirmation, state commits, job-records,
+and finalization. The model skill owns native action semantics. The platform
+skill owns `submit/status/logs/cancel` and live state mapping. The mining skill
+owns embedding and `filter_by_label` selection. Do not delegate state writes or
+hand-author report HTML.
 
-Before every stage, call `deft_context.py --state <deft_state.json> --stage
-<stage>`. Wrap local external/container commands with `deft_exec.py --state
-<deft_state.json> -- <command>`; the selected remote platform must enforce the
-same policy when it constructs a job.
-
-Train uses this application's native Framework renderer, submission helper,
-interim dataset adapter, and export wrapper. Proxy/Benchmark evaluate reuse
-the unchanged `tao-finetune-cosmos-reason` cosmos-rl action, and Mining reuses
-`tao-mine-aoi-images`.
-
-## Automatic report hook
-
-`init_deft_state.py` invokes `render_report.py` after writing canonical state.
-`commit_stage.py` invokes it again after every valid state commit,
-including error and `loop_stop` commits. The hook is outside the state
-transaction: it reports `report hook failed` without rolling back a valid
-stage result.
-
-Normally do not render separately. After optional loop-end token alignment, or
-to recover from a reported presentation error, run:
-
-```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/render_report.py \
-  --results-dir "${RESULTS_DIR}" --require-terminal
-```
-
-The legacy `agents/reporter.md` is a compatibility wrapper around this exact
-command and contains no HTML-generation logic.
-
-## Path invariants
-
-- Every recorded stage artifact is absolute.
-- Every iteration artifact is under `${RESULTS_DIR}/baseline` or
-  `${RESULTS_DIR}/iterN`.
-- Train checkpoints are under `${RESULTS_DIR}/<label>/train`.
-- Proxy artifacts never contain Benchmark paths.
-- Mining, routing, and assembly never consume Benchmark per-sample errors.
-- User data is never mounted over either backend's `/workspace` package root.
+The same Framework image and public console scripts are used for all model GPU
+actions. The app never invokes an internal module path and never inserts a
+separate checkpoint-processing stage.

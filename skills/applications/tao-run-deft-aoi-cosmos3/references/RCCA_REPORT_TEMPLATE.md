@@ -1,41 +1,36 @@
-# Cosmos3 Proxy RCCA Report: `<baseline|iterN>`
+# Cosmos3 Proxy RCCA Report
 
-Build this report from `gaps_summary.json`, `false_accepts.json`, and
-`false_rejects.json`. Replace the guidance below with concrete evidence before
-committing `proxy_rcca`. The machine-readable artifact and heading contract is
-`references/rcca-artifact-manifest.json`.
+Use Proxy evidence only. Preserve these level-2 headings exactly; the stage
+commit validates them.
 
 ## 1. Verdict
 
-State KPI reachability, Proxy accuracy/RCCA numbers, and the headline finding.
+State whether Proxy evidence shows false accepts, false rejects, both, or
+neither. Include counts and the metric artifact path.
 
 ## 2. False-Accept Breakdown
 
-Summarize counts and share by defect type from `false_accepts.json`.
-
-| Defect type | Count | Share |
-|---|---:|---:|
-| `<type>` | `<count>` | `<percent>` |
+Summarize `NG -> OK` rows by defect or visible pattern. Cite sample IDs and
+never import Benchmark sample evidence.
 
 ## 3. False-Reject Breakdown
 
-Summarize counts and share by defect type from `false_rejects.json`.
-
-| Defect type | Count | Share |
-|---|---:|---:|
-| `<type>` | `<count>` | `<percent>` |
+Summarize `OK -> NG` rows by visible pattern. Cite sample IDs and keep this
+separate from false accepts.
 
 ## 4. Top-K Worst Samples
 
-List the worst sample IDs and explain why each is high priority.
+List the highest-priority Proxy sample IDs, ground truth, parsed prediction,
+confidence when present, and image path recovered by joining to the Proxy
+annotation on `id`.
 
 ## 5. Per-Defect Analysis
 
-| Defect type | False accepts | False rejects | RCCA finding |
-|---|---:|---:|---|
-| `<type>` | `<count>` | `<count>` | `<finding>` |
+Describe supported defect families and uncertainty. Mark missing evidence
+explicitly; do not invent a defect label.
 
 ## 6. Recommended Actions
 
-Name concrete mining targets and SDG defect/count targets for the next
-iteration.
+Name concrete real-image Mining targets for the next routing stage. Indicate
+whether each target belongs to the OK or NG query. These actions may influence
+mining only; they never alter the frozen Benchmark gate.
