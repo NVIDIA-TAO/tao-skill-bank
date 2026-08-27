@@ -27,6 +27,16 @@ python3 "$AOI/deft_exec.py" --state "$STATE" --await-job "$JOB" $PLATFORM_CTX
 
 # 4. On failure, ask the platform — do not hand-write an ssh/kubectl probe.
 python3 "$AOI/deft_exec.py" --state "$STATE" --logs "$JOB" --tail 100 $PLATFORM_CTX
+
+# 4. Preserve the launch evidence per container stage. A grader (or you, next
+#    week) cannot distinguish "launched on kubernetes" from "claimed to" from
+#    transcript snippets; the job record carries platform and backend_ref.
+STAGE_EVIDENCE="$RUN_DIR/launch/$JOB"; mkdir -p "$STAGE_EVIDENCE"
+"$BANK/scripts/tao_job_record.py" show "$JOB" > "$STAGE_EVIDENCE/job_record.json"
+cp "$RUN_DIR"/*.bundle.json "$STAGE_EVIDENCE/" 2>/dev/null || true
+cp "$RUN_DIR"/configs/*.yaml "$STAGE_EVIDENCE/" 2>/dev/null || true
+python3 "$AOI/deft_exec.py" --state "$STATE" --logs "$JOB" --tail 500 \
+  $PLATFORM_CTX > "$STAGE_EVIDENCE/tail.log" 2>&1 || true
 ```
 
 `--list` prints the stage table with each stage's required `--param` names:
@@ -100,7 +110,7 @@ as real. An end-to-end run in this repo went green exactly that way.
 |---|---|
 | `docker` | *(none)*; add `--ctx shm_size=16g` if you hit `Bus error` |
 | `slurm` | `--ctx login=… --ctx sqsh_dir=… --ctx job_dir=… --ctx account=… --ctx partition=…` |
-| `kubernetes` | `--ctx namespace=… --ctx pvc_claim=… --ctx mount_path=… --ctx job_dir=… --ctx cred_secret=…` |
+| `kubernetes` | `--ctx namespace=… --ctx pvc_claim=… --ctx mount_path=… --ctx job_dir=… --ctx cred_secret=… --ctx uid=$(id -u) --ctx gid=$(id -g)` |
 
 Take SLURM's `account` and `partition` from `sinfo` / `sacctmgr` at preflight —
 the packaged values describe one cluster. See
@@ -112,3 +122,11 @@ Stage semantics, the four AnomalyGen invariants, spec authoring, and every
 `commit_stage.py` call are unchanged. Only the launch mechanism moved. Each
 stage reference still owns its parameters, its output layout, and its
 `commit_stage.py` arguments.
+
+On Kubernetes pass `--ctx uid`/`--ctx gid` — the renderer emits the
+`securityContext` only when `uid` is present; without it stages run as the
+image's default user and die writing the uid-owned results tree. Workloads
+default their working directory to the stage's results mount on docker (`-w`)
+and kubernetes (`workingDir`), since image WORKDIRs are commonly root-owned and
+a relative-path write there fails with PermissionError; a bundle-declared
+`workdir` still wins.
