@@ -17,7 +17,9 @@ import json
 import re
 import secrets
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -94,6 +96,33 @@ def resolve_session_id(workspace: Path, requested: str | None = None) -> str:
         )
     _validate_controller(selected)
     return selected.stem
+
+
+def validate_session_settings(
+    automl_settings: Mapping[str, Any],
+    *,
+    resume: bool,
+    workspace: Path | None = None,
+) -> str:
+    """Fail before runner construction when session identity is not durable."""
+    if not isinstance(automl_settings, Mapping):
+        raise SessionResolutionError("automl_settings must be a mapping")
+    session_id = automl_settings.get("session_id")
+    if not isinstance(session_id, str) or not SESSION_ID_RE.fullmatch(session_id):
+        raise SessionResolutionError(
+            "automl_settings.session_id must be an explicit valid session id"
+        )
+    if resume:
+        if workspace is None:
+            raise SessionResolutionError(
+                "resume=True requires the full existing workspace path"
+            )
+        resolved = resolve_session_id(workspace, session_id)
+        if resolved != session_id:  # defensive: requested resolution must be exact
+            raise SessionResolutionError(
+                f"resolved session {resolved!r} does not match settings {session_id!r}"
+            )
+    return session_id
 
 
 def build_parser() -> argparse.ArgumentParser:

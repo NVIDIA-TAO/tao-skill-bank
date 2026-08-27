@@ -64,6 +64,37 @@ def test_malformed_controller_state_is_rejected(tmp_path):
         MODULE.resolve_session_id(tmp_path)
 
 
+def test_runner_settings_without_explicit_session_fail_before_launch():
+    with pytest.raises(
+        MODULE.SessionResolutionError,
+        match="automl_settings.session_id",
+    ):
+        MODULE.validate_session_settings(
+            {"algorithm": "bayesian"},
+            resume=False,
+        )
+
+
+def test_resume_settings_must_bind_existing_controller(tmp_path):
+    _write_controller(tmp_path, "abc123def456")
+
+    with pytest.raises(MODULE.SessionResolutionError, match="has no controller state"):
+        MODULE.validate_session_settings(
+            {"algorithm": "bayesian", "session_id": "different123"},
+            resume=True,
+            workspace=tmp_path,
+        )
+
+    assert (
+        MODULE.validate_session_settings(
+            {"algorithm": "bayesian", "session_id": "abc123def456"},
+            resume=True,
+            workspace=tmp_path,
+        )
+        == "abc123def456"
+    )
+
+
 def test_cli_returns_nonzero_instead_of_silently_starting_fresh(tmp_path):
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "resolve", "--workspace", str(tmp_path)],
@@ -92,6 +123,7 @@ def test_explicit_identity_resumes_real_automl_controller(tmp_path):
         "automl_max_recommendations": 1,
         "session_id": session_id,
     }
+    assert MODULE.validate_session_settings(settings, resume=False) == session_id
     fresh = tao_automl.AutoML(
         workspace=str(workspace),
         network="nv_tesseract_forecasting",
@@ -105,6 +137,14 @@ def test_explicit_identity_resumes_real_automl_controller(tmp_path):
     fresh.finish()
 
     assert MODULE.resolve_session_id(workspace) == session_id
+    assert (
+        MODULE.validate_session_settings(
+            settings,
+            resume=True,
+            workspace=workspace,
+        )
+        == session_id
+    )
     resumed = tao_automl.AutoML(
         workspace=str(workspace),
         network="nv_tesseract_forecasting",

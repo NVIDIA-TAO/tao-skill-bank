@@ -184,7 +184,12 @@ def eval_on_held_out(rec, train_job_id):
 
 runner.run(
     ...,
-    automl_settings={"metric": task_metric, "direction": direction, ...},
+    automl_settings={
+        "metric": task_metric,
+        "direction": direction,
+        "session_id": session_id,
+        ...,
+    },
     eval_fn=eval_on_held_out,
 )
 ```
@@ -316,6 +321,17 @@ SESSION_ID=$(python "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-automl/scr
 Place that literal value in the sealed `automl_settings`. The resulting
 `.automl/controller/<session_id>.json` is the durable binding used by later
 resume invocations.
+
+Before either fresh or resumed `runner.run(...)`, call the bundled
+`validate_session_settings(automl_settings, resume=..., workspace=...)` gate
+shown in `SKILL.md`. Missing identities fail before the wheel can apply its
+random default; resumed identities must resolve to an existing controller.
+
+This is a skill-boundary safeguard. The currently packaged
+`nvidia-tao-automl` wheel still permits `resume=True` without a matching
+`session_id` and may silently create a fresh controller for callers outside
+this skill. NVBug 6662913 tracks that upstream fail-loud behavior; until the
+wheel changes, non-skill callers must apply the same explicit identity gate.
 
 Behaviour on resume:
 1. **Brain state** is reloaded from `<workspace>/.automl/*` for the explicit

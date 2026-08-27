@@ -62,6 +62,7 @@ result = runner.run(
         "algorithm": algorithm,
         "metric": metric,
         "automl_max_recommendations": max_recommendations,
+        "session_id": session_id,                     # explicit, generated once
     },
     workspace_path=f"./automl_workspace/{TIMESTAMP}",  # timestamped to avoid collisions
     # Platform-specific create_job kwargs go here as **platform_kwargs.
@@ -97,6 +98,7 @@ result = runner.run(
         "metric": metric,
         "direction": direction,                       # explicit when needed
         "automl_max_recommendations": max_recommendations,
+        "session_id": session_id,                     # explicit, generated/resolved once
     },
     automl_hyperparameters=automl_hyperparameters,    # from model skill / schema
     custom_param_ranges=custom_param_ranges,          # from model skill / user constraints

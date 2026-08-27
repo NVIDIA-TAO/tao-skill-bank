@@ -301,12 +301,17 @@ Use the selected platform SDK only after its preflight passes. Construct SDKs
 without embedding credentials in code.
 
 ```python
+import sys
 from pathlib import Path
 from tao_automl.runner import AutoMLRunner
 
 skill_bank = Path("<absolute-tao-skill-bank>")
 model_skill = "<resolved-model-skill-directory>"
 skill_dir = skill_bank / "skills" / "models" / model_skill
+sys.path.insert(
+    0, str(skill_bank / "skills/applications/tao-run-automl/scripts")
+)
+from resolve_automl_session import validate_session_settings
 
 runner = AutoMLRunner(
     sdk=sdk,
@@ -314,8 +319,16 @@ runner = AutoMLRunner(
     action=action,                      # train, distill, prune, quantize, ...
 )
 
+workspace_path = Path("<automl_workspace>")
+resume = False
+# Mandatory fail-closed gate from this skill's bundled scripts directory.
+validate_session_settings(
+    automl_settings,
+    resume=resume,
+    workspace=workspace_path if resume else None,
+)
 result = runner.run(
-    workspace_path="<automl_workspace>",   # timestamp it to avoid collisions
+    workspace_path=str(workspace_path),    # timestamp it to avoid collisions
     automl_settings=automl_settings,       # must contain an explicit session_id
     spec_overrides=spec_overrides,
     automl_hyperparameters=automl_hyperparameters,
@@ -323,6 +336,7 @@ result = runner.run(
     metric_extractor=metric_extractor,  # optional
     eval_fn=eval_fn,                    # optional
     final_eval_fn=final_eval_fn,        # optional but required when final eval is runnable
+    resume=resume,
 )
 ```
 
@@ -338,6 +352,8 @@ that value in `automl_settings["session_id"]`. The helper deliberately fails
 when state is missing or multiple controller files make the workspace
 ambiguous; do not launch until the intended state is proven. Read the resume
 section of `references/automl-advanced-monitoring.md` for the complete pattern.
+The `validate_session_settings` call above is mandatory for both fresh and
+resumed runs; a prose reminder is not a substitute for that executable gate.
 
 ## Monitoring
 
