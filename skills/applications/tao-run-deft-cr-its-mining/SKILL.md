@@ -5,7 +5,7 @@ description: >-
   focused on the non-reasoning classification/evaluation path. Use when the user asks for a
   DEFT CR ITS mining workflow, traffic-camera Cosmos Reason improvement loop, collision-identification workflow with data mining, or iterative Cosmos-RL refinement driven by gap analysis.
 license: Apache-2.0
-compatibility: Requires Docker with NVIDIA Container Toolkit, Python 3.11 with pandas, pyarrow, PyYAML, and huggingface_hub, plus the selected platform CLI.
+compatibility: Requires Docker with NVIDIA Container Toolkit, Python 3.11 with venv/ensurepip, numpy, pandas, pyarrow, PyYAML, and huggingface_hub, plus the selected platform CLI.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -184,7 +184,7 @@ The KPI parquet contains only the selected modality or modalities. The train par
 
 ### Run Cosmos Embed Inference
 
-Use the `tao-finetune-cosmos-embed` skill's inference action for each generated inference spec. That model skill owns the Cosmos Embed container image, action command, credentials, and platform-specific mount behavior. This workflow skill owns only the generated specs and the downstream conversion into mining-ready parquet files. Do not run inference or conversion for a dataset whose combined Parquet was supplied and staged during preparation. See `references/mining-loop.md` for exact commands, permission repair, and conversion.
+Use `tao-finetune-cosmos-embed` for each generated inference spec. Follow the mandatory terminal-exit validation, permission repair, and conversion procedure in `references/mining-loop.md`. Do not run inference or conversion for a dataset whose combined Parquet was supplied during preparation.
 
 The generated lookup Parquet uses `annotation_id` for the original LLaVA `id` and `video_path` for resolved media. Do not rename either column to `video_id`; that external field belongs to Cosmos Reason and gap-analysis records.
 
@@ -200,7 +200,7 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 | `initialize_workflow` | `$RUN_DIR/workflow.yaml` and `$RUN_DIR/deft_state.json` exist. |
 | `baseline_evaluate` | The evaluate job exits successfully, exactly one baseline `results.json` is found, and `baseline/evaluate/bcq_accuracy_metrics.json` exists. |
 | `prepare_cosmos_embed_inference` | Each dataset has a lookup parquet and either all required Cosmos Embed specs or a staged combined embedding Parquet. |
-| `cosmos_embed` | Every generated Cosmos Embed inference spec has completed successfully through the underlying skill. |
+| `cosmos_embed` | Every generated inference spec has a current `completion_validation.json`; exit `0` is accepted after output validation, while exit `130` additionally records a teardown warning. |
 | `convert_embeddings` | `embedding_parquets/{kpi,train}/embeddings.parquet` exist; train contains both modalities and KPI contains the selected modalities. |
 | `gap_analysis` | `$RUN_DIR/iter_<N>/gaps/predictions.json` exists and the container exits successfully. The workflow counts valid rows directly from `kpi_gaps.jsonl`; missing or empty output after successful completion means zero weak samples. |
 | `prepare_nearest_neighbor_mining` | One target parquet, optional filtered source parquet, and one nearest-neighbor spec exist. |
