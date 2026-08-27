@@ -48,10 +48,10 @@ SERVER="$(cd "$(dirname "$0")" && pwd)/server.py"
 # Default (published): public GitHub distribution on `main`.
 # Internal SQA / pre-release — release/7.x branches live on the internal GitLab
 # repo (GitHub has only main + tags), so set BOTH:
-#   export SKILL_REPO="ssh://git@gitlab-master.nvidia.com:12051/nvidia-tao-toolkit/tao-skills-external.git"
+#   export SKILL_REPO="ssh://git@gitlab-master.nvidia.com:12051/nvidia-tao-toolkit/tao-skill-bank.git"
 #   export SKILL_REF="release/7.1.0"          # or TAO_RELEASE=release/7.1.0
 # …or skip the network entirely and use a local checkout directly:
-#   export SKILL_LOCAL="$HOME/tao-skills-external"
+#   export SKILL_LOCAL="$HOME/tao-skill-bank"
 SKILL_LOCAL="${SKILL_LOCAL:-}"
 SKILL_REPO="${SKILL_REPO:-https://github.com/NVIDIA-TAO/tao-skill-bank}"
 SKILL_REF="${SKILL_REF:-${TAO_RELEASE:-main}}"
@@ -151,17 +151,17 @@ fi
 # Do this before the server starts so TAO_SHELL_IMAGE (the pyt image tao_exec
 # runs its CPU shell in) can be read from the bank's versions.yaml. Clone the
 # bank INTO the workspace (not /tmp) so tao_run containers also see it at
-# /data/tao-skills-external — every skill's scripts, references, and
+# /data/tao-skill-bank — every skill's scripts, references, and
 # versions.yaml are then runnable in-container without the agent copying files
 # through its context. The same tree is copied into the sandbox in step 3.
 mkdir -p "$WORKSPACE"
-BANK="$WORKSPACE/tao-skills-external"
+BANK="$WORKSPACE/tao-skill-bank"
 if [ -n "$SKILL_LOCAL" ]; then
   # Copy a local working tree into the workspace (drop its .git — the sandbox only
   # needs the files). Lets SQA test un-pushed release/7.x skills without a push.
   [ -d "$SKILL_LOCAL" ] || die "SKILL_LOCAL is not a directory: $SKILL_LOCAL"
   src="$(cd "$SKILL_LOCAL" && pwd -P)"
-  if [ "$src" != "$(cd "$WORKSPACE" && pwd -P)/tao-skills-external" ]; then
+  if [ "$src" != "$(cd "$WORKSPACE" && pwd -P)/tao-skill-bank" ]; then
     rm -rf "$BANK"; cp -a "$src" "$BANK"; rm -rf "$BANK/.git"
   fi
   log "skill bank: local tree $src ($(git -C "$src" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'no-git'))"
@@ -269,10 +269,10 @@ if [ -n "${_srv_pid:-}" ] && [ -r "/proc/$_srv_pid/environ" ]; then
 fi
 
 # ── 3. Install the TAO skills into the sandbox ────────────────────────────────
-docker cp "$BANK" "$CID":/sandbox/    # -> /sandbox/tao-skills-external (agent reads skills)
+docker cp "$BANK" "$CID":/sandbox/    # -> /sandbox/tao-skill-bank (agent reads skills)
 # OpenClaw discovers skills one level below its skills dir; the bank nests them.
-nemoclaw "$SB" exec -- bash -c 'cd /sandbox/tao-skills-external && find skills -name SKILL.md | while read -r f; do d=$(dirname "$f"); ln -sfn "/sandbox/tao-skills-external/$d" "/sandbox/.openclaw/skills/$(basename "$d")"; done'
-log "skills installed (workspace: $BANK ; sandbox: /sandbox/tao-skills-external)"
+nemoclaw "$SB" exec -- bash -c 'cd /sandbox/tao-skill-bank && find skills -name SKILL.md | while read -r f; do d=$(dirname "$f"); ln -sfn "/sandbox/tao-skill-bank/$d" "/sandbox/.openclaw/skills/$(basename "$d")"; done'
+log "skills installed (workspace: $BANK ; sandbox: /sandbox/tao-skill-bank)"
 
 # ── 4. Register MCP server + skill-bank path + enable orchestration tools ─────
 # Edits openclaw.json directly (openclaw config set refuses to run in-sandbox).
@@ -312,7 +312,7 @@ case "$MODEL_REASONING" in true) MODEL_REASONING_PY=True ;; *) MODEL_REASONING_P
 nemoclaw "$SB" exec --stdin -- python3 <<PY
 import json, os
 p = "/sandbox/.openclaw/openclaw.json"; d = json.load(open(p))
-d.setdefault("env", {})["TAO_SKILL_BANK_PATH"] = "/sandbox/tao-skills-external"
+d.setdefault("env", {})["TAO_SKILL_BANK_PATH"] = "/sandbox/tao-skill-bank"
 d.setdefault("mcp", {}).setdefault("servers", {})["tao"] = {
     "type": "http", "url": "http://host.openshell.internal:${PORT}/mcp"}
 d.setdefault("tools", {})["profile"] = "coding"   # exec + fs + subagents (sandbox-scoped)

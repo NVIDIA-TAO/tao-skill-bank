@@ -60,7 +60,7 @@ When embeddings feed a mining step, every parquet compared against another must 
 
 ## Quick Start
 
-Run from the `tao-skills-external` repo root.
+Run from the `tao-skill-bank` repo root.
 
 **Write the spec beside the output parquet.** The run does not retain it, so the
 embeddings otherwise carry no record of the encoder that produced them. That

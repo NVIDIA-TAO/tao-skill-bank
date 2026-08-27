@@ -67,7 +67,7 @@ The default template is `assets/default_unique_neighbor_matching.yaml`.
 
 ## Quick Start
 
-Run from the `tao-skills-external` repo root. Resolve the pinned TAO Data Services image from `versions.yaml`, verify the spec, mount the run root with identical host/container paths, and stream the Docker logs.
+Run from the `tao-skill-bank` repo root. Resolve the pinned TAO Data Services image from `versions.yaml`, verify the spec, mount the run root with identical host/container paths, and stream the Docker logs.
 
 **Write the spec into the output directory.** The run does not retain it, so a mined
 set otherwise carries no record of the budget, allocation policy or rare-class list

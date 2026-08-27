@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skill-bank",
         type=Path,
-        default=Path.home() / "tao-skills-external",
+        default=Path.home() / "tao-skill-bank",
         help="Path to the TAO skill bank.",
     )
     parser.add_argument(

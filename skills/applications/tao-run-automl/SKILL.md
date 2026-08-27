@@ -91,7 +91,7 @@ If missing, show the exact install command from `versions.yaml` and ask before
 installing:
 
 ```bash
-SB="${TAO_SKILL_BANK_PATH:-~/tao-skills-external}"
+SB="${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}"
 pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_automl_<platform>)"
 ```
 

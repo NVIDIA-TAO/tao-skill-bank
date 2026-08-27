@@ -145,7 +145,7 @@ TAO subtasks need the spec flag explicitly, or they fail with
 command: ["visual_changenet", "train", "-e", "/results/<stage>_train.yaml"]
 ```
 
-The skill bank is in the workspace at `tao-skills-external/`, so helper scripts
+The skill bank is in the workspace at `tao-skill-bank/`, so helper scripts
 and `versions.yaml` are reachable from both tools.
 
 ## Cleanup
