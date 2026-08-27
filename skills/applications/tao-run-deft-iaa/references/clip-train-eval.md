@@ -154,7 +154,10 @@ another label/path even when its numeric value is plausible.
    `selection_strategy=newest_fallback`. Freshness is anchored to the first
    attempt in the bounded train-attempt lineage, and is validated before the
    canonical link/copy is created, so a retry can safely reuse a checkpoint
-   produced by its earlier attempt.
+   produced by its earlier attempt. The lower bound can never precede the
+   immutable run's `started_at`, which excludes checkpoints left by an earlier
+   occupant of the results path. Legacy retry statuses that predate explicit
+   lineage recording use that run start rather than the retry timestamp.
 5. Commit:
 
    ```bash

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import pathlib
@@ -13,6 +14,62 @@ from typing import Any
 
 BEST_RELPATH = pathlib.Path("best/clip_best_val_t2i_mAP.pth")
 METADATA_RELPATH = pathlib.Path("best/clip_best_val_t2i_mAP.json")
+
+
+def checkpoint_lineage_started_ns(
+    status: dict[str, Any], run_started_at: str
+) -> int:
+    """Resolve a retry lineage lower bound anchored to the immutable run.
+
+    New statuses carry ``lineage_started_ns`` explicitly. Legacy attempt-1
+    statuses use their own start, while legacy retries—whose first-attempt
+    timestamp was never persisted—fall back to the run start rather than the
+    retry start that caused NVBug 6603466. The run anchor also prevents a
+    status copied from an earlier occupant of the results path from widening
+    the checkpoint window before this run existed.
+    """
+    started_ns = status.get("started_ns")
+    attempt = status.get("attempt", 1)
+    if (
+        not isinstance(started_ns, int)
+        or isinstance(started_ns, bool)
+        or started_ns < 1
+    ):
+        raise ValueError("train command status started_ns must be a positive integer")
+    if (
+        not isinstance(attempt, int)
+        or isinstance(attempt, bool)
+        or not 1 <= attempt <= 2
+    ):
+        raise ValueError("train command status attempt must be 1 or 2")
+    if not isinstance(run_started_at, str) or not run_started_at.strip():
+        raise ValueError("run started_at must be a non-empty timestamp")
+    try:
+        run_started = dt.datetime.fromisoformat(run_started_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("run started_at must be an ISO-8601 timestamp") from exc
+    if run_started.tzinfo is None:
+        raise ValueError("run started_at must include a timezone")
+    run_started_ns = int(run_started.timestamp() * 1_000_000_000)
+    if run_started_ns < 1 or run_started_ns > started_ns:
+        raise ValueError("run started_at must be no later than the train attempt")
+
+    if "lineage_started_ns" in status:
+        lineage_started_ns = status["lineage_started_ns"]
+    elif attempt == 1:
+        lineage_started_ns = started_ns
+    else:
+        lineage_started_ns = run_started_ns
+    if (
+        not isinstance(lineage_started_ns, int)
+        or isinstance(lineage_started_ns, bool)
+        or not run_started_ns <= lineage_started_ns <= started_ns
+    ):
+        raise ValueError(
+            "train command status lineage_started_ns must fall between the "
+            "immutable run start and current attempt start"
+        )
+    return lineage_started_ns
 
 
 def _absolute_lexical(path: pathlib.Path | str, name: str) -> pathlib.Path:

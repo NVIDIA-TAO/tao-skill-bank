@@ -24,7 +24,11 @@ import tempfile
 import time
 from typing import Any
 
-from checkpoint_contract import METADATA_RELPATH, validate_best_checkpoint
+from checkpoint_contract import (
+    METADATA_RELPATH,
+    checkpoint_lineage_started_ns,
+    validate_best_checkpoint,
+)
 from command_contract import (
     command_sha256,
     expected_container_command,
@@ -495,7 +499,8 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
 
     results = _results(args.results_dir)
     _config(args.deft_config, results)
-    state_config = _state(results).get("config")
+    state = _state(results)
+    state_config = state.get("config")
     if not isinstance(state_config, dict):
         raise ValueError("state.config must be an object")
     current = _iter_dir(results, args.iter_num)
@@ -542,18 +547,9 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise ValueError("--train-command-status does not prove the approved train command")
     started_ns = payload.get("started_ns")
-    if not isinstance(started_ns, int) or isinstance(started_ns, bool) or started_ns < 1:
-        raise ValueError("train command status started_ns must be a positive integer")
-    lineage_started_ns = payload.get("lineage_started_ns", started_ns)
-    if (
-        not isinstance(lineage_started_ns, int)
-        or isinstance(lineage_started_ns, bool)
-        or not 1 <= lineage_started_ns <= started_ns
-    ):
-        raise ValueError(
-            "train command status lineage_started_ns must be a positive integer "
-            "no later than started_ns"
-        )
+    lineage_started_ns = checkpoint_lineage_started_ns(
+        payload, state.get("started_at")
+    )
     log_path = pathlib.Path(str(payload.get("log_path", "")))
     if (
         not log_path.is_absolute()
