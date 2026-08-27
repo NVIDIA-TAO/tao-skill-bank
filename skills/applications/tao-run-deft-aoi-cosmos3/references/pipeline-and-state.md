@@ -81,13 +81,12 @@ count against `max_iterations`.
    surface the recommendation to increase top-K above the default 5 or expand the
    Mining pool.
 5. Run `emit_mined_sharegpt.py` to align every mined path to exactly one Mining
-   source record. It inherits the source prompt, golden reference, and exact
-   label.
+   source record. It inherits the source prompt and exact label.
 6. After RCA and Mining selection, run `assemble_training_json.py` without a
    seed for `iter1`, passing the mined records and — when AnomalyGen ran — the
    synthetic records as separate `--new-json` inputs; together they become
    `train_iter_1.json`. Later iterations use `train_iter_<N-1>.json` as the
-   seed and write `train_iter_<N>.json`. Dedupe by the two-image pair and
+   seed and write `train_iter_<N>.json`. Dedupe by the image path and
    exclude Proxy and Benchmark targets.
 7. Run `validate_sharegpt.py --require-files` and
    `validate_split_contract.py` against the assembled Train file, passing

@@ -65,7 +65,7 @@ file is the single source of truth, not this document. It wraps
 
 Any assistant response other than exact `OK` or `NG` is a hard stop. Each
 file root must be a non-empty JSON array, and each record must contain exactly
-`[AOI, golden_reference]`. JSONL input is invalid even when it contains the same
+one image. JSONL input is invalid even when it contains the same
 records. A missing `id` on Proxy or Benchmark is a hard stop here — see
 `references/aoi-annotation.md`. Adding ids changes the Benchmark SHA-256, so do
 it before `init_deft_state.py` freezes the hash.

@@ -274,11 +274,14 @@ native exporter merges LoRA into a complete HF checkpoint, so keep
 ### Classify and, when needed, lift the evaluation image cap
 
 Some `cosmos-rl` images build vLLM with
-`limit_mm_per_prompt={"video": 1, "image": 1}`. Every AOI record carries two
-images, so those images fail evaluation until the cap is raised. Other images,
-including framework-evaluator builds, contain neither that literal nor a vLLM
-engine construction and need no patch. Image tags are not a stable way to tell
-the two apart.
+`limit_mm_per_prompt={"video": 1, "image": 1}`. This skill's single-image AOI
+records already fit that default cap, so this stage is normally a no-op
+(`already_sufficient`); it stays in the pipeline as a guardrail for any record
+shape that carries more than one image per prompt, where evaluation would
+otherwise fail until the cap is raised. Other images, including
+framework-evaluator builds, contain neither that literal nor a vLLM engine
+construction and need no patch. Image tags are not a stable way to tell these
+apart.
 
 Run this once per run, before the first evaluate job:
 
@@ -293,10 +296,11 @@ It reads `base.py` out of the selected image and reports one source-driven
 classification, independent of whether the tag is semver, a custom build name,
 or a future tag:
 
-- `patch_required`: the recognized cap is below two; the script rewrites only
-  that literal and prints `MOUNT_ARG=<host>:<container>:ro`. Add it as a
-  read-only mount to every `cosmos-rl-evaluate` job.
-- `already_sufficient`: the recognized cap is at least two; no file or mount.
+- `patch_required`: the recognized cap is below `--images` (default 1); the
+  script rewrites only that literal and prints `MOUNT_ARG=<host>:<container>:ro`.
+  Add it as a read-only mount to every `cosmos-rl-evaluate` job.
+- `already_sufficient`: the recognized cap already meets `--images`; no file
+  or mount.
 - `cap_absent`: the source contains neither the cap nor vLLM engine evidence;
   no file or mount.
 

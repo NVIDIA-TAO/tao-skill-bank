@@ -120,12 +120,12 @@ def annotation_identity_mounts(
     destinations = {str(media_host)}
     for index, record in enumerate(records):
         images = record.get("images") if isinstance(record, dict) else None
-        if not isinstance(images, list) or len(images) != 2 or not all(
+        if not isinstance(images, list) or len(images) != 1 or not all(
             isinstance(image, str) and image for image in images
         ):
             raise ValueError(
                 f"training annotation record[{index}].images must contain "
-                "exactly two non-empty paths"
+                "exactly one non-empty path"
             )
         for image in images:
             annotated = pathlib.Path(image).expanduser()

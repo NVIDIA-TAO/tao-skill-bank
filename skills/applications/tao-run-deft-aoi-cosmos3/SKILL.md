@@ -4,7 +4,7 @@ description: >
   Run the disk-backed DEFT AOI improvement loop for NVIDIA Cosmos Reason 3 /
   Cosmos3 models, using Nano by default and Edge or Super when explicitly
   requested: evaluate the base model on Proxy and frozen Benchmark splits,
-  mine real image pairs from Proxy gaps, assemble a per-iteration Train JSON
+  mine real images from Proxy gaps, assemble a per-iteration Train JSON
   from selected Mining samples, train with native cosmos_framework VLM LoRA SFT, and repeat
   through the selected platform's submit/status/logs/cancel contract.
   This migration supports bare labels only: the assistant response must be
@@ -165,8 +165,7 @@ parallelism, or memory assumptions for Edge or Super.
 
 This migration supports one annotation mode: `bare_okng`.
 
-- Each record is ShareGPT JSON with exactly two images in
-  `[AOI, golden_reference]` order.
+- Each record is ShareGPT JSON with exactly one image.
 - The first human/user turn contains the inspection prompt.
 - The final assistant/gpt response is exactly `OK` or `NG`; reasoning,
   prefixes, explanations, and final-answer wrappers are invalid training
@@ -306,8 +305,8 @@ For each `iterN` when the frozen Benchmark gate is unmet:
    history-aware post-processing so a filepath selected by a prior iteration
    cannot enter Train again. The default top-K remains 5; preserve an explicit
    user value and increase it only when the history summary shows low novelty.
-4. `assemble_data` — align mined target paths to Mining source prompts,
-   golden references, and exact labels with `scripts/emit_mined_sharegpt.py`;
+4. `assemble_data` — align mined target paths to Mining source prompts and
+   exact labels with `scripts/emit_mined_sharegpt.py`;
    create `train_iter_1.json` from the mined and synthetic records only after
    Proxy RCA and Mining selection, then append monotonically into
    `train_iter_N.json` in later iterations with

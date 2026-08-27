@@ -67,7 +67,7 @@ class SdgPathCompatibilityTests(unittest.TestCase):
                 relative=False,
             )
 
-            self.assertEqual(records[0]["images"], [str(generated), str(source)])
+            self.assertEqual(records[0]["images"], [str(generated)])
 
     def test_documented_output_relative_pair_resolves(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -90,7 +90,7 @@ class SdgPathCompatibilityTests(unittest.TestCase):
                 relative=False,
             )
 
-            self.assertEqual(records[0]["images"], [str(generated), str(clean)])
+            self.assertEqual(records[0]["images"], [str(generated)])
 
     def test_missing_101_source_uses_resolved_pair_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -117,7 +117,7 @@ class SdgPathCompatibilityTests(unittest.TestCase):
                 relative=False,
             )
 
-            self.assertEqual(records[0]["images"], [str(generated), str(clean)])
+            self.assertEqual(records[0]["images"], [str(generated)])
 
     def test_explicit_sdg_root_resolves_a_moved_csv(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

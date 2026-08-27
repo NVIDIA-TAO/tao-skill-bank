@@ -2,11 +2,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Interim two-image ShareGPT experiment for the baked Framework runtime.
+"""Interim single-image ShareGPT experiment for the baked Framework runtime.
 
 Mount this file read-only as
 ``/workspace/.venv/lib/python3.13/site-packages/cosmos_framework/configs/base/reasoner/experiment/tao_cr3_aoi.py``.
-Remove it when the pinned image provides an equivalent native image-pair
+Remove it when the pinned image provides an equivalent native single-image
 adapter.  Model, optimizer, LoRA, FSDP, and checkpoint behavior remain native.
 """
 
@@ -39,8 +39,8 @@ from cosmos_framework.utils.lazy_config import LazyCall as L
 from cosmos_framework.utils.reasoner.constant import IGNORE_INDEX
 
 
-class CR3TwoImageShareGPTDataset(Dataset):
-    """Validate and expose bare-OK/NG two-image ShareGPT JSON arrays."""
+class CR3SingleImageShareGPTDataset(Dataset):
+    """Validate and expose bare-OK/NG single-image ShareGPT JSON arrays."""
 
     def __init__(self, annotation_path: str, media_root: str) -> None:
         self.annotation_path = Path(annotation_path).expanduser().resolve(strict=True)
@@ -57,8 +57,8 @@ class CR3TwoImageShareGPTDataset(Dataset):
         row = copy.deepcopy(value)
         images = row.get("images")
         turns = row.get("conversations")
-        if not isinstance(images, list) or len(images) != 2 or not all(isinstance(item, str) for item in images):
-            raise ValueError(f"CR3 record {index} must contain exactly two string image paths")
+        if not isinstance(images, list) or len(images) != 1 or not all(isinstance(item, str) for item in images):
+            raise ValueError(f"CR3 record {index} must contain exactly one string image path")
         if not isinstance(turns, list) or len(turns) < 2:
             raise ValueError(f"CR3 record {index} must contain at least two ShareGPT turns")
         if not all(
@@ -87,8 +87,8 @@ class CR3TwoImageShareGPTDataset(Dataset):
         return self.rows[index]
 
 
-class CR3TwoImageVLMProcessor(VLMProcessor):
-    """Turn both CR3 image paths into one native OpenAI-style user turn."""
+class CR3SingleImageVLMProcessor(VLMProcessor):
+    """Turn the CR3 image path into one native OpenAI-style user turn."""
 
     def _sharegpt_to_openai(self, item: dict[str, Any]) -> list[dict[str, Any]]:
         decoded_images = []
@@ -113,7 +113,7 @@ class CR3TwoImageVLMProcessor(VLMProcessor):
                 content = text
             messages.append({"role": role, "content": content})
         if not images_inserted:
-            raise ValueError("CR3 conversation has no human turn for its image pair")
+            raise ValueError("CR3 conversation has no human turn for its image")
         return messages
 
 
@@ -131,7 +131,7 @@ tao_cr3_aoi.upload_reproducible_setup = False
 
 tao_cr3_aoi.dataloader_train = L(CosmosDataLoader)(
     distributor=L(MapDistributor)(
-        dataset=L(CR3TwoImageShareGPTDataset)(
+        dataset=L(CR3SingleImageShareGPTDataset)(
             annotation_path="${oc.env:TAO_CR3_TRAIN_ANNOTATION}",
             media_root="${oc.env:TAO_CR3_MEDIA_ROOT}",
         ),
@@ -139,7 +139,7 @@ tao_cr3_aoi.dataloader_train = L(CosmosDataLoader)(
         seed="${oc.env:TAO_CR3_SEED,42}",
         name="cr3_train",
     ),
-    processor=L(CR3TwoImageVLMProcessor)(
+    processor=L(CR3SingleImageVLMProcessor)(
         processor=L(build_processor)(
             tokenizer_type="${model.config.policy.backbone.model_name}",
             config_variant="hf",

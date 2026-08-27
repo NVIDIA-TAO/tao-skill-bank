@@ -26,8 +26,8 @@ ROLE_PATHS = {
 
 def _target(record: dict, path: pathlib.Path, index: int, media_root: pathlib.Path) -> str:
     images = record.get("images")
-    if not isinstance(images, list) or len(images) != 2:
-        raise ValueError(f"{path}[{index}]: images must contain [target, golden_reference]")
+    if not isinstance(images, list) or len(images) != 1:
+        raise ValueError(f"{path}[{index}]: images must contain exactly one image")
     if not all(isinstance(image, str) and image for image in images):
         raise ValueError(f"{path}[{index}]: image paths must be non-empty strings")
     target = pathlib.Path(images[0])

@@ -53,7 +53,7 @@ def css_rules(template: pathlib.Path) -> dict[str, dict[str, str]]:
 
 def record(label: str, prompt: str = "Inspect.") -> dict:
     return {
-        "images": ["target.png", "golden.png"],
+        "images": ["target.png"],
         "conversations": [
             {"from": "human", "value": prompt},
             {"from": "gpt", "value": label},

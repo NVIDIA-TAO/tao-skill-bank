@@ -121,12 +121,12 @@ AnomalyGen writes one synthetic defect per row of `SDG_result.csv`:
 <output_dir>/
 ├── allocation.json                       # Phase 2 defect -> AMP count proof
 ├── SDG_result.csv
-├── reconstructed_image/<T>+<A>_<idx>.png   # generated defect  -> images[0], the AOI board
-└── original_image/<T>+<A>_<idx>.png        # clean source      -> images[1], the golden reference
+├── reconstructed_image/<T>+<A>_<idx>.png   # generated defect  -> images[0], the emitted AOI image
+└── original_image/<T>+<A>_<idx>.png        # clean source      -> resolved and existence-checked as a pairing guardrail, not emitted
 ```
 
-That is already the Cosmos3 pair shape, so each generated sample becomes one
-record whose assistant response is exactly `NG`:
+Only the generated-defect image is emitted into the single-image record; each
+generated sample becomes one record whose assistant response is exactly `NG`:
 
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/emit_sdg_sharegpt.py" \

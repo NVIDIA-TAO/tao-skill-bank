@@ -17,8 +17,7 @@ workspace/
 │       │                                # holds ag_config.yaml + fine-tuned checkpoint.
 │       └── datasets/<project>/        # clean boards, cad masks, defect_spec.jsonl
 ├── images/
-│   ├── ... AOI images ...
-│   └── golden/images/... golden references ...
+│   └── ... inspection images ...
 └── specs/
     ├── evaluate_spec_proxy.toml
     ├── evaluate_spec_benchmark.toml
@@ -107,10 +106,10 @@ to the preceding Train artifact.
 
 ## Isolation
 
-Proxy, Benchmark, and Mining target AOI images must be pairwise disjoint.
-Generated Train targets must come from Mining or the iteration's AnomalyGen
-output, and remain disjoint from Proxy and Benchmark. Synthetic targets are
-held to the same isolation. Golden reference images may be shared.
+Proxy, Benchmark, and Mining images must be pairwise disjoint. Generated Train
+images must come from Mining or the iteration's AnomalyGen output, and remain
+disjoint from Proxy and Benchmark. Synthetic targets are held to the same
+isolation.
 
 ## Results
 

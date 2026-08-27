@@ -6,9 +6,11 @@
 
 AnomalyGen writes one synthetic defect per row of ``SDG_result.csv``: a
 ``reconstructed_image/<T>+<A>_<idx>.png`` carrying the generated defect, and
-the ``original_image/<T>+<A>_<idx>.png`` clean board it was painted onto. That
-is exactly the Cosmos3 AOI pair shape ``[AOI, golden_reference]``, so every
-generated sample becomes one ``NG`` record.
+the ``original_image/<T>+<A>_<idx>.png`` clean board it was painted onto. Only
+the generated-defect image becomes the single-image Cosmos3 AOI record; the
+clean board is still resolved and required to exist as an AnomalyGen pairing
+guardrail, but it is not emitted. Every generated sample becomes one ``NG``
+record.
 
 PAIDF 1.0.1 may echo a repo-root-relative output directory into
 ``output_filename`` and records the clean source as ``image_filename``. Path
@@ -220,12 +222,15 @@ def emit_records(
     duplicates = 0
     defects: Counter[str] = Counter()
     for offset, row in enumerate(rows, start=2):
+        # `clean` is resolved and its existence verified as an AnomalyGen
+        # pairing guardrail, but single-image records emit only `generated`.
         generated, clean = _resolve_pair(
             row,
             sdg_dir=sdg_dir,
             row_number=offset,
             sdg_root=sdg_root,
         )
+        del clean
         key = str(generated)
         if key in seen:
             duplicates += 1
@@ -235,8 +240,7 @@ def emit_records(
         output.append(
             {
                 "images": [
-                    _format(generated, media_root=media_root, relative=relative),
-                    _format(clean, media_root=media_root, relative=relative),
+                    _format(generated, media_root=media_root, relative=relative)
                 ],
                 "conversations": [
                     {"from": "human", "value": prompt},

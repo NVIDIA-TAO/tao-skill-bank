@@ -6,11 +6,11 @@
 [
   {
     "id": "aoi_001_93c3e56d",
-    "images": ["boards/aoi_001.png", "boards/golden_001.png"],
+    "images": ["boards/aoi_001.png"],
     "conversations": [
       {
         "from": "human",
-        "value": "Compare the AOI image with the golden reference. Return OK or NG."
+        "value": "Inspect this image. Return OK or NG."
       },
       {"from": "gpt", "value": "NG"}
     ]
@@ -18,8 +18,8 @@
 ]
 ```
 
-The annotation file root is one JSON array, not JSONL. `images` is always
-`[AOI, golden_reference]`. The final assistant value is exactly `OK` or `NG`.
+The annotation file root is one JSON array, not JSONL. `images` always
+contains exactly one image path. The final assistant value is exactly `OK` or `NG`.
 This skill does not accept rich answers, reasoning tags, captions,
 multiple-choice fan-out, or label-derived prose.
 
@@ -55,15 +55,16 @@ Mining pool:
 ```
 
 The join tries resolved/exact paths and then a unique basename. Missing or
-ambiguous matches hard-stop. Each emitted record inherits the source prompt,
-golden reference, and exact label.
+ambiguous matches hard-stop. Each emitted record inherits the source prompt
+and exact label.
 
 ## Emit synthetic records
 
 AnomalyGen writes paired `reconstructed_image/` (generated defect) and
-`original_image/` (clean source) files, which is already the
-`[AOI, golden_reference]` shape. Each generated sample becomes one exact `NG`
-record:
+`original_image/` (clean source it was painted onto) files. Only the
+generated-defect image is emitted into the single-image record; the clean
+pair partner is still resolved and required to exist as an AnomalyGen
+pairing guardrail. Each generated sample becomes one exact `NG` record:
 
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/emit_sdg_sharegpt.py" \
@@ -75,8 +76,8 @@ record:
 ```
 
 The prompt is inherited from the Mining pool so synthetic and mined records ask
-the same question. A missing or empty image on either side of a pair
-hard-stops. See `references/tao-generate-anomalies.md`.
+the same question. A missing or empty image on either side of the AnomalyGen
+pair hard-stops. See `references/tao-generate-anomalies.md`.
 
 ## Assemble monotonically
 

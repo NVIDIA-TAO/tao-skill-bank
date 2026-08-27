@@ -6,8 +6,11 @@
 
 Affected `cosmos_rl/evaluation/base.py` versions hardcode
 ``limit_mm_per_prompt={"video": 1, "image": 1}`` when it builds the vLLM
-engine. The bare OK/NG contract mandates exactly two images per record
-([AOI, golden_reference]), so evaluation fails with::
+engine. This skill's single-image bare OK/NG contract fits that default cap,
+so the patch is normally a no-op here (``already_sufficient``); it stays in
+the pipeline as a guardrail and remains load-bearing for any record shape
+that carries more than one image per prompt, where evaluation would otherwise
+fail with::
 
     ValueError: At most 1 image(s) may be provided in one prompt.
 
@@ -130,8 +133,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--images",
         type=int,
-        default=2,
-        help="Required images per prompt. bare_okng needs 2.",
+        default=1,
+        help="Required images per prompt. This skill's single-image bare_okng "
+        "contract needs 1; pass a higher value for a multi-image record shape.",
     )
     parser.add_argument("--container-path", default=CONTAINER_PATH)
     parser.add_argument("--docker", default="docker")

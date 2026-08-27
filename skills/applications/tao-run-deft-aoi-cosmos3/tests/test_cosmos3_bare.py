@@ -72,13 +72,13 @@ import validate_sharegpt  # noqa: E402
 import validate_split_contract  # noqa: E402
 
 
-def record(target: str, golden: str, label: str) -> dict:
+def record(target: str, label: str) -> dict:
     return {
-        "images": [target, golden],
+        "images": [target],
         "conversations": [
             {
                 "from": "human",
-                "value": "Compare the AOI image with the golden reference.",
+                "value": "Inspect this image.",
             },
             {"from": "gpt", "value": label},
         ],
@@ -163,14 +163,14 @@ def write_sdg_output(sdg_dir: pathlib.Path, stems: list[str]) -> pathlib.Path:
 
 class BareAnnotationTests(unittest.TestCase):
     def test_exact_bare_labels_only(self) -> None:
-        records = [record("a.png", "golden.png", "OK")]
+        records = [record("a.png", "OK")]
         summary = validate_sharegpt.validate_records(
             records, media_root=pathlib.Path("/tmp"), require_files=False
         )
         self.assertEqual(summary["mode"], "bare_okng")
         self.assertEqual(summary["labels"], {"OK": 1})
 
-        invalid = [record("b.png", "golden.png", "Final answer: NG")]
+        invalid = [record("b.png", "Final answer: NG")]
         with self.assertRaisesRegex(ValueError, "exactly OK or NG"):
             validate_sharegpt.validate_records(
                 invalid,
@@ -182,8 +182,8 @@ class BareAnnotationTests(unittest.TestCase):
         """cosmos-rl-evaluate hard-indexes id and reuses it as a filename."""
         media = pathlib.Path("/tmp")
         ok = [
-            {**record("a.png", "g.png", "OK"), "id": "a_93c3e56d"},
-            {**record("b.png", "g.png", "NG"), "id": "b_1f2e3d4c"},
+            {**record("a.png", "OK"), "id": "a_93c3e56d"},
+            {**record("b.png", "NG"), "id": "b_1f2e3d4c"},
         ]
         summary = validate_sharegpt.validate_records(
             ok, media_root=media, require_files=False, require_id=True
@@ -191,7 +191,7 @@ class BareAnnotationTests(unittest.TestCase):
         self.assertEqual(summary["unique_ids"], 2)
 
         # Missing id is only an error for the evaluated splits.
-        bare = [record("a.png", "g.png", "OK")]
+        bare = [record("a.png", "OK")]
         self.assertEqual(
             validate_sharegpt.validate_records(
                 bare, media_root=media, require_files=False
@@ -204,8 +204,8 @@ class BareAnnotationTests(unittest.TestCase):
             )
 
         duplicated = [
-            {**record("a.png", "g.png", "OK"), "id": "same"},
-            {**record("b.png", "g.png", "NG"), "id": "same"},
+            {**record("a.png", "OK"), "id": "same"},
+            {**record("b.png", "NG"), "id": "same"},
         ]
         with self.assertRaisesRegex(ValueError, "duplicate id"):
             validate_sharegpt.validate_records(
@@ -213,7 +213,7 @@ class BareAnnotationTests(unittest.TestCase):
             )
 
         # id doubles as a path segment, so separators must be rejected.
-        unsafe = [{**record("a.png", "g.png", "OK"), "id": "dir/../escape"}]
+        unsafe = [{**record("a.png", "OK"), "id": "dir/../escape"}]
         with self.assertRaisesRegex(ValueError, "filesystem-safe"):
             validate_sharegpt.validate_records(
                 unsafe, media_root=media, require_files=False, require_id=True
@@ -225,17 +225,17 @@ class BareAnnotationTests(unittest.TestCase):
             workspace = pathlib.Path(temporary)
 
             def write_roles(proxy_id: str | None) -> None:
-                proxy = record("p.png", "g.png", "OK")
+                proxy = record("p.png", "OK")
                 if proxy_id:
                     proxy["id"] = proxy_id
                 write_json(workspace / "annotations/proxy_kpi.json", [proxy])
                 write_json(
                     workspace / "annotations/benchmark_kpi.json",
-                    [{**record("b.png", "g.png", "NG"), "id": "b_1"}],
+                    [{**record("b.png", "NG"), "id": "b_1"}],
                 )
                 write_json(
                     workspace / "annotations/mining_pool.json",
-                    [record("m.png", "g.png", "OK")],
+                    [record("m.png", "OK")],
                 )
 
             write_roles(None)
@@ -353,8 +353,8 @@ class BareAnnotationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             records = [
-                record("a.png", "golden.png", "OK"),
-                record("b.png", "golden.png", "NG"),
+                record("a.png", "OK"),
+                record("b.png", "NG"),
             ]
             json_path = write_json(root / "proxy_kpi.json", records)
             self.assertEqual(validate_sharegpt.load_records(json_path), records)
@@ -366,7 +366,7 @@ class BareAnnotationTests(unittest.TestCase):
                 validate_sharegpt.load_records(jsonl_path)
 
     def test_mined_alignment_preserves_prompt_pair_and_label(self) -> None:
-        source = [record("pool/a.png", "golden/g.png", "NG")]
+        source = [record("pool/a.png", "NG")]
         output, summary = emit_mined_sharegpt.emit_records(
             ["pool/a.png"],
             source,
@@ -374,13 +374,13 @@ class BareAnnotationTests(unittest.TestCase):
             relative=True,
         )
         self.assertEqual(summary["mode"], "bare_okng")
-        self.assertEqual(output[0]["images"], ["pool/a.png", "golden/g.png"])
+        self.assertEqual(output[0]["images"], ["pool/a.png"])
         self.assertEqual(output[0]["conversations"][-1]["value"], "NG")
 
     def test_mined_alignment_prefers_full_path_over_colliding_basename(self) -> None:
         source = [
-            record("pool/board-a/U77@1_SolderLight.jpg", "golden/a.jpg", "NG"),
-            record("pool/board-b/U77@1_SolderLight.jpg", "golden/b.jpg", "OK"),
+            record("pool/board-a/U77@1_SolderLight.jpg", "NG"),
+            record("pool/board-b/U77@1_SolderLight.jpg", "OK"),
         ]
         output, summary = emit_mined_sharegpt.emit_records(
             ["pool/board-b/U77@1_SolderLight.jpg"],
@@ -390,7 +390,7 @@ class BareAnnotationTests(unittest.TestCase):
         )
         self.assertEqual(
             output[0]["images"],
-            ["pool/board-b/U77@1_SolderLight.jpg", "golden/b.jpg"],
+            ["pool/board-b/U77@1_SolderLight.jpg"],
         )
         self.assertEqual(output[0]["conversations"][-1]["value"], "OK")
         self.assertEqual(summary["match_modes"], {"exact": 1})
@@ -399,7 +399,7 @@ class BareAnnotationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             new = write_json(
-                root / "new.json", [record("new.png", "golden.png", "NG")]
+                root / "new.json", [record("new.png", "NG")]
             )
             first, summary = assemble_training_json.assemble(
                 None,
@@ -412,7 +412,7 @@ class BareAnnotationTests(unittest.TestCase):
 
             previous = write_json(root / "iter1.json", first)
             next_input = write_json(
-                root / "next.json", [record("next.png", "golden.png", "OK")]
+                root / "next.json", [record("next.png", "OK")]
             )
             merged, summary = assemble_training_json.assemble(
                 previous,
@@ -425,7 +425,7 @@ class BareAnnotationTests(unittest.TestCase):
             self.assertEqual(summary["labels"], {"OK": 1, "NG": 1})
 
             proxy = write_json(
-                root / "proxy_kpi.json", [record("next.png", "g2.png", "NG")]
+                root / "proxy_kpi.json", [record("next.png", "NG")]
             )
             with self.assertRaisesRegex(ValueError, "leakage"):
                 assemble_training_json.assemble(
@@ -521,7 +521,7 @@ class IsolationAndMetricTests(unittest.TestCase):
             role_paths = {
                 role: write_json(
                     root / f"{role}.json",
-                    [record(f"{role}.png", "golden.png", "OK")],
+                    [record(f"{role}.png", "OK")],
                 )
                 for role in ("proxy", "benchmark", "mining")
             }
@@ -537,7 +537,7 @@ class IsolationAndMetricTests(unittest.TestCase):
 
             generated_train = write_json(
                 root / "train.json",
-                [record("mining.png", "golden.png", "OK")],
+                [record("mining.png", "OK")],
             )
             generated_summary = validate_split_contract.validate(
                 {**role_paths, "train": generated_train},
@@ -551,13 +551,13 @@ class IsolationAndMetricTests(unittest.TestCase):
             # AnomalyGen output is an eligible Train source alongside Mining.
             synthetic = write_json(
                 root / "synthetic.json",
-                [record("sdg/PCB+bridge_00000.png", "sdg/orig.png", "NG")],
+                [record("sdg/PCB+bridge_00000.png", "NG")],
             )
             mixed_train = write_json(
                 root / "train_mixed.json",
                 [
-                    record("mining.png", "golden.png", "OK"),
-                    record("sdg/PCB+bridge_00000.png", "sdg/orig.png", "NG"),
+                    record("mining.png", "OK"),
+                    record("sdg/PCB+bridge_00000.png", "NG"),
                 ],
             )
             mixed_summary = validate_split_contract.validate(
@@ -576,14 +576,14 @@ class IsolationAndMetricTests(unittest.TestCase):
             # 2's AnomalyGen output.
             current_synthetic = write_json(
                 root / "synthetic_iter2.json",
-                [record("sdg/iter2.png", "sdg/orig2.png", "NG")],
+                [record("sdg/iter2.png", "NG")],
             )
             monotonic_train = write_json(
                 root / "train_iter2.json",
                 [
-                    record("mining.png", "golden.png", "OK"),
-                    record("sdg/PCB+bridge_00000.png", "sdg/orig.png", "NG"),
-                    record("sdg/iter2.png", "sdg/orig2.png", "NG"),
+                    record("mining.png", "OK"),
+                    record("sdg/PCB+bridge_00000.png", "NG"),
+                    record("sdg/iter2.png", "NG"),
                 ],
             )
             with self.assertRaisesRegex(ValueError, "must come from the Mining"):
@@ -620,8 +620,8 @@ class IsolationAndMetricTests(unittest.TestCase):
             dropped_history = write_json(
                 root / "train_iter2_dropped_history.json",
                 [
-                    record("mining.png", "golden.png", "OK"),
-                    record("sdg/iter2.png", "sdg/orig2.png", "NG"),
+                    record("mining.png", "OK"),
+                    record("sdg/iter2.png", "NG"),
                 ],
             )
             with self.assertRaisesRegex(
@@ -636,7 +636,7 @@ class IsolationAndMetricTests(unittest.TestCase):
             # A synthetic board that also sits in an evaluation split is leakage.
             leaking_synthetic = write_json(
                 root / "synthetic_leak.json",
-                [record("proxy.png", "sdg/orig.png", "NG")],
+                [record("proxy.png", "NG")],
             )
             with self.assertRaisesRegex(
                 ValueError, "leakage between synthetic and proxy"
@@ -649,7 +649,7 @@ class IsolationAndMetricTests(unittest.TestCase):
 
             role_paths["mining"] = write_json(
                 root / "mining.json",
-                [record("proxy.png", "other-golden.png", "NG")],
+                [record("proxy.png", "NG")],
             )
             with self.assertRaisesRegex(ValueError, "target leakage"):
                 validate_split_contract.validate(
@@ -660,17 +660,17 @@ class IsolationAndMetricTests(unittest.TestCase):
 
             outside_mining = write_json(
                 root / "outside.json",
-                [record("outside.png", "golden.png", "OK")],
+                [record("outside.png", "OK")],
             )
             isolated_roles = {
                 "proxy": write_json(
                     root / "proxy2.json",
-                    [record("proxy2.png", "golden.png", "OK")],
+                    [record("proxy2.png", "OK")],
                 ),
                 "benchmark": role_paths["benchmark"],
                 "mining": write_json(
                     root / "mining2.json",
-                    [record("mining2.png", "golden.png", "OK")],
+                    [record("mining2.png", "OK")],
                 ),
                 "train": outside_mining,
             }
@@ -879,7 +879,7 @@ class StateMachineTests(unittest.TestCase):
             ):
                 write_json(
                     workspace / "annotations" / filename,
-                    [record(f"{role}.png", "golden.png", label)],
+                    [record(f"{role}.png", label)],
                 )
 
             rc = init_deft_state.main(
@@ -1051,7 +1051,7 @@ class StateMachineTests(unittest.TestCase):
             ):
                 write_json(
                     workspace / "annotations" / filename,
-                    [record(filename.replace(".json", ".png"), "g.png", label)],
+                    [record(filename.replace(".json", ".png"), label)],
                 )
             self.assertEqual(
                 init_deft_state.main(
@@ -1156,7 +1156,7 @@ class StateMachineTests(unittest.TestCase):
             ):
                 write_json(
                     workspace / "annotations" / filename,
-                    [record(filename.replace(".json", ".png"), "g.png", label)],
+                    [record(filename.replace(".json", ".png"), label)],
                 )
 
             argv = [
@@ -1202,7 +1202,7 @@ class StateMachineTests(unittest.TestCase):
             ):
                 write_json(
                     workspace / "annotations" / filename,
-                    [record(filename.replace(".json", ".png"), "g.png", label)],
+                    [record(filename.replace(".json", ".png"), label)],
                 )
 
             def init(results: pathlib.Path, *extra: str) -> dict:
@@ -1278,7 +1278,7 @@ class StateMachineTests(unittest.TestCase):
             ):
                 write_json(
                     workspace / "annotations" / filename,
-                    [record(filename.replace(".json", ".png"), "g.png", label)],
+                    [record(filename.replace(".json", ".png"), label)],
                 )
             self.assertEqual(
                 init_deft_state.main(
@@ -1348,7 +1348,7 @@ class StateMachineTests(unittest.TestCase):
             ):
                 write_json(
                     workspace / "annotations" / filename,
-                    [record(filename.replace(".json", ".png"), "g.png", label)],
+                    [record(filename.replace(".json", ".png"), label)],
                 )
             self.assertEqual(
                 init_deft_state.main(
@@ -1515,9 +1515,9 @@ class StateMachineTests(unittest.TestCase):
                 ("benchmark", "benchmark_kpi.json", "NG"),
                 ("mining", "mining_pool.json", "OK"),
             ):
-                records = [record(f"{role}.png", "golden.png", label)]
+                records = [record(f"{role}.png", label)]
                 if role == "mining":
-                    records.append(record("mining_iter2.png", "golden.png", label))
+                    records.append(record("mining_iter2.png", label))
                 annotation_paths[role] = write_json(
                     workspace / "annotations" / filename,
                     records,
@@ -1771,7 +1771,7 @@ class StateMachineTests(unittest.TestCase):
             assemble_dir = results / "iter1/assemble"
             mined_sharegpt = write_json(
                 assemble_dir / "mined_sharegpt.json",
-                [record("mining.png", "golden.png", "OK")],
+                [record("mining.png", "OK")],
             )
             # The train file must carry BOTH producers' targets. A mined-only
             # train file never exercises the synthetic lineage path,
@@ -1781,15 +1781,11 @@ class StateMachineTests(unittest.TestCase):
                 (results / "iter1/anomalygen/sdg/reconstructed_image"
                  / "PCB+bridge_00000.png")
             )
-            synthetic_golden = str(
-                (results / "iter1/anomalygen/sdg/original_image"
-                 / "PCB+bridge_00000.png")
-            )
             combined = write_json(
                 assemble_dir / "train_iter_1.json",
                 [
-                    record("mining.png", "golden.png", "OK"),
-                    record(synthetic_target, synthetic_golden, "NG"),
+                    record("mining.png", "OK"),
+                    record(synthetic_target, "NG"),
                 ],
             )
             assemble_summary = write_json(
@@ -1940,7 +1936,7 @@ class StateMachineTests(unittest.TestCase):
             iter2_assemble_dir = results / "iter2/assemble"
             iter2_mined_sharegpt = write_json(
                 iter2_assemble_dir / "mined_sharegpt.json",
-                [record("mining_iter2.png", "golden.png", "OK")],
+                [record("mining_iter2.png", "OK")],
             )
             iter2_records, iter2_summary = assemble_training_json.assemble(
                 combined,
