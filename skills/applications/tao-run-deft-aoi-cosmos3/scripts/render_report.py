@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime as dt
 import html as html_lib
 import json
@@ -165,19 +164,6 @@ def _prompt_examples(state: dict[str, Any], *, limit: int = 3) -> str:
     return "\n".join(rows)
 
 
-def _csv_rows(path_value: Any) -> list[dict[str, str]]:
-    if not isinstance(path_value, str) or not path_value:
-        return []
-    path = pathlib.Path(path_value)
-    if not path.is_file():
-        return []
-    try:
-        with path.open(newline="", encoding="utf-8") as handle:
-            return list(csv.DictReader(handle))
-    except (OSError, UnicodeDecodeError, csv.Error):
-        return []
-
-
 def _metric_candidates(
     state: dict[str, Any], contract: dict[str, Any]
 ) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
@@ -279,41 +265,6 @@ def _recorded_duration_summary(
     )
 
 
-def _sdg_summary_html(
-    state: dict[str, Any], entries: list[dict[str, Any]]
-) -> str:
-    iterations = state.get("iterations", {})
-    if not isinstance(iterations, dict):
-        return "not available"
-    generated: list[int] = []
-    for label in sorted(iterations, key=_label_key):
-        if label == "baseline" or not isinstance(iterations[label], dict):
-            continue
-        phase = iterations[label]
-        if phase.get("anomalygen_skipped"):
-            generated.append(0)
-        elif phase.get("anomalygen_sdg_csv"):
-            generated.append(len(_csv_rows(phase.get("anomalygen_sdg_csv"))))
-    if not generated:
-        return "not available"
-    total = sum(generated)
-    average = round(total / len(generated))
-    detail = f"{average:,} images/iter · {total:,} total"
-    durations = [
-        int(entry["duration_sec"])
-        for entry in entries
-        if entry.get("stage") == "anomalygen"
-        and isinstance(entry.get("duration_sec"), int)
-        and not isinstance(entry.get("duration_sec"), bool)
-        and int(entry["duration_sec"]) > 0
-    ]
-    if durations:
-        detail += f" · {_duration(round(sum(durations) / len(durations)))} avg SDG time/iter"
-    else:
-        detail += " · SDG duration not recorded"
-    return detail
-
-
 def _assemble_counts(phase: dict[str, Any]) -> tuple[int | None, int | None]:
     summary = _optional_json(phase.get("assemble_summary"))
     total = _first_number(summary, ("output_records",))
@@ -333,7 +284,7 @@ def _assemble_counts(phase: dict[str, Any]) -> tuple[int | None, int | None]:
 def _growth_rows(state: dict[str, Any]) -> str:
     rows = [
         '<tr><td><strong>Baseline</strong></td><td class="num">0</td>'
-        '<td class="num">0</td><td class="num">0</td><td class="num">0</td>'
+        '<td class="num">0</td><td class="num">0</td>'
         '<td class="num">—</td></tr>'
     ]
     previous_total = 0
@@ -351,15 +302,6 @@ def _growth_rows(state: dict[str, Any]) -> str:
         )
         if raw is None and phase.get("data_mining_skipped"):
             raw = 0
-        sdg_generated = (
-            0
-            if phase.get("anomalygen_skipped")
-            else (
-                len(_csv_rows(phase.get("anomalygen_sdg_csv")))
-                if phase.get("anomalygen_sdg_csv")
-                else None
-            )
-        )
         total, _batch_unique = _assemble_counts(phase)
         delta = total - previous_total if total is not None else None
         new_unique = delta if delta is not None and delta >= 0 else None
@@ -371,7 +313,6 @@ def _growth_rows(state: dict[str, Any]) -> str:
         rows.append(
             f'<tr><td><strong>{_escape(label.title())}</strong></td>'
             f'<td class="num">{_fmt(raw)}</td>'
-            f'<td class="num">{_fmt(sdg_generated)}</td>'
             f'<td class="num">{_fmt(new_unique)}</td>'
             f'<td class="num">{_fmt(total)}</td>'
             f'<td class="num">{delta_html}</td></tr>'
@@ -414,9 +355,8 @@ def _run_summary_rows(
         ("Model", f"NVIDIA TAO Cosmos Reason 3 · {_fmt(config.get('base_model'))}"),
         ("GPU", gpu),
         ("Baseline (pre-DEFT)", baseline_detail),
-        ("Data Routing", "AnomalyGen SDG &amp; k-NN Mining"),
+        ("Data Routing", "label-separated k-NN mining from real images"),
         ("Iterations × Time", _escape(_recorded_duration_summary(entries, completed))),
-        ("SDG Images", _escape(_sdg_summary_html(state, entries))),
         ("End Result", end_detail),
     )
     return "\n".join(
@@ -452,16 +392,8 @@ def _dataset_rows(state: dict[str, Any]) -> str:
             if label == "baseline" or not isinstance(iterations[label], dict):
                 continue
             phase = iterations[label]
-            producers = (
-                ("Mined real pairs", phase.get("mined_sharegpt_json")),
-                ("AnomalyGen synthetic pairs", phase.get("anomalygen_sharegpt_json")),
-            )
+            producers = (("Mined real samples", phase.get("mined_sharegpt_json")),)
             for producer, path in producers:
-                if not path and producer.startswith("AnomalyGen") and phase.get("anomalygen_skipped"):
-                    rows.append(
-                        f'<tr><td><strong>{_escape(label.title())} · AnomalyGen</strong></td><td>Documented skip</td><td class="num">0</td><td class="num">0 / 0</td><td>skipped by committed stage</td></tr>'
-                    )
-                    continue
                 if not path:
                     continue
                 records = _json_records(path)
@@ -533,36 +465,16 @@ def _first_number(payload: Any, names: tuple[str, ...]) -> Any:
     return None
 
 
-def _defect_breakdown(rows: list[dict[str, str]]) -> str:
-    counts: dict[str, int] = {}
-    for row in rows:
-        raw = row.get("defect_type") or row.get("anomaly_type") or row.get("reconstructed_image") or "unknown"
-        name = pathlib.Path(raw).stem.split("_")[0].split("+")[-1] or "unknown"
-        counts[name] = counts.get(name, 0) + 1
-    if not counts:
-        return "not available"
-    return ", ".join(f"{_escape(name)}: {count}" for name, count in sorted(counts.items()))
-
-
-def _augmentation_rows(state: dict[str, Any]) -> str:
-    config = state.get("config", {})
-    if not isinstance(config, dict):
-        config = {}
-    anomalygen = config.get("anomalygen", {})
-    if not isinstance(anomalygen, dict):
-        anomalygen = {}
-    requested = anomalygen.get("num_SDG")
+def _mining_rows(state: dict[str, Any]) -> str:
     iterations = state.get("iterations", {})
     if not isinstance(iterations, dict):
-        return '<tr><td colspan="9">No augmentation has been committed yet.</td></tr>'
+        return '<tr><td colspan="5">No mining has been committed yet.</td></tr>'
     rows: list[str] = []
     previous_train = 0
     for label in sorted(iterations, key=_label_key):
         if label == "baseline" or not isinstance(iterations[label], dict):
             continue
         phase = iterations[label]
-        sdg_rows = _csv_rows(phase.get("anomalygen_sdg_csv"))
-        generated = 0 if phase.get("anomalygen_skipped") else (len(sdg_rows) if sdg_rows else None)
         summary = _optional_json(phase.get("mining_summary"))
         raw = _first_number(summary, ("raw_candidates", "candidate_count", "input_rows", "raw_rows"))
         kept = phase.get("mining_mined_count")
@@ -573,24 +485,11 @@ def _augmentation_rows(state: dict[str, Any]) -> str:
             new_unique = max(train_count - previous_train, 0)
         if train_count is not None:
             previous_train = train_count
-        allocated = phase.get("anomalygen_amp_allocated")
-        if not isinstance(allocated, int) or isinstance(allocated, bool):
-            allocation = _optional_json(phase.get("anomalygen_allocation_json"))
-            if allocation and all(
-                isinstance(value, int)
-                and not isinstance(value, bool)
-                and value >= 0
-                for value in allocation.values()
-            ):
-                allocated = sum(allocation.values())
-            else:
-                allocated = None
         rows.append(
-            f'<tr><td><strong>{_escape(label.title())}</strong></td><td class="num">{_fmt(requested)}</td><td class="num">{_fmt(allocated)}</td>'
-            f'<td class="num">{_fmt(generated)}</td><td>{_defect_breakdown(sdg_rows)}</td><td class="num">{_fmt(raw)}</td>'
+            f'<tr><td><strong>{_escape(label.title())}</strong></td><td class="num">{_fmt(raw)}</td>'
             f'<td class="num">{_fmt(kept)}</td><td class="num">{_fmt(new_unique)}</td><td class="num">{_fmt(train_count)}</td></tr>'
         )
-    return "\n".join(rows) or '<tr><td colspan="9">No augmentation has been committed yet.</td></tr>'
+    return "\n".join(rows) or '<tr><td colspan="5">No mining has been committed yet.</td></tr>'
 
 
 def _terminal_iteration(label: str, phase: dict[str, Any], state: dict[str, Any], contract: dict[str, Any]) -> bool:
@@ -617,9 +516,6 @@ def _artifact_rows(state: dict[str, Any], contract: dict[str, Any]) -> str:
         ("proxy_results_json", "Proxy results"),
         ("proxy_gaps_summary", "Proxy RCCA"),
         ("mining_targets_json", "Routing targets"),
-        ("anomalygen_sdg_csv", "AnomalyGen SDG_result.csv"),
-        ("anomalygen_allocation_json", "AnomalyGen AMP allocation"),
-        ("anomalygen_sharegpt_json", "AnomalyGen ShareGPT"),
         ("mining_mined_parquet", "Mined candidates"),
         ("mining_summary", "Mining filter summary"),
         ("combined_training_json", "Assembled Train JSON"),
@@ -646,10 +542,6 @@ def _artifact_rows(state: dict[str, Any], contract: dict[str, Any]) -> str:
                 rows.append(
                     f'<tr><td>{_escape(label.title())}</td><td>{_escape(display)}</td><td><span class="badge muted">NOT RUN</span></td><td>not run (terminal iteration)</td></tr>'
                 )
-        if phase.get("anomalygen_skipped"):
-            rows.append(
-                f'<tr><td>{_escape(label.title())}</td><td>AnomalyGen</td><td><span class="badge muted">SKIPPED</span></td><td>documented skip: driving Proxy RCCA recorded zero false accepts</td></tr>'
-            )
     return "\n".join(rows)
 
 
@@ -832,7 +724,7 @@ def render(results_dir: pathlib.Path) -> pathlib.Path:
         "BENCHMARK_HASH": _fmt(benchmark_hash),
         "PROMPT_EXAMPLES_HTML": _prompt_examples(state),
         "METRIC_CHART_HTML": _metric_chart(candidates, contract),
-        "AUGMENTATION_ROWS_HTML": _augmentation_rows(state),
+        "MINING_ROWS_HTML": _mining_rows(state),
         "METRIC_ROWS_HTML": _metric_rows(candidates, contract, best_label),
         "STAGE_ROWS_HTML": _stage_rows(entries),
         "ARTIFACT_ROWS_HTML": _artifact_rows(state, contract),
@@ -853,7 +745,7 @@ def render(results_dir: pathlib.Path) -> pathlib.Path:
         "Prompt Examples",
         "Iteration Metrics",
         "Pipeline Execution",
-        "Augmentation Volume",
+        "Mining Volume",
         "Artifacts",
         "Hard Stops / Warnings",
         "--nvidia-green: #76b900",

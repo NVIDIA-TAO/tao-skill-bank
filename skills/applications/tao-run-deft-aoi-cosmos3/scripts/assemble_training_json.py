@@ -48,23 +48,18 @@ def _unique_target_images(records: list[dict]) -> set[str]:
 
 def assemble(
     seed_path: pathlib.Path | None,
-    new_paths: list[pathlib.Path],
+    mined_path: pathlib.Path,
     *,
     dedupe: bool,
     validation_paths: list[pathlib.Path],
 ) -> tuple[list[dict], dict]:
-    if not new_paths:
-        raise ValueError("at least one --new-json input is required")
     seed = _load_json_list(seed_path) if seed_path is not None else []
     seed_targets = _unique_target_images(seed)
     sources: list[tuple[pathlib.Path, list[dict]]] = []
     if seed_path is not None:
         sources.append((seed_path, seed))
-    new_records: list[dict] = []
-    for path in new_paths:
-        records = _load_json_list(path)
-        sources.append((path, records))
-        new_records.extend(records)
+    new_records = _load_json_list(mined_path)
+    sources.append((mined_path, new_records))
 
     validation_targets: dict[str, pathlib.Path] = {}
     for validation_path in validation_paths:
@@ -110,7 +105,7 @@ def assemble(
 
     summary = {
         "seed": str(seed_path) if seed_path is not None else None,
-        "new_inputs": [str(p) for p in new_paths],
+        "mined_input": str(mined_path),
         "output_records": len(merged),
         "mode": "bare_okng",
         "dedupe": dedupe,
@@ -137,7 +132,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=pathlib.Path,
         help="Previous iteration training JSON. Omit for iter1.",
     )
-    parser.add_argument("--new-json", action="append", default=[], type=pathlib.Path)
+    parser.add_argument(
+        "--mined-json",
+        required=True,
+        type=pathlib.Path,
+        help="Current iteration records selected from the real Mining pool.",
+    )
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--summary", default=None, type=pathlib.Path)
     parser.add_argument("--dedupe", action="store_true")
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         merged, summary = assemble(
             args.previous_json,
-            args.new_json,
+            args.mined_json,
             dedupe=args.dedupe,
             validation_paths=args.validation_json,
         )

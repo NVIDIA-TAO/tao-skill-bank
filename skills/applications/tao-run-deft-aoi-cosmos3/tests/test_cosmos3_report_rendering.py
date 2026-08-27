@@ -276,7 +276,7 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 ],
             }
             state = {
-                "version": 5,
+                "version": 6,
                 "workflow": "tao-run-deft-aoi-cosmos3",
                 "started_at": "2026-08-04T00:00:00+00:00",
                 "status": "complete",
@@ -293,10 +293,9 @@ class CosmosReportRenderingTests(unittest.TestCase):
                     "evaluation": {"benchmark": {"sha256": "abc123"}},
                     "training": {
                         "num_nodes": 1,
-                        "num_gpus": 2,
-                        "gpu_model": "NVIDIA H100 80GB HBM3",
+                        "num_gpus": 1,
+                        "gpu_model": "NVIDIA H200",
                     },
-                    "anomalygen": {"num_SDG": 20},
                 },
                 "iterations": {
                     "iter1": {
@@ -341,18 +340,10 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            sdg_csv = results / "iter1/anomalygen/sdg/SDG_result.csv"
-            sdg_csv.parent.mkdir(parents=True, exist_ok=True)
-            sdg_csv.write_text("image,label\na.png,NG\nb.png,NG\n", encoding="utf-8")
-            allocation = results / "iter1/anomalygen/sdg/allocation.json"
-            allocation.write_text(json.dumps({"bridge": 20}), encoding="utf-8")
             state["iterations"]["iter1"].update(
                 {
                     "mining_summary": str(mining_summary),
                     "assemble_summary": str(assemble_summary),
-                    "anomalygen_sdg_csv": str(sdg_csv),
-                    "anomalygen_allocation_json": str(allocation),
-                    "anomalygen_amp_allocated": 20,
                 }
             )
             entries = [
@@ -387,20 +378,19 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 "Prompt Examples",
                 "Iteration Metrics",
                 "Pipeline Execution",
-                "Augmentation Volume",
+                "Mining Volume",
                 "Artifacts",
                 "Hard Stops / Warnings",
             ):
                 self.assertIn(heading, text)
             self.assertIn("not run (terminal iteration)", text)
-            self.assertIn("1 node(s) · 2 GPU(s) · NVIDIA H100 80GB HBM3", text)
+            self.assertIn("1 node(s) · 1 GPU(s) · NVIDIA H200", text)
             self.assertIn("1 iters × ~12s = 12s total time", text)
             self.assertIn("KNN Raw Mined", text)
-            self.assertIn("SDG Generated", text)
-            self.assertIn("New Unique Images (After Dedup)", text)
+            self.assertIn("Cosine-kept", text)
+            self.assertIn("Batch unique targets", text)
             self.assertIn(">170</td>", text)
             self.assertIn(">+170</td>", text)
-            self.assertIn(">20</td><td class=\"num\">2</td>", text)
             self.assertLess(
                 text.index("Run Configuration &amp; Outcome"),
                 text.index("Benchmark KPI Trend"),
@@ -421,22 +411,19 @@ class CosmosReportRenderingTests(unittest.TestCase):
             self.assertNotIn("<img src=x onerror=alert(1)>", text)
             self.assertNotRegex(text, r"\{\{\s+[A-Z0-9_]+\s+\}\}")
 
-    def test_growth_uses_cumulative_delta_not_batch_unique_diagnostic(self) -> None:
+    def test_growth_uses_only_real_mining_and_cumulative_delta(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             results = pathlib.Path(temporary)
             iterations: dict[str, dict[str, str]] = {}
-            for number, raw, generated, total, batch_unique in (
-                (1, 13, 20, 33, 33),
-                (2, 10, 20, 36, 23),
+            for number, raw, kept, total, batch_unique in (
+                (1, 33, 30, 30, 30),
+                (2, 10, 6, 36, 6),
             ):
                 root = results / f"iter{number}"
                 mining = root / "mining_summary.json"
                 mining.parent.mkdir(parents=True)
-                mining.write_text(json.dumps({"input_rows": raw}), encoding="utf-8")
-                sdg = root / "SDG_result.csv"
-                sdg.write_text(
-                    "image,label\n"
-                    + "".join(f"sdg-{index}.png,NG\n" for index in range(generated)),
+                mining.write_text(
+                    json.dumps({"input_rows": raw, "kept_count": kept}),
                     encoding="utf-8",
                 )
                 assemble = root / "assemble_summary.json"
@@ -453,21 +440,21 @@ class CosmosReportRenderingTests(unittest.TestCase):
                 )
                 iterations[f"iter{number}"] = {
                     "mining_summary": str(mining),
-                    "anomalygen_sdg_csv": str(sdg),
+                    "mining_mined_count": kept,
                     "assemble_summary": str(assemble),
                 }
 
-            rows = render_report._growth_rows({"iterations": iterations})
+            rows = render_report._mining_rows({"iterations": iterations})
             self.assertIn(
-                '<strong>Iter1</strong></td><td class="num">13</td>'
-                '<td class="num">20</td><td class="num">33</td>'
-                '<td class="num">33</td><td class="num">+33</td>',
+                '<strong>Iter1</strong></td><td class="num">33</td>'
+                '<td class="num">30</td><td class="num">30</td>'
+                '<td class="num">30</td>',
                 rows,
             )
             self.assertIn(
                 '<strong>Iter2</strong></td><td class="num">10</td>'
-                '<td class="num">20</td><td class="num">3</td>'
-                '<td class="num">36</td><td class="num">+3</td>',
+                '<td class="num">6</td><td class="num">6</td>'
+                '<td class="num">36</td>',
                 rows,
             )
 

@@ -41,7 +41,7 @@ sample-1: bridge was missed with high confidence.
 Bridge is the only observed under-detection gap.
 
 ## 6. Recommended Actions
-Mine bridge examples and allocate two bridge SDG samples.
+Mine two real bridge examples from the labeled Mining pool.
 """
 
 

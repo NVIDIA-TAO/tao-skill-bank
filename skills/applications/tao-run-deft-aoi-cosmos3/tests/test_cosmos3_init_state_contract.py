@@ -42,6 +42,10 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
         (workspace / "specs/evaluate_spec.toml").write_text(
             "value = 1\n", encoding="utf-8"
         )
+        model = workspace / "models/base"
+        model.mkdir(parents=True)
+        (model / "config.json").write_text("{}\n", encoding="utf-8")
+        (model / "model.safetensors").write_bytes(b"weights")
         return workspace
 
     @staticmethod
@@ -61,20 +65,18 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
             "1",
             "--num-epochs",
             "1",
-            "--num-sdg",
-            "20",
             "--num-gpus",
             "1",
             "--num-nodes",
             "1",
             "--gpu-model",
             "NVIDIA H100 80GB",
-            "--train-container",
+            "--base-model-path",
+            str(workspace / "models/base"),
+            "--framework-container",
             "example/framework:1",
-            "--train-image-digest",
+            "--framework-image-digest",
             "sha256:" + "a" * 64,
-            "--cosmos-container",
-            "example/cosmos:1",
             "--mining-container",
             "example/mining:1",
             *extra,
@@ -105,6 +107,10 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
             self.assertEqual(init_deft_state.main(argv), 0)
             state = json.loads((root / "results/deft_state.json").read_text())
             self.assertEqual(state["config"]["training"]["image_digest"], immutable)
+            self.assertEqual(
+                state["config"]["containers"]["cosmos_framework"],
+                "example/framework:1",
+            )
 
     def test_compound_gate_is_frozen_into_metric_constraints(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

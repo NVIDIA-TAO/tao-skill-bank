@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import tempfile
 from typing import Any
 
@@ -29,6 +30,7 @@ MARKERS = {
     "__TAO_CR3_TRAIN_ANNOTATION__": "annotation_path",
     "__TAO_CR3_MEDIA_ROOT__": "media_root",
     "__TAO_CR3_RUN_NAME__": "run_name",
+    "__TAO_CR3_RESUME__": "resume_checkpoint",
 }
 LORA_TARGETS = "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"
 
@@ -58,6 +60,11 @@ def validate_config(config: dict[str, Any], *, profile: str | None = None) -> No
         raise ValueError("Framework CR3 config must use a positive synchronous DCP save cadence")
     if checkpoint.get("keys_to_skip_loading"):
         raise ValueError("Framework CR3 resume must restore native LoRA keys")
+    load_path = checkpoint.get("load_path")
+    if load_path != "???" and (
+        not isinstance(load_path, str) or not pathlib.Path(load_path).is_absolute()
+    ):
+        raise ValueError("Framework CR3 checkpoint.load_path must be ??? or an absolute DCP path")
     if not isinstance(custom.get("seed"), int):
         raise ValueError("Framework CR3 config must record an integer seed")
     if custom.get("fsdp_master_dtype") != "bfloat16":
@@ -80,6 +87,9 @@ def render_profile(
     annotation_path: str,
     media_root: str,
     run_name: str,
+    resume_checkpoint: str = "???",
+    num_epochs: int = 10,
+    train_records: int | None = None,
 ) -> str:
     template = PROFILES[profile].read_text(encoding="utf-8")
     values = locals()
@@ -88,6 +98,26 @@ def render_profile(
     unresolved = [marker for marker in MARKERS if marker in template]
     if unresolved:
         raise ValueError(f"unresolved Framework TOML markers: {unresolved}")
+    if num_epochs <= 0:
+        raise ValueError("num_epochs must be positive")
+    if train_records is not None:
+        if train_records <= 0:
+            raise ValueError("train_records must be positive")
+        steps = 5 if profile == "smoke" else train_records * num_epochs
+        save_iter = steps if profile == "smoke" else train_records
+        replacements = {
+            r"(?m)^cycle_lengths = \[[0-9]+\]$": f"cycle_lengths = [{steps}]",
+            r"(?m)^max_iter = [0-9]+$": f"max_iter = {steps}",
+            r"(?m)^save_iter = [0-9]+$": f"save_iter = {save_iter}",
+            r"(?m)^images_per_record = 1$": (
+                "images_per_record = 1\n"
+                f"num_epochs = {num_epochs}\ntrain_records = {train_records}"
+            ),
+        }
+        for pattern, replacement in replacements.items():
+            template, count = re.subn(pattern, replacement, template)
+            if count != 1:
+                raise ValueError(f"Framework profile budget field did not match exactly once: {pattern}")
     parsed = tomllib.loads(template)
     validate_config(parsed, profile=profile)
     return template
@@ -110,10 +140,20 @@ def atomic_write(path: pathlib.Path, value: str) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=sorted(PROFILES), required=True)
-    parser.add_argument("--model-path", required=True, help="Compute-frame HF Qwen3-VL snapshot path")
+    parser.add_argument("--model-path", required=True, help="Compute-frame local HF VLM snapshot path")
     parser.add_argument("--annotation-path", required=True, help="Compute-frame Train JSON-array path")
     parser.add_argument("--media-root", required=True, help="Compute-frame base for relative image paths")
     parser.add_argument("--run-name", required=True)
+    parser.add_argument("--num-epochs", type=int, default=10)
+    parser.add_argument(
+        "--annotation-host",
+        type=pathlib.Path,
+        help="Host-visible JSON path used to derive the exact epoch step budget; defaults to --annotation-path.",
+    )
+    parser.add_argument(
+        "--resume-checkpoint",
+        help="Previous iteration Framework DCP compute-frame path; omit for iter1.",
+    )
     parser.add_argument("--output", required=True, type=pathlib.Path)
     return parser.parse_args()
 
@@ -121,15 +161,26 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
+        annotation_host = (
+            args.annotation_host.expanduser().resolve(strict=True)
+            if args.annotation_host
+            else pathlib.Path(args.annotation_path).expanduser().resolve(strict=True)
+        )
+        records = json.loads(annotation_host.read_text(encoding="utf-8"))
+        if not isinstance(records, list) or not records:
+            raise ValueError("training annotation must be a non-empty JSON array")
         rendered = render_profile(
             args.profile,
             model_path=args.model_path,
             annotation_path=args.annotation_path,
             media_root=args.media_root,
             run_name=args.run_name,
+            resume_checkpoint=args.resume_checkpoint or "???",
+            num_epochs=args.num_epochs,
+            train_records=len(records),
         )
         atomic_write(args.output.expanduser().resolve(), rendered)
-    except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
         print(f"render_cfw_sft: {exc}", file=os.sys.stderr)
         return 2
     print(args.output.expanduser().resolve())

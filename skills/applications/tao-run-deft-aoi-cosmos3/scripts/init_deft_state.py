@@ -28,7 +28,6 @@ STAGES = [
     "evaluate_proxy",
     "proxy_rcca",
     "routing",
-    "anomalygen",
     "data_mining",
     "assemble_data",
     "validate_data",
@@ -69,20 +68,12 @@ def _resolve_image_from_versions_yaml(*path: str) -> str | None:
         return None
 
 
-DEFAULT_COSMOS_IMAGE = os.environ.get(
-    "COSMOS_RL_IMAGE"
-) or _resolve_image_from_versions_yaml("images", "tao_toolkit", "cosmos_rl")
 DEFAULT_FRAMEWORK_IMAGE = os.environ.get(
     "COSMOS_FRAMEWORK_IMAGE"
 ) or _resolve_image_from_versions_yaml("images", "tao_toolkit", "cosmos_framework")
 DEFAULT_MINING_IMAGE = os.environ.get(
     "TAO_DS_IMAGE"
 ) or _resolve_image_from_versions_yaml("images", "tao_toolkit", "data_services")
-DEFAULT_ANOMALYGEN_IMAGE = os.environ.get(
-    "AG_IMAGE"
-) or _resolve_image_from_versions_yaml(
-    "images", "metropolis_sdg", "paidf_anomalygen"
-)
 BASE_MODEL_ALIASES = {
     "nano": "nvidia/Cosmos3-Nano",
     "cosmos3-nano": "nvidia/Cosmos3-Nano",
@@ -152,13 +143,6 @@ def _resolve_specs(
         "proxy": evaluate_for("proxy", args.proxy_spec),
         "benchmark": evaluate_for("benchmark", args.benchmark_spec),
     }
-
-
-def _anomalygen_path(
-    override: pathlib.Path | None, default: pathlib.Path
-) -> pathlib.Path:
-    """Prefer an explicit path; resolve symlinks so the record is mountable."""
-    return (override or default).expanduser().resolve()
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -271,6 +255,16 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     )
     benchmark_hash = _sha256(annotations["benchmark"])
     media_root = (args.media_root or workspace).expanduser().resolve()
+    base_model_path = args.base_model_path.expanduser().resolve()
+    config_file = base_model_path / "config.json"
+    has_weights = (base_model_path / "model.safetensors").is_file() or (
+        base_model_path / "model.safetensors.index.json"
+    ).is_file() or any(base_model_path.glob("*.safetensors"))
+    if not config_file.is_file() or not has_weights:
+        raise ValueError(
+            "--base-model-path must be a complete local HF-format VLM snapshot "
+            f"with config.json and safetensors weights: {base_model_path}"
+        )
     base_model = validate_base_model(args.base_model)
     network_mode = getattr(args, "network_mode", None) or (
         "airgap" if os.environ.get("AIR_GAPPED") == "1" else "network-enabled"
@@ -284,7 +278,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     offline = network_mode == "airgap"
 
     return {
-        "version": 5,
+        "version": 6,
         "workflow": WORKFLOW,
         "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(
             timespec="seconds"
@@ -311,6 +305,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             "platform": args.platform,
             "model_skill": "tao-finetune-cosmos-reason",
             "base_model": base_model,
+            "base_model_path": str(base_model_path),
             "automl_policy": "off",
             "annotation_mode": "bare_okng",
             "media_root": str(media_root),
@@ -330,15 +325,14 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             },
             "specs": {role: str(path) for role, path in specs.items()},
             "containers": {
-                "cosmos_framework_train": args.train_container,
-                "cosmos_rl_evaluate": args.cosmos_container,
+                "cosmos_framework": args.framework_container,
                 "data_services": args.mining_container,
             },
             "training": {
                 "backend": "cosmos-framework",
-                "image": args.train_container,
-                "image_digest": args.train_image_digest,
-                "annotation_source": "generated_from_mining_and_anomalygen",
+                "image": args.framework_container,
+                "image_digest": args.framework_image_digest,
+                "annotation_source": "mined_real_samples_only",
                 "num_gpus": args.num_gpus,
                 "num_nodes": args.num_nodes,
                 "gpu_model": args.gpu_model,
@@ -355,50 +349,13 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "top_k_per_target": args.top_k_per_target,
                 "metric": "cosine",
                 "min_similarity": args.min_similarity,
+                "filter_by_label": True,
+                "labels": ["OK", "NG"],
                 "history_aware": {
                     "enabled": True,
                     "identity": "filepath",
                     "history_file": str(results_dir / "mining_history.json"),
                 },
-            },
-            "anomalygen": {
-                "sub_skill": "tao-generate-anomalies",
-                # The DEFT loop only needs Phases 2-3 (AMP routing + SDG
-                # diffusion); Phases 4-7 are SDG-quality optimization and
-                # contribute no training pairs.
-                "mode": "inference_only",
-                "num_search_run": 0,
-                "nn_threshold": 0,
-                "project": args.anomalygen_project,
-                "num_SDG": args.num_sdg,
-                "container": args.anomalygen_container,
-                # Explicit flags win; otherwise derive the workspace
-                # convention. Resolve through symlinks so the recorded path is
-                # the real one — a symlinked subtree under the workspace
-                # dangles inside the container when only $WS is mounted.
-                "checkpoint_dir": str(_anomalygen_path(
-                    args.anomalygen_checkpoint_dir,
-                    workspace
-                    / "augmentation/anomalygen/checkpoints"
-                    / args.anomalygen_project,
-                )),
-                "dataset_dir": str(_anomalygen_path(
-                    args.anomalygen_dataset_dir,
-                    workspace
-                    / "augmentation/anomalygen/datasets"
-                    / args.anomalygen_project,
-                )),
-                "defect_spec": str(_anomalygen_path(
-                    args.anomalygen_dataset_dir,
-                    workspace
-                    / "augmentation/anomalygen/datasets"
-                    / args.anomalygen_project,
-                ) / "defect_spec.jsonl"),
-                "cosmos_models_dir": str(_anomalygen_path(
-                    args.cosmos_models_dir,
-                    workspace / "augmentation/anomalygen/base_checkpoints",
-                )),
-                "label": "NG",
             },
         },
         "iterations": {},
@@ -467,6 +424,12 @@ def _parser() -> argparse.ArgumentParser:
         default="nvidia/Cosmos3-Nano",
         help="Cosmos3 base model; Nano is default, Edge/Super require explicit selection.",
     )
+    parser.add_argument(
+        "--base-model-path",
+        required=True,
+        type=pathlib.Path,
+        help="Complete local HF-format VLM snapshot consumed directly by Framework actions.",
+    )
     parser.add_argument("--media-root", type=pathlib.Path)
     parser.add_argument("--train-spec", type=pathlib.Path)
     parser.add_argument(
@@ -500,53 +463,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
-    parser.add_argument("--top-k-per-target", type=int, default=5)
+    parser.add_argument("--top-k-per-target", type=int, default=15)
     parser.add_argument("--min-similarity", type=float, default=0.9)
     parser.add_argument(
-        "--train-container",
+        "--framework-container",
         default=DEFAULT_FRAMEWORK_IMAGE,
         help="Resolver-selected images.tao_toolkit.cosmos_framework URI.",
     )
     parser.add_argument(
-        "--train-image-digest",
+        "--framework-image-digest",
         required=True,
-        help="Immutable sha256 digest or repository@sha256 digest from the Train job-record.",
-    )
-    parser.add_argument(
-        "--cosmos-container",
-        default=DEFAULT_COSMOS_IMAGE,
-        help="Unchanged cosmos-rl evaluate image.",
+        help="Immutable sha256 digest or repository@sha256 digest for all Framework actions.",
     )
     parser.add_argument("--mining-container", default=DEFAULT_MINING_IMAGE)
-    parser.add_argument("--anomalygen-container", default=DEFAULT_ANOMALYGEN_IMAGE)
-    parser.add_argument(
-        "--anomalygen-project",
-        default="nvpcb",
-        help="Directory label for this AnomalyGen project's checkpoint + dataset.",
-    )
-    parser.add_argument(
-        "--num-sdg",
-        type=int,
-        default=20,
-        help="Per-iteration synthetic defect budget, allocated across defect types.",
-    )
-    # Without these, assets outside the workspace convention need either a
-    # symlink (which dangles inside the container) or a full copy.
-    parser.add_argument(
-        "--anomalygen-checkpoint-dir",
-        type=pathlib.Path,
-        help="Override the derived AnomalyGen checkpoint directory.",
-    )
-    parser.add_argument(
-        "--anomalygen-dataset-dir",
-        type=pathlib.Path,
-        help="Override the derived AnomalyGen dataset directory.",
-    )
-    parser.add_argument(
-        "--cosmos-models-dir",
-        type=pathlib.Path,
-        help="Override the derived Cosmos base-checkpoints cache directory.",
-    )
     return parser
 
 
@@ -588,7 +517,6 @@ def main(argv: list[str] | None = None) -> int:
         "lora_r": args.lora_r,
         "lora_alpha": args.lora_alpha,
         "top_k_per_target": args.top_k_per_target,
-        "num_sdg": args.num_sdg,
     }
     invalid = {name: value for name, value in positive.items() if value <= 0}
     if invalid:
@@ -622,16 +550,16 @@ def main(argv: list[str] | None = None) -> int:
     if not -1.0 <= args.min_similarity <= 1.0:
         print("init_deft_state: --min-similarity must be in [-1, 1]", file=sys.stderr)
         return 2
-    if not args.train_container or not args.cosmos_container or not args.mining_container:
+    if not args.framework_container or not args.mining_container:
         print(
-            "init_deft_state: Train, evaluate, and data-services images are required; resolve "
-            "images.tao_toolkit.{cosmos_framework,cosmos_rl,data_services} from versions.yaml",
+            "init_deft_state: Framework and data-services images are required; resolve "
+            "images.tao_toolkit.{cosmos_framework,data_services} from versions.yaml",
             file=sys.stderr,
         )
         return 2
-    digest = args.train_image_digest.rsplit("@", 1)[-1].removeprefix("sha256:")
+    digest = args.framework_image_digest.rsplit("@", 1)[-1].removeprefix("sha256:")
     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest.lower()):
-        print("init_deft_state: --train-image-digest must be a sha256 digest", file=sys.stderr)
+        print("init_deft_state: --framework-image-digest must be a sha256 digest", file=sys.stderr)
         return 2
     output = args.results_dir.expanduser().resolve() / "deft_state.json"
     if output.exists():

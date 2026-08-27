@@ -188,7 +188,7 @@
       <div class="chart-subtitle" style="margin-top:28px;margin-bottom:10px">DEFT Loop Experiment Summary</div>
       <div class="table-wrap"><table class="data-table"><thead><tr><th>Item</th><th>Details</th></tr></thead><tbody>{{ RUN_SUMMARY_ROWS_HTML }}</tbody></table></div>
       <div class="chart-subtitle" style="margin-top:28px;margin-bottom:10px">Training Set Growth</div>
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>Iteration</th><th>KNN Raw Mined</th><th>SDG Generated</th><th>New Unique Images (After Dedup)</th><th>Training Set Total</th><th>Δ</th></tr></thead><tbody>{{ GROWTH_ROWS_HTML }}</tbody></table></div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Iteration</th><th>KNN Raw Mined</th><th>New Unique Images (After Dedup)</th><th>Training Set Total</th><th>Δ</th></tr></thead><tbody>{{ GROWTH_ROWS_HTML }}</tbody></table></div>
     </section>
 
     <section class="card">
@@ -208,8 +208,8 @@
     </section>
 
     <section class="card">
-      <div class="header"><div><div class="chart-title">Augmentation Volume</div><div class="chart-subtitle">Synthetic and mined contribution by iteration.</div></div></div>
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>Iteration</th><th>SDG requested</th><th>AMP allocated</th><th>Generated</th><th>Defect types</th><th>Mining raw</th><th>Cosine-kept</th><th>Batch unique targets</th><th>Cumulative train</th></tr></thead><tbody>{{ AUGMENTATION_ROWS_HTML }}</tbody></table></div>
+      <div class="header"><div><div class="chart-title">Mining Volume</div><div class="chart-subtitle">Real-image mining contribution by iteration.</div></div></div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>Iteration</th><th>Mining raw</th><th>Cosine-kept</th><th>Batch unique targets</th><th>Cumulative train</th></tr></thead><tbody>{{ MINING_ROWS_HTML }}</tbody></table></div>
     </section>
 
     <section class="card">

@@ -157,6 +157,7 @@ def build_docker_argv(
     gpus: str,
     identity_mounts: list[tuple[pathlib.Path, str, bool]],
     extra_mounts: list[tuple[pathlib.Path, str, bool]],
+    resume_mount: tuple[pathlib.Path, str, bool] | None,
     offline: bool,
 ) -> list[str]:
     custom = config["custom"]
@@ -210,13 +211,15 @@ def build_docker_argv(
     ]
     if offline:
         command.extend(["-e", "HF_HUB_OFFLINE=1", "-e", "TRANSFORMERS_OFFLINE=1"])
-    for host, container, readonly in [*identity_mounts, *extra_mounts]:
+    mounts = [*identity_mounts, *extra_mounts]
+    if resume_mount is not None:
+        mounts.append(resume_mount)
+    for host, container, readonly in mounts:
         command.extend(["--mount", _mount(host, container, readonly=readonly)])
     command.extend(
         [
-            "--entrypoint", "/workspace/.venv/bin/python",
+            "--entrypoint", "/workspace/.venv/bin/cosmos-framework-train",
             immutable_image,
-            "-m", "cosmos_framework.scripts.train",
             f"--sft-toml={CONTAINER_CONFIG}",
             "--",
             f"trainer.seed={custom['seed']}",
@@ -255,6 +258,13 @@ def main() -> int:
         adapter_host = pathlib.Path(__file__).with_name("cfw_cr3_aoi_adapter.py").resolve(strict=True)
         config = load_toml(config_host)
         validate_config(config)
+        resume_value = config.get("checkpoint", {}).get("load_path", "???")
+        resume_mount = None
+        if resume_value != "???":
+            resume_host = pathlib.Path(resume_value).expanduser().resolve(strict=True)
+            if not resume_host.is_dir():
+                raise ValueError("checkpoint.load_path must identify a Framework DCP directory")
+            resume_mount = (resume_host, str(resume_host), True)
         identity_mounts = annotation_identity_mounts(
             annotation_host, media_host
         )
@@ -272,6 +282,7 @@ def main() -> int:
             gpus=args.gpus,
             identity_mounts=identity_mounts,
             extra_mounts=args.mount,
+            resume_mount=resume_mount,
             offline=args.offline,
         )
         payload: dict[str, Any] = {
@@ -287,6 +298,7 @@ def main() -> int:
                 _mount(host, container, readonly=readonly)
                 for host, container, readonly in identity_mounts
             ],
+            "resume_checkpoint": str(resume_mount[0]) if resume_mount else None,
             "command_argv": command,
             "command": shlex.join(command),
             "executed": False,

@@ -15,13 +15,15 @@ SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import export_cfw_checkpoint  # noqa: E402
+import render_cfw_evaluate  # noqa: E402
 import render_cfw_sft  # noqa: E402
+import submit_cfw_evaluate  # noqa: E402
+import submit_cfw_inference  # noqa: E402
 import submit_cfw_train  # noqa: E402
 
 
-class FrameworkTrainBackendTests(unittest.TestCase):
-    def test_smoke_and_full_profiles_render_as_native_lora_toml(self) -> None:
+class FrameworkActionBackendTests(unittest.TestCase):
+    def test_sft_profiles_use_direct_hf_then_direct_dcp_resume(self) -> None:
         for profile, expected_steps in (("smoke", 5), ("full", 500)):
             rendered = render_cfw_sft.render_profile(
                 profile,
@@ -33,15 +35,42 @@ class FrameworkTrainBackendTests(unittest.TestCase):
             parsed = render_cfw_sft.tomllib.loads(rendered)
             render_cfw_sft.validate_config(parsed, profile=profile)
             self.assertEqual(parsed["trainer"]["max_iter"], expected_steps)
-            self.assertEqual(parsed["model"]["precision"], "bfloat16")
-            self.assertEqual(parsed["optimizer"]["keys_to_select"], ["lora_"])
-            self.assertEqual(parsed["checkpoint"]["keys_to_skip_loading"], [])
-            self.assertEqual(parsed["custom"]["fsdp_master_dtype"], "bfloat16")
-            self.assertEqual(parsed["custom"]["model_max_length"], 40960)
-            self.assertEqual(parsed["custom"]["images_per_record"], 2)
+            self.assertEqual(parsed["checkpoint"]["load_path"], "???")
+            self.assertEqual(parsed["custom"]["images_per_record"], 1)
             self.assertNotIn("__TAO_CR3_", rendered)
 
-    def test_train_command_preserves_identity_and_native_entrypoint(self) -> None:
+        resumed = render_cfw_sft.tomllib.loads(
+            render_cfw_sft.render_profile(
+                "full",
+                model_path="/tao/model",
+                annotation_path="/tao/data/train.json",
+                media_root="/tao/media",
+                run_name="iter2-full",
+                resume_checkpoint="/tao/iter1/train/checkpoints/iter_000000500",
+            )
+        )
+        self.assertEqual(
+            resumed["checkpoint"]["load_path"],
+            "/tao/iter1/train/checkpoints/iter_000000500",
+        )
+        self.assertEqual(resumed["checkpoint"]["keys_to_skip_loading"], [])
+
+        ten_epoch = render_cfw_sft.tomllib.loads(
+            render_cfw_sft.render_profile(
+                "full",
+                model_path="/tao/model",
+                annotation_path="/tao/data/train.json",
+                media_root="/tao/media",
+                run_name="iter1-full",
+                num_epochs=10,
+                train_records=37,
+            )
+        )
+        self.assertEqual(ten_epoch["trainer"]["max_iter"], 370)
+        self.assertEqual(ten_epoch["checkpoint"]["save_iter"], 37)
+        self.assertEqual(ten_epoch["custom"]["num_epochs"], 10)
+
+    def test_train_submit_invokes_native_entrypoint(self) -> None:
         config = render_cfw_sft.tomllib.loads(
             render_cfw_sft.render_profile(
                 "smoke",
@@ -62,137 +91,88 @@ class FrameworkTrainBackendTests(unittest.TestCase):
             adapter_host=pathlib.Path("/host/cfw_cr3_aoi_adapter.py"),
             config=config,
             gpus="all",
-            identity_mounts=[
-                (pathlib.Path("/host/media"), "/host/media", True)
-            ],
+            identity_mounts=[],
             extra_mounts=[],
+            resume_mount=None,
             offline=True,
         )
-        joined = " ".join(command)
-        self.assertIn("--user", command)
-        self.assertIn("USER=", joined)
-        self.assertIn("LOGNAME=", joined)
-        self.assertIn("HOME=/tmp", command)
-        self.assertIn("PYTHONDONTWRITEBYTECODE=1", command)
-        for expected in (
-            "RANK=0",
-            "WORLD_SIZE=1",
-            "LOCAL_RANK=0",
-            "LOCAL_WORLD_SIZE=1",
-            "MASTER_ADDR=127.0.0.1",
-            "MASTER_PORT=29500",
-        ):
-            self.assertIn(expected, command)
-        self.assertIn("/etc/passwd:/etc/passwd:ro", command)
-        self.assertIn("/etc/group:/etc/group:ro", command)
-        self.assertIn(submit_cfw_train.CONTAINER_ADAPTER, joined)
-        self.assertIn("cosmos_framework.scripts.train", command)
+        self.assertIn("/workspace/.venv/bin/cosmos-framework-train", command)
         self.assertIn("--sft-toml=/tao/config/train.toml", command)
-        self.assertIn("model.config.parallelism.fsdp_master_dtype=bfloat16", command)
-        self.assertIn("model.config.policy.model_max_length=40960", command)
-        self.assertIn("example/framework@sha256:", joined)
-        self.assertIn(
-            "type=bind,src=/host/media,dst=/host/media,readonly", joined
-        )
-        source = (SCRIPTS / "submit_cfw_train.py").read_text(encoding="utf-8")
-        self.assertIn("images.tao_toolkit.cosmos_framework", source)
-        self.assertNotIn("nvcr.io/nvstaging/tao/cosmos-framework:", source)
+        self.assertIn("--user", command)
+        self.assertIn("WORLD_SIZE=1", command)
+        self.assertIn("HF_HUB_OFFLINE=1", command)
+        self.assertIn("example/framework@sha256:", " ".join(command))
 
-    def test_absolute_annotation_paths_receive_identity_mounts(self) -> None:
+    def test_evaluate_render_and_submit_are_single_gpu_h200_safe(self) -> None:
+        config = render_cfw_evaluate.build_config(
+            annotation_path="/workspace/annotations/benchmark.json",
+            media_root="/workspace",
+            model_path="/workspace/models/base",
+            results_dir="/workspace/results/iter1/evaluate_benchmark",
+        )
+        rendered = render_cfw_evaluate.dump_toml(config)
+        parsed = render_cfw_evaluate.tomllib.loads(rendered)
+        self.assertEqual(parsed["num_gpus"], 1)
+        self.assertEqual(parsed["vision"]["video_decoder"], "torchcodec-cuda-on-demand")
+        self.assertFalse(parsed["model"]["enable_lora"])
+        self.assertEqual(parsed["generation"]["max_tokens"], 4)
+
+        command = submit_cfw_evaluate.build_docker_argv(
+            immutable_image="example/framework@sha256:" + "c" * 64,
+            job_id="docker-eval-test",
+            config_host=pathlib.Path("/workspace/specs/evaluate.toml"),
+            workspace=pathlib.Path("/workspace"),
+            results_dir=pathlib.Path("/workspace/results/iter1/evaluate_benchmark"),
+            writable_export_parent=pathlib.Path("/workspace/results/iter1/train"),
+            gpus="all",
+            offline=False,
+        )
+        self.assertIn("/workspace/.venv/bin/cosmos-framework-evaluate", command)
+        self.assertIn("--config", command)
+        self.assertIn(
+            "type=bind,src=/workspace/results/iter1/train,dst=/workspace/results/iter1/train",
+            command,
+        )
+
+    def test_inference_submit_uses_native_entrypoint_and_dcp_handoff(self) -> None:
+        command = submit_cfw_inference.build_docker_argv(
+            immutable_image="example/framework@sha256:" + "d" * 64,
+            job_id="docker-infer-test",
+            workspace=pathlib.Path("/workspace"),
+            results_dir=pathlib.Path("/workspace/results/inference"),
+            model_path=pathlib.Path("/workspace/results/iter1/train/checkpoint"),
+            media=pathlib.Path("/workspace/images/part.png"),
+            prompt="Return exactly OK or NG.",
+            media_type="image",
+            max_new_tokens=4,
+            framework_config=pathlib.Path("/workspace/results/iter1/train/train.toml"),
+            action_model_dir=pathlib.Path("/workspace/results/iter1/train/action_model"),
+            base_model_path=pathlib.Path("/workspace/models/base"),
+            gpus="all",
+            offline=False,
+        )
+        self.assertIn("/workspace/.venv/bin/cosmos-framework-inference", command)
+        for flag in ("--model_path", "--config_file", "--export_dir", "--vit_checkpoint_path"):
+            self.assertIn(flag, command)
+        self.assertIn("--enable_lora", command)
+        self.assertIn("false", command)
+
+    def test_training_annotations_accept_exactly_one_image(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            media = root / "workspace"
-            external = root / "external"
-            inside = media / "images/a.jpg"
-            outside = external / "golden/a.jpg"
-            inside.parent.mkdir(parents=True)
-            outside.parent.mkdir(parents=True)
-            inside.write_bytes(b"image")
-            outside.write_bytes(b"golden")
+            media = root / "media"
+            media.mkdir()
+            image = media / "part.png"
+            image.write_bytes(b"image")
             annotation = root / "train.json"
             annotation.write_text(
-                json.dumps(
-                    [
-                        {
-                            "images": [str(inside), str(outside)],
-                            "conversations": [],
-                        }
-                    ]
-                )
-            )
-
-            mounts = submit_cfw_train.annotation_identity_mounts(
-                annotation, media
+                json.dumps([{"images": [str(image)], "conversations": []}]),
+                encoding="utf-8",
             )
             self.assertEqual(
-                mounts,
-                [
-                    (media.resolve(), str(media.resolve()), True),
-                    (outside.parent.resolve(), str(outside.parent), True),
-                ],
+                submit_cfw_train.annotation_identity_mounts(annotation, media),
+                [(media.resolve(), str(media.resolve()), True)],
             )
-
-    def test_native_export_artifact_contract(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = pathlib.Path(temporary)
-            checkpoint = root / "checkpoint"
-            metadata = checkpoint / "model/.metadata"
-            metadata.parent.mkdir(parents=True)
-            metadata.write_bytes(b"dcp-metadata")
-            output = root / "export"
-            output.mkdir()
-            (output / "config.json").write_text('{"model_type":"qwen3_vl"}\n')
-            (output / "model-00001-of-00001.safetensors").write_bytes(b"weights")
-            (output / "model.safetensors.index.json").write_text(
-                json.dumps(
-                    {
-                        "weight_map": {
-                            "model.layer.weight": "model-00001-of-00001.safetensors"
-                        }
-                    }
-                )
-            )
-            for name in (
-                "tokenizer.json",
-                "tokenizer_config.json",
-                "preprocessor_config.json",
-            ):
-                (output / name).write_text("{}\n")
-            (output / "checkpoint.json").write_text(
-                json.dumps({"checkpoint_path": "/tao/checkpoint", "checkpoint_type": "vlm_dcp"})
-            )
-            (output / "export_manifest.json").write_text(
-                json.dumps(
-                    {
-                        "format": "cosmos-framework-vlm-dcp",
-                        "checkpoint_metadata_sha256": export_cfw_checkpoint.sha256_file(metadata),
-                        "lora": {"enabled": True},
-                        "merged_adapters": 252,
-                    }
-                )
-            )
-            verified = export_cfw_checkpoint.verify_export(checkpoint, output)
-            self.assertEqual(verified["status"], "VERIFIED")
-            self.assertEqual(verified["expected_shard_count"], 1)
-            self.assertEqual(verified["evaluation_backend"], "cosmos-rl-vllm")
-            self.assertFalse(verified["evaluation_model_contract"]["enable_lora"])
-
-            command = export_cfw_checkpoint.build_docker_argv(
-                immutable_image="example/framework@sha256:" + "c" * 64,
-                checkpoint=checkpoint,
-                config=root / "config.yaml",
-                output=output,
-                base_model=root / "base",
-                gpus="all",
-            )
-            self.assertIn(export_cfw_checkpoint.EXPORTER, command)
-            self.assertEqual(export_cfw_checkpoint.EXPORTER, "cosmos_framework.scripts.export_vlm_dcp")
-
-    def test_interim_adapter_enforces_two_image_bare_contract(self) -> None:
-        source = (SCRIPTS / "cfw_cr3_aoi_adapter.py").read_text(encoding="utf-8")
-        self.assertIn("exactly two string image paths", source)
-        self.assertIn('{"OK", "NG"}', source)
-        self.assertIn("Remove it when the pinned image provides", source)
 
 
 if __name__ == "__main__":

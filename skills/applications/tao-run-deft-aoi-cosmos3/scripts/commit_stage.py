@@ -26,7 +26,6 @@ RCCA_ARTIFACT_MANIFEST = (
     / "rcca-artifact-manifest.json"
 )
 
-from export_cfw_checkpoint import verify_hf_artifact
 from record_metric_result import commit as commit_metric_result
 from render_report import render as render_html_report
 
@@ -38,13 +37,11 @@ STAGES = (
     "evaluate_benchmark",
     "benchmark_metrics",
     "routing",
-    "anomalygen",
     "data_mining",
     "assemble_data",
     "validate_data",
     "loop_stop",
 )
-SKIPPABLE_STAGES = ("anomalygen",)
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -282,87 +279,19 @@ def _required_json_file(value: pathlib.Path | None, flag: str) -> str:
     return path
 
 
-def _required_allocation(
-    value: pathlib.Path | None, flag: str
-) -> tuple[str, int]:
-    path = _required_file(value, flag)
-    try:
-        payload = json.loads(pathlib.Path(path).read_text())
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{flag} must be a JSON object: {path} ({exc})") from exc
-    if not isinstance(payload, dict) or not payload:
-        raise ValueError(f"{flag} must be a non-empty defect-to-count JSON object")
-    invalid = {
-        str(defect): count
-        for defect, count in payload.items()
-        if not isinstance(count, int) or isinstance(count, bool) or count < 0
-    }
-    if invalid:
-        raise ValueError(f"{flag} contains invalid allocation counts: {invalid}")
-    allocated = sum(payload.values())
-    if allocated <= 0:
-        raise ValueError(f"{flag} must allocate at least one sample")
-    return path, allocated
-
-
-def _required_checkpoint(value: pathlib.Path | None, flag: str) -> str:
+def _required_dcp_checkpoint(value: pathlib.Path | None, flag: str) -> str:
     if value is None:
         raise ValueError(f"{flag} is required")
     path = value.expanduser()
-    if not path.is_absolute() or not path.exists():
-        raise ValueError(f"{flag} must be an existing absolute path: {value}")
-    if path.is_file() and path.stat().st_size == 0:
-        raise ValueError(f"{flag} must not be empty: {value}")
-    if path.is_dir() and not any(path.iterdir()):
-        raise ValueError(f"{flag} directory must not be empty: {value}")
-    return str(path.resolve())
-
-
-def _required_verified_export(
-    value: pathlib.Path | None, checkpoint: pathlib.Path
-) -> str:
-    path = pathlib.Path(_required_file(value, "--export-verification"))
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    if not path.is_absolute() or not path.is_dir():
+        raise ValueError(f"{flag} must be an existing absolute DCP directory: {value}")
+    resolved = path.resolve()
+    metadata = [resolved / ".metadata", resolved / "model" / ".metadata"]
+    if not any(candidate.is_file() and candidate.stat().st_size > 0 for candidate in metadata):
         raise ValueError(
-            f"--export-verification must be valid JSON: {path} ({exc})"
-        ) from exc
-    if not isinstance(payload, dict) or payload.get("status") != "VERIFIED":
-        raise ValueError(
-            "--export-verification must record status=VERIFIED from "
-            "export_cfw_checkpoint.py"
+            f"{flag} must contain Framework DCP metadata at .metadata or model/.metadata: {resolved}"
         )
-    action_model = payload.get("action_model_path")
-    if (
-        not isinstance(action_model, str)
-        or pathlib.Path(action_model).resolve() != checkpoint
-    ):
-        raise ValueError(
-            "--export-verification action_model_path must exactly match "
-            f"--best-ckpt: {checkpoint}"
-        )
-    if payload.get("train_backend") != "cosmos-framework" or payload.get(
-        "evaluation_backend"
-    ) != "cosmos-rl-vllm":
-        raise ValueError(
-            "--export-verification has the wrong train/evaluation backend contract"
-        )
-
-    artifact = verify_hf_artifact(checkpoint)
-    if payload.get("weight_files") != artifact["weight_files"] or payload.get(
-        "expected_shard_count"
-    ) != artifact["expected_shard_count"]:
-        raise ValueError(
-            "--export-verification shard manifest does not match --best-ckpt; "
-            "rerun export_cfw_checkpoint.py --verify-only"
-        )
-    if payload.get("required_runtime_files") != artifact["required_runtime_files"]:
-        raise ValueError(
-            "--export-verification runtime-file manifest is incomplete; rerun "
-            "export_cfw_checkpoint.py --verify-only"
-        )
-    return str(path)
+    return str(resolved)
 
 
 def _within(path: str, root: pathlib.Path, flag: str) -> str:
@@ -397,13 +326,11 @@ def _append_event(
         ),
         "iter": args.iter_label,
         "stage": args.stage,
-        "status": "skipped" if args.skip else args.status,
+        "status": args.status,
         "summary": args.summary,
         "duration_sec": args.duration_sec,
         "context_tokens": 0,
     }
-    if args.skip:
-        event["skip_reason"] = args.summary.strip()
     events.append(event)
     return event
 
@@ -412,22 +339,19 @@ def _apply_success(
     phase: dict[str, Any],
     args: argparse.Namespace,
     results_dir: pathlib.Path,
-    iterations: dict[str, Any],
 ) -> None:
     stage = args.stage
     phase_root = results_dir / args.iter_label
     if stage == "train":
         best_ckpt = _within(
-            _required_checkpoint(args.best_ckpt, "--best-ckpt"),
+            _required_dcp_checkpoint(args.best_ckpt, "--best-ckpt"),
             phase_root / "train",
             "--best-ckpt",
         )
-        phase["export_verification"] = _within(
-            _required_verified_export(
-                args.export_verification, pathlib.Path(best_ckpt)
-            ),
+        phase["framework_config"] = _within(
+            _required_file(args.framework_config, "--framework-config"),
             phase_root / "train",
-            "--export-verification",
+            "--framework-config",
         )
         phase["best_ckpt_path"] = best_ckpt
         phase["training_spec"] = _required_file(
@@ -461,61 +385,6 @@ def _apply_success(
             phase_root,
             "--mining-targets",
         )
-    elif stage == "anomalygen":
-        if args.skip:
-            # Documented branch skip: the driving Proxy RCCA found no false
-            # accepts, so there is no under-detection gap for synthetic
-            # defects to close.
-            match = re.fullmatch(r"iter([1-9][0-9]*)", args.iter_label)
-            driving_label = (
-                "baseline"
-                if match and int(match.group(1)) == 1
-                else f"iter{int(match.group(1)) - 1}" if match else args.iter_label
-            )
-            driving_phase = iterations.get(driving_label, {})
-            false_accepts = (
-                driving_phase.get("false_accepts_json")
-                if isinstance(driving_phase, dict)
-                else None
-            )
-            if not isinstance(false_accepts, str):
-                raise ValueError(
-                    "anomalygen --skip requires proxy_rcca false_accepts_json evidence"
-                )
-            try:
-                false_accept_rows = json.loads(pathlib.Path(false_accepts).read_text())
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ValueError(
-                    f"cannot validate false_accepts_json: {false_accepts} ({exc})"
-                ) from exc
-            if not isinstance(false_accept_rows, list) or false_accept_rows:
-                raise ValueError(
-                    "anomalygen --skip requires false_accepts_json to be an empty JSON array"
-                )
-            phase["anomalygen_skipped"] = True
-            phase["anomalygen_skip_reason"] = args.summary.strip()
-        else:
-            phase["anomalygen_sdg_csv"] = _within(
-                _required_file(args.anomalygen_sdg, "--anomalygen-sdg"),
-                phase_root,
-                "--anomalygen-sdg",
-            )
-            allocation, allocated = _required_allocation(
-                args.anomalygen_allocation, "--anomalygen-allocation"
-            )
-            phase["anomalygen_allocation_json"] = _within(
-                allocation,
-                phase_root,
-                "--anomalygen-allocation",
-            )
-            phase["anomalygen_amp_allocated"] = allocated
-            phase["anomalygen_sharegpt_json"] = _within(
-                _required_json_file(
-                    args.anomalygen_sharegpt, "--anomalygen-sharegpt"
-                ),
-                phase_root,
-                "--anomalygen-sharegpt",
-            )
     elif stage == "data_mining":
         artifacts = {
             "mining_mined_parquet": (
@@ -603,20 +472,10 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError(
             "--duration-sec is required and must be a positive measured duration"
         )
-    if args.skip and args.duration_sec < 0:
-        raise ValueError("--duration-sec must be >= 0 for a skipped stage")
-    if not args.skip and args.duration_sec <= 0:
+    if args.duration_sec <= 0:
         raise ValueError(
             "--duration-sec is required and must be a positive measured duration"
         )
-    if getattr(args, "skip", False) and args.stage not in SKIPPABLE_STAGES:
-        raise ValueError(
-            f"--skip is valid only for: {', '.join(SKIPPABLE_STAGES)}"
-        )
-    if args.skip and args.status == "error":
-        raise ValueError("--skip and --status error are mutually exclusive")
-    if args.skip and not args.summary.strip():
-        raise ValueError("--summary must contain the reason for a skipped stage")
     results_dir = args.results_dir.expanduser().resolve()
     state_path = results_dir / "deft_state.json"
     if not state_path.is_file():
@@ -628,7 +487,7 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
 
     try:
         _migrate_execution_policy(state)
-        state["version"] = 5
+        state["version"] = 6
         iterations = state.get("iterations")
         if not isinstance(iterations, dict):
             raise ValueError("state.iterations must be an object")
@@ -668,9 +527,9 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 state = json.loads(state_path.read_text())
                 iterations = state["iterations"]
                 phase = iterations[args.iter_label]
-                _apply_success(phase, args, results_dir, iterations)
+                _apply_success(phase, args, results_dir)
             else:
-                _apply_success(phase, args, results_dir, iterations)
+                _apply_success(phase, args, results_dir)
             state["status"] = "in_progress"
             state.pop("completed_at", None)
         else:
@@ -757,16 +616,13 @@ def _parser() -> argparse.ArgumentParser:
         "--duration-sec",
         required=True,
         type=int,
-        help="Measured wall-clock seconds; must be positive, or >= 0 with --skip",
+        help="Measured wall-clock seconds; must be positive",
     )
     parser.add_argument("--best-ckpt", type=pathlib.Path)
     parser.add_argument(
-        "--export-verification",
+        "--framework-config",
         type=pathlib.Path,
-        help=(
-            "Required train-stage VERIFIED JSON from export_cfw_checkpoint.py; "
-            "the stage revalidates its shard/tokenizer contract before commit"
-        ),
+        help="Saved Framework config.yaml required to load the committed DCP.",
     )
     parser.add_argument("--training-spec", type=pathlib.Path)
     parser.add_argument("--proxy-results", type=pathlib.Path)
@@ -782,17 +638,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--benchmark-metrics-summary", type=pathlib.Path)
     parser.add_argument("--metric-result", type=pathlib.Path)
     parser.add_argument("--mining-targets", type=pathlib.Path)
-    parser.add_argument("--anomalygen-sdg", type=pathlib.Path)
-    parser.add_argument("--anomalygen-allocation", type=pathlib.Path)
-    parser.add_argument("--anomalygen-sharegpt", type=pathlib.Path)
-    parser.add_argument(
-        "--skip",
-        action="store_true",
-        help=(
-            "Record a documented branch skip with status=skipped and a skip "
-            f"reason. Valid only for: {', '.join(SKIPPABLE_STAGES)}."
-        ),
-    )
     parser.add_argument("--mining-parquet", type=pathlib.Path)
     parser.add_argument("--mining-candidates", type=pathlib.Path)
     parser.add_argument("--mining-summary", type=pathlib.Path)
