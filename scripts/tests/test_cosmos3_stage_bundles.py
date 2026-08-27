@@ -286,6 +286,83 @@ def test_the_launcher_implements_every_verb(verb):
     assert callable(getattr(module, verb, None))
 
 
+def test_the_launcher_has_no_unresolved_names():
+    """`callable()` proved nothing: the module imported cleanly while five
+    helpers it calls were missing, so every verb would NameError at runtime.
+
+    Compile in strict mode and resolve each verb's global references against
+    the module namespace -- that catches an incomplete extraction, which is
+    exactly how this module was first written.
+    """
+    module = _load(REPO / "scripts/tao_launch.py", "tao_launch_names")
+    import types
+
+    missing = {}
+    for name in ("submit_bundle", "await_job", "job_logs", "cancel_job",
+                 "load_bundle", "platform_renderer"):
+        fn = getattr(module, name)
+        for referenced in fn.__code__.co_names:
+            if referenced in dir(module) or referenced in dir(__builtins__):
+                continue
+            if hasattr(module, referenced) or referenced in vars(module):
+                continue
+            # attribute names on objects show up here too; only flag globals
+            # the module genuinely cannot resolve.
+            if referenced in fn.__globals__:
+                continue
+            missing.setdefault(name, []).append(referenced)
+    # Names used as attributes (obj.foo) are unavoidable false positives, so
+    # assert on the ones we know were missing rather than the raw set.
+    known_gaps = {"_basename", "_policy", "_reject_airgap", "_with_no_pull",
+                  "_with_offline_container_env", "time"}
+    unresolved = {n for names in missing.values() for n in names} & known_gaps
+    assert not unresolved, f"the extraction is incomplete: {sorted(unresolved)}"
+
+
+def test_submit_passes_the_signature_the_launcher_declares(tmp_path):
+    """Invoke --submit, do not inspect --help.
+
+    The first version passed `results_dir=` -- not a parameter -- and omitted
+    the keyword-only storage_tier and parent_job, so every submit would have
+    raised TypeError. --help looked perfect throughout.
+    """
+    import types
+
+    sys.path.insert(0, str(C3))
+    exec_mod = _load(C3 / "deft_exec.py", "c3_exec_submit")
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"results_dir": str(tmp_path)}), encoding="utf-8")
+    bundle = tmp_path / "b.json"
+    bundle.write_text(json.dumps({"image": "nvcr.io/x:1"}), encoding="utf-8")
+
+    seen = {}
+    exec_mod._launcher = lambda: types.SimpleNamespace(
+        load_bundle=lambda path, policy=None: {"ok": True},
+        submit_bundle=lambda *a, **k: (seen.update(kwargs=k), "job-123")[1],
+    )
+    assert exec_mod.main(["--state", str(state), "--submit", "--bundle", str(bundle),
+                          "--platform", "kubernetes", "--ctx", "namespace=deft",
+                          "--ctx", "storage_tier=B"]) == 0
+
+    import inspect
+    launcher = _load(REPO / "scripts/tao_launch.py", "tao_launch_sig")
+    declared = set(inspect.signature(launcher.submit_bundle).parameters) - {
+        "state_path", "bundle"}
+    assert set(seen["kwargs"]) <= declared, (
+        f"passed {sorted(set(seen['kwargs']) - declared)}, which submit_bundle "
+        "does not accept"
+    )
+    required = {n for n, p in inspect.signature(launcher.submit_bundle).parameters.items()
+                if p.kind is p.KEYWORD_ONLY and p.default is p.empty}
+    assert required <= set(seen["kwargs"]), (
+        f"omitted required keyword-only args: {sorted(required - set(seen['kwargs']))}"
+    )
+    assert seen["kwargs"]["storage_tier"] == "B", "storage_tier not taken from ctx"
+    assert "storage_tier" not in seen["kwargs"]["ctx_extra"], (
+        "storage_tier leaked into ctx_extra, where the renderer would ignore it"
+    )
+
+
 @pytest.mark.parametrize("workflow", sorted(DEFT_EXECS))
 @pytest.mark.parametrize("flag", ["--submit", "--await-job", "--logs", "--cancel"])
 def test_every_workflow_exposes_the_documented_verbs(workflow, flag):

@@ -27,7 +27,10 @@ python3 "$C3/deft_exec.py" --state "$STATE" --logs "$JOB" --tail 100 $PLATFORM_C
 ```
 
 `--list` prints the stage table, each stage's required `--param` names, and the
-host-side stages with the script that owns each:
+host-side stages with the script that owns each. Every `mode=config` stage --
+train, both evaluates, and all three mining stages -- also requires
+`--spec-file`; `--param` values name the paths to MOUNT and are not a substitute
+for the spec the platform renderer serializes into the job's config file:
 
 ```bash
 python3 "$C3/stage_bundle.py" --list

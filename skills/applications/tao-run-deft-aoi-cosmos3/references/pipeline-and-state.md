@@ -50,8 +50,14 @@ event. The bundled `commit_stage.py` owns that write.
    training is warranted.
 4. Only when the gate is unmet, zero-shot evaluate the same base model on Proxy
    with identical prompting and generation settings.
-5. Analyze Proxy results with `--evaluation-role proxy`. Preserve false accepts
-   and false rejects as the only RCCA source.
+5. Analyze Proxy results with `--evaluation-role proxy`. Preserve false accepts,
+   false rejects, `gaps_summary.json`, and the required `RCCA_Report.md`. Commit
+   Proxy RCCA with `--proxy-gaps-summary`, `--false-accepts`, `--false-rejects`
+   and `--rcca-report`, so `commit_stage.py` enforces the report's required
+   headings before anything routes on it — a report missing a section reads as
+   complete while hiding the analysis routing depends on. Template:
+   `references/RCCA_REPORT_TEMPLATE.md`. Proxy false accepts/rejects remain the
+   only RCCA source.
 
 Baseline may stop immediately when the Benchmark gate passes. Baseline does not
 count against `max_iterations`.

@@ -267,12 +267,14 @@ def main(argv: list[str] | None = None) -> int:
             if not args.bundle:
                 raise ValueError("--submit needs --bundle")
             bundle = launcher.load_bundle(args.bundle, _policy(args.state))
-            state = json.loads(args.state.expanduser().read_text())
-            results_dir = state.get("results_dir")
-            if not results_dir:
-                raise ValueError(f"{args.state} has no results_dir")
+            # submit_bundle binds results_dir itself, from the record it opens
+            # -- that is the record-then-launch invariant. It needs the storage
+            # tier and any parent job instead, both keyword-only.
+            storage_tier = ctx_extra.pop("storage_tier", "A")
+            parent_job = ctx_extra.pop("parent_job", None)
             print(launcher.submit_bundle(
-                args.state, bundle, results_dir=results_dir,
+                args.state, bundle,
+                storage_tier=storage_tier, parent_job=parent_job,
                 platform=args.platform, ctx_extra=ctx_extra))
             return 0
         return run(args.state, command)
