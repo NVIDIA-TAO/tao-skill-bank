@@ -57,13 +57,18 @@ AG_CHECKPOINTS = "/workspace/paidf-anomalygen/checkpoints"
 
 
 def _stage(*, action=None, image=None, gpus, mode="args", command=None,
-           config_format=None, inputs=(), outputs=(), workdir=None, targets=None):
+           config_format=None, inputs=(), outputs=(), workdir=None, targets=None,
+           writable=()):
     """One stage. `action` resolves through the model skill; `image`+`command`
     declare a stage the model skill does not own."""
     return {"action": action, "image": image, "command": command,
             "config_format": config_format, "gpus": gpus, "mode": mode,
             "inputs": tuple(inputs), "outputs": tuple(outputs),
-            "workdir": workdir, "targets": dict(targets or {})}
+            "workdir": workdir, "targets": dict(targets or {}),
+            # spec_keys bound read-WRITE (see `writable` in the bundle schema).
+            # Rare and deliberate: an image that addresses one tree for both
+            # its inputs and its outputs.
+            "writable": frozenset(writable)}
 
 
 STAGES: dict[str, dict[str, Any]] = {
@@ -74,7 +79,7 @@ STAGES: dict[str, dict[str, Any]] = {
     "train": _stage(
         action="train", gpus=1,
         inputs=("workspace", "annotations"), outputs=("checkpoint",),
-        targets={"workspace": COSMOS_WORKSPACE},
+        targets={"workspace": COSMOS_WORKSPACE}, writable=("workspace",),
     ),
     # Proxy and Benchmark are the SAME action against different annotation
     # sets. They are separate entries because the loop records them as separate
@@ -83,13 +88,13 @@ STAGES: dict[str, dict[str, Any]] = {
         action="evaluate", gpus=1,
         inputs=("workspace", "checkpoint", "proxy_annotations"),
         outputs=("proxy_results",),
-        targets={"workspace": COSMOS_WORKSPACE},
+        targets={"workspace": COSMOS_WORKSPACE}, writable=("workspace",),
     ),
     "evaluate_benchmark": _stage(
         action="evaluate", gpus=1,
         inputs=("workspace", "checkpoint", "benchmark_annotations"),
         outputs=("benchmark_results",),
-        targets={"workspace": COSMOS_WORKSPACE},
+        targets={"workspace": COSMOS_WORKSPACE}, writable=("workspace",),
     ),
 
     # ---- AnomalyGen: AMP routing (CPU) then SDG diffusion (GPU) ----------
@@ -239,6 +244,10 @@ def build(stage: str, params: dict[str, str], *, results_dir: str,
         target = entry["targets"].get(name)
         if target:
             item["target"] = target
+        if name in entry["writable"]:
+            # cosmos-rl places media_path, annotation_path AND output_dir under
+            # one root, so binding it read-only fails partway through training.
+            item["writable"] = True
         declared_inputs.append(item)
 
     bundle: dict[str, Any] = {
@@ -310,8 +319,26 @@ def main(argv: list[str] | None = None) -> int:
     try:
         spec = None
         if parsed.spec_file:
-            import yaml
-            spec = yaml.safe_load(parsed.spec_file.read_text(encoding="utf-8"))
+            # Parse by SUFFIX. A .toml spec read as YAML does not error -- YAML
+            # happily produces a flat dict of strings from `key = "value"` lines
+            # -- so the wrong parser is silently accepted and the container gets
+            # a spec whose structure bears no relation to the file.
+            text = parsed.spec_file.read_text(encoding="utf-8")
+            if parsed.spec_file.suffix.lower() == ".toml":
+                try:
+                    import tomllib as toml_reader
+                except ModuleNotFoundError:          # Python < 3.11
+                    import tomli as toml_reader
+                spec = toml_reader.loads(text)
+            else:
+                import yaml
+                spec = yaml.safe_load(text)
+            if not isinstance(spec, dict):
+                raise ValueError(
+                    f"{parsed.spec_file} parsed as "
+                    f"{type(spec).__name__}, not a mapping; a spec is a nested "
+                    "dict and anything else would be silently serialized wrong"
+                )
         bundle = build(parsed.stage, _parse_params(parsed.param),
                        results_dir=parsed.results_dir, bank=parsed.bank,
                        network_arch=parsed.network_arch, args=parsed.args,

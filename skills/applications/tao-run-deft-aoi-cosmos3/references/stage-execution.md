@@ -104,6 +104,14 @@ Mounting it anywhere else does **not** fail: the spec's paths simply do not
 resolve, and the stage dies inside the workload with a missing-file error that
 names the spec path rather than the mount.
 
+**And it is bound read-WRITE, unlike every other declared input.** A cosmos-rl
+spec puts `media_path`, `annotation_path` AND `output_dir` under the same root,
+so the stage reads and writes through one tree. Declared inputs are `:ro`
+everywhere else — a stage that can write to its input is a cross-platform trap —
+and this is the documented exception, carried in the bundle as
+`writable: true` rather than arranged by the stage command. Binding it read-only
+does not fail at launch; training runs and then dies on the first write.
+
 ## Host identity
 
 Do not paste `--user`/`-e USER`/`/etc/passwd` flags into a stage. The docker

@@ -87,8 +87,9 @@ def _mounts(bundle: dict[str, Any], results_dir: str) -> str:
         # bundle would fail there and silently succeed here. Writes belong under
         # results_dir. `target` overrides the in-container path.
         target = str(item.get("target") or uri)
+        mode = "" if item.get("writable") else ":ro"
         if (uri, target) not in seen:
-            pairs.append(f"{uri}:{target}:ro")
+            pairs.append(f"{uri}:{target}{mode}")
             seen.add((uri, target))
     pairs.append(f"{results_dir}:{results_dir}")
     return ",".join(pairs)
@@ -518,6 +519,19 @@ def dumps_toml(spec: dict[str, Any], _prefix: str = "") -> str:
         body = dumps_toml(value, f"{name}.")
         out += f"\n\n[{name}]\n{body}" if out else f"[{name}]\n{body}"
     return out.strip() + "\n"
+
+
+# Commands that are SHELL SCRIPTS, not argv ---------------------------------
+# A model skill may own a command that is a script rather than a program plus
+# arguments -- cosmos-rl's train computes a hook path from cosmos_rl.__file__,
+# tests it, then runs it. Splitting that on whitespace and re-quoting each token
+# produces `exec "hook=$(...)"`, i.e. an attempt to run a binary named after the
+# whole first line. It must go to a shell intact.
+SHELL_META = ("\n", ";", "&&", "||", "$(", "`", "|", ">", "<")
+
+
+def is_shell_script(command: str) -> bool:
+    return any(token in command for token in SHELL_META)
 
 
 def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[str, str]:

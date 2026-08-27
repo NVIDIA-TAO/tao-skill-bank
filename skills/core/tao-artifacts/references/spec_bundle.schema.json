@@ -221,6 +221,11 @@
           "type": "string",
           "pattern": "^/",
           "description": "Absolute path this input must appear at INSIDE the container. Optional; the default is the same absolute path as `uri`, which keeps a path written into a CSV or spec resolving identically on both sides. Set it only when the image requires a fixed location: cosmos-rl specs address everything under /tao-workspace, and paidf-anomalygen resolves its base checkpoints relative to its own install directory. Without this the input is mounted somewhere the workload does not look, which does not raise -- the directory is simply absent and the stage reads nothing."
+        },
+        "writable": {
+          "type": "boolean",
+          "default": false,
+          "description": "Bind this input read-WRITE. Default false, and it should stay false: a declared input a stage can write to is a cross-platform trap, and writes normally belong under results_dir. The exception is an image that addresses one tree for BOTH its inputs and its outputs -- a cosmos-rl spec places media_path, annotation_path and output_dir all under /tao-workspace, so binding that root read-only fails the run on a read-only filesystem partway through training."
         }
       }
     },

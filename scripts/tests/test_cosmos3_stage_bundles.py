@@ -667,3 +667,104 @@ def test_the_adapter_lineage_rule_is_unambiguous():
         (C3_REFS / "pipeline-and-state.md").read_text(encoding="utf-8").split())
     assert "evaluated_model" in body and "config.base_model" in body
     assert "must not be graded as a contradiction" in body
+
+
+# ── A command may be a SCRIPT, not argv ────────────────────────────────────
+# cosmos-rl's train computes a hook path from cosmos_rl.__file__, tests it, then
+# runs it. Splitting that on whitespace and re-quoting each token produced
+# `exec "hook=$(...)"` on docker and rewrote the script's own quoting on
+# kubernetes -- both broken, both invisible until something ran.
+
+def _script_train(sb_mod):
+    """Same stage, minimal spec -- for the command/mount assertions below.
+
+    Deliberately NOT named _train: an earlier helper of that name is used by
+    the spec-content tests, and shadowing it silently changed what they built.
+    """
+    return sb_mod.build("train", {"workspace": "/ws", "annotations": "/ws/a.json"},
+                        results_dir="/ws/results/base", bank=REPO,
+                        spec={"train": {"epochs": 2}})
+
+
+def test_docker_hands_a_script_to_a_shell(sb):
+    argv = _renderer("docker").render(_script_train(sb), _ctx("docker"))["argv"]
+    tail = argv[argv.index(_script_train(sb)["image"]) + 1:]
+    assert tail[:2] == ["bash", "-lc"], f"not shell-wrapped: {tail[:3]}"
+    assert "cosmos_rl.__file__" in tail[2], "the script was split apart"
+
+
+def test_kubernetes_passes_the_script_through_intact(sb):
+    import yaml
+
+    rendered = _renderer("kubernetes").render(_script_train(sb), _ctx("kubernetes"))
+    doc = yaml.safe_load(next(iter(rendered["files"].values())))
+    command = doc["spec"]["template"]["spec"]["containers"][0]["command"]
+    assert command[:2] == ["/bin/sh", "-c"]
+    assert "cosmos_rl.__file__" in command[2]
+    assert '"tools"' in command[2], (
+        "the script's own quoting was rewritten; re-quoting each token changes "
+        "what the script means"
+    )
+
+
+def test_a_plain_command_is_still_argv(sb):
+    """Only scripts get wrapped; an ordinary command must not gain a shell."""
+    bundle = sb.build("data_mining.knn",
+                      {"target_embeddings": "/ws/t", "pool_embeddings": "/ws/p"},
+                      results_dir="/ws/results/x", bank=REPO, spec={"topn": 5})
+    argv = _renderer("docker").render(bundle, _ctx("docker"))["argv"]
+    assert "bash" not in argv[argv.index(bundle["image"]) + 1:][:1]
+
+
+# ── One tree for inputs AND outputs must be writable ───────────────────────
+# Declared inputs are read-only everywhere, which is right. cosmos-rl is the
+# exception: its spec puts media_path, annotation_path and output_dir all under
+# /tao-workspace, so a read-only bind fails partway through training.
+
+@pytest.mark.parametrize("platform", ["docker", "slurm"])
+def test_the_cosmos_workspace_is_writable(sb, platform):
+    rendered = _renderer(platform).render(_script_train(sb), _ctx(platform))
+    blob = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert "/ws:/tao-workspace:ro" not in blob, (
+        "the workspace is read-only; cosmos-rl writes its results under it"
+    )
+    assert "/ws:/tao-workspace" in blob
+
+
+def test_kubernetes_does_not_mark_the_workspace_read_only(sb):
+    import yaml
+
+    rendered = _renderer("kubernetes").render(_script_train(sb), _ctx("kubernetes"))
+    doc = yaml.safe_load(next(iter(rendered["files"].values())))
+    mounts = doc["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    workspace = next(m for m in mounts if m.get("mountPath") == "/tao-workspace")
+    assert not workspace.get("readOnly"), "cosmos-rl cannot write its results"
+    assert "subPath" not in workspace or workspace["subPath"], (
+        'an empty subPath is not the same as none: "" means the volume root, '
+        "which is right only when the input IS the whole claim"
+    )
+
+
+@pytest.mark.parametrize("platform", ["docker", "slurm"])
+def test_other_inputs_stay_read_only(sb, platform):
+    """The exception must not become the rule."""
+    rendered = _renderer(platform).render(_script_train(sb), _ctx(platform))
+    blob = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert "/ws/a.json:/ws/a.json:ro" in blob, "annotations lost their :ro"
+
+
+def test_a_toml_spec_is_parsed_as_toml(tmp_path):
+    """YAML happily reads `key = "value"` as a flat string dict, so the wrong
+    parser is accepted silently and the container gets a bogus spec."""
+    spec = tmp_path / "s.toml"
+    spec.write_text('[train]\nepochs = 2\nuse_lora = true\n', encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, str(C3 / "stage_bundle.py"), "train",
+         "--results-dir", "/ws/r", "--spec-file", str(spec),
+         "--param", "workspace=/ws", "--param", "annotations=/ws/a.json"],
+        capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    bundle = json.loads(done.stdout)
+    assert bundle["spec"] == {"train": {"epochs": 2, "use_lora": True}}, (
+        f"parsed as {bundle['spec']!r}; a YAML read would give strings"
+    )

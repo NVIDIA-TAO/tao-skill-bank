@@ -190,6 +190,19 @@ def dumps_toml(spec: dict[str, Any], _prefix: str = "") -> str:
     return out.strip() + "\n"
 
 
+# Commands that are SHELL SCRIPTS, not argv ---------------------------------
+# A model skill may own a command that is a script rather than a program plus
+# arguments -- cosmos-rl's train computes a hook path from cosmos_rl.__file__,
+# tests it, then runs it. Splitting that on whitespace and re-quoting each token
+# produces `exec "hook=$(...)"`, i.e. an attempt to run a binary named after the
+# whole first line. It must go to a shell intact.
+SHELL_META = ("\n", ";", "&&", "||", "$(", "`", "|", ">", "<")
+
+
+def is_shell_script(command: str) -> bool:
+    return any(token in command for token in SHELL_META)
+
+
 def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[str, str]:
     """Serialize a mode=config spec and return (path, content).
 
@@ -314,8 +327,9 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         # CSV or spec must resolve identically inside and outside. `target`
         # overrides it for images that address a fixed location.
         target = str(item.get("target") or uri)
+        mode = "" if item.get("writable") else ":ro"
         if (uri, target) not in seen:
-            mounts += ["-v", f"{uri}:{target}:ro"]
+            mounts += ["-v", f"{uri}:{target}{mode}"]
             seen.add((uri, target))
     mounts += ["-v", f"{results_dir}:{results_dir}"]
 
@@ -342,7 +356,15 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     # Docker's 64MB /dev/shm default is what makes this necessary; slurm and
     # kubernetes each solve it their own way, so it is rendered, not declared.
     shm = ["--shm-size", str(ctx.get("shm_size", "8g"))]
-    tokens = [*shlex.split(bundle["command"]), *(bundle.get("args") or [])]
+    command_text = str(bundle["command"])
+    if is_shell_script(command_text):
+        # One argv element, run by a shell. Args append to the script text so a
+        # config-mode stage that also carries them stays one coherent command.
+        script = command_text + "".join(
+            " " + shlex.quote(a) for a in (bundle.get("args") or []))
+        tokens = ["bash", "-lc", script]
+    else:
+        tokens = [*shlex.split(command_text), *(bundle.get("args") or [])]
     files: dict[str, str] = {}
     if bundle.get("mode") == "config":
         # results_dir is bind-mounted at the SAME absolute path, so a path

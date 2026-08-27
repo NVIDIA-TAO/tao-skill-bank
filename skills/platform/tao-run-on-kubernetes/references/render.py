@@ -120,6 +120,30 @@ def dumps_toml(spec: dict[str, Any], _prefix: str = "") -> str:
     return out.strip() + "\n"
 
 
+# Commands that are SHELL SCRIPTS, not argv ---------------------------------
+# A model skill may own a command that is a script rather than a program plus
+# arguments -- cosmos-rl's train computes a hook path from cosmos_rl.__file__,
+# tests it, then runs it. Splitting that on whitespace and re-quoting each token
+# produces `exec "hook=$(...)"`, i.e. an attempt to run a binary named after the
+# whole first line. It must go to a shell intact.
+SHELL_META = ("\n", ";", "&&", "||", "$(", "`", "|", ">", "<")
+
+
+def is_shell_script(command: str) -> bool:
+    return any(token in command for token in SHELL_META)
+
+
+def _claim_relative(uri: str, mount_path: str) -> str:
+    """The part of `uri` inside the claim. Empty when the uri IS the mount root.
+
+    An empty subPath is not the same as no subPath: kubernetes treats "" as the
+    volume root, which happens to be right when the input is the whole claim
+    and silently wrong the moment it is not. Emit the key only when there is a
+    sub-path to name.
+    """
+    return str(uri)[len(str(mount_path).rstrip("/")):].lstrip("/")
+
+
 def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[str, str]:
     """Serialize a mode=config spec and return (path, content).
 
@@ -191,7 +215,9 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
                 f"the mounted volume {mount_path!r}; a pod cannot bind it"
             )
 
-    tokens = [*shlex.split(bundle["command"]), *(bundle.get("args") or [])]
+    command_text = str(bundle["command"])
+    config_path_for_command = ""
+    tokens = [*shlex.split(command_text), *(bundle.get("args") or [])]
     extra_files: dict[str, str] = {}
     if bundle.get("mode") == "config":
         # A pod sees ONE bound volume, so the spec has to land under it or the
@@ -205,9 +231,17 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
                 "pod cannot read its spec"
             )
         extra_files[config_path] = content
+        config_path_for_command = config_path
         tokens = substitute_config_path(tokens, config_path)
 
-    command = " ".join(shlex.quote(token) for token in tokens)
+    if is_shell_script(command_text):
+        # The template runs this through `/bin/sh -c`, so the script goes in
+        # verbatim. Splitting and re-quoting each token would rewrite the
+        # script's own quoting and change what it means.
+        command = command_text.replace("{config_path}", config_path_for_command)
+        command += "".join(" " + shlex.quote(a) for a in (bundle.get("args") or []))
+    else:
+        command = " ".join(shlex.quote(token) for token in tokens)
     substitutions = {
         "JOB_NAME": job_id,
         "IMAGE": bundle["image"],
@@ -226,8 +260,9 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         "EXTRA_MOUNTS": "".join(
             f'\n            - name: data'
             f'\n              mountPath: "{item["target"]}"'
-            f'\n              subPath: "{str(item["uri"])[len(str(mount_path).rstrip("/")):].lstrip("/")}"'
-            f'\n              readOnly: true'
+            + (f'\n              subPath: "{_claim_relative(item["uri"], mount_path)}"'
+               if _claim_relative(item["uri"], mount_path) else "")
+            + ("" if item.get("writable") else '\n              readOnly: true')
             for item in (bundle.get("declared_inputs") or [])
             if item.get("target") and str(item["target"]) != str(item["uri"])
         ),
