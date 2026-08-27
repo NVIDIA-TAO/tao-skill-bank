@@ -536,3 +536,55 @@ def test_the_routing_coverage_still_exists():
     # The things the removed eval asserted, still asserted here.
     for claim in ("does not default to a platform", "submit/status/logs/cancel"):
         assert claim in behaviours, f"lost coverage: {claim!r}"
+
+
+# ── The k8s evals must bootstrap what the runner lacks ─────────────────────
+# A live run failed twice: the runner had no kubectl/minikube/nvidia-smi, and
+# `minikube start --gpus all` then half-started, leaving kubelet and apiserver
+# Stopped -- which reads as a Kubernetes fault rather than a missing NVIDIA
+# container runtime. The agent then staged artifacts from an earlier completed
+# run, producing a report for work that turn did not do.
+
+K8S_LOOP_EVALS = [
+    ("skills/applications/tao-run-deft-aoi/eval.config", "deft-loop-ag-mining-kubernetes"),
+    ("skills/applications/tao-run-deft-aoi-cosmos3/eval.config",
+     "cosmos3-deft-loop-ag-mining-kubernetes"),
+]
+
+
+@pytest.mark.parametrize("config,eval_id", K8S_LOOP_EVALS)
+def test_the_k8s_eval_bootstraps_its_tools(config, eval_id):
+    cfg = json.loads((REPO / config).read_text(encoding="utf-8"))
+    body = next(e for e in cfg["evals"] if e["id"] == eval_id)["prompt"]
+    assert "single static binaries" in body, "no kubectl/minikube bootstrap"
+    assert "nvidia-smi" in body, "does not check the GPU tooling exists"
+
+
+@pytest.mark.parametrize("config,eval_id", K8S_LOOP_EVALS)
+def test_the_k8s_eval_probes_the_runtime_before_starting(config, eval_id):
+    """`--gpus all` without the runtime hook half-starts the cluster."""
+    cfg = json.loads((REPO / config).read_text(encoding="utf-8"))
+    body = next(e for e in cfg["evals"] if e["id"] == eval_id)["prompt"]
+    probe = body.find("docker info")
+    start = body.find("minikube start")
+    assert probe != -1, "no check that the NVIDIA runtime is registered"
+    assert probe < start, "the runtime probe must come BEFORE minikube start"
+
+
+@pytest.mark.parametrize("config,eval_id", K8S_LOOP_EVALS)
+def test_a_cpu_fallback_is_not_offered_as_a_recovery(config, eval_id):
+    cfg = json.loads((REPO / config).read_text(encoding="utf-8"))
+    entry = next(e for e in cfg["evals"] if e["id"] == eval_id)
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "Do not start a cluster without" in body or "CPU-only cluster" in body
+
+
+@pytest.mark.parametrize("config", sorted({c for c, _ in K8S_LOOP_EVALS}))
+def test_every_eval_grades_evidence_provenance(config):
+    """Staging a previous run's artifacts produced a polished report for work
+    that never happened -- the failure mode that looks most like success."""
+    cfg = json.loads((REPO / config).read_text(encoding="utf-8"))
+    for entry in cfg["evals"]:
+        assert "THIS run" in entry["expected_outcome"], (
+            f"{entry['id']} does not require evidence from this run"
+        )
