@@ -38,6 +38,33 @@ STAGES = (
     "loop_stop",
 )
 SKIPPABLE_STAGES = ("anomalygen",)
+# Sections the Proxy RCCA report must carry. A report missing one reads as
+# complete while hiding the analysis the next iteration's routing depends on,
+# so the commit is refused rather than recorded.
+REQUIRED_RCCA_REPORT_HEADINGS = (
+    "Verdict",
+    "False-Accept Breakdown",
+    "False-Reject Breakdown",
+    "Top-K Worst Samples",
+    "Per-Defect Analysis",
+    "Recommended Actions",
+)
+
+
+def _required_rcca_report(value: "pathlib.Path | None", flag: str) -> str:
+    path = _required_file(value, flag)
+    text = pathlib.Path(path).read_text(encoding="utf-8")
+    missing = [
+        heading
+        for heading in REQUIRED_RCCA_REPORT_HEADINGS
+        if not re.search(rf"^#+\s+.*{re.escape(heading)}", text, re.MULTILINE)
+    ]
+    if missing:
+        raise ValueError(
+            f"{flag} missing required section heading(s): {', '.join(missing)}; "
+            "see references/RCCA_REPORT_TEMPLATE.md"
+        )
+    return path
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -257,6 +284,11 @@ def _apply_success(
             _required_file(args.false_rejects, "--false-rejects"),
             phase_root,
             "--false-rejects",
+        )
+        phase["rcca_report"] = _within(
+            _required_rcca_report(args.rcca_report, "--rcca-report"),
+            phase_root,
+            "--rcca-report",
         )
     elif stage == "evaluate_benchmark":
         phase["benchmark_results_json"] = _within(
@@ -575,6 +607,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--proxy-gaps-summary", type=pathlib.Path)
     parser.add_argument("--false-accepts", type=pathlib.Path)
     parser.add_argument("--false-rejects", type=pathlib.Path)
+    parser.add_argument("--rcca-report", type=pathlib.Path)
     parser.add_argument("--benchmark-results", type=pathlib.Path)
     parser.add_argument("--benchmark-metrics-summary", type=pathlib.Path)
     parser.add_argument("--metric-result", type=pathlib.Path)

@@ -60,7 +60,16 @@ This is a warning, not a hard stop — k-NN by embedding can still pull rows of 
 
 ## Four-Step Execution Order
 
-1. **Embed targets** (`embedding image_embeddings … input_parquet=<target_parquet>`) → `target_embeddings.parquet`
+1. **Embed targets** (`embedding image_embeddings … input_parquet=<target_parquet>`) → `target_embeddings.parquet`.
+   **Closed spec schemas:** the `image_embeddings` spec accepts ONLY `model`,
+   `model_path`, `batch_size`, `input_parquet`, `output_parquet` (plus
+   `model_config` when `model_path` is a TAO `.pth`/`.ckpt`), and
+   `tmm nearest_neighbors` ONLY `topn`, `knn_metric`, `filter_by_label`,
+   `target_parquet`, `source_parquet`, `output_parquet` and the rarely-changed
+   `*_embed_column_name`. Do **not** add a `results_dir` key: these Hydra
+   configs reject unknown keys at merge time with
+   `Key 'results_dir' not in 'ImageEmbeddingsConfig'`, the same closed-schema
+   failure as writing `workflow:` into a ChangeNet spec.
 2. **Embed source pool** (`embedding image_embeddings … input_parquet=<source_pool_parquet>`) → `source_embeddings.parquet`; use the **identical** `model` and `model_path` as Step 1
 3. **Mine nearest neighbours and apply the cosine floor** (`tmm nearest_neighbors …`) → `mined_raw.parquet`, then the existing cosine retention step → `mined_candidates.parquet` + `knn_summary.csv`. Keep both immutable.
 4. **Drop samples mined in earlier iterations** with the mapped data skill's

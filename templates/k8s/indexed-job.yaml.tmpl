@@ -86,7 +86,7 @@ spec:
             - name: dshm
               mountPath: /dev/shm
             - name: data
-              mountPath: "@@MOUNT_PATH@@"
+              mountPath: "@@MOUNT_PATH@@"@@EXTRA_MOUNTS@@
       volumes:
         - name: dshm
           emptyDir:

@@ -517,3 +517,133 @@ def test_vcn_stages_declare_the_backbone(stage_bundle, stage):
     assert "backbone" in stage_bundle.STAGES[stage]["inputs"], (
         f"{stage} omits the backbone the model skill declares"
     )
+
+
+# ── An input can require a fixed in-container path ─────────────────────────
+# Identity mounting is the right default -- a path in a CSV or spec resolves the
+# same on both sides -- but some images address a FIXED location. Every path in
+# a cosmos-rl spec is under /tao-workspace, and its own template warns "NEVER
+# over /workspace, where cosmos-rl itself is installed". paidf-anomalygen
+# resolves base checkpoints relative to its install dir, which this branch first
+# worked around with a symlink inside the stage command.
+#
+# Getting this wrong does not raise: the input is mounted where the workload
+# does not look, so the stage reads nothing and exits 0.
+
+TARGET_BUNDLE_INPUT = {"spec_key": "workspace", "type": "folder",
+                       "uri": "/ws/proj", "target": "/tao-workspace"}
+
+
+def _with_target(stage_bundle):
+    bundle = stage_bundle.build("anomalygen.amp", AMP_PARAMS,
+                                results_dir="/ws/results/x", bank=REPO, args=["true"])
+    bundle["declared_inputs"] = [TARGET_BUNDLE_INPUT]
+    return bundle
+
+
+@pytest.mark.parametrize("platform,marker", [
+    ("docker", "/ws/proj:/tao-workspace:ro"),
+    ("slurm", "/ws/proj:/tao-workspace:ro"),
+])
+def test_bind_platforms_honour_the_target(stage_bundle, platform, marker, tmp_path):
+    ctx = {"job_id": "t1", "results_dir": "/ws/results/x", "bank": str(REPO),
+           "job_dir": "/ws/work", **PLATFORM_CTX[platform]}
+    rendered = _renderer(platform).render(_with_target(stage_bundle), ctx)
+    blob = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert marker in blob, f"{platform} ignored the target and mounted at the uri"
+
+
+def test_kubernetes_maps_a_target_through_subpath(stage_bundle, tmp_path):
+    """A pod sees ONE volume, so a target is the same claim mounted twice."""
+    import yaml
+
+    ctx = {"job_id": "t1", "results_dir": "/ws/results/x", "bank": str(REPO),
+           "job_dir": "/ws/work", **PLATFORM_CTX["kubernetes"]}
+    rendered = _renderer("kubernetes").render(_with_target(stage_bundle), ctx)
+    doc = yaml.safe_load(next(iter(rendered["files"].values())))
+    mounts = doc["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    extra = [m for m in mounts if m.get("mountPath") == "/tao-workspace"]
+    assert extra, "no volumeMount at the requested target"
+    assert extra[0]["subPath"] == "proj", (
+        "subPath must be the claim-relative part of the uri, or the pod mounts "
+        "the wrong directory at the right path"
+    )
+    assert extra[0]["readOnly"] is True
+
+
+@pytest.mark.parametrize("platform", ["docker", "slurm", "kubernetes"])
+def test_no_target_keeps_identity_mounting(stage_bundle, platform, tmp_path):
+    """The default must not change: identity is what makes paths portable."""
+    ctx = {"job_id": "t1", "results_dir": "/ws/results/x", "bank": str(REPO),
+           "job_dir": "/ws/work", **PLATFORM_CTX[platform]}
+    rendered = _renderer(platform).render(
+        stage_bundle.build("anomalygen.amp", AMP_PARAMS, results_dir="/ws/results/x",
+                           bank=REPO, args=["true"]), ctx)
+    blob = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert "/ws/ag/datasets/nvpcb" in blob
+
+
+# ── TOML specs must survive the trip ───────────────────────────────────────
+# Cosmos-RL specs are config_format=toml. Python ships tomllib to READ toml and
+# nothing to write it, and this bank keeps its dependencies to pyyaml and
+# jsonschema, so the renderers carry a minimal writer. Every test here
+# round-trips through the stdlib READER rather than comparing strings: the
+# failure that matters is a file tomllib parses into something other than the
+# spec, not a formatting difference.
+
+TOML_SPECS = [
+    pytest.param({"a": 1, "b": "x"}, id="flat"),
+    pytest.param({"t": {"a": 1}}, id="one-table"),
+    pytest.param({"t": {"u": {"deep": True}}}, id="nested-tables"),
+    pytest.param({"t": {"arr": [1, 2, 3], "s": ["a", "b"]}}, id="arrays"),
+    pytest.param({"t": {"f": 1e-05, "neg": -3}}, id="numbers"),
+    pytest.param({"t": {"q": 'has "quotes" and \\ backslash'}}, id="escapes"),
+    pytest.param({"scalar_first": 1, "t": {"x": 2}}, id="scalar-before-table"),
+]
+
+
+@pytest.mark.parametrize("spec", TOML_SPECS)
+def test_toml_round_trips(spec):
+    import tomllib
+
+    module = _renderer("docker")
+    assert tomllib.loads(module.dumps_toml(spec)) == spec
+
+
+def test_booleans_are_not_written_as_ints():
+    """bool subclasses int in Python; checking int first yields `1`, not `true`."""
+    import tomllib
+
+    module = _renderer("docker")
+    out = tomllib.loads(module.dumps_toml({"t": {"flag": True, "count": 1}}))
+    assert out["t"]["flag"] is True and out["t"]["count"] == 1
+
+
+def test_a_key_after_a_table_would_change_owner():
+    """The classic hand-rolled-writer corruption: a parent key emitted after a
+    [table] header silently belongs to that table."""
+    import tomllib
+
+    module = _renderer("docker")
+    spec = {"top": "parent-level", "section": {"inner": 1}}
+    assert tomllib.loads(module.dumps_toml(spec)) == spec
+
+
+def test_unrepresentable_value_fails_loudly():
+    """Silently dropping a spec key would run training with wrong settings."""
+    module = _renderer("docker")
+    with pytest.raises(ValueError, match="no TOML representation"):
+        module.dumps_toml({"t": {"when": object()}})
+
+
+@pytest.mark.parametrize("platform", CONFIG_MODE_PLATFORMS)
+def test_every_platform_can_write_toml(platform):
+    """cosmos-rl train is toml; a platform without a writer cannot run it."""
+    import tomllib
+
+    module = _renderer(platform)
+    path, content = module.config_file(
+        {"mode": "config", "config_format": "toml", "spec": {"t": {"a": 1}}},
+        "job-1", "/ws/results/x")
+    assert path.endswith(".toml")
+    assert tomllib.loads(content) == {"t": {"a": 1}}

@@ -52,9 +52,12 @@ DATA_SERVICES = "tao_toolkit.data_services"
 ANOMALYGEN = "metropolis_sdg.paidf_anomalygen"
 
 
-def _stage(image, command, *, gpus, mode="args", inputs=(), outputs=(), workdir=None):
+def _stage(image, command, *, gpus, mode="args", inputs=(), outputs=(),
+           workdir=None, targets=None):
     return {"image": image, "command": command, "gpus": gpus, "mode": mode,
-            "inputs": tuple(inputs), "outputs": tuple(outputs), "workdir": workdir}
+            "inputs": tuple(inputs), "outputs": tuple(outputs), "workdir": workdir,
+            # spec_key -> absolute in-container path, when the image requires one.
+            "targets": dict(targets or {})}
 
 
 # Each entry's `inputs` names the PARAMS a caller must supply as paths. They
@@ -115,6 +118,7 @@ STAGES: dict[str, dict[str, Any]] = {
         inputs=("dataset_dir", "defect_spec", "cosmos_models"),
         outputs=("testcase_jsonl", "allocation_json"),
         workdir="/workspace/paidf-anomalygen",
+        targets={"cosmos_models": "/workspace/paidf-anomalygen/checkpoints"},
     ),
     # Bootstrap: one-time asset population. These WRITE to their target, so
     # the cache being populated is passed as --results-dir -- the only path a
@@ -142,9 +146,17 @@ STAGES: dict[str, dict[str, Any]] = {
 
     "anomalygen.sdg": _stage(
         ANOMALYGEN, "bash -lc", gpus=1, mode="args",
-        inputs=("testcase_jsonl", "checkpoint_dir", "cosmos_models"),
+        # clean_dir is NOT a run_sdg.sh flag -- prep_testcase.sh owns
+        # --clean-dir and resolves the images, writing their paths into
+        # testcase.jsonl. SDG then READS those paths, so the directory holding
+        # them has to be mounted here too. The old `docker run -v $WS:$WS`
+        # covered it by mounting everything; a bundle mounts only what it
+        # declares, and a missing clean image is not a mount error -- SDG fails
+        # on a file it was told about by the JSONL.
+        inputs=("testcase_jsonl", "checkpoint_dir", "cosmos_models", "clean_dir"),
         outputs=("sdg_dir",),
         workdir="/workspace/paidf-anomalygen",
+        targets={"cosmos_models": "/workspace/paidf-anomalygen/checkpoints"},
     ),
 }
 
@@ -199,14 +211,20 @@ def build(stage: str, params: dict[str, str], *, results_dir: str,
     declared_inputs = []
     for name in entry["inputs"]:
         uri = params[name]
-        declared_inputs.append({
+        item = {
             "spec_key": name,
             # A spec file is a file; everything else this table declares is a
             # directory tree. Guessing from the path suffix would misclassify
             # an extensionless directory.
             "type": "file" if name == "defect_spec" else "folder",
             "uri": uri,
-        })
+        }
+        target = entry["targets"].get(name)
+        if target:
+            # This image addresses a FIXED path. Mounting at the uri instead
+            # does not raise -- the workload simply finds nothing there.
+            item["target"] = target
+        declared_inputs.append(item)
 
     bundle: dict[str, Any] = {
         "network_arch": network_arch,

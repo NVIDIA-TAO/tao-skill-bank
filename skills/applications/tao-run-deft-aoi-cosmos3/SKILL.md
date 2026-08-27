@@ -35,9 +35,20 @@ the companion skill folders: `TAO_SKILL_BANK_PATH` must point at a directory
 containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
 Cosmos model resolver `scripts/resolve_tao_image.py`, plus the
 `skills/{applications,models,data,platform,core}/...` tree listed in
-`eval.config`. Run bundled validation with the skill Python so dependencies
-match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
-tests.test_cosmos3_bare`. Resolve network mode first. Missing air-gap imports
+`eval.config`. Run bundled validation from this skill's directory **inside the
+bank root** — the tests import sibling `data/` and `models/` skills via
+`SKILL_ROOT.parents[1]`, which only resolves there — using the skill Python so
+dependencies match runtime:
+
+```bash
+cd "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi-cosmos3"
+PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest tests.test_cosmos3_bare
+```
+
+From a standalone `~/.claude/skills` copy this fails with
+`ModuleNotFoundError: No module named 'filter_mined_history'`, which names the
+module rather than the missing sibling skill. Resolve network mode first.
+Missing air-gap imports
 are a hard stop; network-enabled setup lives only in
 `references/network-bootstrap.md`.
 
@@ -107,12 +118,11 @@ credential value.
 - Normalize the user aliases `nano`, `edge`, and `super` to those canonical
   IDs. Preserve any variant selected in the prompt. When no variant is
   selected, use Nano.
-- Give hardware recommendations for the selected variant and report when the
-  available compute is insufficient. If the prompt asks for a variant
-  recommendation based on hardware or workload, recommend one with the
-  tradeoff, but require an explicit selection before state initialization.
-  Never silently switch or fall back to another variant.
-- Keep the selected canonical ID as source-model lineage, but do not pass the
+- Recommend a variant when asked (with the tradeoff) and report insufficient
+  compute, but require an explicit selection before state initialization. Never
+  silently switch or fall back to another variant.
+- Keep the selected canonical ID as source-model lineage; `evaluated_model` may
+  name the adapter path (see `references/pipeline-and-state.md`). Do not pass the
   native online checkpoint directly to Cosmos-RL.
 - The published Cosmos Reason 3 reasoners ship in Cosmos3's own native Omni
   format (`model_type="cosmos3_omni"`), which Cosmos-RL cannot load. After
@@ -132,8 +142,9 @@ credential value.
   `tao-finetune-cosmos-reason/references/skill_info.yaml` with
   `scripts/resolve_tao_image.py`; never copy a Cosmos image pin into this
   application skill.
-- Train action: `cosmos-rl --config <spec.toml>
-  /opt/cosmos_rl/tao_sft_example.py`.
+- Train action: resolved by `scripts/stage_bundle.py` from the model skill's
+  `cosmos-rl` backend contract. Never restate the hook path; see
+  `references/stage-execution.md`.
 - The pinned image caps vLLM evaluation at one image per prompt, which this
   two-image contract cannot satisfy. Run `scripts/patch_eval_image_cap.py`
   before the first evaluate job and mount its output read-only into every
@@ -186,7 +197,9 @@ Run `scripts/validate_sharegpt.py` on Proxy, Benchmark, Mining, and each
 generated iteration training file. There is no input Train annotation.
 Run `scripts/validate_split_contract.py` to prove that Proxy, Benchmark, and
 Mining targets are disjoint and that the frozen Benchmark annotation hash has
-not changed. When a generated Train file is supplied, the same validator
+not changed. `--manifest` is required for a real hash check; its key is in
+`references/pipeline-and-state.md`. When a generated Train file is supplied,
+the same validator
 requires its targets to come from Mining, the immediate `--previous-train`
 seed, or the current iteration's `--synthetic` AnomalyGen output, and to remain
 disjoint from Proxy and Benchmark. For iteration N>1, `--previous-train` is
@@ -330,6 +343,7 @@ report rendering.
 
 | Stage | Producer | Read first |
 |---|---|---|
+| **Launching any container stage** | platform contract — `stage_bundle.py` emits, `deft_exec.py` submits | `references/stage-execution.md` |
 | Train | `tao-finetune-cosmos-reason` train, `automl_policy: off` | `references/cosmos-reason.md`, `references/example_lora_config.toml` |
 | Proxy / Benchmark evaluate | `tao-finetune-cosmos-reason` evaluate | `references/cosmos-reason.md` |
 | Proxy RCCA / Benchmark metric | bundled `analyze_gaps.py` | `references/gap-analysis.md` |

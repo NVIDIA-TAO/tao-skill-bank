@@ -316,7 +316,6 @@ python3 "$SB" anomalygen.amp --results-dir "$RUN_DIR" \
   --param defect_spec="$DS/defect_spec.jsonl" \
   --param cosmos_models="$COSMOS" \
   --arg "export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=/workspace/paidf-anomalygen && \
-    ln -sfn $TAO_INPUT_COSMOS_MODELS /workspace/paidf-anomalygen/checkpoints && \
     \${ANOMALYGEN_SCRIPTS}/prep_testcase.sh \
     --name iter${N} --num-sdg $NUM_SDG \
     --dataset-dir \$TAO_INPUT_DATASET_DIR --clean-dir \$TAO_INPUT_DATASET_DIR \
@@ -336,8 +335,8 @@ python3 "$SB" anomalygen.sdg --results-dir "$RUN_DIR" \
   --param testcase_jsonl="$RUN_DIR/testcase.jsonl" \
   --param checkpoint_dir="$CKPT" \
   --param cosmos_models="$COSMOS" \
+  --param clean_dir="$DS" \
   --arg "export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=/workspace/paidf-anomalygen && \
-    ln -sfn $TAO_INPUT_COSMOS_MODELS /workspace/paidf-anomalygen/checkpoints && \
     \${ANOMALYGEN_SCRIPTS}/run_sdg.sh \
     --checkpoint_dir \$TAO_INPUT_CHECKPOINT_DIR --step $STEP \
     --input_jsonl \$TAO_INPUT_TESTCASE_JSONL \
@@ -361,17 +360,19 @@ fi
 
 test -s "$SDG_LOG" && ! grep -Fqi "post-generation image checks are DISABLED" "$SDG_LOG" || { echo "FATAL: AnomalyGen Guardrail log missing or screening disabled; guardrail=not_run" >&2; exit 2; }
 
-The `export` and `ln -sfn` in front of each call replace three things the old
-`docker run` supplied as flags. `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` and
-`PYTHONPATH` were `-e` flags; the symlink stands in for
-`-v $COSMOS:/workspace/paidf-anomalygen/checkpoints:ro`, because a bundle mounts
-a declared input at its OWN path while the container resolves its base
-checkpoints relative to its working directory. Without the link the phase runs
-and finds no checkpoints — it does not fail on a missing mount.
+The `export` in front of each call replaces the `-e HF_HUB_OFFLINE=1
+-e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=…` flags the old `docker run` carried.
 
-If `/workspace/paidf-anomalygen` is not writable by the launching identity the
-`ln` fails loudly, which is the right outcome: silently proceeding would use
-whatever the image shipped.
+The cosmos mount is handled by the bundle, not by the command: `cosmos_models`
+declares `target: /workspace/paidf-anomalygen/checkpoints`, so every platform
+binds it where the image looks for it — `-v src:target:ro` on docker,
+`--container-mounts=src:target:ro` on SLURM, and a second `volumeMount` of the
+same claim with a `subPath` on Kubernetes. An earlier version symlinked it from
+inside the stage command; declaring the mount is better because it needs no
+write access to the image's own directory and it is visible in the bundle.
+
+Getting this wrong does not fail loudly — the phase runs and finds no
+checkpoints — which is why it is declared rather than left to the command.
 
 ```
 
@@ -445,3 +446,12 @@ The current container CSV schema cannot represent `not_run` and may write `1`
 when initialization failed. The disabled-marker log check above blocks that
 contradiction. The paired container follow-up must add the tri-state schema and
 stop emitting safety-passed values for unscreened content.
+
+`clean_dir` is what Phase 2 resolved the clean images from — `$DS` unless they
+live elsewhere. SDG needs it because `testcase.jsonl` records their PATHS and
+Phase 3 opens them; the AMP masks it also references sit under
+`$TAO_RESULTS_ROOT/amp`, which is already the stage's writable results mount, so
+they need no extra input. If a JSONL ever points outside both, widen this to the
+directory that contains everything it names — the failure is a FileNotFoundError
+on a path the JSONL supplied, not a mount error.
+

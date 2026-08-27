@@ -277,7 +277,13 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 2
-            shutil.rmtree(output)
+            # Move aside rather than delete: this may be the ONLY prepared
+            # PTM, and the reproduction below can fail. Deleting first turns a
+            # failed rerun into a lost checkpoint; renaming keeps it restorable.
+            stale_output = output.with_name(output.name + ".stale")
+            if stale_output.exists():
+                shutil.rmtree(stale_output)
+            output.rename(stale_output)
         else:
             metadata = output / "tao_conversion_provenance.json"
             if metadata.is_file() and not args.force:
@@ -297,6 +303,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     run = subprocess.run(run_command, check=False)
     if run.returncode:
+        if "stale_output" in locals() and stale_output.exists() and not output.exists():
+            stale_output.rename(output)
+            print("conversion failed; restored the previous prepared model",
+                  file=sys.stderr)
         return run.returncode
     prepared = validate(output)
     provenance = {

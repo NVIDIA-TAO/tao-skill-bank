@@ -76,6 +76,74 @@ def input_env(bundle: dict[str, Any]) -> dict[str, str]:
     return env
 
 
+
+def _toml_value(value: Any) -> str:
+    """Serialize one TOML scalar or array. Booleans BEFORE ints on purpose:
+    bool is a subclass of int in Python, so the order matters."""
+    import json as _json
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return _json.dumps(value)          # TOML basic strings match JSON escaping
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    raise ValueError(f"no TOML representation for {type(value).__name__}")
+
+
+def dumps_toml(spec: dict[str, Any], _prefix: str = "") -> str:
+    """Minimal TOML writer for a nested spec dict.
+
+    Python ships tomllib to READ toml and nothing to write it, and this bank
+    keeps its dependency set to pyyaml/jsonschema. Cosmos-RL specs are
+    config_format=toml, so without this every cosmos train stage would fail at
+    render. The supported shape is exactly what those specs contain: scalars,
+    homogeneous arrays, and nested tables.
+
+    Scalars are emitted before sub-tables at each level -- a key written after a
+    [table] header would silently belong to that table instead of its parent,
+    which is the classic way a hand-rolled TOML writer corrupts a config.
+    """
+    scalars, tables = [], []
+    for key, value in spec.items():
+        if isinstance(value, dict):
+            tables.append((key, value))
+        else:
+            scalars.append(f"{key} = {_toml_value(value)}")
+    out = "\n".join(scalars)
+    for key, value in tables:
+        name = f"{_prefix}{key}"
+        body = dumps_toml(value, f"{name}.")
+        out += f"\n\n[{name}]\n{body}" if out else f"[{name}]\n{body}"
+    return out.strip() + "\n"
+
+
+# Commands that are SHELL SCRIPTS, not argv ---------------------------------
+# A model skill may own a command that is a script rather than a program plus
+# arguments -- cosmos-rl's train computes a hook path from cosmos_rl.__file__,
+# tests it, then runs it. Splitting that on whitespace and re-quoting each token
+# produces `exec "hook=$(...)"`, i.e. an attempt to run a binary named after the
+# whole first line. It must go to a shell intact.
+SHELL_META = ("\n", ";", "&&", "||", "$(", "`", "|", ">", "<")
+
+
+def is_shell_script(command: str) -> bool:
+    return any(token in command for token in SHELL_META)
+
+
+def _claim_relative(uri: str, mount_path: str) -> str:
+    """The part of `uri` inside the claim. Empty when the uri IS the mount root.
+
+    An empty subPath is not the same as no subPath: kubernetes treats "" as the
+    volume root, which happens to be right when the input is the whole claim
+    and silently wrong the moment it is not. Emit the key only when there is a
+    sub-path to name.
+    """
+    return str(uri)[len(str(mount_path).rstrip("/")):].lstrip("/")
+
+
 def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[str, str]:
     """Serialize a mode=config spec and return (path, content).
 
@@ -97,7 +165,7 @@ def config_file(bundle: dict[str, Any], job_id: str, config_root: str) -> tuple[
     if fmt == "json":
         return f"{config_root.rstrip('/')}/configs/{job_id}.json", _json.dumps(spec, indent=2)
     if fmt == "toml":
-        raise ValueError("config_format=toml has no writer in this renderer")
+        return f"{config_root.rstrip('/')}/configs/{job_id}.toml", dumps_toml(spec)
     import yaml as _yaml
 
     return (f"{config_root.rstrip('/')}/configs/{job_id}.yaml",
@@ -147,7 +215,9 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
                 f"the mounted volume {mount_path!r}; a pod cannot bind it"
             )
 
-    tokens = [*shlex.split(bundle["command"]), *(bundle.get("args") or [])]
+    command_text = str(bundle["command"])
+    config_path_for_command = ""
+    tokens = [*shlex.split(command_text), *(bundle.get("args") or [])]
     extra_files: dict[str, str] = {}
     if bundle.get("mode") == "config":
         # A pod sees ONE bound volume, so the spec has to land under it or the
@@ -161,9 +231,17 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
                 "pod cannot read its spec"
             )
         extra_files[config_path] = content
+        config_path_for_command = config_path
         tokens = substitute_config_path(tokens, config_path)
 
-    command = " ".join(shlex.quote(token) for token in tokens)
+    if is_shell_script(command_text):
+        # The template runs this through `/bin/sh -c`, so the script goes in
+        # verbatim. Splitting and re-quoting each token would rewrite the
+        # script's own quoting and change what it means.
+        command = command_text.replace("{config_path}", config_path_for_command)
+        command += "".join(" " + shlex.quote(a) for a in (bundle.get("args") or []))
+    else:
+        command = " ".join(shlex.quote(token) for token in tokens)
     substitutions = {
         "JOB_NAME": job_id,
         "IMAGE": bundle["image"],
@@ -175,6 +253,19 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         # drops the quotes the template already supplies.
         "COMMAND": json.dumps(command)[1:-1],
         "MOUNT_PATH": mount_path,
+        # A pod sees ONE bound volume, so an input needing a fixed in-container
+        # path becomes an extra volumeMount of the SAME claim with a subPath --
+        # the claim-relative portion of its uri. That is how a single PVC can
+        # appear at both its natural location and, say, /tao-workspace.
+        "EXTRA_MOUNTS": "".join(
+            f'\n            - name: data'
+            f'\n              mountPath: "{item["target"]}"'
+            + (f'\n              subPath: "{_claim_relative(item["uri"], mount_path)}"'
+               if _claim_relative(item["uri"], mount_path) else "")
+            + ("" if item.get("writable") else '\n              readOnly: true')
+            for item in (bundle.get("declared_inputs") or [])
+            if item.get("target") and str(item["target"]) != str(item["uri"])
+        ),
         # Parity with docker's --user. A TAO image running as its own non-root
         # user cannot write a PVC owned by someone else; fsGroup makes the
         # mounted volume group-writable for the pod.
@@ -184,9 +275,11 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
             f'\n        fsGroup: {int(ctx.get("fs_group", ctx.get("gid", ctx["uid"])))}'
             if ctx.get("uid") is not None else ""
         ),
+        # Same default as docker's -w: the image WORKDIR is often root-owned
+        # (/workspace in cosmos-rl), and runAsUser alone does not fix a
+        # relative-path write into it.
         "WORKING_DIR": (
-            f'\n          workingDir: "{bundle["workdir"]}"'
-            if bundle.get("workdir") else ""
+            f'\n          workingDir: "{bundle.get("workdir") or results_dir}"'
         ),
         "RESULTS_DIR": results_dir,
         # Rendered as additional `env:` list entries at the same indentation as
