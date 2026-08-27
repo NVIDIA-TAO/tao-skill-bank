@@ -39,10 +39,23 @@ probe="$PREPARED_MODEL_PARENT/.tao-write-probe.$$"
 
 "$PYTHON" \
   "$TAO_SKILL_BANK_PATH/skills/models/tao-finetune-cosmos-reason/scripts/prepare_cosmos3_vlm_checkpoint.py" \
-  --checkpoint-path "$COSMOS3_SOURCE_DIR" \
+  --base-model-path-or-uri "$COSMOS3_SOURCE_DIR" \
   --output-path "$PREPARED_MODEL_HOST_PATH" \
-  --validate-with-image "$COSMOS_RL_IMAGE"
+  --cache-dir "$CONV_CACHE_DIR" \
+  --runtime-image "$COSMOS_RL_IMAGE" \
+  --runtime-image-digest "$COSMOS_RL_IMAGE_DIGEST"
 ```
+
+`--checkpoint-path` and `--validate-with-image` do not exist; the invocation
+above is the script's actual contract. Running the old form exits 2 with
+`the following arguments are required: --base-model-path-or-uri, --cache-dir,
+--runtime-image, --runtime-image-digest`, which names four flags at once and
+reads like a different script.
+
+`--vlm-architecture-model-path-or-uri` is optional and defaults to the Nano
+architecture model; pass it only for a non-default variant. When the converter
+module is absent from the runtime image, reuse a complete `qwen3_vl` PTM rather
+than converting.
 
 Confirm `$COSMOS3_SOURCE_DIR` exists before launching; that check costs nothing
 and saves several minutes plus a large cache write.

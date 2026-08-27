@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -767,4 +768,46 @@ def test_a_toml_spec_is_parsed_as_toml(tmp_path):
     bundle = json.loads(done.stdout)
     assert bundle["spec"] == {"train": {"epochs": 2, "use_lora": True}}, (
         f"parsed as {bundle['spec']!r}; a YAML read would give strings"
+    )
+
+
+def test_the_documented_checkpoint_prep_flags_exist():
+    """The reference named --checkpoint-path and --validate-with-image; the
+    script has neither, and the real invocation needs four flags it omitted.
+    Running the documented form exits 2."""
+    import argparse
+    script = (REPO / "skills/models/tao-finetune-cosmos-reason/scripts"
+              / "prepare_cosmos3_vlm_checkpoint.py").read_text(encoding="utf-8")
+    body = (C3_REFS / "cosmos-reason.md").read_text(encoding="utf-8")
+    # Scan the fenced INVOCATION, not the prose around it: the page names the
+    # two bogus flags in order to say they do not exist, and a guard that trips
+    # on that would forbid recording the mistake.
+    block = body.split("prepare_cosmos3_vlm_checkpoint.py", 1)[1].split("```", 1)[0]
+    documented = set(re.findall(r"--[a-z0-9][a-z0-9-]+", block))
+    declared = set(re.findall(r'add_argument\(\s*"(--[a-z0-9-]+)"', script))
+    # Flags the page tells you to pass must be flags the script accepts.
+    unknown = {f for f in documented if f.startswith("--") and f not in declared
+               and f not in {"--force"}}
+    assert not unknown, f"documented flags the script does not accept: {sorted(unknown)}"
+
+
+def test_the_required_checkpoint_prep_flags_are_all_documented():
+    script = (REPO / "skills/models/tao-finetune-cosmos-reason/scripts"
+              / "prepare_cosmos3_vlm_checkpoint.py").read_text(encoding="utf-8")
+    body = (C3_REFS / "cosmos-reason.md").read_text(encoding="utf-8")
+    required = set(re.findall(
+        r'add_argument\(\s*"(--[a-z0-9-]+)",\s*required=True', script))
+    missing = {flag for flag in required if flag not in body}
+    assert not missing, f"required flags absent from the documented call: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("skill", ["tao-run-deft-aoi", "tao-run-deft-aoi-cosmos3"])
+def test_sdg_mounts_the_clean_images_it_reads(skill):
+    """prep_testcase.sh resolves clean images and writes their paths into
+    testcase.jsonl; run_sdg.sh then opens them. The old `-v $WS:$WS` covered
+    that by mounting everything -- a bundle mounts only what it declares."""
+    module = _load(REPO / f"skills/applications/{skill}/scripts/stage_bundle.py",
+                   f"sdg_inputs_{skill}")
+    assert "clean_dir" in module.STAGES["anomalygen.sdg"]["inputs"], (
+        "SDG cannot read the clean images the JSONL points at"
     )

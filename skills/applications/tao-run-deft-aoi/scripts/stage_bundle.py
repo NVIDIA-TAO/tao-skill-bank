@@ -146,7 +146,14 @@ STAGES: dict[str, dict[str, Any]] = {
 
     "anomalygen.sdg": _stage(
         ANOMALYGEN, "bash -lc", gpus=1, mode="args",
-        inputs=("testcase_jsonl", "checkpoint_dir", "cosmos_models"),
+        # clean_dir is NOT a run_sdg.sh flag -- prep_testcase.sh owns
+        # --clean-dir and resolves the images, writing their paths into
+        # testcase.jsonl. SDG then READS those paths, so the directory holding
+        # them has to be mounted here too. The old `docker run -v $WS:$WS`
+        # covered it by mounting everything; a bundle mounts only what it
+        # declares, and a missing clean image is not a mount error -- SDG fails
+        # on a file it was told about by the JSONL.
+        inputs=("testcase_jsonl", "checkpoint_dir", "cosmos_models", "clean_dir"),
         outputs=("sdg_dir",),
         workdir="/workspace/paidf-anomalygen",
         targets={"cosmos_models": "/workspace/paidf-anomalygen/checkpoints"},
