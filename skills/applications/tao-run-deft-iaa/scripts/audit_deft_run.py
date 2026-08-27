@@ -31,7 +31,10 @@ from typing import Any
 
 import yaml
 
-from checkpoint_contract import validate_best_checkpoint
+from checkpoint_contract import (
+    checkpoint_lineage_started_ns,
+    validate_best_checkpoint,
+)
 from command_contract import (
     command_sha256,
     expected_container_command,
@@ -1802,11 +1805,13 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 )
                 if not isinstance(train_payload, dict):
                     raise ValueError("train command status root must be an object")
-                started_ns = train_payload.get("started_ns")
+                lineage_started_ns = checkpoint_lineage_started_ns(
+                    train_payload, state.get("started_at")
+                )
                 provenance = validate_best_checkpoint(
                     pathlib.Path(str(info.get("best_ckpt_path", ""))),
                     phase_root / "train",
-                    started_ns=started_ns,
+                    started_ns=lineage_started_ns,
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
                 errors.append(
