@@ -205,7 +205,7 @@ stage is next:
 
 | Stage | Reference | Required result |
 |---|---|---|
-| dataset setup | `references/data-layout.md` | verified rebuilt dataset, five split files, non-empty source-pool parquet |
+| dataset setup | `references/data-layout.md` | verified rebuilt dataset, transparent layout report, five split files, non-empty source-pool parquet |
 | pool embedding and mining | `references/mining.md` | fresh command evidence plus non-empty, schema-checked parquet outputs |
 | evaluate and train | `references/clip-train-eval.md`, `references/metric-contract.md` | successful TAO status, bound metric evidence; for train, a fresh best and normalized checkpoint |
 | gap analysis | `references/gap-analysis.md` | non-empty iteration-scoped gaps parquet |
