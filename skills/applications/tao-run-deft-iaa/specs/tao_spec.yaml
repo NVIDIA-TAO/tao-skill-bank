@@ -15,11 +15,12 @@ train:
   siglip_loss_mask_mode: none  # none or attribute_match_ignore
   triplet_loss_weight: 0.5  # set > 0 to enable triplet loss
   triplet_margin: 0.2
-  # Set num_gpus/gpu_ids to the shape approved in the Pre-Flight Summary;
-  # per-GPU batch_size is fixed, so world size multiplies the effective batch.
-  num_gpus: 1
+  # prepare_deft_config.py materializes the one approved GPU shape into each
+  # action that the workflow uses; this template carries no competing default.
+  # Per-GPU batch_size is fixed, so world size multiplies the effective batch.
+  num_gpus: ???
   num_nodes: 1
-  gpu_ids: [0]
+  gpu_ids: ???
   optim:
     optimizer_type: adamw  # adamw, lamb, or sgd
     vision_lr: 1.0e-7
@@ -71,15 +72,15 @@ evaluate:
   checkpoint: google/siglip2-so400m-patch16-256
   batch_size: 32
   num_workers: 8
-  num_gpus: 1
-  gpu_ids: [0]
+  num_gpus: ???
+  gpu_ids: ???
 
 inference:
   checkpoint: siglip2-so400m-patch16-256
   batch_size: 32
   num_workers: 8
-  num_gpus: 1
-  gpu_ids: [0]
+  num_gpus: ???
+  gpu_ids: ???
 
 export:
   checkpoint: ???

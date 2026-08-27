@@ -272,9 +272,10 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "gpu_ids": container_gpu_ids,
         }
     )
-    tao["evaluate"].update(
-        {"num_gpus": args.num_gpus, "gpu_ids": container_gpu_ids}
-    )
+    for action in ("evaluate", "inference"):
+        tao[action].update(
+            {"num_gpus": args.num_gpus, "gpu_ids": container_gpu_ids}
+        )
 
     _atomic_yaml(config_dir / "deft_config.yaml", deft)
     _atomic_yaml(config_dir / "tao_spec.yaml", tao)
