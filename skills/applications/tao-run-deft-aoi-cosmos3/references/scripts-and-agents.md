@@ -17,6 +17,7 @@ paths before invoking a script.
 | `validate_split_contract.py` | Enforce split isolation, monotonic generated-Train lineage, and Benchmark hash. |
 | `check_annotations.py` | Per-role field-contract check over all three workspace annotation files. `ROLE_CONTRACT` is the authoritative field list. |
 | `patch_eval_image_cap.py` | Source-classifies the selected image's evaluation cap, raises a recognized undersized literal, and returns the read-only mount only when required. |
+| `patch_eval_video_decoder.py` | Source-classifies the selected image's unconditional GPU video decoder registration and makes it opt-out via `TAO_SKIP_PYNV_VIDEO_DECODER=1` for this skill's video-free single-image records. |
 | `render_cfw_sft.py` | Render and validate the native Framework smoke/full Train profile. |
 | `submit_cfw_train.py` | Resolve the pinned Framework image and compose or execute the identity-preserving single-node Docker Train submission. |
 | `cfw_cr3_aoi_adapter.py` | Interim two-image ShareGPT dataset/processor mounted into the pinned Framework runtime. |

@@ -141,6 +141,15 @@ credential value.
   evaluation container only when it reports `patch_required`; no mount is
   needed for `already_sufficient` or `cap_absent`. An unrecognized cap/vLLM
   shape is a hard stop; see `references/cosmos-reason.md`.
+- Also before the first evaluate job, run `scripts/patch_eval_video_decoder.py`
+  against the same image. This skill's records are single-image and never
+  carry video, but `cosmos-rl`'s evaluator unconditionally registers a
+  PyNvVideoCodec GPU video decoder anyway, which hard-fails on GPUs with no
+  NVENC engine (e.g. H200). Mount its output read-only when it reports
+  `patch_required`, and pass `-e TAO_SKIP_PYNV_VIDEO_DECODER=1` to every
+  evaluate job; no mount is needed for `already_sufficient` or
+  `pattern_absent`. An unrecognized shape is a hard stop; see
+  `references/cosmos-reason.md`.
 - Workflow override: `automl_policy: off`. DEFT owns iteration and checkpoint
   selection; this is a workflow argument, not a TOML key.
 - Default adaptation: Framework-native VLM LoRA over language projections

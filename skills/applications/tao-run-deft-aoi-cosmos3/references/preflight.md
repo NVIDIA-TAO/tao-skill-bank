@@ -139,6 +139,16 @@ discovering them on the first GPU job. Training is unaffected:
   writing. After approval, run it with `--output-dir` and mount the emitted
   file only for `patch_required`. If it reports `classification=unknown`, the
   evaluator still references a changed cap/vLLM shape; hard-stop and verify it.
+- `scripts/patch_eval_video_decoder.py` reads the same `base.py` and reports
+  `patch_required`, `already_sufficient`, or `pattern_absent`: `cosmos-rl`
+  unconditionally registers a PyNvVideoCodec GPU video decoder even for this
+  skill's video-free single-image records, which hard-fails on a GPU with no
+  NVENC engine (e.g. H200) via `libnvidia-encode.so.1: cannot open shared
+  object file`. Use `--probe` here; after approval, run it with
+  `--output-dir`, mount the emitted file only for `patch_required`, and pass
+  `-e TAO_SKIP_PYNV_VIDEO_DECODER=1` to every evaluate job regardless of
+  patch outcome. If it reports `classification=unknown`, the evaluator still
+  references a changed decoder-registration shape; hard-stop and verify it.
 
 Probe the AnomalyGen assets read-only and report each as present or
 `WILL_AUTO_FETCH`: the fine-tuned checkpoint directory holding `ag_config.yaml`,

@@ -287,6 +287,50 @@ recognized literal, the script fails with `classification=unknown`; verify the
 new evaluator shape instead of guessing. Nothing is vendored into the skill,
 and Train jobs never need this mount.
 
+### Make the GPU video decoder registration optional
+
+`cosmos_rl/evaluation/base.py`'s `load_model()` unconditionally registers a
+PyNvVideoCodec-backed GPU video decoder before loading the model, even though
+this skill's bare OK/NG records are single-image and never carry video.
+`PyNvVideoCodec` dlopens both the NVIDIA encode and decode shared libraries at
+import time; on a GPU with no hardware video encoder (for example H200, which
+has no NVENC engine), `libnvidia-encode.so.1` does not exist and the whole
+evaluate job hard-fails with `RuntimeError: Failed to load NVENC library:
+libnvidia-encode.so.1: cannot open shared object file`, regardless of the fact
+that no video will ever be decoded. There is no config key or environment
+override for this in the source — the only accepted `vision.video_decoder`
+value is `"pynvvideocodec"`.
+
+Run this once per run, alongside the image-cap patch, before the first
+evaluate job:
+
+```bash
+"$PYTHON" "$SKILL_ROOT/scripts/patch_eval_video_decoder.py" \
+  --image "$COSMOS_RL_IMAGE" \
+  --output-dir "$RESULTS_DIR/patches/cosmos_rl_video_decoder" \
+  --summary "$RESULTS_DIR/patches/cosmos_rl_video_decoder/summary.json"
+```
+
+- `patch_required`: the recognized unconditional-registration block is
+  present; the script rewrites it to register the GPU decoder only when
+  `TAO_SKIP_PYNV_VIDEO_DECODER` is unset, and to skip it (logging why) when
+  the run sets `TAO_SKIP_PYNV_VIDEO_DECODER=1`. Add the printed
+  `MOUNT_ARG=<host>:<container>:ro` as a read-only mount, and pass
+  `-e TAO_SKIP_PYNV_VIDEO_DECODER=1` to every `cosmos-rl-evaluate` job this
+  single-image skill runs — a video-carrying workload on hardware that does
+  have NVENC/NVDEC would leave that variable unset and keep registering the
+  decoder exactly as before.
+- `already_sufficient`: the source is already conditioned on
+  `TAO_SKIP_PYNV_VIDEO_DECODER`; no file or mount.
+- `pattern_absent`: the source contains no GPU video decoder registration
+  block; no file or mount.
+
+If the source still references `register_pynv_video_reader` or
+`video_decoder` without the recognized block, the script fails with
+`classification=unknown`; verify the new evaluator shape instead of guessing.
+Nothing is vendored into the skill, and Train jobs never need this mount —
+Train's dataset never touches this evaluator module.
+
 The evaluator writes `results.json` with per-sample `video_id`, `response`,
 `question`, and `gt`. Run `analyze_gaps.py` afterward:
 
