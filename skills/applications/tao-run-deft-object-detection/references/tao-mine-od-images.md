@@ -51,7 +51,13 @@ it would need; tracked separately as a TAO DS request.
 
 ## Spec
 
-Write per-iteration under `${RESULTS_DIR}/iter${N}/mining/unique_neighbor_matching.yaml`:
+Write per-iteration under `${RESULTS_DIR}/iter${N}/mining/unique_neighbor_matching.yaml` — the invocation below reads it from
+`$MINE_SPEC`, so bind the two:
+
+```bash
+MINE_SPEC="${RESULTS_DIR}/iter${N}/mining/unique_neighbor_matching.yaml"
+```
+
 
 ```yaml
 source_path:            <config.source_pool_embeddings>

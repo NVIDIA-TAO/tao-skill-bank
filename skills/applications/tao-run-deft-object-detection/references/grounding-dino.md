@@ -117,8 +117,10 @@ nobody applies. They are therefore held in `assets/overlays/grounding_dino_infer
 and applied on every run:
 
 ```bash
+INFER_SPEC="${RESULTS_DIR}/<phase>/infer_grounding_dino.yaml"
+
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
-  --spec "${RESULTS_DIR}/<phase>/infer_grounding_dino.yaml" \
+  --spec "$INFER_SPEC" \
   --apply-workflow-defaults <skill_root>/assets/overlays/grounding_dino_inference.yaml \
   --set inference.checkpoint=<checkpoint> \
   --set inference.num_gpus="$NUM_GPUS" \
@@ -153,8 +155,8 @@ Nothing about this is enforced by TAO, so check it before every inference:
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/verify_class_contract.py \
-  --inference-spec "$GDINO_INFER_SPEC" \
-  --kpi-mapping "$KPI_CLASS_MAPPING" \
+  --inference-spec "$INFER_SPEC" \
+  --kpi-mapping "$CLASS_MAPPING" \
   --state "${RESULTS_DIR}/deft_state.json" \
   --labelmap "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json"
 ```
@@ -185,8 +187,12 @@ Wait on the labels, the same way training does — `results_dir` gains the actio
 so both the labels and `status.json` sit under `inference/`:
 
 ```bash
+LAUNCH_MARKER="${RESULTS_DIR}/<phase>/.inference_launched"
+mkdir -p "$(dirname "$LAUNCH_MARKER")" && touch "$LAUNCH_MARKER"
+# ... launch the container ...
+
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
-  --artifact "${RESULTS_DIR}/<phase>/inference/labels" \
+  --newer-than "$LAUNCH_MARKER" \
   --status-json "${RESULTS_DIR}/<phase>/inference/status.json" \
   --status-contains "finished successfully"
 ```
@@ -248,10 +254,14 @@ mkdir -p "$(dirname "$LAUNCH_MARKER")" && touch "$LAUNCH_MARKER"
 
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
   --newer-than "$LAUNCH_MARKER" \
-  --artifact "${RESULTS_DIR}/iter${N}/train/gdino_model_latest.pth" \
   --status-json "${RESULTS_DIR}/iter${N}/train/status.json" \
   --status-contains "finished successfully"
 ```
+
+`gdino_model_latest.pth` is deliberately not an `--artifact` here: training rewrites it
+at every checkpoint interval, so a wait naming it returns at the first interval and the
+stage is read as finished several epochs early. `status.json` is the only artifact that
+appears once, at the end.
 
 `results_dir` and `train.num_gpus` are Hydra overrides, not flags. Everything else must already be in the spec — do not add further overrides on the command line.
 
