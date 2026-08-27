@@ -41,6 +41,33 @@
     ]
   },
   {
+    "id": "tao-run-deft-iaa-plain-language-routing-stage-paraphrase",
+    "question": "I have product photos paired with textual attributes. Repeatedly identify the weakest retrieval attributes, mine additional image-caption pairs, retrain, and re-evaluate until validation plateaus. Do not run anything; in one line name which skill applies, or say NONE.",
+    "expected_skill": "tao-run-deft-iaa",
+    "expected_script": null,
+    "ground_truth": "Select tao-run-deft-iaa because the requested evaluate, attribute-gap, pair-mining, retrain, and re-evaluate cycle is the PAS/IAA DEFT workflow even though no internal workflow or model name appears.",
+    "expected_behavior": [
+      "Names tao-run-deft-iaa as the applicable skill",
+      "Uses the repeated retrieval evaluation, weak-attribute analysis, pair mining, and retraining cycle as the routing structure",
+      "Does not require the user to know CLIP, SigLIP, DEFT, IAA, or PAS terminology",
+      "Does not select one-shot tao-finetune-clip, tao-run-automl, or tao-run-deft-aoi",
+      "Does not run commands, scripts, containers, installs, web searches, audits, or other tools"
+    ]
+  },
+  {
+    "id": "tao-run-deft-iaa-plain-language-routing-kpi-paraphrase",
+    "question": "For this attribute-captioned person-search dataset, cycle through retrieval evaluation, hard-pair mining, and model updates until medium-query Rank-1 reaches 0.65 or four rounds finish. Do not run anything; in one line name which skill applies, or say NONE.",
+    "expected_skill": "tao-run-deft-iaa",
+    "expected_script": null,
+    "ground_truth": "Select tao-run-deft-iaa because attribute-captioned retrieval with repeated mining/training/evaluation and a retrieval-KPI or iteration stop is the PAS/IAA DEFT application contract.",
+    "expected_behavior": [
+      "Names tao-run-deft-iaa as the applicable skill",
+      "Recognizes the retrieval KPI and bounded repeated mining/training/evaluation loop",
+      "Does not treat the numeric target as generic HPO and does not infer AOI or PCB inspection",
+      "Does not run commands, scripts, containers, installs, web searches, audits, or other tools"
+    ]
+  },
+  {
     "id": "tao-run-deft-iaa-basic",
     "question": "A user says: \"Use the tao-run-deft-iaa skill to plan an IAA DEFT run.\" Identify the applicable skill and outline its documented workflow. This is a planning evaluation: do not run commands, scripts, containers, installs, web searches, audits, or any other tools.",
     "expected_skill": "tao-run-deft-iaa",

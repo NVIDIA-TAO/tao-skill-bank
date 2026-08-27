@@ -16,18 +16,34 @@ def _description(relative: str) -> str:
     return yaml.safe_load(text.split("---", 2)[1])["description"]
 
 
-def test_plain_language_iaa_signals_are_explicit_and_competitors_are_bounded():
+def test_iaa_routing_contract_is_structural_and_competitors_are_bounded():
     iaa = _description("skills/applications/tao-run-deft-iaa")
     aoi = _description("skills/applications/tao-run-deft-aoi")
     automl = _description("skills/applications/tao-run-automl")
     clip = _description("skills/models/tao-finetune-clip")
 
-    for signal in ("SigLIP2", "image retrieval", "attribute-labelled", "stops getting better"):
+    exact_bug_probe = (
+        "Improve my SigLIP2 image retrieval model on my attribute-labelled "
+        "dataset until it stops getting better."
+    )
+    assert exact_bug_probe not in iaa
+    for signal in (
+        "image-text retrieval",
+        "attribute-labelled",
+        "weak-attribute or caption-pair mining",
+        "repeated retraining",
+        "validation plateau",
+    ):
         assert signal in iaa
     assert "Do not use for CLIP / SigLIP" in aoi
     assert "belong to tao-run-deft-iaa" in automl
     assert "belongs to tao-run-deft-iaa" in clip
 
     orchestration = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    for signal in ("SigLIP2 image-retrieval", "attribute-labelled", "tao-run-deft-iaa"):
+    for signal in (
+        "image-text retrieval",
+        "attribute-labelled",
+        "evaluate, mine, retrain",
+        "tao-run-deft-iaa",
+    ):
         assert signal in orchestration
