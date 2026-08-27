@@ -188,6 +188,17 @@ def select_backend(*, model: str, action: str, backend: str = "auto", workload: 
             raise WorkflowError("backend must be cosmos-framework, cosmos-rl, or auto") from exc
     tier = model_tier(model)
     if selected == "auto":
+        if workload.replace("_", "-") == "deft-aoi":
+            action_contract = load_yaml(BACKEND_FILES["cosmos-framework"]).get("actions", {}).get(action, {})
+            if not action_contract.get("supported"):
+                raise WorkflowError(
+                    f"the DEFT AOI Framework route does not support {action}: "
+                    f"{action_contract.get('reason', 'unsupported')}"
+                )
+            return (
+                "cosmos-framework",
+                "DEFT AOI uses one Framework-native train/evaluate/inference and DCP handoff route",
+            )
         if tier == "edge":
             action_contract = load_yaml(BACKEND_FILES["cosmos-framework"]).get("actions", {}).get(action, {})
             if not action_contract.get("supported"):
@@ -1882,7 +1893,9 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--action", choices=sorted(SUPPORTED_ACTIONS), default="train")
     parser.add_argument("--backend", choices=("auto", "cosmos-framework", "cosmos-rl"), default="auto")
     parser.add_argument("--comparative", action="store_true")
-    parser.add_argument("--workload", choices=("training", "automl"), default="training")
+    parser.add_argument(
+        "--workload", choices=("training", "automl", "deft-aoi"), default="training"
+    )
     parser.add_argument("--dataset-family", choices=("auto", "video_conversation", "task_aware_video_reasoning"), default="auto")
     parser.add_argument("--platform", choices=("docker", "slurm"), default="slurm")
     parser.add_argument("--base-model-path-or-uri", default="")

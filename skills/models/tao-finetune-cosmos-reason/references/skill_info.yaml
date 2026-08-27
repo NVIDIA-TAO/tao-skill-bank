@@ -25,6 +25,9 @@ backend_selection:
     inference_microservice: cosmos-rl
     quantize: cosmos-rl
   rules:
+  - match: DEFT AOI train, evaluate, or inference
+    backend: cosmos-framework
+    rationale: one Framework-native action family owns direct HF input and DCP handoff
   - match: Cosmos3-Edge train
     backend: cosmos-framework
   - match: Cosmos3-Edge export, evaluate, inference, or inference_microservice

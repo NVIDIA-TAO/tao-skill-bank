@@ -162,7 +162,10 @@ def select_implementation_backend(
         defaults = policy.get("defaults", {}) if isinstance(policy, dict) else {}
         selected = str(defaults.get(action, "")).strip()
         reason = f"shared frontend default for {action}"
-        if workload in {"automl", "hpo"} and "cosmos-rl" in contracts:
+        if workload.replace("_", "-") == "deft-aoi" and "cosmos-framework" in contracts:
+            selected = "cosmos-framework"
+            reason = "DEFT AOI uses the Framework-native model and DCP action route"
+        elif workload in {"automl", "hpo"} and "cosmos-rl" in contracts:
             selected = "cosmos-rl"
             reason = "AutoML/HPO requires the Cosmos-RL train schema"
         if "edge" in requested_model.casefold() and "cosmos-framework" in contracts:

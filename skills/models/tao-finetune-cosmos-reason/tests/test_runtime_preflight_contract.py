@@ -18,6 +18,17 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+def test_deft_aoi_routes_all_model_actions_to_framework() -> None:
+    for action in ("train", "evaluate", "inference"):
+        backend, reason = MODULE.select_backend(
+            model="nvidia/Cosmos3-Nano",
+            action=action,
+            workload="deft-aoi",
+        )
+        assert backend == "cosmos-framework"
+        assert "DEFT AOI" in reason
+
+
 def _video_args() -> SimpleNamespace:
     return SimpleNamespace(
         dataset_family="video_conversation",

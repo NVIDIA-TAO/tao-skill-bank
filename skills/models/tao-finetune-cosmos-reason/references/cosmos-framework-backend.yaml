@@ -115,11 +115,9 @@ actions:
     command: python -m cosmos_framework.scripts.export_vlm_dcp
   evaluate:
     supported: true
-    implementation: tao_integration_adapter_after_verified_export
-    pre_action: export_if_framework_dcp
+    implementation: native_public_action_with_internal_dcp_materialization
     command: cosmos-framework-evaluate --config <config>
     execution_contract: evaluation_workflow.spec_bundle.execution
-    checkpoint_action_manifest: terminal_verified_required
     image_capability_attestation: baked_framework_evaluator_runtime_required
     video_runtime:
       profile: torchcodec-cuda-on-demand
@@ -135,8 +133,7 @@ actions:
       cosmos_rl_decoder_path: unchanged_and_not_selected
   inference:
     supported: true
-    implementation: tao_integration_adapter_after_verified_export
-    pre_action: export_if_framework_dcp
+    implementation: native_public_action_with_internal_dcp_materialization
     command: cosmos-framework-inference <arguments>
   inference_microservice:
     supported: true

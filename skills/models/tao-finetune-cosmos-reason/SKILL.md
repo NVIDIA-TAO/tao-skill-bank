@@ -81,6 +81,7 @@ Run `scripts/cosmos_workflow.py resolve` first.
 | Nano evaluate/inference/microservice with no explicit backend | Cosmos-RL |
 | Nano quantize | Cosmos-RL |
 | Cosmos3-Edge train/export/evaluate/inference/microservice | Cosmos Framework |
+| DEFT AOI train/evaluate/inference | Cosmos Framework |
 
 An explicit supported backend wins, so users can select Cosmos Framework for
 Nano training without changing model ownership. Comparative runs reject
@@ -88,6 +89,11 @@ Nano training without changing model ownership. Comparative runs reject
 Framework-trained checkpoints use the native exact-key exporter, then the
 repository-backed TAO evaluation adapter. That does not make Framework a
 Cosmos-RL version.
+
+The `deft-aoi` workload is an application-specific route: Train, Evaluate, and
+Inference select `cosmos-framework` so the local HF base and native DCP
+checkpoints remain within one action family. An explicit supported backend
+still wins. This rule does not change the generic training or AutoML defaults.
 
 ## Cosmos3-Nano checkpoint conversion
 
