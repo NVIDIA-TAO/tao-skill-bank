@@ -87,7 +87,11 @@ count against `max_iterations`.
    label.
 6. After RCA and Mining selection, run `assemble_training_json.py` without a
    seed for `iter1`, passing the mined records and — when AnomalyGen ran — the
-   synthetic records as separate `--new-json` inputs; together they become
+   synthetic records as separate `--new-json` inputs. Commit `assemble_data`
+   with BOTH `--combined-training <train_iter_N.json>` AND
+   `--mined-sharegpt <mined_sharegpt.json>` — commit_stage.py validates the
+   latter as a required JSON file, so omitting it fails the commit, not the
+   assembly. Together they become
    `train_iter_1.json`. Later iterations use `train_iter_<N-1>.json` as the
    seed and write `train_iter_<N>.json`. Dedupe by the two-image pair and
    exclude Proxy and Benchmark targets.

@@ -352,7 +352,11 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
             for arg in ("-e", f"{name}={value}")]
     env += [arg for name in ctx.get("env_passthrough") or [] for arg in ("-e", name)]
 
-    workdir = ["-w", bundle["workdir"]] if bundle.get("workdir") else []
+    # Default -w to the writable results mount. Images commonly ship a
+    # root-owned WORKDIR, and a workload writing relative paths ("./results")
+    # then dies with PermissionError -- cosmos-rl-evaluate does exactly this.
+    # A bundle that declares its own workdir still wins.
+    workdir = ["-w", bundle.get("workdir") or results_dir]
     # Docker's 64MB /dev/shm default is what makes this necessary; slurm and
     # kubernetes each solve it their own way, so it is rendered, not declared.
     shm = ["--shm-size", str(ctx.get("shm_size", "8g"))]

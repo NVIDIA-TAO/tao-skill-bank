@@ -811,3 +811,46 @@ def test_sdg_mounts_the_clean_images_it_reads(skill):
     assert "clean_dir" in module.STAGES["anomalygen.sdg"]["inputs"], (
         "SDG cannot read the clean images the JSONL points at"
     )
+
+
+# ── Workloads must start somewhere they can write ───────────────────────────
+# cosmos-rl-evaluate writes "./results" relative to its CWD. Images commonly
+# ship a root-owned WORKDIR (/workspace in cosmos-rl), so with runAsUser set the
+# stage dies with PermissionError: './results' -- runAsUser fixes ownership of
+# the MOUNTS, not of the image's own directories.
+
+def test_docker_defaults_the_workdir_to_the_results_mount(sb):
+    bundle = _script_train(sb)
+    assert not bundle.get("workdir"), "fixture drift: train now declares a workdir"
+    argv = _renderer("docker").render(bundle, _ctx("docker"))["argv"]
+    assert argv[argv.index("-w") + 1] == "/ws/results/base"
+
+
+def test_kubernetes_defaults_workingdir_to_the_results_mount(sb):
+    import yaml
+
+    rendered = _renderer("kubernetes").render(_script_train(sb), _ctx("kubernetes"))
+    doc = yaml.safe_load(next(iter(rendered["files"].values())))
+    assert doc["spec"]["template"]["spec"]["containers"][0]["workingDir"] == \
+        "/ws/results/base"
+
+
+def test_a_declared_workdir_still_wins(sb):
+    """anomalygen resolves its scripts relative to its own install dir."""
+    bundle = sb.build("anomalygen.amp",
+                      {"dataset_dir": "/ws/ds", "defect_spec": "/ws/ds/d.jsonl",
+                       "cosmos_models": "/ws/base"},
+                      results_dir="/ws/results/x", bank=REPO, args=["true"])
+    argv = _renderer("docker").render(bundle, _ctx("docker"))["argv"]
+    assert argv[argv.index("-w") + 1] == "/workspace/paidf-anomalygen"
+
+
+def test_force_reprepare_keeps_the_old_ptm_restorable():
+    """--force moved aside, not deleted: the reproduction can fail, and
+    deleting first turns a failed rerun into a lost checkpoint."""
+    script = (REPO / "skills/models/tao-finetune-cosmos-reason/scripts"
+              / "prepare_cosmos3_vlm_checkpoint.py").read_text(encoding="utf-8")
+    assert 'output.rename(stale_output)' in script
+    assert 'stale_output.rename(output)' in script, "no restore on failure"
+    assert script.index("output.rename(stale_output)") < \
+        script.index("subprocess.run(run_command"), "moved aside AFTER running"

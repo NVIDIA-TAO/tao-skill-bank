@@ -275,9 +275,11 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
             f'\n        fsGroup: {int(ctx.get("fs_group", ctx.get("gid", ctx["uid"])))}'
             if ctx.get("uid") is not None else ""
         ),
+        # Same default as docker's -w: the image WORKDIR is often root-owned
+        # (/workspace in cosmos-rl), and runAsUser alone does not fix a
+        # relative-path write into it.
         "WORKING_DIR": (
-            f'\n          workingDir: "{bundle["workdir"]}"'
-            if bundle.get("workdir") else ""
+            f'\n          workingDir: "{bundle.get("workdir") or results_dir}"'
         ),
         "RESULTS_DIR": results_dir,
         # Rendered as additional `env:` list entries at the same indentation as

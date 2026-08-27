@@ -43,6 +43,8 @@ probe="$PREPARED_MODEL_PARENT/.tao-write-probe.$$"
   --output-path "$PREPARED_MODEL_HOST_PATH" \
   --cache-dir "$CONV_CACHE_DIR" \
   --runtime-image "$COSMOS_RL_IMAGE" \
+  --base-model-revision "$COSMOS3_SOURCE_REVISION" \
+  --vlm-architecture-model-revision "$QWEN3_VL_ARCH_REVISION" \
   --runtime-image-digest "$COSMOS_RL_IMAGE_DIGEST"
 ```
 
@@ -53,9 +55,15 @@ above is the script's actual contract. Running the old form exits 2 with
 reads like a different script.
 
 `--vlm-architecture-model-path-or-uri` is optional and defaults to the Nano
-architecture model; pass it only for a non-default variant. When the converter
-module is absent from the runtime image, reuse a complete `qwen3_vl` PTM rather
-than converting.
+architecture model; pass it only for a non-default variant. The two
+`--*-revision` flags are passed through to `snapshot_download`, so an empty
+value resolves the repo's default branch — legal, but not reproducible. Resolve
+both to immutable revisions during preflight so a re-run converts the same
+weights. When the converter
+module is absent from the runtime image, first check whether the image ships a
+different converter entrypoint before assuming conversion is impossible, and
+only reuse a complete `qwen3_vl` PTM when that directory is intact and has
+provenance — a partial or unprovenanced PTM fails later, in training.
 
 Confirm `$COSMOS3_SOURCE_DIR` exists before launching; that check costs nothing
 and saves several minutes plus a large cache write.
