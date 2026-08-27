@@ -2,24 +2,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Lift the pinned Cosmos-RL image's 1-image-per-prompt evaluation cap.
+"""Classify and, when necessary, lift a Cosmos-RL evaluation image cap.
 
-`cosmos_rl/evaluation/base.py` hardcodes
+Affected `cosmos_rl/evaluation/base.py` versions hardcode
 ``limit_mm_per_prompt={"video": 1, "image": 1}`` when it builds the vLLM
 engine. The bare OK/NG contract mandates exactly two images per record
 ([AOI, golden_reference]), so evaluation fails with::
 
     ValueError: At most 1 image(s) may be provided in one prompt.
 
-There is no spec key and no environment override, and the rest of that file is
-already multi-image correct — only the cap is wrong.
+Those versions have no spec key or environment override, and the rest of that
+file is already multi-image correct — only the cap is wrong.
 
-This reads `base.py` **out of the image being used**, rewrites just that
-literal, and writes the result under the run's results directory. Nothing is
-vendored into the skill, so the patch tracks whatever image is pinned instead
-of silently masking a newer one. When the image no longer carries the defect
-the script emits nothing and exits 0, which is how the workaround retires
-itself.
+This reads `base.py` **out of the image being used** and classifies its source,
+independent of the image tag format. A recognized undersized literal is
+rewritten under the run's results directory. A sufficient literal or a source
+with neither the cap nor vLLM engine construction retires the workaround with
+an explicit no-patch verdict. An unrecognized cap/vLLM shape fails closed for
+manual verification.
 """
 
 from __future__ import annotations
@@ -37,6 +37,13 @@ CONTAINER_PATH = "/workspace/cosmos_rl_merged/cosmos_rl/evaluation/base.py"
 CAP_PATTERN = re.compile(
     r"(limit_mm_per_prompt\s*=\s*\{[^}]*?[\"']image[\"']\s*:\s*)(\d+)"
 )
+VLLM_EVIDENCE_PATTERN = re.compile(
+    r"(?:\bfrom\s+vllm\b|\bimport\s+vllm\b|\b(?:LLM|AsyncLLMEngine)\s*\()"
+)
+
+PATCH_REQUIRED = "patch_required"
+ALREADY_SUFFICIENT = "already_sufficient"
+CAP_ABSENT = "cap_absent"
 
 
 def read_from_image(image: str, container_path: str, *, docker: str) -> str:
@@ -101,6 +108,27 @@ def apply_cap(source: str, images: int) -> tuple[str, int]:
     return patched, current
 
 
+def classify_cap(source: str, images: int) -> tuple[str, int | None]:
+    """Return a source-driven verdict and the detected cap, if any."""
+    matches = CAP_PATTERN.findall(source)
+    if len(matches) > 1:
+        raise ValueError(
+            f"expected exactly one image cap, found {len(matches)}; "
+            "re-verify by hand rather than rewriting all of them"
+        )
+    if matches:
+        current = int(matches[0][1])
+        verdict = PATCH_REQUIRED if current < images else ALREADY_SUFFICIENT
+        return verdict, current
+    if "limit_mm_per_prompt" in source or VLLM_EVIDENCE_PATTERN.search(source):
+        raise ValueError(
+            "classification=unknown: the recognized image-cap literal is absent "
+            "but the evaluator still references limit_mm_per_prompt or vLLM; "
+            "verify the new source shape before evaluating"
+        )
+    return CAP_ABSENT, None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True, help="Pinned Cosmos-RL image URI.")
@@ -143,7 +171,10 @@ def main(argv: list[str] | None = None) -> int:
         source = read_from_image(
             args.image, args.container_path, docker=args.docker
         )
-        patched, current = apply_cap(source, args.images)
+        classification, current = classify_cap(source, args.images)
+        patched = None
+        if classification == PATCH_REQUIRED:
+            patched, _ = apply_cap(source, args.images)
     except (OSError, ValueError) as exc:
         print(f"patch_eval_image_cap: {exc}", file=sys.stderr)
         return 2
@@ -151,27 +182,31 @@ def main(argv: list[str] | None = None) -> int:
     summary = {
         "image": args.image,
         "container_path": args.container_path,
+        "classification": classification,
         "cap_in_image": current,
         "cap_required": args.images,
-        "patch_needed": current < args.images,
+        "patch_needed": classification == PATCH_REQUIRED,
     }
     if args.probe:
         # Read-only: preflight has to report this number before the approval
         # gate, and that gate forbids writing anything.
         summary["mount_argument"] = None
         print(
-            f"patch_eval_image_cap: cap_in_image={current} "
+            f"patch_eval_image_cap: classification={classification} "
+            f"cap_in_image={current if current is not None else 'none'} "
             f"cap_required={args.images} patch_needed={summary['patch_needed']}"
         )
-    elif current >= args.images:
-        # The image was fixed upstream. Emit no mount so the caller stops
-        # overriding a file it no longer needs to touch.
+    elif classification != PATCH_REQUIRED:
+        # No override is needed. Emit no mount so the caller does not replace
+        # a file whose source is already sufficient or not applicable.
         summary["mount_argument"] = None
-        print(
-            f"patch_eval_image_cap: {args.image} already allows {current} "
-            f"image(s) per prompt; no patch needed"
-        )
+        if classification == ALREADY_SUFFICIENT:
+            detail = f"already allows {current} image(s) per prompt"
+        else:
+            detail = "contains no image-cap literal or vLLM engine construction"
+        print(f"patch_eval_image_cap: {args.image} {detail}; no patch needed")
     else:
+        assert patched is not None
         args.output_dir.mkdir(parents=True, exist_ok=True)
         out = (args.output_dir / "base.py").resolve()
         out.write_text(patched)

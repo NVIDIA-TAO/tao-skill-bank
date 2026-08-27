@@ -112,10 +112,10 @@ direct forecast quality.
 
 | Parameter | Spec key | Default | Search range |
 |---|---|---|---|
-| Context length | `inference.seq_len` | `512` | `[128, 256, 512]` ordered_int |
-| Cross-channel | `inference.use_cross_channel` | `false` | `[true, false]` categorical |
-| Attention heads | `inference.cross_channel_heads` | `8` | `[4, 8, 16]` ordered_int |
-| Head dropout | `inference.cross_channel_dropout` | `0.1` | `[0.0, 0.1, 0.2]` |
+| Context length | `hpo.seq_len` | `512` | `[128, 256, 512]` ordered_int |
+| Cross-channel | `hpo.use_cross_channel` | `false` | `[true, false]` categorical |
+| Attention heads | `hpo.cross_channel_heads` | `8` | `[4, 8, 16]` ordered_int |
+| Head dropout | `hpo.cross_channel_dropout` | `0.1` | `[0.0, 0.1, 0.2]` |
 
 **Trial script template (basic):**
 
@@ -138,22 +138,23 @@ def main():
 
     cfg = yaml.safe_load(Path(args.run_config).read_text())
     ds  = cfg["dataset"]
-    inf = cfg["inference"]
+    inf = cfg["hpo"]
     out = Path(cfg.get("train", {}).get("output_dir", "artifacts/inference_hpo"))
     out.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_csv(ds["csv"], parse_dates=[ds.get("timestamp_col", "timestamp")])
-    df = df.set_index(ds.get("timestamp_col", "timestamp"))
+    ts_col = ds.get("timestamp_col", "timestamp")
+    df = pd.read_csv(ds["csv"], parse_dates=[ts_col])
     target_cols = [c.strip() for c in ds["target_cols"].split(",")] if ds.get("target_cols") else None
 
     horizon = inf["forecast_horizon"]
     if horizon <= 0 or horizon >= len(df):
-        raise ValueError(f"inference.forecast_horizon must be in [1, {len(df) - 1}], got {horizon}")
+        raise ValueError(f"hpo.forecast_horizon must be in [1, {len(df) - 1}], got {horizon}")
     df_input  = df.iloc[:-horizon]
     df_actual = df.iloc[-horizon:]
 
     result = perform_forecasting(
         df=df_input,
+        timestamp_column=ts_col,
         forecast_horizon=horizon,
         seq_len=inf.get("seq_len", 512),
         ckpt=inf.get("ckpt") or None,
@@ -203,14 +204,14 @@ result = runner.run(
         "dataset.csv":                "/path/to/eval_data.csv",
         "dataset.timestamp_col":      "timestamp",
         "dataset.target_cols":        "target",
-        "inference.forecast_horizon": 72,
+        "hpo.forecast_horizon": 72,
         "train.output_dir":           "automl_workspace/basic_hpo/trials",
     },
     hyperparameters={
-        "inference.seq_len":               {"type": "ordered_int", "values": [128, 256, 512]},
-        "inference.use_cross_channel":     {"type": "categorical", "values": [True, False]},
-        "inference.cross_channel_heads":   {"type": "ordered_int", "values": [4, 8, 16]},
-        "inference.cross_channel_dropout": {"type": "uniform",     "min": 0.0, "max": 0.2},
+        "hpo.seq_len":               {"type": "ordered_int", "values": [128, 256, 512]},
+        "hpo.use_cross_channel":     {"type": "categorical", "values": [True, False]},
+        "hpo.cross_channel_heads":   {"type": "ordered_int", "values": [4, 8, 16]},
+        "hpo.cross_channel_dropout": {"type": "uniform",     "min": 0.0, "max": 0.2},
     },
     workspace_path="automl_workspace/basic_hpo",
     execution={
@@ -224,9 +225,9 @@ result = runner.run(
 
 best = result["best"]
 print(f"Best val_mse: {best['metric_value']}")
-print(f"Best params: seq_len={best['specs']['inference.seq_len']}  "
-      f"use_cross_channel={best['specs']['inference.use_cross_channel']}  "
-      f"cross_channel_heads={best['specs']['inference.cross_channel_heads']}")
+print(f"Best params: seq_len={best['specs']['hpo.seq_len']}  "
+      f"use_cross_channel={best['specs']['hpo.use_cross_channel']}  "
+      f"cross_channel_heads={best['specs']['hpo.cross_channel_heads']}")
 ```
 
 #### DARR mode (tune blending parameters)
@@ -236,9 +237,9 @@ how much weight the retrieval signal gets versus the model's direct forecast.
 
 | Parameter | Spec key | Default | Search range |
 |---|---|---|---|
-| Blend weight | `inference.alpha` | `0.01` | `[0.001, 0.5]` |
-| kNN count | `inference.k` | `64` | `[8, 16, 32, 64, 128]` ordered_int |
-| Temperature | `inference.temperature` | `0.05` | `[0.01, 0.5]` |
+| Blend weight | `hpo.alpha` | `0.01` | `[0.001, 0.5]` |
+| kNN count | `hpo.k` | `64` | `[8, 16, 32, 64, 128]` ordered_int |
+| Temperature | `hpo.temperature` | `0.05` | `[0.01, 0.5]` |
 
 **Trial script template (DARR):**
 
@@ -261,25 +262,25 @@ def main():
 
     cfg = yaml.safe_load(Path(args.run_config).read_text())
     ds  = cfg["dataset"]
-    inf = cfg["inference"]
+    inf = cfg["hpo"]
     out = Path(cfg.get("train", {}).get("output_dir", "artifacts/inference_hpo"))
     out.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_csv(ds["csv"], parse_dates=[ds.get("timestamp_col", "timestamp")])
-    df = df.set_index(ds.get("timestamp_col", "timestamp"))
+    ts_col = ds.get("timestamp_col", "timestamp")
+    df = pd.read_csv(ds["csv"], parse_dates=[ts_col])
     target_cols = [c.strip() for c in ds["target_cols"].split(",")] if ds.get("target_cols") else None
 
     horizon = inf["forecast_horizon"]
     if horizon <= 0 or horizon >= len(df):
-        raise ValueError(f"inference.forecast_horizon must be in [1, {len(df) - 1}], got {horizon}")
+        raise ValueError(f"hpo.forecast_horizon must be in [1, {len(df) - 1}], got {horizon}")
     df_input  = df.iloc[:-horizon]
     df_actual = df.iloc[-horizon:]
 
-    context_df = pd.read_csv(ds["context_csv"], parse_dates=[ds.get("timestamp_col", "timestamp")])
-    context_df = context_df.set_index(ds.get("timestamp_col", "timestamp"))
+    context_df = pd.read_csv(ds["context_csv"], parse_dates=[ts_col])
 
     result = perform_forecasting(
         df=df_input,
+        timestamp_column=ts_col,
         context_df=context_df,
         forecast_horizon=horizon,
         seq_len=inf.get("seq_len", 512),
@@ -332,15 +333,15 @@ result = runner.run(
         "dataset.context_csv":        "/path/to/context_history.csv",
         "dataset.timestamp_col":      "timestamp",
         "dataset.target_cols":        "target",
-        "inference.forecast_horizon": 72,
-        "inference.seq_len":          512,
-        "inference.use_cross_channel": False,
+        "hpo.forecast_horizon": 72,
+        "hpo.seq_len":          512,
+        "hpo.use_cross_channel": False,
         "train.output_dir":           "automl_workspace/darr_hpo/trials",
     },
     hyperparameters={
-        "inference.alpha":       {"type": "uniform",     "min": 0.001, "max": 0.5},
-        "inference.k":           {"type": "ordered_int", "values": [8, 16, 32, 64, 128]},
-        "inference.temperature": {"type": "uniform",     "min": 0.01,  "max": 0.5},
+        "hpo.alpha":       {"type": "uniform",     "min": 0.001, "max": 0.5},
+        "hpo.k":           {"type": "ordered_int", "values": [8, 16, 32, 64, 128]},
+        "hpo.temperature": {"type": "uniform",     "min": 0.01,  "max": 0.5},
     },
     workspace_path="automl_workspace/darr_hpo",
     execution={
@@ -354,6 +355,6 @@ result = runner.run(
 
 best = result["best"]
 print(f"Best val_mse: {best['metric_value']}")
-print(f"Best DARR params: alpha={best['specs']['inference.alpha']}  "
-      f"k={best['specs']['inference.k']}  temp={best['specs']['inference.temperature']}")
+print(f"Best DARR params: alpha={best['specs']['hpo.alpha']}  "
+      f"k={best['specs']['hpo.k']}  temp={best['specs']['hpo.temperature']}")
 ```

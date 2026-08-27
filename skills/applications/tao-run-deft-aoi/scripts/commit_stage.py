@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import math
 import os
 import pathlib
 import re
@@ -20,8 +21,52 @@ import sys
 import tempfile
 from typing import Any
 
+RCA_ARTIFACT_MANIFEST = (
+    pathlib.Path(__file__).resolve().parents[1]
+    / "references"
+    / "rca-artifact-manifest.json"
+)
+
 from record_metric_result import commit as commit_metric_result
 from render_report import render as render_html_report
+
+
+class _CommitArgumentParser(argparse.ArgumentParser):
+    """Add guidance for the repeatable single-value RCA label flag."""
+
+    _argv: list[str]
+
+    def parse_args(
+        self,
+        args: list[str] | None = None,
+        namespace: argparse.Namespace | None = None,
+    ) -> argparse.Namespace:
+        self._argv = list(sys.argv[1:] if args is None else args)
+        return super().parse_args(self._argv, namespace)
+
+    def error(self, message: str) -> None:
+        if (
+            message.startswith("unrecognized arguments:")
+            and "--rca-target-defect" in getattr(self, "_argv", [])
+        ):
+            message += (
+                "\n--rca-target-defect accepts exactly one label per occurrence; "
+                "repeat the flag for each label"
+            )
+        super().error(message)
+
+
+def _rca_target_label(value: str) -> str:
+    label = value.strip()
+    if not label:
+        raise argparse.ArgumentTypeError(
+            "--rca-target-defect label must not be empty"
+        )
+    return label
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -83,6 +128,201 @@ def _required_file(path: pathlib.Path | None, name: str) -> str:
     if not expanded.is_file() or expanded.stat().st_size == 0:
         raise ValueError(f"{name} must be an existing non-empty file: {path}")
     return str(expanded.resolve())
+
+
+def _rca_manifest_entries(
+    manifest: dict[str, Any], class_name: str
+) -> list[dict[str, Any]]:
+    classes = manifest.get("artifact_classes")
+    entries = classes.get(class_name) if isinstance(classes, dict) else None
+    if not isinstance(entries, list) or not entries or not all(
+        isinstance(entry, dict) for entry in entries
+    ):
+        raise ValueError(
+            f"RCA artifact manifest {class_name} must be a non-empty array"
+        )
+    return entries
+
+
+def _rca_manifest_path(output_dir: pathlib.Path, entry: dict[str, Any]) -> pathlib.Path:
+    value = entry.get("path")
+    if not isinstance(value, str) or not value:
+        raise ValueError("RCA artifact manifest entry has no non-empty path")
+    relative = pathlib.Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"RCA artifact manifest path must be relative: {value}")
+    return output_dir / relative
+
+
+def _validate_rca_report(
+    report: pathlib.Path,
+    entry: dict[str, Any],
+    *,
+    unreachable: bool,
+) -> None:
+    validation = entry.get("validation")
+    headings = (
+        validation.get("required_headings")
+        if isinstance(validation, dict)
+        else None
+    )
+    if not isinstance(headings, list) or not all(
+        isinstance(heading, str) and heading for heading in headings
+    ):
+        raise ValueError("RCA report manifest must declare required_headings")
+    try:
+        text = report.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"--rca-report must be UTF-8 text: {report}") from exc
+    actual = [
+        re.sub(r"[^a-z0-9]+", " ", match.group(1).lower()).strip()
+        for match in re.finditer(
+            r"^##[ \t]+(?:[0-9]+\.[ \t]*)?(.+?)[ \t]*$",
+            text,
+            flags=re.MULTILINE,
+        )
+    ]
+    missing = [
+        heading
+        for heading in headings
+        if not any(
+            re.sub(r"[^a-z0-9]+", " ", heading.lower()).strip() in found
+            for found in actual
+        )
+    ]
+    if not missing:
+        return
+    abridged = validation.get("abridged_heading")
+    normalized_abridged = (
+        re.sub(r"[^a-z0-9]+", " ", abridged.lower()).strip()
+        if isinstance(abridged, str)
+        else ""
+    )
+    if unreachable and len(actual) == 1 and normalized_abridged in actual[0]:
+        body = re.split(r"^##[^\n]*$", text, maxsplit=1, flags=re.MULTILINE)
+        if len(body) == 2 and body[1].strip():
+            return
+        raise ValueError(
+            "abridged --rca-report must explain the unreachable KPI and "
+            "recommend retraining or relabeling"
+        )
+    suffix = (
+        f"; with unreachable_kpi.txt, use one '## {abridged}' section"
+        if unreachable and normalized_abridged
+        else ""
+    )
+    raise ValueError(
+        "--rca-report is missing required section heading(s): "
+        f"{', '.join(missing)}{suffix}; follow references/output-template.md"
+    )
+
+
+def _required_rca_artifacts(
+    gaps: pathlib.Path | None,
+    report: pathlib.Path | None,
+) -> dict[str, str]:
+    report_path = pathlib.Path(_required_file(report, "--rca-report"))
+    if report_path.name != "RCA_Report.md":
+        raise ValueError(
+            "--rca-report must name RCA_Report.md in the timestamped RCA output "
+            f"directory: {report_path}"
+        )
+    try:
+        manifest = json.loads(RCA_ARTIFACT_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"cannot load RCA artifact manifest: {RCA_ARTIFACT_MANIFEST} ({exc})"
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("RCA artifact manifest root must be an object")
+    output_dir = report_path.parent
+    report_entry = _rca_manifest_entries(
+        manifest, "agent_produced_required"
+    )[0]
+    expected_report = _rca_manifest_path(output_dir, report_entry).resolve()
+    if report_path != expected_report:
+        raise ValueError(f"--rca-report must point to {expected_report}")
+
+    failure = manifest.get("failure_artifact")
+    if not isinstance(failure, dict):
+        raise ValueError("RCA artifact manifest failure_artifact must be an object")
+    unreachable_path = _rca_manifest_path(output_dir, failure)
+    unreachable = unreachable_path.exists()
+    state_artifacts: dict[str, str] = {}
+    if unreachable:
+        state_field = failure.get("state_field")
+        if not isinstance(state_field, str) or not state_field:
+            raise ValueError("RCA failure artifact must declare state_field")
+        state_artifacts[state_field] = _required_file(
+            unreachable_path, "RCA artifact unreachable_kpi.txt"
+        )
+    else:
+        for entry in _rca_manifest_entries(
+            manifest, "container_produced_required"
+        ):
+            artifact = pathlib.Path(
+                _required_file(
+                    _rca_manifest_path(output_dir, entry),
+                    f"RCA artifact {entry.get('path')}",
+                )
+            )
+            if entry.get("validation") == "float_text":
+                try:
+                    value = float(artifact.read_text(encoding="utf-8").strip())
+                except (OSError, UnicodeDecodeError, ValueError) as exc:
+                    raise ValueError(
+                        f"RCA artifact must contain one numeric value: {artifact}"
+                    ) from exc
+                if not math.isfinite(value):
+                    raise ValueError(
+                        f"RCA artifact must contain one finite numeric value: {artifact}"
+                    )
+            state_field = entry.get("state_field")
+            if not isinstance(state_field, str) or not state_field:
+                raise ValueError(
+                    f"RCA artifact {entry.get('path')} must declare state_field"
+                )
+            state_artifacts[state_field] = str(artifact)
+        gaps_path = pathlib.Path(_required_file(gaps, "--rca-gaps"))
+        declared_gaps = state_artifacts.get("rca_gaps_parquet")
+        if gaps_path != pathlib.Path(str(declared_gaps)):
+            raise ValueError(
+                f"--rca-gaps must point to the manifest artifact: {declared_gaps}"
+            )
+
+    _validate_rca_report(report_path, report_entry, unreachable=unreachable)
+    report_field = report_entry.get("state_field")
+    if not isinstance(report_field, str) or not report_field:
+        raise ValueError("RCA report artifact must declare state_field")
+    state_artifacts[report_field] = str(report_path)
+
+    if not unreachable:
+        images_entry = _rca_manifest_entries(
+            manifest, "agent_produced_conditionally_required"
+        )[0]
+        images_dir = _rca_manifest_path(output_dir, images_entry)
+        if not images_dir.is_dir():
+            raise ValueError(
+                f"RCA artifact rca_images/ must be a directory: {images_dir}"
+            )
+        image_files = [
+            path
+            for path in images_dir.rglob("*")
+            if path.is_file()
+            and path.stat().st_size > 0
+            and path.suffix.lower()
+            in {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+        ]
+        if not image_files:
+            raise ValueError(
+                "RCA artifact rca_images/ must contain at least one non-empty "
+                f"image file: {images_dir}"
+            )
+        images_field = images_entry.get("state_field")
+        if not isinstance(images_field, str) or not images_field:
+            raise ValueError("RCA images artifact must declare state_field")
+        state_artifacts[images_field] = str(images_dir.resolve())
+    return state_artifacts
 
 
 def _parquet_row_count(path: str, name: str) -> int:
@@ -166,11 +406,13 @@ def _append_event(
         ),
         "iter": args.iter_label,
         "stage": args.stage,
-        "status": args.status,
+        "status": "skipped" if args.skip else args.status,
         "summary": args.summary,
         "duration_sec": args.duration_sec,
         "context_tokens": 0,
     }
+    if args.skip:
+        event["skip_reason"] = args.summary.strip()
     events.append(event)
     return event
 
@@ -204,11 +446,11 @@ def _apply_success(
                 f"{missing or ['status=complete']}"
             )
     elif stage == "rca":
-        phase["rca_gaps_parquet"] = _required_file(args.rca_gaps, "--rca-gaps")
+        phase.update(_required_rca_artifacts(args.rca_gaps, args.rca_report))
         if args.rca_threshold is not None:
             phase["rca_threshold"] = args.rca_threshold
         if args.rca_target_defect:
-            phase["rca_target_defects"] = args.rca_target_defect
+            phase["rca_target_defects"] = _ordered_unique(args.rca_target_defect)
     elif stage == "routing":
         phase["routing_mining_parquet"] = _required_file(
             args.routing_mining, "--routing-mining"
@@ -226,6 +468,7 @@ def _apply_success(
                     "anomalygen --skip requires routing_anomalygen_parquet with zero rows"
                 )
             phase["anomalygen_skipped"] = True
+            phase["anomalygen_skip_reason"] = args.summary.strip()
         else:
             phase["anomalygen_sdg_csv"] = _required_file(
                 args.anomalygen_sdg, "--anomalygen-sdg"
@@ -245,6 +488,7 @@ def _apply_success(
                     "data_mining --skip requires routing_mining_parquet with zero rows"
                 )
             phase["data_mining_skipped"] = True
+            phase["data_mining_skip_reason"] = args.summary.strip()
         else:
             phase_root = results_dir / iter_label
             mining_artifacts = {
@@ -320,16 +564,22 @@ def _apply_success(
 def commit(args: argparse.Namespace) -> dict[str, Any]:
     if not re.fullmatch(r"baseline|iter[1-9][0-9]*", args.iter_label):
         raise ValueError("--iter-label must be baseline or iterN (N >= 1)")
-    if (
-        not isinstance(args.duration_sec, int)
-        or isinstance(args.duration_sec, bool)
-        or args.duration_sec <= 0
-    ):
+    if not isinstance(args.duration_sec, int) or isinstance(args.duration_sec, bool):
+        raise ValueError(
+            "--duration-sec is required and must be a positive measured duration"
+        )
+    if args.skip and args.duration_sec < 0:
+        raise ValueError("--duration-sec must be >= 0 for a skipped stage")
+    if not args.skip and args.duration_sec <= 0:
         raise ValueError(
             "--duration-sec is required and must be a positive measured duration"
         )
     if args.skip and args.stage not in {"anomalygen", "data_mining"}:
         raise ValueError("--skip is valid only for anomalygen or data_mining")
+    if args.skip and args.status == "error":
+        raise ValueError("--skip and --status error are mutually exclusive")
+    if args.skip and not args.summary.strip():
+        raise ValueError("--summary must contain the reason for a skipped stage")
 
     results_dir = args.results_dir.expanduser().resolve()
     state_path = results_dir / "deft_state.json"
@@ -456,7 +706,15 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = _CommitArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog=(
+            "Repeatable RCA syntax: [--rca-target-defect <label>]...\n"
+            "Example: --rca-target-defect missing --rca-target-defect shift "
+            "--rca-target-defect lifted_lead"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--results-dir", required=True, type=pathlib.Path)
     parser.add_argument("--iter-label", required=True)
     parser.add_argument(
@@ -480,9 +738,16 @@ def _parser() -> argparse.ArgumentParser:
         "--duration-sec",
         required=True,
         type=int,
-        help="Measured wall-clock seconds for this stage; must be positive",
+        help="Measured wall-clock seconds; must be positive, or >= 0 with --skip",
     )
-    parser.add_argument("--skip", action="store_true")
+    parser.add_argument(
+        "--skip",
+        action="store_true",
+        help=(
+            "Record a documented skip with status=skipped and a skip reason. "
+            "Valid only for anomalygen or data_mining."
+        ),
+    )
     parser.add_argument("--best-ckpt", type=pathlib.Path)
     parser.add_argument("--best-ckpt-kind", choices=("best_val", "latest"))
     parser.add_argument("--training-spec", type=pathlib.Path)
@@ -491,8 +756,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--inference-csv", type=pathlib.Path)
     parser.add_argument("--threshold", type=float)
     parser.add_argument("--rca-gaps", type=pathlib.Path)
+    parser.add_argument(
+        "--rca-report",
+        type=pathlib.Path,
+        help="Required RCA_Report.md path for a successful RCA commit",
+    )
     parser.add_argument("--rca-threshold", type=float)
-    parser.add_argument("--rca-target-defect", action="append", default=[])
+    parser.add_argument(
+        "--rca-target-defect",
+        action="append",
+        default=[],
+        type=_rca_target_label,
+        metavar="<label>",
+        help="RCA target label; repeat this flag for each label",
+    )
     parser.add_argument("--routing-mining", type=pathlib.Path)
     parser.add_argument("--routing-anomalygen", type=pathlib.Path)
     parser.add_argument("--anomalygen-sdg", type=pathlib.Path)

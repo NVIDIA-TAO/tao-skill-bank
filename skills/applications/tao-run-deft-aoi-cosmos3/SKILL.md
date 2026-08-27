@@ -61,17 +61,15 @@ Treat a run as a disk-backed state machine.
 2. Ask which installed platform to use. Do not select Docker, SLURM,
    Kubernetes, Brev, virtualenv, or an external platform by default.
 3. Resolve network mode, then read exactly one of `references/air-gap.md` or
-   `references/network-bootstrap.md`. Run the selected platform skill's
-   Preflight and stop on a missing system/native-CLI prerequisite.
+   `references/network-bootstrap.md`. Run the selected platform's Preflight;
+   stop on a missing system prerequisite.
 4. Before any mutation or launch, invoke `tao-launch-workflow` and show its
    launch review plus this skill's Pre-Flight Summary. Wait for one explicit
    approval.
 5. After approval, initialize `${RESULTS_DIR}/deft_state.json` exactly once
-   with `scripts/init_deft_state.py`. Pass the exact GPU model reported by the
-   selected platform's Preflight through `--gpu-model` (include accelerator
-   memory when available), plus the resolved network mode/source and selected
-   absolute Python. Never reinitialize a resumed run or edit
-   `deft_state.json` by hand.
+   with `scripts/init_deft_state.py` — the Preflight-reported `--gpu-model`,
+   resolved network mode/source, and selected absolute Python. Never
+   reinitialize a resumed run or hand-edit `deft_state.json`.
 6. Before every stage, after context compaction, and before a completion claim,
    run `scripts/deft_context.py --state ... --stage ...`. Use its durable
    `next_stage` and the state file's `status`,
@@ -90,9 +88,10 @@ Treat a run as a disk-backed state machine.
 9. Commit every completed or failed DEFT stage with
    `scripts/commit_stage.py`. It verifies the stage inputs and atomically
    updates both the resume snapshot and ordered `events` array in state. Every
-   commit requires a positive, measured `--duration-sec`: use backend elapsed
-   wall time for submitted jobs and a host wall-clock timer for inline stages.
-   Missing or zero durations are rejected.
+   executed-stage commit requires a positive, measured `--duration-sec`: use
+   backend elapsed wall time for submitted jobs and a host wall-clock timer for
+   inline stages. A documented `--skip` may record `0`; negative durations are
+   always rejected.
 10. Claim completion only after `scripts/finalize_run.py` verifies final
    Benchmark evidence, successfully commits `loop_stop`, and a fresh
    read of `deft_state.json` shows `status == "complete"`,
@@ -124,31 +123,27 @@ credential value.
 - Keep the selected canonical ID as source-model lineage; `evaluated_model` may
   name the adapter path (see `references/pipeline-and-state.md`). Do not pass the
   native online checkpoint directly to Cosmos-RL.
-- The published Cosmos Reason 3 reasoners ship in Cosmos3's own native Omni
-  format (`model_type="cosmos3_omni"`), which Cosmos-RL cannot load. After
-  launch approval and before baseline evaluation, run the model skill's
-  `scripts/prepare_cosmos3_vlm_checkpoint.py` to convert the selected reasoner
-  into a Qwen3-VL safetensors PTM, or validate and reuse an existing prepared
-  output.
+- Published reasoners ship in native Omni format (`cosmos3_omni`), which
+  Cosmos-RL cannot load. After launch approval, run the model skill's
+  `scripts/prepare_cosmos3_vlm_checkpoint.py` to produce a Qwen3-VL safetensors
+  PTM, or validate and reuse an existing prepared output.
 - Use the prepared PTM consistently for zero-shot evaluation, Train
   `policy.model_name_or_path`, and LoRA `model.base_model_path`. The model
   being trained is still the selected Cosmos Reason 3 reasoner — keep its
   canonical ID as checkpoint lineage; the Qwen3-VL PTM is only the on-disk
   format Cosmos-RL consumes.
-- Nano may use the helper's packaged Qwen3-VL default. Edge and Super require
-  a variant-specific, validated VLM base; never reuse Nano's conversion
-  arguments.
-- Container image: resolve the `cosmos-rl` backend from
-  `tao-finetune-cosmos-reason/references/skill_info.yaml` with
-  `scripts/resolve_tao_image.py`; never copy a Cosmos image pin into this
-  application skill.
+- Nano may use the helper's packaged Qwen3-VL default; Edge and Super need a
+  variant-specific, validated VLM base — never reuse Nano's arguments.
+- Container image: resolve the `cosmos-rl` backend from the model skill's
+  `skill_info.yaml`; never copy a Cosmos image pin into this skill.
 - Train action: resolved by `scripts/stage_bundle.py` from the model skill's
   `cosmos-rl` backend contract. Never restate the hook path; see
   `references/stage-execution.md`.
-- The pinned image caps vLLM evaluation at one image per prompt, which this
-  two-image contract cannot satisfy. Run `scripts/patch_eval_image_cap.py`
-  before the first evaluate job and mount its output read-only into every
-  evaluation container; see `references/cosmos-reason.md`.
+- Before the first evaluate job, run `scripts/patch_eval_image_cap.py` to
+  source-classify the selected image. Mount its output read-only into every
+  evaluation container only when it reports `patch_required`; no mount is
+  needed for `already_sufficient` or `cap_absent`. An unrecognized cap/vLLM
+  shape is a hard stop; see `references/cosmos-reason.md`.
 - Workflow override: `automl_policy: off`. DEFT owns iteration and checkpoint
   selection; this is a workflow argument, not a TOML key.
 - Default adaptation: LoRA over the language-side projections
@@ -296,6 +291,9 @@ base model, which establishes the zero-shot KPI:
 3. `evaluate_proxy` — only when the gate is unmet.
 4. `proxy_rcca`
 
+Every `proxy_rcca` commit requires `--rcca-report`; the template, artifact
+requirements and state fields are in `references/pipeline-and-state.md` step 6.
+
 For each `iterN` when the frozen Benchmark gate is unmet:
 
 1. `routing` — derive mining targets from Proxy false accepts/rejects only.
@@ -307,7 +305,9 @@ For each `iterN` when the frozen Benchmark gate is unmet:
    `inference_only` mode, then turn each generated pair into a bare `NG`
    record with `scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
    the driving Proxy RCCA recorded zero false accepts, and even then generating
-   is often still worthwhile — see `references/tao-generate-anomalies.md`.
+   is often still worthwhile. The emitter accepts PAIDF 1.0.1 repo-root-relative
+   and documented output-dir-relative paths, with `--sdg-root` as an explicit
+   additional base — see `references/tao-generate-anomalies.md`.
 3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
    floor with `scripts/filter_mined_by_cosine.py`, then run the mapped skill's
    history-aware post-processing so a filepath selected by a prior iteration

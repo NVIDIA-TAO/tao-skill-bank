@@ -23,7 +23,8 @@ fi
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_parent=$(CDPATH= cd -- "$script_dir/../../../../.." && pwd)
 
-probe='import pandas,numpy,matplotlib,pyarrow,PIL,yaml'
+modules='pandas numpy matplotlib pyarrow PIL yaml'
+probe="import ${modules// /,}"
 candidates=(
   "${DEFT_PYTHON:-}"
   "${WORKSPACE_DIR:-}/.venv/bin/python"
@@ -49,7 +50,21 @@ for candidate in "${candidates[@]}"; do
 done
 
 if [ -z "$selected" ]; then
-  echo "deft_python: no installed Python provides pandas,numpy,matplotlib,pyarrow,PIL,yaml" >&2
+  echo "deft_python: no installed Python provides $modules" >&2
+  # Which modules each interpreter is short of, rather than the whole list every
+  # time: a report naming all six sends the reader after five that are present.
+  reported=
+  for candidate in "${candidates[@]}"; do
+    [ -n "$candidate" ] || continue
+    [ -x "$candidate" ] || continue
+    [ "$candidate" != "$script_dir/deft_python.sh" ] || continue
+    case " $reported " in *" $candidate "*) continue ;; esac
+    reported="$reported $candidate"
+    missing=$("$candidate" -c 'import importlib.util, sys
+print(" ".join(m for m in sys.argv[1:] if importlib.util.find_spec(m) is None))' \
+      $modules 2>/dev/null) || continue
+    [ -n "$missing" ] && echo "deft_python:   $candidate is missing: $missing" >&2
+  done
   echo "deft_python: provision dependencies outside this workflow; no installer will be run" >&2
   exit 2
 fi

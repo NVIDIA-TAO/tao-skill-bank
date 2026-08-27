@@ -69,6 +69,16 @@ The canonical workflow executes plain `clip train`, so there is no AutoML branch
 Never add `automl_policy`, `workflow`, or another orchestration key to a TAO
 YAML schema.
 
+## Attached driver lifecycle
+
+One driving agent owns the linear loop until the audit is terminal. Long stage
+updates are in-progress messages only: the agent continues polling, validates
+and commits the completed stage, re-audits, and starts the single next action
+without waiting for user input. Sending a final response while a stage or the
+audited loop is nonterminal is an explicit detach and is permitted only when
+the user requested it or the runtime cannot keep a turn alive. No timer or
+future poll can resume an ended chat turn.
+
 ## Container launch contract
 
 Always launch TAO through the wrapper, not an assembled `docker run`. It reads

@@ -499,42 +499,21 @@ def run(
 
 
 def detect_local_gpu_arches() -> list[str]:
-    if not shutil.which("nvidia-smi"):
+    ok, gpus = query_host_gpus(print_result=False)
+    if not ok:
         return []
-    result = run(
-        ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
-        timeout=20,
-    )
-    if result.returncode != 0:
-        return []
-    arches = []
-    for line in result.stdout.splitlines():
-        value = line.strip()
-        if not value:
-            continue
-        arches.append(normalize_gpu_arch(value))
-    return arches
+    return [gpu["sm"] for gpu in gpus if gpu.get("sm")]
 
 
 def detect_local_gpu_memory_gb() -> list[float]:
-    if not shutil.which("nvidia-smi"):
+    ok, gpus = query_host_gpus(print_result=False)
+    if not ok:
         return []
-    result = run(
-        ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-        timeout=20,
-    )
-    if result.returncode != 0:
-        return []
-    memory_gb = []
-    for line in result.stdout.splitlines():
-        value = line.strip()
-        if not value:
-            continue
-        try:
-            memory_gb.append(float(value) / 1024.0)
-        except ValueError:
-            continue
-    return memory_gb
+    return [
+        float(gpu["memory_mib"]) / 1024.0
+        for gpu in gpus
+        if gpu.get("memory_mib") is not None
+    ]
 
 
 def check_gpu_arch_allowlists(
@@ -1104,27 +1083,107 @@ def docker_runtimes() -> tuple[bool, set[str]]:
     return True, runtimes
 
 
-def parse_gpu_query_output(stdout: str, has_compute_cap: bool) -> list[dict[str, Any]]:
+def parse_gpu_query_output(
+    stdout: str, has_compute_cap: bool, *, has_uuid: bool = False
+) -> list[dict[str, Any]]:
     gpus: list[dict[str, Any]] = []
     for row in csv.reader(stdout.splitlines()):
-        if len(row) < 4:
+        minimum_columns = 5 if has_uuid else 4
+        if len(row) < minimum_columns:
             continue
+        offset = 1 if has_uuid else 0
         memory_mib = None
         try:
-            memory_mib = float(row[3].strip())
+            memory_mib = float(row[3 + offset].strip())
         except ValueError:
             pass
-        compute_cap = row[4].strip() if has_compute_cap and len(row) > 4 else ""
+        compute_cap_index = 4 + offset
+        compute_cap = (
+            row[compute_cap_index].strip()
+            if has_compute_cap and len(row) > compute_cap_index
+            else ""
+        )
         gpus.append(
             {
                 "index": row[0].strip(),
-                "name": row[1].strip(),
-                "driver_version": row[2].strip(),
+                "uuid": row[1].strip() if has_uuid else "",
+                "name": row[1 + offset].strip(),
+                "driver_version": row[2 + offset].strip(),
                 "memory_mib": memory_mib,
                 "sm": sm_from_compute_cap(compute_cap) if compute_cap else "",
             }
         )
     return gpus
+
+
+def filter_cuda_visible_gpus(
+    gpus: list[dict[str, Any]], raw_visibility: str | None
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Apply the launcher process's CUDA visibility contract to host inventory.
+
+    ``nvidia-smi`` intentionally reports physical inventory. CUDA workloads see
+    only ``CUDA_VISIBLE_DEVICES`` and renumber the selected devices densely, so
+    preflight must preserve both namespaces instead of treating inventory as
+    availability.
+    """
+    physical_count = len(gpus)
+    if raw_visibility is None:
+        visible = [dict(gpu, visible_index=str(index)) for index, gpu in enumerate(gpus)]
+        print(
+            "CUDA-visible GPU comparison: "
+            f"physical={physical_count}, visible={len(visible)}, "
+            "source=unrestricted"
+        )
+        return True, visible
+
+    raw = raw_visibility.strip()
+    if not raw or raw == "-1":
+        print(
+            "CUDA-visible GPU comparison: "
+            f"physical={physical_count}, visible=0, source=CUDA_VISIBLE_DEVICES"
+        )
+        return False, []
+
+    tokens = [token.strip() for token in raw.split(",")]
+    if any(not token for token in tokens):
+        print("CUDA_VISIBLE_DEVICES is invalid: empty device token")
+        return False, []
+
+    by_index = {str(gpu.get("index")): gpu for gpu in gpus}
+    selected: list[dict[str, Any]] = []
+    selected_host_ids: set[str] = set()
+    for token in tokens:
+        match = by_index.get(token) if token.isdigit() else None
+        if match is None and token.upper().startswith("GPU-"):
+            candidates = [
+                gpu
+                for gpu in gpus
+                if str(gpu.get("uuid", "")).upper().startswith(token.upper())
+            ]
+            if len(candidates) == 1:
+                match = candidates[0]
+        if match is None:
+            print(
+                "CUDA_VISIBLE_DEVICES cannot be resolved against host inventory: "
+                f"token={token!r}"
+            )
+            return False, []
+        host_id = str(match.get("index"))
+        if host_id in selected_host_ids:
+            print(
+                "CUDA_VISIBLE_DEVICES selects the same host GPU more than once: "
+                f"index={host_id}"
+            )
+            return False, []
+        selected_host_ids.add(host_id)
+        selected.append(dict(match, visible_index=str(len(selected))))
+
+    print(
+        "CUDA-visible GPU comparison: "
+        f"physical={physical_count}, visible={len(selected)}, "
+        "source=CUDA_VISIBLE_DEVICES"
+    )
+    return True, selected
 
 
 def print_gpus(gpus: list[dict[str, Any]], prefix: str = "Host GPU OK") -> None:
@@ -1139,14 +1198,14 @@ def print_gpus(gpus: list[dict[str, Any]], prefix: str = "Host GPU OK") -> None:
         )
 
 
-def query_host_gpus() -> tuple[bool, list[dict[str, Any]]]:
+def query_host_gpus(*, print_result: bool = True) -> tuple[bool, list[dict[str, Any]]]:
     if not shutil.which("nvidia-smi"):
         print("nvidia-smi not found on host PATH")
         return False, []
 
     command = [
         "nvidia-smi",
-        "--query-gpu=index,name,driver_version,memory.total,compute_cap",
+        "--query-gpu=index,uuid,name,driver_version,memory.total,compute_cap",
         "--format=csv,noheader,nounits",
     ]
     result = run(command, timeout=20)
@@ -1154,7 +1213,7 @@ def query_host_gpus() -> tuple[bool, list[dict[str, Any]]]:
     if not has_compute_cap:
         command = [
             "nvidia-smi",
-            "--query-gpu=index,name,driver_version,memory.total",
+            "--query-gpu=index,uuid,name,driver_version,memory.total",
             "--format=csv,noheader,nounits",
         ]
         result = run(command, timeout=20)
@@ -1162,12 +1221,16 @@ def query_host_gpus() -> tuple[bool, list[dict[str, Any]]]:
         print(f"nvidia-smi GPU query failed: {command_detail(result)}")
         return False, []
 
-    gpus = parse_gpu_query_output(result.stdout, has_compute_cap)
+    gpus = parse_gpu_query_output(result.stdout, has_compute_cap, has_uuid=True)
     if not gpus:
         print("nvidia-smi did not report any GPUs")
         return False, []
-    print_gpus(gpus)
-    return True, gpus
+    visibility_ok, visible_gpus = filter_cuda_visible_gpus(
+        gpus, os.environ.get("CUDA_VISIBLE_DEVICES")
+    )
+    if print_result and visibility_ok:
+        print_gpus(visible_gpus)
+    return visibility_ok, visible_gpus
 
 
 def query_docker_gpus(
@@ -1724,6 +1787,7 @@ def check_local_docker(
     target_gpu_indices: list[str],
 ) -> bool:
     ok = True
+    effective_target_gpu_indices = list(target_gpu_indices)
     docker_host = os.environ.get("DOCKER_HOST")
     remote_docker = docker_host_is_remote(docker_host)
     if require_remote_docker and not remote_docker:
@@ -1765,6 +1829,8 @@ def check_local_docker(
                 gpu_ok, gpus = query_host_gpus()
                 selection_ok, gpus = filter_target_gpus(gpus, target_gpu_indices)
                 gpu_ok = gpu_ok and selection_ok
+                if gpu_ok and not effective_target_gpu_indices:
+                    effective_target_gpu_indices = [str(gpu["index"]) for gpu in gpus]
             ok = gpu_ok and ok
             if gpu_ok:
                 ok = (
@@ -1783,15 +1849,20 @@ def check_local_docker(
                     )
                     and ok
                 )
-            ok = (
-                check_docker_gpu_smoke(
-                    container_image,
-                    gpu_smoke_image,
-                    pull_smoke_image,
-                    target_gpu_indices,
+            if gpu_ok:
+                ok = (
+                    check_docker_gpu_smoke(
+                        container_image,
+                        gpu_smoke_image,
+                        pull_smoke_image,
+                        effective_target_gpu_indices,
+                    )
+                    and ok
                 )
-                and ok
-            )
+            else:
+                print(
+                    "Docker GPU smoke skipped: effective GPU allocation failed validation"
+                )
 
     for label, raw_path in paths:
         path = normalize_local_path(raw_path)

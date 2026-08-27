@@ -4,7 +4,7 @@ description: Extract false-positive and false-negative gaps from VLM binary-clas
   Use when the user asks to "analyze VLM BCQ gaps", "extract VLM false positives and false negatives", or identify failure
   cases from a predictions JSON for DEFT root-cause analysis on a binary-classification VLM workflow.
 license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit.
+compatibility: Requires Docker, NVIDIA Container Toolkit, and one visible GPU.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -61,6 +61,11 @@ Invoke the `vlm_bcq` action inside the TAO Toolkit data services container with 
 ```bash
 gap_analysis vlm_bcq -e /path/to/vlm_bcq_spec.yaml
 ```
+
+Request exactly one GPU from the selected platform (`compute_shape.gpus: 1`,
+`compute_shape.nodes: 1`). VLM BCQ gap analysis does not perform GPU compute,
+but the Data Services image always calls `nvidia-smi` and fails when no GPU is
+visible. One is a GPU count, not a device ID; the platform selects the device.
 
 After the run, surface the FP/FN counts from `kpi_gaps_report.txt` and point downstream stages at `kpi_gaps.jsonl`.
 

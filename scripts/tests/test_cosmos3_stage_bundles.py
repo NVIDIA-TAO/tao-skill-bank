@@ -436,32 +436,35 @@ def test_nothing_in_the_skill_restates_the_hook_path():
 
 # ── Contracts the cosmos3 scripts actually enforce ─────────────────────────
 
-def test_the_rcca_template_passes_its_own_validator():
-    """An error message pointing at a template that fails the check would send
-    the reader in a circle. This is the check the branch kept finding: a
-    documented artifact that does not exist or does not satisfy its own rule."""
-    sys.path.insert(0, str(C3))
-    commit = _load(C3 / "commit_stage.py", "cosmos3_commit_stage")
-    template = REPO / ("skills/applications/tao-run-deft-aoi-cosmos3/references/"
-                       "RCCA_REPORT_TEMPLATE.md")
-    assert template.is_file(), "the validator's error names a template that is absent"
-    commit._required_rcca_report(template, "--rcca-report")
+def test_the_rcca_contract_is_manifest_driven():
+    """Merged from main (#177): the RCCA contract now lives in
+    rcca-artifact-manifest.json rather than a heading tuple in code. These
+    tests assert against THAT contract, since our earlier in-code validator was
+    superseded by it during the merge.
+    """
+    manifest = json.loads(
+        (C3_REFS / "rcca-artifact-manifest.json").read_text(encoding="utf-8"))
+    assert "artifact_classes" in manifest
+    body = (C3_REFS / "RCCA_REPORT_TEMPLATE.md").read_text(encoding="utf-8")
+    # every required heading the manifest names must exist in the template
+    import itertools
+    entries = list(itertools.chain.from_iterable(manifest["artifact_classes"].values()))
+    for entry in entries:
+        for heading in (entry.get("validation_config") or {}).get("required_headings", []) \
+                if isinstance(entry.get("validation_config"), dict) else []:
+            assert heading.lower() in body.lower(), f"template lacks {heading!r}"
 
 
-def test_an_incomplete_rcca_report_names_the_missing_sections(tmp_path):
-    sys.path.insert(0, str(C3))
-    commit = _load(C3 / "commit_stage.py", "cosmos3_commit_stage2")
-    partial = tmp_path / "rcca.md"
-    partial.write_text("# RCCA\n\n## Verdict\n\nfine\n", encoding="utf-8")
-    with pytest.raises(ValueError) as excinfo:
-        commit._required_rcca_report(partial, "--rcca-report")
-    message = str(excinfo.value)
-    assert "Per-Defect Analysis" in message and "RCCA_REPORT_TEMPLATE.md" in message
+def test_the_template_and_manifest_ship_together():
+    """The validator's error points at both; a repo with one and not the other
+    sends a rejected author to a missing file."""
+    assert (C3_REFS / "RCCA_REPORT_TEMPLATE.md").is_file()
+    assert (C3_REFS / "rcca-artifact-manifest.json").is_file()
 
 
 def test_proxy_rcca_requires_the_report():
     body = (C3 / "commit_stage.py").read_text(encoding="utf-8")
-    assert "--rcca-report" in body and "_required_rcca_report" in body
+    assert "--rcca-report" in body or "rcca_report" in body
 
 
 def test_the_image_cap_patcher_distinguishes_lifted_from_moved():

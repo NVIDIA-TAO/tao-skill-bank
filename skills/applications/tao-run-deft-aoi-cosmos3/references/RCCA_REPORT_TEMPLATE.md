@@ -1,52 +1,41 @@
-# RCCA Report — `<run>` / `<iteration>`
+# Cosmos3 Proxy RCCA Report: `<baseline|iterN>`
 
-Template for the Proxy RCCA report that `commit_stage.py --rcca-report`
-validates. Every `##` heading below is **required**: the validator checks for
-each by name and refuses the commit if one is missing, because a report that
-silently drops a section reads as complete while hiding the analysis the next
-iteration's routing depends on.
+Build this report from `gaps_summary.json`, `false_accepts.json`, and
+`false_rejects.json`. Replace the guidance below with concrete evidence before
+committing `proxy_rcca`. The machine-readable artifact and heading contract is
+`references/rcca-artifact-manifest.json`.
 
-Keep the headings verbatim. Everything under them is yours.
+## 1. Verdict
 
----
+State KPI reachability, Proxy accuracy/RCCA numbers, and the headline finding.
 
-## Verdict
+## 2. False-Accept Breakdown
 
-One paragraph: did this iteration's Proxy evaluation meet the KPI, and if not,
-what is the dominant failure mode. State the metric and the target, not an
-impression.
+Summarize counts and share by defect type from `false_accepts.json`.
 
-> Example: `recall_ng=0.94` against a target of `1.00`. The gap is dominated by
-> false rejects on `PCB+bridge`, not by a uniform drop across defects.
+| Defect type | Count | Share |
+|---|---:|---:|
+| `<type>` | `<count>` | `<percent>` |
 
-## False-Accept Breakdown
+## 3. False-Reject Breakdown
 
-NG records the model called OK. Group by defect type and by any structural
-attribute that separates them (board, lighting, component class). A count with
-no grouping is not a breakdown.
+Summarize counts and share by defect type from `false_rejects.json`.
 
-## False-Reject Breakdown
+| Defect type | Count | Share |
+|---|---:|---:|
+| `<type>` | `<count>` | `<percent>` |
 
-OK records the model called NG. Same grouping. These usually matter more for the
-AOI KPI, since the contract is recall-first — say so explicitly when the two
-directions disagree about where the model is weak.
+## 4. Top-K Worst Samples
 
-## Top-K Worst Samples
+List the worst sample IDs and explain why each is high priority.
 
-The individual records that most influenced the verdict, with their paths under
-`${RESULTS_DIR}`, so a reader can look at the images rather than trust the
-summary. Include the model's response verbatim; a response that is neither `OK`
-nor `NG` is a finding in itself, not a miscount.
+## 5. Per-Defect Analysis
 
-## Per-Defect Analysis
+| Defect type | False accepts | False rejects | RCCA finding |
+|---|---:|---:|---|
+| `<type>` | `<count>` | `<count>` | `<finding>` |
 
-One subsection per defect type present in the annotation set. For each: how many
-records, how many wrong, and whether the errors cluster. A defect with too few
-records to conclude anything should say that rather than report a rate.
+## 6. Recommended Actions
 
-## Recommended Actions
-
-What the next iteration should do, tied to the evidence above: which defects to
-route to mining, which to AnomalyGen, and which to leave alone. Say when the
-evidence does not support acting — an empty recommendation with a reason is a
-valid outcome, and `anomalygen --skip` requires exactly that proof.
+Name concrete mining targets and SDG defect/count targets for the next
+iteration.

@@ -6,6 +6,11 @@
 
 Polls for whichever condition is given:
 
+The first condition that holds ends the wait. So an ``--artifact`` the stage creates
+while starting up — an output directory, a labels directory — ends it immediately and
+the stage reads as finished when it has barely begun. Name only artifacts that appear
+on success; when the outputs appear before completion, wait on ``--status-json`` alone.
+
 * ``--artifact`` — a path the stage writes on success. A checkpoint symlink counts
   only once it resolves, so a dangling link is not mistaken for completion.
 * ``--status-json`` with ``--status-contains`` — TAO writes one JSON object per
@@ -86,7 +91,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--artifact", action="append", default=[],
-                        help="Path the stage writes on success. Repeatable; any one ends "
+                        help="Path the stage writes ON SUCCESS -- not one it creates while "
+                             "starting. Any one ending the wait is the point, so a directory "
+                             "the stage opens up front (an output dir, a labels dir) ends it "
+                             "immediately and the stage reads as finished when it has barely "
+                             "begun. When outputs appear before completion, wait on "
+                             "--status-json alone. Repeatable; any one ends "
                              "the wait.")
     parser.add_argument("--status-json", default=None,
                         help="TAO status.json to watch (JSON-lines).")
