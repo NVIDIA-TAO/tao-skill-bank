@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Regression tests for IAA DEFT GPU inventory and selection."""
+"""Regression tests for IAA DEFT GPU-shape materialization."""
 
 import json
 import subprocess
@@ -19,7 +19,7 @@ PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"
 DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"
 
 
-def _base_args(tmp_path: Path, selected: str, visible: str):
+def _base_args(tmp_path: Path, selected: str):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     images = tmp_path / "images_raw.tar"
@@ -47,15 +47,13 @@ def _base_args(tmp_path: Path, selected: str, visible: str):
         str(len(selected.split(","))),
         "--gpu-ids",
         selected,
-        "--visible-gpu-ids",
-        visible,
     ]
     return args, workspace, results, dataset, images, metadata
 
 
-def test_selected_gpu_shape_is_materialized_once_and_inventory_is_recorded(tmp_path):
+def test_selected_host_gpu_shape_is_materialized_as_dense_container_ordinals(tmp_path):
     args, workspace, results, dataset, images, metadata = _base_args(
-        tmp_path, "0,2", "0,1,2,3,4,5,6,7"
+        tmp_path, "2,3"
     )
     prepared = subprocess.run(args, check=True, capture_output=True, text=True)
     report = json.loads(prepared.stdout)
@@ -63,12 +61,13 @@ def test_selected_gpu_shape_is_materialized_once_and_inventory_is_recorded(tmp_p
     spec = yaml.safe_load((results / "config/tao_spec.yaml").read_text())
     template = yaml.safe_load((IAA_ROOT / "specs/tao_spec.yaml").read_text())
 
-    assert report["gpu_ids"] == [0, 2]
-    assert report["visible_gpu_count"] == 8
-    assert approval["visible_gpu_ids"] == list(range(8))
-    assert spec["train"]["gpu_ids"] == [0, 2]
-    assert spec["evaluate"]["gpu_ids"] == [0, 2]
-    assert spec["inference"]["gpu_ids"] == [0, 2]
+    assert report["gpu_ids"] == [2, 3]
+    assert report["container_gpu_ids"] == [0, 1]
+    assert approval["host_gpu_ids"] == [2, 3]
+    assert approval["container_gpu_ids"] == [0, 1]
+    assert spec["train"]["gpu_ids"] == [0, 1]
+    assert spec["evaluate"]["gpu_ids"] == [0, 1]
+    assert spec["inference"]["gpu_ids"] == [0, 1]
     assert spec["inference"]["num_gpus"] == 2
     assert template["train"]["num_gpus"] == "???"
     assert template["evaluate"]["gpu_ids"] == "???"
@@ -105,14 +104,13 @@ def test_selected_gpu_shape_is_materialized_once_and_inventory_is_recorded(tmp_p
     )
     assert initialized.returncode == 0
     state = json.loads((results / "deft_state.json").read_text())
-    assert state["config"]["visible_gpu_ids"] == list(range(8))
-    assert state["config"]["visible_gpu_count"] == 8
-    assert state["config"]["gpu_ids"] == [0, 2]
+    assert state["config"]["gpu_ids"] == [2, 3]
+    assert state["config"]["container_gpu_ids"] == [0, 1]
 
 
-def test_selection_rejects_gpu_absent_from_host_inventory(tmp_path):
-    args, *_ = _base_args(tmp_path, "0,4", "0,1,2,3")
+def test_selection_rejects_duplicate_host_gpu_ids(tmp_path):
+    args, *_ = _base_args(tmp_path, "2,2")
     result = subprocess.run(args, capture_output=True, text=True)
 
     assert result.returncode == 2
-    assert "absent from --visible-gpu-ids: 4" in result.stderr
+    assert "distinct non-negative IDs" in result.stderr
