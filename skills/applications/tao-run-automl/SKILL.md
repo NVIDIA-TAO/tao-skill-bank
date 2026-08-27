@@ -340,20 +340,14 @@ result = runner.run(
 )
 ```
 
-Every fresh run must set `automl_settings["session_id"]` explicitly. Generate
-it once with `scripts/resolve_automl_session.py new` and retain it in the sealed
-runner configuration. Never rely on the wheel's random per-process default.
-
-Only resume an existing workspace when the user explicitly asks to resume,
-continue, recover, or inspect an existing experiment. Treat a plain "run
-AutoML" request as a fresh run. Before `resume=True`, recover the session with
-`scripts/resolve_automl_session.py resolve --workspace <full-run-path>` and put
-that value in `automl_settings["session_id"]`. The helper deliberately fails
-when state is missing or multiple controller files make the workspace
-ambiguous; do not launch until the intended state is proven. Read the resume
-section of `references/automl-advanced-monitoring.md` for the complete pattern.
-The `validate_session_settings` call above is mandatory for both fresh and
-resumed runs; a prose reminder is not a substitute for that executable gate.
+Set `automl_settings["session_id"]` explicitly and call
+`validate_session_settings` before every run. Generate a fresh ID once with
+`scripts/resolve_automl_session.py new`. Resume only when explicitly requested;
+resolve its controller with
+`scripts/resolve_automl_session.py resolve --workspace <full-run-path>`.
+Missing or ambiguous state is a blocker. See the
+resume section of `references/automl-advanced-monitoring.md` for the complete
+fresh/resume pattern.
 
 ## Monitoring
 
