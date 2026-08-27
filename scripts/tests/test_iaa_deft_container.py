@@ -3,6 +3,7 @@
 
 """Focused tests for IAA DEFT host/container GPU scoping."""
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -49,8 +50,12 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
             str(dataset),
             "--images-archive",
             str(images_archive),
+            "--images-archive-sha256",
+            hashlib.sha256(images_archive.read_bytes()).hexdigest(),
             "--metadata-archive",
             str(metadata_archive),
+            "--metadata-archive-sha256",
+            hashlib.sha256(metadata_archive.read_bytes()).hexdigest(),
             "--max-iterations",
             "1",
             "--num-gpus",
@@ -75,10 +80,14 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
             str(results),
             "--dataset-root",
             str(dataset),
-            "--images-archive",
-            str(images_archive),
-            "--metadata-archive",
-            str(metadata_archive),
+                "--images-archive",
+                str(images_archive),
+                "--images-archive-sha256",
+                hashlib.sha256(images_archive.read_bytes()).hexdigest(),
+                "--metadata-archive",
+                str(metadata_archive),
+                "--metadata-archive-sha256",
+                hashlib.sha256(metadata_archive.read_bytes()).hexdigest(),
             "--max-iterations",
             "1",
             "--platform",
