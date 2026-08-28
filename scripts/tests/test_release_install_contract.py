@@ -51,7 +51,7 @@ def test_default_marketplace_exposes_the_canonical_codex_plugin_name():
     assert "tao-skills" in names
 
 
-def test_iaa_stamped_pins_match_published_versions():
+def test_pas_stamped_pins_match_published_versions():
     versions = yaml.safe_load((REPO_ROOT / "versions.yaml").read_text())
     images = versions["images"]["tao_toolkit"]
     scripts = REPO_ROOT / "skills/applications/tao-run-deft-iaa/scripts"
@@ -62,5 +62,5 @@ def test_iaa_stamped_pins_match_published_versions():
         scripts / "run_deft_container.py",
     ):
         text = path.read_text()
-        assert images["pyt"] in text
-        assert images["data_services"] in text
+        assert images["deft_pas_pyt"] in text
+        assert images["deft_pas_data_services"] in text

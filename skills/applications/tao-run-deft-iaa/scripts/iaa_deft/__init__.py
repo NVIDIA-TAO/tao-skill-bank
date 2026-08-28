@@ -6,6 +6,6 @@
 
 """Bundled CLIP DEFT pipeline utilities used by this skill."""
 
-from iaa_deft.config import IaaDeftConfig
+from iaa_deft.config import IaaDeftConfig, PasDeftConfig, config_field_metadata
 
-__all__ = ["IaaDeftConfig"]
+__all__ = ["IaaDeftConfig", "PasDeftConfig", "config_field_metadata"]
