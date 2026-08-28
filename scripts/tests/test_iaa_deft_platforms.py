@@ -41,8 +41,8 @@ from command_contract import (  # noqa: E402
 
 
 PLATFORMS = ("docker", "slurm", "kubernetes", "brev", "virtualenv")
-PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"
-DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"
+PYT_IMAGE = action_contract.PINNED_IMAGES["pyt"]
+DS_IMAGE = action_contract.PINNED_IMAGES["ds"]
 SPEC_NAMES = (
     "deft_config.yaml",
     "tao_spec.yaml",

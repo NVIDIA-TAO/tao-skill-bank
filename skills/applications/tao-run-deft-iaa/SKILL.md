@@ -108,6 +108,14 @@ summary. `max_iterations` has no default. An absent metric target means an
 ungated run that stops after `max_iterations`. Hugging Face token forwarding
 defaults to disabled because the bundled model is public.
 
+The authoritative parameter contract is the nested dataclass schema in
+`scripts/iaa_deft/config.py`, adapted from the PAS reference notebook. Read
+that schema when a request needs the meaning, default, numeric bounds, or valid
+options of a DEFT parameter. Do not infer an undocumented field or bypass its
+metadata constraint. Config preparation, initialization, audit, and every
+host-side stage validate the materialized bundle through that same schema;
+the legacy YAML section name `iaa` is normalized to the typed `pas` section.
+
 If required information remains missing after full discovery, ask one
 consolidated follow-up. A normal invocation should need no knowledge of stage
 modules, container mounts, state files, or bundled-runtime function
@@ -117,11 +125,10 @@ signatures.
 
 Perform only read-only discovery before approval: resolve paths, inspect file
 metadata and archives, check process-environment variable presence, inspect
-local images, inspect GPUs, and audit an existing run. Credentials come from
-the launching process environment or a user-approved env file. Source only a
-path the repository contract permits, in the same shell as the consuming
-command; never print, grep, copy, or otherwise inspect its contents or echo a
-credential value. If a required variable is absent, tell the user which name
+local images, inspect GPUs, and audit an existing run. Credentials come only
+from the launching process environment; never open or source a credential file,
+and never print, grep, copy, or echo a credential value. If a required variable
+is absent, tell the user which name
 to export in the shell that launches the agent; never ask for its value in
 chat. Do not inspect credential-file metadata when no credential is needed. If
 the user explicitly asks for a file-permission check, `stat` only that named
@@ -207,7 +214,7 @@ stage is next:
 
 | Stage | Reference | Required result |
 |---|---|---|
-| dataset setup | `references/data-layout.md` | verified rebuilt dataset, five split files, non-empty source-pool parquet |
+| dataset setup | `references/data-layout.md` | verified rebuilt dataset, transparent layout report, five split files, non-empty source-pool parquet |
 | pool embedding and mining | `references/mining.md` | fresh command evidence plus non-empty, schema-checked parquet outputs |
 | evaluate and train | `references/clip-train-eval.md`, `references/metric-contract.md` | successful TAO status, bound metric evidence; for train, a fresh best and normalized checkpoint |
 | gap analysis | `references/gap-analysis.md` | non-empty iteration-scoped gaps parquet |
@@ -260,7 +267,7 @@ failing visualization mid-run without revising and reapproving the config.
 ## Metric and Stop Semantics
 
 The approved metric contract is immutable for the run. Evaluation must parse
-the exact iteration's `nvidia_iaa_metrics_aggregate.csv`; the result records
+the exact iteration's `nvidia_pas_metrics_aggregate.csv`; the result records
 its source path and is re-derived during commit and audit. Checkpoint ranking
 and best-run reporting follow the approved operator (`>=`/`>` chooses the
 higher value, `<=`/`<` the lower), not a hard-coded metric convention.

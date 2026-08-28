@@ -57,8 +57,8 @@ from metric_contract import validate_contract
 
 
 WORKFLOW = "tao-run-deft-iaa"
-PINNED_PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"  # versions-key: images.tao_toolkit.pyt
-PINNED_DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"  # versions-key: images.tao_toolkit.data_services
+PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
+PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
     "tao_spec.yaml",
@@ -295,25 +295,29 @@ def _load_run_config(args: argparse.Namespace) -> dict:
             "approval.json does not match the approved initialization inputs; "
             "rerun config preparation in a fresh results directory"
         )
-    deft = yaml.safe_load(args.deft_config.read_text())
+    from iaa_deft.config import PasDeftConfig
+
+    typed = PasDeftConfig(str(args.deft_config))
     tao = yaml.safe_load(args.tao_spec.read_text())
-    if not isinstance(deft, dict) or not isinstance(tao, dict):
-        raise ValueError("--deft-config and --tao-spec must have object roots")
-    iteration = _mapping(deft, "iteration", "deft_config")
-    experiment = _mapping(deft, "experiment", "deft_config")
-    mining = _mapping(deft, "mining", "deft_config")
-    history = _mapping(mining, "history_aware", "deft_config.mining")
-    training = _mapping(deft, "training", "deft_config")
-    gap = _mapping(deft, "gap_analysis", "deft_config")
+    if not isinstance(tao, dict):
+        raise ValueError("--tao-spec must have an object root")
     train = _mapping(tao, "train", "tao_spec")
     evaluate = _mapping(tao, "evaluate", "tao_spec")
-    if iteration.get("start") != 1:
+    dataset = _mapping(tao, "dataset", "tao_spec")
+    dataset_train = _mapping(dataset, "train", "tao_spec.dataset")
+    dataset_val = _mapping(dataset, "val", "tao_spec.dataset")
+    optim = _mapping(train, "optim", "tao_spec.train")
+    text_embed = yaml.safe_load((config_dir / "text_embed_spec.yaml").read_text())
+    image_embed = yaml.safe_load((config_dir / "image_embed_spec.yaml").read_text())
+    if not isinstance(text_embed, dict) or not isinstance(image_embed, dict):
+        raise ValueError("prepared embedding spec roots must be objects")
+    if typed.iteration.start != 1:
         raise ValueError("prepared deft_config iteration.start must be 1")
-    if iteration.get("end") != args.max_iterations:
+    if typed.iteration.end != args.max_iterations:
         raise ValueError(
             "prepared deft_config iteration.end must equal --max-iterations"
         )
-    if pathlib.Path(str(experiment.get("results_path", ""))).resolve() != args.results_dir.resolve():
+    if pathlib.Path(typed.experiment.results_path).resolve() != args.results_dir.resolve():
         raise ValueError("prepared deft_config experiment.results_path must equal --results-dir")
     num_gpus = train.get("num_gpus")
     gpu_ids = train.get("gpu_ids")
@@ -335,36 +339,73 @@ def _load_run_config(args: argparse.Namespace) -> dict:
     training_epochs = train.get("num_epochs")
     if not isinstance(training_epochs, int) or training_epochs < 1:
         raise ValueError("prepared tao_spec train.num_epochs must be >= 1")
-    if gap.get("metric_name") != args.metric_contract["metric_name"]:
+    if typed.gap_analysis.metric_name != args.metric_contract["metric_name"]:
         raise ValueError(
             "prepared gap_analysis.metric_name must match the immutable "
             "metric contract"
         )
-    replay = float(history.get("replay_fraction"))
-    if not 0.0 <= replay <= 1.0:
-        raise ValueError("prepared replay_fraction must be in [0, 1]")
-    boolean_fields = {
-        "history_aware.enabled": history.get("enabled"),
-        "training.continual_dataset": training.get("continual_dataset"),
-        "training.continual_model": training.get("continual_model"),
-        "experiment.visualize": experiment.get("visualize"),
-        "experiment.visualize_embeddings": experiment.get("visualize_embeddings"),
-    }
-    invalid_booleans = [name for name, value in boolean_fields.items() if not isinstance(value, bool)]
-    if invalid_booleans:
+    replay = typed.mining.history_aware.replay_fraction
+    eval_path = pathlib.Path(typed.pas.eval_pairs_source_file).resolve()
+    dataset_root = args.dataset_root.resolve()
+    if eval_path.parent != dataset_root or eval_path.name not in {
+        "val_pairs.json",
+        "test_pairs.json",
+    }:
         raise ValueError(
-            "prepared boolean fields are invalid: " + ", ".join(invalid_booleans)
+            "prepared iaa.eval_pairs_source_file must be val_pairs.json or "
+            "test_pairs.json directly under --dataset-root"
         )
+    eval_split = eval_path.name.removesuffix("_pairs.json")
+    queries_per_slice = typed.gap_analysis.queries_per_slice
+    gap_query_types = typed.gap_analysis.query_types
     for name, value in (
-        ("mining.topn", mining.get("topn")),
-        ("gap_analysis.target_query_count", gap.get("target_query_count")),
+        ("tao_spec.train.optim.vision_lr", optim.get("vision_lr")),
+        ("tao_spec.train.optim.text_lr", optim.get("text_lr")),
     ):
-        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-            raise ValueError(f"prepared {name} must be an integer >= 1")
-    if mining.get("knn_metric") not in {"cosine", "euclidean"}:
-        raise ValueError("prepared mining.knn_metric must be cosine or euclidean")
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or float(value) <= 0.0
+        ):
+            raise ValueError(f"prepared {name} must be greater than zero")
+    batch_sizes = {
+        "train_batch_size": dataset_train.get("batch_size"),
+        "val_batch_size": dataset_val.get("batch_size"),
+        "eval_batch_size": evaluate.get("batch_size"),
+    }
+    invalid_batches = {
+        name: value
+        for name, value in batch_sizes.items()
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1
+    }
+    if invalid_batches:
+        raise ValueError(
+            "prepared batch sizes must be integers >= 1: "
+            + ", ".join(f"{name}={value!r}" for name, value in invalid_batches.items())
+        )
+    text_embed_model = text_embed.get("model")
+    if text_embed_model != "SigLIP":
+        raise ValueError(
+            "prepared text_embed_spec.model must be SigLIP, the adapter token "
+            "supported by both TAO 7.2 image and text embedding"
+        )
+    if image_embed.get("model") != text_embed_model:
+        raise ValueError(
+            "prepared image_embed_spec.model must match text_embed_spec.model "
+            "for the shared embedding checkpoint"
+        )
+    text_embed_model_path = text_embed.get("model_path")
+    if (
+        not isinstance(text_embed_model_path, str)
+        or not text_embed_model_path.strip()
+        or image_embed.get("model_path") != text_embed_model_path
+    ):
+        raise ValueError(
+            "prepared image/text embedding model_path values must be the same "
+            "non-empty shared checkpoint"
+        )
     for key in ("train_config", "eval_config"):
-        if pathlib.Path(str(experiment.get(key, ""))).resolve() != args.tao_spec.resolve():
+        if pathlib.Path(getattr(typed.experiment, key)).resolve() != args.tao_spec.resolve():
             raise ValueError(
                 f"prepared deft_config experiment.{key} must equal --tao-spec"
             )
@@ -378,15 +419,22 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "num_gpus": num_gpus,
         "gpu_ids": approved_host_gpu_ids,
         "container_gpu_ids": parsed_gpu_ids,
-        "history_aware": history.get("enabled"),
+        "history_aware": typed.mining.history_aware.enabled,
         "replay_fraction": replay,
-        "mining_topn": int(mining.get("topn")),
-        "knn_metric": str(mining.get("knn_metric")),
-        "target_query_count": int(gap.get("target_query_count")),
-        "continual_dataset": training.get("continual_dataset"),
-        "continual_model": training.get("continual_model"),
-        "visualize": experiment.get("visualize"),
-        "visualize_embeddings": experiment.get("visualize_embeddings"),
+        "mining_topn": typed.mining.topn,
+        "knn_metric": typed.mining.knn_metric,
+        "target_query_count": typed.gap_analysis.target_query_count,
+        "eval_split": eval_split,
+        "queries_per_slice": queries_per_slice,
+        "gap_query_types": gap_query_types,
+        "vision_lr": float(optim.get("vision_lr")),
+        "text_lr": float(optim.get("text_lr")),
+        **batch_sizes,
+        "text_embed_model": text_embed_model,
+        "continual_dataset": typed.training.continual_dataset,
+        "continual_model": typed.training.continual_model,
+        "visualize": typed.visualization.enabled,
+        "visualize_embeddings": typed.visualization.embeddings,
     }
 
 

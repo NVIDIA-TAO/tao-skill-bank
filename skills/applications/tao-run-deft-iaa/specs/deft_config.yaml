@@ -17,8 +17,6 @@ training:
   num_nodes: 1
 
 mining:
-  topn: 25
-  knn_metric: "cosine"
   knn_batch_size: 32
   history_aware:
     enabled: true

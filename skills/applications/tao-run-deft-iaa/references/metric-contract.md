@@ -45,7 +45,7 @@ fi
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
   "$SKILL_ROOT/scripts/parse_iaa_metrics.py" \
-    --metrics-csv "$PHASE_DIR/evaluate/nvidia_iaa_metrics_aggregate.csv" \
+    --metrics-csv "$PHASE_DIR/evaluate/nvidia_pas_metrics_aggregate.csv" \
     --metric-name "$METRIC_NAME" --query-type "$QUERY_TYPE" \
     --op "$METRIC_OP" "${TARGET_ARGS[@]}" \
     --iter-label "$LABEL" \

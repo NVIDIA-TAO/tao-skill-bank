@@ -68,6 +68,7 @@ def analyze_clip_inference_gaps(
     import os
 
     import pandas as pd
+    from iaa_deft.pas_artifacts import PAS_METRICS_FILENAME
 
     _ = (kpi_caption_dir, caption_file_suffix)
 
@@ -256,15 +257,15 @@ def analyze_clip_inference_gaps(
 
     def _metrics_path(base_dir):
         candidates = [
-            os.path.join(base_dir, "nvidia_iaa_metrics.csv"),
-            os.path.join(base_dir, "evaluate", "nvidia_iaa_metrics.csv"),
-            os.path.join(base_dir, "iaa_eval", "nvidia_iaa_metrics.csv"),
+            os.path.join(base_dir, PAS_METRICS_FILENAME),
+            os.path.join(base_dir, "evaluate", PAS_METRICS_FILENAME),
+            os.path.join(base_dir, "iaa_eval", PAS_METRICS_FILENAME),
         ]
         for path in candidates:
             if os.path.isfile(path):
                 return path
         raise FileNotFoundError(
-            "Could not find nvidia_iaa_metrics.csv under "
+            "Could not find nvidia_pas_metrics.csv under "
             f"{base_dir}. Checked: {candidates}"
         )
 

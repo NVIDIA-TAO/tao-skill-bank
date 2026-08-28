@@ -16,7 +16,6 @@ import hashlib
 import json
 import os
 import pathlib
-import shutil
 import sys
 import tempfile
 from typing import Any
@@ -28,15 +27,8 @@ from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
 from virtualenv_runtime import resolve_virtualenv_profiles
 
 
-SPEC_NAMES = (
-    "deft_config.yaml",
-    "tao_spec.yaml",
-    "text_embed_spec.yaml",
-    "image_embed_spec.yaml",
-    "mining_spec.yaml",
-)
-PINNED_PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"  # versions-key: images.tao_toolkit.pyt
-PINNED_DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"  # versions-key: images.tao_toolkit.data_services
+PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
+PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
 
 
 def _bool(value: str) -> bool:
@@ -58,6 +50,25 @@ def _gpu_ids(raw: str, count: int) -> list[int]:
             "--gpu-ids must contain exactly --num-gpus distinct non-negative IDs"
         )
     return values
+
+
+def _query_types(raw: str) -> str:
+    allowed = {
+        "easy",
+        "medium",
+        "hard",
+        "natural_caption",
+        "original_captions",
+    }
+    values = [item.strip() for item in raw.split(",") if item.strip()]
+    invalid = [item for item in values if item not in allowed]
+    if not values or invalid or len(set(values)) != len(values):
+        detail = f"; unsupported values: {', '.join(invalid)}" if invalid else ""
+        raise ValueError(
+            "--gap-query-types must be a non-empty, duplicate-free comma-separated "
+            f"list drawn from {sorted(allowed)}{detail}"
+        )
+    return ",".join(values)
 
 
 def _workspace_child(path: pathlib.Path, workspace: pathlib.Path, name: str) -> pathlib.Path:
@@ -137,23 +148,6 @@ def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
         raise
 
 
-def _copy_atomic(source: pathlib.Path, destination: pathlib.Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=destination.name + ".", suffix=".tmp", dir=str(destination.parent)
-    )
-    os.close(fd)
-    try:
-        shutil.copyfile(source, temporary)
-        os.replace(temporary, destination)
-    except Exception:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
-
-
 def materialize(args: argparse.Namespace) -> dict[str, Any]:
     skill_root = pathlib.Path(__file__).resolve().parent.parent
     templates = skill_root / "specs"
@@ -213,6 +207,10 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "num_gpus": args.num_gpus,
         "mining_topn": args.mining_topn,
         "target_query_count": args.target_query_count,
+        "queries_per_slice": args.queries_per_slice,
+        "train_batch_size": args.train_batch_size,
+        "val_batch_size": args.val_batch_size,
+        "eval_batch_size": args.eval_batch_size,
     }
     invalid = {key: value for key, value in positive.items() if value < 1}
     if invalid:
@@ -229,6 +227,13 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     # TAO must never receive the host ordinals directly.
     host_gpu_ids = _gpu_ids(args.gpu_ids, args.num_gpus)
     container_gpu_ids = list(range(args.num_gpus))
+    for name, value in (
+        ("vision_lr", args.vision_lr),
+        ("text_lr", args.text_lr),
+    ):
+        if value <= 0.0:
+            raise ValueError(f"--{name.replace('_', '-')} must be greater than zero")
+    gap_query_types = _query_types(args.gap_query_types)
     metric_contract = validate_contract(
         {
             "metric_name": args.metric_name,
@@ -240,6 +245,9 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
 
     deft = _load_yaml(templates / "deft_config.yaml")
     tao = _load_yaml(templates / "tao_spec.yaml")
+    text_embed = _load_yaml(templates / "text_embed_spec.yaml")
+    image_embed = _load_yaml(templates / "image_embed_spec.yaml")
+    mining_spec = _load_yaml(templates / "mining_spec.yaml")
 
     deft["experiment"].update(
         {
@@ -257,9 +265,6 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "continual_dataset": args.continual_dataset,
         }
     )
-    deft["mining"].update(
-        {"topn": args.mining_topn, "knn_metric": args.knn_metric}
-    )
     deft["mining"].setdefault("history_aware", {}).update(
         {"enabled": args.history_aware, "replay_fraction": args.replay_fraction}
     )
@@ -267,13 +272,17 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         {
             "metric_name": args.metric_name,
             "target_query_count": args.target_query_count,
+            "queries_per_slice": args.queries_per_slice,
+            "query_types": gap_query_types,
         }
     )
     iaa = deft["iaa"]
     iaa.update(
         {
             "pool_pairs_source_file": str(dataset_root / "train_pairs.json"),
-            "eval_pairs_source_file": str(dataset_root / "val_pairs.json"),
+            "eval_pairs_source_file": str(
+                dataset_root / f"{args.eval_split}_pairs.json"
+            ),
             "train_image_dir": str(dataset_root / "images"),
             "train_caption_dir": str(dataset_root / "captions"),
             "source_image_dir": str(dataset_root / "images"),
@@ -292,15 +301,51 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "gpu_ids": container_gpu_ids,
         }
     )
-    for action in ("evaluate", "inference"):
-        tao[action].update(
-            {"num_gpus": args.num_gpus, "gpu_ids": container_gpu_ids}
-        )
+    tao["train"].setdefault("optim", {}).update(
+        {"vision_lr": args.vision_lr, "text_lr": args.text_lr}
+    )
+    tao["dataset"].setdefault("train", {}).update(
+        {"batch_size": args.train_batch_size}
+    )
+    tao["dataset"].setdefault("val", {}).update(
+        {"batch_size": args.val_batch_size}
+    )
+    tao["evaluate"].update(
+        {
+            "num_gpus": args.num_gpus,
+            "gpu_ids": container_gpu_ids,
+            "batch_size": args.eval_batch_size,
+        }
+    )
+    tao["inference"].update(
+        {"num_gpus": args.num_gpus, "gpu_ids": container_gpu_ids}
+    )
+
+    # These values are consumed from separate TAO data-services specs. Those
+    # specs are the single materialized authority; do not duplicate the same
+    # controls in deft_config.yaml where they can drift independently.
+    # Image and text embeddings are compared in the same vector space, so both
+    # specs use the common adapter token supported by TAO 7.2's image and text
+    # entry points and the same checkpoint. Updating only one side silently
+    # changes mining; exposing a text-only token that image embedding rejects
+    # makes visualization fail late in the loop.
+    text_embed["model"] = args.text_embed_model
+    image_embed["model"] = args.text_embed_model
+    mining_spec.update({"topn": args.mining_topn, "knn_metric": args.knn_metric})
 
     _atomic_yaml(config_dir / "deft_config.yaml", deft)
     _atomic_yaml(config_dir / "tao_spec.yaml", tao)
-    for name in SPEC_NAMES[2:]:
-        _copy_atomic(templates / name, config_dir / name)
+    _atomic_yaml(config_dir / "text_embed_spec.yaml", text_embed)
+    _atomic_yaml(config_dir / "image_embed_spec.yaml", image_embed)
+    _atomic_yaml(config_dir / "mining_spec.yaml", mining_spec)
+
+    # Validate the complete materialized bundle through the same typed schema
+    # that every host-side stage consumes. This prevents a generated config
+    # from crossing the approval boundary with an unknown, missing, mistyped,
+    # out-of-range, or cross-spec-conflicting field.
+    from iaa_deft.config import PasDeftConfig
+
+    PasDeftConfig(str(config_dir / "deft_config.yaml"))
     _atomic_json(
         config_dir / "approval.json",
         {
@@ -348,6 +393,15 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "requires_hf_token": args.requires_hf_token,
         "iaa_deft_bundle_sha256": runtime_sha256,
+        "eval_split": args.eval_split,
+        "queries_per_slice": args.queries_per_slice,
+        "gap_query_types": gap_query_types,
+        "vision_lr": args.vision_lr,
+        "text_lr": args.text_lr,
+        "train_batch_size": args.train_batch_size,
+        "val_batch_size": args.val_batch_size,
+        "eval_batch_size": args.eval_batch_size,
+        "text_embed_model": args.text_embed_model,
         "approval_manifest": str(config_dir / "approval.json"),
     }
 
@@ -399,6 +453,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mining-topn", default=25, type=int)
     parser.add_argument("--knn-metric", default="cosine")
     parser.add_argument("--target-query-count", default=10000, type=int)
+    parser.add_argument("--queries-per-slice", default=256, type=int)
+    parser.add_argument("--gap-query-types", default="easy,medium")
+    parser.add_argument("--eval-split", default="val", choices=("val", "test"))
+    parser.add_argument("--vision-lr", default=1.0e-7, type=float)
+    parser.add_argument("--text-lr", default=1.0e-7, type=float)
+    parser.add_argument("--train-batch-size", default=32, type=int)
+    parser.add_argument("--val-batch-size", default=64, type=int)
+    parser.add_argument("--eval-batch-size", default=32, type=int)
+    parser.add_argument(
+        "--text-embed-model", default="SigLIP", choices=("SigLIP",)
+    )
     parser.add_argument("--history-aware", default=True, type=_bool)
     parser.add_argument("--replay-fraction", default=0.20, type=float)
     parser.add_argument("--continual-dataset", default=True, type=_bool)

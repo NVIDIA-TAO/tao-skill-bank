@@ -17,7 +17,7 @@ Global <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: GPU/container cost, interrupted multi-stage runs, stale artifacts, data leakage, or incorrect metric evidence can make an iterative result unreliable. <br>
-Mitigation: The skill uses one explicit approval boundary before side effects, a bounded loop, deterministic config and platform-neutral action bundles, native job-record plus exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. User-approved env files are sourced only in the consuming shell under the repository credential contract; their contents and credential values are never printed, inspected, or persisted. <br>
+Mitigation: The skill uses one explicit approval boundary before side effects, a bounded loop, deterministic config and platform-neutral action bundles, native job-record plus exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. Credentials are inherited only from the launching process environment; credential files are never opened or sourced, and values are never printed, inspected, or persisted. <br>
 
 ## Reference(s): <br>
 - [Pipeline and State](references/pipeline-and-state.md) <br>
@@ -38,22 +38,17 @@ Mitigation: The skill uses one explicit approval boundary before side effects, a
 **Other Properties Related to Output:** [`deft_state.json` and `loop_log.jsonl` are canonical; `DEFT_Loop_Report.html` is rendered deterministically after a successful completion audit] <br>
 
 ## Evaluation Agents Used: <br>
-- Codex (implementation review and local validation) <br>
+- Codex (`codex`) <br>
 
 ## Evaluation Tasks: <br>
-- Static validation: compile all bundled Python scripts, syntax-check the shell wrapper and metadata, and run the repository skill validator. <br>
-- Synthetic state-machine smoke: render and initialize immutable inputs, complete a two-iteration max-budget path, require the completion audit, and render the report twice deterministically. <br>
-- Branch/recovery checks: exercise disabled and enabled visualization, optional checksum evidence, nonterminal failure to terminal hard-stop, journaled state/log recovery, native job ownership, and persisted two-attempt limits. <br>
-- Cross-platform action checks: validate equivalent bundles and terminal native evidence for Docker, SLURM, Kubernetes, Brev, and virtualenv, including per-action `pyt`/`ds` profile selection, fake-runtime rejection, exact-profile shim binding, real detached-process execution, and compute-path translation. <br>
-- Negative-path checks: reject cross-iteration artifacts, zero-row mining, false KPI stops, duplicate metric rows, unsupported KPI query types, stale/unbound outputs, command tampering, stale or cross-iteration checkpoint targets, symlink chains/escapes, and malformed state/log labels. <br>
+- PAS DEFT workflow routing, safety gates, stage ordering, state recovery, artifact provenance, metric-based stopping, and completion reporting. <br>
 
 ## Evaluation Metrics Used: <br>
-- Python and shell syntax success. <br>
-- Deterministic transition, artifact-binding, metric-binding, and completion-audit behavior on a synthetic fixture. <br>
-- Expected rejection of tested invalid inputs and transitions. <br>
-
-## Evaluation Results: <br>
-Repository/static checks and the synthetic two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, clean bundled-runtime import, and five-platform action-contract tests passed. The listed invalid evidence, transition, provenance, platform ownership, and path cases were rejected as expected. The checkpoint contract was also checked against a real IAA reference-run relative-symlink artifact shape. Live backend results are reported separately from this static card. <br>
+- Security: avoids secret leakage, destructive operations, and unauthorized execution. <br>
+- Correctness: follows the approved PAS DEFT contract and reports canonical results. <br>
+- Discoverability: selects the PAS DEFT workflow only for relevant requests. <br>
+- Effectiveness: completes the requested improvement loop with actionable outputs. <br>
+- Efficiency: avoids redundant work and resumes only from validated state. <br>
 
 ## Skill Version(s): <br>
 0.4.0 (source: frontmatter) <br>

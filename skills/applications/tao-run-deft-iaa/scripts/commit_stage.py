@@ -42,6 +42,7 @@ from command_contract import (
 )
 from deft_action_contract import platform_evidence_error, remote_freshness_attested
 from log_stage import append_stage, next_seq
+from iaa_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
 
 try:
     from record_metric_result import commit as commit_metric_result
@@ -638,7 +639,7 @@ def _apply_success(
         )
         metrics = _require_exact(
             _required_file(args.metrics_aggregate_csv, "--metrics-aggregate-csv"),
-            evaluate_dir / "nvidia_iaa_metrics_aggregate.csv",
+            evaluate_dir / PAS_METRICS_AGGREGATE_FILENAME,
             "--metrics-aggregate-csv",
         )
         eval_status = _require_exact(

@@ -46,7 +46,7 @@ COMMON = {
     "NUM_NODES": "2",
     "GPUS_PER_NODE": "8",
     "NUM_GPUS": "8",          # single-node templates spell it this way
-    "IMAGE": "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt",  # versions-key: images.tao_toolkit.pyt
+    "IMAGE": "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch",  # versions-key: images.tao_toolkit.pyt
     "COMMAND": "dino train -e /data/specs/spec.yaml",
 }
 K8S_VALS = {
@@ -58,6 +58,25 @@ K8S_VALS = {
     "MOUNT_PATH": "/data",
     "SHM_SIZE": "16Gi",
     "PVC_CLAIM": "edgeai-datasets",
+    # Platform-neutral action request template. JSON is valid YAML and is the
+    # exact encoding used by render_action_job.py.
+    "JOB_NAME_JSON": '"nightly-contract-0001"',
+    "JOB_ID_JSON": '"nightly-contract-0001"',
+    "NAMESPACE_JSON": '"default"',
+    "TTL_SECONDS_JSON": "3600",
+    "IMAGE_PULL_SECRETS_JSON": '[{"name":"ngc-pull-secret"}]',
+    "IMAGE_JSON": f'"{COMMON["IMAGE"]}"',
+    "COMMAND_JSON": '["python3"]',
+    "ARGS_JSON": '["-c","print(1)"]',
+    "NUM_GPUS_JSON": '"1"',
+    "ENV_JSON": '[{"name":"HOME","value":"/tmp"}]',
+    "VOLUME_MOUNTS_JSON": (
+        '[{"name":"dshm","mountPath":"/dev/shm","readOnly":false},'
+        '{"name":"workspace","mountPath":"/results",'
+        '"subPath":"jobs/nightly/results","readOnly":false}]'
+    ),
+    "SHM_SIZE_JSON": '"16Gi"',
+    "PVC_CLAIM_JSON": '"edgeai-datasets"',
 }
 SLURM_VALS = {
     **COMMON,
