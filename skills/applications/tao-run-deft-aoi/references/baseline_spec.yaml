@@ -44,7 +44,7 @@ train:
   tensorboard:
     enabled: True
     infrequent_logging_frequency: 1
-results_dir: /results   # PLACEHOLDER — the loop MUST override this to ${RESULTS_DIR}=<workspace>/results/run_<TS> at launch; never leave as bare /results (writes outside <workspace>)
+results_dir: /results   # PLACEHOLDER — direct-container fallback overrides this to ${RESULTS_DIR}. For stage_bundle+deft_exec launches set `results_dir: ${oc.env:TAO_RESULTS_ROOT}` (the job-scoped writable mount); never leave as bare /results
 model:
   backbone:
     type: "c_radio_v2_vit_base_patch16_224"

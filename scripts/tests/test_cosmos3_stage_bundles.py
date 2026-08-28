@@ -473,8 +473,15 @@ def test_the_image_cap_patcher_distinguishes_lifted_from_moved():
     `ValueError: At most 1 image(s) may be provided in one prompt`."""
     patcher = _load(C3 / "patch_eval_image_cap.py", "cosmos3_cap_patcher")
 
-    _, current = patcher.apply_cap('engine = LLM(model=path)', 2)
-    assert current == 2, "a genuinely lifted cap should report no patch needed"
+    # Genuinely lifted: no cap AND no engine construction in this file -- the
+    # code moved. If the file still builds a vLLM engine, absence of the cap
+    # more likely means it MOVED, and "no patch needed" would sail into the
+    # 1-image ValueError at evaluation, so that now fails closed too.
+    _, current = patcher.apply_cap('def helper():\n    return config', 2)
+    assert current == 2, "a file with no engine and no cap needs no patch"
+
+    with pytest.raises(ValueError, match="vLLM engine construction is present"):
+        patcher.apply_cap('engine = LLM(model=path)', 2)
 
     with pytest.raises(ValueError, match="present but its image cap did not match"):
         patcher.apply_cap('limit_mm_per_prompt=DEFAULT_CAPS', 2)
@@ -857,3 +864,36 @@ def test_force_reprepare_keeps_the_old_ptm_restorable():
     assert 'stale_output.rename(output)' in script, "no restore on failure"
     assert script.index("output.rename(stale_output)") < \
         script.index("subprocess.run(run_command"), "moved aside AFTER running"
+
+
+def test_kubernetes_creates_the_results_dir_in_cluster(sb):
+    """docker's prepare() and slurm's prologue mkdir it host/cluster-side; a
+    fresh PVC has no results_dir/<job_id>, and the first output write fails
+    with an error naming the FILE, not the missing directory."""
+    import yaml
+
+    rendered = _renderer("kubernetes").render(_script_train(sb), _ctx("kubernetes"))
+    doc = yaml.safe_load(next(iter(rendered["files"].values())))
+    command = doc["spec"]["template"]["spec"]["containers"][0]["command"]
+    assert command[2].startswith("mkdir -p /ws/results/base && "), (
+        "nothing creates the per-job results dir on a fresh volume"
+    )
+
+
+@pytest.mark.parametrize("skill,prefix", [("tao-run-deft-aoi", "mining"),
+                                          ("tao-run-deft-aoi-cosmos3", "data_mining")])
+def test_embed_stages_mount_the_images_the_parquet_names(skill, prefix):
+    """The parquet carries image paths; the container opens each directly."""
+    module = _load(REPO / f"skills/applications/{skill}/scripts/stage_bundle.py",
+                   f"embed_inputs_{skill}_{prefix}")
+    for stage in (f"{prefix}.embed_target", f"{prefix}.embed_pool"):
+        assert "images_root" in module.STAGES[stage]["inputs"], (
+            f"{skill}:{stage} cannot read the images its parquet points at"
+        )
+
+
+def test_deft_python_probes_for_a_toml_reader():
+    """stage_bundle.py reads .toml specs; a Python without tomllib/tomli
+    passes the old probe and then fails inside the first train bundle."""
+    body = (C3 / "deft_python.sh").read_text(encoding="utf-8")
+    assert "tomli" in body and "3, 11" in body.replace("(", "(").replace(" ", " ")

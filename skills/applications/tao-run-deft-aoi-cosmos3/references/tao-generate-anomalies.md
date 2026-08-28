@@ -12,7 +12,11 @@ differs. `skills/applications/tao-run-deft-aoi/references/tao-generate-anomalies
 holds the shared shell setup, the container-owned one-time post-gate bootstrap,
 and the per-iteration `docker run` pair. Its download command explicitly
 requests Text2Image 2B for both loops. Do not duplicate them here — read that
-file for the commands and apply the Cosmos3 values below.
+file for the commands and apply the Cosmos3 values below. Both stages are
+`mode=args` and `stage_bundle.py` synthesizes NO command — pass it verbatim:
+
+- AMP: `--arg "export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=/workspace/paidf-anomalygen && \$ANOMALYGEN_SCRIPTS/prep_testcase.sh --name iter\${N} --num-sdg <num_SDG> --dataset-dir \$TAO_INPUT_DATASET_DIR --clean-dir \$TAO_INPUT_DATASET_DIR --defect-spec \$TAO_INPUT_DEFECT_SPEC --amp-output-dir \$TAO_RESULTS_ROOT/amp --output-jsonl \$TAO_RESULTS_ROOT/testcase.jsonl"`
+- SDG: `--arg "export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=/workspace/paidf-anomalygen && \$ANOMALYGEN_SCRIPTS/run_sdg.sh --checkpoint_dir \$TAO_INPUT_CHECKPOINT_DIR --step <STEP> --input_jsonl \$TAO_INPUT_TESTCASE_JSONL --output_dir \$TAO_RESULTS_ROOT/sdg --model_size 2b --num_gpus 1"`
 
 ## The published checkpoint is flat — normalize it first
 
@@ -45,6 +49,10 @@ if [ ! -f "$CKPT/checkpoints/latest_checkpoint.txt" ]; then
   ln -sfn "$(realpath "${staged[0]}")" "$CKPT_VIEW/checkpoints/model/$name"
   printf '%s\n' "$name" > "$CKPT_VIEW/checkpoints/latest_checkpoint.txt"
   CKPT=$CKPT_VIEW
+# Renderers mount only DECLARED inputs plus the job's results_dir: a symlink
+# pointing outside those trees dangles inside the container. Materialize the
+# view with real files (cp -L), and run AMP and SDG against the SAME results
+# dir so testcase.jsonl, amp/ masks and checkpoint_view share one bound tree.
 fi
 STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' "$CKPT/checkpoints/latest_checkpoint.txt")
 ```

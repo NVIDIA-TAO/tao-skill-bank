@@ -9,7 +9,12 @@ DEFT-loop-specific overlay: required inputs, output directory layout, and
 
 ## DEFT-Loop Inputs
 
-Pass these as Hydra overrides to the `gap_analysis vcn_aoi` container (see `skills/data/tao-analyze-gaps-visual-changenet/SKILL.md` for the full `docker run` line):
+Pass these as Hydra overrides. **`stage_bundle.py rca` is `mode=config` and
+rejects `--arg`**, so put `inference_results_dir`, `train_config`,
+`kpi_media_path` and `results_dir: ${oc.env:TAO_RESULTS_ROOT}` INSIDE the spec
+file, declare `--param inference_results_dir=<dir>`, and copy `train_config`
+into that mounted dir. For the direct-container fallback (see
+`skills/data/tao-analyze-gaps-visual-changenet/SKILL.md` for the full `docker run` line):
 
 - `inference_results_dir` — **directory** containing `inference.csv` (e.g. `${RESULTS_DIR}/<iter>/inference/best_val/`), not the CSV path. The container reads `inference_results_dir/inference.csv`. Required CSV columns: `input_path`, `object_name`, `label`, `siamese_score`. Use the inference subdirectory recorded in `deft_state.json` (`best_val` or `latest`).
 - `train_config` — VCN train YAML from the experiment directory; provides `dataset.classify.input_map` (lighting list) and `dataset.classify.image_ext` for per-lighting expansion

@@ -433,7 +433,9 @@ def _build_metric_contract(args: argparse.Namespace) -> tuple[dict, str]:
     structured_values = (args.metric_name, args.metric_operator, args.metric_target)
     if args.kpi_target and any(value is not None for value in structured_values):
         raise ValueError(
-            "use either --kpi-target or the structured --metric-name/operator/target flags"
+            "use either --kpi-target (e.g. 'FAR <= 0.5% at recall=99') or the "
+        "structured --metric-name/--metric-operator/--metric-target flags, "
+        "not both"
         )
     if args.kpi_target:
         contract = parse_target_expression(args.kpi_target)
@@ -553,7 +555,9 @@ def _build_metric_contract(args: argparse.Namespace) -> tuple[dict, str]:
     if evaluator.get("type") == "unconfigured":
         raise ValueError(
             "custom metrics require --metric-evaluator with an absolute command "
-            "path or the value 'artifact'"
+            "path or the value 'artifact'. For the bundled FAR@recall "
+            "evaluator pass no evaluator and use the builtin form, e.g. "
+            "--kpi-target 'FAR <= 0.5% at recall=99'"
         )
     contract = validate_contract(contract)
     return contract, target_text or render_target(contract)

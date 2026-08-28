@@ -51,7 +51,15 @@ which one the transcript talked about.
 host-side stages with the script that owns each. Every `mode=config` stage --
 train, both evaluates, and all three mining stages -- also requires
 `--spec-file`; `--param` values name the paths to MOUNT and are not a substitute
-for the spec the platform renderer serializes into the job's config file:
+for the spec the platform renderer serializes into the job's config file.
+`stage_bundle.py` passes `--spec-file` through UNCHANGED — it does not repoint
+`results_dir`, `[train].output_dir`, `[policy].model_name_or_path`,
+`[custom.train_dataset].annotation_path`, or an evaluate `model.model_name`.
+Author a per-run copy of every spec first (results_dir under
+`/tao-workspace/results/$RUN_ID/<label>/<stage>`, model_name_or_path = the
+prepared PTM, and for iterN evaluate the exported adapter with
+`enable_lora = true`), or the container writes into the template's path and
+evaluate loads the wrong checkpoint:
 
 ```bash
 python3 "$C3/stage_bundle.py" --list

@@ -95,6 +95,7 @@ and the output path as `TAO_RESULTS_ROOT`:
 : "${TAO_INPUT_DATASET_DIR:?input not exported by the platform}"
 n=$(ls "$TAO_INPUT_DATASET_DIR" | wc -l)
 [ "$n" -gt 0 ] || { echo "read 0 inputs" >&2; exit 3; }
+mkdir -p "$TAO_RESULTS_ROOT"   # a fresh volume may not have the per-job dir yet
 ```
 
 **Fail closed like that.** A wrong or missing input path does not raise: the

@@ -126,15 +126,20 @@ STAGES: dict[str, dict[str, Any]] = {
     # Named `data_mining.*` to match the stage this loop RECORDS. AOI calls the
     # same family `mining.*`; each table follows its own workflow's vocabulary,
     # because that is what commit_stage.py and deft_state.json use.
+    # Both embed stages declare images_root: the parquet carries image PATHS
+    # and the container calls Image.open() on each, so the directory holding
+    # them must be mounted. The old docker recipe's -v $WS:$WS hid this; a
+    # bundle mounts only what it declares, and a missing image is a
+    # FileNotFoundError on a path the parquet supplied -- not a mount error.
     "data_mining.embed_target": _stage(
         image=DATA_SERVICES, command="embedding image_embeddings -e {config_path}",
         gpus=1, mode="config", config_format="yaml",
-        inputs=("target_parquet",), outputs=("target_embeddings",),
+        inputs=("target_parquet", "images_root"), outputs=("target_embeddings",),
     ),
     "data_mining.embed_pool": _stage(
         image=DATA_SERVICES, command="embedding image_embeddings -e {config_path}",
         gpus=1, mode="config", config_format="yaml",
-        inputs=("mining_pool",), outputs=("pool_embeddings",),
+        inputs=("mining_pool", "images_root"), outputs=("pool_embeddings",),
     ),
     "data_mining.knn": _stage(
         image=DATA_SERVICES, command="tmm nearest_neighbors -e {config_path}",

@@ -94,13 +94,18 @@ STAGES: dict[str, dict[str, Any]] = {
     # ---- Mining: embed targets, embed pool, then k-NN ---------------------
     # Three allocations, not one: each output is the next input, and splitting
     # them lets a platform schedule and retry them independently.
+    # Both embed stages declare images_root: the parquet carries image PATHS
+    # and the container calls Image.open() on each, so the directory holding
+    # them must be mounted. The old docker recipe's -v $WS:$WS hid this; a
+    # bundle mounts only what it declares, and a missing image is a
+    # FileNotFoundError on a path the parquet supplied -- not a mount error.
     "mining.embed_target": _stage(
         DATA_SERVICES, "embedding image_embeddings -e {config_path}", gpus=1, mode="config",
-        inputs=("target_parquet",), outputs=("target_embeddings",),
+        inputs=("target_parquet", "images_root"), outputs=("target_embeddings",),
     ),
     "mining.embed_pool": _stage(
         DATA_SERVICES, "embedding image_embeddings -e {config_path}", gpus=1, mode="config",
-        inputs=("mining_pool",), outputs=("pool_embeddings",),
+        inputs=("mining_pool", "images_root"), outputs=("pool_embeddings",),
     ),
     "mining.knn": _stage(
         DATA_SERVICES, "tmm nearest_neighbors -e {config_path}", gpus=1, mode="config",

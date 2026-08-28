@@ -60,7 +60,7 @@ need no sudo.
 -v <workspace>:/data/workspace                                  # combined iter CSVs + staged images
 -v ${RESULTS_DIR}:/results                                      # canonical run root; never /results/iterN
 -v ${IMAGES_DIR}:/data/datasets/NV_PCB_Siamese/images            # canonical real-image root from state
--v <workspace>/train/base:/data/datasets/NV_PCB_Siamese/csv      # training_set.csv, validation_set.csv
+-v <workspace>/train/base:/data/datasets/NV_PCB_Siamese/csv      # training_set.csv, validation_set.csv  (direct-container fallback only; under the bundle contract only dataset_dir+backbone are mounted, so pass --param dataset_dir=<workspace> and keep the CSVs under it)
 -v <workspace>/kpi:/data/datasets/NV_PCB_Siamese/kpi             # testing_set.csv
 -v "${STAGED}:${BACKBONE_CONTAINER_PATH}:ro"                    # selected backbone file
 ```
@@ -73,7 +73,7 @@ need no sudo.
 | Validation CSV | `/data/datasets/NV_PCB_Siamese/csv/validation_set.csv` |
 | KPI test CSV | `/data/datasets/NV_PCB_Siamese/kpi/testing_set.csv` |
 | images_dir | `/data/datasets/NV_PCB_Siamese/images` |
-| Results dir (baseline / iter N) | `/results/baseline` / `/results/iter${N}` |
+| Results dir (baseline / iter N) | `/results/baseline` / `/results/iter${N}` (direct-container fallback only). **Through the stage_bundle+deft_exec contract the job-scoped writable dir is exported as `TAO_RESULTS_ROOT`, so set `results_dir: ${oc.env:TAO_RESULTS_ROOT}` in the spec and relocate `train/`,`inference/` into the baseline/iterN tree after the stage.** |
 
 ## Spec `output_dir` Contract
 

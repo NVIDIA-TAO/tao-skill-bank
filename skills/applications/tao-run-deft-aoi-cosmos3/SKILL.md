@@ -13,7 +13,7 @@ description: >
   rich/reasoning annotation, one-off Cosmos training, or generic anomaly
   generation.
 license: Apache-2.0 AND CC-BY-4.0
-compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python with `pyarrow` and `yaml`, and the selected platform's native CLI.
+compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python 3.11+ (or 3.10 with `tomli`) with `pyarrow` and `yaml`, and the selected platform's native CLI.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -114,16 +114,15 @@ credential value.
   - `nvidia/Cosmos3-Nano` — default;
   - `nvidia/Cosmos3-Edge` — only when explicitly requested;
   - `nvidia/Cosmos3-Super` — only when explicitly requested.
-- Normalize the user aliases `nano`, `edge`, and `super` to those canonical
-  IDs. Preserve any variant selected in the prompt. When no variant is
-  selected, use Nano.
+- Normalize aliases `nano`/`edge`/`super` to those IDs; preserve a prompt-
+  selected variant; default to Nano.
 - Recommend a variant when asked (with the tradeoff) and report insufficient
   compute, but require an explicit selection before state initialization. Never
   silently switch or fall back to another variant.
 - Keep the selected canonical ID as source-model lineage; `evaluated_model` may
   name the adapter path (see `references/pipeline-and-state.md`). Do not pass the
   native online checkpoint directly to Cosmos-RL.
-- Published reasoners ship in native Omni format (`cosmos3_omni`), which
+- Published reasoners ship in native Omni format (`model_type="cosmos3_omni"`), which
   Cosmos-RL cannot load. After launch approval, run the model skill's
   `scripts/prepare_cosmos3_vlm_checkpoint.py` to produce a Qwen3-VL safetensors
   PTM, or validate and reuse an existing prepared output.

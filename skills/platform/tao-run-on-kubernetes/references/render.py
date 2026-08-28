@@ -234,14 +234,22 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         config_path_for_command = config_path
         tokens = substitute_config_path(tokens, config_path)
 
+    # Create the per-job results dir before the workload writes. docker's
+    # prepare() and slurm's sbatch prologue both do this host/cluster-side; on
+    # kubernetes the PVC is provisioned empty and NOTHING creates
+    # results_dir/<job_id>, so the first output write fails with a
+    # FileNotFoundError that names the file, not the missing directory. The
+    # template runs /bin/sh -c, so a prefix is safe for both command forms.
+    mkdir_prefix = f"mkdir -p {shlex.quote(str(results_dir))} && "
     if is_shell_script(command_text):
         # The template runs this through `/bin/sh -c`, so the script goes in
         # verbatim. Splitting and re-quoting each token would rewrite the
         # script's own quoting and change what it means.
         command = command_text.replace("{config_path}", config_path_for_command)
         command += "".join(" " + shlex.quote(a) for a in (bundle.get("args") or []))
+        command = mkdir_prefix + command
     else:
-        command = " ".join(shlex.quote(token) for token in tokens)
+        command = mkdir_prefix + " ".join(shlex.quote(token) for token in tokens)
     substitutions = {
         "JOB_NAME": job_id,
         "IMAGE": bundle["image"],

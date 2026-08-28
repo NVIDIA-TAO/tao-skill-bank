@@ -34,6 +34,11 @@ import sys
 
 CONTAINER_PATH = "/workspace/cosmos_rl_merged/cosmos_rl/evaluation/base.py"
 # Tolerates spacing and key order; captures only the image cap's digits.
+# Evidence that this file still BUILDS a vLLM engine. If the cap literal is
+# gone but this is present, the cap likely moved rather than lifted, and
+# reporting "no patch needed" sails into the 1-image ValueError at evaluation.
+VLLM_EVIDENCE_PATTERN = re.compile(r"\bLLM\s*\(|vllm", re.IGNORECASE)
+
 CAP_PATTERN = re.compile(
     r"(limit_mm_per_prompt\s*=\s*\{[^}]*?[\"']image[\"']\s*:\s*)(\d+)"
 )
@@ -91,6 +96,12 @@ def apply_cap(source: str, images: int) -> tuple[str, int]:
                 "limit_mm_per_prompt is present but its image cap did not "
                 "match; the file changed shape around a cap that may still be "
                 "1. Re-verify by hand rather than assuming the cap is gone."
+            )
+        if VLLM_EVIDENCE_PATTERN.search(source):
+            raise ValueError(
+                "image cap not found but vLLM engine construction is present; "
+                "the cap likely moved rather than lifted -- verify the new "
+                "source shape before evaluating"
             )
         # Cap satisfied: report the requested count as the current one, so
         # patch_needed (current < images) is False and main() writes a summary

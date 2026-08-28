@@ -108,6 +108,10 @@ def resolve(
                 continue
         resolved = existing.pop()
         try:
+            # images_root-RELATIVE by contract (the ChangeNet CSV consumes it
+            # that way). The embed_pool container opens filepath DIRECTLY, so
+            # the mining step must prepend images_root before writing the
+            # embedding source parquet -- see references/tao-mine-aoi-images.md.
             row["filepath"] = str(resolved.relative_to(images_root))
         except ValueError:
             row["filepath"] = str(resolved)
