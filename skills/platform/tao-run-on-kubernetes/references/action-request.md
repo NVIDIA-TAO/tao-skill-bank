@@ -8,12 +8,38 @@ The renderer accepts action-request schema version `"1"` only and fails closed
 on a missing or unsupported `request.schema_version`; update the renderer and
 this contract together before consuming a future version.
 
-## Stage every declared source
+## Materialize config-mode bundles, then stage every source
+
+For `spec_bundle.mode=config`, the producer supplies a nested `spec` as
+content, not a launcher-local path. The Kubernetes consumer must first
+serialize that content and later replace the command's `{config_path}` with
+the file's in-container path:
+
+```bash
+CONFIG_RENDER_ARGS=()
+if [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["spec_bundle"]["mode"])' \
+    "$ACTION_REQUEST")" = "config" ]; then
+  CONFIG_SOURCE=$(python3 \
+    "$BANK/skills/platform/tao-run-on-kubernetes/scripts/render_action_job.py" \
+    materialize-config --request "$ACTION_REQUEST" \
+    --output-dir "$WORKSPACE/.tao/action-configs")
+  CONFIG_RENDER_ARGS+=(--config-source "$CONFIG_SOURCE")
+fi
+```
+
+The materializer supports the contract's `yaml`, `json`, and `toml` formats.
+It writes an atomic, content-addressed file and returns its absolute path.
+Treat that returned path as one additional consumer-derived staging source:
+copy the exact file onto the PVC and add exactly one row for it to the staging
+receipt. Do not rewrite the producer bundle as `mode=args`, hand-author a
+second config, or substitute a launcher path that the pod cannot see.
 
 Use `tao-data-io` when the producer source is not already visible from the
 Kubernetes compute frame. Mirror each distinct `request.mounts[].source` into
-a job-owned relative path on one bound PVC. Use delete semantics when the
-producer requires remote freshness. Record exactly one row per distinct source:
+a job-owned relative path on one bound PVC. If `CONFIG_SOURCE` is set, mirror
+that exact file too. Use delete semantics when the producer requires remote
+freshness. Record exactly one row per distinct source, including the generated
+config when present:
 
 ```json
 {
@@ -21,12 +47,14 @@ producer requires remote freshness. Record exactly one row per distinct source:
   "sources": [
     {"source": "/launcher/run/results", "sub_path": "jobs/action-123/results"},
     {"source": "/launcher/run/config", "sub_path": "jobs/action-123/results/config"},
-    {"source": "/launcher/cache", "sub_path": "jobs/action-123/cache"}
+    {"source": "/launcher/cache", "sub_path": "jobs/action-123/cache"},
+    {"source": "/launcher/.tao/action-configs/tao-action-config-<sha256>.yaml", "sub_path": "jobs/action-123/action-config.yaml"}
   ]
 }
 ```
 
-The staged subpaths must already exist. Verify read access and required write
+Omit the last row for `mode=args`. The staged subpaths must already exist.
+Verify read access and required write
 access from a pod before opening the job-record. For an application freshness
 contract, also verify every declared absent path and persist its staging
 receipt before opening the record. Never add an undeclared source or use an
@@ -67,10 +95,20 @@ dependency on a placeholder Secret.
 
 ## Render and gate
 
-The renderer validates the immutable argv/image/GPU shape, exact source map,
-unique targets, safe relative PVC subpaths, writable coverage for fresh
+The renderer validates the immutable command/image/GPU shape, exact source
+map, unique targets, safe relative PVC subpaths, writable coverage for fresh
 outputs, duplicate-source aliases, read-only flags, and conditional Secret
-references. It emits native `command`/`args` arrays, not a shell string:
+references. For `mode=config`, it also verifies that `CONFIG_SOURCE` is the
+canonical serialization of `spec_bundle.spec`, mounts that exact staged file
+read-only at a content-addressed path, and substitutes the path for every
+`{config_path}` occurrence. A stale, altered, unstaged, or symlinked config is
+rejected before a manifest is emitted.
+
+Simple commands are emitted as native `command`/`args` arrays. A producer-owned
+config command that is itself a multi-line shell script (for example, a
+Cosmos-RL action that discovers its hook inside the image) is preserved
+verbatim under `/bin/sh -c`; values from the config are never interpolated as
+shell text:
 
 ```bash
 RENDER_ARGS=()
@@ -84,7 +122,7 @@ fi
 python3 "$BANK/skills/platform/tao-run-on-kubernetes/scripts/render_action_job.py" \
   render --request "$ACTION_REQUEST" --staging-map "$STAGING_MAP" \
   --job-id "$JOB_ID" --namespace "$NAMESPACE" --pvc-claim "$PVC_CLAIM" \
-  "${RENDER_ARGS[@]}" >"$MANIFEST"
+  "${CONFIG_RENDER_ARGS[@]}" "${RENDER_ARGS[@]}" >"$MANIFEST"
 
 "$BANK/scripts/redact_secrets.py" lint "$MANIFEST"
 kubectl apply --dry-run=server -f "$MANIFEST"

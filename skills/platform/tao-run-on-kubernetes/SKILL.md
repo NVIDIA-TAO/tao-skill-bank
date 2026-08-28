@@ -128,7 +128,10 @@ jobs are submitted with plain `kubectl apply`.
    A producer action request may declare several mounts, including duplicate-
    source aliases for logical and embedded absolute paths. Read
    `references/action-request.md` and use its staging map plus packaged
-   renderer; the legacy single-root template cannot represent that contract.
+   renderer. For `mode=config`, materialize the producer's nested spec first,
+   stage that exact generated file, and pass it back to the renderer so the
+   pod receives a verified read-only config mount. The legacy single-root
+   template cannot represent that contract.
 3. **Open the record — mints the id, binds `results_dir`, before launch:**
    ```bash
    JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform kubernetes --image "$IMAGE" \
@@ -221,10 +224,13 @@ fake-device-plugin middle option: `references/local-cluster.md`.
 ## Container shell
 
 The simple single-pod template invokes its command via `/bin/sh -c` (POSIX sh,
-present in busybox/distroless as well as TAO images). The producer-action
-template does not invoke a shell: it preserves `spec_bundle.command` and every
-`args` token as native container `command`/`args` arrays. A producer that needs
-a shell must declare the shell and its script as explicit argv.
+present in busybox/distroless as well as TAO images). For producer action
+requests, an args-mode command and its arguments are native container argv; a
+producer that needs a shell declares the shell and its script explicitly. A
+simple config-mode command also becomes native argv after `{config_path}` is
+substituted. A producer-owned config command that is itself a multi-line shell
+script is preserved verbatim under `/bin/sh -c`; the renderer never constructs
+shell text from config values.
 
 ## GPU Operator dependency
 
