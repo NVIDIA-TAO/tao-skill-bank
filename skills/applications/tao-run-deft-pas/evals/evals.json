@@ -15,6 +15,59 @@
     ]
   },
   {
+    "id": "tao-run-deft-pas-plain-language-routing",
+    "question": "Improve my SigLIP2 image retrieval model on my attribute-labelled dataset until it stops getting better. Do not run anything; in one line name which skill applies, or say NONE.",
+    "expected_skill": "tao-run-deft-pas",
+    "expected_script": null,
+    "ground_truth": "Select tao-run-deft-pas because the request describes its iterative attribute-focused retrieval improvement loop in customer language. It is not a one-off tao-finetune-clip run, generic AutoML search, or the AOI/ChangeNet workflow. Do not execute anything.",
+    "expected_behavior": [
+      "Names tao-run-deft-pas as the applicable skill",
+      "Recognizes attribute-labelled SigLIP2 retrieval plus repeated improvement as the PAS DEFT loop",
+      "Does not select one-shot tao-finetune-clip, tao-run-automl, or tao-run-deft-aoi",
+      "Does not run commands, scripts, containers, installs, web searches, audits, or other tools"
+    ]
+  },
+  {
+    "id": "tao-run-deft-pas-plain-language-routing-no-model-name",
+    "question": "Keep improving my image-retrieval model on attribute-labelled images until it stops getting better. Do not run anything; in one line name which skill applies, or say NONE.",
+    "expected_skill": "tao-run-deft-pas",
+    "expected_script": null,
+    "ground_truth": "Select tao-run-deft-pas because attribute-labelled image retrieval plus iterative improvement is the PAS DEFT workflow even when the customer does not know the PAS or SigLIP2 names. Do not select AOI, which is restricted to PCB/VisualChangeNet inspection.",
+    "expected_behavior": [
+      "Names tao-run-deft-pas as the applicable skill",
+      "Uses attribute-labelled image retrieval and repeated improvement as the routing signals",
+      "Does not select tao-run-deft-aoi without AOI, PCB, VisualChangeNet, or ChangeNet context",
+      "Does not run commands, scripts, containers, installs, web searches, audits, or other tools"
+    ]
+  },
+  {
+    "id": "tao-run-deft-pas-plain-language-routing-stage-paraphrase",
+    "question": "I have product photos paired with textual attributes. Repeatedly identify the weakest retrieval attributes, mine additional image-caption pairs, retrain, and re-evaluate until validation plateaus. Do not run anything; in one line name which skill applies, or say NONE.",
+    "expected_skill": "tao-run-deft-pas",
+    "expected_script": null,
+    "ground_truth": "Select tao-run-deft-pas because the requested evaluate, attribute-gap, pair-mining, retrain, and re-evaluate cycle is the PAS DEFT workflow even though no internal workflow or model name appears.",
+    "expected_behavior": [
+      "Names tao-run-deft-pas as the applicable skill",
+      "Uses the repeated retrieval evaluation, weak-attribute analysis, pair mining, and retraining cycle as the routing structure",
+      "Does not require the user to know CLIP, SigLIP, DEFT, or PAS terminology",
+      "Does not select one-shot tao-finetune-clip, tao-run-automl, or tao-run-deft-aoi",
+      "Does not run commands, scripts, containers, installs, web searches, audits, or other tools"
+    ]
+  },
+  {
+    "id": "tao-run-deft-pas-plain-language-routing-kpi-paraphrase",
+    "question": "For this attribute-captioned person-search dataset, cycle through retrieval evaluation, hard-pair mining, and model updates until medium-query Rank-1 reaches 0.65 or four rounds finish. Do not run anything; in one line name which skill applies, or say NONE.",
+    "expected_skill": "tao-run-deft-pas",
+    "expected_script": null,
+    "ground_truth": "Select tao-run-deft-pas because attribute-captioned retrieval with repeated mining/training/evaluation and a retrieval-KPI or iteration stop is the PAS DEFT application contract.",
+    "expected_behavior": [
+      "Names tao-run-deft-pas as the applicable skill",
+      "Recognizes the retrieval KPI and bounded repeated mining/training/evaluation loop",
+      "Does not treat the numeric target as generic HPO and does not infer AOI or PCB inspection",
+      "Does not run commands, scripts, containers, installs, web searches, audits, or other tools"
+    ]
+  },
+  {
     "id": "tao-run-deft-pas-basic",
     "question": "A user says: \"Use the tao-run-deft-pas skill to plan a PAS DEFT run.\" Identify the applicable skill and outline its documented workflow. This is a planning evaluation: do not run commands, scripts, containers, installs, web searches, audits, or any other tools.",
     "expected_skill": "tao-run-deft-pas",

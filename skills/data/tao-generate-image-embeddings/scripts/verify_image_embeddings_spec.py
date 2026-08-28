@@ -47,7 +47,11 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 def validate_config(config: dict[str, Any]) -> None:
     required = ("input_parquet", "output_parquet", "model", "model_path")
-    missing = [k for k in required if not config.get(k)]
+    missing = [
+        key
+        for key in required
+        if not isinstance(config.get(key), str) or not config[key].strip()
+    ]
     if missing:
         raise ValueError(f"Missing required field(s): {', '.join(missing)}")
 
@@ -68,7 +72,7 @@ def validate_config(config: dict[str, Any]) -> None:
     except OSError as exc:
         raise PermissionError(f"output_parquet parent is not writable: {out.parent}") from exc
 
-    model = str(config["model"])
+    model = config["model"]
     if model not in VALID_MODELS:
         raise ValueError(f"model must be one of {sorted(VALID_MODELS)}.")
     config["model"] = model
@@ -76,7 +80,7 @@ def validate_config(config: dict[str, Any]) -> None:
     # `model` selects the loader and `model_path` the weights, and they are otherwise
     # independent — a SigLIP path under model: CLIP passes every other check here and
     # fails inside the container, or worse loads something that embeds badly.
-    mp = str(config["model_path"]).lower()
+    mp = config["model_path"].lower()
     for name, marker in (("SigLIP", "siglip"), ("CLIP", "clip")):
         if marker in mp and model != name and not (name == "CLIP" and "siglip" in mp):
             raise ValueError(
@@ -85,18 +89,21 @@ def validate_config(config: dict[str, Any]) -> None:
             )
 
     # A TAO checkpoint cannot be rebuilt without its training spec.
-    model_path = str(config["model_path"])
+    model_path = config["model_path"]
     if Path(model_path).suffix in TAO_CKPT_SUFFIXES and not config.get("model_config_path"):
         raise ValueError(
             "model_config_path is required when model_path is a TAO checkpoint "
             f"({Path(model_path).suffix})."
         )
 
-    batch_size = int(config.get("batch_size", 64))
-    if batch_size < 1:
-        raise ValueError("batch_size must be at least 1.")
+    batch_size = config.get("batch_size", 64)
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        raise ValueError("batch_size must be an integer of at least 1.")
     config["batch_size"] = batch_size
-    config["model_config_path"] = str(config.get("model_config_path", ""))
+    model_config_path = config.get("model_config_path", "")
+    if not isinstance(model_config_path, str):
+        raise ValueError("model_config_path must be a string.")
+    config["model_config_path"] = model_config_path
 
 
 def parse_args() -> argparse.Namespace:

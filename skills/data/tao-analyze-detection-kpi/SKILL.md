@@ -64,7 +64,7 @@ The default template is `assets/default_kpi_analyze.yaml`.
 
 ## Quick Start
 
-Run from the `tao-skills-external` repo root.
+Run from the `tao-skill-bank` repo root.
 
 **Write the spec into the results directory.** The run does not retain it, so a
 completed run otherwise cannot tell you which settings produced `kpi_calc.csv`.

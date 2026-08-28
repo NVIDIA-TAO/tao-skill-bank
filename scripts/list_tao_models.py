@@ -21,7 +21,7 @@ import yaml
 
 
 DEFAULT_SKILL_BANK = Path(
-    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
+    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")
 )
 SCHEMA_DIR_REL = Path("schemas")
 TRAIN_SCHEMA_REL = SCHEMA_DIR_REL / "train.schema.json"
