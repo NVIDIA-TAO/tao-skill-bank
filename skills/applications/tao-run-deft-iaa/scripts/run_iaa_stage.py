@@ -25,7 +25,11 @@ import time
 from typing import Any
 
 from archive_contract import verify_archive_bindings
-from checkpoint_contract import METADATA_RELPATH, validate_best_checkpoint
+from checkpoint_contract import (
+    METADATA_RELPATH,
+    checkpoint_lineage_started_ns,
+    validate_best_checkpoint,
+)
 from command_contract import (
     command_sha256,
     expected_container_command,
@@ -83,7 +87,7 @@ def _python_tree_sha256(root: pathlib.Path) -> str:
 
 def _config(path: pathlib.Path, results: pathlib.Path):
     import iaa_deft
-    from iaa_deft.config import IaaDeftConfig
+    from iaa_deft.config import PasDeftConfig
 
     resolved = path.expanduser().resolve()
     if not resolved.is_file():
@@ -112,7 +116,7 @@ def _config(path: pathlib.Path, results: pathlib.Path):
     actual_digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
     if not expected_digest or actual_digest != expected_digest:
         raise ValueError("approved DEFT config hash does not match state")
-    return IaaDeftConfig(str(resolved))
+    return PasDeftConfig(str(resolved))
 
 
 def _results(path: pathlib.Path) -> pathlib.Path:
@@ -140,9 +144,7 @@ def _require(paths: list[pathlib.Path]) -> None:
 
 
 def _training_checkpoint(cfg, number: int) -> str:
-    if not cfg.continual_model or number == 1:
-        return cfg.init_checkpoint
-    return f"/results/iter_{number - 1}/pretrained/model_state.pth"
+    return cfg.training_checkpoint_for_iter(number)
 
 
 def dataset_materialize(args: argparse.Namespace) -> dict[str, Any]:
@@ -171,27 +173,27 @@ def dataset_materialize(args: argparse.Namespace) -> dict[str, Any]:
     source_pool = results / "embeddings" / "source" / "source_pool.parquet"
 
     materialize_iaa_eval_split(
-        eval_pairs_source_file=cfg.iaa_eval_pairs_source_file,
+        eval_pairs_source_file=cfg.pas.eval_pairs_source_file,
         eval_image_list_file=str(eval_list),
         eval_pairs_file=str(eval_pairs),
-        query_types=cfg.iaa_query_types,
+        query_types=cfg.pas.query_types,
         val_image_list_file=str(val_list),
-        val_sample_size=cfg.iaa_val_sample_size,
+        val_sample_size=cfg.pas.val_sample_size,
     )
     materialize_iaa_pool_split(
-        pool_pairs_source_file=cfg.iaa_pool_pairs_source_file,
+        pool_pairs_source_file=cfg.pas.pool_pairs_source_file,
         aug_pool_image_list_file=str(pool_list),
         aug_pool_pairs_file=str(pool_pairs),
-        augmented_suffix=cfg.iaa_augmented_suffix,
-        query_types=cfg.iaa_query_types,
-        max_aug_pool_rows=cfg.iaa_max_aug_pool_rows,
-        mining_pool_mode=cfg.iaa_mining_pool_mode,
+        augmented_suffix=cfg.pas.augmented_suffix,
+        query_types=cfg.pas.query_types,
+        max_aug_pool_rows=cfg.pas.max_aug_pool_rows,
+        mining_pool_mode=cfg.pas.mining_pool_mode,
     )
     convert_clip_image_list_to_parquet(
         image_list_file=str(pool_list),
-        image_dir=cfg.iaa_source_image_dir,
+        image_dir=cfg.pas.source_image_dir,
         output_parquet=str(source_pool),
-        caption_dir=cfg.iaa_source_caption_dir,
+        caption_dir=cfg.pas.source_caption_dir,
         caption_file_suffix=".txt",
         pairs_file=str(pool_pairs),
     )
@@ -224,30 +226,42 @@ def gap_analysis(args: argparse.Namespace) -> dict[str, Any]:
     analyze_clip_inference_gaps(
         results_dir=previous_eval,
         gaps_parquet=str(gaps),
-        kpi_image_dir=cfg.iaa_eval_image_dir,
+        kpi_image_dir=cfg.pas.eval_image_dir,
         logs_dir=str(current / "logs"),
-        kpi_caption_dir=cfg.iaa_eval_caption_dir,
+        kpi_caption_dir=cfg.pas.eval_caption_dir,
         caption_file_suffix=".txt",
         kpi_pairs_file=str(results / "iaa_splits" / "eval_pairs.json"),
-        metric_name=cfg.gap_metric_name,
-        queries_per_slice=cfg.queries_per_slice,
-        min_num_queries=cfg.min_gap_num_queries,
-        query_types=cfg.gap_query_types,
-        weak_attribute_topk=cfg.weak_attribute_topk,
-        target_query_count=cfg.target_query_count,
-        caption_diversity_enabled=cfg.caption_diversity_enabled,
-        caption_history_file=str(results / "caption_selection_history.json"),
+        metric_name=cfg.gap_analysis.metric_name,
+        queries_per_slice=cfg.gap_analysis.queries_per_slice,
+        min_num_queries=cfg.gap_analysis.min_num_queries,
+        query_types=cfg.gap_analysis.query_types,
+        weak_attribute_topk=cfg.gap_analysis.weak_attribute_topk,
+        target_query_count=cfg.gap_analysis.target_query_count,
+        caption_diversity_enabled=(
+            "true" if cfg.gap_analysis.caption_diversity.enabled else "false"
+        ),
+        caption_history_file=cfg.caption_history_file,
         iter_num=args.iter_num,
         total_iters=_state(results)["max_iterations"],
-        continual_dataset="true" if cfg.continual_dataset else "false",
-        caption_history_policy=cfg.caption_history_policy,
-        caption_coverage_target=cfg.caption_coverage_target,
-        min_unique_texts_per_attribute=cfg.min_unique_texts_per_attribute,
-        max_unique_texts_per_attribute=cfg.max_unique_texts_per_attribute,
-        max_rows_per_unique_text=cfg.max_rows_per_unique_text,
-        max_rows_per_image_path=cfg.max_rows_per_image_path,
-        recent_exclude_iters=cfg.recent_exclude_iters,
-        replay_fraction_when_noncontinual=cfg.replay_fraction_when_noncontinual,
+        continual_dataset="true" if cfg.training.continual_dataset else "false",
+        caption_history_policy=cfg.gap_analysis.caption_diversity.history_policy,
+        caption_coverage_target=cfg.gap_analysis.caption_diversity.coverage_target,
+        min_unique_texts_per_attribute=(
+            cfg.gap_analysis.caption_diversity.min_unique_texts_per_attribute
+        ),
+        max_unique_texts_per_attribute=(
+            cfg.gap_analysis.caption_diversity.max_unique_texts_per_attribute
+        ),
+        max_rows_per_unique_text=(
+            cfg.gap_analysis.caption_diversity.max_rows_per_unique_text
+        ),
+        max_rows_per_image_path=(
+            cfg.gap_analysis.caption_diversity.max_rows_per_image_path
+        ),
+        recent_exclude_iters=cfg.gap_analysis.caption_diversity.recent_exclude_iters,
+        replay_fraction_when_noncontinual=(
+            cfg.gap_analysis.caption_diversity.replay_fraction_when_noncontinual
+        ),
     )
     _require([gaps])
     return {"gaps_parquet": str(gaps), "previous_eval_dir": str(previous_eval)}
@@ -265,7 +279,7 @@ def mining_postprocess(args: argparse.Namespace) -> dict[str, Any]:
     target = current / "embeddings" / "target" / "embeddings.parquet"
     mined = current / "mining" / "mined_samples.parquet"
     mining_dir = current / "mining"
-    history_enabled = cfg.history_aware_enabled == "true"
+    history_enabled = cfg.mining.history_aware.enabled
     candidates = mining_dir / "history_candidates" if history_enabled else mining_dir
     candidate_list = candidates / "mined_image_list.txt"
     candidate_pairs = candidates / "mined_pairs.json"
@@ -276,24 +290,36 @@ def mining_postprocess(args: argparse.Namespace) -> dict[str, Any]:
         mined_parquet=str(mined),
         target_parquet=str(target),
         output_dir=str(mining_dir),
-        topn=cfg.mining_topn,
+        topn=cfg.mining.topn,
     )
     convert_mined_parquet_to_clip_image_list(
         mined_parquet=str(mined),
-        image_dir=cfg.iaa_source_image_dir,
-        caption_dir=cfg.iaa_source_caption_dir,
+        image_dir=cfg.pas.source_image_dir,
+        caption_dir=cfg.pas.source_caption_dir,
         caption_file_suffix=".txt",
         output_image_list_file=str(candidate_list),
         manifest_path=str(candidate_manifest),
         source_pairs_file=str(results / "iaa_splits" / "aug_pool_pairs.json"),
         output_pairs_file=str(candidate_pairs),
-        target_query_count=0 if history_enabled else cfg.target_query_count,
-        caption_expansion_enabled=cfg.caption_expansion_enabled,
-        caption_expansion_mode=cfg.caption_expansion_mode,
-        caption_expansion_max_pairs_per_image_path=cfg.caption_expansion_max_pairs_per_image_path,
-        caption_expansion_max_expanded_pair_fraction=cfg.caption_expansion_max_expanded_pair_fraction,
-        caption_expansion_dedupe_normalized_caption=cfg.caption_expansion_dedupe_normalized_caption,
-        caption_expansion_count_expanded_pairs_toward_target=cfg.caption_expansion_count_expanded_pairs_toward_target,
+        target_query_count=(
+            0 if history_enabled else cfg.gap_analysis.target_query_count
+        ),
+        caption_expansion_enabled=(
+            "true" if cfg.mining.caption_expansion.enabled else "false"
+        ),
+        caption_expansion_mode=cfg.mining.caption_expansion.mode,
+        caption_expansion_max_pairs_per_image_path=(
+            cfg.mining.caption_expansion.max_pairs_per_image_path
+        ),
+        caption_expansion_max_expanded_pair_fraction=(
+            cfg.mining.caption_expansion.max_expanded_pair_fraction
+        ),
+        caption_expansion_dedupe_normalized_caption=(
+            "true" if cfg.mining.caption_expansion.dedupe_normalized_caption else "false"
+        ),
+        caption_expansion_count_expanded_pairs_toward_target=(
+            cfg.mining.caption_expansion.count_expanded_pairs_toward_target
+        ),
         source_embedding_shards_dir=str(results / "embeddings" / "source"),
         write_detailed_csv="false" if history_enabled else "true",
         source_embeddings_parquet=str(source_embeddings),
@@ -318,7 +344,7 @@ def history_select(args: argparse.Namespace) -> dict[str, Any]:
     output_pairs = mining / "mined_pairs.json"
     manifest = mining / "mined_dataset.json"
     cumulative = mining / "cumulative_mined_unique_names.json"
-    if cfg.history_aware_enabled == "true":
+    if cfg.mining.history_aware.enabled:
         candidates = mining / "history_candidates"
         select_history_aware_mined_pairs(
             candidate_pairs_file=str(candidates / "mined_pairs.json"),
@@ -329,9 +355,11 @@ def history_select(args: argparse.Namespace) -> dict[str, Any]:
             history_file=str(results / "mining_selection_history.json"),
             source_pool_image_list_file=str(results / "iaa_splits" / "aug_pool_list.txt"),
             iter_num=args.iter_num,
-            target_query_count=cfg.target_query_count,
-            continual_dataset="true" if cfg.continual_dataset else "false",
-            replay_fraction=cfg.history_aware_replay_fraction,
+            target_query_count=cfg.gap_analysis.target_query_count,
+            continual_dataset=(
+                "true" if cfg.training.continual_dataset else "false"
+            ),
+            replay_fraction=cfg.mining.history_aware.replay_fraction,
             resume="true" if args.resume else "false",
         )
     track_cumulative_mined_unique_names(
@@ -382,7 +410,7 @@ def visualize_prepare(args: argparse.Namespace) -> dict[str, Any]:
     mined = current / "mining" / "mined_samples.parquet"
     samples = current / "visualization" / "samples"
     outputs: dict[str, Any] = {}
-    if cfg.visualize:
+    if cfg.visualization.enabled:
         if samples.exists():
             shutil.rmtree(samples)
         export_clip_sample_contact_sheets(
@@ -390,48 +418,51 @@ def visualize_prepare(args: argparse.Namespace) -> dict[str, Any]:
             mined_parquet=str(mined),
             output_dir=str(samples),
             source_pairs_file=str(current / "mining" / "mined_pairs.json"),
-            max_samples_per_group=cfg.viz_max_samples_per_group,
-            max_total_samples=cfg.viz_max_total_samples,
-            tile_size=cfg.viz_tile_size,
+            max_samples_per_group=cfg.visualization.max_samples_per_group,
+            max_total_samples=cfg.visualization.max_total_samples,
+            tile_size=cfg.visualization.tile_size,
             host_path_map={
                 "/results": str(results),
-                "/data": str(pathlib.Path(cfg.iaa_source_image_dir).parent.parent),
+                "/data": str(pathlib.Path(cfg.pas.source_image_dir).parent.parent),
             },
         )
         if not samples.is_dir() or not any(samples.iterdir()):
             raise ValueError(f"contact-sheet output is empty: {samples}")
         outputs["samples_dir"] = str(samples)
-    if cfg.visualize_embeddings:
+    if cfg.visualization.embeddings:
         weak_input = current / "embeddings" / "viz_weak" / "input.parquet"
         mined_input = current / "mining" / "mined_unique_images.parquet"
         prepare_clip_images_for_embedding(
             input_parquet=str(gaps),
             output_parquet_path=str(weak_input),
-            image_dir=cfg.iaa_eval_image_dir,
+            image_dir=cfg.pas.eval_image_dir,
         )
         prepare_clip_images_for_embedding(
             input_parquet=str(mined),
             output_parquet_path=str(mined_input),
-            image_dir=cfg.iaa_source_image_dir,
+            image_dir=cfg.pas.source_image_dir,
         )
         _require([weak_input, mined_input])
         outputs.update(
             {"weak_input_parquet": str(weak_input), "mined_input_parquet": str(mined_input)}
         )
-        has_previous = args.iter_num > 1 or bool(cfg.iaa_train_pairs_source_file)
-        if cfg.continual_dataset and has_previous:
+        has_previous = args.iter_num > 1 or bool(cfg.pas.train_pairs_source_file)
+        if cfg.training.continual_dataset and has_previous:
             previous_config = resolve_prev_clip_train_config(
                 base_experiment_path=str(results),
                 iter_num=args.iter_num,
-                continual_dataset=cfg.continual_dataset,
-                base_template=cfg.train_config,
+                continual_dataset=cfg.training.continual_dataset,
+                base_template=cfg.experiment.train_config,
                 train_image_list_file="",
             )
             previous_pool = current / "embeddings" / "previous" / "prev_pool.parquet"
             prepare_prev_clip_data_for_embedding(
                 prev_train_config_yaml=previous_config,
                 output_parquet_path=str(previous_pool),
-                host_path_map={"/results": str(results), "/data": str(pathlib.Path(cfg.iaa_source_image_dir).parent.parent)},
+                host_path_map={
+                    "/results": str(results),
+                    "/data": str(pathlib.Path(cfg.pas.source_image_dir).parent.parent),
+                },
             )
             _require([previous_pool])
             outputs["previous_input_parquet"] = str(previous_pool)
@@ -444,7 +475,7 @@ def visualize_finish(args: argparse.Namespace) -> dict[str, Any]:
     results = _results(args.results_dir)
     cfg = _config(args.deft_config, results)
     current = _iter_dir(results, args.iter_num)
-    if not cfg.visualize_embeddings:
+    if not cfg.visualization.embeddings:
         return {"visualize_embeddings": False}
     output = current / "visualization" / "tsne_plot.png"
     try:
@@ -470,8 +501,8 @@ def train_config(args: argparse.Namespace) -> dict[str, Any]:
     previous = resolve_prev_clip_train_config(
         base_experiment_path=str(results),
         iter_num=args.iter_num,
-        continual_dataset=cfg.continual_dataset,
-        base_template=cfg.train_config,
+        continual_dataset=cfg.training.continual_dataset,
+        base_template=cfg.experiment.train_config,
         train_image_list_file="",
     )
     output = current / "specs" / "train_config.yaml"
@@ -481,19 +512,19 @@ def train_config(args: argparse.Namespace) -> dict[str, Any]:
         output_dir=f"/results/iter_{args.iter_num}",
         checkpoint_path=_training_checkpoint(cfg, args.iter_num),
         sweep_args=cfg.sweep_args_str,
-        mined_image_dir=cfg.iaa_source_image_dir,
-        mined_caption_dir=cfg.iaa_source_caption_dir,
+        mined_image_dir=cfg.pas.source_image_dir,
+        mined_caption_dir=cfg.pas.source_caption_dir,
         mined_image_list_file=f"/results/iter_{args.iter_num}/mining/mined_image_list.txt",
         caption_file_suffix=".txt",
-        train_image_dir=cfg.iaa_train_image_dir,
-        train_caption_dir=cfg.iaa_train_caption_dir,
+        train_image_dir=cfg.pas.train_image_dir,
+        train_caption_dir=cfg.pas.train_caption_dir,
         train_image_list_file="",
         train_pairs_file="",
         mined_pairs_file=f"/results/iter_{args.iter_num}/mining/mined_pairs.json",
         val_image_list_file="/results/iaa_splits/val_list.txt",
-        val_image_dir=cfg.iaa_eval_image_dir,
-        val_caption_dir=cfg.iaa_eval_caption_dir,
-        continual_dataset=cfg.continual_dataset,
+        val_image_dir=cfg.pas.eval_image_dir,
+        val_caption_dir=cfg.pas.eval_caption_dir,
+        continual_dataset=cfg.training.continual_dataset,
     )
     _require([output])
     return {"train_config": str(output), "checkpoint_input": _training_checkpoint(cfg, args.iter_num)}
@@ -504,7 +535,8 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
 
     results = _results(args.results_dir)
     _config(args.deft_config, results)
-    state_config = _state(results).get("config")
+    state = _state(results)
+    state_config = state.get("config")
     if not isinstance(state_config, dict):
         raise ValueError("state.config must be an object")
     current = _iter_dir(results, args.iter_num)
@@ -551,8 +583,9 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise ValueError("--train-command-status does not prove the approved train command")
     started_ns = payload.get("started_ns")
-    if not isinstance(started_ns, int) or isinstance(started_ns, bool) or started_ns < 1:
-        raise ValueError("train command status started_ns must be a positive integer")
+    lineage_started_ns = checkpoint_lineage_started_ns(
+        payload, state.get("started_at")
+    )
     log_path = pathlib.Path(str(payload.get("log_path", "")))
     if (
         not log_path.is_absolute()
@@ -598,10 +631,16 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
             output.unlink()
         except FileNotFoundError:
             pass
-    published = pathlib.Path(get_current_checkpoint(str(train_dir)))
+    published = pathlib.Path(
+        get_current_checkpoint(
+            str(train_dir), earliest_mtime_ns=lineage_started_ns
+        )
+    )
     if pathlib.Path(os.path.abspath(published)) != best:
         raise ValueError(f"checkpoint publisher returned {published}, expected {best}")
-    provenance = validate_best_checkpoint(best, train_dir, started_ns=started_ns)
+    provenance = validate_best_checkpoint(
+        best, train_dir, started_ns=lineage_started_ns
+    )
     normalize_clip_pretrained_checkpoint(str(best), str(normalized))
     _require([best, metadata, normalized])
     if normalized.is_symlink() or normalized.resolve() != normalized:
@@ -621,7 +660,7 @@ def eval_config(args: argparse.Namespace) -> dict[str, Any]:
     if args.iter_label == "baseline":
         host_dir = results / "zs"
         container_dir = "/results/zs"
-        checkpoint = cfg.init_checkpoint
+        checkpoint = cfg.training.init_checkpoint
     else:
         number = int(args.iter_label[4:])
         host_dir = _iter_dir(results, number)
@@ -629,12 +668,12 @@ def eval_config(args: argparse.Namespace) -> dict[str, Any]:
         checkpoint = f"{container_dir}/train/best/clip_best_val_t2i_mAP.pth"
     output = host_dir / "specs" / "eval_config.yaml"
     create_clip_eval_config(
-        base_config_yaml=cfg.eval_config,
+        base_config_yaml=cfg.experiment.eval_config,
         new_config_yaml=str(output),
         output_dir=container_dir,
         checkpoint_path=checkpoint,
-        eval_image_dir=cfg.iaa_eval_image_dir,
-        eval_caption_dir=cfg.iaa_eval_caption_dir,
+        eval_image_dir=cfg.pas.eval_image_dir,
+        eval_caption_dir=cfg.pas.eval_caption_dir,
         eval_image_list_file="/results/iaa_splits/eval_list.txt",
         caption_file_suffix=".txt",
     )

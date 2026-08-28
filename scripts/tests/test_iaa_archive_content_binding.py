@@ -19,8 +19,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_ROOT = REPO_ROOT / "skills" / "applications" / "tao-run-deft-iaa"
 SCRIPTS = SKILL_ROOT / "scripts"
-PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"
-DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"
+PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
+DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
 
 
 def _sha256(path: Path) -> str:
