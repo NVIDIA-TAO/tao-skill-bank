@@ -136,9 +136,9 @@ Usually there is no up-front setup beyond the chosen platform prerequisites.
 Model and data skills run with just `docker run`; platform skills add job
 tracking, S3 I/O, and multi-node over their native CLI with no
 `nvidia-tao-sdk` — see [Execution: no SDK required](#execution-no-sdk-required).
-Application workflows such as IAA DEFT may provision documented host-Python
-dependencies into an isolated workspace environment, but only after the
-workflow's approval gate. AutoML search (`tao-run-automl`) remains the one
+Application workflows such as People Attribute Search (PAS) DEFT may provision
+documented host-Python dependencies into an isolated workspace environment,
+but only after the workflow's approval gate. AutoML search (`tao-run-automl`) remains the one
 special SDK exception: its Preflight lazily installs the
 `nvidia-tao-automl` wheel, whose pin lives in [`versions.yaml`](versions.yaml)
 (`wheels.tao_automl_*`).
@@ -225,8 +225,9 @@ The agent will read `skills/models/tao-train-visual-changenet/SKILL.md` (skill n
 
 For more complex workflows, see `skills/applications/tao-run-deft-aoi/SKILL.md`
 (`tao-run-deft-aoi`, shorthand `tao-deft-aoi`) for AOI iterative fine-tuning,
-`skills/applications/tao-run-deft-iaa/SKILL.md` (`tao-run-deft-iaa`, shorthand
-`tao-deft-iaa`) for the self-contained local-Docker IAA loop, and
+`skills/applications/tao-run-deft-pas/SKILL.md` (`tao-run-deft-pas`, shorthand
+`tao-deft-pas`) for the self-contained local-Docker People Attribute Search
+(PAS) loop, and
 `skills/applications/tao-run-automl/SKILL.md` (`tao-run-automl`) for
 hyperparameter optimization. AutoML launch reviews should show the number of
 recommendations, metric, search space, expected runtime, and resolved train
@@ -239,7 +240,7 @@ image before long-running jobs start.
 | `skills/models/` | Network-centric skills: containers, commands, data formats, checkpoints | `tao-finetune-cosmos-reason`, `tao-train-visual-changenet`, `tao-finetune-clip`, `tao-train-dino`, `tao-train-segformer`, … |
 | `skills/data/` | Data preparation, analysis, and enhancement | `tao-mine-aoi-images`, `tao-analyze-gaps-visual-changenet`, `tao-route-visual-changenet-samples`, `tao-analyze-gaps-vlm-bcq`, `tao-convert-dataset-format`, `tao-validate-dataset-format`, `tao-generate-image-grounding`, `tao-generate-referring-expressions`, `tao-generate-video-reasoning-annotations` |
 | `skills/platform/` | Where and how jobs run | `tao-run-on-docker` (local daemon or `DOCKER_HOST=ssh://`), `tao-run-on-brev` (instance-based GPU), `tao-run-on-slurm` (remote SLURM cluster), `tao-run-on-kubernetes` (k8s), `tao-run-on-virtualenv` (docker-free local venv), `tao-data-io` (S3/data staging), `tao-setup-nvidia-gpu-host` (host runtime) |
-| `skills/applications/` | End-to-end workflows composing the layers above | `tao-run-deft-aoi`, `tao-run-deft-iaa`, `tao-run-automl-deft-pipeline`, `tao-analyze-changenet-rca`, `tao-train-single-step`, `tao-run-automl`, `tao-finetune-huggingface-model`, `tao-port-huggingface-model`, `tao-run-inference-service` |
+| `skills/applications/` | End-to-end workflows composing the layers above | `tao-run-deft-aoi`, `tao-run-deft-pas`, `tao-run-automl-deft-pipeline`, `tao-analyze-changenet-rca`, `tao-train-single-step`, `tao-run-automl`, `tao-finetune-huggingface-model`, `tao-port-huggingface-model`, `tao-run-inference-service` |
 
 Each skill is a directory with `SKILL.md` (agent-readable instructions). Optional `references/skill_info.yaml` provides structured metadata (container image, per-action command/mode/inputs/outputs) the agent uses to construct the container command; optional `scripts/` bundles supporting code.
 
