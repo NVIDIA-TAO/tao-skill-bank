@@ -54,13 +54,8 @@ from metric_contract import validate_contract
 
 
 WORKFLOW = "tao-run-deft-iaa"
-<<<<<<< HEAD
-PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.pyt
-PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.data_services
-=======
 PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
 PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
->>>>>>> 48f22fa ([TAO-0][Bugfix] Type and bind the PAS 7.2 execution contract (#198))
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
     "tao_spec.yaml",

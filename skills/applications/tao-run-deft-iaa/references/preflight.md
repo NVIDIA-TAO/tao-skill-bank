@@ -144,25 +144,11 @@ Run this section only after required intake is resolved.
 
    ```bash
    docker version --format '{{.Server.Version}}'
-<<<<<<< HEAD
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.pyt
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.data_services
-   nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
-=======
    PAS_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
    PAS_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
    docker image inspect "$PAS_PYT_IMAGE" >/dev/null 2>&1
    docker image inspect "$PAS_DS_IMAGE" >/dev/null 2>&1
-   TARGET_GPU_ARGS=()
-   IFS=, read -r -a GPU_ID_LIST <<< "$GPU_IDS"
-   for GPU_ID in "${GPU_ID_LIST[@]}"; do
-     TARGET_GPU_ARGS+=(--target-gpu-index "$GPU_ID")
-   done
-   "${TAO_SKILL_BANK_PATH:?}/scripts/check_tao_launch_preflight.py" \
-     --skill-bank "$TAO_SKILL_BANK_PATH" --platform docker \
-     --container-image "$PAS_PYT_IMAGE" \
-     --gpu-min-count "$NUM_GPUS" "${TARGET_GPU_ARGS[@]}"
->>>>>>> 48f22fa ([TAO-0][Bugfix] Type and bind the PAS 7.2 execution contract (#198))
+   nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
    ```
 
    Missing local images are planned pulls. Do not run a CUDA container probe
@@ -223,13 +209,8 @@ hardware, pool size, and accumulated data can change this substantially.
 | continual behavior | dataset `true`, model `false` |
 | visualization | contact sheets `true`, embedding plot `true` |
 | Hugging Face token forwarding | disabled; enable only when the approved model/environment requires it |
-<<<<<<< HEAD
-| PyTorch image | `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch` | <!-- versions-key: images.tao_toolkit.pyt -->
-| data-services image | `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch` | <!-- versions-key: images.tao_toolkit.data_services -->
-=======
 | PyTorch image | `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch` | <!-- versions-key: images.tao_toolkit.deft_pas_pyt -->
 | data-services image | `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch` | <!-- versions-key: images.tao_toolkit.deft_pas_data_services -->
->>>>>>> 48f22fa ([TAO-0][Bugfix] Type and bind the PAS 7.2 execution contract (#198))
 | monitoring | attached, poll every `5 minutes` |
 
 An ungated run evaluates every allowed iteration and completes with
@@ -290,15 +271,9 @@ Inputs
   credentials: NGC_KEY=<set | not needed | missing>;
                HF_TOKEN=<set | optional/unset | missing>
   token forwarding: requires_hf_token=<bool> (source=<user | default>)
-<<<<<<< HEAD
-  PyTorch image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.pyt
-                 (source=versions.yaml; status=<local | pull after approval>)
-  data-services image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
-=======
   PyTorch image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
                  (source=versions.yaml; status=<local | pull after approval>)
   data-services image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
->>>>>>> 48f22fa ([TAO-0][Bugfix] Type and bind the PAS 7.2 execution contract (#198))
                        (source=versions.yaml; status=<local | pull after approval>)
   GPUs: <selected IDs> (source=<user | default>);
         memory=<free/total discovery result>
@@ -332,13 +307,8 @@ For a new run, perform the following in order.
      printf '%s' "$NGC_KEY" | docker login nvcr.io \
        --username '$oauthtoken' --password-stdin >/dev/null
    )
-<<<<<<< HEAD
-   docker pull nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.pyt
-   docker pull nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
-=======
    docker pull nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
    docker pull nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
->>>>>>> 48f22fa ([TAO-0][Bugfix] Type and bind the PAS 7.2 execution contract (#198))
    ```
 
    Never print, persist, or place the credential value in argv.
@@ -349,11 +319,7 @@ For a new run, perform the following in order.
    : "${GPU_IDS:?approved comma-separated GPU ids are required}"
    DOCKER_GPU_REQUEST="\"device=${GPU_IDS}\""
    docker run --rm --gpus "$DOCKER_GPU_REQUEST" \
-<<<<<<< HEAD
-     nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch python3 -c 'import torch; torch.zeros(1).cuda()'  # versions-key: images.tao_toolkit.pyt
-=======
      nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch python3 -c 'import torch; torch.zeros(1).cuda()'  # versions-key: images.tao_toolkit.deft_pas_pyt
->>>>>>> 48f22fa ([TAO-0][Bugfix] Type and bind the PAS 7.2 execution contract (#198))
    ```
 
    `GPU_IDS` is the exact approved host `gpu_ids` list (for example `0` or
@@ -435,13 +401,8 @@ For a new run, perform the following in order.
      INIT_OPTIONAL_ARGS+=(--requires-hf-token)
    fi
 
-<<<<<<< HEAD
-   IAA_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.pyt
-   IAA_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
-=======
    PAS_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
    PAS_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
->>>>>>> 48f22fa ([TAO-0][Bugfix] Type and bind the PAS 7.2 execution contract (#198))
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
      "$SKILL_ROOT/scripts/init_deft_state.py" \
