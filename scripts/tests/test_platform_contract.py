@@ -80,6 +80,16 @@ def test_platform_wires_the_job_record(platform):
         f"{platform}/SKILL.md never calls `tao_job_record.py mark` to update state")
 
 
+def test_brev_submit_contract_is_idempotent():
+    """The normative Brev submit verb must guard against CLI command replay."""
+    text = _skill_text("tao-run-on-brev")
+    execution = text.split("## Execution — the four verbs", 1)[1].split(
+        "### `brev exec` argument form", 1
+    )[0]
+    assert "docker inspect '$JOB_ID'" in execution
+    assert "$JOB_ID already submitted" in execution
+
+
 # Shell-assigned paths that point into the bank, e.g.
 #   SETUP_SCRIPT="${TAO_SKILL_BANK_ROOT}/skills/platform/.../setup.sh"
 BANK_PATH_RE = re.compile(

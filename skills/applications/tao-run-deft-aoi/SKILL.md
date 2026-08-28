@@ -3,11 +3,11 @@ name: tao-run-deft-aoi
 description: >
   Run the full DEFT AOI improvement loop for NVIDIA TAO VisualChangeNet / ChangeNet PCB inspection models:
   baseline evaluate, RCA, Cosmos AnomalyGen / AMP synthetic defects, k-NN mining, retraining, and deployment
-  gating against a customer-defined primary metric and optional constraints. Supports air-gapped/offline runs
-  with pre-staged assets. Use for prompts like "run the DEFT loop", "fine-tune until the configured quality
-  metric meets its target", "optimize a customer metric", or "improve my AOI ChangeNet model with RCA and synthetic
-  defects"; do not use
-  for standalone TAO training, one-off inference, generic anomaly generation, or RCA-only analysis.
+  gating against a customer-defined primary metric and optional constraints. Use only when the request identifies
+  an AOI / automated-optical-inspection, PCB-defect, VisualChangeNet, or ChangeNet workflow. Supports air-gapped/offline
+  runs with pre-staged assets. Never infer AOI from generic iterative-improvement language. Do not use for CLIP / SigLIP
+  image retrieval, attribute-labelled image data, standalone TAO training, one-off inference, generic anomaly generation,
+  or RCA-only analysis.
 license: Apache-2.0 AND CC-BY-4.0
 compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
 metadata:

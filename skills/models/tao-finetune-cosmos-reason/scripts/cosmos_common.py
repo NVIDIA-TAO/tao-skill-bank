@@ -15,7 +15,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -27,6 +29,7 @@ MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ACCURACY_TASKS = {"bcq", "binary", "mcq", "binary_choice", "multiple_choice"}
 DATASET_FAMILIES = {"auto", "video_conversation", "task_aware_video_reasoning"}
 MEDIA_FIELDS = ("video", "video_id", "image", "image_id", "media", "media_path")
+TAO_VL_MEDIA_FIELDS = ("video_id", "image_id")
 CLASSIFICATION_LABEL_SETS = (
     frozenset({"a", "b", "c", "d"}),
     frozenset({"yes", "no"}),
@@ -222,6 +225,27 @@ def _record_media(record: Mapping[str, Any]) -> list[str]:
     return values
 
 
+def decode_media(path: Path) -> None:
+    """Decode-probe one frame so corrupt video inputs fail before launch."""
+    if path.suffix.casefold() not in {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}:
+        return
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise WorkflowError(
+            "media decode validation requires ffprobe on the inspection host; "
+            f"cannot validate {path}"
+        )
+    completed = subprocess.run(
+        [ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#1",
+         "-show_entries", "frame=media_type", "-of", "csv=p=0", str(path)],
+        text=True, capture_output=True, check=False,
+    )
+    if completed.returncode or "video" not in completed.stdout.split():
+        detail = completed.stderr.strip().splitlines()
+        reason = detail[-1] if detail else "no decodable video frame"
+        raise WorkflowError(f"media decode validation failed for {path}: {reason}")
+
+
 def _record_key(record: Mapping[str, Any]) -> str:
     identity = {
         "id": record.get("id") or record.get("sample_id") or record.get("video_id"),
@@ -361,8 +385,17 @@ def inspect_dataset(
                     schema_errors.append(f"{annotation_path}:{index}: task-aware record has no task")
                 if requested_tasks and task not in requested_tasks:
                     continue
-                if not _record_media(record):
-                    schema_errors.append(f"{annotation_path}:{index}: task-aware record has no media field")
+                canonical_media = [
+                    field for field in TAO_VL_MEDIA_FIELDS
+                    if isinstance(record.get(field), str) and record.get(field)
+                ]
+                if len(canonical_media) != 1:
+                    aliases = [field for field in MEDIA_FIELDS if record.get(field)]
+                    schema_errors.append(
+                        f"{annotation_path}:{index}: task-aware tao-vl-reason-v1.0 "
+                        "record requires exactly one canonical video_id or image_id; "
+                        f"found {aliases or 'none'}"
+                    )
                 conversations = record.get("conversations") or record.get("messages")
                 has_conversation_target = isinstance(conversations, list) and len(conversations) >= 2
                 has_question_answer = (

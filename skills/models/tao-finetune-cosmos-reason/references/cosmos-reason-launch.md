@@ -160,7 +160,7 @@ Don't rebuild from scratch.
 import yaml
 from pathlib import Path
 
-skill = Path.home() / "tao-sdk/tao-skills-external/skills/models/tao-finetune-cosmos-reason"
+skill = Path.home() / "tao-sdk/tao-skill-bank/skills/models/tao-finetune-cosmos-reason"
 action = "train"  # train, evaluate, inference, or quantize
 specs = yaml.safe_load((skill / f"references/spec_template_{action}.yaml").read_text())
 # Now apply your overrides on top of `specs` (next section).

@@ -522,7 +522,7 @@ CI runs the same script — fix errors before opening a PR; address warnings opp
 ## 9. Test locally
 
 Use the applicable local plugin/runtime command for the target environment and
-point it at `/path/to/tao-skills-external`.
+point it at `/path/to/tao-skill-bank`.
 
 Start a session, ask the agent to exercise the skill. Verify the agent reads it, constructs a valid invocation, and produces the expected output.
 

@@ -148,15 +148,7 @@ Run this section only after required intake is resolved.
    TAO_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
    docker image inspect "$TAO_PYT_IMAGE" >/dev/null 2>&1
    docker image inspect "$TAO_DS_IMAGE" >/dev/null 2>&1
-   TARGET_GPU_ARGS=()
-   IFS=, read -r -a GPU_ID_LIST <<< "$GPU_IDS"
-   for GPU_ID in "${GPU_ID_LIST[@]}"; do
-     TARGET_GPU_ARGS+=(--target-gpu-index "$GPU_ID")
-   done
-   "${TAO_SKILL_BANK_PATH:?}/scripts/check_tao_launch_preflight.py" \
-     --skill-bank "$TAO_SKILL_BANK_PATH" --platform docker \
-     --container-image "$TAO_PYT_IMAGE" \
-     --gpu-min-count "$NUM_GPUS" "${TARGET_GPU_ARGS[@]}"
+   nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
    ```
 
    Missing local images are planned pulls. Do not run a CUDA container probe

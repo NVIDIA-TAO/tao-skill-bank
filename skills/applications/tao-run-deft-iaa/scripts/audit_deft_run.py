@@ -40,6 +40,7 @@ from command_contract import (
     expected_container_command,
     expected_hf_forwarding,
     expected_image_kind,
+    validate_content_bound_outputs,
 )
 from metric_contract import (
     compare,
@@ -713,6 +714,65 @@ def _validate_command_status(
     return payload
 
 
+def _validate_derived_specs_on_disk(
+    results_dir: pathlib.Path, max_iterations: int, errors: list[str]
+) -> None:
+    candidates = [
+        (
+            results_dir / "zs" / "specs" / "eval_config.yaml",
+            results_dir / "zs" / "specs" / "eval-config.host.status.json",
+            "eval-config",
+            results_dir / "zs",
+        )
+    ]
+    for number in range(1, max_iterations + 1):
+        phase = results_dir / f"iter_{number}"
+        candidates.extend(
+            [
+                (
+                    phase / "specs" / "train_config.yaml",
+                    phase / "specs" / "train-config.host.status.json",
+                    "train-config",
+                    phase,
+                ),
+                (
+                    phase / "specs" / "eval_config.yaml",
+                    phase / "specs" / "eval-config.host.status.json",
+                    "eval-config",
+                    phase,
+                ),
+            ]
+        )
+    for spec_path, status_path, producer, scope in candidates:
+        if not spec_path.exists() and not status_path.exists():
+            continue
+        if not status_path.is_file():
+            errors.append(f"derived spec lacks producer evidence: {spec_path}")
+            continue
+        try:
+            raw_payload = json.loads(status_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            raw_payload = None
+        # A failed/running producer is retry evidence, not a trusted spec. The
+        # container gate rejects it; audit content-checks only successful output.
+        if not isinstance(raw_payload, dict) or raw_payload.get("status") != "ok":
+            continue
+        payload = _validate_command_status(
+            status_path,
+            f"derived {producer} status",
+            errors,
+            scope,
+            required_name=producer,
+        )
+        if payload is not None:
+            try:
+                validate_content_bound_outputs(
+                    payload, [spec_path], f"derived {producer} status"
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(str(exc))
+
+
 def _history_iteration_numbers(
     payload: dict[str, Any], errors: list[str]
 ) -> list[int]:
@@ -881,6 +941,8 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         errors.append("state.current_iteration must be >= 0")
     if valid_max and valid_current and current_iteration > max_iterations:
         errors.append("state.current_iteration must not exceed max_iterations")
+    if valid_max and max_iterations >= 1:
+        _validate_derived_specs_on_disk(results_dir, max_iterations, errors)
 
     gate = _gate_from_state(state, errors)
     gate_met = state.get("gate_met")

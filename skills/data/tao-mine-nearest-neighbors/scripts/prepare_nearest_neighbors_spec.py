@@ -12,6 +12,7 @@ the mining knobs explicit for reproducibility.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,11 @@ def absolute_path(raw_path: str, *, must_exist: bool, kind: str) -> str:
 def validate_config(config: dict[str, Any]) -> None:
     """Validate the fields this skill depends on before Docker is launched."""
     required = ("source_parquet", "target_parquet", "output_parquet")
-    missing = [key for key in required if not config.get(key)]
+    missing = [
+        key
+        for key in required
+        if not isinstance(config.get(key), str) or not config[key].strip()
+    ]
     if missing:
         raise ValueError(f"Missing required field(s): {', '.join(missing)}")
 
@@ -80,24 +85,38 @@ def validate_config(config: dict[str, Any]) -> None:
     except OSError as exc:
         raise PermissionError(f"output_parquet parent is not writable: {output_path.parent}") from exc
 
-    topn = int(config.get("topn", 5))
-    if topn < 1:
-        raise ValueError("topn must be at least 1.")
+    topn = config.get("topn", 5)
+    if isinstance(topn, bool) or not isinstance(topn, int) or topn < 1:
+        raise ValueError("topn must be an integer of at least 1.")
     config["topn"] = topn
 
-    metric = str(config.get("knn_metric", "cosine"))
-    if metric not in VALID_METRICS:
+    metric = config.get("knn_metric", "cosine")
+    if not isinstance(metric, str) or metric not in VALID_METRICS:
         raise ValueError(f"knn_metric must be one of {sorted(VALID_METRICS)}.")
     config["knn_metric"] = metric
 
-    filter_by_label = str(config.get("filter_by_label", "false")).lower()
+    filter_by_label = config.get("filter_by_label", "false")
+    if not isinstance(filter_by_label, str):
+        raise ValueError('filter_by_label must be the string "true" or "false".')
+    filter_by_label = filter_by_label.lower()
     if filter_by_label not in {"true", "false"}:
         raise ValueError('filter_by_label must be the string "true" or "false".')
     config["filter_by_label"] = filter_by_label
 
-    config["source_embed_column_name"] = str(config.get("source_embed_column_name", "embedding"))
-    config["target_embed_column_name"] = str(config.get("target_embed_column_name", "embedding"))
-    config["distance_threshold"] = float(config.get("distance_threshold", -1.0))
+    for key in ("source_embed_column_name", "target_embed_column_name"):
+        value = config.get(key, "embedding")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{key} must be a non-empty string.")
+        config[key] = value
+
+    distance_threshold = config.get("distance_threshold", -1.0)
+    if (
+        isinstance(distance_threshold, bool)
+        or not isinstance(distance_threshold, (int, float))
+        or not math.isfinite(distance_threshold)
+    ):
+        raise ValueError("distance_threshold must be a finite number.")
+    config["distance_threshold"] = float(distance_threshold)
 
 
 def build_config(args: argparse.Namespace) -> dict[str, Any]:

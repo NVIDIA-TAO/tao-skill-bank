@@ -30,6 +30,7 @@ from checkpoint_contract import (
     validate_best_checkpoint,
 )
 from command_contract import (
+    fresh_output_sha256,
     command_sha256,
     expected_container_command,
     expected_hf_forwarding,
@@ -905,6 +906,7 @@ def _execute_stage(
             print(f"run_iaa_stage[{args.stage}]: {exc}", file=sys.stderr)
             return 2
         fresh_outputs = _result_paths(report, results, args.stage)
+        output_hashes = fresh_output_sha256(fresh_outputs)
         finished_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
         _atomic_json(
             status_path,
@@ -914,6 +916,7 @@ def _execute_stage(
                 "status": "ok",
                 "exit_code": 0,
                 "fresh_outputs": fresh_outputs,
+                "fresh_output_sha256": output_hashes,
             },
         )
         report = dict(report)

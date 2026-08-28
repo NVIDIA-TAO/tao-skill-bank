@@ -27,11 +27,13 @@ from typing import Any
 
 from command_contract import (
     command_sha256,
+    derived_spec_evidence,
     expected_container_command,
     expected_hf_forwarding,
     expected_fresh_outputs,
     expected_image_kind,
     expected_stage_directory,
+    validate_content_bound_outputs,
 )
 
 
@@ -254,6 +256,153 @@ def _container_is_running(container_name: str) -> bool:
     )
 
 
+def _container_exit_code(container_name: str) -> int | None:
+    """Return a retained container's exit code, or None after Docker --rm."""
+    inspected = subprocess.run(
+        [
+            "docker",
+            "container",
+            "inspect",
+            "--format",
+            "{{.State.ExitCode}}",
+            container_name,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if inspected.returncode == 0:
+        try:
+            return int(inspected.stdout.strip())
+        except ValueError as exc:
+            raise ValueError(
+                f"Docker returned an invalid exit code for {container_name}: "
+                f"{inspected.stdout.strip()!r}"
+            ) from exc
+    combined = (inspected.stdout + inspected.stderr).lower()
+    if "no such object" in combined or "no such container" in combined:
+        return None
+    raise ValueError(
+        f"cannot inspect prior container {container_name}; Docker said: "
+        f"{(inspected.stderr or inspected.stdout).strip() or 'unknown error'}"
+    )
+
+
+def _last_execution_status(log_path: pathlib.Path) -> str | None:
+    """Stream the complete log and return its final TAO status marker.
+
+    Reconciliation is an exceptional recovery path, so a linear scan is a
+    better tradeoff than a fixed tail: it uses bounded memory and cannot lose
+    durable success evidence merely because later diagnostics made the log
+    larger than an arbitrary window.
+    """
+    final_status = None
+    pattern = re.compile(r"^Execution status:\s*(PASS|FAIL)\s*$", re.IGNORECASE)
+    with log_path.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            match = pattern.match(line)
+            if match:
+                final_status = match.group(1).upper()
+    return final_status
+
+
+def _validate_interrupted_identity(
+    existing: dict[str, Any],
+    *,
+    name: str,
+    image_kind: str,
+    image: str,
+    command: list[str],
+    passed_hf_token: bool,
+    container_name: str,
+    cidfile_path: pathlib.Path,
+    log_path: pathlib.Path,
+    fresh_outputs: list[str],
+) -> None:
+    expected = {
+        "schema_version": "1",
+        "workflow": "tao-run-deft-iaa",
+        "kind": "container",
+        "name": name,
+        "image_kind": image_kind,
+        "image": image,
+        "command": command,
+        "command_sha256": command_sha256(command),
+        "passed_hf_token": passed_hf_token,
+        "container_name": container_name,
+        "cidfile": str(cidfile_path),
+        "log_path": str(log_path),
+        "fresh_outputs": fresh_outputs,
+    }
+    mismatches = [key for key, value in expected.items() if existing.get(key) != value]
+    if mismatches:
+        raise ValueError(
+            "existing running status does not match the approved command identity: "
+            + ", ".join(mismatches)
+        )
+
+
+def _reconcile_interrupted_success(
+    existing: dict[str, Any],
+    *,
+    status_path: pathlib.Path,
+    log_path: pathlib.Path,
+    fresh_outputs: list[str],
+    container_name: str,
+) -> bool:
+    """Close a status left running only when durable success evidence agrees."""
+    started_ns = existing.get("started_ns")
+    if (
+        not isinstance(started_ns, int)
+        or isinstance(started_ns, bool)
+        or started_ns < 1
+        or not log_path.is_file()
+        or log_path.stat().st_size == 0
+        or log_path.is_symlink()
+        or log_path.resolve() != log_path
+    ):
+        return False
+    for raw in fresh_outputs:
+        output = pathlib.Path(raw)
+        if (
+            output.is_symlink()
+            or not output.is_file()
+            or output.stat().st_size == 0
+            or output.stat().st_mtime_ns < started_ns
+        ):
+            return False
+
+    docker_exit_code = _container_exit_code(container_name)
+    log_status = _last_execution_status(log_path)
+    if docker_exit_code is not None:
+        if docker_exit_code != 0 or log_status == "FAIL":
+            return False
+        source = "docker"
+    else:
+        if log_status != "PASS":
+            return False
+        docker_exit_code = 0
+        source = "container_log"
+
+    finished_at = dt.datetime.fromtimestamp(
+        log_path.stat().st_mtime, tz=dt.timezone.utc
+    ).isoformat(timespec="seconds")
+    _atomic_json(
+        status_path,
+        {
+            **existing,
+            "finished_at": finished_at,
+            "status": "ok",
+            "exit_code": 0,
+            "docker_exit_code": docker_exit_code,
+            "artifact_error": None,
+            "reconciled_after_wrapper_exit": True,
+            "reconciliation_source": source,
+        },
+    )
+    return True
+
+
 def _launch_label(name: str, stage_dir: pathlib.Path, results_dir: pathlib.Path) -> str:
     if name == "pool_embed":
         return "baseline"
@@ -279,6 +428,30 @@ def _load_existing_status(path: pathlib.Path) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         raise ValueError(f"existing command status root must be an object: {path}")
     return payload
+
+
+def _validate_derived_spec_input(
+    name: str, label: str, results_dir: pathlib.Path
+) -> dict[str, str]:
+    evidence = derived_spec_evidence(name, label, results_dir)
+    if evidence is None:
+        return {}
+    spec_path, status_path, producer = evidence
+    payload = _load_existing_status(status_path)
+    if (
+        payload is None
+        or payload.get("schema_version") != "1"
+        or payload.get("workflow") != "tao-run-deft-iaa"
+        or payload.get("kind") != "host"
+        or payload.get("name") != producer
+        or payload.get("status") != "ok"
+        or payload.get("exit_code") != 0
+        or str(spec_path) not in payload.get("fresh_outputs", [])
+    ):
+        raise ValueError(
+            f"{name} requires successful content-bound {producer} evidence: {status_path}"
+        )
+    return validate_content_bound_outputs(payload, [spec_path], str(status_path))
 
 
 def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
@@ -336,6 +509,9 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
         raise ValueError(
             f"--pass-hf-token for {args.name} must be {required_hf} per immutable approval"
         )
+    input_sha256 = _validate_derived_spec_input(
+        args.name, label, results_dir
+    )
     stage_dir.mkdir(parents=True, exist_ok=True)
     log_path = stage_dir / f"{args.name}.log"
     status_path = stage_dir / f"{args.name}.status.json"
@@ -447,11 +623,31 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
                     "existing running status lacks the deterministic container identity; "
                     f"inspect and recover manually before replacing {status_path}"
                 )
+            _validate_interrupted_identity(
+                existing,
+                name=args.name,
+                image_kind=args.image,
+                image=image,
+                command=list(args.command),
+                passed_hf_token=bool(args.pass_hf_token),
+                container_name=container_name,
+                cidfile_path=cidfile_path,
+                log_path=log_path,
+                fresh_outputs=fresh_outputs,
+            )
             if _container_is_running(container_name):
                 raise ValueError(
                     f"prior container {container_name} is still running; wait for it to "
                     "exit, then rerun the same command (the wrapper never auto-kills it)"
                 )
+            if _reconcile_interrupted_success(
+                existing,
+                status_path=status_path,
+                log_path=log_path,
+                fresh_outputs=fresh_outputs,
+                container_name=container_name,
+            ):
+                return status_path, log_path, 0
         if prior_attempt >= 2:
             raise ValueError(
                 f"attempt budget exhausted for {args.name} (attempt={prior_attempt}); "
@@ -490,6 +686,7 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
             "exit_code": None,
             "log_path": str(log_path),
             "fresh_outputs": fresh_outputs,
+            "input_sha256": input_sha256,
         }
         _atomic_json(status_path, running_payload)
         for raw in fresh_outputs:

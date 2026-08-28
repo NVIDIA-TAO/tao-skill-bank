@@ -26,6 +26,7 @@ somewhere to write.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -46,19 +47,23 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def validate_config(config: dict[str, Any]) -> None:
-    data = config.get("data") or {}
+    data = config.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("data must be a mapping.")
 
-    fmt = str(data.get("input_format") or "")
-    if fmt not in VALID_FORMATS:
+    fmt = data.get("input_format")
+    if not isinstance(fmt, str) or fmt not in VALID_FORMATS:
         raise ValueError(f"data.input_format must be one of {sorted(VALID_FORMATS)} (uppercase).")
 
-    sources = data.get("kpi_sources") or []
-    if not sources:
+    sources = data.get("kpi_sources")
+    if not isinstance(sources, list) or not sources:
         raise ValueError("data.kpi_sources must contain at least one source.")
     for idx, source in enumerate(sources):
+        if not isinstance(source, dict):
+            raise ValueError(f"data.kpi_sources[{idx}] must be a mapping.")
         for key in SOURCE_KEYS:
             value = source.get(key)
-            if not value:
+            if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"data.kpi_sources[{idx}].{key} is required.")
             path = Path(str(value)).expanduser()
             if not path.is_absolute():
@@ -73,7 +78,7 @@ def validate_config(config: dict[str, Any]) -> None:
             )
 
     mapping = data.get("mapping")
-    if not mapping:
+    if not isinstance(mapping, str) or not mapping.strip():
         raise ValueError("data.mapping is required.")
     mapping_path = Path(str(mapping)).expanduser()
     if not mapping_path.is_absolute():
@@ -82,25 +87,48 @@ def validate_config(config: dict[str, Any]) -> None:
         raise FileNotFoundError(f"data.mapping does not exist or is not a file: {mapping_path}")
 
     results_dir = config.get("results_dir")
-    if not results_dir:
+    if not isinstance(results_dir, str) or not results_dir.strip():
         raise ValueError("results_dir is required.")
     out = Path(str(results_dir)).expanduser()
     if not out.is_absolute():
         raise ValueError(f"results_dir must be absolute: {out}")
     out.mkdir(parents=True, exist_ok=True)
 
-    platform = str((config.get("visualize") or {}).get("platform", "local"))
-    if platform not in VALID_PLATFORMS:
+    visualize = config.get("visualize", {})
+    if not isinstance(visualize, dict):
+        raise ValueError("visualize must be a mapping.")
+    platform = visualize.get("platform", "local")
+    if not isinstance(platform, str) or platform not in VALID_PLATFORMS:
         raise ValueError(f"visualize.platform must be one of {sorted(VALID_PLATFORMS)}.")
+    tag = visualize.get("tag")
+    if tag is not None and not isinstance(tag, str):
+        raise ValueError("visualize.tag must be a string or null.")
 
-    kpi = config.get("kpi") or {}
+    kpi = config.get("kpi", {})
+    if not isinstance(kpi, dict):
+        raise ValueError("kpi must be a mapping.")
     for key in ("iou_threshold", "conf_threshold"):
-        value = float(kpi.get(key, 0.5))
+        value = kpi.get(key, 0.5)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"kpi.{key} must be a finite number between 0.0 and 1.0.")
         if not 0.0 <= value <= 1.0:
             raise ValueError(f"kpi.{key} must be between 0.0 and 1.0.")
-        kpi[key] = value
-    if int(kpi.get("num_recall_points", 101)) < 1:
-        raise ValueError("kpi.num_recall_points must be at least 1.")
+        kpi[key] = float(value)
+    recall_points = kpi.get("num_recall_points", 101)
+    if isinstance(recall_points, bool) or not isinstance(recall_points, int) or recall_points < 1:
+        raise ValueError("kpi.num_recall_points must be an integer of at least 1.")
+    for key in ("filter", "is_internal"):
+        value = kpi.get(key, False)
+        if not isinstance(value, bool):
+            raise ValueError(f"kpi.{key} must be true or false.")
+    ignore_sqwidth = kpi.get("ignore_sqwidth", 0)
+    if (
+        isinstance(ignore_sqwidth, bool)
+        or not isinstance(ignore_sqwidth, (int, float))
+        or not math.isfinite(ignore_sqwidth)
+        or ignore_sqwidth < 0
+    ):
+        raise ValueError("kpi.ignore_sqwidth must be a finite non-negative number.")
 
 
 def parse_args() -> argparse.Namespace:
