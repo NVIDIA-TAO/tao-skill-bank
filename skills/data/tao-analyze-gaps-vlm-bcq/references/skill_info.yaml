@@ -1,6 +1,14 @@
 network_arch: tao-analyze-gaps-vlm-bcq
 type: data
+<<<<<<< HEAD
 container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
+=======
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
+# Fixed compute requirement: request one GPU from the platform. Even though this
+# function doesn't need a GPU, the Data Services image always calls nvidia-smi.
+# This remains null because the strict VLM BCQ spec has no GPU-count field;
+# gpu_spec_key is a spec-field pointer, not a GPU count or device ID.
+>>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))
 gpu_spec_key: null
 required_credentials: []
 actions:

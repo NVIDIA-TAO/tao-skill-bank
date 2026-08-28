@@ -11,7 +11,11 @@ Direct TAO Deploy command name: `visual_changenet`.
 Use the pinned deploy container URI (stamped from the release manifest):
 
 ```bash
+<<<<<<< HEAD
 TAO_DEPLOY_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deploy
+=======
+TAO_DEPLOY_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch  # versions-key: images.tao_toolkit.deploy
+>>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))
 ```
 
 Every invocation below uses `"$TAO_DEPLOY_IMAGE"` in place of the literal image URI.

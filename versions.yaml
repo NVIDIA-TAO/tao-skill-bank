@@ -29,12 +29,21 @@
 
 images:
   tao_toolkit:
+<<<<<<< HEAD
     pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
     deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-53-multiarch
     data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
     cosmos_framework:   nvcr.io/nvstaging/tao/cosmos_framework:7.2.0-rc-290-multiarch
     cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-290-multiarch
+=======
+    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch
+    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch
+    data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch
+    # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
+    cosmos_framework:   nvcr.io/nvstaging/tao/cosmos-framework:cosmos3-tao-reproducibility-20260818-6aa9a80
+    cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch
+>>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
     cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
@@ -70,8 +79,16 @@ wheels:
   # nvidia-tao-automl pulls nvidia-tao-sdk as a transitive dep. One entry per
   # platform extra; append `,llm` or `,wandb` to an extra at install time for
   # the agentic-search or experiment-tracking deps.
+<<<<<<< HEAD
   tao_automl_slurm:      nvidia-tao-automl[slurm]==7.2.0rc33
   tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.2.0rc33
   tao_automl_docker:     nvidia-tao-automl[docker]==7.2.0rc33
   tao_automl_brev:       nvidia-tao-automl[brev]==7.2.0rc33
   tao_automl_all:        nvidia-tao-automl[all]==7.2.0rc33
+=======
+  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.2.0rc18
+  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.2.0rc18
+  tao_automl_docker:     nvidia-tao-automl[docker]==7.2.0rc18
+  tao_automl_brev:       nvidia-tao-automl[brev]==7.2.0rc18
+  tao_automl_all:        nvidia-tao-automl[all]==7.2.0rc18
+>>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))

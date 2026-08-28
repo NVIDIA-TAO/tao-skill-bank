@@ -50,7 +50,11 @@ The threshold sweep, weakness ranking, and per-lighting expansion all run inside
 
 ```bash
 # Pinned TAO data-services container URI (stamped from the release manifest)
+<<<<<<< HEAD
 DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
+=======
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
+>>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))
 echo "DS_IMAGE=$DS_IMAGE"
 
 docker info > /dev/null && echo "OK: docker"
@@ -132,7 +136,11 @@ MIN_RECALL=1.0                       # zero-miss default; lower if KPI relaxes
 TOP_K=50                             # per-label augmentation budget
 OUT="$EXP_DIR/rca_results/$(date +%Y-%m-%d_%H%M%S)"
 SPEC="$OUT/vcn_aoi_spec.yaml"
+<<<<<<< HEAD
 IMG=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
+=======
+IMG=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
+>>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))
 
 mkdir -p "$OUT"
 
