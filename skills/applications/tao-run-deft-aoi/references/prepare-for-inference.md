@@ -91,11 +91,7 @@ cp ${RESULTS_DIR}/best_model_inference_spec.yaml /tmp/my_inference.yaml
 # … set the four CONSUMER fields …
 
 # 3. Pinned TAO pyt image URI (stamped from the release manifest).
-<<<<<<< HEAD
 TAO_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.pyt
-=======
-TAO_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.pyt
->>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))
 
 # 4. Run inference. Mount paths from best_model.json into the container.
 HANDOFF="${RESULTS_DIR}/best_model.json"

@@ -15,8 +15,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 IAA_ROOT = REPO_ROOT / "skills/applications/tao-run-deft-iaa"
 PREPARE = IAA_ROOT / "scripts/prepare_deft_config.py"
 INITIALIZE = IAA_ROOT / "scripts/init_deft_state.py"
-PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"
-DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"
+VERSIONS = yaml.safe_load((REPO_ROOT / "versions.yaml").read_text())
+PYT_IMAGE = VERSIONS["images"]["tao_toolkit"]["pyt"]
+DS_IMAGE = VERSIONS["images"]["tao_toolkit"]["data_services"]
 
 
 def _base_args(tmp_path: Path, selected: str):

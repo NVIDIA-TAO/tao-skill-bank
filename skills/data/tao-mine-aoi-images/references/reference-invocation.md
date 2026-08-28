@@ -14,11 +14,7 @@ MODEL_PATH=google/siglip-base-patch16-224  # or a local checkpoint path
 TOPN=5
 METRIC=cosine
 FILTER_BY_LABEL=false
-<<<<<<< HEAD
 IMG=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
-=======
-IMG=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
->>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))
 
 mkdir -p "$OUT"
 

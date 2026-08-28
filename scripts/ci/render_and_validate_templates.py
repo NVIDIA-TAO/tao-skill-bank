@@ -46,11 +46,7 @@ COMMON = {
     "NUM_NODES": "2",
     "GPUS_PER_NODE": "8",
     "NUM_GPUS": "8",          # single-node templates spell it this way
-<<<<<<< HEAD
     "IMAGE": "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch",  # versions-key: images.tao_toolkit.pyt
-=======
-    "IMAGE": "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch",  # versions-key: images.tao_toolkit.pyt
->>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))
     "COMMAND": "dino train -e /data/specs/spec.yaml",
 }
 K8S_VALS = {

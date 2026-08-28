@@ -139,10 +139,6 @@ All outputs go to `results_dir/`:
 
 ## Prerequisites
 
-<<<<<<< HEAD
 - **Container**: `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch` <!-- versions-key: images.tao_toolkit.pyt -->
-=======
-- **Container**: `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch` <!-- versions-key: images.tao_toolkit.pyt -->
->>>>>>> ae022a9 ([TAO-0][Bugfix] NVBug 6602338: Publish the TAO 7.2 skill-bank release (#137))
 - **API access**: At least one VLM endpoint (Gemini API key or OpenAI-compatible endpoint capable of image input)
 - **PIL / Pillow**: Required to read image dimensions during seeding (already present in the TAO container)
