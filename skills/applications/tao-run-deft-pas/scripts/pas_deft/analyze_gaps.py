@@ -68,6 +68,7 @@ def analyze_clip_inference_gaps(
     import os
 
     import pandas as pd
+    from pas_deft.pas_artifacts import PAS_METRICS_FILENAME
 
     _ = (kpi_caption_dir, caption_file_suffix)
 
@@ -256,9 +257,9 @@ def analyze_clip_inference_gaps(
 
     def _metrics_path(base_dir):
         candidates = [
-            os.path.join(base_dir, "nvidia_pas_metrics.csv"),
-            os.path.join(base_dir, "evaluate", "nvidia_pas_metrics.csv"),
-            os.path.join(base_dir, "pas_eval", "nvidia_pas_metrics.csv"),
+            os.path.join(base_dir, PAS_METRICS_FILENAME),
+            os.path.join(base_dir, "evaluate", PAS_METRICS_FILENAME),
+            os.path.join(base_dir, "pas_eval", PAS_METRICS_FILENAME),
         ]
         for path in candidates:
             if os.path.isfile(path):

@@ -3,10 +3,6 @@
 The immutable metric contract controls evaluation parsing, KPI stopping, and
 best-iteration reporting:
 
-The TAO evaluator emits `nvidia_pas_metrics.csv` and
-`nvidia_pas_metrics_aggregate.csv`; every workflow stage consumes those
-producer-owned filenames directly.
-
 ```json
 {
   "metric_name": "Rank-1",

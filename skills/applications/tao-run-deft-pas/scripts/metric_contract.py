@@ -28,8 +28,8 @@ _OPERATOR_ALIASES = {
 }
 
 # Gate-able metrics from nvidia_pas_metrics_aggregate.csv. All are
-# higher-is-better except Zero@5 (fraction of queries
-# with zero hits in the top five results), which is lower-is-better.
+# higher-is-better except Zero@5 (fraction of queries with zero hits in the
+# top five results), which is lower-is-better.
 METRIC_NAMES = ("mAP", "Rank-1", "Rank-5", "Separability", "Match@5", "Zero@5")
 LOWER_IS_BETTER_METRICS = {"Zero@5"}
 # The PAS aggregate evaluator emits one row for each of these three
@@ -97,7 +97,7 @@ def metric_direction(metric_name: str) -> str:
 
 
 def validate_contract(contract: dict[str, Any]) -> dict[str, Any]:
-    """Validate and normalize a PAS metric contract.
+    """Validate and normalize an PAS metric contract.
 
     Unknown metric names, query types, and operators raise ``ValueError``.
     An operator whose gate direction disagrees with the metric's natural

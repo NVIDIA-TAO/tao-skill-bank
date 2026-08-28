@@ -30,7 +30,10 @@ import sys
 import tempfile
 from typing import Any
 
-from checkpoint_contract import validate_best_checkpoint
+from checkpoint_contract import (
+    checkpoint_lineage_started_ns,
+    validate_best_checkpoint,
+)
 from command_contract import (
     command_sha256,
     expected_container_command,
@@ -38,6 +41,7 @@ from command_contract import (
     expected_image_kind,
 )
 from log_stage import append_stage, next_seq
+from pas_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
 
 try:
     from record_metric_result import commit as commit_metric_result
@@ -630,7 +634,7 @@ def _apply_success(
         )
         metrics = _require_exact(
             _required_file(args.metrics_aggregate_csv, "--metrics-aggregate-csv"),
-            evaluate_dir / "nvidia_pas_metrics_aggregate.csv",
+            evaluate_dir / PAS_METRICS_AGGREGATE_FILENAME,
             "--metrics-aggregate-csv",
         )
         eval_status = _require_exact(
@@ -1062,10 +1066,13 @@ def _apply_success(
         )
         phase["train_tao_status_json"] = train_tao_status
         train_payload = json.loads(pathlib.Path(train_command_status).read_text())
+        lineage_started_ns = checkpoint_lineage_started_ns(
+            train_payload, state.get("started_at")
+        )
         provenance = validate_best_checkpoint(
             args.best_ckpt,
             train_dir,
-            started_ns=train_payload["started_ns"],
+            started_ns=lineage_started_ns,
         )
         phase.update(provenance)
         publish_status = _required_command_status(
@@ -1163,7 +1170,7 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
         or state.get("workflow") != "tao-run-deft-pas"
         or state.get("schema_version") != "3"
     ):
-        raise ValueError("deft_state.json must be a PAS DEFT schema-v3 object")
+        raise ValueError("deft_state.json must be an PAS DEFT schema-v3 object")
     if pathlib.Path(str(state.get("results_dir", ""))).resolve() != results_dir:
         raise ValueError("state.results_dir does not match --results-dir")
 

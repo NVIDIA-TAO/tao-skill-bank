@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import pathlib
@@ -13,6 +14,62 @@ from typing import Any
 
 BEST_RELPATH = pathlib.Path("best/clip_best_val_t2i_mAP.pth")
 METADATA_RELPATH = pathlib.Path("best/clip_best_val_t2i_mAP.json")
+
+
+def checkpoint_lineage_started_ns(
+    status: dict[str, Any], run_started_at: str
+) -> int:
+    """Resolve a retry lineage lower bound anchored to the immutable run.
+
+    New statuses carry ``lineage_started_ns`` explicitly. Legacy attempt-1
+    statuses use their own start, while legacy retries—whose first-attempt
+    timestamp was never persisted—fall back to the run start rather than the
+    retry start that caused NVBug 6603466. The run anchor also prevents a
+    status copied from an earlier occupant of the results path from widening
+    the checkpoint window before this run existed.
+    """
+    started_ns = status.get("started_ns")
+    attempt = status.get("attempt", 1)
+    if (
+        not isinstance(started_ns, int)
+        or isinstance(started_ns, bool)
+        or started_ns < 1
+    ):
+        raise ValueError("train command status started_ns must be a positive integer")
+    if (
+        not isinstance(attempt, int)
+        or isinstance(attempt, bool)
+        or not 1 <= attempt <= 2
+    ):
+        raise ValueError("train command status attempt must be 1 or 2")
+    if not isinstance(run_started_at, str) or not run_started_at.strip():
+        raise ValueError("run started_at must be a non-empty timestamp")
+    try:
+        run_started = dt.datetime.fromisoformat(run_started_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("run started_at must be an ISO-8601 timestamp") from exc
+    if run_started.tzinfo is None:
+        raise ValueError("run started_at must include a timezone")
+    run_started_ns = int(run_started.timestamp() * 1_000_000_000)
+    if run_started_ns < 1 or run_started_ns > started_ns:
+        raise ValueError("run started_at must be no later than the train attempt")
+
+    if "lineage_started_ns" in status:
+        lineage_started_ns = status["lineage_started_ns"]
+    elif attempt == 1:
+        lineage_started_ns = started_ns
+    else:
+        lineage_started_ns = run_started_ns
+    if (
+        not isinstance(lineage_started_ns, int)
+        or isinstance(lineage_started_ns, bool)
+        or not run_started_ns <= lineage_started_ns <= started_ns
+    ):
+        raise ValueError(
+            "train command status lineage_started_ns must fall between the "
+            "immutable run start and current attempt start"
+        )
+    return lineage_started_ns
 
 
 def _absolute_lexical(path: pathlib.Path | str, name: str) -> pathlib.Path:
@@ -93,7 +150,7 @@ def validate_best_checkpoint(
     )
     if source.stat().st_mtime_ns < started_ns:
         raise ValueError(
-            f"selected checkpoint predates the current train attempt: {source}"
+            f"selected checkpoint predates the train attempt lineage: {source}"
         )
     if metadata.get("published_checkpoint") != str(best):
         raise ValueError(
@@ -101,6 +158,13 @@ def validate_best_checkpoint(
         )
     if metadata.get("metric_name") != "val/t2i_mAP":
         raise ValueError("best checkpoint metadata.metric_name must be 'val/t2i_mAP'")
+    selection_strategy = metadata.get("selection_strategy")
+    if selection_strategy not in {"metric", "newest_fallback"}:
+        raise ValueError("best checkpoint metadata.selection_strategy is invalid")
+    if selection_strategy == "metric" and not isinstance(metadata.get("metric"), dict):
+        raise ValueError("metric checkpoint selection requires metric evidence")
+    if selection_strategy == "newest_fallback" and metadata.get("metric") is not None:
+        raise ValueError("newest fallback selection must record metric=null")
     mode = metadata.get("publish_mode")
     if mode not in {"symlink", "hardlink", "copy"}:
         raise ValueError("best checkpoint metadata.publish_mode is invalid")
@@ -137,4 +201,5 @@ def validate_best_checkpoint(
         "best_ckpt_metadata": str(metadata_path),
         "best_ckpt_source": str(source),
         "publish_mode": mode,
+        "checkpoint_selection_strategy": selection_strategy,
     }

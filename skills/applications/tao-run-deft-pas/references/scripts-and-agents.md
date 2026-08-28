@@ -55,7 +55,7 @@ or logs.
 
 | State stage | Producer | Adapter or launch | Read first |
 |---|---|---|---|
-| `dataset_setup` | archive `rebuild.py` plus bundled PAS data utilities | `run_pas_stage.py dataset-materialize` | `data-layout.md` |
+| `dataset_setup` | archive `rebuild.py`, read-only layout reporter, and bundled PAS data utilities | `pas_deft.dataset_layout`; `run_pas_stage.py dataset-materialize` | `data-layout.md` |
 | `pool_embed` | TAO data services | `run_deft_container.py` | `mining.md` |
 | `evaluate` | TAO CLIP plus bound parser | `run_pas_stage.py eval-config`, container wrapper, parser | `clip-train-eval.md`, `metric-contract.md` |
 | `gap_analysis` | bundled PAS gap analysis | `run_pas_stage.py gap-analysis` | `gap-analysis.md` |

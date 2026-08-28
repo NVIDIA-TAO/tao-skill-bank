@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Validate evaluator JSON and atomically commit a PAS DEFT evaluate result.
+"""Validate evaluator JSON and atomically commit an PAS DEFT evaluate result.
 
 The metric result JSON (written by parse_pas_metrics.py) is validated against
 the contract stored in ``${RESULTS_DIR}/deft_state.json`` under
@@ -27,6 +27,7 @@ from metric_contract import (
     result_from_iteration,
     result_passes,
 )
+from pas_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
 from parse_pas_metrics import build_result
 
 EXPECTED_WORKFLOW = "tao-run-deft-pas"
@@ -136,7 +137,7 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
     metrics_path = _required_file(args.metrics_csv, name="metrics CSV")
     expected_metrics_path = pathlib.Path(
         os.path.abspath(
-            phase_dir / "evaluate" / "nvidia_pas_metrics_aggregate.csv"
+            phase_dir / "evaluate" / PAS_METRICS_AGGREGATE_FILENAME
         )
     )
     if metrics_path != expected_metrics_path:

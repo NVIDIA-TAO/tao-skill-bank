@@ -6,6 +6,6 @@
 
 """Bundled CLIP DEFT pipeline utilities used by this skill."""
 
-from pas_deft.config import PasDeftConfig
+from pas_deft.config import PasDeftConfig, config_field_metadata
 
-__all__ = ["PasDeftConfig"]
+__all__ = ["PasDeftConfig", "config_field_metadata"]
