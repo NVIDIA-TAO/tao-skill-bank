@@ -1,12 +1,14 @@
 ---
 name: tao-run-deft-iaa
 description: >
-  Run the self-contained DEFT improvement loop for NVIDIA TAO CLIP /
-  SigLIP2 Image Attribute Augmentation (IAA): dataset preparation, zero-shot
-  evaluation, attribute gap analysis, caption-space k-NN mining,
-  history-aware selection, retraining, and re-evaluation against an IAA
-  retrieval KPI. Use for requests to run or resume the IAA DEFT loop or improve
-  an IAA model until a metric target or iteration budget is reached. Treat
+  Run iterative improvement for NVIDIA TAO CLIP / SigLIP image-text retrieval
+  on attribute-labelled data. Use when a request combines retrieval evaluation,
+  weak-attribute or caption-pair mining, repeated retraining, and a stopping
+  condition based on a retrieval KPI, validation plateau, or iteration budget;
+  the customer need not know the DEFT or Image Attribute Augmentation (IAA)
+  names. The self-contained workflow performs dataset preparation, zero-shot
+  evaluation, attribute gap analysis, caption-space k-NN mining, history-aware
+  selection, retraining, and re-evaluation. Treat
   `tao-deft-iaa` as shorthand for this canonical `tao-run-deft-iaa` workflow.
   Do not use for standalone CLIP training, one-off evaluation or embedding,
   generic k-NN mining, or AOI/ChangeNet DEFT workflows.

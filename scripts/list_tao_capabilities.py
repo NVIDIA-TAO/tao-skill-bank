@@ -18,7 +18,7 @@ from list_tao_models import build_all_models, build_automl_support
 
 
 DEFAULT_SKILL_BANK = Path(
-    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
+    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")
 )
 FLOW_ACTIONS = ("train", "evaluate", "inference", "export", "gen_trt_engine")
 

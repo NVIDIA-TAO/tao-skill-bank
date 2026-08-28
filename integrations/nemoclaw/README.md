@@ -138,7 +138,7 @@ NVIDIA RTX A6000 (49 GB), corporate IT-managed host with `ufw` active.
 | Gateway port | 8080 on the same bridge IP | OpenShell |
 | Network policy | `tao-mcp` preset, GET/POST/DELETE to `host.openshell.internal:9901` | `nemoclaw <sb> policy list` |
 | Tools profile | `coding` (exec + fs + subagents, sandbox-scoped) | `openclaw.json` → `tools.profile` |
-| Skill bank | `<workspace>/tao-skills-external` (host) and `/sandbox/tao-skills-external` (sandbox) | `docker cp` |
+| Skill bank | `<workspace>/tao-skill-bank` (host) and `/sandbox/tao-skill-bank` (sandbox) | `docker cp` |
 | `contextWindow` | `1000000` | `openclaw.json` → `models.providers.*.models[]` |
 | `maxTokens` | `128000` | same |
 | `reasoning` | `true` | same |
