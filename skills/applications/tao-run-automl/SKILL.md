@@ -6,7 +6,8 @@ description: Run container-backed AutoML / hyperparameter optimization (HPO) for
   optimization, HPO, automl, automl_settings, AutoMLRunner, tao_automl, bayesian search, hyperband, ASHA, LLM-guided search,
   autoresearch, or wants to tune train/evaluate/inference/distill/prune/quantize for a TAO network. Model actions use the resolved
   image; venv training requires an explicit request. Platform-agnostic — runs on any SDK (Brev,
-  SLURM, Kubernetes, Docker).
+  SLURM, Kubernetes, Docker). Do not use generic "keep improving" language alone to override a matching domain-specific
+  DEFT workflow; attribute-labelled CLIP / SigLIP image-retrieval loops belong to tao-run-deft-iaa unless HPO is explicit.
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
 metadata:
