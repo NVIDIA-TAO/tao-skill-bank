@@ -58,6 +58,7 @@ persisted policy:
 <skill_root>/scripts/stage_bundle.py mining.embed_pool \
   --results-dir "${RESULTS_DIR}/iter1/mining" \
   --param mining_pool="$WS/augmentation/mining_pool" \
+  --param images_root="$WS/augmentation/mining_pool/images" \
   --spec-file "$RUN_DIR/embedding_spec.yaml" > "$RUN_DIR/embed.bundle.json"
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_exec.py \
   --state "${RESULTS_DIR}/deft_state.json" --submit \

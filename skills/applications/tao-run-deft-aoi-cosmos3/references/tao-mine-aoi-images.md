@@ -32,6 +32,13 @@ mapping:
 --user $(id -u):$(id -g) \
 -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
 -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro
+
+**Bundle launches (`stage_bundle.py data_mining.*`)**: the identity flags above
+are the docker renderer's job — do not paste them. What you MUST pass is
+`--param images_root=<the directory the parquet's filepath values point into>`:
+the embed stages declare it as a required input so the image tree is mounted.
+Without it the stage dies with FileNotFoundError on the first image the parquet
+names — which is not a mount error, so it reads like corrupt data.
 ```
 
 Verified 2026-07-30 against the pinned data-services image: `pwd.getpwuid`
