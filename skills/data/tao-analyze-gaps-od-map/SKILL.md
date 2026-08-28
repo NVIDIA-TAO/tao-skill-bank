@@ -73,7 +73,7 @@ warns when a fallback is above zero, since that gates classes you did not list.
 
 ## Quick Start
 
-Run from the `tao-skills-external` repo root.
+Run from the `tao-skill-bank` repo root.
 
 **Write the spec into the results directory.** The run emits four artifacts and
 does not retain the spec, so a completed gap analysis otherwise cannot tell you
