@@ -127,8 +127,11 @@ On startup or after context compaction:
 4. Read one reference and continue the selected stage.
 
 Uncommitted outputs can be reused only when that stage's validators accept a
-successful matching command status and fresh scoped artifacts. Otherwise the
-documented wrapper reruns the exact stage after deleting only named fresh
+successful matching command status and fresh scoped artifacts. When a
+container wrapper was interrupted and its status remains `running`, rerun the
+exact wrapper command after the deterministic container exits. The wrapper
+first reconciles durable Docker/log success evidence and fresh outputs; only
+when that fails does it consume the bounded retry and delete the named fresh
 outputs. For history selection, use its one `--resume` path. Never backfill a
 log entry or manually mark a stage complete.
 

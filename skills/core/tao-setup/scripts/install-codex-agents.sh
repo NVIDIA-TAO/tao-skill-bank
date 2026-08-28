@@ -5,7 +5,7 @@
 # One-shot Codex installer for the TAO skill bank.
 #
 # What it does:
-#   1. Registers the tao-skills-external marketplace with the Codex CLI.
+#   1. Registers the tao-skill-bank marketplace with the Codex CLI.
 #   2. Installs the `tao-skill-bank` plugin (skills surface).
 #   3. Copies AGENTS.md to ~/.codex/AGENTS.md so the TAO identity loads in
 #      every Codex session, not only when codex is launched from a clone.
