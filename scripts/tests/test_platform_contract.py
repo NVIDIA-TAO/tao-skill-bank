@@ -53,6 +53,20 @@ def _skill_text(name: str) -> str:
     return (PLATFORM_DIR / name / "SKILL.md").read_text(encoding="utf-8")
 
 
+def _skill_docs(name: str) -> str:
+    """SKILL.md plus its references.
+
+    Use this for detail that may legitimately live in a reference -- SKILL.md
+    is capped at ~20k chars, so prose migrates outward under size pressure and
+    an assertion pinned to the file, rather than to the skill, breaks on a move
+    that lost nothing. Contract-level claims (e.g. the four verbs) should keep
+    using _skill_text: those must be in the entry point itself.
+    """
+    skill = PLATFORM_DIR / name
+    files = [skill / "SKILL.md", *sorted((skill / "references").glob("*.md"))]
+    return "\n".join(f.read_text(encoding="utf-8") for f in files)
+
+
 @pytest.mark.parametrize("platform", RUN_PLATFORMS)
 @pytest.mark.parametrize("verb", sorted(VERB_PATTERNS))
 def test_platform_documents_every_verb(platform, verb):
@@ -159,7 +173,7 @@ def test_slurm_enroot_conversion_uses_job_unique_node_local_temp():
     allocation.  Enroot then fails during whiteout conversion with ``getcwd``
     and ``failed to resolve path`` errors after all image layers were fetched.
     """
-    text = _skill_text("tao-run-on-slurm")
+    text = _skill_docs("tao-run-on-slurm")
     assert "ENROOT_TEMP_PATH=/tmp/enroot-tao-\\${SLURM_JOB_ID}" in text
     assert "SLURM_ENROOT_TEMP_PATH=\\${ENROOT_TEMP_PATH}" in text
     assert "--chdir=/tmp" in text
@@ -172,7 +186,11 @@ def test_slurm_sqsh_conversion_uses_validated_cpu_long_resource_profile():
     training job's CPU request multiplies the site's implicit per-CPU memory
     and leaves conversion pending under ``QOSGrpMemLimit``.
     """
-    text = _skill_text("tao-run-on-slurm")
+    # _skill_docs, not _skill_text: the conversion command moved into
+    # references/slurm-container-execution.md when SKILL.md hit its 20k size
+    # cap. The requirement is that the skill documents the profile, not which
+    # file it sits in.
+    text = _skill_docs("tao-run-on-slurm")
     info = (PLATFORM_DIR / "tao-run-on-slurm" / "references" /
             "skill_info.yaml").read_text()
     assert "sqsh_conversion_partition: cpu_long" in info
@@ -306,3 +324,37 @@ def test_directly_invoked_scripts_are_executable():
     assert not stale_mode, (
         f"executable on disk but not in the git index, so the bit will not "
         f"travel — run `git update-index --chmod=+x <path>`: {stale_mode}")
+
+
+# ── The documented open snippet must be runnable as written ────────────────
+# The kubernetes SKILL.md created a per-job Secret named tao-creds-$JOB_ID one
+# step BEFORE the step that mints JOB_ID, so the Secret was named tao-creds-
+# while the manifest referenced the real id. Nothing caught it, and the
+# `optional: true` on the secretRef makes the mismatch SILENT: the pod starts
+# with no credentials and fails later on an auth error naming the registry.
+#
+# It also passed --results-dir "$RESULTS_DIR" for a variable the page never
+# defines, where every other platform passes --results-root.
+
+OPEN_PLATFORMS = ["tao-run-on-docker", "tao-run-on-kubernetes",
+                  "tao-run-on-slurm", "tao-run-on-brev", "tao-run-on-virtualenv"]
+
+
+@pytest.mark.parametrize("platform", OPEN_PLATFORMS)
+def test_job_id_is_minted_before_it_is_used(platform):
+    """`open` mints the id; anything named after it must come later."""
+    text = _skill_text(platform)
+    # Fenced code only: prose legitimately mentions $JOB_ID while explaining
+    # that `open` mints it.
+    code = "\n".join(
+        block for block in re.findall(r"```bash\n(.*?)```", text, re.S)
+    )
+    mint = re.search(r"JOB_ID=\$\(", code)
+    if mint is None:
+        pytest.skip(f"{platform} documents no open snippet in a code block")
+    first_use = re.search(r"\$JOB_ID|\$\{JOB_ID", code)
+    assert first_use is not None
+    assert mint.start() < first_use.start(), (
+        f"{platform} uses $JOB_ID at offset {first_use.start()} but only mints "
+        f"it at {mint.start()}; everything named after the id gets an empty one"
+    )

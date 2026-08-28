@@ -1616,7 +1616,19 @@ def check_slurm(
                 f"host={working_host}: {reason}"
             )
             return False
-        print(f"Remote SLURM/Pyxis/Enroot tools OK: {working_host}")
+        # Record the enroot version: image import failures are version-shaped
+        # (an enroot too old for the registry's manifest format fails with
+        # "Could not process JSON input", naming nothing useful), and this is
+        # the only place the version is cheap to obtain.
+        version = run(ssh_command(working_host, "enroot version"), timeout=20)
+        detail = version.stdout.strip().splitlines()
+        print(
+            f"Remote SLURM/Pyxis/Enroot tools OK: {working_host}"
+            + (f" (enroot {detail[0]})" if version.returncode == 0 and detail else "")
+        )
+
+        if not check_slurm_scheduler(working_host):
+            return False
 
     for label, raw_path in paths:
         path = normalize_local_path(raw_path)
@@ -1646,6 +1658,78 @@ def check_slurm(
             ok = False
 
     return ok
+
+
+
+def check_slurm_scheduler(host: str) -> bool:
+    """Ask the cluster what it will actually schedule.
+
+    Everything above this point checks REACHABILITY -- ssh answers, sbatch and
+    enroot exist, paths are readable. None of it is schedulability, so a run
+    could pass preflight completely and still be rejected at submit for a
+    partition that does not exist here or an account this site requires. Both
+    of the failures that motivated this check were of that kind, and neither
+    was visible until submit.
+
+    `sinfo` is cheap and authoritative, so it runs before any launch artifact
+    is generated. Its output is printed verbatim: the packaged partition names
+    and wall limits in skill_info.yaml describe ONE cluster and are fallbacks,
+    not facts about yours.
+    """
+    result = run(ssh_command(host, "sinfo -h -o '%R|%l|%L|%a'"), timeout=30)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        print(
+            "Could not query partitions: "
+            f"{detail[-1] if detail else 'exit ' + str(result.returncode)}"
+        )
+        return False
+
+    found = {}
+    for line in result.stdout.splitlines():
+        fields = line.strip().split("|")
+        if len(fields) >= 4 and fields[0].strip():
+            found[fields[0].strip().rstrip("*")] = (fields[1].strip(), fields[2].strip())
+    if not found:
+        print("sinfo returned no partitions; cannot validate the request")
+        return False
+
+    print(f"Partitions on {host} (name: MaxTime, DefaultTime):")
+    for name in sorted(found):
+        max_time, default_time = found[name]
+        print(f"  {name}: {max_time}, {default_time}")
+
+    requested = os.environ.get("SLURM_PARTITION", "")
+    missing = [
+        part.strip() for part in requested.split(",")
+        if part.strip() and part.strip().rstrip("*") not in found
+    ]
+    if missing:
+        # Submitting would fail with a bare "invalid partition specified" that
+        # never says what IS valid, costing another round trip to find out.
+        print(
+            f"SLURM_PARTITION names partitions this cluster does not have: "
+            f"{','.join(missing)}. Available: {','.join(sorted(found))}."
+        )
+        return False
+    if not requested:
+        print(
+            "SLURM_PARTITION is unset; the packaged default describes another "
+            "cluster. Export one of the partitions listed above."
+        )
+        return False
+
+    print(f"SLURM_PARTITION OK: {requested}")
+    if not os.environ.get("SLURM_ACCOUNT"):
+        # Sites that require an account reject every allocation without one --
+        # including the one-time image conversion, whose error names enroot and
+        # so reads as a broken import rather than a missing scheduler setting.
+        print(
+            "SLURM_ACCOUNT is unset. If this site requires an account, every "
+            "allocation is rejected, including the image conversion. Check with "
+            "`sacctmgr show assoc user=$USER format=account,partition,qos`."
+        )
+    return True
 
 
 def parse_float_env(name: str) -> float | None:

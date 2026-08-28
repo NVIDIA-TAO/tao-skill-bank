@@ -31,14 +31,38 @@ class ApplicationDockerIdentityTests(unittest.TestCase):
         self.assertIn("/etc/group:/etc/group:ro", block)
 
     def test_all_anomalygen_launches_map_the_host_identity(self) -> None:
+        """The guarantee moved from pasted flags to the docker renderer.
+
+        These stages are now emitted as spec-bundles and launched through
+        deft_exec.py, so the reference carries no docker recipe to inspect.
+        The requirement is unchanged -- a writable launch must map the host
+        identity or it leaves root-owned outputs -- but it is now enforced in
+        code by tao-run-on-docker's render(), which emits --user/--group-add
+        and the HOME/USER/LOGNAME redirects, with its own tests. Asserting it
+        in prose only proved the prose.
+
+        What still matters here: any docker recipe that REMAINS in this file
+        must map identity, and the bootstrap content must survive.
+        """
         reference = SKILL_ROOT / "references/tao-generate-anomalies.md"
-        launch_blocks = _docker_blocks(reference)
-        self.assertEqual(len(launch_blocks), 5)
-        for block in launch_blocks:
+        for block in _docker_blocks(reference):
             self._assert_mapped_identity(block)
         text = reference.read_text(encoding="utf-8")
         self.assertIn(".tao-write-probe", text)
         self.assertIn("download_anomalygen_checkpoints", text)
+        # The stages must go through the contract, not a pasted runtime.
+        self.assertIn("stage_bundle.py", text)
+        self.assertIn("deft_exec.py", text)
+
+    def test_docker_renderer_still_maps_the_host_identity(self) -> None:
+        """Where the guarantee actually lives now. If this regresses, every
+        converted stage silently starts writing root-owned results."""
+        render = (
+            SKILL_ROOT.parents[1]
+            / "platform/tao-run-on-docker/references/render.py"
+        ).read_text(encoding="utf-8")
+        for marker in ("--user", "--group-add", "HOME=", "USER=", "LOGNAME="):
+            self.assertIn(marker, render)
 
     def test_consumer_inference_maps_identity_after_write_probe(self) -> None:
         reference = SKILL_ROOT / "references/prepare-for-inference.md"
@@ -61,13 +85,18 @@ class ApplicationDockerIdentityTests(unittest.TestCase):
         self.assertIn("including resumed actions", reference)
 
     def test_direct_fallback_carries_runtime_identity(self) -> None:
+        """The documented stage path is the contract, not a pasted docker run.
+
+        The example here previously pasted the identity flags. It now emits a
+        bundle and submits it, so the identity comes from the docker renderer
+        -- and the page says why, so nobody re-pastes a runtime into a stage.
+        """
         reference = (SKILL_ROOT / "references/scripts-and-agents.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn('docker run --user "$(id -u):$(id -g)"', reference)
-        self.assertIn('USER="$(id -un)"', reference)
-        self.assertIn('LOGNAME="$(id -un)"', reference)
-        self.assertIn("HOME=/tmp", reference)
+        self.assertIn("stage_bundle.py", reference)
+        self.assertIn("--platform", reference)
+        self.assertIn("docker renderer", reference)
 
     def test_cosmos3_maps_or_delegates_every_writable_launch(self) -> None:
         applications = SKILL_ROOT.parent

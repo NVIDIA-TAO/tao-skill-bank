@@ -56,6 +56,9 @@ event. The bundled `commit_stage.py` owns that write.
    three machine artifacts using `references/RCCA_REPORT_TEMPLATE.md` and pass
    it with `--rcca-report`; `references/rcca-artifact-manifest.json` is the
    machine-readable source for artifact requirements and state fields.
+   `commit_stage.py` enforces the report's required headings before anything
+   routes on it — a report missing a section reads as complete while hiding
+   the analysis routing depends on.
 
 Baseline may stop immediately when the Benchmark gate passes. Baseline does not
 count against `max_iterations`.
@@ -85,14 +88,53 @@ count against `max_iterations`.
    label.
 6. After RCA and Mining selection, run `assemble_training_json.py` without a
    seed for `iter1`, passing the mined records and — when AnomalyGen ran — the
-   synthetic records as separate `--new-json` inputs; together they become
+   synthetic records as separate `--new-json` inputs. Commit `assemble_data`
+   with BOTH `--combined-training <train_iter_N.json>` AND
+   `--mined-sharegpt <mined_sharegpt.json>` — commit_stage.py validates the
+   latter as a required JSON file, so omitting it fails the commit, not the
+   assembly. Together they become
    `train_iter_1.json`. Later iterations use `train_iter_<N-1>.json` as the
    seed and write `train_iter_<N>.json`. Dedupe by the two-image pair and
    exclude Proxy and Benchmark targets.
 7. Run `validate_sharegpt.py --require-files` and
-   `validate_split_contract.py` against the assembled Train file, passing
+   `validate_split_contract.py --train train_iter_<N>.json
+   --manifest <benchmark manifest> --summary <validation>/split_contract_summary.json`
+   against the assembled Train file, passing
    `--synthetic` when AnomalyGen produced records this iteration and
-   `--previous-train train_iter_<N-1>.json` for N>1. The latter makes historical
+   `--previous-train train_iter_<N-1>.json` for N>1. **`--manifest` is
+   required**: without it the Benchmark hash is compared against the value
+   recorded alongside it, which is self-referential, and
+   `benchmark_hash_verified` stays false.
+
+   Preserve enough CONCRETE configuration evidence for a grader to compare
+   rather than infer — name the fields, or "configuration is consistent" is
+   graded differently by every reader:
+
+   | Evidence | Where |
+   |---|---|
+   | `config.platform` | `deft_state.json` |
+   | Platform | the rendered `DEFT_Loop_Report.html` |
+   | the stage specs actually launched | copied under the run results |
+   | annotation paths | Proxy / Benchmark / Train, as recorded |
+   | `benchmark_hash_verified` | this split-contract summary |
+
+   The first two must agree: a report naming a platform the state does not
+   record means one of them was written from something other than the run.
+
+   **Lineage vs. the evaluated model.** An iteration's `evaluated_model` MAY
+   point at the trained adapter or export path — that is precisely what iter1
+   evaluates — while `config.base_model` and the recorded lineage stay the
+   selected Cosmos3 ID. Both appearing together is correct and must not be
+   graded as a contradiction; what would be wrong is lineage drifting off the
+   selected ID, or a baseline evaluate pointing at an adapter.
+
+   The manifest is a JSON file whose **exact nested key**
+   `evaluation_contract.benchmark.annotations_sha256` holds the frozen
+   Benchmark SHA-256 that `init_deft_state.py` recorded under
+   `config.evaluation.benchmark.sha256`. A flat or differently-keyed file is
+   rejected with `missing evaluation_contract.benchmark.annotations_sha256`,
+   which names the key rather than the file, so the shape has to be written
+   down somewhere — here. The latter makes historical
    records eligible while proving that the current Train retained all of them.
 8. Retrain, then Benchmark-evaluate/gate. Stop when the gate passes or
    `N = max_iterations`. Only when the loop continues, Proxy-evaluate and run

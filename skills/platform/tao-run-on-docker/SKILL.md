@@ -74,9 +74,9 @@ below, with the raw state carried in the transition `message`. `$BANK` =
 ### submit
 
 1. **Stage** inputs via `tao-data-io`: it picks the storage tier and returns the
-   mount args + compute-frame paths. Docker uses **tier A** (bind-mount a host
+   mount args + compute-frame paths. `--storage-tier` takes `A`, `B`, or `C` (no `none`). Docker uses **tier A** (bind-mount a host
    dir, `-v /host/data:/data`) as the norm, or **tier C** (pass S3 creds, the
-   container fetches). Author the spec file at `<stage>/spec.yaml` with those
+   container fetches). A job staging no inputs still declares **tier A**. Author the spec file at `<stage>/spec.yaml` with those
    compute-frame paths.
 2. **Lint** the assembled command — `redact_secrets.py lint` must pass (no inline
    secrets; pass creds as `-e VAR` with no value).
@@ -85,7 +85,7 @@ below, with the raw state carried in the transition `message`. `$BANK` =
    JOB_ID=$("$BANK/scripts/tao_job_record.py" open \
      --platform docker --image "$IMAGE" \
      --network-arch "$ARCH" --action "$ACTION" \
-     --storage-tier "$TIER" --results-root "$RESULTS_ROOT")
+     --storage-tier "$TIER" --results-root "$RESULTS_ROOT")   # $TIER: A|B|C
    ```
 4. **Launch detached**, naming the container after the id so the other verbs find
    it (keep `--rm` OFF so an exited container stays inspectable):
@@ -117,8 +117,8 @@ read -r st code < <(docker inspect --format '{{.State.Status}} {{.State.ExitCode
 | `exited`, code ≠ 0 | `ERROR` |
 | `dead` / missing | `UNKNOWN` (confirm via `docker ps -a`) |
 
-On a terminal state, `mark` it — and for **tier C**, `tao-data-io` uploads
-results **before** you `docker rm` (the container is the only copy).
+For **tier C**, `tao-data-io` uploads results **before** the terminal `mark` and
+before `docker rm` (the container is the only copy). Then `mark` it.
 
 ### logs
 

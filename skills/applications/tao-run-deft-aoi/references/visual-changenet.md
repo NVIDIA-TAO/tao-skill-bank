@@ -2,12 +2,19 @@
 
 Read this when the parent runs the `train`, `inference`, or `evaluate` stage. The
 underlying skill `tao-skill-bank:tao-train-visual-changenet` (`skills/models/tao-train-visual-changenet/SKILL.md`)
-owns the docker invocation, spec format, CSV format, lighting conventions, and error
-patterns — its `## Local Docker Invocation` section has the exact docker run command
-(including `--shm-size=8g`, backbone file mount, and how to override
-checkpoint/results_dir on the command line without editing the spec). This file only
-covers the DEFT-loop-specific overlay: mounts, spec paths, two-checkpoint compare,
-KPI sweep and `deft_state.json` updates.
+owns the spec format, CSV format, lighting conventions, and error patterns, and
+documents a standalone docker invocation for use outside this loop.
+
+**Inside the DEFT loop, launch through the platform contract instead** — emit
+the stage with `stage_bundle.py train|evaluate|inference` and submit it with
+`deft_exec.py`, per `references/stage-execution.md`. The loop must run on
+docker, SLURM or Kubernetes from one definition, so the stage declares what it
+needs and the platform renderer supplies the rest: `--shm-size`, the host
+identity flags, and the backbone mount are emitted by the docker renderer and
+have different (or no) equivalents elsewhere.
+
+This file covers only the DEFT-loop-specific overlay: spec paths, two-checkpoint
+compare, KPI sweep and `deft_state.json` updates.
 
 DEFT AOI is intentionally plain-train for Visual ChangeNet. When invoking the
 underlying model skill for any train stage, pass `automl_policy: off` so this
@@ -53,7 +60,7 @@ need no sudo.
 -v <workspace>:/data/workspace                                  # combined iter CSVs + staged images
 -v ${RESULTS_DIR}:/results                                      # canonical run root; never /results/iterN
 -v ${IMAGES_DIR}:/data/datasets/NV_PCB_Siamese/images            # canonical real-image root from state
--v <workspace>/train/base:/data/datasets/NV_PCB_Siamese/csv      # training_set.csv, validation_set.csv
+-v <workspace>/train/base:/data/datasets/NV_PCB_Siamese/csv      # training_set.csv, validation_set.csv  (direct-container fallback only; under the bundle contract only dataset_dir+backbone are mounted, so pass --param dataset_dir=<workspace> and keep the CSVs under it)
 -v <workspace>/kpi:/data/datasets/NV_PCB_Siamese/kpi             # testing_set.csv
 -v "${STAGED}:${BACKBONE_CONTAINER_PATH}:ro"                    # selected backbone file
 ```
@@ -66,7 +73,7 @@ need no sudo.
 | Validation CSV | `/data/datasets/NV_PCB_Siamese/csv/validation_set.csv` |
 | KPI test CSV | `/data/datasets/NV_PCB_Siamese/kpi/testing_set.csv` |
 | images_dir | `/data/datasets/NV_PCB_Siamese/images` |
-| Results dir (baseline / iter N) | `/results/baseline` / `/results/iter${N}` |
+| Results dir (baseline / iter N) | `/results/baseline` / `/results/iter${N}` (direct-container fallback only). **Through the stage_bundle+deft_exec contract the job-scoped writable dir is exported as `TAO_RESULTS_ROOT`, so set `results_dir: ${oc.env:TAO_RESULTS_ROOT}` in the spec and relocate `train/`,`inference/` into the baseline/iterN tree after the stage.** |
 
 ## Spec `output_dir` Contract
 

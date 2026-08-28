@@ -46,6 +46,77 @@ export MASTER_PORT=29500
 export MASTER_ADDR=$(scontrol show hostname "$SLURM_JOB_NODELIST" | head -1)
 export NODE_RANK=$SLURM_NODEID
 
-srun --container-image=@@IMAGE@@ \
+# Pyxis/Enroot will NOT create a missing --container-mounts source: it fails the
+# whole container start with "enroot-mount: failed to mount: ... No such file or
+# directory", which names the mount and not the missing directory. Docker's -v
+# auto-creates one, so this gap stays invisible until a bundle runs on SLURM.
+# results_dir is bound into the job record BEFORE launch, so it is known here
+# and only needs materialising. The OUTPUT directory only: creating a missing
+# INPUT would paper over unstaged data instead of failing on it.
+# Unconditional -- the mount happens whether or not auto-resume is enabled.
+mkdir -p "@@RESULTS_DIR@@"
+
+# Auto-resume across a requeue. A requeued attempt re-runs THIS script with the
+# spec frozen at submit time, so a resumable job would otherwise restart from
+# epoch 0. Search only the declared results dir — a staged PTM or downloaded
+# input must never masquerade as training state, which is why ptm/ and inputs/
+# are pruned. Newest non-empty checkpoint wins. TAO_AUTO_RESUME=0 disables.
+# @@RESUME_KEY@@ is the spec key for this network (e.g.
+# train.resume_training_checkpoint_path); empty disables the block entirely.
+RESUME_OVERRIDE=""
+if [ -n "@@RESUME_KEY@@" ] && [ "${TAO_AUTO_RESUME:-1}" != "0" ]; then
+  # Prefer real training state. A `best`/`latest` file is often written AFTER
+  # the last epoch checkpoint, so newest-by-mtime alone would resume from a
+  # metric-best snapshot or an alias and lose optimizer/scheduler position.
+  # Fall back to them only when nothing else exists.
+  # Newest wins. `ls -t` rather than find's -printf: -printf is GNU-only, and
+  # because stderr is discarded here a BSD find would fail silently and disable
+  # auto-resume without a word. -print0/xargs -0 keeps paths with spaces intact.
+  RESUME_CKPT=$(find "@@RESULTS_DIR@@" \
+      \( -type d \( -name ptm -o -name inputs \) -prune \) -o \
+      \( -type f \( -name '*.pth' -o -name '*.ckpt' -o -name '*.tlt' \) \
+         ! -iname '*best*' ! -iname '*latest*' \
+         -size +0c -print0 \) 2>/dev/null \
+    | xargs -0 ls -t 2>/dev/null | head -1)
+  # GNU xargs runs its command even on EMPTY input, so `ls -t` with no
+  # arguments lists the current directory and returns a stray name -- the
+  # resume path then points at whatever sorted first in $PWD. BSD xargs skips
+  # the command instead, which is why this is invisible on macOS and happens on
+  # every real Linux compute node. Discard anything that is not a real file.
+  [ -f "$RESUME_CKPT" ] || RESUME_CKPT=""
+  if [ -z "$RESUME_CKPT" ]; then
+    RESUME_CKPT=$(find "@@RESULTS_DIR@@" \
+        \( -type d \( -name ptm -o -name inputs \) -prune \) -o \
+        \( -type f \( -name '*.pth' -o -name '*.ckpt' -o -name '*.tlt' \) \
+           -size +0c -print0 \) 2>/dev/null \
+      | xargs -0 ls -t 2>/dev/null | head -1)
+  # GNU xargs runs its command even on EMPTY input, so `ls -t` with no
+  # arguments lists the current directory and returns a stray name -- the
+  # resume path then points at whatever sorted first in $PWD. BSD xargs skips
+  # the command instead, which is why this is invisible on macOS and happens on
+  # every real Linux compute node. Discard anything that is not a real file.
+  [ -f "$RESUME_CKPT" ] || RESUME_CKPT=""
+  fi
+  if [ -n "$RESUME_CKPT" ]; then
+    RESUME_OVERRIDE="@@RESUME_KEY@@=$RESUME_CKPT"
+    echo "auto-resume: continuing from $RESUME_CKPT" >&2
+  fi
+fi
+
+# Wall-time self-requeue. `timeout` fires BEFORE SLURM's own --time, so the job
+# exits cleanly and re-queues itself instead of dying in TIMEOUT state (which
+# --requeue does not cover: it handles NODE_FAIL and pre-emption only). Paired
+# with --open-mode=append so logs accumulate across attempts.
+# `|| rc=$?` is required: `set -e` above would otherwise abort before the check.
+rc=0
+timeout "@@TIMEOUT_MINUTES@@m" srun --container-image=@@IMAGE@@ \
      --container-mounts=@@CONTAINER_MOUNTS@@ \
-     @@COMMAND@@
+     @@CONTAINER_WORKDIR@@\
+     @@COMMAND@@ $RESUME_OVERRIDE || rc=$?
+
+if [ "$rc" -eq 124 ]; then
+  echo "wall-time limit reached; requeueing $SLURM_JOB_ID" >&2
+  scontrol requeue "$SLURM_JOB_ID"
+  exit 0
+fi
+exit "$rc"

@@ -34,6 +34,11 @@ import sys
 
 CONTAINER_PATH = "/workspace/cosmos_rl_merged/cosmos_rl/evaluation/base.py"
 # Tolerates spacing and key order; captures only the image cap's digits.
+# Evidence that this file still BUILDS a vLLM engine. If the cap literal is
+# gone but this is present, the cap likely moved rather than lifted, and
+# reporting "no patch needed" sails into the 1-image ValueError at evaluation.
+VLLM_EVIDENCE_PATTERN = re.compile(r"\bLLM\s*\(|vllm", re.IGNORECASE)
+
 CAP_PATTERN = re.compile(
     r"(limit_mm_per_prompt\s*=\s*\{[^}]*?[\"']image[\"']\s*:\s*)(\d+)"
 )
@@ -75,10 +80,33 @@ def apply_cap(source: str, images: int) -> tuple[str, int]:
     """Return the rewritten source and the cap it previously carried."""
     matches = CAP_PATTERN.findall(source)
     if not matches:
-        raise ValueError(
-            "limit_mm_per_prompt image cap not found; the image has changed "
-            "shape. Re-verify the defect before assuming it still applies."
-        )
+        # "Absent" has two causes and only one is safe. If the whole
+        # `limit_mm_per_prompt` construct is gone, the image lifted the cap
+        # itself and there is nothing to patch -- raising here would block the
+        # loop on a WORKING image, which is the failure this branch of the
+        # condition exists to avoid.
+        #
+        # If the key is still there but the image cap did not match, the file
+        # changed shape around a cap that may still be 1. Reporting "no patch
+        # needed" would then sail into
+        # `ValueError: At most 1 image(s) may be provided in one prompt`
+        # at evaluation time, so that case still stops here.
+        if "limit_mm_per_prompt" in source:
+            raise ValueError(
+                "limit_mm_per_prompt is present but its image cap did not "
+                "match; the file changed shape around a cap that may still be "
+                "1. Re-verify by hand rather than assuming the cap is gone."
+            )
+        if VLLM_EVIDENCE_PATTERN.search(source):
+            raise ValueError(
+                "image cap not found but vLLM engine construction is present; "
+                "the cap likely moved rather than lifted -- verify the new "
+                "source shape before evaluating"
+            )
+        # Cap satisfied: report the requested count as the current one, so
+        # patch_needed (current < images) is False and main() writes a summary
+        # with no MOUNT_ARG and exits 0.
+        return source, images
     if len(matches) > 1:
         raise ValueError(
             f"expected exactly one image cap, found {len(matches)}; "

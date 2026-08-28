@@ -232,3 +232,149 @@ different platform.
 **Bad node or transient GPU failure**: The handler retries infrastructure-like
 failures such as CUDA driver errors, missing GPUs, NCCL/RDMA failures, Xid
 errors, and node failures up to the configured retry limit.
+
+## Enroot temp paths
+
+Set both `ENROOT_TEMP_PATH` and `SLURM_ENROOT_TEMP_PATH` to a job-unique
+`/tmp/enroot-tao-${SLURM_JOB_ID}` and force `TMPDIR=/tmp`. Direct Enroot reads
+the first variable and Pyxis may read the second, so setting only one leaves the
+other on its default.
+
+The directory must be **node-local and unique**. Lustre rejects the
+`enroot-aufs2ovlfs` xattr whiteouts with `Operation not permitted`, and a shared
+path can also fail on cleanup races between concurrent jobs. Note that
+`/lustre/fsw/...` user directories may themselves be symlinks onto another
+Lustre filesystem, so pointing the temp path at "a different Lustre path" is a
+no-op — it has to be node-local.
+
+## Acquire the image off the GPU allocation
+
+**The GPU is yours from the moment the allocation starts, not from when compute
+begins.** Anything done before training — pulling an image, converting it,
+fetching data — runs on GPUs that are idle, billed, and visible to the
+GPU-idle reaper. A first-time TAO pull plus conversion is minutes of that.
+
+So the image must already be a local `.sqsh` when the GPU job starts: passing a
+`docker://` or `registry#image:tag` URI to `srun --container-image=` makes Pyxis
+pull *and* convert inside the allocation. Convert once on a **CPU partition**,
+then point every later job at the file:
+
+```bash
+# One-time per image, on CPU. Always pass -t (the partition DEFAULT, not its
+# max, is what truncates a conversion). Note enroot's '#' registry separator.
+ssh $LOGIN "test -e <sqsh>" || \
+  ssh $LOGIN "srun --chdir=/tmp -n1 -c4 --mem=7200M \
+    -p <cpu_partition> -t <minutes> \
+    bash -c 'set -Eeuo pipefail
+      export TMPDIR=/tmp
+      export ENROOT_TEMP_PATH=/tmp/enroot-tao-\${SLURM_JOB_ID}
+      export SLURM_ENROOT_TEMP_PATH=\${ENROOT_TEMP_PATH}
+      mkdir -p \"\${ENROOT_TEMP_PATH}\"
+      cd /tmp
+      enroot import -o <sqsh> docker://<registry>#<image>:<tag>'"
+
+# Every GPU job then references the file, never the registry.
+srun --container-image=<sqsh> ...
+```
+
+Temp-path exports: `references/slurm-container-execution.md`.
+
+The same rule governs data: stage it to Lustre before submit (tier A) rather
+than fetching inside the allocation.
+
+**Cluster-specific values — CS-OCI-ORD.** The general rule above is portable;
+these numbers are not, and are recorded because each cost real allocations:
+
+- **Always pass an explicit `-t`** — every partition sets
+  `DefaultTime=00:31:00`, so a conversion without one is capped at 31 min and
+  truncated. That, not the partition, is what killed conversions: `cpu` allows
+  `MaxTime=1-00:00:00`, and `cpu`/`cpu_short`/`cpu_long`/`cpu_interactive` share
+  one node pool. Check with `scontrol show partition <name>`.
+- Conversion `-t` is a ceiling, not an estimate, clamped to the partition's
+  real `MaxTime` and never left below its `DefaultTime`.
+
+Partial conversions are self-detecting: `references/render.py` `prepare()` reads
+the 4-byte `hsqs` magic, reconverts on mismatch, and treats a still-bad
+conversion as fatal. Conversion runs once, then is cached by image name.
+
+**A failed conversion must not fall back to the registry image.** The tempting
+recovery — pass `docker://…` to `srun` and let Pyxis handle it — puts the pull
+back inside the GPU allocation, which is the cost the conversion existed to
+avoid, and it does so precisely when something is already wrong. Treat a failed
+or truncated conversion as fatal: fix it on the CPU partition and resubmit.
+
+Diagnostic: if a job is slow to produce output, check what `--container-image=`
+received — a registry URI rather than a `.sqsh` path means the pull happened on
+the GPUs.
+
+## Registry manifest format vs. enroot version
+
+Enroot must be able to parse the registry's manifest, and older releases cannot
+read an **OCI image index** (`application/vnd.oci.image.index.v1+json`). When
+they meet one the import fails with:
+
+```
+[INFO] Fetching image manifest list
+[ERROR] Could not process JSON input
+curl: (23) Failed writing body (18 != 16375)
+```
+
+Neither line names the cause. `Failed writing body` is curl losing its pipe
+when the JSON parser exits — it is not a transport or disk fault, and the
+manifest fetch itself returned `200` with valid JSON.
+
+**There is no request-side workaround.** Measured against Docker Hub: it serves
+the OCI index even when the client's `Accept` header offers *only*
+`application/vnd.docker.distribution.manifest.list.v2+json`. Retrying, changing
+headers, or adding credentials cannot help.
+
+The two real options are a different image or a newer enroot. `nvcr.io`
+publishes Docker manifest lists, so TAO images import on enroot releases that
+reject Docker Hub official images — verified on enroot 3.4.1, where
+`nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt` reaches `Downloading ... layers`
+while `docker.io/library/alpine:3.20` fails at the manifest.
+
+To identify it in one call, without downloading layers:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' \
+  -H "Authorization: Bearer $TOKEN" <registry>/v2/<path>/manifests/<tag>
+```
+
+`vnd.oci.image.index` in the content type plus an old enroot is the whole
+diagnosis. `scripts/check_tao_launch_preflight.py` reports the enroot version
+next to its tool check so the version half is visible before it is needed.
+
+Registries are migrating to OCI generally, so treat an enroot too old to read
+it as a dependency with a clock on it, not a per-image workaround.
+
+## Translating `docker run` flags
+
+A skill that documents its stages as `docker run` is not docker-only: the image
+is converted once to `.sqsh` and every flag has a Pyxis equivalent, or needs
+none.
+
+| docker | on SLURM |
+|---|---|
+| `<image>` | `srun --container-image=<sqsh>` (converted once, cached) |
+| `--gpus all` | `#SBATCH --gres=gpu:N`, rendered from the bundle's `compute_shape` |
+| `-v src:dst` | `--container-mounts=src:dst` |
+| `-e VAR=…` | exported in the sbatch prologue |
+| `--shm-size=16g` | **nothing needed** — see below |
+| `--ipc=host` | **nothing needed** — same reason |
+| `--rm` | never: it destroys the exit code `status()` reads |
+
+**`--shm-size` is a docker workaround, not a requirement.** Docker defaults
+`/dev/shm` to 64 MB, which starves NCCL/DDP, so GPU images routinely pass
+`--shm-size`. Enroot does not impose that default — it exposes the host tmpfs.
+Measured inside a Pyxis container on a CS-OCI-ORD compute node:
+
+```
+$ srun --container-image=<sqsh> df -h /dev/shm
+tmpfs            89G   24K   89G   1% /dev/shm
+```
+
+So a stage whose docker recipe passes `--shm-size`/`--ipc=host` needs no SLURM
+counterpart, and their absence from the template is correct rather than an
+oversight. Re-measure on an unfamiliar cluster before assuming it holds there.
+

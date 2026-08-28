@@ -49,11 +49,29 @@ COSMOS_RL_IMAGE_DIGEST=$(docker image inspect --format '{{.Id}}' "$COSMOS_RL_IMA
   --base-model-path-or-uri "$COSMOS3_SOURCE_DIR" \
   --vlm-architecture-model-path-or-uri "$COSMOS3_VLM_ARCHITECTURE_MODEL" \
   --vlm-architecture-model-revision "$COSMOS3_VLM_ARCHITECTURE_REVISION" \
+  --base-model-revision "$COSMOS3_SOURCE_REVISION" \
   --output-path "$PREPARED_MODEL_HOST_PATH" \
   --cache-dir "$COSMOS3_CONVERSION_CACHE_DIR" \
   --runtime-image "$COSMOS_RL_IMAGE" \
   --runtime-image-digest "$COSMOS_RL_IMAGE_DIGEST"
 ```
+
+`--checkpoint-path` and `--validate-with-image` do not exist; the invocation
+above is the script's actual contract. Running the old form exits 2 with
+`the following arguments are required: --base-model-path-or-uri, --cache-dir,
+--runtime-image, --runtime-image-digest`, which names four flags at once and
+reads like a different script.
+
+`--vlm-architecture-model-path-or-uri` is optional and defaults to the Nano
+architecture model; pass it only for a non-default variant. The two
+`--*-revision` flags are passed through to `snapshot_download`, so an empty
+value resolves the repo's default branch — legal, but not reproducible. Resolve
+both to immutable revisions during preflight so a re-run converts the same
+weights. When the converter
+module is absent from the runtime image, first check whether the image ships a
+different converter entrypoint before assuming conversion is impossible, and
+only reuse a complete `qwen3_vl` PTM when that directory is intact and has
+provenance — a partial or unprovenanced PTM fails later, in training.
 
 Confirm `$COSMOS3_SOURCE_DIR` exists before launching; that check costs nothing
 and saves several minutes plus a large cache write.
@@ -102,15 +120,16 @@ CR3_IDENTITY_ARGS=(
 )
 ```
 
-Insert `"${CR3_IDENTITY_ARGS[@]}"` into every Docker Train, Proxy evaluate,
-and Benchmark evaluate launch, including resumed actions, and use the
-stage-local writable working directory:
+**When launching through the platform contract, do not paste these.** The
+docker renderer emits `--user`/`--group-add`, sets `USER`/`LOGNAME`/`HOME`,
+redirects the framework caches onto the results mount, and refuses to launch as
+UID 0 for a writable bind. SLURM needs none of it — enroot is rootless — and
+Kubernetes uses a `securityContext`. Pasting the flags into a stage pins the
+loop to docker, which is exactly what the bundle exists to avoid.
 
-```bash
--w "$RESULTS_DIR/<label>/<stage>/cwd"
-```
-
-All four parts are one unit; dropping any of them fails.
+The block above remains correct for a standalone `docker run` outside the loop,
+where nothing else supplies the identity. In that case all four parts are one
+unit; dropping any of them fails.
 
 `HOME=/tmp` matters: a mapped uid has no home inside the image, and libraries
 that write caches to `$HOME` fail or scatter files otherwise.
@@ -137,12 +156,17 @@ the selected platform's equivalent rather than copying these flags blindly.
 Read the current `tao-finetune-cosmos-reason` model skill and
 `references/skill_info.yaml`. The action contract is:
 
-- image: resolve the `cosmos-rl` backend image from the Cosmos model skill's
-  `references/skill_info.yaml` with `scripts/resolve_tao_image.py`;
-- command: `cosmos-rl --config {config_path}
-  /opt/cosmos_rl/tao_sft_example.py`;
-- mode/format: `config` / TOML;
+- image, command, mode and config_format: **resolved** from the model skill's
+  `references/skill_info.yaml` by `scripts/stage_bundle.py`. Do not restate the
+  command here. It used to read `cosmos-rl --config {config_path}
+  /opt/cosmos_rl/tao_sft_example.py`, while the model skill computes the hook
+  path from `cosmos_rl.__file__` — landing at
+  `…/tools/custom_hooks/tao_sft_example.py` — and guards it with `test -f`
+  first. Those are different files, so the restated form passed cosmos-rl a
+  script that does not exist;
 - output: `train.output_dir`.
+
+See `references/stage-execution.md` for the emit → submit → await loop.
 
 Use `nvidia/Cosmos3-Nano` by default. Accept `nvidia/Cosmos3-Edge` or
 `nvidia/Cosmos3-Super` only when the user explicitly selects that variant.

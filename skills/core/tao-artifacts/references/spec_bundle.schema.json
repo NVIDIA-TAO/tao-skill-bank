@@ -4,50 +4,106 @@
   "title": "TAO spec-bundle",
   "description": "The typed package a model/data (producer) skill hands to a platform (consumer) skill: everything needed to run one action, nothing platform-specific. Mode-discriminated union: config | args.",
   "type": "object",
-  "required": ["network_arch", "action", "image", "mode", "command", "declared_inputs", "declared_outputs", "compute_shape"],
+  "required": [
+    "network_arch",
+    "action",
+    "image",
+    "mode",
+    "command",
+    "declared_inputs",
+    "declared_outputs",
+    "compute_shape"
+  ],
   "additionalProperties": false,
   "properties": {
-    "network_arch": { "type": "string", "minLength": 1 },
-    "action": { "type": "string", "minLength": 1 },
+    "network_arch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    },
     "image": {
       "type": "string",
       "pattern": "^\\S+/\\S+$",
-      "description": "Resolved container URI (registry/path:tag), carried as data. Never a versions.yaml key — resolve first via scripts/resolve_tao_image.py."
+      "description": "Resolved container URI (registry/path:tag), carried as data. Never a versions.yaml key \u2014 resolve first via scripts/resolve_tao_image.py."
     },
-    "mode": { "enum": ["config", "args"] },
-    "command": { "type": "string", "minLength": 1 },
-    "config_format": { "enum": ["yaml", "toml", "json"] },
+    "mode": {
+      "enum": [
+        "config",
+        "args"
+      ]
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "config_format": {
+      "enum": [
+        "yaml",
+        "toml",
+        "json"
+      ]
+    },
     "spec": {
       "$ref": "#/$defs/nestedDict",
       "description": "The NESTED config dict mirroring the container's spec shape (mode=config only). Dotted keys are the #1 mistake and are rejected at every level."
     },
     "args": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "Argument list (mode=args only)."
     },
     "declared_inputs": {
       "type": "array",
-      "items": { "$ref": "#/$defs/declaredInput" }
+      "items": {
+        "$ref": "#/$defs/declaredInput"
+      }
     },
     "declared_outputs": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/declaredOutput" }
+      "items": {
+        "$ref": "#/$defs/declaredOutput"
+      }
     },
-    "upload_excludes": { "type": "array", "items": { "type": "string" } },
+    "upload_excludes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "compute_shape": {
       "type": "object",
-      "required": ["gpus", "nodes"],
+      "required": [
+        "gpus",
+        "nodes"
+      ],
       "additionalProperties": false,
       "properties": {
-        "gpus": { "type": "integer", "minimum": 0, "description": "GPUs per node" },
-        "nodes": { "type": "integer", "minimum": 1, "description": "nodes > 1 engages the multi-node contract (templates + probes)" }
+        "gpus": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "GPUs per node"
+        },
+        "nodes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "nodes > 1 engages the multi-node contract (templates + probes)"
+        }
       }
     },
     "gpu_spec_key": {
       "type": "string",
       "description": "Dotted pointer to where the GPU count is written in the spec (config mode), e.g. train.num_gpus."
+    },
+    "workdir": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute working directory inside the container. Optional. Some images only work from a specific directory (paidf-anomalygen resolves its scripts relative to /workspace/paidf-anomalygen), and each platform spells this differently -- docker -w, srun --container-workdir, kubernetes workingDir -- so it belongs in the bundle rather than being folded into the command as a `cd`, which would hide it from the renderer and from anyone reading the bundle."
     },
     "execution": {
       "$ref": "#/$defs/executionContract",
@@ -56,19 +112,44 @@
   },
   "allOf": [
     {
-      "if": { "properties": { "mode": { "const": "config" } }, "required": ["mode"] },
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "config"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
       "then": {
-        "required": ["spec", "config_format"],
+        "required": [
+          "spec",
+          "config_format"
+        ],
         "properties": {
           "args": false,
-          "command": { "pattern": "\\{config_path\\}" }
+          "command": {
+            "pattern": "\\{config_path\\}"
+          }
         }
       }
     },
     {
-      "if": { "properties": { "mode": { "const": "args" } }, "required": ["mode"] },
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "args"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
       "then": {
-        "required": ["args"],
+        "required": [
+          "args"
+        ],
         "properties": {
           "spec": false,
           "config_format": false
@@ -79,42 +160,93 @@
   "$defs": {
     "nestedDict": {
       "type": "object",
-      "propertyNames": { "pattern": "^[^.]+$" },
-      "additionalProperties": { "$ref": "#/$defs/nestedValue" }
+      "propertyNames": {
+        "pattern": "^[^.]+$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/nestedValue"
+      }
     },
     "nestedValue": {
       "anyOf": [
-        { "type": ["string", "number", "boolean", "null"] },
-        { "type": "array", "items": { "$ref": "#/$defs/nestedValue" } },
-        { "$ref": "#/$defs/nestedDict" }
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nestedValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/nestedDict"
+        }
       ]
     },
     "declaredInput": {
       "type": "object",
-      "required": ["spec_key", "type", "uri"],
+      "required": [
+        "spec_key",
+        "type",
+        "uri"
+      ],
       "additionalProperties": false,
       "properties": {
         "spec_key": {
           "type": "string",
           "minLength": 1,
-          "description": "Dotted/indexed POINTER into the spec (e.g. dataset.train_data_sources[0].image_dir). Dots are allowed here — this is a pointer, not a spec key."
+          "description": "Dotted/indexed POINTER into the spec (e.g. dataset.train_data_sources[0].image_dir). Dots are allowed here \u2014 this is a pointer, not a spec key."
         },
-        "type": { "enum": ["file", "folder"] },
-        "optional": { "type": "boolean", "default": false },
+        "type": {
+          "enum": [
+            "file",
+            "folder"
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "default": false
+        },
         "uri": {
           "type": "string",
           "minLength": 1,
-          "description": "Source location: s3://, hf://, ngc://, lustre:///, or an absolute compute-frame path (strategy A). NO storage_tier here — the tier is chosen by tao-data-io at stage time and stamped into the job-record."
+          "description": "Source location: s3://, hf://, ngc://, lustre:///, or an absolute compute-frame path (strategy A). NO storage_tier here \u2014 the tier is chosen by tao-data-io at stage time and stamped into the job-record."
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Absolute path this input must appear at INSIDE the container. Optional; the default is the same absolute path as `uri`, which keeps a path written into a CSV or spec resolving identically on both sides. Set it only when the image requires a fixed location: cosmos-rl specs address everything under /tao-workspace, and paidf-anomalygen resolves its base checkpoints relative to its own install directory. Without this the input is mounted somewhere the workload does not look, which does not raise -- the directory is simply absent and the stage reads nothing."
+        },
+        "writable": {
+          "type": "boolean",
+          "default": false,
+          "description": "Bind this input read-WRITE. Default false, and it should stay false: a declared input a stage can write to is a cross-platform trap, and writes normally belong under results_dir. The exception is an image that addresses one tree for BOTH its inputs and its outputs -- a cosmos-rl spec places media_path, annotation_path and output_dir all under /tao-workspace, so binding that root read-only fails the run on a read-only filesystem partway through training."
         }
       }
     },
     "declaredOutput": {
       "type": "object",
-      "required": ["spec_key", "type"],
+      "required": [
+        "spec_key",
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "spec_key": { "type": "string", "minLength": 1 },
-        "type": { "enum": ["file", "folder"] }
+        "spec_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "enum": [
+            "file",
+            "folder"
+          ]
+        }
       }
     },
     "executionContract": {
@@ -123,52 +255,92 @@
       "properties": {
         "environment": {
           "type": "object",
-          "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*$" },
-          "additionalProperties": { "type": "string" },
+          "propertyNames": {
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": "string"
+          },
           "description": "Non-secret container environment. Values may use the documented {job_id}, {results_dir}, and {config_path} placeholders, which the platform binds after opening the job record."
         },
         "pre_commands": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Model-owned runtime attestations or preparation commands, executed in order before the primary command in the same allocation/container."
         },
         "post_commands": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "description": "Model-owned result validation or aggregation commands, executed in order only after the primary command succeeds."
         },
         "post_scope": {
-          "enum": ["all", "leader"],
+          "enum": [
+            "all",
+            "leader"
+          ],
           "default": "leader",
           "description": "Whether post_commands run in every platform task or only task/rank zero."
         },
         "distributed": {
           "type": "object",
-          "required": ["launcher", "processes_per_node"],
+          "required": [
+            "launcher",
+            "processes_per_node"
+          ],
           "additionalProperties": false,
           "properties": {
-            "launcher": { "enum": ["direct", "torchrun"] },
-            "processes_per_node": { "type": "integer", "minimum": 1 },
-            "tasks_per_node": { "const": 1, "default": 1 }
+            "launcher": {
+              "enum": [
+                "direct",
+                "torchrun"
+              ]
+            },
+            "processes_per_node": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "tasks_per_node": {
+              "const": 1,
+              "default": 1
+            }
           }
         },
         "supporting_files": {
           "type": "array",
-          "items": { "$ref": "#/$defs/supportingFile" },
+          "items": {
+            "$ref": "#/$defs/supportingFile"
+          },
           "description": "Checked-in orchestration helpers to stage as immutable auxiliary inputs. These are not source overlays and must not replace code in the image."
         },
         "completion": {
           "type": "object",
-          "required": ["child_exit_code_path"],
+          "required": [
+            "child_exit_code_path"
+          ],
           "additionalProperties": false,
           "properties": {
-            "child_exit_code_path": { "type": "string", "minLength": 1 },
-            "structured_status_path": { "type": "string", "minLength": 1 },
+            "child_exit_code_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "structured_status_path": {
+              "type": "string",
+              "minLength": 1
+            },
             "success_states": {
               "type": "array",
               "minItems": 1,
               "uniqueItems": true,
-              "items": { "type": "string", "minLength": 1 }
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         }
@@ -176,7 +348,11 @@
     },
     "supportingFile": {
       "type": "object",
-      "required": ["source", "destination", "sha256"],
+      "required": [
+        "source",
+        "destination",
+        "sha256"
+      ],
       "additionalProperties": false,
       "properties": {
         "source": {
@@ -191,7 +367,10 @@
           "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))\\S+$",
           "description": "Relative path below the platform-owned staged helper directory."
         },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
       }
     }
   }

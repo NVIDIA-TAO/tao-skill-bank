@@ -31,6 +31,7 @@ spec:
       labels:
         tao-job: "@@JOB_NAME@@"
     spec:
+      securityContext:@@RUN_AS_USER@@
       restartPolicy: Never
       imagePullSecrets:
         - name: "@@IMAGE_PULL_SECRET@@"
@@ -41,17 +42,18 @@ spec:
           resources:
             limits:
               "nvidia.com/gpu": "@@NUM_GPUS@@"
-          envFrom:
-            - secretRef:
-                name: "@@CRED_SECRET@@"
+@@WORKING_DIR@@
+          # Credentials are projected PER KEY via secretKeyRef entries in env
+          # (the CRED_ENV slot below): a Secret's existence does not authorize every
+          # key it holds, which is what a whole-Secret envFrom import assumed.
           env:
             - name: TAO_RESULTS_ROOT
-              value: "@@RESULTS_DIR@@"
+              value: "@@RESULTS_DIR@@"@@CRED_ENV@@@@INPUT_ENV@@
           volumeMounts:
             - name: dshm
               mountPath: /dev/shm
             - name: data
-              mountPath: "@@MOUNT_PATH@@"
+              mountPath: "@@MOUNT_PATH@@"@@EXTRA_MOUNTS@@
       volumes:
         - name: dshm
           emptyDir:

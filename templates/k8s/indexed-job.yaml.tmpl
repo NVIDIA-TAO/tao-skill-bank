@@ -48,6 +48,7 @@ spec:
       labels:
         tao-job: "@@JOB_NAME@@"
     spec:
+      securityContext:@@RUN_AS_USER@@
       restartPolicy: Never
       subdomain: "@@JOB_NAME@@"          # pods get FQDN <job>-<index>.<svc>.<ns>.svc.cluster.local
       imagePullSecrets:
@@ -59,9 +60,10 @@ spec:
           resources:
             limits:
               "nvidia.com/gpu": "@@GPUS_PER_NODE@@"
-          envFrom:
-            - secretRef:
-                name: "@@CRED_SECRET@@"
+@@WORKING_DIR@@
+          # Credentials are projected PER KEY via secretKeyRef entries in env
+          # (the CRED_ENV slot below): a Secret's existence does not authorize every
+          # key it holds, which is what a whole-Secret envFrom import assumed.
           env:
             - name: WORLD_SIZE                 # = NODE COUNT (TAO convention), not global ranks
               value: "@@NUM_NODES@@"
@@ -79,12 +81,12 @@ spec:
             - name: MASTER_ADDR
               value: "@@JOB_NAME@@-0.@@JOB_NAME@@"
             - name: TAO_RESULTS_ROOT
-              value: "@@RESULTS_DIR@@"
+              value: "@@RESULTS_DIR@@"@@CRED_ENV@@@@INPUT_ENV@@
           volumeMounts:
             - name: dshm
               mountPath: /dev/shm
             - name: data
-              mountPath: "@@MOUNT_PATH@@"
+              mountPath: "@@MOUNT_PATH@@"@@EXTRA_MOUNTS@@
       volumes:
         - name: dshm
           emptyDir:

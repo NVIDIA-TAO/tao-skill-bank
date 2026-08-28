@@ -1,0 +1,899 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""DEFT Cosmos3 stages must render on every platform from one definition.
+
+Cosmos3 differs from AOI in two ways that these tests pin:
+
+* Most of its loop is HOST-SIDE. Only four container families -- Train,
+  Proxy/Benchmark evaluate, AnomalyGen, Mining -- belong in a bundle at all.
+* Its commands are RESOLVED from the model skill rather than copied. The AOI
+  table copied `visual_changenet classify train`, a subcommand that does not
+  exist; resolving removes the copy that can drift.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+import pytest
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+C3 = REPO / "skills/applications/tao-run-deft-aoi-cosmos3/scripts"
+
+
+def _load(path: pathlib.Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def sb():
+    return _load(C3 / "stage_bundle.py", "cosmos3_stage_bundle")
+
+
+def _renderer(platform: str):
+    return _load(REPO / f"skills/platform/tao-run-on-{platform}/references/render.py",
+                 f"c3_render_{platform}")
+
+
+PLATFORM_CTX = {
+    "docker": {},
+    "slurm": {"login": "me@login", "sqsh_dir": "/lustre/img", "time_limit": "04:00:00",
+              "account": "some-account", "partition": "some-partition"},
+    "kubernetes": {"mount_path": "/ws", "namespace": "tao", "pvc_claim": "deft"},
+}
+SPEC = {"custom": {"system_prompt": "Return exactly OK or NG."}, "train": {"epochs": 2}}
+TRAIN_PARAMS = {"workspace": "/ws", "annotations": "/ws/annotations/train.json"}
+
+
+def _ctx(platform):
+    return {"job_id": "c3-train-1", "results_dir": "/ws/results/base",
+            "bank": str(REPO), "job_dir": "/ws/work", "uid": 1000, "gid": 1000,
+            "groups": [1000], "user_name": "ci", **PLATFORM_CTX[platform]}
+
+
+def _train(sb):
+    return sb.build("train", TRAIN_PARAMS, results_dir="/ws/results/base",
+                    bank=REPO, spec=SPEC)
+
+
+@pytest.mark.parametrize("platform", sorted(PLATFORM_CTX))
+def test_train_renders_everywhere(sb, platform):
+    assert _renderer(platform).render(_train(sb), _ctx(platform))["argv"]
+
+
+@pytest.mark.parametrize("platform", sorted(PLATFORM_CTX))
+def test_the_toml_spec_is_written(sb, platform):
+    """cosmos-rl is config_format=toml; nothing in the stdlib writes toml."""
+    import tomllib
+
+    rendered = _renderer(platform).render(_train(sb), _ctx(platform))
+    configs = {p: c for p, c in rendered.get("files", {}).items() if "configs/" in p}
+    assert configs, f"{platform} wrote no spec file"
+    path, content = next(iter(configs.items()))
+    assert path.endswith(".toml")
+    assert tomllib.loads(content) == SPEC
+
+
+@pytest.mark.parametrize("platform", sorted(PLATFORM_CTX))
+def test_the_workspace_lands_at_tao_workspace(sb, platform):
+    """Every path in a cosmos-rl spec is under /tao-workspace.
+
+    Mounting the workspace at its host path instead does not fail -- the spec's
+    paths simply do not resolve, and the stage fails deep inside the workload.
+    """
+    rendered = _renderer(platform).render(_train(sb), _ctx(platform))
+    blob = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert "/tao-workspace" in blob, f"{platform} did not honour the target"
+
+
+def test_the_command_comes_from_the_model_skill(sb):
+    """Not a copy. cosmos-rl train is a multi-line shell hook that computes a
+    path inside the container; a transcription would be stale in a release."""
+    import yaml
+
+    owned = yaml.safe_load(
+        (REPO / "skills/models/tao-finetune-cosmos-reason/references/skill_info.yaml")
+        .read_text(encoding="utf-8"))
+    assert _train(sb)["command"] == owned["actions"]["train"]["command"]
+
+
+def test_the_image_comes_from_the_backend_contract(sb):
+    import yaml
+
+    owned = yaml.safe_load(
+        (REPO / "skills/models/tao-finetune-cosmos-reason/references/skill_info.yaml")
+        .read_text(encoding="utf-8"))
+    expected = owned["backend_contracts"]["cosmos-rl"]["container_image"]
+    assert _train(sb)["image"] == expected
+
+
+def test_no_stage_pins_an_image_uri(sb):
+    """Model-skill stages resolve through the contract; the rest through
+    versions.yaml. A URI written into the table drifts at the next bump."""
+    for name, entry in sb.STAGES.items():
+        if entry["image"]:
+            assert "/" not in entry["image"], f"{name} pins {entry['image']!r}"
+
+
+def test_host_side_stages_are_refused_with_a_reason(sb):
+    """Wrapping a local script in a scheduler would be pure overhead."""
+    with pytest.raises(ValueError, match="runs on the host"):
+        sb.build("proxy_rcca", {}, results_dir="/ws/r", bank=REPO)
+
+
+def test_every_recorded_stage_is_accounted_for(sb):
+    """A stage in neither table is an oversight; this makes that visible."""
+    commit = (C3 / "commit_stage.py").read_text(encoding="utf-8")
+    block = commit[commit.index("STAGES = ("):commit.index(")", commit.index("STAGES = ("))]
+    recorded = {line.strip().strip('",') for line in block.splitlines()[1:] if line.strip()}
+    known = set(sb.STAGES) | set(sb.HOST_SIDE_STAGES)
+    # Container families expand into sub-stages (anomalygen -> .amp/.sdg).
+    families = {name.split(".")[0] for name in known}
+    unaccounted = {s for s in recorded if s not in known and s not in families}
+    assert not unaccounted, f"stages in neither table: {sorted(unaccounted)}"
+
+
+def test_every_stage_emits_a_schema_valid_bundle(sb, tmp_path):
+    validator = REPO / "scripts/tao_spec_bundle.py"
+    for name, entry in sb.STAGES.items():
+        params = {key: f"/ws/{key}" for key in entry["inputs"]}
+        is_config = entry["action"] is not None or entry["mode"] == "config"
+        bundle = sb.build(name, params, results_dir="/ws/results/x", bank=REPO,
+                          args=None if is_config else ["true"],
+                          spec=SPEC if is_config else None)
+        path = tmp_path / f"{name.replace('.', '_')}.json"
+        path.write_text(json.dumps(bundle), encoding="utf-8")
+        done = subprocess.run([sys.executable, str(validator), "validate", str(path)],
+                              capture_output=True, text=True)
+        assert done.returncode == 0, f"{name}: {done.stdout}{done.stderr}"
+
+
+# ── The cosmos3 references must stay on the contract ───────────────────────
+# The reference used to state the train command as
+#   cosmos-rl --config {config_path} /opt/cosmos_rl/tao_sft_example.py
+# while the model skill computes the hook from cosmos_rl.__file__, landing at
+# .../tools/custom_hooks/tao_sft_example.py. Different files: the restated form
+# passed cosmos-rl a script that does not exist.
+
+C3_REFS = REPO / "skills/applications/tao-run-deft-aoi-cosmos3/references"
+
+
+def test_stage_execution_reference_exists():
+    assert (C3_REFS / "stage-execution.md").is_file()
+
+
+def test_the_skill_points_at_it():
+    body = (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/SKILL.md").read_text(
+        encoding="utf-8")
+    assert "references/stage-execution.md" in body
+
+
+def test_no_reference_restates_the_stale_hook_path():
+    """The old literal is wrong AND unresolvable; it must not come back."""
+    offenders = [
+        path.name for path in sorted(C3_REFS.glob("*"))
+        if path.is_file()
+        and "/opt/cosmos_rl/tao_sft_example.py" in path.read_text(encoding="utf-8")
+        and "does not exist" not in path.read_text(encoding="utf-8")
+        and "NOT /opt/cosmos_rl" not in path.read_text(encoding="utf-8")
+    ]
+    assert not offenders, (
+        f"{offenders} restate the hardcoded hook path; the model skill computes "
+        "it from cosmos_rl.__file__, so the literal points at nothing"
+    )
+
+
+def test_the_workspace_target_is_documented():
+    body = (C3_REFS / "stage-execution.md").read_text(encoding="utf-8")
+    assert "/tao-workspace" in body and "NEVER mount over `/workspace`" in body
+
+
+@pytest.mark.parametrize("platform", ["docker", "kubernetes"])
+def test_a_full_loop_eval_names_its_platform(platform):
+    """The converted references read $PLATFORM; an eval that never sets it
+    leaves the documented commands with nothing to substitute."""
+    cfg = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+        .read_text(encoding="utf-8"))
+    entry = next((e for e in cfg["evals"]
+                  if "loop" in e["id"] and f"PLATFORM={platform}" in e["prompt"]), None)
+    assert entry is not None, f"no cosmos3 loop eval exports PLATFORM={platform}"
+
+
+def test_the_kubernetes_loop_provisions_a_gpu():
+    cfg = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+        .read_text(encoding="utf-8"))
+    entry = next(e for e in cfg["evals"] if e["id"].endswith("-kubernetes"))
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "--gpus all" in body
+    assert "nvidia-device-plugin" in body or "gpu-operator" in body
+    assert "FAILURE" in body
+
+
+def test_host_side_stages_are_not_graded_as_platform_violations():
+    """RCCA and friends run locally by design; grading them as fallbacks would
+    fail every correct run."""
+    cfg = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+        .read_text(encoding="utf-8"))
+    entry = next(e for e in cfg["evals"] if e["id"].endswith("-kubernetes"))
+    assert "Host-side stages" in entry["expected_outcome"]
+
+
+def test_the_documented_test_command_names_its_working_directory():
+    """The bundled tests import sibling skills via SKILL_ROOT.parents[1].
+
+    Run from a standalone ~/.claude/skills copy they fail with
+    `ModuleNotFoundError: No module named 'filter_mined_history'` -- which names
+    the module, not the missing sibling skill, so the documented command has to
+    say where to run it from.
+    """
+    body = (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/SKILL.md").read_text(
+        encoding="utf-8")
+    assert "unittest tests.test_cosmos3_bare" in body
+    assert "TAO_SKILL_BANK_PATH" in body and "cd " in body, (
+        "the documented command does not say which directory to run it from"
+    )
+
+
+def test_the_bundled_tests_do_reach_into_sibling_skills():
+    """Guard the premise: if the imports become self-contained, the cd is stale."""
+    body = (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/tests/test_cosmos3_bare.py"
+            ).read_text(encoding="utf-8")
+    assert "parents[1]" in body, (
+        "the bundled tests no longer reach outside the skill; the working-"
+        "directory requirement in SKILL.md can be relaxed"
+    )
+
+
+# ── The documented verbs must exist ────────────────────────────────────────
+# stage-execution.md documented `deft_exec.py --submit/--await-job/--logs` for
+# Cosmos3 while that script accepted only `--state` and a trailing command. The
+# emitter was useless: an agent following the page hit "unrecognized arguments".
+#
+# Copying AOI's ~400 lines would have created the fork this work exists to
+# remove -- DEFT AOI, IAA and Cosmos3 already ship three commit_stage.py. The
+# verbs are workflow-agnostic (no stage name, state file or network arch
+# anywhere in them), so they live at bank root and both workflows delegate.
+
+DEFT_EXECS = {
+    "aoi": REPO / "skills/applications/tao-run-deft-aoi/scripts/deft_exec.py",
+    "cosmos3": REPO / "skills/applications/tao-run-deft-aoi-cosmos3/scripts/deft_exec.py",
+}
+
+
+def test_the_shared_launcher_exists():
+    assert (REPO / "scripts/tao_launch.py").is_file(), (
+        "the shared four-verb launcher is missing; each workflow would need its "
+        "own copy"
+    )
+
+
+@pytest.mark.parametrize("verb", ["submit_bundle", "await_job", "job_logs", "cancel_job"])
+def test_the_launcher_implements_every_verb(verb):
+    module = _load(REPO / "scripts/tao_launch.py", "tao_launch_probe")
+    assert callable(getattr(module, verb, None))
+
+
+def test_the_launcher_has_no_unresolved_names():
+    """`callable()` proved nothing: the module imported cleanly while five
+    helpers it calls were missing, so every verb would NameError at runtime.
+
+    Compile in strict mode and resolve each verb's global references against
+    the module namespace -- that catches an incomplete extraction, which is
+    exactly how this module was first written.
+    """
+    module = _load(REPO / "scripts/tao_launch.py", "tao_launch_names")
+    import types
+
+    missing = {}
+    for name in ("submit_bundle", "await_job", "job_logs", "cancel_job",
+                 "load_bundle", "platform_renderer"):
+        fn = getattr(module, name)
+        for referenced in fn.__code__.co_names:
+            if referenced in dir(module) or referenced in dir(__builtins__):
+                continue
+            if hasattr(module, referenced) or referenced in vars(module):
+                continue
+            # attribute names on objects show up here too; only flag globals
+            # the module genuinely cannot resolve.
+            if referenced in fn.__globals__:
+                continue
+            missing.setdefault(name, []).append(referenced)
+    # Names used as attributes (obj.foo) are unavoidable false positives, so
+    # assert on the ones we know were missing rather than the raw set.
+    known_gaps = {"_basename", "_policy", "_reject_airgap", "_with_no_pull",
+                  "_with_offline_container_env", "time"}
+    unresolved = {n for names in missing.values() for n in names} & known_gaps
+    assert not unresolved, f"the extraction is incomplete: {sorted(unresolved)}"
+
+
+def test_submit_passes_the_signature_the_launcher_declares(tmp_path):
+    """Invoke --submit, do not inspect --help.
+
+    The first version passed `results_dir=` -- not a parameter -- and omitted
+    the keyword-only storage_tier and parent_job, so every submit would have
+    raised TypeError. --help looked perfect throughout.
+    """
+    import types
+
+    sys.path.insert(0, str(C3))
+    exec_mod = _load(C3 / "deft_exec.py", "c3_exec_submit")
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"results_dir": str(tmp_path)}), encoding="utf-8")
+    bundle = tmp_path / "b.json"
+    bundle.write_text(json.dumps({"image": "nvcr.io/x:1"}), encoding="utf-8")
+
+    seen = {}
+    exec_mod._launcher = lambda: types.SimpleNamespace(
+        load_bundle=lambda path, policy=None: {"ok": True},
+        submit_bundle=lambda *a, **k: (seen.update(kwargs=k), "job-123")[1],
+    )
+    assert exec_mod.main(["--state", str(state), "--submit", "--bundle", str(bundle),
+                          "--platform", "kubernetes", "--ctx", "namespace=deft",
+                          "--ctx", "storage_tier=B"]) == 0
+
+    import inspect
+    launcher = _load(REPO / "scripts/tao_launch.py", "tao_launch_sig")
+    declared = set(inspect.signature(launcher.submit_bundle).parameters) - {
+        "state_path", "bundle"}
+    assert set(seen["kwargs"]) <= declared, (
+        f"passed {sorted(set(seen['kwargs']) - declared)}, which submit_bundle "
+        "does not accept"
+    )
+    required = {n for n, p in inspect.signature(launcher.submit_bundle).parameters.items()
+                if p.kind is p.KEYWORD_ONLY and p.default is p.empty}
+    assert required <= set(seen["kwargs"]), (
+        f"omitted required keyword-only args: {sorted(required - set(seen['kwargs']))}"
+    )
+    assert seen["kwargs"]["storage_tier"] == "B", "storage_tier not taken from ctx"
+    assert "storage_tier" not in seen["kwargs"]["ctx_extra"], (
+        "storage_tier leaked into ctx_extra, where the renderer would ignore it"
+    )
+
+
+@pytest.mark.parametrize("workflow", sorted(DEFT_EXECS))
+@pytest.mark.parametrize("flag", ["--submit", "--await-job", "--logs", "--cancel"])
+def test_every_workflow_exposes_the_documented_verbs(workflow, flag):
+    """A reference documenting a flag the script rejects is worse than no doc."""
+    done = subprocess.run([sys.executable, str(DEFT_EXECS[workflow]), "--help"],
+                          capture_output=True, text=True)
+    assert flag in done.stdout, f"{workflow} deft_exec has no {flag}"
+
+
+def test_cosmos3_keeps_its_policy_gate(tmp_path):
+    """The verbs are additive: `-- <cmd>` still enforces air-gap policy."""
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps(
+        {"results_dir": str(tmp_path), "execution_policy": {"network_mode": "airgap"}}))
+    done = subprocess.run(
+        [sys.executable, str(DEFT_EXECS["cosmos3"]), "--state", str(state),
+         "--", "pip", "install", "torch"],
+        capture_output=True, text=True)
+    assert done.returncode != 0 and "air-gap" in done.stdout + done.stderr
+
+
+def test_a_verb_and_a_trailing_command_are_refused_together(tmp_path):
+    """Two different modes; silently preferring one would hide the other."""
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"results_dir": str(tmp_path)}))
+    done = subprocess.run(
+        [sys.executable, str(DEFT_EXECS["cosmos3"]), "--state", str(state),
+         "--logs", "job-1", "--", "echo", "hi"],
+        capture_output=True, text=True)
+    assert done.returncode != 0
+    assert "different modes" in done.stdout + done.stderr
+
+
+def test_the_launcher_is_workflow_agnostic():
+    """If it starts naming a workflow in CODE, it has stopped being shared.
+
+    The module docstring names the workflows deliberately -- it explains which
+    forks this exists to prevent -- so only the code below it is scanned.
+    """
+    import ast
+
+    source = (REPO / "scripts/tao_launch.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    body = ast.unparse(ast.Module(body=[
+        node for node in tree.body
+        if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))
+    ], type_ignores=[])).lower()
+    for term in ("deft_state", "changenet", "cosmos3", "iter_label"):
+        assert term not in body, f"the shared launcher references {term!r} in code"
+
+
+def test_nothing_in_the_skill_restates_the_hook_path():
+    """The literal points at a file that does not exist, wherever it appears."""
+    root = REPO / "skills/applications/tao-run-deft-aoi-cosmos3"
+    offenders = []
+    for path in sorted(root.rglob("*.md")) + sorted(root.rglob("*.toml")):
+        body = path.read_text(encoding="utf-8")
+        if "/opt/cosmos_rl/tao_sft_example.py" not in body:
+            continue
+        # Naming it to say it is WRONG is the point; prescribing it is not.
+        if any(k in body for k in ("does not exist", "NOT /opt/cosmos_rl",
+                                   "points at a file that does not exist")):
+            continue
+        offenders.append(str(path.relative_to(root)))
+    assert not offenders, (
+        f"{offenders} prescribe the hardcoded hook path; the model skill computes "
+        "it from cosmos_rl.__file__"
+    )
+
+
+# ── Contracts the cosmos3 scripts actually enforce ─────────────────────────
+
+def test_the_rcca_contract_is_manifest_driven():
+    """Merged from main (#177): the RCCA contract now lives in
+    rcca-artifact-manifest.json rather than a heading tuple in code. These
+    tests assert against THAT contract, since our earlier in-code validator was
+    superseded by it during the merge.
+    """
+    manifest = json.loads(
+        (C3_REFS / "rcca-artifact-manifest.json").read_text(encoding="utf-8"))
+    assert "artifact_classes" in manifest
+    body = (C3_REFS / "RCCA_REPORT_TEMPLATE.md").read_text(encoding="utf-8")
+    # every required heading the manifest names must exist in the template
+    import itertools
+    entries = list(itertools.chain.from_iterable(manifest["artifact_classes"].values()))
+    for entry in entries:
+        for heading in (entry.get("validation_config") or {}).get("required_headings", []) \
+                if isinstance(entry.get("validation_config"), dict) else []:
+            assert heading.lower() in body.lower(), f"template lacks {heading!r}"
+
+
+def test_the_template_and_manifest_ship_together():
+    """The validator's error points at both; a repo with one and not the other
+    sends a rejected author to a missing file."""
+    assert (C3_REFS / "RCCA_REPORT_TEMPLATE.md").is_file()
+    assert (C3_REFS / "rcca-artifact-manifest.json").is_file()
+
+
+def test_proxy_rcca_requires_the_report():
+    body = (C3 / "commit_stage.py").read_text(encoding="utf-8")
+    assert "--rcca-report" in body or "rcca_report" in body
+
+
+def test_the_image_cap_patcher_distinguishes_lifted_from_moved():
+    """Absent has two causes. A newer image that lifted the cap must not block
+    the loop; a file that moved the cap must not be waved through into
+    `ValueError: At most 1 image(s) may be provided in one prompt`."""
+    patcher = _load(C3 / "patch_eval_image_cap.py", "cosmos3_cap_patcher")
+
+    # Genuinely lifted: no cap AND no engine construction in this file -- the
+    # code moved. If the file still builds a vLLM engine, absence of the cap
+    # more likely means it MOVED, and "no patch needed" would sail into the
+    # 1-image ValueError at evaluation, so that now fails closed too.
+    _, current = patcher.apply_cap('def helper():\n    return config', 2)
+    assert current == 2, "a file with no engine and no cap needs no patch"
+
+    with pytest.raises(ValueError, match="vLLM engine construction is present"):
+        patcher.apply_cap('engine = LLM(model=path)', 2)
+
+    with pytest.raises(ValueError, match="present but its image cap did not match"):
+        patcher.apply_cap('limit_mm_per_prompt=DEFAULT_CAPS', 2)
+
+    _, current = patcher.apply_cap('limit_mm_per_prompt={"image": 1}', 2)
+    assert current == 1, "a real cap must still be detected and patched"
+
+
+def test_the_manifest_key_is_documented_exactly():
+    """A flat manifest is rejected by a message naming the nested key; the docs
+    have to say which key, or the reader guesses."""
+    root = REPO / "skills/applications/tao-run-deft-aoi-cosmos3"
+    # SKILL.md is size-capped, so prose migrates into references/. What matters
+    # is that the skill documents the key SOMEWHERE, not which file.
+    documented = any(
+        "evaluation_contract.benchmark.annotations_sha256" in path.read_text(encoding="utf-8")
+        for path in [root / "SKILL.md", *sorted((root / "references").glob("*.md"))]
+    )
+    validator = (C3 / "validate_split_contract.py").read_text(encoding="utf-8")
+    assert documented, "the manifest's nested key is documented nowhere"
+    assert '["evaluation_contract"]["benchmark"]["annotations_sha256"]' in validator, (
+        "the documented key no longer matches what the validator reads"
+    )
+
+
+# ── eval.config is the LIVE-EXECUTION lane ─────────────────────────────────
+# docs/skill-requirements.md draws the line: evals/evals.json is the required,
+# no-execution routing check; eval.config is the optional layer that "pulls real
+# datasets, runs real docker run, measures real" behaviour. A plan-only entry in
+# eval.config occupies a Colossus GPU shard (x2 backends) to exercise nothing,
+# and duplicates a check the free lane already runs -- more strictly, as
+# individually gradable expected_behavior items rather than one prose paragraph.
+
+def test_no_plan_only_eval_sits_in_the_execution_lane():
+    cfg = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+        .read_text(encoding="utf-8"))
+    plan_only = [
+        e["id"] for e in cfg["evals"]
+        if "do not execute" in e["prompt"].lower()
+        or "plan-only" in e["prompt"].lower()
+    ]
+    assert not plan_only, (
+        f"{plan_only} are plan-only but sit in eval.config, which is the "
+        "live-execution lane. Routing checks belong in evals/evals.json, which "
+        "is required, free, and graded per behaviour"
+    )
+
+
+def test_the_routing_coverage_still_exists():
+    """Removing the duplicate must not remove the coverage."""
+    entries = json.loads(
+        (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/evals/evals.json")
+        .read_text(encoding="utf-8"))
+    planning = [e for e in entries if "plan" in e["question"].lower()]
+    assert planning, "no routing/plan check survives in evals.json"
+    # Both fields: expected_behavior lists gradable items, ground_truth carries
+    # the narrative the grader compares against. A claim in either is covered.
+    behaviours = " ".join(
+        str(e.get("expected_behavior", "")) + " " + str(e.get("ground_truth", ""))
+        for e in planning
+    ).lower()
+    # The things the removed eval asserted, still asserted here.
+    for claim in ("does not default to a platform", "submit/status/logs/cancel"):
+        assert claim in behaviours, f"lost coverage: {claim!r}"
+
+
+# ── The k8s evals must bootstrap what the runner lacks ─────────────────────
+# A live run failed twice: the runner had no kubectl/minikube/nvidia-smi, and
+# `minikube start --gpus all` then half-started, leaving kubelet and apiserver
+# Stopped -- which reads as a Kubernetes fault rather than a missing NVIDIA
+# container runtime. The agent then staged artifacts from an earlier completed
+# run, producing a report for work that turn did not do.
+
+K8S_LOOP_EVALS = [
+    ("skills/applications/tao-run-deft-aoi/eval.config", "deft-loop-ag-mining-kubernetes"),
+    ("skills/applications/tao-run-deft-aoi-cosmos3/eval.config",
+     "cosmos3-deft-loop-ag-mining-kubernetes"),
+]
+
+
+@pytest.mark.parametrize("config,eval_id", K8S_LOOP_EVALS)
+def test_the_k8s_eval_bootstraps_its_tools(config, eval_id):
+    cfg = json.loads((REPO / config).read_text(encoding="utf-8"))
+    body = next(e for e in cfg["evals"] if e["id"] == eval_id)["prompt"]
+    assert "single static binaries" in body, "no kubectl/minikube bootstrap"
+    assert "nvidia-smi" in body, "does not check the GPU tooling exists"
+
+
+@pytest.mark.parametrize("config,eval_id", K8S_LOOP_EVALS)
+def test_the_k8s_eval_probes_the_runtime_before_starting(config, eval_id):
+    """`--gpus all` without the runtime hook half-starts the cluster."""
+    cfg = json.loads((REPO / config).read_text(encoding="utf-8"))
+    body = next(e for e in cfg["evals"] if e["id"] == eval_id)["prompt"]
+    probe = body.find("docker info")
+    start = body.find("minikube start")
+    assert probe != -1, "no check that the NVIDIA runtime is registered"
+    assert probe < start, "the runtime probe must come BEFORE minikube start"
+
+
+@pytest.mark.parametrize("config,eval_id", K8S_LOOP_EVALS)
+def test_a_cpu_fallback_is_not_offered_as_a_recovery(config, eval_id):
+    cfg = json.loads((REPO / config).read_text(encoding="utf-8"))
+    entry = next(e for e in cfg["evals"] if e["id"] == eval_id)
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "Do not start a cluster without" in body or "CPU-only cluster" in body
+
+
+@pytest.mark.parametrize("config", sorted({c for c, _ in K8S_LOOP_EVALS}))
+def test_every_eval_grades_evidence_provenance(config):
+    """Staging a previous run's artifacts produced a polished report for work
+    that never happened -- the failure mode that looks most like success."""
+    cfg = json.loads((REPO / config).read_text(encoding="utf-8"))
+    for entry in cfg["evals"]:
+        assert "THIS run" in entry["expected_outcome"], (
+            f"{entry['id']} does not require evidence from this run"
+        )
+
+
+# ── What the evals grade, beyond "did it finish" ───────────────────────────
+# Three assertions that close gaps a live run exposed: an action name resolving
+# is not the same as its contract being runnable; a first-attempt failure that a
+# retry papers over is still a readiness failure; and grader-produced artifacts
+# must not be mistaken for outputs of the run.
+
+COSMOS3_EVAL = REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config"
+
+
+def _cosmos3_evals():
+    return json.loads(COSMOS3_EVAL.read_text(encoding="utf-8"))["evals"]
+
+
+@pytest.mark.parametrize("eval_id", [e["id"] for e in json.loads(
+    (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+    .read_text(encoding="utf-8"))["evals"]])
+def test_stages_must_be_submittable_not_merely_named(eval_id):
+    """The observed failure was an action whose NAME resolved but whose
+    contract would not run without a spec file."""
+    entry = next(e for e in _cosmos3_evals() if e["id"] == eval_id)
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "bundleable and submittable" in body
+    assert "stage_bundle.py" in body and "deft_exec.py" in body
+
+
+@pytest.mark.parametrize("eval_id", [e["id"] for e in json.loads(
+    (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+    .read_text(encoding="utf-8"))["evals"]])
+def test_a_retry_does_not_erase_a_first_attempt_failure(eval_id):
+    """Otherwise every skill looks runnable, because a capable agent fixes it."""
+    entry = next(e for e in _cosmos3_evals() if e["id"] == eval_id)
+    body = entry["prompt"] + entry["expected_outcome"]
+    assert "readiness" in body.lower()
+    assert "self-correction" in body.lower()
+
+
+@pytest.mark.parametrize("eval_id", [e["id"] for e in json.loads(
+    (REPO / "skills/applications/tao-run-deft-aoi-cosmos3/eval.config")
+    .read_text(encoding="utf-8"))["evals"]])
+def test_grader_artifacts_are_listed_separately(eval_id):
+    """grading.json and fix_suggestions.json are produced BY the grader.
+
+    Listed beside the run's own artifacts they read as things the run should
+    have written -- which is how a request arrived to apply "exact replacements
+    from artifacts/fix_suggestions.json", a file no run produces.
+    """
+    entry = next(e for e in _cosmos3_evals() if e["id"] == eval_id)
+    assert "Grading-phase outputs" in entry["prompt"]
+    assert "produced by the grader, not by this run" in entry["prompt"]
+
+
+def test_launch_evidence_is_documented_per_stage():
+    """A grader given only transcript snippets cannot distinguish "launched on
+    kubernetes" from "claimed to have launched on kubernetes"."""
+    body = (C3_REFS / "stage-execution.md").read_text(encoding="utf-8")
+    assert "tao_job_record.py" in body and "job_record.json" in body
+    assert "backend_ref" in body, (
+        "the job record is what proves which backend ran the stage; say so"
+    )
+
+
+def test_the_consistency_check_names_its_fields():
+    """"Configuration is consistent" is graded differently by every reader."""
+    body = (C3_REFS / "pipeline-and-state.md").read_text(encoding="utf-8")
+    for field in ("config.platform", "benchmark_hash_verified", "annotation paths"):
+        assert field in body, f"the consistency check does not name {field}"
+
+
+def test_the_adapter_lineage_rule_is_unambiguous():
+    """Both fields appearing is correct; a strict reader could grade it either
+    way without this."""
+    # Collapse whitespace: prose wraps, and a doc assertion that breaks on a
+    # line break tests the formatter, not the content.
+    body = " ".join(
+        (C3_REFS / "pipeline-and-state.md").read_text(encoding="utf-8").split())
+    assert "evaluated_model" in body and "config.base_model" in body
+    assert "must not be graded as a contradiction" in body
+
+
+# ── A command may be a SCRIPT, not argv ────────────────────────────────────
+# cosmos-rl's train computes a hook path from cosmos_rl.__file__, tests it, then
+# runs it. Splitting that on whitespace and re-quoting each token produced
+# `exec "hook=$(...)"` on docker and rewrote the script's own quoting on
+# kubernetes -- both broken, both invisible until something ran.
+
+def _script_train(sb_mod):
+    """Same stage, minimal spec -- for the command/mount assertions below.
+
+    Deliberately NOT named _train: an earlier helper of that name is used by
+    the spec-content tests, and shadowing it silently changed what they built.
+    """
+    return sb_mod.build("train", {"workspace": "/ws", "annotations": "/ws/a.json"},
+                        results_dir="/ws/results/base", bank=REPO,
+                        spec={"train": {"epochs": 2}})
+
+
+def test_docker_hands_a_script_to_a_shell(sb):
+    argv = _renderer("docker").render(_script_train(sb), _ctx("docker"))["argv"]
+    tail = argv[argv.index(_script_train(sb)["image"]) + 1:]
+    assert tail[:2] == ["bash", "-lc"], f"not shell-wrapped: {tail[:3]}"
+    assert "cosmos_rl.__file__" in tail[2], "the script was split apart"
+
+
+def test_kubernetes_passes_the_script_through_intact(sb):
+    import yaml
+
+    rendered = _renderer("kubernetes").render(_script_train(sb), _ctx("kubernetes"))
+    doc = yaml.safe_load(next(iter(rendered["files"].values())))
+    command = doc["spec"]["template"]["spec"]["containers"][0]["command"]
+    assert command[:2] == ["/bin/sh", "-c"]
+    assert "cosmos_rl.__file__" in command[2]
+    assert '"tools"' in command[2], (
+        "the script's own quoting was rewritten; re-quoting each token changes "
+        "what the script means"
+    )
+
+
+def test_a_plain_command_is_still_argv(sb):
+    """Only scripts get wrapped; an ordinary command must not gain a shell."""
+    bundle = sb.build("data_mining.knn",
+                      {"target_embeddings": "/ws/t", "pool_embeddings": "/ws/p"},
+                      results_dir="/ws/results/x", bank=REPO, spec={"topn": 5})
+    argv = _renderer("docker").render(bundle, _ctx("docker"))["argv"]
+    assert "bash" not in argv[argv.index(bundle["image"]) + 1:][:1]
+
+
+# ── One tree for inputs AND outputs must be writable ───────────────────────
+# Declared inputs are read-only everywhere, which is right. cosmos-rl is the
+# exception: its spec puts media_path, annotation_path and output_dir all under
+# /tao-workspace, so a read-only bind fails partway through training.
+
+@pytest.mark.parametrize("platform", ["docker", "slurm"])
+def test_the_cosmos_workspace_is_writable(sb, platform):
+    rendered = _renderer(platform).render(_script_train(sb), _ctx(platform))
+    blob = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert "/ws:/tao-workspace:ro" not in blob, (
+        "the workspace is read-only; cosmos-rl writes its results under it"
+    )
+    assert "/ws:/tao-workspace" in blob
+
+
+def test_kubernetes_does_not_mark_the_workspace_read_only(sb):
+    import yaml
+
+    rendered = _renderer("kubernetes").render(_script_train(sb), _ctx("kubernetes"))
+    doc = yaml.safe_load(next(iter(rendered["files"].values())))
+    mounts = doc["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    workspace = next(m for m in mounts if m.get("mountPath") == "/tao-workspace")
+    assert not workspace.get("readOnly"), "cosmos-rl cannot write its results"
+    assert "subPath" not in workspace or workspace["subPath"], (
+        'an empty subPath is not the same as none: "" means the volume root, '
+        "which is right only when the input IS the whole claim"
+    )
+
+
+@pytest.mark.parametrize("platform", ["docker", "slurm"])
+def test_other_inputs_stay_read_only(sb, platform):
+    """The exception must not become the rule."""
+    rendered = _renderer(platform).render(_script_train(sb), _ctx(platform))
+    blob = " ".join(rendered["argv"]) + " ".join(rendered.get("files", {}).values())
+    assert "/ws/a.json:/ws/a.json:ro" in blob, "annotations lost their :ro"
+
+
+def test_a_toml_spec_is_parsed_as_toml(tmp_path):
+    """YAML happily reads `key = "value"` as a flat string dict, so the wrong
+    parser is accepted silently and the container gets a bogus spec."""
+    spec = tmp_path / "s.toml"
+    spec.write_text('[train]\nepochs = 2\nuse_lora = true\n', encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, str(C3 / "stage_bundle.py"), "train",
+         "--results-dir", "/ws/r", "--spec-file", str(spec),
+         "--param", "workspace=/ws", "--param", "annotations=/ws/a.json"],
+        capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    bundle = json.loads(done.stdout)
+    assert bundle["spec"] == {"train": {"epochs": 2, "use_lora": True}}, (
+        f"parsed as {bundle['spec']!r}; a YAML read would give strings"
+    )
+
+
+def test_the_documented_checkpoint_prep_flags_exist():
+    """The reference named --checkpoint-path and --validate-with-image; the
+    script has neither, and the real invocation needs four flags it omitted.
+    Running the documented form exits 2."""
+    import argparse
+    script = (REPO / "skills/models/tao-finetune-cosmos-reason/scripts"
+              / "prepare_cosmos3_vlm_checkpoint.py").read_text(encoding="utf-8")
+    body = (C3_REFS / "cosmos-reason.md").read_text(encoding="utf-8")
+    # Scan the fenced INVOCATION, not the prose around it: the page names the
+    # two bogus flags in order to say they do not exist, and a guard that trips
+    # on that would forbid recording the mistake.
+    block = body.split("prepare_cosmos3_vlm_checkpoint.py", 1)[1].split("```", 1)[0]
+    documented = set(re.findall(r"--[a-z0-9][a-z0-9-]+", block))
+    declared = set(re.findall(r'add_argument\(\s*"(--[a-z0-9-]+)"', script))
+    # Flags the page tells you to pass must be flags the script accepts.
+    unknown = {f for f in documented if f.startswith("--") and f not in declared
+               and f not in {"--force"}}
+    assert not unknown, f"documented flags the script does not accept: {sorted(unknown)}"
+
+
+def test_the_required_checkpoint_prep_flags_are_all_documented():
+    script = (REPO / "skills/models/tao-finetune-cosmos-reason/scripts"
+              / "prepare_cosmos3_vlm_checkpoint.py").read_text(encoding="utf-8")
+    body = (C3_REFS / "cosmos-reason.md").read_text(encoding="utf-8")
+    required = set(re.findall(
+        r'add_argument\(\s*"(--[a-z0-9-]+)",\s*required=True', script))
+    missing = {flag for flag in required if flag not in body}
+    assert not missing, f"required flags absent from the documented call: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("skill", ["tao-run-deft-aoi", "tao-run-deft-aoi-cosmos3"])
+def test_sdg_mounts_the_clean_images_it_reads(skill):
+    """prep_testcase.sh resolves clean images and writes their paths into
+    testcase.jsonl; run_sdg.sh then opens them. The old `-v $WS:$WS` covered
+    that by mounting everything -- a bundle mounts only what it declares."""
+    module = _load(REPO / f"skills/applications/{skill}/scripts/stage_bundle.py",
+                   f"sdg_inputs_{skill}")
+    assert "clean_dir" in module.STAGES["anomalygen.sdg"]["inputs"], (
+        "SDG cannot read the clean images the JSONL points at"
+    )
+
+
+# ── Workloads must start somewhere they can write ───────────────────────────
+# cosmos-rl-evaluate writes "./results" relative to its CWD. Images commonly
+# ship a root-owned WORKDIR (/workspace in cosmos-rl), so with runAsUser set the
+# stage dies with PermissionError: './results' -- runAsUser fixes ownership of
+# the MOUNTS, not of the image's own directories.
+
+def test_docker_defaults_the_workdir_to_the_results_mount(sb):
+    bundle = _script_train(sb)
+    assert not bundle.get("workdir"), "fixture drift: train now declares a workdir"
+    argv = _renderer("docker").render(bundle, _ctx("docker"))["argv"]
+    assert argv[argv.index("-w") + 1] == "/ws/results/base"
+
+
+def test_kubernetes_defaults_workingdir_to_the_results_mount(sb):
+    import yaml
+
+    rendered = _renderer("kubernetes").render(_script_train(sb), _ctx("kubernetes"))
+    doc = yaml.safe_load(next(iter(rendered["files"].values())))
+    assert doc["spec"]["template"]["spec"]["containers"][0]["workingDir"] == \
+        "/ws/results/base"
+
+
+def test_a_declared_workdir_still_wins(sb):
+    """anomalygen resolves its scripts relative to its own install dir."""
+    bundle = sb.build("anomalygen.amp",
+                      {"dataset_dir": "/ws/ds", "defect_spec": "/ws/ds/d.jsonl",
+                       "cosmos_models": "/ws/base"},
+                      results_dir="/ws/results/x", bank=REPO, args=["true"])
+    argv = _renderer("docker").render(bundle, _ctx("docker"))["argv"]
+    assert argv[argv.index("-w") + 1] == "/workspace/paidf-anomalygen"
+
+
+def test_force_reprepare_keeps_the_old_ptm_restorable():
+    """--force moved aside, not deleted: the reproduction can fail, and
+    deleting first turns a failed rerun into a lost checkpoint."""
+    script = (REPO / "skills/models/tao-finetune-cosmos-reason/scripts"
+              / "prepare_cosmos3_vlm_checkpoint.py").read_text(encoding="utf-8")
+    assert 'output.rename(stale_output)' in script
+    assert 'stale_output.rename(output)' in script, "no restore on failure"
+    assert script.index("output.rename(stale_output)") < \
+        script.index("subprocess.run(run_command"), "moved aside AFTER running"
+
+
+def test_kubernetes_creates_the_results_dir_in_cluster(sb):
+    """docker's prepare() and slurm's prologue mkdir it host/cluster-side; a
+    fresh PVC has no results_dir/<job_id>, and the first output write fails
+    with an error naming the FILE, not the missing directory."""
+    import yaml
+
+    rendered = _renderer("kubernetes").render(_script_train(sb), _ctx("kubernetes"))
+    doc = yaml.safe_load(next(iter(rendered["files"].values())))
+    command = doc["spec"]["template"]["spec"]["containers"][0]["command"]
+    assert command[2].startswith("mkdir -p /ws/results/base && "), (
+        "nothing creates the per-job results dir on a fresh volume"
+    )
+
+
+@pytest.mark.parametrize("skill,prefix", [("tao-run-deft-aoi", "mining"),
+                                          ("tao-run-deft-aoi-cosmos3", "data_mining")])
+def test_embed_stages_mount_the_images_the_parquet_names(skill, prefix):
+    """The parquet carries image paths; the container opens each directly."""
+    module = _load(REPO / f"skills/applications/{skill}/scripts/stage_bundle.py",
+                   f"embed_inputs_{skill}_{prefix}")
+    for stage in (f"{prefix}.embed_target", f"{prefix}.embed_pool"):
+        assert "images_root" in module.STAGES[stage]["inputs"], (
+            f"{skill}:{stage} cannot read the images its parquet points at"
+        )
+
+
+def test_deft_python_probes_for_a_toml_reader():
+    """stage_bundle.py reads .toml specs; a Python without tomllib/tomli
+    passes the old probe and then fails inside the first train bundle."""
+    body = (C3 / "deft_python.sh").read_text(encoding="utf-8")
+    assert "tomli" in body and "3, 11" in body.replace("(", "(").replace(" ", " ")

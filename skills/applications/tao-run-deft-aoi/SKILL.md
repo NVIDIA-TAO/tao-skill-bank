@@ -122,17 +122,10 @@ checkpoint selection. For this workflow only, bypass model-level AutoML even
 when the underlying Visual ChangeNet model metadata has `automl_enabled: true`.
 
 `automl_policy: off` is a **workflow argument** to the Visual ChangeNet skill
-invocation (the value the parent passes when calling `tao-skill-bank:tao-train-visual-changenet`
-via the Skill tool), **not** a TAO spec field. Two cases:
-
-- **Direct `docker run visual_changenet train -e <spec>`** (the path this workflow
-  actually uses inline): no action needed. The TAO entrypoint is plain training
-  by default; AutoML lives behind a different code path that the SDK orchestrates.
-  Effectively, every direct `docker run` is already `automl_policy: off`.
-- **SDK-orchestrated dispatch** (Brev/SLURM/k8s with the SDK building the
-  command): pass `automl_policy: off` to `VisualChangeNetSDK.train(...)` or the
-  equivalent runner argument. The SDK uses it to pick the plain-train command
-  instead of the AutoML wrapper.
+invocation, **not** a TAO spec field — and in practice needs no action: the TAO
+entrypoint is plain training by default, so every stage this loop launches is
+already `automl_policy: off` whichever platform renders it. AutoML lives behind
+a separate code path (`tao-run-automl`) that this workflow never enters.
 
 **Never add `automl_policy` or a `workflow` key to the spec YAML.** TAO's Hydra
 `ExperimentConfig` schema does not recognize these keys and the train job
@@ -165,7 +158,7 @@ file.
 > **There is exactly one user gate: pre-flight confirmation.** Print the Pre-Flight Summary
 > (see `references/preflight.md` → Pre-Flight Summary), then STOP and wait for the user to type "go", "yes",
 > "looks good", or similar explicit approval. Do not launch any side-effecting step
-> (`docker run`, training, SDG, mutations under `${RESULTS_DIR}/`) before that approval —
+> (any stage `submit`, training, SDG, mutations under `${RESULTS_DIR}/`) before that approval —
 > reading specs, listing files, `docker image inspect`, and populating the summary table
 > are fine. **"Autonomous" describes behavior *after* this gate, not before it.** Do not
 > skip the gate even if the user's original prompt sounded urgent ("just run it", "go
@@ -178,7 +171,7 @@ file.
 > progress.
 >
 > **Auto-mode required.** The post-gate loop fires constant side-effecting calls
-> (`docker run`, `${RESULTS_DIR}/` writes); without auto-accept / bypass-permissions mode it
+> (any stage `submit`, `${RESULTS_DIR}/` writes); without auto-accept / bypass-permissions mode it
 > stalls on the first prompt. Remind the user at the Pre-Flight Summary to enable auto-mode
 > (shift+tab) before approving.
 >
@@ -250,6 +243,7 @@ directory to `/results/iterN`.
 
 | Topic | Reference | Contents |
 |---|---|---|
+| **Launching any stage, on any platform** | `references/stage-execution.md` | `stage_bundle.py` emits the stage; `deft_exec.py` submits/awaits/logs it on docker, SLURM or Kubernetes. Where each `docker run` flag went; why stages use `TAO_INPUT_*`, not host paths |
 | Air-gap activation and offline execution | `references/air-gap.md` | Global mode triggers, precedence, prohibited network actions, staged-asset requirements, and Pre-Flight evidence |
 | Bring-your-own-data, data contract, output layout, augmentation pool | `references/data-layout.md` | No public AOI dataset; full `<workspace>` input tree, ChangeNet four-column required CSV schema, `${RESULTS_DIR}/` output tree, and the two-source mining-pool table |
 | Customer metric contract and evaluator adapter | `references/metric-contract.md` | Primary metric schema, comparison direction, evaluator JSON, constraints, evaluate commit, and compatibility behavior |

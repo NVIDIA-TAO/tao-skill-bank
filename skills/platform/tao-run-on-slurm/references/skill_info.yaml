@@ -36,12 +36,32 @@ resource_defaults:
   time_hours: 4
   timeout_hours: 3.8
   max_time_hours: 4
-  partition: polar,polar3,polar4,grizzly
+  # FALLBACK ONLY -- these name partitions on one cluster and are wrong
+  # everywhere else. Preflight runs `sinfo` and requires SLURM_PARTITION to
+  # match a partition that actually exists; treat this as an example of the
+  # shape, never as a default to submit against.
+  partition: example-gpu-partition
   container_mounts: runtime-supplied
   use_sqsh: true
+  # A measured CS-OCI-ORD profile, preserved from successful conversion job
+  # 32370651 (21m28s). Treat the NUMBERS as this cluster's, not universal --
+  # but do not raise them casually: omitted memory is charged per CPU here, so
+  # an oversized request sits pending on QOSGrpMemLimit rather than failing
+  # fast. A 32G/8-CPU request also completed, in the same ~21 minutes, so the
+  # larger ask bought nothing and only widened the queueing risk.
+  #
+  # Leave sqsh_conversion_partition unset to have the renderer discover a
+  # GPU-free partition from `sinfo` instead; discovery independently selects
+  # cpu_long on this cluster, which is why the two agree.
   sqsh_conversion_partition: cpu_long
+  # A CEILING, not an estimate, and clamped down to the chosen partition's real
+  # MaxTime. It must exceed the partition's DefaultTime: the default -- not the
+  # maximum -- is what silently truncates a conversion when no -t is passed.
   sqsh_conversion_timeout_minutes: 120
   sqsh_conversion_cpus_per_task: 4
+  # Peak RSS is set by parallel layer extraction, not image size. The partition
+  # default (observed: 1800M) is OOM-killed at the extract stage, AFTER every
+  # layer has been downloaded.
   sqsh_conversion_memory_mb: 7200
 cloud_storage:
   protocol: lustre

@@ -33,3 +33,37 @@ jobs:
           set -euo pipefail
           BASE="$(git merge-base "${BASE_SHA}" HEAD)"
           pre-commit run --from-ref "${BASE}" --to-ref HEAD --show-diff-on-failure
+
+  unit-tests:
+    # The bank's own test suite. It ran nowhere in CI until now: pre-commit
+    # covers license headers, DCO and the dependency guard, and nothing
+    # executed scripts/tests/ or templates/tests/. That left every contract
+    # test -- the ones asserting a skill's documentation and its renderer agree
+    # -- running only on whichever machine someone happened to type pytest on.
+    #
+    # No cluster, no credentials, no containers: these render and assert, so
+    # they belong on every pull request rather than behind a live-eval gate.
+    name: Unit Tests (contracts + templates)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Pinned rather than floating: a test suite whose assertions move with an
+      # unpinned dependency stops being a regression signal.
+      - name: Install test dependencies
+        run: pip install pytest==8.3.4 PyYAML==6.0.2 jsonschema==4.23.0
+
+      - name: Run the test suite
+        run: python -m pytest scripts/tests templates/tests -q
+
+      - name: Validate skill structure
+        run: ./scripts/validate-skills.sh

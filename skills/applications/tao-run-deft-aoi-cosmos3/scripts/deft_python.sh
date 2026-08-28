@@ -11,7 +11,7 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_parent=$(CDPATH= cd -- "$script_dir/../../../../.." && pwd)
 
-probe='import pyarrow,yaml'
+probe='import pyarrow,yaml; import sys; (sys.version_info >= (3, 11)) or __import__("tomli")'
 candidates=(
   "${DEFT_PYTHON:-}"
   "${WORKSPACE_DIR:-}/.venv/bin/python"
@@ -37,7 +37,7 @@ for candidate in "${candidates[@]}"; do
 done
 
 if [ -z "$selected" ]; then
-  echo "deft_python: no installed Python provides pyarrow,yaml" >&2
+  echo "deft_python: no installed Python provides pyarrow,yaml and TOML parsing (3.11+ tomllib or tomli) — stage_bundle.py reads .toml specs" >&2
   echo "deft_python: provision dependencies outside this workflow; no installer will be run" >&2
   exit 2
 fi

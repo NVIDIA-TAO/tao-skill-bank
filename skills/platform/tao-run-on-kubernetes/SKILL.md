@@ -124,19 +124,38 @@ jobs are submitted with plain `kubectl apply`.
    or a first-time multi-GB image pull — is billed and reaper-eligible idle GPU
    time, exactly like pulling inside a SLURM allocation. Prefer tier A when the
    data is already on a PVC; choose tier C knowingly, for small inputs.
-
    A producer action request may declare several mounts, including duplicate-
-   source aliases for logical and embedded absolute paths. Read
-   `references/action-request.md` and use its staging map plus packaged
-   renderer. For `mode=config`, materialize the producer's nested spec first,
-   stage that exact generated file, and pass it back to the renderer so the
-   pod receives a verified read-only config mount. The legacy single-root
-   template cannot represent that contract.
+   source aliases; use `references/action-request.md`'s staging map and
+   packaged renderer — the legacy single-root template cannot represent that
+   contract. For `mode=config`, materialize the spec first and stage that
+   exact file so the pod gets a verified read-only config mount.
 3. **Open the record — mints the id, binds `results_dir`, before launch:**
    ```bash
+   # RESULTS_ROOT is a mounted (surviving) volume path or an S3 prefix.
    JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform kubernetes --image "$IMAGE" \
-     --network-arch "$ARCH" --action "$ACTION" --storage-tier "$TIER" --results-dir "$RESULTS_DIR")
+     --network-arch "$ARCH" --action "$ACTION" --storage-tier "$TIER" \
+     --results-root "$RESULTS_ROOT")
    ```
+   `open` takes exactly one of `--results-root` or `--results-dir`. Use
+   `--results-root`: it derives `results_dir` as `$RESULTS_ROOT/$JOB_ID` from the
+   id it mints, so the path can contain the id. `--results-dir` is for a FULL
+   path already fixed and not needing the not-yet-minted `$JOB_ID` in it.
+
+   This step comes FIRST because everything below is named after `$JOB_ID`.
+4. **Credentials → a per-job Secret (never inline in the manifest** — it lands on
+   disk and is readable via `kubectl get job -o yaml`). Create it from an env-file
+   on **stdin** so no value hits a command line:
+   ```bash
+   set -a; source /path/to/.env; set +a   # omit if already exported
+   printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nHF_TOKEN=%s\n' \
+     "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$HF_TOKEN" \
+     | kubectl create secret generic "tao-creds-$JOB_ID" --from-env-file=/dev/stdin
+   ```
+   The template references it via `envFrom.secretRef` — only the Secret *name* is
+   in the manifest. The Secret is declared `optional`, so a NAME MISMATCH does not
+   fail the pod: it starts with no credentials and the workload fails later on an
+   auth error that names the registry, not the Secret. Create it after `open`, from
+   the same `$JOB_ID` the manifest will reference.
    `results_dir` must be a **mounted (surviving) volume path or an S3 prefix** —
    `ttlSecondsAfterFinished` deletes the Job and its logs after it ends, so
    nothing is recoverable from the Job object later.
@@ -252,63 +271,15 @@ Full guide: https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/
 
 ## Multi-node training (distributed)
 
-Set `num_nodes > 1` (see the [Multi-node (nodes > 1)](#multi-node-nodes--1) verb
-steps above) to run distributed training across N pods. Rendering
-`templates/k8s/indexed-job.yaml.tmpl` provisions:
+Set `num_nodes > 1` to run distributed training across N pods. Rendering
+`templates/k8s/indexed-job.yaml.tmpl` provisions a headless Service, an
+Indexed Job (`parallelism = completions = num_nodes`), and a command wrapper
+that exports the rendezvous env (`WORLD_SIZE`/`NNODES`/`NPROC_PER_NODE`/
+`NODE_RANK`/`MASTER_ADDR`/`MASTER_PORT`). **`WORLD_SIZE` is TAO's NODE COUNT
+(a misnomer) — the container entrypoint builds torchrun internally.**
 
-1. A **headless Service** named after the Job (selector: `job-name=<job-name>`, `clusterIP: None`, `publishNotReadyAddresses: true` so pods can rendezvous before they're all Ready).
-2. An **Indexed Job** with `parallelism = completions = num_nodes`, `completionMode: Indexed`. Each pod gets `JOB_COMPLETION_INDEX` injected by k8s automatically (= the node rank).
-3. A **command wrapper** that exports the rendezvous env vars before invoking the user command. Two naming conventions are exported simultaneously:
-
-   | Env var | Value | Read by |
-   |---|---|---|
-   | `WORLD_SIZE` | `num_nodes` | TAO PyTorch container's `nvidia_tao_pytorch/core/entrypoint.py` (uses this to mean *node count*, even though PyTorch's own convention is *total processes*) |
-   | `NUM_GPU_PER_NODE` | `gpu_count` | TAO PyTorch container's entrypoint |
-   | `NNODES` | `num_nodes` | `torchrun` and PyTorch-standard rendezvous |
-   | `NPROC_PER_NODE` | `gpu_count` | `torchrun` |
-   | `NODE_RANK` | `$JOB_COMPLETION_INDEX` | both |
-   | `MASTER_ADDR` | `<job-name>-0.<job-name>` (pod-0's DNS) | both |
-   | `MASTER_PORT` | `29500` | both (TAO's default) |
-
-   Both naming conventions are set so TAO entrypoints (`dino train`, etc.) and raw `torchrun` commands work without modification.
-
-For a TAO entrypoint, the container reads `spec.train.num_nodes` and the wired
-env vars — e.g. `dino train -e /tmp/spec.yaml` with `gpu_count=8`, `num_nodes=4`
-(4 × 8 = 32 GPUs total).
-
-For raw `torchrun`-based commands (non-TAO containers), the wrapper invokes:
-
-```bash
-torchrun --nnodes=$NNODES --nproc-per-node=$NPROC_PER_NODE --node-rank=$NODE_RANK \
-  --master-addr=$MASTER_ADDR --master-port=$MASTER_PORT train.py
-```
-
-The capacity check sums across nodes: `gpu_count × num_nodes` ≤ cluster's allocatable `nvidia.com/gpu`.
-
-### Cluster requirements for multi-node
-
-- **k8s 1.28+** is required for stable pod hostnames in Indexed Jobs (the `PodIndexLabel` feature). On older clusters the `MASTER_ADDR=<job>-0.<svc>` DNS lookup fails. Verify with `kubectl version`.
-- **Pod-to-pod networking** must be open on port 29500 (PyTorch default; configurable via `MASTER_PORT` env var). Most CNIs (Calico, Cilium, AWS VPC CNI) allow this by default; restrictive NetworkPolicies must be relaxed.
-- **NCCL** in the container talks GPU-to-GPU; if the cluster has multi-NIC nodes or RDMA, set `NCCL_SOCKET_IFNAME` / `NCCL_IB_HCA` in the container `env` of the rendered manifest.
-
-### Reference reading
-
-- Kubernetes Indexed Job: <https://kubernetes.io/docs/concepts/workloads/controllers/job/#completion-mode>
-- Indexed Job for batch ML: <https://kubernetes.io/blog/2022/06/01/indexed-jobs-mpi/>
-- PyTorch distributed (env-var rendezvous): <https://pytorch.org/docs/stable/elastic/run.html>
-- NCCL networking tuning (NCCL_SOCKET_IFNAME, NCCL_IB_HCA): <https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html>
-
-### Kubernetes operator alternatives
-
-For more sophisticated topologies (gang scheduling, PyTorch elastic / fault-tolerant training, MPI / Horovod, RDMA setup), reach for an operator instead of plain Indexed Job:
-
-- **MPI Operator** — <https://github.com/kubeflow/mpi-operator> — for MPI / Horovod workloads.
-- **Kubeflow Training Operator** (`PyTorchJob`, `TFJob`) — <https://www.kubeflow.org/docs/components/training/> — for elastic PyTorch training with built-in restart logic.
-- **Volcano** — <https://volcano.sh/> — gang scheduling, queues, fair-share. Useful in shared multi-tenant clusters.
-- **Kueue** — <https://kueue.sigs.k8s.io/> — quota / queue layer on top of any of the above.
-
-This skill's Indexed Job path is intentionally simple and dependency-free; if you need elastic restart or gang scheduling, layer one of these on top and submit jobs through the operator's CRD instead.
-
+Full provisioning detail, the rendezvous table, NCCL probe usage, and the
+per-pod GPU shape rules: `references/multi-node.md`.
 ## Common error patterns
 
 **`No nvidia.com/gpu resources allocatable on the cluster`** — the GPU Operator (or NVIDIA Device Plugin) isn't installed. Install per the link above; verify with `kubectl get nodes -o jsonpath='{.items[*].status.allocatable}'`.

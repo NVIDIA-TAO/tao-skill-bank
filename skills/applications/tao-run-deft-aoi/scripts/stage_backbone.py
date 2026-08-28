@@ -234,10 +234,10 @@ def resolve_dest(args: argparse.Namespace) -> str:
     if configured:
         return configured
     if args.dest:
-        return os.path.abspath(os.path.expanduser(args.dest))
+        return os.path.realpath(os.path.expanduser(args.dest))
     if not args.workspace:
         sys.exit("stage_backbone: one of --dest or --workspace is required.")
-    ws = os.path.abspath(os.path.expanduser(args.workspace))
+    ws = os.path.realpath(os.path.expanduser(args.workspace))
     _, _, stage_name = resolve_source(args)
     return os.path.join(ws, "augmentation", "backbone", stage_name)
 

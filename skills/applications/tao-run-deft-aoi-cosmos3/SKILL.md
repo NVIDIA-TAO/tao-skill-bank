@@ -13,7 +13,7 @@ description: >
   rich/reasoning annotation, one-off Cosmos training, or generic anomaly
   generation.
 license: Apache-2.0 AND CC-BY-4.0
-compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python with `pyarrow` and `yaml`, and the selected platform's native CLI.
+compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python 3.11+ (or 3.10 with `tomli`) with `pyarrow` and `yaml`, and the selected platform's native CLI.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -35,9 +35,20 @@ the companion skill folders: `TAO_SKILL_BANK_PATH` must point at a directory
 containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
 Cosmos model resolver `scripts/resolve_tao_image.py`, plus the
 `skills/{applications,models,data,platform,core}/...` tree listed in
-`eval.config`. Run bundled validation with the skill Python so dependencies
-match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
-tests.test_cosmos3_bare`. Resolve network mode first. Missing air-gap imports
+`eval.config`. Run bundled validation from this skill's directory **inside the
+bank root** — the tests import sibling `data/` and `models/` skills via
+`SKILL_ROOT.parents[1]`, which only resolves there — using the skill Python so
+dependencies match runtime:
+
+```bash
+cd "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi-cosmos3"
+PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest tests.test_cosmos3_bare
+```
+
+From a standalone `~/.claude/skills` copy this fails with
+`ModuleNotFoundError: No module named 'filter_mined_history'`, which names the
+module rather than the missing sibling skill. Resolve network mode first.
+Missing air-gap imports
 are a hard stop; network-enabled setup lives only in
 `references/network-bootstrap.md`.
 
@@ -50,17 +61,15 @@ Treat a run as a disk-backed state machine.
 2. Ask which installed platform to use. Do not select Docker, SLURM,
    Kubernetes, Brev, virtualenv, or an external platform by default.
 3. Resolve network mode, then read exactly one of `references/air-gap.md` or
-   `references/network-bootstrap.md`. Run the selected platform skill's
-   Preflight and stop on a missing system/native-CLI prerequisite.
+   `references/network-bootstrap.md`. Run the selected platform's Preflight;
+   stop on a missing system prerequisite.
 4. Before any mutation or launch, invoke `tao-launch-workflow` and show its
    launch review plus this skill's Pre-Flight Summary. Wait for one explicit
    approval.
 5. After approval, initialize `${RESULTS_DIR}/deft_state.json` exactly once
-   with `scripts/init_deft_state.py`. Pass the exact GPU model reported by the
-   selected platform's Preflight through `--gpu-model` (include accelerator
-   memory when available), plus the resolved network mode/source and selected
-   absolute Python. Never reinitialize a resumed run or edit
-   `deft_state.json` by hand.
+   with `scripts/init_deft_state.py` — the Preflight-reported `--gpu-model`,
+   resolved network mode/source, and selected absolute Python. Never
+   reinitialize a resumed run or hand-edit `deft_state.json`.
 6. Before every stage, after context compaction, and before a completion claim,
    run `scripts/deft_context.py --state ... --stage ...`. Use its durable
    `next_stage` and the state file's `status`,
@@ -105,36 +114,30 @@ credential value.
   - `nvidia/Cosmos3-Nano` — default;
   - `nvidia/Cosmos3-Edge` — only when explicitly requested;
   - `nvidia/Cosmos3-Super` — only when explicitly requested.
-- Normalize the user aliases `nano`, `edge`, and `super` to those canonical
-  IDs. Preserve any variant selected in the prompt. When no variant is
-  selected, use Nano.
-- Give hardware recommendations for the selected variant and report when the
-  available compute is insufficient. If the prompt asks for a variant
-  recommendation based on hardware or workload, recommend one with the
-  tradeoff, but require an explicit selection before state initialization.
-  Never silently switch or fall back to another variant.
-- Keep the selected canonical ID as source-model lineage, but do not pass the
+- Normalize aliases `nano`/`edge`/`super` to those IDs; preserve a prompt-
+  selected variant; default to Nano.
+- Recommend a variant when asked (with the tradeoff) and report insufficient
+  compute, but require an explicit selection before state initialization. Never
+  silently switch or fall back to another variant.
+- Keep the selected canonical ID as source-model lineage; `evaluated_model` may
+  name the adapter path (see `references/pipeline-and-state.md`). Do not pass the
   native online checkpoint directly to Cosmos-RL.
-- The published Cosmos Reason 3 reasoners ship in Cosmos3's own native Omni
-  format (`model_type="cosmos3_omni"`), which Cosmos-RL cannot load. After
-  launch approval and before baseline evaluation, run the model skill's
-  `scripts/prepare_cosmos3_vlm_checkpoint.py` to convert the selected reasoner
-  into a Qwen3-VL safetensors PTM, or validate and reuse an existing prepared
-  output.
+- Published reasoners ship in native Omni format (`model_type="cosmos3_omni"`), which
+  Cosmos-RL cannot load. After launch approval, run the model skill's
+  `scripts/prepare_cosmos3_vlm_checkpoint.py` to produce a Qwen3-VL safetensors
+  PTM, or validate and reuse an existing prepared output.
 - Use the prepared PTM consistently for zero-shot evaluation, Train
   `policy.model_name_or_path`, and LoRA `model.base_model_path`. The model
   being trained is still the selected Cosmos Reason 3 reasoner — keep its
   canonical ID as checkpoint lineage; the Qwen3-VL PTM is only the on-disk
   format Cosmos-RL consumes.
-- Nano may use the helper's packaged Qwen3-VL default. Edge and Super require
-  a variant-specific, validated VLM base; never reuse Nano's conversion
-  arguments.
-- Container image: resolve the `cosmos-rl` backend from
-  `tao-finetune-cosmos-reason/references/skill_info.yaml` with
-  `scripts/resolve_tao_image.py`; never copy a Cosmos image pin into this
-  application skill.
-- Train action: `cosmos-rl --config <spec.toml>
-  /opt/cosmos_rl/tao_sft_example.py`.
+- Nano may use the helper's packaged Qwen3-VL default; Edge and Super need a
+  variant-specific, validated VLM base — never reuse Nano's arguments.
+- Container image: resolve the `cosmos-rl` backend from the model skill's
+  `skill_info.yaml`; never copy a Cosmos image pin into this skill.
+- Train action: resolved by `scripts/stage_bundle.py` from the model skill's
+  `cosmos-rl` backend contract. Never restate the hook path; see
+  `references/stage-execution.md`.
 - Before the first evaluate job, run `scripts/patch_eval_image_cap.py` to
   source-classify the selected image. Mount its output read-only into every
   evaluation container only when it reports `patch_required`; no mount is
@@ -188,7 +191,9 @@ Run `scripts/validate_sharegpt.py` on Proxy, Benchmark, Mining, and each
 generated iteration training file. There is no input Train annotation.
 Run `scripts/validate_split_contract.py` to prove that Proxy, Benchmark, and
 Mining targets are disjoint and that the frozen Benchmark annotation hash has
-not changed. When a generated Train file is supplied, the same validator
+not changed. `--manifest` is required for a real hash check; its key is in
+`references/pipeline-and-state.md`. When a generated Train file is supplied,
+the same validator
 requires its targets to come from Mining, the immediate `--previous-train`
 seed, or the current iteration's `--synthetic` AnomalyGen output, and to remain
 disjoint from Proxy and Benchmark. For iteration N>1, `--previous-train` is
@@ -285,10 +290,8 @@ base model, which establishes the zero-shot KPI:
 3. `evaluate_proxy` — only when the gate is unmet.
 4. `proxy_rcca`
 
-Before every `proxy_rcca` commit, write `proxy_rcca/RCCA_Report.md` from the
-three Proxy RCCA JSON artifacts using `references/RCCA_REPORT_TEMPLATE.md`,
-then pass it with `--rcca-report`. Artifact requirements, section headings,
-and state fields come from `references/rcca-artifact-manifest.json`.
+Every `proxy_rcca` commit requires `--rcca-report`; the template, artifact
+requirements and state fields are in `references/pipeline-and-state.md` step 6.
 
 For each `iterN` when the frozen Benchmark gate is unmet:
 
@@ -339,6 +342,7 @@ report rendering.
 
 | Stage | Producer | Read first |
 |---|---|---|
+| **Launching any container stage** | platform contract — `stage_bundle.py` emits, `deft_exec.py` submits | `references/stage-execution.md` |
 | Train | `tao-finetune-cosmos-reason` train, `automl_policy: off` | `references/cosmos-reason.md`, `references/example_lora_config.toml` |
 | Proxy / Benchmark evaluate | `tao-finetune-cosmos-reason` evaluate | `references/cosmos-reason.md` |
 | Proxy RCCA / Benchmark metric | bundled `analyze_gaps.py` | `references/gap-analysis.md` |

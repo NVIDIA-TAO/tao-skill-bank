@@ -91,14 +91,32 @@ def resolve(
         golden_count = _validate_golden(
             row, images_root, csv_path.parent, light, image_ext
         )
+        label = str(row.get("label", "")).strip().upper()
+        golden_fallback = False
         if row.get("golden_path") and golden_count != 1:
-            failures.append(f"row {index}: golden resolved {golden_count} files")
-            continue
+            if label == "PASS":
+                # OK-only pools carry golden_path values that resolve to
+                # nothing. For a PASS row the input IS its own reference --
+                # ChangeNet compares input against golden, and an identical
+                # pair is the definition of PASS -- so fall back rather than
+                # hard-stop the whole pool. Only skipping the check would be
+                # worse than failing: the row would keep an unresolvable
+                # golden_path and the crash would move into training.
+                golden_fallback = True
+            else:
+                failures.append(f"row {index}: golden resolved {golden_count} files")
+                continue
         resolved = existing.pop()
         try:
+            # images_root-RELATIVE by contract (the ChangeNet CSV consumes it
+            # that way). The embed_pool container opens filepath DIRECTLY, so
+            # the mining step must prepend images_root before writing the
+            # embedding source parquet -- see references/tao-mine-aoi-images.md.
             row["filepath"] = str(resolved.relative_to(images_root))
         except ValueError:
             row["filepath"] = str(resolved)
+        if golden_fallback:
+            row["golden_path"] = row["filepath"]
     if failures:
         raise ValueError("; ".join(failures[:20]))
     output.parent.mkdir(parents=True, exist_ok=True)

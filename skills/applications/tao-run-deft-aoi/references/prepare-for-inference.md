@@ -105,6 +105,11 @@ probe="$HOST_RESULTS/.tao-write-probe.$$"
     exit 2
 }
 
+# This is a HANDOFF recipe: it is what you hand a customer to run the finished
+# model on their own machine, so it is deliberately a self-contained docker
+# command with no dependency on this skill bank. To run inference as a loop
+# stage instead -- on docker, SLURM or Kubernetes from one definition -- use
+# `stage_bundle.py inference` per `references/stage-execution.md`.
 docker run --pull=never --rm --gpus all --shm-size=8g \
     --user "$(id -u):$(id -g)" \
     -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \

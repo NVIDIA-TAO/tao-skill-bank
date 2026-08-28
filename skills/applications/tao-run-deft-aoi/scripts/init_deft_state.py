@@ -129,16 +129,36 @@ def _resolve_anomalygen_checkpoint_dir(ws: pathlib.Path, project: str) -> pathli
 
 
 def _resolve_workspace_images_dir(ws: pathlib.Path) -> pathlib.Path:
-    """Resolve the canonical real-image root with legacy-layout fallback."""
-    canonical = ws / "images"
-    if canonical.is_dir():
-        return canonical.resolve()
-    legacy = ws / "kpi" / "images"
-    if legacy.is_dir():
-        return legacy.resolve()
-    # Keep a deterministic canonical path so Pre-Flight reports the missing
-    # input instead of silently recording the obsolete legacy location.
-    return canonical.resolve()
+    """Resolve the real-image root, preferring the one CSV rows resolve against.
+
+    Two layouts exist and both can be present. Picking `images/` merely because
+    it exists records a root the training CSVs do not resolve against, and the
+    failure surfaces later as missing files rather than as a bad root.
+
+    Every ChangeNet CSV pairs an `input_path` with a `golden_path` under the
+    SAME media root, so the presence of `golden/` is the discriminator: it is
+    what a row actually dereferences. A directory without it cannot satisfy a
+    single row, whatever its name. (Observed: a workspace whose real root is
+    `kpi/images/`, carrying the board trees and `golden/images/`.)
+    """
+    candidates = [ws / "images", ws / "kpi" / "images"]
+    with_golden = [c for c in candidates if c.is_dir() and (c / "golden").is_dir()]
+    if with_golden:
+        # Both an incomplete subset and the full media root can carry golden/,
+        # so presence alone is not enough -- prefer the one holding more image
+        # files, since that is the root whose rows actually resolve. Counted
+        # once at init; the extension set covers the layouts this bank ships.
+        exts = ("*.jpg", "*.jpeg", "*.png")
+        def _image_count(root: pathlib.Path) -> int:
+            return sum(1 for ext in exts for _ in root.rglob(ext))
+
+        return max(with_golden, key=_image_count).resolve()
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    # Neither exists. Return the canonical path deterministically so Pre-Flight
+    # reports the missing input instead of silently recording the legacy one.
+    return candidates[0].resolve()
 
 
 def build_state(args: argparse.Namespace) -> dict:
@@ -413,7 +433,9 @@ def _build_metric_contract(args: argparse.Namespace) -> tuple[dict, str]:
     structured_values = (args.metric_name, args.metric_operator, args.metric_target)
     if args.kpi_target and any(value is not None for value in structured_values):
         raise ValueError(
-            "use either --kpi-target or the structured --metric-name/operator/target flags"
+            "use either --kpi-target (e.g. 'FAR <= 0.5% at recall=99') or the "
+        "structured --metric-name/--metric-operator/--metric-target flags, "
+        "not both"
         )
     if args.kpi_target:
         contract = parse_target_expression(args.kpi_target)
@@ -533,7 +555,9 @@ def _build_metric_contract(args: argparse.Namespace) -> tuple[dict, str]:
     if evaluator.get("type") == "unconfigured":
         raise ValueError(
             "custom metrics require --metric-evaluator with an absolute command "
-            "path or the value 'artifact'"
+            "path or the value 'artifact'. For the bundled FAR@recall "
+            "evaluator pass no evaluator and use the builtin form, e.g. "
+            "--kpi-target 'FAR <= 0.5% at recall=99'"
         )
     contract = validate_contract(contract)
     return contract, target_text or render_target(contract)

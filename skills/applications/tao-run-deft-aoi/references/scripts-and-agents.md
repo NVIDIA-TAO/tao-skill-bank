@@ -55,11 +55,21 @@ persisted policy:
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_context.py \
   --state "${RESULTS_DIR}/deft_state.json" --stage data_mining
+<skill_root>/scripts/stage_bundle.py mining.embed_pool \
+  --results-dir "${RESULTS_DIR}/iter1/mining" \
+  --param mining_pool="$WS/augmentation/mining_pool" \
+  --param images_root="$WS/augmentation/mining_pool/images" \
+  --spec-file "$RUN_DIR/embedding_spec.yaml" > "$RUN_DIR/embed.bundle.json"
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_exec.py \
-  --state "${RESULTS_DIR}/deft_state.json" -- \
-  docker run --user "$(id -u):$(id -g)" \
-    -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp ...
+  --state "${RESULTS_DIR}/deft_state.json" --submit \
+  --bundle "$RUN_DIR/embed.bundle.json" --platform "$PLATFORM" $PLATFORM_CTX
 ```
+
+The trailing-argv form (`deft_exec.py -- docker run ...`) still works for an
+ad-hoc command, but a STAGE should go through `stage_bundle.py`: a pasted
+`docker run` pins the workflow to one platform, and the host identity flags it
+carries are emitted by the docker renderer anyway. See
+`references/stage-execution.md`.
 
 Set `STAGE_DURATION_SEC` from measured wall-clock evidence before committing:
 use the selected backend's elapsed time for submitted jobs, or time an inline

@@ -34,6 +34,20 @@ the cluster.
 
 Confirm `SLURM_USER` and `SLURM_HOSTNAME` are exported and passwordless SSH to a
 login host works (`ssh -o BatchMode=yes`).
+
+**Then ask the cluster what it will schedule**, before generating any launch
+artifact — reachability is not schedulability:
+
+```bash
+ssh $LOGIN "sinfo -h -o '%R|%l|%L|%a'"      # partition|MaxTime|DefaultTime|state
+ssh $LOGIN "sacctmgr -n show assoc user=\$USER format=account,partition,qos"
+```
+
+Export `SLURM_PARTITION` from what that lists, and `SLURM_ACCOUNT` if the site
+requires one. Packaged partitions and wall limits in `references/skill_info.yaml`
+are **fallbacks describing one cluster, not facts about yours**. Note
+`DefaultTime` as well as `MaxTime` — see
+`references/slurm-preflight-storage.md`.
 The launch host needs `ssh`, not local `sbatch`, `srun`, Enroot, or a Lustre
 mount. Preflight those scheduler, Pyxis, Enroot, and shared-storage dependencies
 on the selected remote login/compute frame. Model-specific inspectors may be
@@ -79,16 +93,17 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    (e.g. `HF_TOKEN`), write them to a mode-600 sidecar on Lustre and let the
    template shred it on exit; NGC image pulls use the one-time
    `~/.config/enroot/.credentials` (see `references/slurm-ssh-credentials.md`),
-   not the job env:
-   ```bash
-   set -a; source /path/to/.env; set +a   # omit if already exported
-   printf 'export HF_TOKEN=%s\n' "$HF_TOKEN" | ssh $LOGIN "umask 077; cat > <job_dir>/job_$JOB_ID.env"
-   ```
-3. **Open the record — mints the id, binds `results_dir` on Lustre, before launch:**
+   not the job env. **Open the record first** — the sidecar is named after the
+   id, so writing it earlier produces `job_.env` while the sbatch script
+   references `job_$JOB_ID.env`:
    ```bash
    JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform slurm --image "$IMAGE" \
      --network-arch "$ARCH" --action "$ACTION" --storage-tier A --results-root "$SLURM_BASE_RESULTS_DIR")
+
+   set -a; source /path/to/.env; set +a   # omit if already exported
+   printf 'export HF_TOKEN=%s\n' "$HF_TOKEN" | ssh $LOGIN "umask 077; cat > <job_dir>/job_$JOB_ID.env"
    ```
+3. **The record is open** — `results_dir` is bound on Lustre before any launch.
 4. **Consume the optional model lifecycle.** If the validated spec-bundle has
    `execution`, preserve its order and semantics while mapping distributed
    intent to native SLURM/Pyxis. Stage only its checksum-closed
@@ -209,61 +224,22 @@ direct-spec modes, backend details, and the results-dir default.
 5. Run the container with `srun --container-image=<image> --container-mounts=<RUNTIME_SUPPLIED_MOUNTS>`.
 
 Accepted image formats: `/path/to/image.sqsh`, `registry#image:tag`,
-`docker://registry#image:tag`, and ordinary `registry/image:tag` (converted to
-Pyxis form when needed). SQSH conversion is cached by image name; for `:latest`
-images the cached SQSH is reused unless `force_reconvert_latest` is enabled.
+`docker://registry#image:tag`, and ordinary `registry/image:tag` — the last is
+translated to Pyxis form by `render.py` `enroot_uri()`, since enroot separates
+the registry with `#` and reads a `/` form as a path. Conversion is cached by
+image name; `:latest` reuses the cache unless `force_reconvert_latest` is set.
 
 ### Acquire the image off the GPU allocation
 
 **The GPU is yours from the moment the allocation starts, not from when compute
-begins.** Anything the job does before training — pulling a registry image,
-converting it, fetching a dataset — runs on GPUs that are idle, billed, and
-visible to the cluster's GPU-idle reaper. A first-time TAO pull plus enroot
-conversion is minutes of that, which is long enough to be killed and long enough
-to be expensive.
+begins.** Pulling and converting an image inside the allocation burns idle,
+billed GPUs and can trip the GPU-idle reaper. Convert once on a CPU partition
+with an explicit `-t`, then point every later job at the resulting `.sqsh`; a
+failed conversion is fatal and must never fall back to the registry reference,
+which would put the pull back on the GPUs exactly when something is wrong.
 
-So the image must already be a local `.sqsh` when the GPU job starts. Passing a
-`docker://` or `registry#image:tag` URI straight to `srun --container-image=`
-makes Pyxis pull *and* convert inside the allocation — the exact trap. Convert
-once on a **CPU partition**, then point every later job at the resulting file:
-
-```bash
-# One-time per image, on CPU — costs no GPU time.
-ssh $LOGIN "test -e <sqsh>" || \
-  ssh $LOGIN "srun --chdir=/tmp -n1 -c4 --mem=7200M \
-    -p <cpu_partition> -t <minutes> \
-    bash -c 'set -Eeuo pipefail
-      export TMPDIR=/tmp
-      export ENROOT_TEMP_PATH=/tmp/enroot-tao-\${SLURM_JOB_ID}
-      export SLURM_ENROOT_TEMP_PATH=\${ENROOT_TEMP_PATH}
-      mkdir -p \"\${ENROOT_TEMP_PATH}\"
-      cd /tmp
-      enroot import -o <sqsh> docker://<registry>#<image>:<tag>'"
-
-# Every GPU job then references the file, never the registry.
-srun --container-image=<sqsh> ...
-```
-
-The same rule governs data: stage it to Lustre before submit (tier A) rather
-than fetching inside the allocation.
-
-CS-OCI-ORD conversion uses `cpu_long`, 4 CPUs, 7200M memory, no exclusive node,
-node-local Enroot temp paths, and at least 120 minutes. The execution reference
-records the evidence and `QOSGrpMemLimit` recovery contract.
-
-Partial conversions are self-detecting: the SQSH is validated by `hsqs` magic,
-so a truncated file is rejected rather than silently used. Conversion runs once
-and is then cached by image name.
-
-**A failed conversion must not fall back to the registry image.** The tempting
-recovery — pass `docker://…` to `srun` and let Pyxis handle it — puts the pull
-back inside the GPU allocation, which is the cost the conversion existed to
-avoid, and it does so precisely when something is already wrong. Treat a failed
-or truncated conversion as fatal: fix it on the CPU partition and resubmit.
-
-Diagnostic: if a job is unexpectedly slow to produce output, check what
-`--container-image=` actually received. A registry URI there — rather than a
-`.sqsh` path — means the pull happened on the GPUs.
+Full rationale, the conversion command, and the `hsqs` validation:
+`references/slurm-container-execution.md`.
 
 ## Monitoring and cancellation
 
@@ -302,8 +278,8 @@ for the full credential list, microservices schema keys, and defaults.
 
 - **SLURM_USER** (required): SSH username for the login node.
 - **SLURM_HOSTNAME** (required): Comma-separated login hostnames for failover.
-- **SLURM_PARTITION** (required): Partition list for GPU submission. Packaged
-  default `polar,polar3,polar4,grizzly`, treated as 4-hour queues.
+- **SLURM_PARTITION** (required): Partition list for GPU submission. Take the
+  names and wall limits from `sinfo`; the packaged value is one cluster's.
 - **SSH_KEY_PATH** (preferred, expected before launch): private key for
   non-interactive public-key auth. Ask for this first in remediation; prefer it
   over the `SSH_AUTH_SOCK` agent-socket fallback.
@@ -317,25 +293,22 @@ results root, or the workflow cannot proceed without overriding defaults.
 
 ## Resource defaults
 
-Defaults from `tao-core`:
+Shape defaults from `tao-core`: `num_nodes` 1, `num_gpus` 4,
+`max_num_gpus_per_node` 8, `cpus_per_task` 16, `use_requeue` true, `use_sqsh`
+true, `container_mounts` supplied at runtime.
 
-- `num_nodes`: 1
-- `num_gpus`: 4
-- `max_num_gpus_per_node`: 8
-- `cpus_per_task`: 16
-- `time_hours`: 4
-- `timeout_hours`: 3.8
-- `max_time_hours`: 4
-- `container_mounts`: explicit source-to-target mounts supplied at runtime
-- `use_requeue`: true
-- `use_sqsh`: true
+Wall time is **not** a packaged default — it is a property of the partition
+preflight selected. Set it from that partition's real `MaxTime`, and keep the
+requeue timeout just under it so the job requeues instead of being killed:
 
-Launchers must use the packaged 4-hour wall and 3.8-hour child-timeout
-defaults, never 12 hours. If the user supplies a longer
-`SLURM_TIME_HOURS`, verify that the selected partition supports it before
-submitting. For the packaged default partition list
-`polar,polar3,polar4,grizzly`, reject requests above 4 hours and ask for a
-different partition only if the user actually wants a longer wall time.
+```bash
+export SLURM_TIME_HOURS=...       # <= the chosen partition's MaxTime (sinfo)
+export SLURM_TIMEOUT_HOURS=...    # ~5% under SLURM_TIME_HOURS
+```
+
+Validate a longer request against that partition's `MaxTime`, never against a
+packaged number — the packaged values describe one cluster. Do not default to
+12 hours.
 
 At or above `max_num_gpus_per_node`, allocate exclusive nodes and derive their
 count from total GPUs.
