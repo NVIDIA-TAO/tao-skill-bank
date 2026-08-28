@@ -75,14 +75,29 @@ def test_dev_shm_sized_memory():
     assert vols["dshm"]["emptyDir"]["sizeLimit"] == "16Gi"   # not the 64Mi default
 
 
-def test_creds_via_secretref_never_inline():
+def test_creds_are_projected_per_key_never_inline():
+    """Adopted from #141: a Secret's existence is not authorization for every
+    key it holds, so the old whole-Secret envFrom import is gone. Credentials
+    appear only as per-key secretKeyRef entries the caller forwarded, and no
+    VALUE is ever inline."""
+    c = load({"CRED_ENV": (
+        '\n            - name: HF_TOKEN'
+        '\n              valueFrom:'
+        '\n                secretKeyRef:'
+        '\n                  name: "tao-creds-dino-train-a1b2c3"'
+        '\n                  key: HF_TOKEN')})["spec"]["template"]["spec"]["containers"][0]
+    assert "envFrom" not in c, "whole-Secret import came back"
+    by_name = {e["name"]: e for e in c.get("env", [])}
+    assert by_name["HF_TOKEN"]["valueFrom"]["secretKeyRef"]["key"] == "HF_TOKEN"
+    assert "value" not in by_name["HF_TOKEN"], "a credential VALUE went inline"
+    # unforwarded keys never appear
+    assert not any(k in by_name for k in ("AWS_SECRET_ACCESS_KEY", "NGC_KEY"))
+
+
+def test_no_forwarded_names_means_no_secret_reference_at_all():
     c = load()["spec"]["template"]["spec"]["containers"][0]
-    # creds arrive via envFrom.secretRef — only the secret NAME, no values
-    assert c["envFrom"][0]["secretRef"]["name"] == "tao-creds-dino-train-a1b2c3"
-    # the only inline env is the non-secret results root
-    inline = {e["name"] for e in c.get("env", [])}
-    assert inline == {"TAO_RESULTS_ROOT"}
-    assert not any(k in inline for k in ("AWS_SECRET_ACCESS_KEY", "NGC_KEY", "HF_TOKEN"))
+    assert "envFrom" not in c
+    assert not any("valueFrom" in e for e in c.get("env", []))
 
 
 def test_rendered_manifest_lints_clean():

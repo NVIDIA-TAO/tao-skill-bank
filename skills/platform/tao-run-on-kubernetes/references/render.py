@@ -293,6 +293,19 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
         # Rendered as additional `env:` list entries at the same indentation as
         # TAO_RESULTS_ROOT, so a bundle finds its inputs here exactly as it
         # does on docker and slurm.
+        # Per-key credential projection, adopting #141's fail-closed model: a
+        # Secret's EXISTENCE is not authorization for every key it holds. Only
+        # names the caller forwarded are projected; nothing forwarded means no
+        # secret reference at all, so the old failure -- envFrom importing the
+        # whole Secret once it exists -- cannot recur.
+        "CRED_ENV": "".join(
+            f'\n            - name: {name}'
+            f'\n              valueFrom:'
+            f'\n                secretKeyRef:'
+            f'\n                  name: "{ctx.get("cred_secret", f"tao-creds-{job_id}")}"'
+            f'\n                  key: {name}'
+            for name in (ctx.get("env_passthrough") or [])
+        ),
         "INPUT_ENV": "".join(
             f'\n            - name: {name}\n              value: "{value}"'
             for name, value in input_env(bundle).items()

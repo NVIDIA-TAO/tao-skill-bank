@@ -61,9 +61,9 @@ spec:
             limits:
               "nvidia.com/gpu": "@@GPUS_PER_NODE@@"
 @@WORKING_DIR@@
-          envFrom:
-            - secretRef:
-                name: "@@CRED_SECRET@@"
+          # Credentials are projected PER KEY via secretKeyRef entries in env
+          # (the CRED_ENV slot below): a Secret's existence does not authorize every
+          # key it holds, which is what a whole-Secret envFrom import assumed.
           env:
             - name: WORLD_SIZE                 # = NODE COUNT (TAO convention), not global ranks
               value: "@@NUM_NODES@@"
@@ -81,7 +81,7 @@ spec:
             - name: MASTER_ADDR
               value: "@@JOB_NAME@@-0.@@JOB_NAME@@"
             - name: TAO_RESULTS_ROOT
-              value: "@@RESULTS_DIR@@"@@INPUT_ENV@@
+              value: "@@RESULTS_DIR@@"@@CRED_ENV@@@@INPUT_ENV@@
           volumeMounts:
             - name: dshm
               mountPath: /dev/shm

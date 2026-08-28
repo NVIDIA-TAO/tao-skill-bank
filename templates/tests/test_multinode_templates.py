@@ -133,7 +133,9 @@ def test_k8s_gpu_limit_and_shm_and_secretref():
     _, job = k8s_docs()
     c = job["spec"]["template"]["spec"]["containers"][0]
     assert c["resources"]["limits"]["nvidia.com/gpu"] == "8"     # per node
-    assert c["envFrom"][0]["secretRef"]["name"] == "tao-creds-dino-train-a1b2c3"
+    # per-key projection replaced the whole-Secret envFrom import (see
+    # test_k8s_singlepod_template for the full contract)
+    assert "envFrom" not in c
     vols = {v["name"]: v for v in job["spec"]["template"]["spec"]["volumes"]}
     assert vols["dshm"]["emptyDir"]["sizeLimit"] == "16Gi"
 

@@ -43,16 +43,12 @@ spec:
             limits:
               "nvidia.com/gpu": "@@NUM_GPUS@@"
 @@WORKING_DIR@@
-          envFrom:
-            - secretRef:
-                name: "@@CRED_SECRET@@"
-                # Without this the kubelet refuses to start the pod when the
-                # Secret is absent, so a stage needing no credentials cannot
-                # run at all -- including every CI smoke test.
-                optional: true
+          # Credentials are projected PER KEY via secretKeyRef entries in env
+          # (the CRED_ENV slot below): a Secret's existence does not authorize every
+          # key it holds, which is what a whole-Secret envFrom import assumed.
           env:
             - name: TAO_RESULTS_ROOT
-              value: "@@RESULTS_DIR@@"@@INPUT_ENV@@
+              value: "@@RESULTS_DIR@@"@@CRED_ENV@@@@INPUT_ENV@@
           volumeMounts:
             - name: dshm
               mountPath: /dev/shm
