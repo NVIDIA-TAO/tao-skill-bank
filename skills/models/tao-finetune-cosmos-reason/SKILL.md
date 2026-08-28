@@ -50,11 +50,9 @@ from history, another user, a prior job, an image, or a developer checkout.
   For Nano, use the packaged `Qwen/Qwen3-VL-8B-Instruct` architecture mapping,
   resolve both Hub models to immutable commits automatically, verify the
   selected backend image imports `cosmos_rl.model_preparation.vlm_safetensors`
-  before launch (`docker run --rm --entrypoint python <image> -c "import
-  cosmos_rl.model_preparation.vlm_safetensors"`), and only then run that
-  TAO-owned entrypoint. An image lacking the module fails there in seconds
-  instead of minutes into the conversion. Both backend images must package that
-  entrypoint and its pinned native Framework conversion runtime. An explicitly
+  (one `--entrypoint python -c` probe; fails in seconds), then run that
+  TAO-owned entrypoint. Both backend images must package it and its pinned
+  Framework conversion runtime. An explicitly
   supplied `prepared_checkpoint_path` or donor is an advanced override: validate
   it, but never present a route A/B choice or ask for one by default.
 - Accept `hf_model://nvidia/Cosmos3-Nano` directly. If a gated/private model
