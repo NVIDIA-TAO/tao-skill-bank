@@ -44,8 +44,8 @@ RUN_SPEC_NAMES = (
     "approval.json",
 )
 PINNED_IMAGES = {
-    "pyt": "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt",  # versions-key: images.tao_toolkit.pyt
-    "ds": "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services",  # versions-key: images.tao_toolkit.data_services
+    "pyt": "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch",  # versions-key: images.tao_toolkit.pyt
+    "ds": "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch",  # versions-key: images.tao_toolkit.data_services
 }
 
 
