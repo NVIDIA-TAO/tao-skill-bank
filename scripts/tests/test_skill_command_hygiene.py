@@ -41,7 +41,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCAN_DIRS = ("skills", "templates", "scripts", "integrations")
 SCAN_SUFFIXES = {".md", ".yaml", ".yml", ".sh", ".py", ".config", ".json", ".txt"}
-IAA_SKILL_ROOT = REPO_ROOT / "skills/applications/tao-run-deft-iaa"
+PAS_SKILL_ROOT = REPO_ROOT / "skills/applications/tao-run-deft-pas"
 
 SECRET_VARS = "NGC_KEY|NGC_API_KEY|HF_TOKEN|BREV_API_TOKEN|WANDB_API_KEY|ACCESS_KEY|SECRET_KEY|AWS_SECRET_ACCESS_KEY"
 
@@ -70,11 +70,11 @@ RULES = (
      "every token but the last as an instance name)"),
 )
 
-# Unlike the shared platform contract, the IAA/PAS skill's credential contract
+# Unlike the shared platform contract, the PAS/PAS skill's credential contract
 # explicitly requires credentials to be inherited from the launching process.
 # Ban equivalent shell spellings across the complete skill, not one documented
 # example string.
-IAA_CREDENTIAL_FILE_RULES = (
+PAS_CREDENTIAL_FILE_RULES = (
     re.compile(r"(?:^|[;&|]\s*)(?:source|\.)\s+\S+"),
     re.compile(r"(?:^|[;&|]\s*)set\s+-a(?:\s|;|&|$)"),
 )
@@ -143,9 +143,9 @@ def test_no_banned_command_patterns():
         + "\n".join(violations))
 
 
-def test_iaa_skill_never_loads_credential_files():
+def test_pas_skill_never_loads_credential_files():
     violations = []
-    for path in sorted(IAA_SKILL_ROOT.rglob("*")):
+    for path in sorted(PAS_SKILL_ROOT.rglob("*")):
         if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
             continue
         try:
@@ -153,13 +153,13 @@ def test_iaa_skill_never_loads_credential_files():
         except (UnicodeDecodeError, OSError):
             continue
         for lineno, line in _executable_lines(path, text):
-            if any(pattern.search(line) for pattern in IAA_CREDENTIAL_FILE_RULES):
+            if any(pattern.search(line) for pattern in PAS_CREDENTIAL_FILE_RULES):
                 violations.append(
                     f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}"
                 )
 
     assert not violations, (
-        "IAA/PAS commands must inherit credentials from the launching process; "
+        "PAS/PAS commands must inherit credentials from the launching process; "
         "they must never source a file or enable automatic export:\n"
         + "\n".join(violations)
     )
