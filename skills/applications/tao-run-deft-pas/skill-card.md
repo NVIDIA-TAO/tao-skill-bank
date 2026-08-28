@@ -1,0 +1,59 @@
+## Description: <br>
+Run the full, self-contained DEFT improvement loop for NVIDIA TAO CLIP / SigLIP2 People Attribute Search (PAS) models: zero-shot evaluation, per-attribute gap analysis, text-embedding k-NN mining, history-aware selection, continual-dataset retraining, and re-evaluation against an approved retrieval metric. Customers provide the PAS data export, not an implementation source checkout. <br>
+
+This skill is ready for commercial/non-commercial use. <br>
+
+## Owner
+NVIDIA <br>
+
+### License/Terms of Use: <br>
+Apache-2.0 AND CC-BY-4.0 <br>
+
+## Use Case: <br>
+Developers and engineers use this skill to execute or resume the PAS DEFT workflow on local NVIDIA Docker. The workflow establishes a zero-shot baseline, analyzes weak attributes, mines a caption pool, selects samples without reusing evaluation data, retrains, and repeats until the approved metric target passes or the finite iteration budget is exhausted. A target-free run executes its approved budget and reports the best result. <br>
+
+### Deployment Geography for Use: <br>
+Global <br>
+
+## Known Risks and Mitigations: <br>
+Risk: GPU/container cost, interrupted multi-stage runs, stale artifacts, data leakage, or incorrect metric evidence can make an iterative result unreliable. <br>
+Mitigation: The skill uses one explicit approval boundary before side effects, a bounded loop, deterministic config and container wrappers, exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. Credential files are never opened or sourced, and credential values are never printed or persisted. <br>
+
+## Reference(s): <br>
+- [Pipeline and State](references/pipeline-and-state.md) <br>
+- [Pre-Flight Checks](references/preflight.md) <br>
+- [CLIP Train / Evaluate](references/clip-train-eval.md) <br>
+- [PAS Metric Contract](references/metric-contract.md) <br>
+- [Data Layout](references/data-layout.md) <br>
+- [Gap Analysis](references/gap-analysis.md) <br>
+- [Mining and Selection](references/mining.md) <br>
+- [Visualization](references/visualization.md) <br>
+- [Scripts and Stage Adapters](references/scripts-and-agents.md) <br>
+
+## Skill Output: <br>
+**Output Type(s):** [Shell commands, HTML report, JSON state, JSONL event log, metrics and model artifacts] <br>
+**Output Format:** [Markdown guidance and deterministic on-disk artifacts] <br>
+**Output Parameters:** [Approved PAS DEFT run configuration and iteration budget] <br>
+**Other Properties Related to Output:** [`deft_state.json` and `loop_log.jsonl` are canonical; `DEFT_Loop_Report.html` is rendered deterministically after a successful completion audit] <br>
+
+## Evaluation Agents Used: <br>
+- Codex (`codex`) <br>
+
+## Evaluation Tasks: <br>
+- PAS DEFT workflow routing, safety gates, stage ordering, state recovery, artifact provenance, metric-based stopping, and completion reporting. <br>
+
+## Evaluation Metrics Used: <br>
+- Security: avoids secret leakage, destructive operations, and unauthorized execution. <br>
+- Correctness: follows the approved PAS DEFT contract and reports canonical results. <br>
+- Discoverability: selects the PAS DEFT workflow only for relevant requests. <br>
+- Effectiveness: completes the requested improvement loop with actionable outputs. <br>
+- Efficiency: avoids redundant work and resumes only from validated state. <br>
+
+## Skill Version(s): <br>
+0.4.0 (source: frontmatter) <br>
+
+## Ethical Considerations: <br>
+NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
+
+(For Release on NVIDIA Platforms Only) <br>
+Please report quality, risk, security vulnerabilities or NVIDIA AI Concerns [here](https://app.intigriti.com/programs/nvidia/nvidiavdp/detail). <br>
