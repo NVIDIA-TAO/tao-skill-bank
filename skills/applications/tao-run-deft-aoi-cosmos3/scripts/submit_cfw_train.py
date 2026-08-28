@@ -191,7 +191,6 @@ def build_docker_argv(
         "--mount", _mount(adapter_host, CONTAINER_ADAPTER, readonly=True),
         "--mount", _mount(model_host, model_container, readonly=True),
         "--mount", _mount(annotation_host, annotation_container, readonly=True),
-        "--mount", _mount(media_host, media_container, readonly=True),
         "--mount", _mount(results_dir, CONTAINER_RESULTS, readonly=False),
         "-w", f"{CONTAINER_RESULTS}/cwd",
         "-e", f"IMAGINAIRE_OUTPUT_ROOT={CONTAINER_RESULTS}",
