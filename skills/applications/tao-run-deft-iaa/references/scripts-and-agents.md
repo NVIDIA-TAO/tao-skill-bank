@@ -55,7 +55,7 @@ or logs.
 
 | State stage | Producer | Adapter or launch | Read first |
 |---|---|---|---|
-| `dataset_setup` | archive `rebuild.py` plus bundled IAA data utilities | `run_iaa_stage.py dataset-materialize` | `data-layout.md` |
+| `dataset_setup` | archive `rebuild.py`, read-only layout reporter, and bundled IAA data utilities | `iaa_deft.dataset_layout`; `run_iaa_stage.py dataset-materialize` | `data-layout.md` |
 | `pool_embed` | TAO data services | `run_deft_container.py` | `mining.md` |
 | `evaluate` | TAO CLIP plus bound parser | `run_iaa_stage.py eval-config`, container wrapper, parser | `clip-train-eval.md`, `metric-contract.md` |
 | `gap_analysis` | bundled IAA gap analysis | `run_iaa_stage.py gap-analysis` | `gap-analysis.md` |
@@ -110,8 +110,23 @@ a file without successful matching command status is not resumable evidence.
 The wrapper uses a deterministic Docker name, CID file, and nonblocking launch
 lock. If its process dies while Docker continues, a later call inspects that
 container read-only and refuses to overlap it. Wait for the named container to
-exit; never kill it automatically. `HF_TOKEN` is not forwarded unless the
-approved command needs it and `--pass-hf-token` is supplied explicitly.
+exit; never kill it automatically. Rerun the exact wrapper command after exit.
+Before consuming a retry, it verifies the prior command identity and reconciles
+a status left at `running` when Docker reports exit zero or an auto-removed
+container's complete durable log has a final `Execution status: PASS` marker,
+and every named
+fresh output is non-empty and newer than that attempt. The normal stage commit
+then applies the format/cardinality validators. Incomplete or contradictory
+evidence is never reconciled. `HF_TOKEN` is not forwarded unless the approved
+command needs it and `--pass-hf-token` is supplied explicitly.
+
+For a reconciled status, `exit_code` is the wrapper contract outcome. A value
+of zero means the wrapper established success from the full evidence set, not
+necessarily that it directly observed Docker exit. `docker_exit_code` is zero
+for both a retained container inspected at exit zero and an auto-removed
+container whose zero outcome was inferred from its final PASS marker. Read
+`reconciliation_source` (`docker` or `container_log`) to distinguish those
+provenance paths; `reconciled_after_wrapper_exit` is true in either case.
 Docker and host-adapter statuses also carry a stable `attempt` value. Attempt
 1 is the initial call, attempt 2 is the single evidence-based correction, and
 either wrapper refuses attempt 3. Keep the documented stable command names;

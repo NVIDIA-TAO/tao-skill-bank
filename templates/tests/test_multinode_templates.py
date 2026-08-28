@@ -185,7 +185,13 @@ def test_k8s_skill_doc_and_template_env_agree():
     Catches the drift class directly rather than via a hand-maintained list: if
     someone documents a new var without templating it, this fails.
     """
-    doc = (REPO / "skills/platform/tao-run-on-kubernetes/SKILL.md").read_text(encoding="utf-8")
+    # SKILL.md is size-capped, so the rendezvous table lives in references/
+    # now; read both so a doc move cannot silently skip this guard.
+    skill = REPO / "skills/platform/tao-run-on-kubernetes"
+    doc = "\n".join(
+        f.read_text(encoding="utf-8")
+        for f in [skill / "SKILL.md", *sorted((skill / "references").glob("*.md"))]
+    )
     # Rendezvous table rows look like: | `NNODES` | `num_nodes` | torchrun ... |
     documented = set(re.findall(r"^\s*\|\s*`([A-Z][A-Z0-9_]+)`\s*\|", doc, re.M))
     documented -= {"JOB_COMPLETION_INDEX"}  # injected by k8s itself, not by us

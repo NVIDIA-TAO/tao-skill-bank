@@ -6,7 +6,8 @@ description: Run container-backed AutoML / hyperparameter optimization (HPO) for
   optimization, HPO, automl, automl_settings, AutoMLRunner, tao_automl, bayesian search, hyperband, ASHA, LLM-guided search,
   autoresearch, or wants to tune train/evaluate/inference/distill/prune/quantize for a TAO network. Model actions use the resolved
   image; venv training requires an explicit request. Platform-agnostic — runs on any SDK (Brev,
-  SLURM, Kubernetes, Docker).
+  SLURM, Kubernetes, Docker). Do not use generic "keep improving" language alone to override a matching domain-specific
+  DEFT workflow; attribute-labelled CLIP / SigLIP image-retrieval loops belong to tao-run-deft-iaa unless HPO is explicit.
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
 metadata:
@@ -91,7 +92,7 @@ If missing, show the exact install command from `versions.yaml` and ask before
 installing:
 
 ```bash
-SB="${TAO_SKILL_BANK_PATH:-~/tao-skills-external}"
+SB="${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}"
 pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_automl_<platform>)"
 ```
 
@@ -301,12 +302,17 @@ Use the selected platform SDK only after its preflight passes. Construct SDKs
 without embedding credentials in code.
 
 ```python
+import sys
 from pathlib import Path
 from tao_automl.runner import AutoMLRunner
 
 skill_bank = Path("<absolute-tao-skill-bank>")
 model_skill = "<resolved-model-skill-directory>"
 skill_dir = skill_bank / "skills" / "models" / model_skill
+sys.path.insert(
+    0, str(skill_bank / "skills/applications/tao-run-automl/scripts")
+)
+from resolve_automl_session import validate_session_settings
 
 runner = AutoMLRunner(
     sdk=sdk,
@@ -314,21 +320,35 @@ runner = AutoMLRunner(
     action=action,                      # train, distill, prune, quantize, ...
 )
 
+workspace_path = Path("<automl_workspace>")
+resume = False
+# Mandatory fail-closed gate from this skill's bundled scripts directory.
+validate_session_settings(
+    automl_settings,
+    resume=resume,
+    workspace=workspace_path if resume else None,
+)
 result = runner.run(
-    workspace_path="<automl_workspace>",   # timestamp it to avoid collisions
-    automl_settings=automl_settings,
+    workspace_path=str(workspace_path),    # timestamp it to avoid collisions
+    automl_settings=automl_settings,       # must contain an explicit session_id
     spec_overrides=spec_overrides,
     automl_hyperparameters=automl_hyperparameters,
     custom_param_ranges=custom_param_ranges,
     metric_extractor=metric_extractor,  # optional
     eval_fn=eval_fn,                    # optional
     final_eval_fn=final_eval_fn,        # optional but required when final eval is runnable
+    resume=resume,
 )
 ```
 
-Only resume an existing workspace when the user explicitly asks to resume,
-continue, recover, or inspect an existing experiment. Treat a plain "run
-AutoML" request as a fresh run.
+Set `automl_settings["session_id"]` explicitly and call
+`validate_session_settings` before every run. Generate a fresh ID once with
+`scripts/resolve_automl_session.py new`. Resume only when explicitly requested;
+resolve its controller with
+`scripts/resolve_automl_session.py resolve --workspace <full-run-path>`.
+Missing or ambiguous state is a blocker. See the
+resume section of `references/automl-advanced-monitoring.md` for the complete
+fresh/resume pattern.
 
 ## Monitoring
 

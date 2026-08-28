@@ -11,7 +11,7 @@ Direct TAO Deploy command name: `visual_changenet`.
 Use the pinned deploy container URI (stamped from the release manifest):
 
 ```bash
-TAO_DEPLOY_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-deploy  # versions-key: images.tao_toolkit.deploy
+TAO_DEPLOY_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch  # versions-key: images.tao_toolkit.deploy
 ```
 
 Every invocation below uses `"$TAO_DEPLOY_IMAGE"` in place of the literal image URI.

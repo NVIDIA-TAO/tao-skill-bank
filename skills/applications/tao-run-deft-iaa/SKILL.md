@@ -1,12 +1,14 @@
 ---
 name: tao-run-deft-iaa
 description: >
-  Run the self-contained DEFT improvement loop for NVIDIA TAO CLIP /
-  SigLIP2 Image Attribute Augmentation (IAA): dataset preparation, zero-shot
-  evaluation, attribute gap analysis, caption-space k-NN mining,
-  history-aware selection, retraining, and re-evaluation against an IAA
-  retrieval KPI. Use for requests to run or resume the IAA DEFT loop or improve
-  an IAA model until a metric target or iteration budget is reached. Treat
+  Run iterative improvement for NVIDIA TAO CLIP / SigLIP image-text retrieval
+  on attribute-labelled data. Use when a request combines retrieval evaluation,
+  weak-attribute or caption-pair mining, repeated retraining, and a stopping
+  condition based on a retrieval KPI, validation plateau, or iteration budget;
+  the customer need not know the DEFT or Image Attribute Augmentation (IAA)
+  names. The self-contained workflow performs dataset preparation, zero-shot
+  evaluation, attribute gap analysis, caption-space k-NN mining, history-aware
+  selection, retraining, and re-evaluation. Treat
   `tao-deft-iaa` as shorthand for this canonical `tao-run-deft-iaa` workflow.
   Do not use for standalone CLIP training, one-off evaluation or embedding,
   generic k-NN mining, or AOI/ChangeNet DEFT workflows.
@@ -14,7 +16,7 @@ license: Apache-2.0 AND CC-BY-4.0
 compatibility: Requires Docker, NVIDIA Container Toolkit, accessible NVIDIA GPUs, the two IAA dataset export archives, and Python 3.9+ with the documented runtime dependencies.
 metadata:
   author: NVIDIA Corporation
-  version: "0.3.3"
+  version: "0.3.7"
 allowed-tools: Read Bash Write
 tags:
 - application
@@ -101,6 +103,14 @@ unspecified values and must be identified as defaults in the pre-flight
 summary. `max_iterations` has no default. An absent metric target means an
 ungated run that stops after `max_iterations`. Hugging Face token forwarding
 defaults to disabled because the bundled model is public.
+
+The authoritative parameter contract is the nested dataclass schema in
+`scripts/iaa_deft/config.py`, adapted from the PAS reference notebook. Read
+that schema when a request needs the meaning, default, numeric bounds, or valid
+options of a DEFT parameter. Do not infer an undocumented field or bypass its
+metadata constraint. Config preparation, initialization, audit, and every
+host-side stage validate the materialized bundle through that same schema;
+the legacy YAML section name `iaa` is normalized to the typed `pas` section.
 
 If required information remains missing after full discovery, ask one
 consolidated follow-up. A normal invocation should need no knowledge of stage
@@ -197,7 +207,7 @@ stage is next:
 
 | Stage | Reference | Required result |
 |---|---|---|
-| dataset setup | `references/data-layout.md` | verified rebuilt dataset, five split files, non-empty source-pool parquet |
+| dataset setup | `references/data-layout.md` | verified rebuilt dataset, transparent layout report, five split files, non-empty source-pool parquet |
 | pool embedding and mining | `references/mining.md` | fresh command evidence plus non-empty, schema-checked parquet outputs |
 | evaluate and train | `references/clip-train-eval.md`, `references/metric-contract.md` | successful TAO status, bound metric evidence; for train, a fresh best and normalized checkpoint |
 | gap analysis | `references/gap-analysis.md` | non-empty iteration-scoped gaps parquet |
@@ -250,7 +260,7 @@ failing visualization mid-run without revising and reapproving the config.
 ## Metric and Stop Semantics
 
 The approved metric contract is immutable for the run. Evaluation must parse
-the exact iteration's `nvidia_iaa_metrics_aggregate.csv`; the result records
+the exact iteration's `nvidia_pas_metrics_aggregate.csv`; the result records
 its source path and is re-derived during commit and audit. Checkpoint ranking
 and best-run reporting follow the approved operator (`>=`/`>` chooses the
 higher value, `<=`/`<` the lower), not a hard-coded metric convention.

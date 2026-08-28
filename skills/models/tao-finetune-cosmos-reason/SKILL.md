@@ -48,9 +48,12 @@ from history, another user, a prior job, an image, or a developer checkout.
   choice.
 - Do not expose Omni preparation implementation fields during normal intake.
   For Nano, use the packaged `Qwen/Qwen3-VL-8B-Instruct` architecture mapping,
-  resolve both Hub models to immutable commits automatically, and run the
-  TAO-owned `cosmos_rl.model_preparation.vlm_safetensors` entrypoint with the
-  already selected backend image/SQSH. Both backend images must package that
+  resolve both Hub models to immutable commits automatically, verify the
+  selected backend image imports `cosmos_rl.model_preparation.vlm_safetensors`
+  before launch (`docker run --rm --entrypoint python <image> -c "import
+  cosmos_rl.model_preparation.vlm_safetensors"`), and only then run that
+  TAO-owned entrypoint. An image lacking the module fails there in seconds
+  instead of minutes into the conversion. Both backend images must package that
   entrypoint and its pinned native Framework conversion runtime. An explicitly
   supplied `prepared_checkpoint_path` or donor is an advanced override: validate
   it, but never present a route A/B choice or ask for one by default.

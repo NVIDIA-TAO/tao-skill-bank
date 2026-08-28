@@ -219,8 +219,8 @@ Before creating specs, runner scripts, workspaces, logs, state files, or
 submitting a job, resolve the image for the selected model/action:
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/resolve_tao_image.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} \
+${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/resolve_tao_image.py \
+  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} \
   --model <network> --action <action> --backend <auto-or-explicit> \
   --workload <workload-hint> --format text
 ```

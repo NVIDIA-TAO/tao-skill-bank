@@ -27,6 +27,7 @@ from metric_contract import (
     result_from_iteration,
     result_passes,
 )
+from iaa_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
 from parse_iaa_metrics import build_result
 
 EXPECTED_WORKFLOW = "tao-run-deft-iaa"
@@ -136,7 +137,7 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
     metrics_path = _required_file(args.metrics_csv, name="metrics CSV")
     expected_metrics_path = pathlib.Path(
         os.path.abspath(
-            phase_dir / "evaluate" / "nvidia_iaa_metrics_aggregate.csv"
+            phase_dir / "evaluate" / PAS_METRICS_AGGREGATE_FILENAME
         )
     )
     if metrics_path != expected_metrics_path:

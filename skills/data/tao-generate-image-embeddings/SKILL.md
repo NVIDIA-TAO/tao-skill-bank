@@ -41,7 +41,7 @@ Required spec fields:
 | `input_parquet` | Absolute path to a parquet containing image filepaths. |
 | `output_parquet` | Absolute path where the embedding parquet is written. |
 | `model` | `CLIP` or `SigLIP`. |
-| `model_path` | HuggingFace model id, local HF snapshot directory, or a TAO `.pth`/`.ckpt` checkpoint. **Must match `model`.** SigLIP: `google/siglip-base-patch16-224` (768-dim, the template default). CLIP: `openai/clip-vit-base-patch32` (512-dim). The two fields are validated independently, so a mismatched pair is accepted here and fails or mis-loads inside the container. |
+| `model_path` | HuggingFace model id, local HF snapshot directory, or a TAO `.pth`/`.ckpt` checkpoint. **Must match `model`.** SigLIP: `google/siglip-base-patch16-224` (768-dim, the template default). CLIP: `openai/clip-vit-base-patch32` (512-dim). The validator rejects a recognizable model/path mismatch before launch. |
 
 Common optional fields:
 
@@ -60,7 +60,7 @@ When embeddings feed a mining step, every parquet compared against another must 
 
 ## Quick Start
 
-Run from the `tao-skills-external` repo root.
+Run from the `tao-skill-bank` repo root.
 
 **Write the spec beside the output parquet.** The run does not retain it, so the
 embeddings otherwise carry no record of the encoder that produced them. That
@@ -77,7 +77,7 @@ GPU_COUNT=1
 python3 skills/data/tao-generate-image-embeddings/scripts/verify_image_embeddings_spec.py \
   --spec "$SPEC"
 
-DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
 
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -144,7 +144,7 @@ nvidia-smi -L
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 

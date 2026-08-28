@@ -145,6 +145,12 @@ python -m cosmos_rl.model_preparation.vlm_safetensors \
         "run",
         "--rm",
         "--ipc=host",
+        # The conversion fetches both Hub models from INSIDE this container
+        # (snapshot_download); on hosts where the default bridge has no
+        # egress the fetch hangs or fails while the same URL works host-side,
+        # which reads as an auth problem. Host networking matches how every
+        # other nested fetch in this bank runs.
+        "--network=host",
         "--entrypoint",
         "bash",
         "--user",
