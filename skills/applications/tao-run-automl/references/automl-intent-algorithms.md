@@ -172,6 +172,7 @@ result = runner.run(
         "algorithm": "bayesian",
         "metric": metric,
         "automl_max_recommendations": 10,
+        "session_id": session_id,
     },
     automl_hyperparameters=None,  # use schema params marked automl_enabled=true
     custom_param_ranges=None,     # use schema ranges/options/defaults
