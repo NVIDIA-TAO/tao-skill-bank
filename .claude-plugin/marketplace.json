@@ -9,6 +9,12 @@
   },
   "plugins": [
     {
+      "name": "tao-skill-bank",
+      "description": "Canonical cross-client entry for the TAO Skill Bank plugin. Codex resolves this name from .codex-plugin/plugin.json; Claude users may continue using the tao-skills compatibility entry.",
+      "source": "./",
+      "strict": true
+    },
+    {
       "name": "tao-skills",
       "description": "Full TAO skill bank \u2014 every model, data, platform, and application skill in one bundle. Install this for the standard agentic-fine-tuning experience.",
       "source": "./",

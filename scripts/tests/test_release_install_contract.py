@@ -30,6 +30,27 @@ def test_default_branch_publishes_7_2_images_and_new_plugin_version():
     assert {manifest["version"] for manifest in manifests} == {advertised}
 
 
+def test_default_marketplace_exposes_the_canonical_codex_plugin_name():
+    """A root marketplace add must expose the name Codex installs.
+
+    The shared marketplace historically listed only the Claude-facing
+    ``tao-skills`` alias. Codex reads its canonical name from plugin.json and
+    then could not find that name in the marketplace it had just registered.
+    Keep the alias for existing Claude installs, but require the canonical
+    cross-client entry too.
+    """
+    codex_manifest = json.loads(
+        (REPO_ROOT / ".codex-plugin/plugin.json").read_text()
+    )
+    shared_marketplace = json.loads(
+        (REPO_ROOT / ".claude-plugin/marketplace.json").read_text()
+    )
+    names = {entry["name"] for entry in shared_marketplace["plugins"]}
+
+    assert codex_manifest["name"] in names
+    assert "tao-skills" in names
+
+
 def test_iaa_stamped_pins_match_published_versions():
     versions = yaml.safe_load((REPO_ROOT / "versions.yaml").read_text())
     images = versions["images"]["tao_toolkit"]
