@@ -1,7 +1,7 @@
 # Cosmos3 DEFT Scripts and Agents
 
-Run host Python through `scripts/deft_python.sh`. Resolve all paths to absolute
-paths before invoking a script.
+Set `PYTHON=$(bash scripts/deft_python.sh)`, then run host Python scripts with
+`"$PYTHON"`. Resolve all paths to absolute paths before invoking a script.
 
 ## Available scripts
 
@@ -57,7 +57,8 @@ Normally do not render separately. After optional loop-end token alignment, or
 to recover from a reported presentation error, run:
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/render_report.py \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" <skill_root>/scripts/render_report.py \
   --results-dir "${RESULTS_DIR}" --require-terminal
 ```
 

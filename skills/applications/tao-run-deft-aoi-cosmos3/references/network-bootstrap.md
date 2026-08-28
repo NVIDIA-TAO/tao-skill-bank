@@ -3,7 +3,7 @@
 Read this file only after Pre-Flight has resolved `network_mode=network-enabled`.
 It is never part of an air-gapped run.
 
-If `scripts/deft_python.sh` cannot select a dependency-complete interpreter,
+If `bash scripts/deft_python.sh` cannot select a dependency-complete interpreter,
 install `pyarrow` and `pyyaml` into a dedicated workspace-local environment,
 then rerun Pre-Flight:
 
