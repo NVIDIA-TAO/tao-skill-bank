@@ -1555,6 +1555,31 @@ def _framework_video_runtime(
         and validation_shard_strategy == "media_grouped"
         else (validation_processed_video_cache_override or 0)
     )
+    # Training re-decodes every video every epoch unless this cache is on, and decode is
+    # what a step actually costs: measured on a GB300, the steady-state step is 2.00s of
+    # dataloader wait against 0.62s of compute. Sizing the cache to the unique training
+    # media turns repeats -- within an epoch as well as across them -- into hits.
+    # Some callers resolve only the validation split, so treat a missing training
+    # profile as "no repeats known" and leave the cache off rather than guessing.
+    train_record_count = int(train_data.get("record_count", 0))
+    train_unique_media = max(int((train_data.get("profile") or {}).get("unique_media_count", 0)), 1)
+    repeated_train_media = (
+        args.dataset_family == "video_conversation" and train_record_count > train_unique_media
+    )
+    train_processed_video_cache_override = getattr(
+        args, "framework_train_processed_video_cache_size", None
+    )
+    if (
+        train_processed_video_cache_override is not None
+        and train_processed_video_cache_override < 0
+    ):
+        raise WorkflowError("Framework training processed-video cache size must be nonnegative")
+    train_processed_video_cache_size = (
+        train_unique_media
+        if train_processed_video_cache_override is None and repeated_train_media
+        else (train_processed_video_cache_override or 0)
+    )
+
     validation_frontload_unique_override = getattr(
         args,
         "framework_validation_cache_frontload_unique_per_batch",
@@ -1649,6 +1674,7 @@ def _framework_video_runtime(
         "validation_partial_final_batch": validation_partial_final_batch,
         "validation_video_feature_cache_size": validation_feature_cache_size,
         "validation_processed_video_cache_size": validation_processed_video_cache_size,
+        "train_processed_video_cache_size": train_processed_video_cache_size,
         "validation_processed_video_cache_scope": "validation_worker_local_host_tensors",
         "validation_processed_video_cache_population": "on_demand_during_validation",
         "validation_cache_frontload_unique_per_batch": validation_frontload_unique,
@@ -2046,6 +2072,9 @@ def _env(
                     framework_video_runtime.get(
                         "validation_processed_video_cache_size", 0
                     )
+                ),
+                "TAO_FRAMEWORK_TRAIN_PROCESSED_VIDEO_CACHE_SIZE": str(
+                    framework_video_runtime.get("train_processed_video_cache_size", 0)
                 ),
             }
         )
@@ -5609,6 +5638,18 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--video-override-workers", type=int, default=16)
     parser.add_argument("--system-prompt", default="")
     parser.add_argument("--attention-implementation", default="auto")
+    parser.add_argument(
+        "--framework-train-processed-video-cache-size",
+        type=int,
+        default=None,
+        help=(
+            "Decoded-video cache entries for framework TRAINING. Defaults to the unique "
+            "training media count when the dataset carries several records per video, "
+            "which is the case that makes decode dominate the step. Set 0 to disable. "
+            "The cache is per dataloader worker and holds decoded frames, so raising the "
+            "worker count multiplies the host memory it needs."
+        ),
+    )
     parser.add_argument(
         "--torch-compile",
         choices=("on", "off"),
