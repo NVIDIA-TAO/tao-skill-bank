@@ -25,6 +25,10 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
        --iter-label "$LABEL"
    ```
 
+   The adjacent `eval-config.host.status.json` content-binds this generated
+   YAML. The container wrapper verifies that digest before launch and the
+   commit/audit paths verify it again; do not hand-edit the spec.
+
 2. Set `PHASE_DIR="$RESULTS_DIR/zs"` and `CONTAINER_PHASE=zs` for `baseline`;
    otherwise set `PHASE_DIR="$RESULTS_DIR/iter_$N"` and
    `CONTAINER_PHASE="iter_$N"`. Launch evaluation with both canonical outputs
@@ -101,6 +105,10 @@ another label/path even when its numeric value is plausible.
        --results-dir "$RESULTS_DIR" \
        --deft-config "$RESULTS_DIR/config/deft_config.yaml" --iter-num "$N"
    ```
+
+   The adjacent `train-config.host.status.json` content-binds this generated
+   YAML. Any post-generation edit is an integrity failure, not a supported
+   override; revise approval and start a new immutable run instead.
 
    In the default continual-dataset/non-continual-model mode, the accumulated
    mined datasets are included but training starts from the configured base

@@ -84,8 +84,92 @@ def infer_config_file(checkpoint: Path) -> Path:
 
 
 def _normalized_source(value: str) -> str:
+    if value.startswith("hf_model://"):
+        return value.removeprefix("hf_model://").strip("/")
+    if value.startswith("hf://"):
+        return value.removeprefix("hf://").removeprefix("models/").strip("/")
     candidate = Path(value).expanduser()
     return str(candidate.resolve()) if candidate.exists() else value
+
+
+def _safetensors_file_tensor_keys(path: Path) -> set[str]:
+    """Read tensor names from a safetensors header without loading tensor data."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as stream:
+            encoded_length = stream.read(8)
+            if len(encoded_length) != 8:
+                raise WorkflowError(f"safetensors file has no complete header: {path}")
+            header_length = int.from_bytes(encoded_length, "little", signed=False)
+            if header_length <= 0 or header_length > min(100 * 1024 * 1024, size - 8):
+                raise WorkflowError(
+                    f"safetensors file has an invalid header length: {path}"
+                )
+            encoded_header = stream.read(header_length)
+    except OSError as exc:
+        raise WorkflowError(f"cannot read safetensors header: {path}: {exc}") from exc
+    try:
+        header = json.loads(encoded_header.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise WorkflowError(f"invalid safetensors header JSON: {path}: {exc}") from exc
+    if not isinstance(header, dict):
+        raise WorkflowError(f"safetensors header must be a JSON object: {path}")
+    tensor_entries = {
+        name: value for name, value in header.items() if name != "__metadata__"
+    }
+    if not tensor_entries or not all(
+        isinstance(name, str) and name and isinstance(value, dict)
+        for name, value in tensor_entries.items()
+    ):
+        raise WorkflowError(f"safetensors header has no valid tensor entries: {path}")
+    return set(tensor_entries)
+
+
+def _safetensors_tensor_keys(root: Path) -> set[str] | None:
+    """Return verified tensor keys for indexed or single-file safetensors."""
+    index = root / "model.safetensors.index.json"
+    expected_keys: set[str] | None = None
+    if index.is_file():
+        payload = _read_json(index, "safetensors index")
+        weight_map = payload.get("weight_map")
+        if not isinstance(weight_map, dict) or not weight_map or not all(
+            isinstance(name, str)
+            and name
+            and isinstance(filename, str)
+            and filename
+            for name, filename in weight_map.items()
+        ):
+            raise WorkflowError(f"safetensors index has an invalid weight_map: {index}")
+        expected_keys = set(weight_map)
+        weight_files = sorted({root / filename for filename in weight_map.values()})
+    else:
+        weight_files = sorted(root.glob("*.safetensors"))
+    if not weight_files:
+        return None
+    actual_keys: set[str] = set()
+    for weight_file in weight_files:
+        try:
+            resolved_weight = weight_file.resolve(strict=True)
+            resolved_weight.relative_to(root.resolve())
+        except (OSError, ValueError) as exc:
+            raise WorkflowError(
+                f"safetensors weight path escapes or is missing below {root}: {weight_file}"
+            ) from exc
+        keys = _safetensors_file_tensor_keys(resolved_weight)
+        duplicates = actual_keys & keys
+        if duplicates:
+            raise WorkflowError(
+                "duplicate tensor keys across safetensors files: "
+                f"{sorted(duplicates)[:10]}"
+            )
+        actual_keys.update(keys)
+    if expected_keys is not None and actual_keys != expected_keys:
+        raise WorkflowError(
+            "safetensors index tensor keys disagree with shard headers: "
+            f"missing={sorted(expected_keys - actual_keys)[:10]}, "
+            f"unexpected={sorted(actual_keys - expected_keys)[:10]}"
+        )
+    return actual_keys
 
 
 def _base_model_fingerprint(path: Path) -> str:
@@ -180,6 +264,20 @@ def verify_export(
             recorded_fingerprint = manifest.get("base_model_fingerprint", {}).get("sha256")
             if recorded_fingerprint != _base_model_fingerprint(local_base.resolve()):
                 raise WorkflowError("Framework export base model fingerprint is stale")
+            base_keys = _safetensors_tensor_keys(local_base.resolve())
+            export_keys = _safetensors_tensor_keys(output)
+            if base_keys is None or export_keys is None:
+                raise WorkflowError(
+                    "Framework export tensor-key verification requires safetensors "
+                    "weights in both the local base checkpoint and export"
+                )
+            if base_keys != export_keys:
+                missing = sorted(base_keys - export_keys)[:10]
+                unexpected = sorted(export_keys - base_keys)[:10]
+                raise WorkflowError(
+                    "Framework export tensor key set differs from the base checkpoint: "
+                    f"missing={missing}, unexpected={unexpected}"
+                )
     if base_model_revision and manifest.get("base_model_revision") != base_model_revision:
         raise WorkflowError("Framework export base model revision does not match the requested revision")
     return {
@@ -263,7 +361,9 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         args.dtype,
     ]
     if args.base_model_path_or_uri:
-        export_command.extend(["--base-model-path-or-uri", args.base_model_path_or_uri])
+        export_command.extend(
+            ["--base-model-path-or-uri", _normalized_source(args.base_model_path_or_uri)]
+        )
     if args.base_model_revision:
         export_command.extend(["--base-model-revision", args.base_model_revision])
 
