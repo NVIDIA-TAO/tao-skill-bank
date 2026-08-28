@@ -55,3 +55,46 @@ Bayesian/BFBO, and `enable_llm_range_narrowing` is a no-op outside hybrid).
 - **Fixed-spec training via pinning** uses epsilon-width ranges
   (`launch_fixed_train`): degenerate min==max pins are rewritten ×1.1/×0.9 by
   the value generator's boundary clamp.
+
+## Reproducing the guarded post-DEFT campaign
+
+Build deterministic, duplicate-free 50% and 100% DEFT mixtures first:
+
+```bash
+python prepare_post_deft_data.py \
+  --source /path/to/train_combined_final.csv \
+  --output-dir /path/to/post_deft_data \
+  --ratios 0.50,1.00 \
+  --seed 20260814
+```
+
+Stage those CSVs and the DEFT incumbent checkpoint where SLURM workers can
+read them. Then inspect the exact four-arm campaign without launching:
+
+```bash
+python aoi_post_deft_campaign.py \
+  --campaign-dir /path/to/local/campaign \
+  --mix50-csv /remote/data/train_unique_mix_050.csv \
+  --mix100-csv /remote/data/train_unique_mix_100.csv \
+  --images-dir /remote/aoi/workspace \
+  --incumbent-checkpoint /remote/checkpoints/deft_winner.pth \
+  --incumbent-far 16.096636665087637 \
+  --dry-run
+```
+
+Remove `--dry-run` only after the normal TAO launch preflight and review. The
+launcher writes `campaign_manifest.json` before submission, runs warm-full,
+warm-head, scratch-mix50, and scratch-mix100 concurrently, and preserves each
+branch summary independently for recovery.
+
+The search objective is global validation FAR. `far_eval_calibrated.py`
+calibrates the 100%-recall threshold on validation and applies it unchanged to
+the KPI inference output. `max_regression=0` keeps the incumbent when a final
+challenger metric is missing, non-finite, or worse. A bad fine-tune can still
+occur; it cannot replace the incumbent through this guarded path.
+
+The study used eight GPUs per trial with per-GPU batch size 2, giving the same
+effective batch size of 16 as the prior one-GPU runs. The default campaign
+contains 8 recommendations for each warm-start arm and 16 for each scratch
+arm. Every path, incumbent FAR, seed, and bound is materialized in the written
+manifest so a run can be audited or reproduced on another machine.
