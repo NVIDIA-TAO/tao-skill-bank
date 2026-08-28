@@ -70,6 +70,12 @@ def test_target_gpu_selection_excludes_unallocated_display_gpu(capsys):
     assert "indices=0,1,4" in capsys.readouterr().out
 
 
+def test_target_count_without_memory_uses_detected_hardware(monkeypatch, capsys):
+    monkeypatch.setattr(preflight, "detect_local_gpu_memory_gb", lambda: [80.0, 80.0])
+    assert preflight.check_gpu_resources(2, 40, None, 2, [], False)
+    assert "detected=0.0GiB" not in capsys.readouterr().out
+
+
 def test_target_gpu_selection_rejects_missing_index(capsys):
     ok, selected = preflight.filter_target_gpus([{"index": "0"}], ["0", "2"])
     assert not ok and selected == []

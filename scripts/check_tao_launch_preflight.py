@@ -605,8 +605,23 @@ def check_gpu_resources(
         memory_gb = list(target_memory_gb)
         if target_count and len(memory_gb) == 1:
             memory_gb = memory_gb * target_count
+    elif target_count and not skip_access:
+        detected_memory = detect_local_gpu_memory_gb()
+        if len(detected_memory) < target_count:
+            print(
+                "GPU resource check failed: detected fewer GPUs than "
+                f"--target-gpu-count={target_count}"
+            )
+            return False
+        memory_gb = detected_memory[:target_count]
     elif target_count:
-        memory_gb = [0.0] * target_count
+        if min_memory_gb is not None or min_total_memory_gb is not None:
+            print(
+                "GPU memory requirements cannot be verified from --target-gpu-count alone; "
+                "provide --target-gpu-memory-gb or allow target access."
+            )
+            return False
+        memory_gb = [1.0] * target_count
     elif skip_access:
         print(
             "GPU resource requirement present but target GPU detection was skipped. "
