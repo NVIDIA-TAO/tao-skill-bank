@@ -10,14 +10,14 @@ NVIDIA <br>
 Apache-2.0 AND CC-BY-4.0 <br>
 
 ## Use Case: <br>
-Developers and engineers use this skill to execute or resume the PAS DEFT workflow on local NVIDIA Docker. The workflow establishes a zero-shot baseline, analyzes weak attributes, mines a caption pool, selects samples without reusing evaluation data, retrains, and repeats until the approved metric target passes or the finite iteration budget is exhausted. A target-free run executes its approved budget and reports the best result. <br>
+Developers and engineers use this skill to execute or resume the PAS DEFT workflow on Docker, SLURM, Kubernetes, Brev, or a TAO-capable virtualenv. The workflow establishes a zero-shot baseline, analyzes weak attributes, mines a caption pool, selects samples without reusing evaluation data, retrains, and repeats until the approved metric target passes or the finite iteration budget is exhausted. A target-free run executes its approved budget and reports the best result. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: GPU/container cost, interrupted multi-stage runs, stale artifacts, data leakage, or incorrect metric evidence can make an iterative result unreliable. <br>
-Mitigation: The skill uses one explicit approval boundary before side effects, a bounded loop, deterministic config and container wrappers, exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. Credential files are never opened or sourced, and credential values are never printed or persisted. <br>
+Mitigation: The skill uses one explicit approval boundary before side effects, a bounded loop, deterministic config and platform-neutral action bundles, native job-record plus exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. Credentials are inherited only from the launching process environment; credential files are never opened or sourced, and values are never printed, inspected, or persisted. <br>
 
 ## Reference(s): <br>
 - [Pipeline and State](references/pipeline-and-state.md) <br>
@@ -29,6 +29,7 @@ Mitigation: The skill uses one explicit approval boundary before side effects, a
 - [Mining and Selection](references/mining.md) <br>
 - [Visualization](references/visualization.md) <br>
 - [Scripts and Stage Adapters](references/scripts-and-agents.md) <br>
+- [Platform Execution](references/platform-execution.md) <br>
 
 ## Skill Output: <br>
 **Output Type(s):** [Shell commands, HTML report, JSON state, JSONL event log, metrics and model artifacts] <br>

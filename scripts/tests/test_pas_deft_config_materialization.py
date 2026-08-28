@@ -56,6 +56,8 @@ def _base_argv(tmp_path: Path) -> tuple[list[str], Path, Path]:
             str(images_archive),
             "--metadata-archive",
             str(metadata_archive),
+            "--platform",
+            "docker",
             "--max-iterations",
             "10",
         ],
@@ -272,6 +274,42 @@ def test_test_split_survives_state_initialization_and_audit(tmp_path):
     assert typed.gap_analysis.queries_per_slice == 50
     assert typed.mining.topn == 25
     assert typed.mining.knn_metric == "cosine"
+
+
+def test_schema_v3_approval_remains_valid_as_local_docker(tmp_path):
+    _, results, dataset = _materialize(tmp_path)
+    approval_path = results / "config" / "approval.json"
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval["schema_version"] = "3"
+    approval.pop("platform")
+    approval.pop("docker_remote")
+    approval.pop("virtualenvs")
+    approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8")
+
+    init = subprocess.run(
+        _init_command(results, dataset, approval),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert init.returncode == 0, init.stderr
+    state = json.loads((results / "deft_state.json").read_text(encoding="utf-8"))
+    assert state["config"]["platform"] == "docker"
+    assert state["config"]["docker_remote"] is False
+    audit = subprocess.run(
+        [
+            sys.executable,
+            str(PAS_SCRIPTS / "audit_deft_run.py"),
+            "--results-dir",
+            str(results),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert audit.returncode == 0, audit.stderr
+    assert "DEFT_RUN_STATUS=IN_PROGRESS" in audit.stdout
 
 
 @pytest.mark.parametrize(

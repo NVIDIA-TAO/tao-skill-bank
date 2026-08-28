@@ -12,12 +12,12 @@ categories with distinct colors.
 
 Note: ``create_image_embeddings_task``, ``create_text_embeddings_task``, and
 ``create_video_embeddings_task`` from the Kratos pipeline are omitted — they
-build Kubeflow tasks and cannot be called locally.  Run the equivalent
-dockerised command instead::
-
-    docker run ... {tao_ds_image} embedding image_embeddings \\
-        -e /specs/image_embed_spec.yaml \\
-        input_parquet=/<input> output_parquet=/<output>
+build Kubeflow tasks and are not part of this host utility. Prepare the
+equivalent ``viz_*_embed`` action with ``run_deft_action.py`` and dispatch its
+platform-neutral request through the selected TAO platform's four verbs. The
+immutable action contract supplies the ``embedding image_embeddings`` argv,
+mount aliases, image, and fresh-output checks; callers must not reconstruct a
+platform-specific launch here.
 """
 
 

@@ -48,6 +48,12 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-$cores}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-$cores}"
 
 control_probe='import sys; assert sys.version_info >= (3, 9)'
+if [ "$#" -gt 0 ] && [ "$(basename -- "$1")" = run_deft_action.py ]; then
+  # The platform seam validates tao-artifacts JSON Schemas before submit and
+  # finalize. Do not select an otherwise valid workspace interpreter that
+  # lacks the schema validator and then fail only after mutating action state.
+  control_probe='import sys; assert sys.version_info >= (3, 9); import jsonschema'
+fi
 if [ "$runtime" = true ] && [ ! -f "$script_dir/pas_deft/__init__.py" ]; then
   echo "deft_python: bundled PAS runtime is missing from the installed skill" >&2
   exit 2

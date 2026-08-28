@@ -13,7 +13,7 @@ description: >
   Do not use for standalone CLIP training, one-off evaluation or embedding,
   generic k-NN mining, or AOI/ChangeNet DEFT workflows.
 license: Apache-2.0 AND CC-BY-4.0
-compatibility: Requires Docker, NVIDIA Container Toolkit, accessible NVIDIA GPUs, the two PAS dataset export archives, and Python 3.9+ with the documented runtime dependencies.
+compatibility: Requires one supported TAO execution platform (Docker, SLURM, Kubernetes, Brev, or virtualenv), accessible NVIDIA GPUs, the two PAS dataset export archives, and Python 3.9+ for control; virtualenv execution additionally requires the documented CPython 3.12 pyt and ds profiles.
 metadata:
   author: NVIDIA Corporation
   version: "0.4.0"
@@ -39,14 +39,19 @@ workflow logic, templates, and host adapters ship with this skill; customers do
 not need a separate source checkout. The bundled scripts make stage calls
 deterministic without adding another orchestration layer.
 
-This skill supports local Docker only. Do not ask the user to choose a
-platform or silently translate the workflow to SLURM, Kubernetes, or Brev.
+This skill supports every packaged TAO execution platform: Docker, SLURM,
+Kubernetes, Brev, and virtualenv. The workflow produces a platform-neutral,
+schema-validated action bundle; the selected platform skill owns native
+`submit`/`status`/`logs`/`cancel` and the job-record.
+Virtualenv execution uses separate immutable `pyt` and `ds` runtime profiles;
+the workspace control `.venv` is not an execution runtime.
 
 ## Entry Contract
 
-`tao-deft-pas` and `tao-run-deft-pas` select this same workflow. PAS supports
-local Docker only, so that declaration is the platform selection. State it and
-do not ask the user to choose a platform.
+`tao-deft-pas` and `tao-run-deft-pas` select this same workflow. If the user
+did not choose a platform, ask once among Docker, SLURM, Kubernetes, Brev, and
+virtualenv; never default to Docker. On resume, the immutable platform in
+`deft_state.json` is already the selection and must not be changed.
 
 Use two intake phases:
 
@@ -73,7 +78,7 @@ Use two intake phases:
    `<workspace>/results/run_*/deft_state.json`. Read the minimal identity fields
    and present a resume candidate only when `workflow` is exactly
    `tao-run-deft-pas`; never offer AOI or unidentified DEFT state as PAS.
-   Do not validate large archives to EOF or inspect Docker, images, GPUs, or
+   Do not validate large archives to EOF or inspect platforms, images, GPUs, or
    credentials yet.
 2. If `max_iterations` or a time budget is absent, ask one consolidated
    question for that required value and any genuinely ambiguous path/run
@@ -90,6 +95,7 @@ After required intake is resolved, discover and validate:
   limit can be estimated;
 - metric name, query type, operator, and optional target;
 - whether the deployment requires authenticated Hugging Face model access;
+- selected TAO execution platform and its platform-specific prerequisites;
 - any explicit epoch, GPU, mining, continual-learning, or visualization
   overrides.
 
@@ -122,18 +128,19 @@ signatures.
 Perform only read-only discovery before approval: resolve paths, inspect file
 metadata and archives, check process-environment variable presence, inspect
 local images, inspect GPUs, and audit an existing run. Credentials come only
-from the launching process environment. Never open, source, grep, or copy a
-credential file. If a required variable is absent, tell the user which name to
-export in the shell that launches the agent; never ask for its value in chat.
-Do not inspect credential-file metadata when no credential is needed. If the
-user explicitly asks for a file-permission check, `stat` only that named file,
-warn about group/other readability, and still do not load it.
+from the launching process environment; never open or source a credential file,
+and never print, grep, copy, or echo a credential value. If a required variable
+is absent, tell the user which name
+to export in the shell that launches the agent; never ask for its value in
+chat. Do not inspect credential-file metadata when no credential is needed. If
+the user explicitly asks for a file-permission check, `stat` only that named
+file and warn about group/other readability.
 
 Show the summary defined in `references/preflight.md`, including every
 parameter and source, planned file creation/extraction, image pulls, estimated
-runtime, and resume status. Wait for explicit approval before Docker login or
-pulls, package installation, archive extraction, config/state creation, or any
-write under the workspace.
+runtime, and resume status. Wait for explicit approval before registry login or
+pulls, platform submit, package installation, archive extraction, config/state
+creation, or any write under the workspace.
 
 If an approved parameter later changes, show the changed summary rows and get
 approval again before continuing. No confirmation is needed between unchanged,
@@ -159,12 +166,14 @@ already-approved stages.
    terminal `FAILED`, report the failure and launch no more work. For
    `COMPLETE`, do not rerun a stage.
 3. Read only the current stage reference named by `read_before_action`. Use
-   `run_pas_stage.py` for bundled PAS host stages and
-   `run_deft_container.py` for every TAO container command. These wrappers
-   reconstruct paths and images from state on each call, so do not depend on a
-   previous `cd` or `export`.
+   `run_pas_stage.py` for bundled PAS host stages. For every TAO action, use
+   `run_deft_action.py prepare`, reconcile any interrupted launch, bind the
+   exact request-owned job-record before native submit, dispatch the emitted
+   bundle through the selected platform's four verbs, synchronize remote
+   outputs, capture native logs, then use `run_deft_action.py finalize`. Follow
+   `references/platform-execution.md`; never assemble an untracked launch.
 4. A command succeeds only when its exit status is zero and its documented
-   output checks pass. Redirect verbose output to the wrapper-owned log;
+   output checks pass. Capture verbose output at the action-owned log path;
    inspect the final error block or at most the last 40 lines.
 5. Commit each successful or terminally failed stage exactly once with
    `commit_stage.py`. It validates artifact structure, freshness, iteration
@@ -224,9 +233,9 @@ failing visualization mid-run without revising and reapproving the config.
   that range. Once the KPI passes, the only legal next transition is
   `loop_stop`. Do not mine or train again.
 - Monitoring defaults to attached (`long_running_enabled=true`, five-minute
-  updates). Use terminal-condition polling: for a deliberately backgrounded
-  container, poll its wrapper-owned status evidence no more often than every
-  30 seconds, continuing through finalize, commit, audit, and the next stage.
+  updates). Use terminal-condition polling: retain the selected platform's job
+  id and poll its native status no more often than every 30 seconds, continuing
+  through finalize, commit, audit, and the next stage.
   The bounded workflow's terminal audit status is the end condition, so this is
   not open-ended polling.
 - Never send a final response while an approved run is nonterminal. A final
@@ -297,6 +306,7 @@ HTML file, or assistant statement alone is not completion evidence.
 |---|---|
 | read-only checks, approval summary, initialization | `references/preflight.md` |
 | stage commands and script interfaces | `references/scripts-and-agents.md` |
+| platform staging, four verbs, job records, finalization | `references/platform-execution.md` |
 | state transitions and resume behavior | `references/pipeline-and-state.md` |
 | dataset/archive contract | `references/data-layout.md` |
 | KPI parsing and evidence | `references/metric-contract.md` |
