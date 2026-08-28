@@ -65,7 +65,7 @@ K8S_VALS = {
     "NAMESPACE_JSON": '"default"',
     "TTL_SECONDS_JSON": "3600",
     "IMAGE_PULL_SECRETS_JSON": '[{"name":"ngc-pull-secret"}]',
-    "IMAGE_JSON": '"nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"',
+    "IMAGE_JSON": f'"{COMMON["IMAGE"]}"',
     "COMMAND_JSON": '["python3"]',
     "ARGS_JSON": '["-c","print(1)"]',
     "NUM_GPUS_JSON": '"1"',

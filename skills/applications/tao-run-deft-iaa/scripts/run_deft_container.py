@@ -1,9 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/run_deft_container.py
 """Run one IAA DEFT Docker command with persistent mounts and status evidence.
+=======
+"""Legacy schema-v1 Docker adapter for existing PAS DEFT runs.
+>>>>>>> b99df7e ([TAO-0][Bugfix] Run PAS DEFT actions on every TAO platform (#144)):skills/applications/tao-run-deft-pas/scripts/run_deft_container.py
 
-This wrapper reconstructs every value from ``deft_state.json`` on each call;
+New runs use ``run_deft_action.py`` and a selected platform consumer. This
+compatibility wrapper reconstructs every value from ``deft_state.json`` on each call;
 it never relies on a previous shell export.  It records the Docker exit code
 and log path atomically and never places credential values in argv or status.
 """

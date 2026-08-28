@@ -24,6 +24,8 @@ from typing import Any
 import yaml
 
 from metric_contract import validate_contract
+from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
+from virtualenv_runtime import resolve_virtualenv_profiles
 
 
 SPEC_NAMES = (
@@ -59,7 +61,7 @@ def _gpu_ids(raw: str, count: int) -> list[int]:
 
 
 def _workspace_child(path: pathlib.Path, workspace: pathlib.Path, name: str) -> pathlib.Path:
-    resolved = path.expanduser().resolve()
+    resolved = safe_absolute_path(path, name)
     try:
         relative = resolved.relative_to(workspace)
     except ValueError as exc:
@@ -79,7 +81,7 @@ def _load_yaml(path: pathlib.Path) -> dict[str, Any]:
 
 
 def _existing_path(path: pathlib.Path, name: str, *, directory: bool) -> pathlib.Path:
-    resolved = path.expanduser().resolve()
+    resolved = safe_absolute_path(path, name, require_exists=True)
     valid = resolved.is_dir() if directory else resolved.is_file()
     if not valid or (not directory and resolved.stat().st_size == 0):
         kind = "directory" if directory else "non-empty file"
@@ -157,11 +159,28 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     templates = skill_root / "specs"
     runtime_dir = skill_root / "scripts" / "iaa_deft"
     runtime_sha256 = _python_tree_sha256(runtime_dir)
-    workspace = args.workspace.expanduser().resolve()
+    workspace = safe_absolute_path(
+        args.workspace, "--workspace", require_exists=True
+    )
     if not workspace.is_dir() or workspace == pathlib.Path(workspace.anchor):
         raise ValueError(f"--workspace must be an existing non-root directory: {workspace}")
     results_dir = _workspace_child(args.results_dir, workspace, "--results-dir")
     dataset_root = _workspace_child(args.dataset_root, workspace, "--dataset-root")
+    virtualenvs = resolve_virtualenv_profiles(
+        platform=args.platform,
+        legacy=args.virtualenv,
+        pyt=args.pyt_virtualenv,
+        ds=args.ds_virtualenv,
+        probe_imports=True,
+    )
+    if args.docker_remote and args.platform != "docker":
+        raise ValueError("--docker-remote is valid only with --platform docker")
+    if virtualenvs is not None:
+        control_environment = (workspace / ".venv").resolve()
+        if any(path == control_environment for path in virtualenvs.values()):
+            raise ValueError(
+                "TAO execution profiles must be separate from the workspace control .venv"
+            )
     images_archive = _existing_path(
         args.images_archive, "--images-archive", directory=False
     )
@@ -186,6 +205,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "deft_state.json or choose a fresh --results-dir"
         )
     config_dir = results_dir / "config"
+    safe_absolute_path(config_dir, "run config directory")
 
     positive = {
         "max_iterations": args.max_iterations,
@@ -284,8 +304,20 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     _atomic_json(
         config_dir / "approval.json",
         {
+<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/prepare_deft_config.py
             "schema_version": "3",
             "workflow": "tao-run-deft-iaa",
+=======
+            "schema_version": "4",
+            "workflow": "tao-run-deft-pas",
+            "platform": args.platform,
+            "docker_remote": args.docker_remote,
+            "virtualenvs": (
+                {name: str(path) for name, path in virtualenvs.items()}
+                if virtualenvs is not None
+                else None
+            ),
+>>>>>>> b99df7e ([TAO-0][Bugfix] Run PAS DEFT actions on every TAO platform (#144)):skills/applications/tao-run-deft-pas/scripts/prepare_deft_config.py
             "workspace": str(workspace),
             "results_dir": str(results_dir),
             "dataset_root": str(dataset_root),
@@ -312,6 +344,13 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "num_gpus": args.num_gpus,
         "gpu_ids": host_gpu_ids,
         "container_gpu_ids": container_gpu_ids,
+        "platform": args.platform,
+        "docker_remote": args.docker_remote,
+        "virtualenvs": (
+            {name: str(path) for name, path in virtualenvs.items()}
+            if virtualenvs is not None
+            else None
+        ),
         "requires_hf_token": args.requires_hf_token,
         "iaa_deft_bundle_sha256": runtime_sha256,
         "approval_manifest": str(config_dir / "approval.json"),
@@ -326,6 +365,38 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--images-archive", required=True, type=pathlib.Path)
     parser.add_argument("--metadata-archive", required=True, type=pathlib.Path)
     parser.add_argument("--checksums-file", type=pathlib.Path)
+    parser.add_argument(
+        "--platform",
+        default="docker",
+        choices=SUPPORTED_PLATFORMS,
+        help="TAO execution platform (default: docker for CLI compatibility).",
+    )
+    parser.add_argument(
+        "--docker-remote",
+        action="store_true",
+        help=(
+            "Approve Docker execution through a remote DOCKER_HOST; requires "
+            "remote staging/absence attestation instead of launcher-local mounts."
+        ),
+    )
+    parser.add_argument(
+        "--virtualenv",
+        type=pathlib.Path,
+        help=(
+            "Compatibility form: one environment that independently satisfies both "
+            "pyt and ds profiles; cannot be combined with profile-specific options."
+        ),
+    )
+    parser.add_argument(
+        "--pyt-virtualenv",
+        type=pathlib.Path,
+        help="Python 3.12 TAO PyTorch execution profile for train/evaluate.",
+    )
+    parser.add_argument(
+        "--ds-virtualenv",
+        type=pathlib.Path,
+        help="Python 3.12 TAO data-services execution profile for embedding/mining.",
+    )
     parser.add_argument(
         "--requires-hf-token",
         action="store_true",

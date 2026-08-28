@@ -1,7 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/command_contract.py
 """Exact Docker argv contracts for the IAA DEFT workflow."""
+=======
+"""Exact platform-neutral TAO argv contracts for the PAS DEFT workflow."""
+>>>>>>> b99df7e ([TAO-0][Bugfix] Run PAS DEFT actions on every TAO platform (#144)):skills/applications/tao-run-deft-pas/scripts/command_contract.py
 
 from __future__ import annotations
 

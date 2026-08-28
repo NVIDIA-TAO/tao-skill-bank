@@ -58,6 +58,8 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
             str(images_archive),
             "--metadata-archive",
             str(metadata_archive),
+            "--platform",
+            "docker",
             "--max-iterations",
             "1",
             "--num-gpus",
