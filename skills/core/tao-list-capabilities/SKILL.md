@@ -35,8 +35,8 @@ Run `scripts/list_tao_capabilities.py` for general capability questions, or
 For a general capabilities answer, run the packaged helper:
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_tao_capabilities.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} --format text
+${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/list_tao_capabilities.py \
+  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} --format text
 ```
 
 Use the helper output as the source of truth for the answer instead of manually
@@ -60,8 +60,8 @@ run, use the packaged model-list script instead of manually scanning model
 folders:
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_tao_models.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} --scope all --format text
+${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/list_tao_models.py \
+  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} --scope all --format text
 ```
 
 The model list comes from `skills/models/schemas.manifest.json`.
@@ -72,13 +72,13 @@ When the user asks what models are capable with AutoML, use the same model-list
 script in AutoML mode, or the compatibility wrapper:
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_tao_models.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} --scope automl --format text
+${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/list_tao_models.py \
+  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} --scope automl --format text
 ```
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_automl_support.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} --format text
+${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/list_automl_support.py \
+  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} --format text
 ```
 
 Use `--action distill`, `--action prune`, or `--action quantize` when the user

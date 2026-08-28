@@ -8,8 +8,8 @@ created.
 Prefer the packaged preflight helper when the needed inputs are available:
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/check_tao_launch_preflight.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} \
+${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/check_tao_launch_preflight.py \
+  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} \
   --platform <platform> \
   --container-image <selected-image> \
   --path train_annotation=<path> \

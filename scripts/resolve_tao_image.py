@@ -22,7 +22,7 @@ import yaml
 from resolve_tao_model import backend_contracts, select_implementation_backend
 
 DEFAULT_SKILL_BANK = Path(
-    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
+    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")
 )
 
 

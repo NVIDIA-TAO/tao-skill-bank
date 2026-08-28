@@ -58,7 +58,7 @@ The default template is `assets/default_nearest_neighbors.yaml`.
 
 ## Quick Start
 
-Run from the `tao-skills-external` repo root. Resolve the pinned TAO Data Services image from `versions.yaml`, verify the spec, mount the run root with identical host/container paths, and stream the Docker logs.
+Run from the `tao-skill-bank` repo root. Resolve the pinned TAO Data Services image from `versions.yaml`, verify the spec, mount the run root with identical host/container paths, and stream the Docker logs.
 
 ```bash
 SPEC=/absolute/path/to/nearest_neighbors.yaml
