@@ -12,6 +12,7 @@ source, runtime, and output checkpoint provenance.
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
 import json
 import os
@@ -138,6 +139,7 @@ python -m cosmos_rl.model_preparation.vlm_safetensors \
   --checkpoint-path "$source_value" --output-path "/output/$OUTPUT_NAME" \
   --vlm-model-name "$architecture_value"
 """
+    runtime_user = os.environ.get("USER") or os.environ.get("LOGNAME") or getpass.getuser() or "tao"
     result = [
         # Run as the invoking user so the host-side validation pass can read
         # the prepared files; the selected backend image keeps its venv readable.
@@ -149,6 +151,16 @@ python -m cosmos_rl.model_preparation.vlm_safetensors \
         "bash",
         "--user",
         f"{os.getuid()}:{os.getgid()}",
+        "-e",
+        f"USER={runtime_user}",
+        "-e",
+        f"LOGNAME={runtime_user}",
+        "-e",
+        "HOME=/cache/tao-home",
+        "-e",
+        "XDG_CACHE_HOME=/cache/tao-home/.cache",
+        "-e",
+        "TORCHINDUCTOR_CACHE_DIR=/cache/torchinductor",
         "-e",
         f"BASE_MODEL={source}",
         "-e",
