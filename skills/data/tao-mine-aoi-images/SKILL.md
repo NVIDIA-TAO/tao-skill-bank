@@ -35,6 +35,13 @@ Schema keys can rename between data-services releases (the RCA skill saw `infere
 1. **Target parquet** — the gap-analysis output, typically `mining_gaps.parquet` from `tao-route-visual-changenet-samples` (or `gaps.parquet` from `tao-analyze-gaps-visual-changenet` if routing was skipped). Required column: `filepath`. If `label` is also present, label-aware filtering during mining is available; otherwise the mining task silently no-ops the filter.
 2. **Source pool** — a parquet of candidate images to mine against, with a `filepath` column. If the user only has a CSV, convert it to a parquet **with the same columns** before Step 2. For label-aware filtering, the pool must also carry a `label` column.
 3. **Embedding spec file** — a YAML containing `model`, `model_path`, `batch_size`, and (only when `model_path` is a TAO `.pth`/`.ckpt`) `model_config_path`. Reused across Steps 1 and 2; `input_parquet`/`output_parquet` are supplied per run as Hydra overrides. The **same** spec MUST drive both embedding steps — embeddings from different encoders are not comparable, and mismatched encoders are the most common cause of "the mined images look unrelated" reports.
+   **Bundle launches must declare `images_root`:** the input parquet carries
+   image PATHS and this container calls `Image.open()` on each, so the
+   directory those paths point into has to be mounted. DEFT's `stage_bundle.py`
+   tables (`mining.embed_*` / `data_mining.embed_*`) require
+   `--param images_root=<root>` for exactly this reason; a direct `docker run`
+   with `-v $WORKSPACE:$WORKSPACE` hides the requirement, and a missing image
+   is a FileNotFoundError on a path the parquet supplied — not a mount error.
    **Closed schema:** `ImageEmbeddingsConfig` rejects unknown keys at Hydra merge — do NOT add `results_dir` or any other extra key, or the job fails with `Key 'results_dir' not in 'ImageEmbeddingsConfig'` before doing anything.
 4. **Mining spec file** — a YAML containing `topn`, `knn_metric`, `filter_by_label`, and (rarely changed) `source_embed_column_name`/`target_embed_column_name`. `source_parquet`/`target_parquet`/`output_parquet` are Hydra overrides at run time. SigLIP and CLIP embeddings should use `knn_metric: cosine`. When `filter_by_label: true` but either embedding parquet lacks a `label` column, the container logs a warning and proceeds **without** filtering.
    **Closed schema** likewise: `TmmConfig` accepts only the keys above; an added `results_dir` hard-fails the merge.
