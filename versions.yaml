@@ -29,9 +29,17 @@
 
 images:
   tao_toolkit:
+<<<<<<< HEAD
     pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
     deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-53-multiarch
     data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
+=======
+    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch
+    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch
+    data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch
+    deft_pas_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
+    deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
+>>>>>>> 48f22fa ([TAO-0][Bugfix] Type and bind the PAS 7.2 execution contract (#198))
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
     cosmos_framework:   nvcr.io/nvstaging/tao/cosmos_framework:7.2.0-rc-290-multiarch
     cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-290-multiarch
