@@ -178,7 +178,7 @@ with open(os.path.join(out, "threshold.txt")) as f:
     threshold = float(f.read().strip())
 inference = pd.read_csv(sys.argv[2])
 actual_no_pass = inference["label"].eq("NO_PASS")
-predicted_no_pass = inference["siamese_score"].gt(threshold)
+predicted_no_pass = inference["siamese_score"].ge(threshold)
 tp = int((actual_no_pass & predicted_no_pass).sum())
 fp = int((~actual_no_pass & predicted_no_pass).sum())
 tn = int((~actual_no_pass & ~predicted_no_pass).sum())

@@ -17,7 +17,8 @@ Keep the report tight (1000–1800 words). This is a computational gap analysis,
 - Candidates evaluated: <count>; candidates meeting recall target: <count>
 - Chosen threshold and tie-break reasoning (best F1 → precision → threshold)
 - Confusion matrix at chosen threshold (calculate from the full `inference.csv`
-  using `siamese_score > threshold` as predicted NO_PASS):
+  using `siamese_score >= threshold` as predicted NO_PASS; a NO_PASS sample tied
+  at the threshold is correctly classified and has zero weakness):
 
 | | Predicted NO_PASS | Predicted PASS |
 |--|--|--|

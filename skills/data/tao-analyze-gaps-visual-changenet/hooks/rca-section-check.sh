@@ -26,7 +26,7 @@ checks = [
     ("Top-K Weakest",            5, ["weakness", "siamese_score"]),
     ("Visual Spot Check",        5, ["![", "verdict"]),
     ("Per-Label Breakdown",      0, ["misclassified", "marginal"]),
-    ("Recommended Actions",      0, ["relabel", "augment", "kpi_gaps.parquet"]),
+    ("Recommended Actions",      0, ["relabel", "augment"]),
 ]
 
 warnings = []
@@ -61,7 +61,7 @@ if verdict_m and thr_m:
 # Recommended Actions must reference kpi_gaps.parquet (the headline deliverable)
 rec_m = re.search(r'Recommended Actions(.*)', report, re.DOTALL | re.IGNORECASE)
 if rec_m and 'kpi_gaps.parquet' not in rec_m.group(1).lower():
-    warnings.append("RECOMMENDATIONS: do not reference kpi_gaps.parquet. The augmentation queue is the headline deliverable.")
+    warnings.append("RECOMMENDATIONS: must reference kpi_gaps.parquet. The augmentation queue is the headline deliverable.")
 
 if warnings:
     print("VCN SECTION ISSUES:")
