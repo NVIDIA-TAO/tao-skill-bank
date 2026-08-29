@@ -124,7 +124,7 @@ Collect these before runner construction:
 |---|---|
 | `model_skill` | Resolved model skill directory under `skills/models/`. Resolve user aliases such as `network_arch` to the packaged skill directory first. |
 | `network_arch` | Read from the resolved model skill metadata. |
-| `action` | Action to optimize — `train`, `evaluate`, `inference`, `distill`, `prune`, or `quantize` with a packaged schema/template. |
+| `action` | Action to optimize, usually `train`, `evaluate`, `inference`, `distill`, `prune`, or `quantize` with a packaged schema/template. |
 | `platform` | One of the supported TAO platform skills. |
 | `train_dataset` / `eval_dataset` / action inputs | Use model-specific spec keys and layout. Non-train actions may also need parent/teacher checkpoints, calibration data, or pruned artifacts. |
 | `results_root` | Local, Lustre, or S3 path appropriate for the platform. |
@@ -233,7 +233,7 @@ adjustment in `result["history"][i]["adjustments"]`.
 | `hyperband`, `asha` | Many configs, cheap early rungs; ASHA is parallel-friendly. | `max_epochs`, `reduction_factor`, optional `max_concurrent` |
 | `bohb`, `dehb` | Mixed Bayesian/evolutionary search with multi-fidelity budgets. | same rung budget fields as Hyperband |
 | `pbt` | Long training where schedules should mutate during training. | population and generation budget |
-| `llm`, `hybrid`, `autoresearch` | User explicitly wants LLM-guided search with a configured endpoint. | LLM endpoint config plus budget |
+| `llm`, `hybrid`, `autoresearch` | User explicitly wants LLM-guided search and an endpoint is configured. | LLM endpoint config plus budget |
 
 For `evaluate` or `inference`, default to Bayesian/BFBO-style search over the
 selected action's prompt, decoding, preprocessing, or runtime config knobs.
