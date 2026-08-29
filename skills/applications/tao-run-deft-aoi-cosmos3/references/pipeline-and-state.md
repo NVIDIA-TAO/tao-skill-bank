@@ -169,8 +169,8 @@ from its latest event and `stage_completed` value.
 
 ## Stop and completion
 
-For an ordinary stop, run `scripts/deft_context.py --stage finalize`, then
-`scripts/finalize_run.py` after a completed `benchmark_metrics`. Pass exactly
+For an ordinary stop, run `"$PYTHON" scripts/deft_context.py --stage finalize`, then
+`"$PYTHON" scripts/finalize_run.py` after a completed `benchmark_metrics`. Pass exactly
 one stop reason:
 
 - `--stop-reason metric_met` when the final Benchmark result passes; or
@@ -182,7 +182,7 @@ state becomes `failed`; a failed terminal run is not KPI completion.
 
 `finalize_run.py` renders the report before committing `loop_stop`; the commit
 validates and records that report and refreshes it again. After optional token
-alignment, run `render_report.py --require-terminal` once so the final artifact contains the
+alignment, run `"$PYTHON" scripts/render_report.py --require-terminal` once so the final artifact contains the
 aligned evidence. The final completion claim requires
 a fresh state read showing `status == "complete"`, a complete baseline, and a
 complete final iteration. A hard-stop claim instead requires

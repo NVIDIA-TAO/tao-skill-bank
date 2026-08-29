@@ -17,6 +17,10 @@ import unittest
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 APPLICATIONS_ROOT = SKILL_ROOT.parent
 REPO_ROOT = SKILL_ROOT.parents[2]
+SKILL_NAMES = (
+    "tao-run-deft-aoi",
+    "tao-run-deft-aoi-cosmos3",
+)
 DIRECT_CONTROL_SCRIPTS = {
     "deft_context.py",
     "deft_exec.py",
@@ -26,12 +30,27 @@ DIRECT_CONTROL_SCRIPTS = {
 SCRIPT_REFERENCE_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])scripts/(?P<name>[A-Za-z0-9_.-]+\.(?:py|sh))"
 )
+SHELL_CONTINUATION_RE = re.compile(r"\\\n[ \t]*")
+BARE_SCRIPT_EXEC_RE = re.compile(
+    r"(?m)(?:^[ \t]*|(?:&&|\|\||;|\$\()[ \t]*|bash[ \t]+-lc[ \t]+[\"'][ \t]*)"
+    r"(?:[A-Z_][A-Z0-9_]*=\$\([ \t]*)?"
+    r"[\"']?(?P<command>(?:(?:\$[A-Z_]+|<[^>]+>)[^ \t\n]*/|\./)?"
+    r"scripts/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:py|sh))"
+    r"(?=[\"' \t;)])"
+)
+INLINE_BARE_SCRIPT_EXEC_RE = re.compile(
+    r"\b(?:call|execute|invoke|run|through|use|using|with)\s+`"
+    r"(?P<command>(?:(?:\$[A-Z_]+|<[^>]+>)[^ `]*/|\./)?"
+    r"scripts/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:py|sh))(?=[ `])",
+    re.IGNORECASE,
+)
 
 
 def _documented_direct_control_scripts() -> dict[pathlib.Path, set[pathlib.Path]]:
     """Find DEFT control programs that app docs instruct agents to execute."""
     found: dict[pathlib.Path, set[pathlib.Path]] = {}
-    for skill_root in sorted(APPLICATIONS_ROOT.glob("tao-run-deft-*")):
+    for name in SKILL_NAMES:
+        skill_root = APPLICATIONS_ROOT / name
         docs = [skill_root / "SKILL.md"]
         references = skill_root / "references"
         if references.is_dir():
@@ -51,6 +70,28 @@ def _documented_direct_control_scripts() -> dict[pathlib.Path, set[pathlib.Path]
     return found
 
 
+def _documented_bare_invocations(skill_root: pathlib.Path) -> list[str]:
+    """Return shell command positions that execute a script without an interpreter."""
+    docs = [skill_root / "SKILL.md"]
+    docs.extend(sorted((skill_root / "references").glob("*.md")))
+    found: list[str] = []
+    for doc in docs:
+        text = SHELL_CONTINUATION_RE.sub(" ", doc.read_text(encoding="utf-8"))
+        for pattern in (BARE_SCRIPT_EXEC_RE, INLINE_BARE_SCRIPT_EXEC_RE):
+            for match in pattern.finditer(text):
+                line = text.count("\n", 0, match.start()) + 1
+                found.append(
+                    f"{doc.relative_to(skill_root)}:{line}: {match.group('command')}"
+                )
+    return found
+
+
+def _strip_file_exec_bits(root: pathlib.Path) -> None:
+    for path in root.rglob("*"):
+        if path.is_file():
+            path.chmod(0o644)
+
+
 def _companion_source(category: str, name: str) -> pathlib.Path:
     candidates = (
         SKILL_ROOT.parent / name,
@@ -66,7 +107,49 @@ def _companion_source(category: str, name: str) -> pathlib.Path:
 
 
 class ExecBitAndPackagingTests(unittest.TestCase):
-    def test_documented_direct_control_scripts_are_executable(self) -> None:
+    def test_documented_invocations_survive_exec_bit_stripped_install(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            skills_root = pathlib.Path(temporary) / ".claude" / "skills"
+            skills_root.mkdir(parents=True)
+            installed = []
+            for name in SKILL_NAMES:
+                destination = skills_root / name
+                shutil.copytree(
+                    APPLICATIONS_ROOT / name,
+                    destination,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
+                _strip_file_exec_bits(destination)
+                installed.append(destination)
+
+            bare = [
+                invocation
+                for skill_root in installed
+                for invocation in _documented_bare_invocations(skill_root)
+            ]
+            self.assertFalse(
+                bare,
+                "documented commands depend on an executable script bit: "
+                + ", ".join(bare),
+            )
+
+            environment = os.environ.copy()
+            environment["DEFT_PYTHON"] = "/bin/true"
+            for skill_root in installed:
+                launcher = skill_root / "scripts" / "deft_python.sh"
+                self.assertEqual(launcher.stat().st_mode & 0o111, 0)
+                result = subprocess.run(
+                    ["bash", str(launcher)],
+                    cwd=skill_root,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), "/bin/true")
+
+    def test_control_scripts_remain_executable_in_repo(self) -> None:
         documented = _documented_direct_control_scripts()
         self.assertTrue(documented, "no directly invoked DEFT control scripts found")
         self.assertTrue(

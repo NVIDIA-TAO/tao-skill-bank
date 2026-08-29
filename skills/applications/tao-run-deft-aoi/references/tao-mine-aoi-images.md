@@ -34,7 +34,7 @@ directory. If the selected source CSV is absent, empty, or its declared paths
 cannot be resolved, stop in Pre-Flight; never scan the workspace image tree to
 invent source rows.
 
-Before converting CSV to parquet, run `scripts/resolve_mining_pool.py` with
+Before converting CSV to parquet, run `"$PYTHON" scripts/resolve_mining_pool.py` with
 the three paths persisted in state. The resolver checks direct paths, paths
 relative to the independent images root, golden-directory plus basename, and
 the ChangeNet object/light filename form. It writes one canonical `filepath`
@@ -78,7 +78,8 @@ Preserve the Docker return code (do not hide it behind `| tail`), then require
 both `rc=0` and `Execution status: PASS`; any `Execution status: FAIL` is a
 hard stop even when Docker exits zero. In air-gap mode pass
 `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. Run host-side parquet and CSV
-checks through this orchestrator's `<skill_root>/scripts/deft_python.sh`, not a
+checks through the interpreter selected by
+`bash <skill_root>/scripts/deft_python.sh`, not a
 similarly named path guessed under the mapped data skill.
 
 Use this capture shape for each mapped command (replace `<docker command>` and
@@ -133,7 +134,8 @@ whose counts disagree are not valid stage artifacts.
 Run the history filter after cosine retention:
 
 ```bash
-<skill_root>/scripts/deft_python.sh \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" \
   <bank_root>/skills/data/tao-mine-aoi-images/scripts/filter_mined_history.py \
   --candidate-parquet <abs>/mined_candidates.parquet \
   --output-parquet <abs>/mined.parquet \
@@ -204,7 +206,8 @@ This snippet documents the schema only; use `commit_stage.py` for the write.
 ## Log Stage
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" <skill_root>/scripts/commit_stage.py \
     --results-dir "${RESULTS_DIR}" \
     --iter-label iter${N} \
     --stage data_mining \
