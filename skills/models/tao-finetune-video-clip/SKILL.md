@@ -2,15 +2,18 @@
 name: tao-finetune-video-clip
 description: >-
   InternVideo2-CLIP L14 (TAO video_clip) for video-text retrieval, zero-shot classification,
-  embedding extraction, LoRA fine-tuning, and ONNX export. Use when the user asks to
-  "fine-tune IV2CLIP", "run video_clip train/evaluate/inference/export", "InternVideo2-CLIP
-  on KPI chunks", or "TAO video_clip on vadr1_chunks JSON".
+  embedding extraction, LoRA fine-tuning, ONNX export, and TensorRT deployment. Use when
+  the user asks to "fine-tune IV2CLIP", "run video_clip train/evaluate/inference/export",
+  "build a Video-CLIP TensorRT engine", "InternVideo2-CLIP on KPI chunks", or "TAO
+  video_clip on vadr1_chunks JSON".
 license: Apache-2.0
 compatibility: >-
-  Requires docker + nvidia-container-toolkit and the pinned TAO video_clip container (see
-  references/skill_info.yaml), or a local tao-pytorch checkout + tao-cli venv for virtualenv
-  runs. MobileCLIP + InternVideo2 weights must be on disk for offline eval (HF LFS may be
-  blocked in CI). Metadata JSON uses vadr1_chunks with absolute video_path entries.
+  Requires docker + nvidia-container-toolkit and the pinned TAO video_clip PyTorch and
+  Deploy containers (see references/skill_info.yaml and
+  references/tao-deploy-video-clip.skill_info.yaml), or a local tao-pytorch checkout +
+  tao-cli venv for PyTorch virtualenv runs. MobileCLIP + InternVideo2 weights must be on
+  disk for offline eval (HF LFS may be blocked in CI). Metadata JSON uses vadr1_chunks
+  with absolute video_path entries.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -25,15 +28,20 @@ tags:
 - internvideo2
 - iv2clip
 - fine-tuning
+- deployment
 ---
 
 # InternVideo2-CLIP (TAO video_clip)
 
 > **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
 
-TAO task **`video_clip`** wraps OpenGVLab **InternVideo2-CLIP L14**. The CLI entrypoint is `video_clip` with actions `train`, `evaluate`, `inference`, `export`, and `default_specs`.
+TAO task **`video_clip`** wraps OpenGVLab **InternVideo2-CLIP L14**. The PyTorch image provides `train`, `evaluate`, `inference`, `export`, and `default_specs`. TAO Deploy provides `gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference`.
 
-Container image and per-action commands are in `references/skill_info.yaml`. Starting specs are in `references/spec_template_*.yaml`. The pinned image is the official TAO PyTorch container, which ships the complete `video_clip` stack (`model.backbones` and the `decord` decode backend).
+Container images and per-action commands are in `references/skill_info.yaml` and `references/tao-deploy-video-clip.skill_info.yaml`. Starting specs are in `references/spec_template_*.yaml`.
+
+> **Release note:** The pinned PyTorch image is the TAO 7.2 release-candidate build validated for Video-CLIP. It includes PyAV 17.1.0 as the primary decoder and ONNXScript 0.7.1 for export, with decord absent. The TAO Deploy image is pinned independently because `gen_trt_engine` and TensorRT-backed actions do not run in the PyTorch image.
+>
+> **Known-broken images:** interim builds cut before tao-pytorch commit `0cc31de4` ship a `video_clip` package with no `model.backbones` submodule, so `train`/`evaluate`/`inference` die at import while `video_clip --help` still exits 0. Images without PyAV also fail at data loading. Run both import checks in the preflight below before pulling data or launching a run.
 
 ## Train Action Policy
 
@@ -66,6 +74,10 @@ workspace/
 │   ├── evaluate.yaml
 │   ├── inference.yaml
 │   └── export.yaml
+├── deploy_specs/
+│   ├── gen_trt_engine.yaml
+│   ├── evaluate.yaml
+│   └── inference.yaml
 └── results/
 ```
 
@@ -102,7 +114,9 @@ Preflight (host):
 docker run --rm "$VIDEO_CLIP_IMAGE" video_clip --help >/dev/null || echo "MISSING: video_clip in container"
 docker run --rm "$VIDEO_CLIP_IMAGE" \
   python -c "import nvidia_tao_pytorch.multimodal.video_clip.model.adapters.internvideo2clip" \
-  >/dev/null 2>&1 || echo "BROKEN IMAGE: video_clip package failed to import — stop and report the image"
+  >/dev/null 2>&1 || echo "BROKEN IMAGE: video_clip package is incomplete (missing model.backbones) — stop, see Release note"
+docker run --rm "$VIDEO_CLIP_IMAGE" python -c "import av; print(av.__version__)" \
+  >/dev/null 2>&1 || echo "BROKEN IMAGE: PyAV is missing — use the pinned FC image; do not install decord"
 nvidia-smi >/dev/null 2>&1 || echo "note: no GPU visible"
 ```
 
@@ -134,6 +148,29 @@ docker run "${DOCKER_COMMON[@]}" "$VIDEO_CLIP_IMAGE" \
   video_clip export -e /specs/export.yaml results_dir=/results
 ```
 
+## TensorRT Deploy
+
+Use the independently pinned TAO Deploy image after PyTorch export. Read `references/tao-deploy-video-clip.md` before running the deploy actions; its templates cover the engine build, retrieval evaluation, and embedding inference contracts.
+
+```bash
+VIDEO_CLIP_DEPLOY_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deploy
+VIDEO_CLIP_DEPLOY_IMAGE="${VIDEO_CLIP_DEPLOY_IMAGE:-$VIDEO_CLIP_DEPLOY_IMAGE_DEFAULT}"
+
+# Verify the independently pinned image before staging artifacts or using a GPU.
+docker run --rm "$VIDEO_CLIP_DEPLOY_IMAGE" video_clip gen_trt_engine --help >/dev/null || \
+  { echo "BROKEN IMAGE: Video-CLIP deploy entrypoint is unavailable" >&2; exit 1; }
+
+docker run --gpus all --rm --shm-size=16g \
+  -v "$RUN_ROOT/deploy_specs:/specs:ro" \
+  -v "$RUN_ROOT/results/export:/models:ro" \
+  -v "$RUN_ROOT/data:/data:ro" \
+  -v "$RUN_ROOT/results/deploy:/results" \
+  "$VIDEO_CLIP_DEPLOY_IMAGE" \
+  video_clip gen_trt_engine -e /specs/gen_trt_engine.yaml
+```
+
+Keep the exported ONNX file, its matching `*_config.yaml`, and its matching `*_tokenizer/` directory together. `gen_trt_engine` copies the sidecars beside the engine so TensorRT `evaluate` and `inference` can reconstruct preprocessing and tokenization.
+
 ## Quick Start (virtualenv — local dev hosts)
 
 On hosts with a `tao-pytorch` checkout and `tao-cli` venv (for example rtdetr-pytorch), run through **`tao-run-on-virtualenv`** instead of Docker:
@@ -161,10 +198,11 @@ video_clip export -e /path/to/export.yaml
 ## Credentials
 
 - **NGC_KEY** — pull the pinned TAO container from `nvcr.io` when it is not cached locally.
-- **HF_TOKEN** (only when weights are not already cached on the host):
-  HuggingFace read token used to resolve the InternVideo2 snapshot named by
-  `model.internvideo2clip_hf_id`. With `HF_HUB_OFFLINE=1` and local MobileCLIP +
-  InternVideo2 weights already on disk, no token is required.
+- **HF_TOKEN** (online Hugging Face download only): Hugging Face read token used
+  when `model.vision_encoder` and `model.clip_head` are `null` and the resolver
+  downloads the InternVideo2 snapshot named by `model.internvideo2clip_hf_id`.
+  For offline CI/eval, stage the complete S3/local snapshot and point both fields
+  at the local files; no Hugging Face token is then required.
 
 Treat tokens as secrets. Export them into the environment or pass them through an
 `--env-file` of bare `KEY=value` lines, rather than inlining values into generated
@@ -204,7 +242,7 @@ Use `dataset.metrics.mode: retrieval` only when `dataset.val.video_text.relevanc
 
 ## Export
 
-`export.encoder_type: separate` writes vision/text ONNX under `export.onnx_file` (base path). Default opset is **23** on the vendor branch. Requires a trained `.pth` at `export.checkpoint`.
+`export.encoder_type: combined` produces the image-and-text ONNX consumed by the Video-CLIP deploy workflow. Keep `export.batch_size: -1` for symbolic/dynamic batch dimensions; a positive value produces a fixed-batch ONNX. Export also writes matching `*_config.yaml` and `*_tokenizer/` sidecars; preserve all three artifacts. Default opset is **23** on the vendor branch. Export requires a trained `.pth` at `export.checkpoint`.
 
 ## LoRA
 
@@ -217,7 +255,10 @@ For vision-LoRA runs, start from `tao-pytorch` `experiment_spec_lora.yaml` or ad
 - **Eval precision**: match `train.precision` (typically `bf16`) or flash-attn paths may fail under fp32 eval.
 - **Empty `action_queries` on normal chunks** become literal `"Normal"` positives during training; exclude `Normal`/`Abnormal` in `dataset.metrics.exclude_categories` for classification eval.
 - **No hard-negative / explicit-neg training** on the vendor branch unless the spec and branch explicitly enable it.
-- **`video_clip --help` is not a health check.** It can exit 0 even when the `video_clip` package fails to import; only the data-free import smoke check in the preflight confirms the actions can run.
+- **`video_clip --help` is not a health check.** It exits 0 on an image whose `video_clip` package is missing `model.backbones`; only the import smoke check in the preflight catches it.
+- **PyAV is the primary Video-CLIP decoder in TAO 7.2.** The loader can fall back to the image's FFmpeg CLI and OpenCV support. A missing `av` import is an image defect: use the pinned FC image. Do not add or force-install decord, because it is not part of the supported TAO 7.2 decode contract.
+- **TensorRT actions use TAO Deploy.** `gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference` must use the independently pinned deploy image and deploy templates, not the PyTorch image/specs.
+- **Deploy sidecars are required.** TensorRT evaluation and text inference need the exported `*_config.yaml` and `*_tokenizer/` beside the engine. Keep them with the ONNX input so engine generation can copy them automatically.
 - **PyTorch ≥ 2.6 defaults to `torch.load(weights_only=True)`** and rejects the TAO checkpoint’s numpy dtype objects with `_pickle.UnpicklingError`. `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` is set in `DOCKER_COMMON` above; keep it for `evaluate`, `inference`, and `export`.
 - **`model/hf/` is a snapshot, not an HF hub cache.** Offline packs stage InternVideo2 weights at repo-relative paths (`stage1/L14/L14_dist_1B_stage2/pytorch_model.bin`, `clip/L14/pytorch_model.bin`), while `HUGGINGFACE_HUB_CACHE` expects a `models--<org>--<repo>/snapshots/<sha>/` tree. Leaving `model.vision_encoder` / `model.clip_head` at `null` sends asset resolution to `hf_hub_download` and fails under `HF_HUB_OFFLINE=1` — point both at the files directly.
 - **CI / skill-eval**: stage weights + remapped JSON under `$WORKSPACE_DIR` from S3; do not rely on HuggingFace LFS downloads at eval time.
@@ -225,3 +266,4 @@ For vision-LoRA runs, start from `tao-pytorch` `experiment_spec_lora.yaml` or ad
 ## References
 
 - Shipped defaults: `tao-pytorch` `nvidia_tao_pytorch/multimodal/video_clip/experiment_specs/` (when developing from source)
+- TAO Deploy workflow: [`references/tao-deploy-video-clip.md`](references/tao-deploy-video-clip.md)

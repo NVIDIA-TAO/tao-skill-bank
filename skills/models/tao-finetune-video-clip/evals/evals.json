@@ -26,5 +26,20 @@
       "Explains that empty action_queries become literal Normal positives and should be excluded via the metrics exclude_categories list",
       "Does not run commands, scripts, or web searches"
     ]
+  },
+  {
+    "id": "tao-finetune-video-clip-tensorrt-deploy",
+    "question": "A user request: \"I exported a combined TAO Video-CLIP ONNX and want to build a TensorRT engine, evaluate retrieval, and extract embeddings. Which image, specs, inputs, and artifacts should I use?\" Identify which TAO skill applies and, reading only that skill's documentation, explain the deploy workflow. Do NOT run any commands, scripts, web searches, or other tools — describe the plan only.",
+    "expected_skill": "tao-finetune-video-clip",
+    "expected_script": null,
+    "ground_truth": "Identify tao-finetune-video-clip and use its independently pinned TAO Deploy workflow: preserve the combined ONNX with its matching *_config.yaml and *_tokenizer/ sidecars; use the deploy gen_trt_engine template to create the TensorRT engine; use explicit-relevance gt_queries plus vadr1_chunks metadata for TensorRT evaluate; and use a text file and/or the gallery query JSON plus metadata for TensorRT inference, which writes text_embeddings.h5 and/or video_embeddings.h5.",
+    "expected_behavior": [
+      "Identifies tao-finetune-video-clip as the relevant skill",
+      "Uses the independently pinned TAO Deploy image for gen_trt_engine and TensorRT evaluate/inference",
+      "Preserves the exported ONNX, *_config.yaml, and *_tokenizer/ sidecars",
+      "States that evaluate requires dataset.val.gt_queries and dataset.val.metadata",
+      "States that inference requires inference.text_file and/or both gallery inputs and names the HDF5 outputs",
+      "Does not run commands, scripts, or web searches"
+    ]
   }
 ]
