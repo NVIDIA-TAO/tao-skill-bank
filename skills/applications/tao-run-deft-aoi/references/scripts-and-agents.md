@@ -2,7 +2,8 @@
 
 ## Using Bundled Scripts
 
-Run every bundled script through `scripts/deft_python.sh`. It selects
+Set `PYTHON=$(bash scripts/deft_python.sh)` before every bundled-script
+command. The launcher selects
 an explicit `DEFT_PYTHON` candidate when supplied, otherwise probes workspace
 and preinstalled interpreters. It never invokes an installer, so it works
 across isolated Claude, Codex, and OpenCode shell calls.
@@ -38,7 +39,8 @@ Commit state changes only through `commit_stage.py`. Never write
 Use one portable form in every harness:
 
 ```bash
-<skill_root>/scripts/deft_python.sh \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" \
   <skill_root>/scripts/commit_stage.py \
   --results-dir /abs/path/results/run_YYYYMMDD_HHMMSS \
   --iter-label iter1 \
@@ -53,9 +55,10 @@ Before an external/container command, validate the stage and execute under the
 persisted policy:
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_context.py \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" <skill_root>/scripts/deft_context.py \
   --state "${RESULTS_DIR}/deft_state.json" --stage data_mining
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_exec.py \
+"$PYTHON" <skill_root>/scripts/deft_exec.py \
   --state "${RESULTS_DIR}/deft_state.json" -- \
   docker run --user "$(id -u):$(id -g)" \
     -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp ...
@@ -73,7 +76,8 @@ the required artifact flags.
 `commit_stage.py` cannot measure LLM token usage at write time. Run `align_token_usage.py` after the loop (or on demand) to backfill real per-stage numbers from the Claude Code transcript JSONL:
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/align_token_usage.py \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" <skill_root>/scripts/align_token_usage.py \
   --state-path /abs/path/results/deft_state.json \
   --cwd /abs/path/to/project-root
 ```
@@ -92,7 +96,8 @@ Normally do not invoke the renderer separately. If a hook reports an error,
 repair the named presentation input and run:
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/render_report.py \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" <skill_root>/scripts/render_report.py \
   --results-dir "${RESULTS_DIR}"
 ```
 
@@ -133,7 +138,7 @@ In air-gap mode, apply `references/air-gap.md` and use only images already
 returned by `docker image inspect`.
 
 The fallback changes only the invocation mechanism. It must produce the same
-required artifacts and commit them through `scripts/commit_stage.py`. Never
+required artifacts and commit them through `"$PYTHON" scripts/commit_stage.py`. Never
 hand-edit state to reconcile an incorrectly mounted or incomplete run.
 
 ### Invariants

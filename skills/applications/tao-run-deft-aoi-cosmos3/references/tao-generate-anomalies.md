@@ -190,7 +190,8 @@ skip when generator cost matters or the clean-image pool is unrepresentative.
 To skip, commit a documented branch skip instead of launching the generator:
 
 ```bash
-"$SKILL_ROOT/scripts/deft_python.sh" "$SKILL_ROOT/scripts/commit_stage.py" \
+PYTHON=$(bash "$SKILL_ROOT/scripts/deft_python.sh")
+"$PYTHON" "$SKILL_ROOT/scripts/commit_stage.py" \
   --results-dir "$RESULTS_DIR" --iter-label "iter${N}" --stage anomalygen \
   --skip --duration-sec "$STAGE_DURATION_SEC" \
   --summary "no Proxy false accepts; synthetic defects not indicated"
@@ -229,7 +230,8 @@ be automatic.
 ## Commit
 
 ```bash
-"$SKILL_ROOT/scripts/deft_python.sh" "$SKILL_ROOT/scripts/commit_stage.py" \
+PYTHON=$(bash "$SKILL_ROOT/scripts/deft_python.sh")
+"$PYTHON" "$SKILL_ROOT/scripts/commit_stage.py" \
   --results-dir "$RESULTS_DIR" --iter-label "iter${N}" --stage anomalygen \
   --anomalygen-sdg "$RESULTS_DIR/iter${N}/anomalygen/sdg/SDG_result.csv" \
   --anomalygen-allocation "$RESULTS_DIR/iter${N}/anomalygen/sdg/allocation.json" \

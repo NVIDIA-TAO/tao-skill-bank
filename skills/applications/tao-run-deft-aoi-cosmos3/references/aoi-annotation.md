@@ -35,7 +35,7 @@ reads media with `.get()`. The bundled emitters therefore do not produce one.
 Carrying one anyway is valid and is validated the same way, which is useful for
 tracing a mined record back to its source row.
 
-`scripts/check_annotations.py --print-contract` prints the authoritative
+`"$PYTHON" scripts/check_annotations.py --print-contract` prints the authoritative
 per-role field list; its `ROLE_CONTRACT` table is the source of truth if this
 document ever disagrees.
 
