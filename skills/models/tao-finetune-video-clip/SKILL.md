@@ -156,6 +156,10 @@ Use the independently pinned TAO Deploy image after PyTorch export. Read `refere
 VIDEO_CLIP_DEPLOY_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-47-multiarch"  # versions-key: images.tao_toolkit.video_clip_deploy
 VIDEO_CLIP_DEPLOY_IMAGE="${VIDEO_CLIP_DEPLOY_IMAGE:-$VIDEO_CLIP_DEPLOY_IMAGE_DEFAULT}"
 
+# Verify the independently pinned image before staging artifacts or using a GPU.
+docker run --rm "$VIDEO_CLIP_DEPLOY_IMAGE" video_clip gen_trt_engine --help >/dev/null || \
+  { echo "BROKEN IMAGE: Video-CLIP deploy entrypoint is unavailable" >&2; exit 1; }
+
 docker run --gpus all --rm --shm-size=16g \
   -v "$RUN_ROOT/deploy_specs:/specs:ro" \
   -v "$RUN_ROOT/results/export:/models:ro" \

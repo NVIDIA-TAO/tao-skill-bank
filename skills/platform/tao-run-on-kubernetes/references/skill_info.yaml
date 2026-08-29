@@ -40,3 +40,4 @@ features:
 - log-streaming
 - pod-diagnostics
 - multi-node
+- producer-action-mount-aliases

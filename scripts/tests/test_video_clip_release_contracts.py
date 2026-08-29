@@ -44,6 +44,7 @@ def test_eval_data_staging_uses_the_provisioned_smoke_pack():
 
 
 def test_deploy_actions_and_templates_match_video_clip_contract():
+    skill = (MODEL_ROOT / "SKILL.md").read_text()
     base_info = _load_yaml(MODEL_ROOT / "references" / "skill_info.yaml")
     deploy_info = _load_yaml(
         MODEL_ROOT / "references" / "tao-deploy-video-clip.skill_info.yaml"
@@ -90,6 +91,10 @@ def test_deploy_actions_and_templates_match_video_clip_contract():
     export_spec = _load_yaml(MODEL_ROOT / "references" / "spec_template_export.yaml")
     assert export_spec["export"]["encoder_type"] == "combined"
     assert export_spec["export"]["batch_size"] == -1
+    assert (
+        'docker run --rm "$VIDEO_CLIP_DEPLOY_IMAGE" '
+        "video_clip gen_trt_engine --help"
+    ) in skill
 
 
 def test_deploy_eval_case_is_registered():

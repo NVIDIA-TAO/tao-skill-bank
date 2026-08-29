@@ -73,7 +73,7 @@ warns when a fallback is above zero, since that gates classes you did not list.
 
 ## Quick Start
 
-Run from the `tao-skills-external` repo root.
+Run from the `tao-skill-bank` repo root.
 
 **Write the spec into the results directory.** The run emits four artifacts and
 does not retain the spec, so a completed gap analysis otherwise cannot tell you
@@ -87,7 +87,7 @@ SPEC="$RESULTS_DIR/object_detection.yaml"        # spec lives beside its outputs
 RUN_ROOT=/absolute/path/that/contains/annotations/images/and/results
 GPU_COUNT=1
 
-DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
 
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -109,7 +109,7 @@ docker info > /dev/null
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.data_services
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 
