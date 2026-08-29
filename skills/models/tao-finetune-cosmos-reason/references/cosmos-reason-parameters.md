@@ -10,12 +10,12 @@ Load this only when `SKILL.md` points here. If this conflicts with `SKILL.md`, `
   Use at least 2 for local AutoML or validation runs that need a host-visible best checkpoint for
   evaluate/inference; one-epoch runs can leave only a broken `best` symlink
   after checkpoint cleanup.
-- **train.train_batch_per_replica**: Global batch size per training step. Ideally >= 32 for stability. CRITICAL: must be divisible by `train.train_policy.mini_batch` (default 1 in the packaged smoke-safe template). Recommended production value: 32.
+- **train.train_batch_per_replica**: Global batch size per training step. Ideally >= 32 for stability. CRITICAL: must be divisible by `train.train_policy.mini_batch` (default 1 in the packaged template). Recommended production value: 32.
 - **train.compile**: Set to true for potential speedup on newer GPUs (H100), else false.
 - **train.output_dir**: Output directory for checkpoints and logs.
 
 ### Model & Policy
-- **policy.model_name_or_path**: Required runtime Hugging Face model URI or cluster-local snapshot path. URI sources also require an immutable revision.
+- **policy.model_name_or_path**: Required runtime Hugging Face model ID/URL or cluster-local snapshot path. The planner resolves an omitted revision as `main`, or a supplied branch/tag, to an immutable Hub commit automatically. Local snapshots use content fingerprints and need no revision.
 - **policy.model_max_length**: Context window size. Must be 40960 for video SFT. Affected by FPS, resolution, and prompt length.
 - **policy.model_gradient_checkpointing**: Save VRAM by recomputing activations. Keep true for large models.
 
@@ -56,7 +56,10 @@ For platform-side multi-node setup (sbatch flags on SLURM, Indexed Job + Service
   - `fps`: extract frames at this rate. High motion: 3. Low motion/static: 1–2. Select this only when the selected videos, `policy.model_max_length`, and GPU memory can absorb the expanded token count.
   - Setting both makes qwen-vl-utils' decord backend error out (`Only accept either fps or nframes`) and silently fall back to torchvision, which deadlocks under multi-worker dataloading (`BlockingIOError [Errno 11]` swscaler errors). If you switch from `fps` to `nframes`, also delete `fps` from your spec.
   - Default Cosmos AutoML search must not tune `custom.vision.fps` while the packaged template uses `custom.vision.nframes`. Only include `custom.vision.fps` when the user explicitly requests FPS tuning and the assembled spec deletes `custom.vision.nframes`.
-- **custom.vision.total_pixels**: Resolution constraint. Increase if the object of focus is small relative to the frame. Default 3136000.
+- **custom.vision.min_frames** / **custom.vision.max_frames** — optional lower and upper sampled-frame bounds used only with `fps`. Qwen rounds the resolved count to its frame factor and clamps it to the selected clip length.
+- **custom.vision.video_start** / **custom.vision.video_end** — optional nonnegative clip boundaries in seconds; when both are present, start must be less than end.
+- **custom.vision.resized_height** / **custom.vision.resized_width** — explicit frame dimensions. Set both together; they replace automatic pixel-budget resizing.
+- **custom.vision.min_pixels** / **custom.vision.max_pixels** / **custom.vision.total_pixels** — per-frame minimum, per-frame maximum, and aggregate video pixel budgets forwarded to qwen-vl-utils.
 - **custom.system_prompt**: Instructions prepended to every prompt.
 
 ### Checkpointing
@@ -117,7 +120,7 @@ per-device capacity. Set `dp_shard_size` to the actual visible GPU count and
 8x A100 or H100 (80 GB each). A single high-memory GB300 is also viable with a
 compatible image, `dp_shard_size=1`, and the single-GPU video guards documented in
 `cosmos-reason-single-gpu-video.md`. Every visible architecture must be supported by
-the selected image and pass the runtime CUDA-stack smoke test.
+the selected image and pass the allocated-node CUDA-stack gate.
 
 Read `runtime_requirements.gpu_host` from `references/skill_info.yaml` and pass
 it as minimum-version overrides to `tao-setup-nvidia-gpu-host`; do not copy the
@@ -135,7 +138,7 @@ values into a platform-wide rule or convert them into exact pins.
 
 **Quantize image/video token mismatch**: `Mismatch in image token count between
 text and input_ids` during calibration means `quantize.max_sequence_length` is
-too small for the sampled media tokens. The packaged smoke template uses 4096;
+too small for the sampled media tokens. The packaged template uses 4096;
 do not lower it to tiny values such as 128 for video calibration.
 
 **train_batch_per_replica not divisible by mini_batch**: The default `train_batch_per_replica=1` from the TAO Core schema is invalid because `mini_batch` defaults to 4. Immediate AssertionError on all ranks. Fix: set `train_batch_per_replica` to a multiple of `mini_batch` (recommended: 32 for large datasets, 4 for small datasets).

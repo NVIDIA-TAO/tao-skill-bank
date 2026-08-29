@@ -68,12 +68,12 @@ before fine-tuning or DEFT because it can identify whether prompt wording,
 frame sampling, or generation settings recover enough accuracy without changing
 weights.
 
-The packaged Cosmos evaluate schema defaults to this joint prompt/config search
-space:
+The packaged Cosmos evaluate schema exposes this dataset-neutral joint
+prompt/config search space:
 
 ```text
 dataset.system_prompt
-vision.nframes
+vision.num_frames
 generation.max_tokens
 generation.temperature
 generation.repetition_penalty
@@ -81,12 +81,17 @@ generation.presence_penalty
 generation.frequency_penalty
 ```
 
+These are parameter names, not packaged experiment values. Resolve the
+baseline with `scripts/evaluation_workflow.py` first. The system-prompt seed,
+frame value/range, generation length/range, dataset, checkpoint, and results
+path must come from the selected training plan or explicit current-run intake.
+
 There are three distinct operating modes:
 
-1. **Bounded fallback:** use `algorithm="bayesian"`. The four packaged prompts
-   are an exhaustive categorical choice set. This is useful for a cheap prompt
-   ablation, but it is not the reflective Auto-Prompter described in the
-   Metropolis design.
+1. **Bounded fallback:** use `algorithm="bayesian"` and require the user to
+   supply the exact categorical prompt seeds and numeric candidate ranges for
+   this run. This is useful for a cheap prompt ablation, but it is not a
+   reflective Auto-Prompter.
 2. **Generic reflective fallback:** use `algorithm="autoresearch"`, provide the LLM
    endpoint/model/key, and set
    `evolvable_text_parameters=["dataset.system_prompt"]`. The four packaged
@@ -102,7 +107,8 @@ There are three distinct operating modes:
    must not receive TAO feature changes. A TAO evaluate callback launches one
    action job for `run_batch(candidate, items) -> outputs`, preserving GEPA's
    aligned per-example scores. Keep fixed inference settings in the base action
-   spec; only prompt components being evolved belong in GEPA's seed. Use the
+   spec; only user-supplied prompt components being evolved belong in GEPA's
+   seed. Use the
    generic TAO autoresearch mode above when prompt and bounded config knobs must
    be explored jointly.
 
@@ -153,7 +159,7 @@ automl_settings = {
 }
 automl_hyperparameters = [
     "dataset.system_prompt",
-    "vision.nframes",
+    "vision.num_frames",
     "generation.max_tokens",
     "generation.temperature",
     "generation.repetition_penalty",
@@ -161,7 +167,7 @@ automl_hyperparameters = [
     "generation.frequency_penalty",
 ]
 custom_param_ranges = {
-    "vision.nframes": {
+    "vision.num_frames": {
         "value_type": "ordered_int",
         "valid_options": [4, 8, 16],
     },
@@ -219,25 +225,18 @@ text.
   three-way GEPA/VLM implementation. Those remain useful ablations or historical
   evidence and must be labeled as such.
 
-If the eval spec uses `vision.nframes`, do not also search `vision.fps` by
+If the eval spec uses `vision.num_frames`, do not also search `vision.fps` by
 default. Search `vision.fps` only when the user explicitly requests FPS-based
 sampling and the spec/runtime has been switched away from frame-count sampling.
 Sixteen frames is a higher-cost option intended for detail- or coverage-bound
 failures on sufficiently provisioned local evaluation. The current Cosmos
 evaluator materializes processed video inputs before inference; split a large
 corpus into complete, video-disjoint execution shards when one monolithic action
-would exhaust host memory, then reject missing or duplicate prediction IDs
-before computing the aggregate metric.
-With the TAO 7.0.1 Cosmos-RL image, every evaluation annotation record must
-contain `video_fps`, even when `vision.nframes` is configured. Validate that
-field and confirm that each record's `video` path resolves beneath
-`dataset.media_dir` before launching the baseline. Do not invent frame rates or
-patch source annotations unless the user explicitly requests dataset repair.
-With the TAO 7.0.1 Cosmos-RL image, every evaluation annotation record must
-contain `video_fps`, even when `vision.nframes` is configured. Validate that
-field and confirm that each record's `video` path resolves beneath
-`dataset.media_dir` before launching the baseline. Do not invent frame rates or
-patch source annotations unless the user explicitly requests dataset repair.
+would exhaust host memory. Use the repository evaluator's final metric; do not
+add a second prediction-ID matching gate after evaluation.
+Validate every referenced media path and the resolved decoder contract before
+launching the baseline. Do not invent frame rates or patch source annotations
+unless the user explicitly requests dataset repair.
 
 For the evaluator prompt "search over learning rate, batch size, number of
 epochs, weight decay, warmup ratio", map the requested knobs to:

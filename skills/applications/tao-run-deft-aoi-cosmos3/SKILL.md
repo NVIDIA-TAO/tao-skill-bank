@@ -33,6 +33,7 @@ tags:
 Install this application as part of the full TAO skill-bank root, not as only
 the companion skill folders: `TAO_SKILL_BANK_PATH` must point at a directory
 containing `versions.yaml`, `scripts/resolve_versions_key.py`, and the
+Cosmos model resolver `scripts/resolve_tao_image.py`, plus the
 `skills/{applications,models,data,platform,core}/...` tree listed in
 `eval.config`. Run bundled validation with the skill Python so dependencies
 match runtime: `PYTHON=$(scripts/deft_python.sh); "$PYTHON" -m unittest
@@ -78,9 +79,10 @@ Treat a run as a disk-backed state machine.
 9. Commit every completed or failed DEFT stage with
    `scripts/commit_stage.py`. It verifies the stage inputs and atomically
    updates both the resume snapshot and ordered `events` array in state. Every
-   commit requires a positive, measured `--duration-sec`: use backend elapsed
-   wall time for submitted jobs and a host wall-clock timer for inline stages.
-   Missing or zero durations are rejected.
+   executed-stage commit requires a positive, measured `--duration-sec`: use
+   backend elapsed wall time for submitted jobs and a host wall-clock timer for
+   inline stages. A documented `--skip` may record `0`; negative durations are
+   always rejected.
 10. Claim completion only after `scripts/finalize_run.py` verifies final
    Benchmark evidence, successfully commits `loop_stop`, and a fresh
    read of `deft_state.json` shows `status == "complete"`,
@@ -127,13 +129,17 @@ credential value.
 - Nano may use the helper's packaged Qwen3-VL default. Edge and Super require
   a variant-specific, validated VLM base; never reuse Nano's conversion
   arguments.
-- Container key: `images.tao_toolkit.cosmos_rl` in `versions.yaml`.
+- Container image: resolve the `cosmos-rl` backend from
+  `tao-finetune-cosmos-reason/references/skill_info.yaml` with
+  `scripts/resolve_tao_image.py`; never copy a Cosmos image pin into this
+  application skill.
 - Train action: `cosmos-rl --config <spec.toml>
   /opt/cosmos_rl/tao_sft_example.py`.
-- The pinned image caps vLLM evaluation at one image per prompt, which this
-  two-image contract cannot satisfy. Run `scripts/patch_eval_image_cap.py`
-  before the first evaluate job and mount its output read-only into every
-  evaluation container; see `references/cosmos-reason.md`.
+- Before the first evaluate job, run `scripts/patch_eval_image_cap.py` to
+  source-classify the selected image. Mount its output read-only into every
+  evaluation container only when it reports `patch_required`; no mount is
+  needed for `already_sufficient` or `cap_absent`. An unrecognized cap/vLLM
+  shape is a hard stop; see `references/cosmos-reason.md`.
 - Workflow override: `automl_policy: off`. DEFT owns iteration and checkpoint
   selection; this is a workflow argument, not a TOML key.
 - Default adaptation: LoRA over the language-side projections
@@ -145,9 +151,12 @@ credential value.
 - Every spec is a nested dictionary serialized to TOML. Never write literal
   flat dotted keys into a spec.
 - Do not mount user data over `/workspace`; cosmos-rl is installed there.
-- Run every container that writes into the results tree as the invoking user,
-  not root, or the run's own outputs become undeletable by their owner. See
-  `references/cosmos-reason.md`.
+- Run every Docker container with a writable host mount as the invoking
+  UID:GID with `USER`, `LOGNAME`, `HOME=/tmp`, and the read-only host
+  passwd/group databases; never fall back to a root repair container. This
+  covers checkpoint preparation, Train, Proxy/Benchmark evaluate, AnomalyGen,
+  and mining. See `references/cosmos-reason.md` and
+  `references/tao-mine-aoi-images.md`.
 
 Read `skills/models/tao-finetune-cosmos-reason/SKILL.md` and its
 `references/skill_info.yaml` before authoring a spec. Start from the model
@@ -276,6 +285,11 @@ base model, which establishes the zero-shot KPI:
 3. `evaluate_proxy` — only when the gate is unmet.
 4. `proxy_rcca`
 
+Before every `proxy_rcca` commit, write `proxy_rcca/RCCA_Report.md` from the
+three Proxy RCCA JSON artifacts using `references/RCCA_REPORT_TEMPLATE.md`,
+then pass it with `--rcca-report`. Artifact requirements, section headings,
+and state fields come from `references/rcca-artifact-manifest.json`.
+
 For each `iterN` when the frozen Benchmark gate is unmet:
 
 1. `routing` — derive mining targets from Proxy false accepts/rejects only.
@@ -283,11 +297,13 @@ For each `iterN` when the frozen Benchmark gate is unmet:
    (`--mining-targets` takes the JSON) and a `filepath[,label]` parquet for the
    embedding container. Gap rows carry no image paths, so join back to Proxy by
    `id` — see `references/gap-analysis.md`.
-2. `anomalygen` — generate synthetic defects with `paidf-anomalygen` in
+2. `anomalygen` — generate synthetic defects with `tao-generate-anomalies` in
    `inference_only` mode, then turn each generated pair into a bare `NG`
    record with `scripts/emit_sdg_sharegpt.py`. `--skip` is permitted only when
    the driving Proxy RCCA recorded zero false accepts, and even then generating
-   is often still worthwhile — see `references/paidf-anomalygen.md`.
+   is often still worthwhile. The emitter accepts PAIDF 1.0.1 repo-root-relative
+   and documented output-dir-relative paths, with `--sdg-root` as an explicit
+   additional base — see `references/tao-generate-anomalies.md`.
 3. `data_mining` — invoke `tao-mine-aoi-images`, apply the configured cosine
    floor with `scripts/filter_mined_by_cosine.py`, then run the mapped skill's
    history-aware post-processing so a filepath selected by a prior iteration
@@ -327,7 +343,7 @@ report rendering.
 | Proxy / Benchmark evaluate | `tao-finetune-cosmos-reason` evaluate | `references/cosmos-reason.md` |
 | Proxy RCCA / Benchmark metric | bundled `analyze_gaps.py` | `references/gap-analysis.md` |
 | Routing / mining | Proxy gaps + `tao-mine-aoi-images` | `references/tao-mine-aoi-images.md` |
-| AnomalyGen | `paidf-anomalygen`, `mode=inference_only` | `references/paidf-anomalygen.md` |
+| AnomalyGen | `tao-generate-anomalies`, `mode=inference_only` | `references/tao-generate-anomalies.md` |
 | Assemble / validate | bundled bare ShareGPT scripts | `references/aoi-annotation.md` |
 | State/report | bundled state commit + deterministic report hook | `references/scripts-and-agents.md` |
 
@@ -344,7 +360,9 @@ output, or overlapping Proxy/Benchmark; a changed Benchmark hash; any Benchmark
 error used for routing; missing/empty mining output; a failed or empty
 AnomalyGen run while Proxy false accepts remain outstanding; an `anomalygen`
 skip not backed by zero false accepts in the driving RCCA; a synthetic record
-whose label is not `NG` or whose paired image is missing; a checkpoint outside
+whose label is not `NG` or whose paired image is missing; a
+PAIDF-incompatible AnomalyGen fine-tuned checkpoint; a missing AnomalyGen
+Guardrail checkpoint or an SDG log showing disabled screening; a checkpoint outside
 the iteration result tree; an invalid nested TOML spec; unknown evaluator
 ground truth; or a program error.
 

@@ -7,11 +7,10 @@ The committed ``skills/models/tao-train-dinov3/schemas/*.schema.json`` files are
 generated from the TAO Core dataclass config (``nvidia_tao_core.config.dinov3``)
 by ``scripts/generate_dataclass_schemas.py``. Guarded invariants:
 
-1. The backbone enums in the committed schemas list every backbone TAO's DINOv3
-   supports (always checked, stdlib-only — runs in the validate-skills CI job).
-2. When a tao-core checkout is importable, it must carry the DINOv3 config with
-   the same backbone set, and regenerating the schemas from it must reproduce
-   the committed backbone options (skipped when tao-core is absent).
+1. The committed schemas expose the complete backbone, LoRA, preservation, and
+   logging-cadence contracts (always checked, stdlib-only).
+2. When a tao-core checkout is importable, regenerating from it must reproduce
+   those committed contracts (skipped when tao-core is absent).
 
 Note: a full byte-compare against a fresh regeneration is deliberately NOT done —
 ``dataclass2json_converter`` emits ``automl_disabled_parameters``/``popular`` in
@@ -33,14 +32,49 @@ ACTIONS = ("convert", "export", "inference", "train")
 # Must match SUPPORTED_BACKBONES in nvidia_tao_core.config.dinov3.default_config
 # (mirrored from nvidia_tao_pytorch.config.dinov3.default_config).
 EXPECTED_BACKBONES = ["vit_s", "vit_s_plus", "vit_b", "vit_l", "vit_h_plus", "vit_7b"]
+EXPECTED_LORA_DEFAULTS = {
+    "enable": False,
+    "rank": 8,
+    "alpha": 16.0,
+    "dropout": 0.05,
+    "target_modules": ["qkv", "proj"],
+    "num_last_blocks": 0,
+}
+EXPECTED_PRESERVATION_DEFAULTS = {
+    "enable": False,
+    "cls_mse_weight": 0.05,
+    "cls_cosine_weight": 0.05,
+}
 
 
 def _backbone_properties(schema):
     return schema["properties"]["model"]["properties"]["backbone"]["properties"]
 
 
+def _model_properties(schema):
+    return schema["properties"]["model"]["properties"]
+
+
 def _load_committed_schema(action):
     return json.loads((MODEL_DIR / "schemas" / f"{action}.schema.json").read_text())
+
+
+def _normalize_unordered_metadata(value):
+    """Sort generator metadata whose source is a Python set."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                sorted(item)
+                if key in {"popular", "automl_disabled_parameters"}
+                and isinstance(item, list)
+                and all(isinstance(entry, str) for entry in item)
+                else _normalize_unordered_metadata(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalize_unordered_metadata(item) for item in value]
+    return value
 
 
 @pytest.mark.parametrize("action", ACTIONS)
@@ -51,6 +85,23 @@ def test_committed_backbone_enums(action):
     assert backbone["student_type"]["enum"] == EXPECTED_BACKBONES
     assert backbone["teacher_type"]["default"] == "vit_b"
     assert backbone["student_type"]["default"] == "vit_b"
+
+
+@pytest.mark.parametrize("action", ACTIONS)
+def test_committed_adaptation_and_logging_contracts(action):
+    """Every action schema carries the shared DINOv3 model/train contract."""
+    schema = _load_committed_schema(action)
+    model = _model_properties(schema)
+    assert model["lora"]["default"] == EXPECTED_LORA_DEFAULTS
+    assert model["preservation"]["default"] == EXPECTED_PRESERVATION_DEFAULTS
+    assert "disabled" not in model["lora"]["description"].lower()
+    assert schema["properties"]["train"]["properties"]["log_every_n_steps"] == {
+        "default": 1,
+        "description": "Number of training steps between logger updates.",
+        "minimum": 1,
+        "title": "logging interval",
+        "type": "int",
+    }
 
 
 @pytest.fixture(scope="module")
@@ -71,8 +122,8 @@ def test_tao_core_backbones_match(tao_core_dinov3_config):
     assert tao_core_dinov3_config.SUPPORTED_BACKBONES == EXPECTED_BACKBONES
 
 
-def test_regenerated_backbone_enums_match_committed(tao_core_dinov3_config, tmp_path):
-    """Schemas regenerated from tao-core carry the committed backbone options."""
+def test_regenerated_contracts_match_committed(tao_core_dinov3_config, tmp_path):
+    """Bug-critical schema contracts exactly match a tao-core regeneration."""
     sys.path.insert(0, str(SCRIPTS_DIR))
     try:
         generator = importlib.import_module("generate_dataclass_schemas")
@@ -97,11 +148,9 @@ def test_regenerated_backbone_enums_match_committed(tao_core_dinov3_config, tmp_
         regenerated = json.loads(
             (scratch_model_dir / "schemas" / f"{action}.schema.json").read_text()
         )
-        committed_backbone = _backbone_properties(_load_committed_schema(action))
-        regenerated_backbone = _backbone_properties(regenerated)
-        for field in ("teacher_type", "student_type"):
-            assert regenerated_backbone[field]["enum"] == committed_backbone[field]["enum"], (
-                f"{action}.schema.json backbone options drifted from tao-core: re-run "
-                "scripts/generate_dataclass_schemas.py for tao-train-dinov3."
-            )
-            assert regenerated_backbone[field]["default"] == committed_backbone[field]["default"]
+        assert _normalize_unordered_metadata(
+            regenerated
+        ) == _normalize_unordered_metadata(_load_committed_schema(action)), (
+            f"{action}.schema.json drifted from verbatim tao-core generator output: "
+            "re-run scripts/generate_dataclass_schemas.py for tao-train-dinov3."
+        )

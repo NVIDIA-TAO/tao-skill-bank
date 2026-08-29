@@ -1,8 +1,8 @@
 {
   "automl_default_parameters": [
-    "inference.alpha",
-    "inference.k",
-    "inference.temperature"
+    "hpo.alpha",
+    "hpo.k",
+    "hpo.temperature"
   ],
   "automl_disabled_parameters": [
     "dataset.csv",
@@ -10,12 +10,12 @@
     "dataset.timestamp_col",
     "dataset.target_cols",
     "dataset.label_horizon",
-    "inference.forecast_horizon",
-    "inference.seq_len",
-    "inference.ckpt",
-    "inference.standardizer_pkl",
-    "inference.use_cross_channel",
-    "inference.context_stride",
+    "hpo.forecast_horizon",
+    "hpo.seq_len",
+    "hpo.ckpt",
+    "hpo.standardizer_pkl",
+    "hpo.use_cross_channel",
+    "hpo.context_stride",
     "train.output_dir"
   ],
   "default": {
@@ -26,7 +26,7 @@
       "target_cols": "",
       "label_horizon": 72
     },
-    "inference": {
+    "hpo": {
       "alpha": 0.01,
       "k": 64,
       "temperature": 0.05,
@@ -87,19 +87,19 @@
         }
       }
     },
-    "inference": {
+    "hpo": {
       "automl_default_parameters": [
-        "inference.alpha",
-        "inference.k",
-        "inference.temperature"
+        "hpo.alpha",
+        "hpo.k",
+        "hpo.temperature"
       ],
       "automl_disabled_parameters": [
-        "inference.forecast_horizon",
-        "inference.seq_len",
-        "inference.ckpt",
-        "inference.standardizer_pkl",
-        "inference.use_cross_channel",
-        "inference.context_stride"
+        "hpo.forecast_horizon",
+        "hpo.seq_len",
+        "hpo.ckpt",
+        "hpo.standardizer_pkl",
+        "hpo.use_cross_channel",
+        "hpo.context_stride"
       ],
       "automl_enabled": false,
       "description": "DARR inference hyperparameters.",

@@ -15,11 +15,25 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    canonical `<workspace>/images`; accept `<workspace>/kpi/images` only as a
    legacy fallback. Resolve symlinks, export the absolute result as
    `IMAGES_DIR`, and hard-stop if neither directory exists. Run
-   `scripts/validate_training_csv.py` against each base CSV with
-   `--workspace-root "$IMAGES_DIR"` so at least the CSV-declared input and
-   golden paths are proven to resolve on disk. `init_deft_state.py` records the
-   same resolved directory as `config.images_dir`; all ChangeNet containers
-   must mount that state value rather than reconstructing a path from `kpi/`.
+   `scripts/validate_training_csv.py` against each base CSV so at least the
+   CSV-declared input and golden paths are proven to resolve on disk:
+
+   ```bash
+   for BASE_CSV in \
+     "$WORKSPACE/train/base/training_set.csv" \
+     "$WORKSPACE/train/base/validation_set.csv" \
+     "$WORKSPACE/kpi/testing_set.csv"
+   do
+     "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/scripts/deft_python.sh" \
+       "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/scripts/validate_training_csv.py" \
+       --csv "$BASE_CSV" \
+       --workspace-root "$IMAGES_DIR"
+   done
+   ```
+
+   `init_deft_state.py` records the same resolved directory as
+   `config.images_dir`; all ChangeNet containers must mount that state value
+   rather than reconstructing a path from `kpi/`.
 
    **Resolve the mining source independently from its images.** A common staged
    layout places the CSV at
@@ -53,7 +67,7 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    | Variable | Required for | Image prefix it gates |
    |---|---|---|
    | `NGC_KEY` | All nvcr.io image pulls — TAO toolkit (train/infer/deploy/data services) and the paidf-anomalygen SDG container | the registry orgs of the manifest-resolved image URIs in step 5 |
-   | `HF_TOKEN` | Pre-Flight HuggingFace model downloads (ChangeNet backbone, Cosmos diffusion, T5, C-RADIO-V3, DINOv2, SAM2, Qwen-VL, SigLIP) — cached under `augmentation/anomalygen/base_checkpoints/`. Also gates the PCB reference dataset auto-fetch. | huggingface.co |
+   | `HF_TOKEN` | Pre-Flight HuggingFace model downloads (ChangeNet backbone, Cosmos diffusion, T5, C-RADIO-V3, DINOv2, SAM2, Qwen-VL, SigLIP) — cached under `augmentation/anomalygen/base_checkpoints/`. Also gates the PCB fine-tuned checkpoint and reference dataset auto-fetch. | huggingface.co |
 
    For planned network actions both variables must be non-empty in the process
    environment. The single `NGC_KEY` must have read access to every registry
@@ -132,19 +146,23 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    plan. In air-gap mode every required slot must already be non-empty and a
    missing asset is a hard stop. NVIDIA publishes the PCB fine-tuned
    checkpoint (`nvidia/Cosmos-AnomalyGen-PCB-2B`) and the PCB reference dataset
-   (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on HuggingFace;
-   paidf-anomalygen downloads them automatically on first use. Users who want
-   to provide their own fine-tuned checkpoint or custom dataset can pre-stage
-   the directory to override. Do not ask the user about missing AnomalyGen
-   assets — treat empty slots as `will auto-fetch from HF (default)` and
-   proceed. If `base_checkpoints/` is pre-staged, export its host path as
-   `COSMOS_MODELS_DIR` for downstream mounts. Stage the ChangeNet pretrained
+   (`nvidia/Cosmos-AnomalyGen-PCB-Dataset`) publicly on Hugging Face; the
+   `tao-generate-anomalies` skill downloads them automatically on first use.
+   Users can pre-stage their own fine-tuned checkpoint or dataset to override
+   the default; a checkpoint override must match the pinned container's PAIDF
+   major.minor. Do not ask about missing AnomalyGen assets in network-enabled
+   mode: report `will auto-fetch from HF (default)` and proceed. If
+   `base_checkpoints/` is pre-staged, export its host path as
+   `COSMOS_MODELS_DIR` for downstream mounts. Before SDG, use the
+   executable file check in `references/tao-generate-anomalies.md` to gate the
+   AnomalyGen Guardrail safety model; a missing file is a hard stop.
+   Stage the ChangeNet pretrained
    backbone by running `scripts/stage_backbone.py --workspace <workspace>`,
    then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path`
    to the staged file and bind-mount it per `references/visual-changenet.md` →
    *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script
    exits non-zero; there is no URL fallback. See
-   `references/paidf-anomalygen.md` for invocation and mount layout.
+   `references/tao-generate-anomalies.md` for invocation and mount layout.
 9. **GPU memory sanity check.** ChangeNet classify with C-RADIOv2-B (ViT-B) at the spec defaults (`batch_size: 64`, `image_width/height: 224`, `cls_weight: [1.0, 10.0]`, learnable difference modules) OOMs on a single 48GB-class GPU. Inspect `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` and warn if the assembled spec's `dataset.classify.batch_size` is too large for the available memory: as a rule of thumb, **≤ 16 on 48GB GPUs, ≤ 8 on 24GB GPUs**. Surface the recommendation in the Pre-Flight Summary's `GPUs` row — let the user accept or override before launch rather than failing 30 seconds into training.
 10. Run train/validation leakage check before resuming any prior run.
 
@@ -208,7 +226,7 @@ be a staged local path and no download fallback may appear.
 | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
 | AnomalyGen ckpt    | `<path>` (FOUND, step N) **or** will auto-fetch from HF (`nvidia/Cosmos-AnomalyGen-PCB-2B`, ~5 GB) **[default]** |
 | Defect spec        | `<N types: type1, type2, ...>` (from staged dataset) **or** will auto-fetch from HF **[default]**                 |
-| Cosmos base models | `<path>` (FOUND) **or** will auto-download on first container run (~22 GB for 2B, ~140 GB with 14B + T5-11b) **[default]** |
+| Cosmos base models | `<path>` (container check FOUND) **or** will auto-download the 2B workflow set on first container run (~22 GB) **[default]** |
 | SigLIP model       | `<cached / download / local path>`                                                                                 |
 | Backbone           | `<path>` (FOUND) **or** will auto-download from HF (`nvidia/C-RADIOv2-B`, ~393 MB) **[default]**                  |
 
@@ -257,6 +275,6 @@ done
 | train | ~11 min | train rows × epochs |
 | evaluate | ~2 min | KPI-test rows |
 
-`total ≈ baseline + max_iterations × ~33 min` + overhead (10 iters ≈ ~6.5h wall). Add the one-time ~22–140 GB base-checkpoint/image pull separately when image/Cosmos rows are `MISSING`.
+`total ≈ baseline + max_iterations × ~33 min` + overhead (10 iters ≈ ~6.5h wall). Add the one-time ~22 GB base-checkpoint/image pull separately when image/Cosmos rows are `MISSING`.
 
 **Ask the user to confirm before proceeding.** Wait for explicit approval ("looks good", "go", "yes"). Do not start the loop until the user confirms.

@@ -13,6 +13,13 @@ their output owned by the caller.
 Do not substitute a `chown` fixup after each stage. It works, but it is a step every caller
 has to remember and it leaves a window where the artifacts on disk are unreadable.
 
+`--user` is not sufficient on its own. A uid with no `/etc/passwd` entry in the image has
+no name, and the container then crashes at torch import with
+`KeyError: 'getpwuid(): uid not found: <uid>'` before the action starts. Every launch
+therefore carries `$DOCKER_IDENTITY` as well; `references/preflight.md` defines it.
+Removing `--user` is not the way out of that — it reintroduces the root-owned output
+above.
+
 ## Pipeline
 
 All stages run inline in the parent context. For SKILL stages, read the matching `references/*.md` overlay first, then invoke the underlying `tao-skill-bank:*` skill. GLUE stages run a bundled script; there is no leaf skill.
@@ -163,7 +170,20 @@ Three stage types:
 After every stage, before advancing:
 
 1. Verify the documented required artifacts exist.
-2. Invoke `commit_stage.py` once with the documented artifact flags.
+2. Invoke `commit_stage.py` once with the documented artifact flags, and pass
+   `--duration-sec` with the stage's measured wall clock. Take a timestamp before the
+   stage and subtract:
+
+   ```bash
+   started=$SECONDS
+   # ... run the stage ...
+   commit_stage.py ... --duration-sec "$(( SECONDS - started ))"
+   ```
+
+   The field is in the log schema and the report renders a duration column from it, but
+   nothing populates it unless the flag is passed — every stage then reads 0 and the
+   timeline is empty. If no reliable start time was captured, omit the flag rather than
+   inventing a number.
 3. Run `audit_deft_run.py --results-dir ${RESULTS_DIR}`. If `INVALID`, halt and repair.
 4. If the committed status is `error` — halt, surface the disk evidence, **do not auto-retry**.
 5. If `ok` — print one status line: `[iter <N>/<max> · <stage>] <detail> · <duration> · next: <stage>`. Then advance. Render the HTML report only at iteration end and loop end.

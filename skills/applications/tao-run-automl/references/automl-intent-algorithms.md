@@ -142,8 +142,8 @@ Customization-only fields:
 
 For the selected model/action, read:
 
-- `${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/skills/models/<model_skill>/schemas/<action>.schema.json`
-- `${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/skills/models/<model_skill>/schemas/manifest.json`
+- `${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/skills/models/<model_skill>/schemas/<action>.schema.json`
+- `${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/skills/models/<model_skill>/schemas/manifest.json`
 
 AutoML is enabled by the model skill, but it can run only when
 `schemas/<action>.schema.json` is packaged with the plugin and valid for the
@@ -172,6 +172,7 @@ result = runner.run(
         "algorithm": "bayesian",
         "metric": metric,
         "automl_max_recommendations": 10,
+        "session_id": session_id,
     },
     automl_hyperparameters=None,  # use schema params marked automl_enabled=true
     custom_param_ranges=None,     # use schema ranges/options/defaults

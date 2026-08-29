@@ -103,7 +103,7 @@ instance to stop billing. `$BANK` = `${TAO_SKILL_BANK_PATH}`.
     --platform brev --image "$IMG" \
     --network-arch "$ARCH" --action "$ACTION" \
     --storage-tier "$TIER" --results-root "$RESULTS_ROOT")
-  brev exec <instance> "docker run -d --name $JOB_ID ..."
+  brev exec <instance> "docker inspect '$JOB_ID' >/dev/null 2>&1 && { echo '$JOB_ID already submitted'; exit 0; }; docker run -d --name '$JOB_ID' --label 'tao-job=$JOB_ID' ..."
   "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING \
     --backend-ref "<instance>/$JOB_ID"       # instance is part of the ref: the
                                              # container is unreachable without it
@@ -139,7 +139,7 @@ which sends the password over the Brev-managed SSH alias directly to
 `--password-stdin`:
 
 ```bash
-IMG=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
+IMG=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.pyt
 
 # NGC auth (one-time per instance) — value never appears on argv.
 set -a; source /path/to/user-approved.env; set +a
@@ -159,7 +159,7 @@ brev exec <instance> "docker manifest inspect $IMG >/dev/null && echo AUTH_OK ||
 brev exec <instance> "docker image inspect $IMG >/dev/null 2>&1 || docker pull $IMG"
 
 # Run a TAO job (the docker `submit` verb, over brev exec)
-brev exec <instance> "docker run -d --name $JOB_ID --gpus all -v ~/data:/data -e NGC_KEY $IMG visual_changenet train -e /data/spec.yaml"
+brev exec <instance> "docker inspect '$JOB_ID' >/dev/null 2>&1 && { echo '$JOB_ID already submitted'; exit 0; }; docker run -d --name '$JOB_ID' --label 'tao-job=$JOB_ID' --gpus all -v ~/data:/data -e NGC_KEY '$IMG' visual_changenet train -e /data/spec.yaml"
 ```
 
 ## Multi-GPU and multi-node

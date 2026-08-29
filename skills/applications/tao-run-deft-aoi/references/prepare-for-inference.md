@@ -68,7 +68,10 @@ spec, then:
 - Setting `inference.checkpoint` to the best checkpoint
 - Setting `model.classify.eval_margin` to the evaluator-selected threshold when one exists; otherwise retaining the training spec value
 - Disabling augmentation (`augmentation_config.augment: false`)
-- Adding a stub `train.classify.loss` (TAO's `load_from_checkpoint` rebuilds the criterion and asserts on the loss/difference_module pairing)
+- Carrying only `train.classify.loss` as a compatibility stub for the pinned
+  TAO 7.1 image. It must match the checkpoint's training spec. TAO 7.2 images
+  containing NVIDIA-TAO/tao-pytorch#107 derive the non-training criterion from
+  the model architecture and no longer require this stub.
 
 The consumer sets four things and runs:
 
@@ -88,27 +91,39 @@ cp ${RESULTS_DIR}/best_model_inference_spec.yaml /tmp/my_inference.yaml
 # … set the four CONSUMER fields …
 
 # 3. Pinned TAO pyt image URI (stamped from the release manifest).
-TAO_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt  # versions-key: images.tao_toolkit.pyt
+TAO_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch  # versions-key: images.tao_toolkit.pyt
 
 # 4. Run inference. Mount paths from best_model.json into the container.
 HANDOFF="${RESULTS_DIR}/best_model.json"
 BACKBONE=$(jq -er '.backbone | strings | select(length > 0)' "$HANDOFF")
 BACKBONE_CONTAINER_PATH=$(jq -er '.backbone_container_path | strings | select(startswith("/"))' "$HANDOFF")
+HOST_RESULTS=<output_dir>
+mkdir -p "$HOST_RESULTS"
+probe="$HOST_RESULTS/.tao-write-probe.$$"
+(umask 077 && : >"$probe" && rm -f "$probe") || {
+    echo "FATAL: $HOST_RESULTS is not writable by uid $(id -u)" >&2
+    exit 2
+}
 
 docker run --pull=never --rm --gpus all --shm-size=8g \
     --user "$(id -u):$(id -g)" \
+    -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
+    -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
     -v <your_csv_dir>:/data/infer \
     -v "$(jq -er .images_dir "$HANDOFF"):/data/images:ro" \
     -v "$(jq -er .checkpoint "$HANDOFF"):/model/best.pth:ro" \
     -v "${BACKBONE}:${BACKBONE_CONTAINER_PATH}:ro" \
     -v /tmp/my_inference.yaml:/specs/inference.yaml \
-    -v <output_dir>:/results \
+    -v "$HOST_RESULTS:/results" \
     "$TAO_PYT_IMAGE" \
     visual_changenet inference -e /specs/inference.yaml
 ```
 
 The `--shm-size=8g` is required — TAO dataloaders crash with bus errors on the
 default 64MB allocation.
+
+The output tree is owned by the submitting host user, so it can be updated or
+removed without sudo.
 
 ## Threshold Contract
 
@@ -144,10 +159,11 @@ config verbatim, but if you build an inference spec by hand, watch out:
    set to `.png`. Dataloader finds zero rows; predict loop runs over 0 batches;
    no error. Verify `image_ext` matches actual files on disk.
 
-4. **`loss` / `difference_module` pair (assertion).** Contrastive loss requires
-   `difference_module: euclidean`. CE loss works with either. The training spec
-   already paired them correctly — copy both fields together, never one without
-   the other.
+4. **`loss` / `difference_module` pair (assertion on the pinned TAO 7.1 image).**
+   Contrastive loss requires `difference_module: euclidean`; CE loss works with
+   either. Copy `train.classify.loss` from the training spec until the documented
+   image baseline includes NVIDIA-TAO/tao-pytorch#107. Do not copy other
+   training-only keys.
 
 ## When to Re-Run
 

@@ -21,7 +21,7 @@ Commit state changes only through `commit_stage.py`. Never write
 | `scripts/resolve_versions_key.py` | Resolve a dotted image key from the installed skill bank's `versions.yaml`; discovers the bank from `--skill-bank`, `TAO_SKILL_BANK_PATH`, or the script's ancestors. | `KEY [--skill-bank PATH]` |
 | `scripts/metric_contract.py` | Shared stdlib parser/comparator for primary metrics, direction-aware best selection, constraints, and bundled-evaluator normalization. Import from sibling scripts; no CLI. | — |
 | `scripts/record_metric_result.py` | Internal evaluate helper: validate standard evaluator JSON, enforce a configured artifact path, recompute `passed`, and write evaluate evidence. `commit_stage.py` calls it transactionally. | Internal; standalone CLI retained for compatibility |
-| `scripts/commit_stage.py` | The only supported normal stage writer. Validate required evidence and append state atomically. Skip branches require zero-row routing proof; mining count must match the real parquet and logs cannot be placeholders. Terminal commits require an explicit reason and final handoff artifacts. | `--results-dir PATH --iter-label STR --stage STAGE --summary STR --duration-sec POSITIVE_INT [stage artifact flags] [--status ok|error]` |
+| `scripts/commit_stage.py` | The only supported normal stage writer. Validate required evidence and append state atomically. Skip branches require zero-row routing proof and record `status=skipped` plus `skip_reason`; mining count must match the real parquet and logs cannot be placeholders. Terminal commits require an explicit reason and final handoff artifacts. | `--results-dir PATH --iter-label STR --stage STAGE --summary STR --duration-sec INT [stage artifact flags] [--status ok|error] [--skip]` (positive for executed stages; non-negative for skips) |
 | `scripts/render_report.py` | Deterministically render the NVIDIA-styled, self-contained `DEFT_Loop_Report.html` from `deft_state.json` and recorded artifacts. Read the source template fresh, escape file-derived text, embed optional thumbnails, validate every placeholder/section, and replace atomically. Called automatically after initialization and every successful stage commit. | `--results-dir PATH [--require-terminal]` |
 | `scripts/align_token_usage.py` | Backfill per-stage LLM token usage into `deft_state.json.events` by parsing the Claude Code transcript JSONL. Run after the loop (or any time). Adds a `tokens` field per event and refreshes `context_tokens`. | `--state-path PATH [--cwd PATH \| --project-dir PATH \| --transcript PATH ...] [--dry-run]` |
 | `scripts/analyze_kpi.py` | Bundled threshold-sweep evaluator: emit standard `metric_result.json` plus diagnostic CSV/plots. Other customer metrics use the adapter contract in `references/metric-contract.md`. | `csv_path` (positional) `[--output-dir PATH]` `[--label-column NAME=label]` `[--score-column NAME=siamese_score]` `[--pass-label NAME=PASS]` `[--bins INT=40]` |
@@ -56,7 +56,9 @@ persisted policy:
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_context.py \
   --state "${RESULTS_DIR}/deft_state.json" --stage data_mining
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/deft_exec.py \
-  --state "${RESULTS_DIR}/deft_state.json" -- docker run ...
+  --state "${RESULTS_DIR}/deft_state.json" -- \
+  docker run --user "$(id -u):$(id -g)" \
+    -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp ...
 ```
 
 Set `STAGE_DURATION_SEC` from measured wall-clock evidence before committing:
@@ -112,7 +114,7 @@ a reference file is missing, stop and ask the user to reinstall the plugin.
 | Stage(s) | Reference file | Underlying skill | Owns |
 |---|---|---|---|
 | `train`, `evaluate` | `references/visual-changenet.md` | `tao-skill-bank:tao-train-visual-changenet` | TAO training, inference, evaluation, checkpoint discovery, TAO spec edits, two-checkpoint compare, `${TAO_PYT_IMAGE}` (pinned in Pre-Flight step 5) invocation. |
-| `anomalygen` | `references/paidf-anomalygen.md` | `tao-skill-bank:paidf-anomalygen` | AMP / AnomalyGen synthetic defect generation, `defect_spec.jsonl` routing, testcase prep, allocation recovery, and SDG output schema. |
+| `anomalygen` | `references/tao-generate-anomalies.md` | `tao-skill-bank:tao-generate-anomalies` | AMP / AnomalyGen synthetic defect generation, `defect_spec.jsonl` routing, testcase prep, allocation recovery, and SDG output schema. |
 | `rca` (VCN Classify) | `references/tao-analyze-gaps-visual-changenet.md` | `tao-skill-bank:tao-analyze-gaps-visual-changenet` | Threshold sweep, per-label weakness ranking, per-lighting expansion, `kpi_gaps.parquet` schema, and `deft_state.json` output for VCN Classify models. |
 | `routing` | `references/tao-route-visual-changenet-samples.md` | `tao-skill-bank:tao-route-visual-changenet-samples` | VCN weak-sample routing to mining and/or AnomalyGen, `mining_gaps.parquet` + `anomalygen_gaps.parquet` outputs, dropped-label warnings. |
 | `data_mining` (VCN path) | `references/tao-mine-aoi-images.md` | `tao-skill-bank:tao-mine-aoi-images` | Embed-then-mine workflow: target embedding, source-pool embedding, k-NN nearest-neighbour mining, `mined.parquet` output schema, encoder consistency requirement. |

@@ -35,9 +35,6 @@ model.soft_nms_enabled: true
 model.soft_nms_iou_threshold: 0.8
 model.soft_nms_method: linear
 
-inference.save_annotated_images: false
-    # TAO: true. Writes a rendered JPEG per image alongside the labels — on a 100k pool,
-    # 100k files nothing downstream reads.
 inference.batch_size: 1        # TAO: -1
 dataset.batch_size: 1          # TAO: 4
 dataset.dataset_type: default  # TAO: serialized

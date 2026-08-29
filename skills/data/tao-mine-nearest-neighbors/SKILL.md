@@ -58,7 +58,7 @@ The default template is `assets/default_nearest_neighbors.yaml`.
 
 ## Quick Start
 
-Run from the `tao-skills-external` repo root. Resolve the pinned TAO Data Services image from `versions.yaml`, verify the spec, mount the run root with identical host/container paths, and stream the Docker logs.
+Run from the `tao-skill-bank` repo root. Resolve the pinned TAO Data Services image from `versions.yaml`, verify the spec, mount the run root with identical host/container paths, and stream the Docker logs.
 
 ```bash
 SPEC=/absolute/path/to/nearest_neighbors.yaml
@@ -68,7 +68,7 @@ GPU_COUNT=1
 python3 skills/data/tao-mine-nearest-neighbors/scripts/verify_nearest_neighbors_spec.py \
   --spec "$SPEC"
 
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services_nightly)"
+DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
 
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -113,7 +113,7 @@ nvidia-smi -L
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services_nightly)"
+DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 

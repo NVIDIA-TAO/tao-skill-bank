@@ -2,8 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # `analytics kpi_analyze` — the settings that do not vary per run, applied over
-# the spec `analytics default_specs` emits. Paths, `visualize.tag` and
-# `data.kpi_sources` are run-specific and stay as --set.
+# the spec `analytics default_specs` emits. Paths, `visualize.tag`,
+# `data.kpi_sources` and `kpi.conf_threshold` are run-specific and stay as --set.
+#
+# `kpi.conf_threshold` is deliberately absent: it is the run's scoring threshold,
+# frozen at init as config.kpi_conf_threshold, and pinning it here would override
+# the recorded value on every run and make the record meaningless.
 #
 # The comment on each line is what TAO emits by default, so the cost of removing
 # the line is visible without diffing against a container.
@@ -14,10 +18,6 @@ visualize.platform: local      # TAO: local. Pinned so a loop stage cannot acqui
                                # a wandb credential dependency.
 
 kpi.iou_threshold: 0.5         # TAO: 0.5
-kpi.conf_threshold: 0.0        # TAO: 0.5. Inference writes its labels at 0.0, so
-                               # scoring at 0.0 covers the full PR curve. Sweeping
-                               # this re-scores existing labels without re-running
-                               # inference: pass --allow-workflow-default-override.
 kpi.num_recall_points: 11      # TAO: 11. 11-point interpolated AP (VOC); 101
                                # selects COCO-style and shifts every reported AP.
 kpi.ignore_sqwidth: 40         # TAO: 0. Excludes boxes below this square-width

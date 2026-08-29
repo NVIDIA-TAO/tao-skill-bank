@@ -89,14 +89,19 @@ timeout kills GPU-idle jobs and bills the wasted time). `$BANK` =
    JOB_ID=$("$BANK/scripts/tao_job_record.py" open --platform slurm --image "$IMAGE" \
      --network-arch "$ARCH" --action "$ACTION" --storage-tier A --results-root "$SLURM_BASE_RESULTS_DIR")
    ```
-4. **Render** `templates/slurm/singlenode.sbatch.tmpl` — substitute every
+4. **Consume the optional model lifecycle.** If the validated spec-bundle has
+   `execution`, preserve its order and semantics while mapping distributed
+   intent to native SLURM/Pyxis. Stage only its checksum-closed
+   `supporting_files`. The full generic lifecycle and staging contract is in
+   `references/slurm-container-execution.md`.
+5. **Render** `templates/slurm/singlenode.sbatch.tmpl` — substitute every
    `@@<NAME>@@` (`JOB_NAME=$JOB_ID`, `NUM_GPUS`, `CPUS_PER_TASK`, `TIME`, `LOG_DIR`,
    `IMAGE`, `CONTAINER_MOUNTS=<RUNTIME_SUPPLIED_MOUNTS>`, `COMMAND=<bundle command reading the shared-storage
    spec>`, `SBATCH_EXTRA=` account/partition lines, `ENV_FILE=` the sidecar path or
    empty, `EXTRA_ENV=` any cluster NCCL knobs) → `<job_dir>/sbatch/job_$JOB_ID.sbatch`.
    **Lint + syntax-check before submit:** `redact_secrets.py lint <sbatch>` must
    pass and `bash -n <sbatch>` must succeed.
-5. **Submit + record RUNNING:**
+6. **Submit + record RUNNING:**
    ```bash
    SLURM_ID=$(ssh $LOGIN "sbatch --parsable <job_dir>/sbatch/job_$JOB_ID.sbatch")
    "$BANK/scripts/tao_job_record.py" mark "$JOB_ID" --state RUNNING --backend-ref "$SLURM_ID"
@@ -225,7 +230,8 @@ once on a **CPU partition**, then point every later job at the resulting file:
 ```bash
 # One-time per image, on CPU — costs no GPU time.
 ssh $LOGIN "test -e <sqsh>" || \
-  ssh $LOGIN "srun --chdir=/tmp -n1 -p <cpu_partition> -t <minutes> \
+  ssh $LOGIN "srun --chdir=/tmp -n1 -c4 --mem=7200M \
+    -p <cpu_partition> -t <minutes> \
     bash -c 'set -Eeuo pipefail
       export TMPDIR=/tmp
       export ENROOT_TEMP_PATH=/tmp/enroot-tao-\${SLURM_JOB_ID}
@@ -241,18 +247,9 @@ srun --container-image=<sqsh> ...
 The same rule governs data: stage it to Lustre before submit (tier A) rather
 than fetching inside the allocation.
 
-**Cluster-specific values — CS-OCI-ORD.** The general rule above is portable;
-these numbers are not, and are recorded because each cost real allocations:
-
-- Conversion partition `cpu_long`, **not** the default `cpu` — `cpu` has a
-  ~30-minute wall-time cap, shorter than a TAO conversion, so the conversion job
-  is killed partway and leaves a truncated file.
-- Set both `ENROOT_TEMP_PATH` and `SLURM_ENROOT_TEMP_PATH` to a job-unique
-  `/tmp/enroot-tao-${SLURM_JOB_ID}` and force `TMPDIR=/tmp`. Direct
-  Enroot uses the first variable and Pyxis may use the second. The directory
-  must be node-local and unique; shared paths can fail on cleanup races or
-  unsupported overlay whiteouts.
-- Conversion timeout ≥ 120 minutes.
+CS-OCI-ORD conversion uses `cpu_long`, 4 CPUs, 7200M memory, no exclusive node,
+node-local Enroot temp paths, and at least 120 minutes. The execution reference
+records the evidence and `QOSGrpMemLimit` recovery contract.
 
 Partial conversions are self-detecting: the SQSH is validated by `hsqs` magic,
 so a truncated file is rejected rather than silently used. Conversion runs once
@@ -333,23 +330,15 @@ Defaults from `tao-core`:
 - `use_requeue`: true
 - `use_sqsh`: true
 
-When generating launchers or wrapper scripts for SLURM, set the wall-time
-defaults explicitly from the packaged platform resource defaults:
-
-```bash
-export SLURM_TIME_HOURS="${SLURM_TIME_HOURS:-4}"
-export SLURM_TIMEOUT_HOURS="${SLURM_TIMEOUT_HOURS:-3.8}"
-```
-
-Do not default to 12 hours on SLURM. If the user supplies a longer
+Launchers must use the packaged 4-hour wall and 3.8-hour child-timeout
+defaults, never 12 hours. If the user supplies a longer
 `SLURM_TIME_HOURS`, verify that the selected partition supports it before
 submitting. For the packaged default partition list
 `polar,polar3,polar4,grizzly`, reject requests above 4 hours and ask for a
 different partition only if the user actually wants a longer wall time.
 
-When `num_gpus` is greater than or equal to `max_num_gpus_per_node`, the
-handler treats the request as exclusive per node and computes additional nodes
-from total GPU count when necessary.
+At or above `max_num_gpus_per_node`, allocate exclusive nodes and derive their
+count from total GPUs.
 
 ## Multi-node and retries
 
@@ -383,7 +372,6 @@ may require `--no-requeue`.
 Treat an empty `sbatch --parsable` response or SSH disconnect as ambiguous:
 reconcile by exact job name, never submit blindly, and validate inherited node
 exclusions. The referenced execution guide defines the full decision table.
-
 See `references/slurm-container-execution.md` for the full multi-node
 env-var/sbatch directive detail and table, cluster requirements, the
 Lustre-not-S3 rule in full, and the failure-mode checklist.

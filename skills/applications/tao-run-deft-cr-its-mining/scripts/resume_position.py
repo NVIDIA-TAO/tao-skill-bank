@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from log_stage import read_valid_events, rebuild_state
+from validate_cosmos_embed_output import incomplete_specs
 from workflow_common import absolute_path
 
 
@@ -91,6 +92,16 @@ def resume_position(
     for stage in INITIAL_STAGES:
         candidates = [event for (_, event_stage), event in latest.items() if event_stage == stage]
         event = max(candidates, key=lambda item: item["seq"], default=None)
+        if stage == "cosmos_embed" and stage_is_complete(event) and run_dir is not None:
+            incomplete = incomplete_specs(run_dir)
+            if incomplete:
+                return {
+                    "workflow_status": "running",
+                    "next_iteration": 0,
+                    "next_stage": stage,
+                    "reason": "Cosmos Embed completion validation is missing or stale: "
+                    + "; ".join(incomplete),
+                }
         if not stage_is_complete(event):
             return {
                 "workflow_status": "failed" if event and event.get("status") == "error" else "running",

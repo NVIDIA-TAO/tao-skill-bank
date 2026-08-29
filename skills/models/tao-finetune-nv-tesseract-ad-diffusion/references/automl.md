@@ -46,12 +46,12 @@ VirtualEnvSDK with no container required:
 
 | Parameter | Spec key | Default | Search range | Effect |
 |---|---|---|---|---|
-| Diffusion samples | `inference.nsample` | `15` | `[5, 30]` | More samples → better MAE estimate, slower per trial |
+| Diffusion samples | `hpo.nsample` | `15` | `[5, 30]` | More samples → better MAE estimate, slower per trial |
 
 **`threshold_strategy`** (`scs` or `macs`) is fixed per AutoML run — run once
 per strategy and compare F1 to pick the winner.
 
-**Fixed:** `inference.model_path`, `inference.config_path` — set these in
+**Fixed:** `hpo.model_path`, `hpo.config_path` — set these in
 `spec_overrides`, not the search space.
 
 ### AutoML artifacts
@@ -182,7 +182,7 @@ def main():
 
     cfg = yaml.safe_load(Path(args.run_config).read_text())
     ds  = cfg["dataset"]
-    inf = cfg["inference"]
+    inf = cfg["hpo"]
     out = Path(cfg.get("train", {}).get("output_dir", "artifacts/inference_hpo"))
     out.mkdir(parents=True, exist_ok=True)
 
@@ -227,8 +227,8 @@ for strategy in ["scs", "macs"]:
         # spec_overrides MUST use dotted keys — see fine-tuning section for why.
         spec_overrides={
             "dataset.csv":                  "/path/to/labeled_data.csv",
-            "inference.threshold_strategy": strategy,
-            "inference.model_path":         None,   # None → pretrained HF weights; or path to fine-tuned .pth
+            "hpo.threshold_strategy": strategy,
+            "hpo.model_path":         None,   # None → pretrained HF weights; or path to fine-tuned .pth
             "train.output_dir":             f"automl_workspace/inference_hpo_{strategy}/trials",
         },
         workspace_path=f"automl_workspace/inference_hpo_{strategy}",
@@ -243,10 +243,10 @@ for strategy in ["scs", "macs"]:
     best = result["best"]
     results_by_strategy[strategy] = best
     # best["specs"] uses the same dotted keys as spec_overrides
-    print(f"{strategy:4s}  F1={best['metric_value']:.4f}  nsample={best['specs']['inference.nsample']}")
+    print(f"{strategy:4s}  F1={best['metric_value']:.4f}  nsample={best['specs']['hpo.nsample']}")
 
 winner = max(results_by_strategy, key=lambda s: results_by_strategy[s]["metric_value"])
-print(f"\nBest: strategy={winner}  nsample={results_by_strategy[winner]['specs']['inference.nsample']}")
+print(f"\nBest: strategy={winner}  nsample={results_by_strategy[winner]['specs']['hpo.nsample']}")
 ```
 
 **Timestamp / label columns:** drop them before passing to the inference function — the template above does this via `errors="ignore"`.

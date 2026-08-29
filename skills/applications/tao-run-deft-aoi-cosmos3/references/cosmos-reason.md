@@ -16,12 +16,12 @@ After the user approves the launch review, prepare the selected checkpoint with
 the helper owned by `tao-finetune-cosmos-reason`:
 
 ```bash
-set -a; source /path/to/.env; set +a   # omit if already exported
+# If credentials are not already exported, source only the user-approved env
+# file selected during Pre-Flight before running this block.
 
-# --checkpoint-path is resolved as a filesystem path by the upstream converter,
-# so it must be a LOCAL DIRECTORY. A bare HuggingFace repo id can never work,
-# and the failure only surfaces after the container's slow `uv sync`. Download
-# first (~33 GB excluding demo assets; the repo is ungated):
+# --base-model-path-or-uri may be a URI or a LOCAL DIRECTORY. This workflow
+# downloads the source first (~33 GB excluding demo assets; the repo is
+# ungated) so the approved conversion has a stable, inspectable local input:
 # Repeat --exclude per pattern. A second bare pattern is parsed as a positional
 # FILENAMES argument, and the whole download fails with "File not found in
 # repository" pointing at .../resolve/main/images/%2A — which reads like a
@@ -29,40 +29,47 @@ set -a; source /path/to/.env; set +a   # omit if already exported
 hf download nvidia/Cosmos3-Nano --local-dir "$COSMOS3_SOURCE_DIR" \
   --exclude 'assets/*' --exclude 'images/*'
 
+PREPARED_MODEL_PARENT=$(dirname "$PREPARED_MODEL_HOST_PATH")
+mkdir -p "$PREPARED_MODEL_PARENT"
+probe="$PREPARED_MODEL_PARENT/.tao-write-probe.$$"
+(umask 077 && : >"$probe" && rm -f "$probe") || {
+  echo "FATAL: $PREPARED_MODEL_PARENT is not writable by uid $(id -u)" >&2
+  exit 2
+}
+
+# Pre-Flight resolves this packaged Nano mapping to an immutable Hub revision.
+COSMOS3_VLM_ARCHITECTURE_MODEL="${COSMOS3_VLM_ARCHITECTURE_MODEL:-Qwen/Qwen3-VL-8B-Instruct}"
+: "${COSMOS3_VLM_ARCHITECTURE_REVISION:?set the immutable revision resolved by the model planner}"
+COSMOS3_CONVERSION_CACHE_DIR="${COSMOS3_CONVERSION_CACHE_DIR:-$PREPARED_MODEL_PARENT/cache}"
+COSMOS_RL_IMAGE_DIGEST=$(docker image inspect --format '{{.Id}}' "$COSMOS_RL_IMAGE")
+: "${COSMOS_RL_IMAGE_DIGEST:?could not resolve the selected runtime image ID}"
+
 "$PYTHON" \
   "$TAO_SKILL_BANK_PATH/skills/models/tao-finetune-cosmos-reason/scripts/prepare_cosmos3_vlm_checkpoint.py" \
-  --checkpoint-path "$COSMOS3_SOURCE_DIR" \
+  --base-model-path-or-uri "$COSMOS3_SOURCE_DIR" \
+  --vlm-architecture-model-path-or-uri "$COSMOS3_VLM_ARCHITECTURE_MODEL" \
+  --vlm-architecture-model-revision "$COSMOS3_VLM_ARCHITECTURE_REVISION" \
   --output-path "$PREPARED_MODEL_HOST_PATH" \
-  --validate-with-image "$COSMOS_RL_IMAGE"
+  --cache-dir "$COSMOS3_CONVERSION_CACHE_DIR" \
+  --runtime-image "$COSMOS_RL_IMAGE" \
+  --runtime-image-digest "$COSMOS_RL_IMAGE_DIGEST"
 ```
 
 Confirm `$COSMOS3_SOURCE_DIR` exists before launching; that check costs nothing
 and saves several minutes plus a large cache write.
 
-The helper runs its own containers as root and repairs ownership afterwards
-with a trailing `chown ... || true`, which covers only the paths it names and
-tolerates its own failure. Expect a handful of root-owned files to survive in
-the converted directory — `chat_template.json` and `.cache/huggingface/` were
-the observed leftovers. They make the PTM directory unremovable by its owner,
-so repair it before the run needs to move or delete it. No sudo required:
+The model helper owns its internal Docker command and maps the invoking
+UID:GID before writing the prepared checkpoint. Treat any root-owned output as
+a helper regression and hard-stop; never launch a root repair container. A
+valid existing checkpoint is reported as `status=reused_verified` and reused.
 
-```bash
-docker run --pull=never --rm -v "$(dirname "$PREPARED_MODEL_HOST_PATH"):/out" busybox:latest \
-  chown -R "$(id -u):$(id -g)" "/out/$(basename "$PREPARED_MODEL_HOST_PATH")"
-```
+The helper may pull the selected backend image, download the architecture
+checkpoint, and write a large checkpoint, so never run it before approval. It
+forwards whichever of `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` is set in the
+session, by name and without printing values; the second is the legacy alias
+for the same HuggingFace access token, so either one is enough.
 
-Prefer chowning over deleting: the prepared PTM is ~17 GB across four shards
-and re-converting means re-downloading the source checkpoint too. Once the
-ownership is fixed the helper reports `status=skipped_existing` and reuses it.
-
-The helper may clone NVIDIA/cosmos-framework, pull its conversion image, and
-write a large checkpoint, so never run it before approval. It forwards
-whichever of `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` is set in the session, by
-name and without printing values; the second is the legacy alias for the same
-HuggingFace access token, so either one is enough. For `--secrets-env`, see the
-model skill.
-
-Do not convert again when the helper reports `status=skipped_existing`; it has
+Do not convert again when the helper reports `status=reused_verified`; it has
 already verified a complete `qwen3_vl` safetensors directory. Mount or stage
 that directory for the selected platform, then use its compute-frame path for:
 
@@ -71,10 +78,13 @@ that directory for the selected platform, then use its compute-frame path for:
 - LoRA evaluate `model.base_model_path`.
 
 Keep the canonical Cosmos Reason 3 ID (`nvidia/Cosmos3-Nano` by default) as the
-source-model lineage; it names the model, not the Cosmos-RL PTM path. The command above is the Nano default. For Edge or Super, supply the
-selected source checkpoint and a model-skill-approved, variant-matched
-`--vlm-model-name`; if that mapping and the selected Cosmos-RL image have not
-been validated, hard-stop instead of applying Nano's Qwen3-VL 8B default.
+source-model lineage; it names the model, not the Cosmos-RL PTM path. The
+command above is the Nano default. For Edge or Super, supply the selected
+source checkpoint plus a model-skill-approved, variant-matched
+`--vlm-architecture-model-path-or-uri` and immutable
+`--vlm-architecture-model-revision`; if that mapping and the selected runtime
+have not been validated, hard-stop instead of applying Nano's Qwen3-VL 8B
+default.
 
 ## Run containers as the invoking user
 
@@ -85,8 +95,18 @@ and the run tree then cannot be deleted, re-rendered into, or cleaned up
 without `sudo`. On Docker:
 
 ```bash
---user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
--v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
+CR3_IDENTITY_ARGS=(
+  --user "$(id -u):$(id -g)"
+  -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp
+  -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro
+)
+```
+
+Insert `"${CR3_IDENTITY_ARGS[@]}"` into every Docker Train, Proxy evaluate,
+and Benchmark evaluate launch, including resumed actions, and use the
+stage-local writable working directory:
+
+```bash
 -w "$RESULTS_DIR/<label>/<stage>/cwd"
 ```
 
@@ -117,7 +137,8 @@ the selected platform's equivalent rather than copying these flags blindly.
 Read the current `tao-finetune-cosmos-reason` model skill and
 `references/skill_info.yaml`. The action contract is:
 
-- image: `images.tao_toolkit.cosmos_rl`;
+- image: resolve the `cosmos-rl` backend image from the Cosmos model skill's
+  `references/skill_info.yaml` with `scripts/resolve_tao_image.py`;
 - command: `cosmos-rl --config {config_path}
   /opt/cosmos_rl/tao_sft_example.py`;
 - mode/format: `config` / TOML;
@@ -211,14 +232,14 @@ annotation, bound output directory, and save-folder label differ. For a LoRA
 export, set `model.enable_lora=true` and keep `model.base_model_path` aligned
 with Train's prepared Qwen3-VL PTM.
 
-### Lift the image's 1-image-per-prompt cap
+### Classify and, when needed, lift the evaluation image cap
 
-`cosmos_rl/evaluation/base.py` hardcodes
-`limit_mm_per_prompt={"video": 1, "image": 1}` when it builds the vLLM engine.
-Every AOI record carries two images, so both evaluation stages fail with
-`ValueError: At most 1 image(s) may be provided in one prompt` until that cap
-is raised. There is no spec key and no environment override; the rest of the
-file is already multi-image correct.
+Some `cosmos-rl` images build vLLM with
+`limit_mm_per_prompt={"video": 1, "image": 1}`. Every AOI record carries two
+images, so those images fail evaluation until the cap is raised. Other images,
+including framework-evaluator builds, contain neither that literal nor a vLLM
+engine construction and need no patch. Image tags are not a stable way to tell
+the two apart.
 
 Run this once per run, before the first evaluate job:
 
@@ -229,16 +250,21 @@ Run this once per run, before the first evaluate job:
   --summary "$RESULTS_DIR/patches/cosmos_rl_eval/summary.json"
 ```
 
-It reads `base.py` out of the image actually pinned, rewrites only that
-literal, and prints `MOUNT_ARG=<host>:<container>:ro`. Add that as a read-only
-mount to every `cosmos-rl-evaluate` job. Nothing is vendored into the skill, so
-the patch cannot mask a newer image.
+It reads `base.py` out of the selected image and reports one source-driven
+classification, independent of whether the tag is semver, a custom build name,
+or a future tag:
 
-When the image already allows enough images the script writes no file and
-prints `no patch needed` — drop the mount in that case rather than overriding a
-file that no longer needs it. If it reports the cap was not found, the image
-changed shape: re-verify the defect instead of forcing a rewrite. Train jobs
-never need this mount; only evaluation builds the vLLM engine.
+- `patch_required`: the recognized cap is below two; the script rewrites only
+  that literal and prints `MOUNT_ARG=<host>:<container>:ro`. Add it as a
+  read-only mount to every `cosmos-rl-evaluate` job.
+- `already_sufficient`: the recognized cap is at least two; no file or mount.
+- `cap_absent`: the source contains neither the cap nor vLLM engine evidence;
+  no file or mount.
+
+If the source still references `limit_mm_per_prompt` or vLLM without the
+recognized literal, the script fails with `classification=unknown`; verify the
+new evaluator shape instead of guessing. Nothing is vendored into the skill,
+and Train jobs never need this mount.
 
 The evaluator writes `results.json` with per-sample `video_id`, `response`,
 `question`, and `gt`. Run `analyze_gaps.py` afterward:

@@ -24,7 +24,7 @@ def _find_skill_bank(explicit: pathlib.Path | None) -> pathlib.Path:
             pathlib.Path(os.environ["TAO_SKILL_BANK_PATH"]).expanduser()
         )
     candidates.extend(pathlib.Path(__file__).resolve().parents)
-    candidates.append(pathlib.Path.home() / "tao-skills-external")
+    candidates.append(pathlib.Path.home() / "tao-skill-bank")
 
     seen: set[pathlib.Path] = set()
     for candidate in candidates:

@@ -8,6 +8,7 @@
 - Bumping the AutoML wheel
 - Adding a new image
 - When to use absolute paths instead of keys
+- Bumping the documented release pin
 - Related: Python wheel install matrix
 
 
@@ -25,11 +26,16 @@ images:
   tao_toolkit:
 -   pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
 +   pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.27.0-pyt
-    cosmos_rl:  nvcr.io/nvidia/tao/tao-toolkit:6.26.3-cosmos-rl
     vila:       nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 ```
 
 That's it. Every skill referencing `tao_toolkit.pyt` (28 of them today) automatically picks up the new tag at runtime.
+
+For a multi-backend model such as Cosmos Reason, update its backend key in
+`versions.yaml`, then run `scripts/stamp_versions.py`. The stamped runtime value
+lives at `backend_contracts.<backend>.container_image` in the model skill's
+`references/skill_info.yaml`; the referenced backend contract must not duplicate
+the image field.
 
 ### Verify the bump
 
@@ -110,6 +116,33 @@ Promote to a key (`versions.yaml` entry) when:
 - The image is shared by **two or more skills**.
 - The image will be **bumped on a release cadence**.
 - You want to track it in changelogs / RC notes.
+
+## Bumping the documented release pin
+
+The install instructions point users at the **latest release build**, not at
+`main`, so every install path carries a release tag that has to be bumped when a
+new release is published. After tagging release `X.Y.Z` on GitHub, update:
+
+| File | What to change |
+|---|---|
+| [`README.md`](../README.md) | the tag in the Install section prose, the Claude Code `/plugin marketplace add NVIDIA-TAO/tao-skill-bank@X.Y.Z` block, and the manual `codex plugin marketplace add` block |
+| [`scripts/install-codex-agents.sh`](../scripts/install-codex-agents.sh) | `DEFAULT_MARKETPLACE_REF="X.Y.Z"` |
+
+Leave the curl one-liner pointing at `main`. It fetches the installer, and only
+the copy on `main` knows the current release tag — a copy served from tag
+`X.Y.Z` pins whatever was current when that tag was cut (or nothing at all, for
+tags cut before this pin existed).
+
+```bash
+grep -rn "7\.1\.0" README.md scripts/install-codex-agents.sh   # find every pin to bump
+```
+
+Verify against the published tag before merging — a pin to a tag that does not
+exist yet fails at `marketplace add` time, not in CI:
+
+```bash
+git ls-remote --tags https://github.com/NVIDIA-TAO/tao-skill-bank.git "refs/tags/X.Y.Z"
+```
 
 ## Related: the AutoML wheel
 
