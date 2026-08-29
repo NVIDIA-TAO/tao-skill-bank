@@ -91,9 +91,41 @@ best = result["best"]
 print(f"Best val_mse: {best['metric_value']}")
 print(f"Best specs:   {best['specs']}")
 # best['specs'] uses the same dotted keys as spec_overrides.
-# The best checkpoint lives in the VirtualEnvSDK managed job directory, not in train.output_dir.
-# If locating it via glob, scope to result['history'] rec_ids and sort by metrics.json val_mse
-# to avoid accidentally picking up a checkpoint from a prior experiment with lower val_mse.
+# The checkpoint is NOT under the train.output_dir you passed, and there are
+# no rec_<N> directories -- see "Locating the winning checkpoint" below.
+```
+
+#### Locating the winning checkpoint
+
+`train.output_dir` is a **declared output** (`references/skill_info.yaml` ->
+`actions.train.outputs`), so the runner never appends `rec_<N>` to it: the
+platform SDK rewrites that spec value to a per-job path before the trial
+starts. The real layout is
+
+```text
+<work_dir>/jobs/<job-id>/results/train_output_dir/best_model.pt
+<work_dir>/jobs/<job-id>/results/train_output_dir/standardizer.pkl
+```
+
+where `<work_dir>` is the `work_dir=` you passed when the runner's SDK was
+constructed. `result["best"]` / `result["history"]` do not carry the job id --
+read it from the persisted AutoML state, then feed both artifacts to
+`perform_forecasting`:
+
+```python
+from pathlib import Path
+from tao_automl import query_status
+
+# runner.run() appends run_<UTC-timestamp> to workspace_path.
+run_dir = max(Path("automl_workspace/finetune").glob("run_*"),
+              key=lambda p: p.stat().st_mtime)
+status  = query_status(str(run_dir))
+best_id = status["progress"]["best_rec_id"]
+job_id  = next(r["job_id"] for r in status["recommendations"]
+               if r["rec_id"] == best_id)
+
+out = Path(sdk.get_job_results_dir(job_id)) / "train_output_dir"
+ckpt, standardizer = out / "best_model.pt", out / "standardizer.pkl"
 ```
 
 ### Inference HPO

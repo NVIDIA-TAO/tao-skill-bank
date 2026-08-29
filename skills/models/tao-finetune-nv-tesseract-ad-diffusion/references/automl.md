@@ -120,8 +120,40 @@ print(f"Best val_loss : {best['metric_value']:.6f}")
 print(f"Best params   : {best['specs']}")
 ```
 
-The winning checkpoint is at `train.output_dir/rec_<N>/best_finetuned_model.pth`.
-Pass it as `model_path` to `perform_anomaly_analysis_with_diffusion` for inference.
+#### Locating the winning checkpoint
+
+`train.output_dir` is a **declared output** (`references/skill_info.yaml` ->
+`actions.train.outputs`), so the runner never appends `rec_<N>` to it: the
+platform SDK rewrites that spec value to a per-job path before the trial
+starts. The real layout is
+
+```text
+<work_dir>/jobs/<job-id>/results/train_output_dir/best_finetuned_model.pth
+<work_dir>/jobs/<job-id>/results/train_output_dir/finetune_config.yaml
+```
+
+where `<work_dir>` is the `work_dir=` you passed when the runner's SDK was
+constructed. Nothing named `rec_0`, `rec_1`, ... exists in this layout, and
+`result["best"]` / `result["history"]` do not carry the job id -- read it from
+the persisted AutoML state instead:
+
+```python
+from pathlib import Path
+from tao_automl import query_status
+
+# runner.run() appends run_<UTC-timestamp> to workspace_path.
+run_dir = max(Path("automl_workspace/finetune").glob("run_*"),
+              key=lambda p: p.stat().st_mtime)
+status  = query_status(str(run_dir))
+best_id = status["progress"]["best_rec_id"]
+job_id  = next(r["job_id"] for r in status["recommendations"]
+               if r["rec_id"] == best_id)
+
+model_path = (Path(sdk.get_job_results_dir(job_id))
+              / "train_output_dir" / "best_finetuned_model.pth")
+```
+
+Pass `model_path` to `perform_anomaly_analysis_with_diffusion` for inference.
 
 #### How the config flows (fine-tuning)
 
