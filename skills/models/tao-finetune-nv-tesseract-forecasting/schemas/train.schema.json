@@ -39,7 +39,7 @@
       "target_cols": "",
       "val_ratio": 0.1,
       "test_ratio": 0.0,
-      "stride": 1
+      "stride": null
     },
     "model": {
       "seq_len": 512,
@@ -127,8 +127,8 @@
         },
         "stride": {
           "automl_enabled": false,
-          "default": 1,
-          "description": "Sliding window stride. Use 1 for dense windows.",
+          "default": null,
+          "description": "Sliding window stride. null (the model default) resolves to model.forecast_horizon, matching the --stride CLI default. An explicit 1 gives dense overlapping windows and roughly forecast_horizon times more windows per epoch, which inflates per-trial wall time by the same factor.",
           "minimum": 1,
           "title": "stride",
           "type": "int"

@@ -6,7 +6,7 @@ dataset:
   target_cols: ""
   val_ratio: 0.1
   test_ratio: 0.0
-  stride: 1
+  stride: null        # null -> NV-Tesseract resolves to forecast_horizon
 model:
   seq_len: 512
   forecast_horizon: 72
