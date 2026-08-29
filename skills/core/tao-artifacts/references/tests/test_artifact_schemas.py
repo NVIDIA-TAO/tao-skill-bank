@@ -117,6 +117,63 @@ def test_args_bundle_valid(spec_schema):
     ok(ARGS_BUNDLE, spec_schema)
 
 
+def test_bundle_accepts_model_owned_action_lifecycle(spec_schema):
+    b = copy.deepcopy(DINO_BUNDLE)
+    b["execution"] = {
+        "environment": {
+            "PYTHONUNBUFFERED": "1",
+            "TAO_JOB_ID": "{job_id}",
+        },
+        "pre_commands": ["python -m package.runtime_preflight"],
+        "post_commands": ["python -m package.verify_results --config {config_path}"],
+        "post_scope": "leader",
+        "distributed": {
+            "launcher": "torchrun",
+            "processes_per_node": 8,
+            "tasks_per_node": 1,
+        },
+        "supporting_files": [
+            {
+                "source": "scripts/checkpoint_action.py",
+                "destination": "checkpoint_action.py",
+                "sha256": "a" * 64,
+            }
+        ],
+        "completion": {
+            "child_exit_code_path": "{results_dir}/child_exit_code",
+            "structured_status_path": "{results_dir}/status.json",
+            "success_states": ["SUCCESS"],
+        },
+    }
+    ok(b, spec_schema)
+
+
+def test_bundle_rejects_secret_like_or_unhashed_lifecycle_inputs(spec_schema):
+    b = copy.deepcopy(DINO_BUNDLE)
+    b["execution"] = {"environment": {"bad-name": "value"}}
+    bad(b, spec_schema)
+
+    b = copy.deepcopy(DINO_BUNDLE)
+    b["execution"] = {
+        "supporting_files": [
+            {"source": "scripts/helper.py", "destination": "helper.py"}
+        ]
+    }
+    bad(b, spec_schema)
+
+    b = copy.deepcopy(DINO_BUNDLE)
+    b["execution"] = {
+        "supporting_files": [
+            {
+                "source": "../outside.py",
+                "destination": "helper.py",
+                "sha256": "a" * 64,
+            }
+        ]
+    }
+    bad(b, spec_schema)
+
+
 def test_dotted_pointer_allowed_in_declared_inputs(spec_schema):
     # spec_key is a pointer; dots + [0] indices are correct THERE
     b = copy.deepcopy(DINO_BUNDLE)

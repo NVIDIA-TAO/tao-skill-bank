@@ -79,7 +79,7 @@ scripts/check_tao_launch_preflight.py --platform local-docker \
 
 Set `--target-gpu-index` to the exact indices passed to Docker's `--gpus`
 allocation. This prevents an unallocated display or heterogeneous accelerator
-from contaminating memory, architecture, and runtime-smoke checks.
+from contaminating memory, architecture, and allocated-runtime checks.
 
 The 384 GiB result-filesystem gate is mandatory for Cosmos-RL Nano training
 with synchronous epoch checkpoints. A dense four-way sharded checkpoint plus
@@ -109,7 +109,7 @@ the actual visible GPU count, and set `policy.parallelism.dp_replicate_size=1`
 for a single node. Workflows that allocate separate policy and rollout replicas
 must still satisfy their explicit topology. In every case, each visible GPU
 architecture must be in the image-supported allowlist above and the selected
-image must pass the runtime CUDA-stack smoke test along with normal
+image must pass the allocated-node CUDA-stack gate along with normal
 Docker/platform, S3, and credential preflight checks. Architecture-specific
 suffixes such as `a` and `f` are matched to the same base SM family by the
 preflight helper.
@@ -160,7 +160,7 @@ Don't rebuild from scratch.
 import yaml
 from pathlib import Path
 
-skill = Path.home() / "tao-sdk/tao-skills-external/skills/models/tao-finetune-cosmos-reason"
+skill = Path.home() / "tao-sdk/tao-skill-bank/skills/models/tao-finetune-cosmos-reason"
 action = "train"  # train, evaluate, inference, or quantize
 specs = yaml.safe_load((skill / f"references/spec_template_{action}.yaml").read_text())
 # Now apply your overrides on top of `specs` (next section).
@@ -206,6 +206,11 @@ validation frequency, and logging. The packaged template keeps
 `custom.vision.nframes=8` for bounded 1-GPU memory; switch to `fps` only after
 checking token budget and GPU memory.
 
+The DAFT hook also forwards FPS-only `min_frames` / `max_frames`, clip-time
+`video_start` / `video_end`, paired `resized_height` / `resized_width`, and
+`min_pixels` / `max_pixels` / `total_pixels`. Record all selected values in
+the sealed plan and inherit them into linked evaluation.
+
 Keep cadence epoch-based by default: use `train.epoch` for training duration,
 `train.ckpt.save_freq_in_epoch=1` for checkpoints, and
 `validation.freq_in_epoch=1` for validation. Do not select step-based
@@ -213,17 +218,11 @@ Keep cadence epoch-based by default: use `train.epoch` for training duration,
 topology, or runtime image. Use step cadence only when the user explicitly
 requests it.
 
-Do not require per-record `video_fps` for the packaged `nframes` template. If a
-run switches to `custom.vision.fps` or a selected dataset/image profile
-requires per-record timing, validate the annotation files before launching:
-
-```bash
-scripts/check_tao_launch_preflight.py --platform <platform> \
-  --path train_annotation=/path/to/train.json \
-  --path val_annotation=/path/to/val.json \
-  --json-required-field train_annotation=video_fps \
-  --json-required-field val_annotation=video_fps
-```
+Neither `nframes` nor `fps` sampling requires a per-record `video_fps` field.
+The selected decoder reads the source frame rate from each media stream and
+qwen-vl-utils uses it to resolve FPS sampling. Treat annotation-level `fps` or
+`video_fps` as optional descriptive metadata and validate it when present;
+never invent it or reject an otherwise valid dataset because it is absent.
 
 The packaged train/evaluate/inference/quantize templates default to
 the user-supplied immutable model URI or local path for base-model fields. Resolve it only when

@@ -139,6 +139,8 @@ Run bundled scripts through `<skill_root>/scripts/deft_python.sh`. Resolve every
 
 Each stage maps to one underlying skill or to bundled glue. **Read only the current stage's overlay, then invoke.**
 
+The overlays are written against two loop variables that Pre-Flight sets and every stage uses: `N`, the current iteration number, and `PHASE`, which is `baseline` or `iter${N}`. They are stated here because a stage overlay is read on its own — see `references/preflight.md` for the full set.
+
 If an *overlay* is missing, stop and ask the user to reinstall the plugin — the loop cannot run a stage whose settings it does not have. If a mapped *skill* is unavailable, do not stop and do not improvise: fall back to the overlay's documented `docker run` as described in `references/scripts-and-agents.md`, and record `execution_path=direct-container`. The overlay carries everything the invocation needs, so the fallback produces the same artifacts.
 
 | Stage | Overlay | Underlying skill |
@@ -163,7 +165,7 @@ If an *overlay* is missing, stop and ask the user to reinstall the plugin — th
 | Pipeline stages, state schema, loop-end sequence | `references/pipeline-and-state.md` |
 | Bundled scripts, glue, reporter agent, stage table | `references/scripts-and-agents.md` |
 
-**Required input — `max_iterations`.** No default; ask the user if not supplied. All other parameters have documented defaults.
+**`max_iterations` defaults to `1`** — one mine, train and score pass, the smallest run that yields a comparison against the baseline. Confirm it with the user when they have not said how many iterations they want; an unattended run takes the default rather than stopping to ask.
 
 ## Gating
 

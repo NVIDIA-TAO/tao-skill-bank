@@ -27,6 +27,36 @@ Keep evaluation samples separate from the unlabeled training corpus when possibl
 
 Compare the high-resolution result with a relevant base-resolution checkpoint before selecting a model.
 
+## LoRA and representation preservation
+
+LoRA freezes the backbone's base weights and adapts low-rank projections while
+the DINO/iBOT heads remain trainable. Start with the default attention targets:
+
+```yaml
+model:
+  lora:
+    enable: true
+    rank: 8
+    alpha: 16.0
+    dropout: 0.05
+    target_modules: [qkv, proj]
+    num_last_blocks: 0
+  preservation:
+    enable: true
+    cls_mse_weight: 0.05
+    cls_cosine_weight: 0.05
+train:
+  log_every_n_steps: 1
+```
+
+`num_last_blocks: 0` adapts every block; a positive value limits adapters to
+the final N blocks. The preservation terms protect global CLS geometry and are
+complementary to Gram anchoring, which protects patch-token geometry. Compare
+downstream metrics before changing the default loss weights.
+
+Component losses are logged per step. `log_every_n_steps: 1` makes them visible
+even when a smoke run has fewer than 50 optimizer steps.
+
 ## Checkpoint files
 
 | File | Typical use |

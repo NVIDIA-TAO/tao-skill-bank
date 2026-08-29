@@ -37,7 +37,7 @@ visible without diffing against a container.
 |---|---|---|
 | `kitti_to_coco.yaml` | `annotations convert` KITTI→COCO | `kitti.project: coco` — names the output file every later step looks for |
 | `coco_to_odvg.yaml` | `annotations convert` COCO→ODVG | formats only |
-| `codetr_inference.yaml` | pool pseudo-labelling | `num_select: 1000` (TAO 300 crowds rare classes out of the pool), `conf_threshold: 0.3`, the ViT-L/16 architecture the checkpoint requires, and `save_annotated_images: false` |
+| `codetr_inference.yaml` | pool pseudo-labelling | `num_select: 1000` (TAO 300 crowds rare classes out of the pool), `conf_threshold: 0.3`, and the ViT-L/16 architecture the checkpoint requires |
 | `grounding_dino_inference.yaml` | baseline + per-iteration inference | `conf_threshold: 0.0` (keep the full PR curve), `log_scale: auto`, `class_embed_bias: true` |
 | `kpi_analyze.yaml` | scoring | `num_recall_points: 11`, `ignore_sqwidth: 40` |
 
@@ -52,6 +52,7 @@ must be derived from the run's classes, never pinned.
 | `prepare_mapping_for_kpi_analyze.py` | `kpi_analyze` | Narrow the supplied KPI class mapping to the run's target classes, aliases verbatim. A class the model cannot predict would otherwise score a constant 0 and compress the mAP trend. |
 | `prepare_input_for_image_embeddings.py` | `prep` | List the pool image directory into the `filepath` parquet `embedding image_embeddings` reads. Absolute paths, symlinks resolved, sorted — so the same directory always yields the same parquet. |
 | `prepare_val_split_for_train.py` | `prep` | Carve a validation COCO from 10% of the prepared pool, rewriting category ids to **0-based**. `grounding_dino train` cannot run without a validation source, and its loader uses `category_id` verbatim as a dense label index, so a conventional 1-based COCO overflows on the last class. |
+| `summarize_kpi.py` | after `kpi_analyze` | Recompute the aggregate mAP from `kpi_calc.csv` and write `kpi_summary.json` beside it. The stage prints mAP to stdout and writes it nowhere, so this removes the need to hold a stream open for the length of the stage. |
 | `await_stage.py` | any long stage | Block until a stage finishes by watching its artifacts or `status.json`. **Never wait on a process name.** Pass `--newer-than <marker touched before launch>` so a retry is not satisfied by the previous attempt's leftovers. |
 | `prepare_class_mappings_for_mining_data_prep.py` | `prep` | Translate one `classes.yaml` into the two mappings TAO folds with: the `category_mapping` block for the Co-DETR inference spec (the real fold, applied at detection time with per-category soft-NMS) and the identity `kitti.mapping` for `annotations convert`. Emits nothing else — TAO does the folding. |
 | `verify_class_contract.py` | Pre-Flight, before every inference | Compare the class list as it appears in captions, the KPI mapping, `deft_state.json`, the ODVG labelmap and `classes.yaml`. Grounding DINO labels a detection by caption *position*, so a reordered or short list relabels every prediction while the run still exits 0. |

@@ -15,9 +15,17 @@ helper scripts (`scripts/tao_job_record.py`, `scripts/redact_secrets.py`, and
 the `tao-data-io` skill) — no TAO SDK install.
 
 User-facing DEFT shorthand resolves to canonical application skills:
-`tao-deft-aoi` → `tao-run-deft-aoi` and `tao-deft-iaa` →
-`tao-run-deft-iaa`. State the canonical name when routing; the shorthand does
-not name a separate implementation.
+`tao-deft-aoi` → `tao-run-deft-aoi` and People Attribute Search (PAS)
+`tao-deft-pas` → `tao-run-deft-pas`. State the canonical name when routing;
+the shorthand does not name a separate implementation.
+
+Route to `tao-run-deft-pas` when a request combines image-text retrieval on
+attribute-labelled data with an iterative evaluate, mine, retrain, and
+re-evaluate loop. A KPI target, plateau condition, or iteration budget may
+bound the loop; CLIP/SigLIP, DEFT, and PAS names are optional routing signals.
+Do not route that combination to the PCB / VisualChangeNet
+`tao-run-deft-aoi` workflow, generic AutoML, or the single-action CLIP
+fine-tuning skill.
 
 ## Discovery flow
 
@@ -34,7 +42,7 @@ uses `scripts/cosmos_workflow.py` for this step.
 0. **Read the task skill.** `skills/models/<arch>/SKILL.md` (network specifics),
    `skills/data/<name>/SKILL.md` (transforms), or `skills/applications/<name>/SKILL.md`
    (workflows that compose model + data + platform — `tao-run-automl`,
-   `tao-run-deft-aoi`, `tao-run-deft-iaa`, etc.). Get the model facts, data
+   `tao-run-deft-aoi`, `tao-run-deft-pas`, etc.). Get the model facts, data
    format, action parameters, supported-platform contract, and known error
    patterns. Resolve documented shorthand names to the canonical frontmatter
    name before continuing.
@@ -50,6 +58,9 @@ uses `scripts/cosmos_workflow.py` for this step.
 
 2. **Read `references/skill_info.yaml`** for the structured contract:
    - `container_image` — image key or absolute URI
+   - `backend_contracts.<backend>.container_image` — selected-backend image
+     for a multi-backend frontend; this remains in `skill_info.yaml` while the
+     referenced contract owns backend-native runtime semantics
    - `actions.<action>.command` — the in-container command template
    - `actions.<action>.mode` — `config` / `args` / `passthrough` (drives how you
      serialize the spec into the container command)
@@ -58,6 +69,10 @@ uses `scripts/cosmos_workflow.py` for this step.
    - `actions.<action>.inputs` — declared input contract (paths + types)
    - `actions.<action>.outputs` — declared output contract (paths + types)
    - `actions.<action>.upload_excludes` — what NOT to upload back
+   - `actions.<action>.execution_contract` and the produced
+     `spec_bundle.execution` — model-owned runtime environment, pre/post
+     commands, distributed intent, helper dependencies, and completion
+     evidence consumed unchanged by the selected platform
    - `data_format` (if present)
    - `backend_contracts` / `backend_selection` / `backend_resolver` (if
      present) — implementation-specific image, command, TOML, dataset,
@@ -66,7 +81,9 @@ uses `scripts/cosmos_workflow.py` for this step.
 3. **Read the platform SKILL.md you'll dispatch to** for execution conventions
    (mounts, env vars, resource shapes, retry behavior, the four verbs).
 
-4. **Resolve `container_image`.** If it's a dotted key (`tao_toolkit.pyt`),
+4. **Resolve `container_image`.** For a multi-backend frontend, select the
+   backend first and read its `backend_contracts.<backend>.container_image`.
+   If the selected value is a dotted key (`tao_toolkit.pyt`),
    look it up in `${TAO_SKILL_BANK_PATH}/versions.yaml`. Absolute URIs
    (`nvcr.io/...`) are valid as-is.
 

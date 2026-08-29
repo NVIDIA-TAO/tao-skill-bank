@@ -31,7 +31,38 @@ Everything else already matches: an image is weak if it fails on **any** class (
 
 ## Spec
 
-Write per-iteration under `${RESULTS_DIR}/iter${N}/gaps/od_gap_spec.yaml`:
+Write per-iteration under `${RESULTS_DIR}/iter${N}/gaps/od_gap_spec.yaml` — the invocation below reads it from
+`$OD_GAP_SPEC`, so bind the two:
+
+```bash
+OD_GAP_SPEC="${RESULTS_DIR}/iter${N}/gaps/od_gap_spec.yaml"
+```
+
+Build it the same way every other stage does — emit, then fill the run-specific fields:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
+  --stage gap_analysis --out "$OD_GAP_SPEC"
+
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
+  --spec "$OD_GAP_SPEC" \
+  --set ground_truth_ann_path="$GROUND_TRUTH_LABELS_DIR" \
+  --set inference_ann_path="<previous phase's inference/labels>" \
+  --set images_dir="$KPI_IMAGES_DIR" \
+  --set results_dir="${RESULTS_DIR}/iter${N}/gaps" \
+  --set kpi="iter${N}" \
+  --set-from-file weak_thresholds="<the threshold mapping from the section above>"
+```
+
+`gap_analysis` is absent from TAO's `default_specs` list, so unlike the other stages
+there is no container to emit from: `emit_default_spec.py` copies
+`assets/gap_analysis_object_detection.yaml`, which is hand-maintained for exactly that
+reason. That asset is a **starting spec, not an overlay** — do not pass it to
+`--apply-workflow-defaults`. It carries a nested `weak_thresholds` mapping, and the
+overlay mechanism takes one dotted key per leaf, so it is rejected with
+`'weak_thresholds' has a mapping value`. There is no `--apply-workflow-defaults` step
+for this stage; the emitted spec already holds every documented default.
+
 
 ```yaml
 ground_truth_ann_path: <config.ground_truth_labels_dir>
@@ -60,8 +91,11 @@ class_mapping: {}
 ## Invocation
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+<skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-analyze-gaps-od-map/scripts/verify_object_detection_spec.py \
+  --spec "$OD_GAP_SPEC"
+
+docker run --rm --name "deft_iter${N}_gap" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   gap_analysis object_detection -e "$OD_GAP_SPEC"
 ```
@@ -95,6 +129,7 @@ Count the rows of `weak_images.parquet` and pass that number. It is required on 
   --weak-images "${RESULTS_DIR}/iter${N}/gaps/weak_images.parquet" \
   --gap-report "${RESULTS_DIR}/iter${N}/gaps/gap_report.json" \
   --weak-image-count <row count of weak_images.parquet> \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "gap_analysis: <N> weak images across <M> classes"
 ```
 

@@ -15,7 +15,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -24,13 +26,21 @@ from typing import Any, Iterable, Mapping, Sequence
 
 URI_RE = re.compile(r"^(?:hf_model://|https?://|s3://|ngc://|hf://)")
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-ACCURACY_TASKS = {"bcq", "mcq", "binary_choice", "multiple_choice"}
+ACCURACY_TASKS = {"bcq", "binary", "mcq", "binary_choice", "multiple_choice"}
 DATASET_FAMILIES = {"auto", "video_conversation", "task_aware_video_reasoning"}
 MEDIA_FIELDS = ("video", "video_id", "image", "image_id", "media", "media_path")
+TAO_VL_MEDIA_FIELDS = ("video_id", "image_id")
 CLASSIFICATION_LABEL_SETS = (
     frozenset({"a", "b", "c", "d"}),
     frozenset({"yes", "no"}),
 )
+EVALUATOR_TASK_ALIASES = {
+    "bcq": "binary",
+    "binary": "binary",
+    "binary_choice": "binary",
+    "mcq": "mcq",
+    "multiple_choice": "mcq",
+}
 
 
 class WorkflowError(ValueError):
@@ -72,16 +82,27 @@ def is_model_uri(value: str) -> bool:
     return bool(URI_RE.match(value) or MODEL_ID_RE.fullmatch(value))
 
 
-def _file_inventory(root: Path, names: Iterable[str]) -> list[dict[str, Any]]:
+def _file_inventory(
+    root: Path, names: Iterable[str], *, hash_content: bool = True
+) -> list[dict[str, Any]]:
     inventory = []
     for name in names:
         path = root / name
         if path.is_file():
-            inventory.append({"path": name, "size": path.stat().st_size, "sha256": sha256_file(path)})
+            entry = {"path": name, "size": path.stat().st_size}
+            if hash_content:
+                entry["sha256"] = sha256_file(path)
+            inventory.append(entry)
     return inventory
 
 
-def inspect_model(value: str, revision: str = "", prepared: str = "") -> dict[str, Any]:
+def inspect_model(
+    value: str,
+    revision: str = "",
+    prepared: str = "",
+    *,
+    fast_weight_fingerprint: bool = False,
+) -> dict[str, Any]:
     if not value:
         raise WorkflowError("base_model_path_or_uri is required for every Cosmos training request")
     supplied = path_identity(value)
@@ -120,12 +141,15 @@ def inspect_model(value: str, revision: str = "", prepared: str = "") -> dict[st
                     raise WorkflowError(f"model safetensors index contains an unsafe weight path: {relative!r}")
                 if not (root / relative).is_file():
                     raise WorkflowError(f"model safetensors index references a missing weight file: {relative}")
-        important = [
+        metadata_files = [
             "config.json", "generation_config.json", "model.safetensors.index.json",
             "tokenizer.json", "tokenizer_config.json", "processor_config.json",
             "preprocessor_config.json", "chat_template.json",
-        ] + weight_files + indexed_weight_files
-        inventory = _file_inventory(root, important)
+        ]
+        weight_names = list(dict.fromkeys([*weight_files, *indexed_weight_files]))
+        inventory = _file_inventory(root, metadata_files) + _file_inventory(
+            root, weight_names, hash_content=not fast_weight_fingerprint
+        )
         result.update(
             {
                 "source_type": "local",
@@ -133,6 +157,11 @@ def inspect_model(value: str, revision: str = "", prepared: str = "") -> dict[st
                 "config": {"model_type": config.get("model_type"), "architectures": config.get("architectures")},
                 "files": inventory,
                 "fingerprint": stable_hash(inventory),
+                "fingerprint_mode": (
+                    "metadata_content_and_weight_sizes"
+                    if fast_weight_fingerprint
+                    else "full_content"
+                ),
             }
         )
     elif is_model_uri(value):
@@ -154,7 +183,9 @@ def inspect_model(value: str, revision: str = "", prepared: str = "") -> dict[st
         prepared_id = result["prepared_checkpoint"]
         if not prepared_id["exists"] or prepared_id["kind"] != "directory":
             raise WorkflowError(f"prepared checkpoint is inaccessible: {prepared}")
-        prepared_result = inspect_model(prepared)
+        prepared_result = inspect_model(
+            prepared, fast_weight_fingerprint=fast_weight_fingerprint
+        )
         result["prepared_checkpoint"].update(
             {
                 "format": prepared_result["format"],
@@ -192,6 +223,27 @@ def _record_media(record: Mapping[str, Any]) -> list[str]:
         elif isinstance(value, list):
             values.extend(item for item in value if isinstance(item, str) and item)
     return values
+
+
+def decode_media(path: Path) -> None:
+    """Decode-probe one frame so corrupt video inputs fail before launch."""
+    if path.suffix.casefold() not in {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}:
+        return
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise WorkflowError(
+            "media decode validation requires ffprobe on the inspection host; "
+            f"cannot validate {path}"
+        )
+    completed = subprocess.run(
+        [ffprobe, "-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#1",
+         "-show_entries", "frame=media_type", "-of", "csv=p=0", str(path)],
+        text=True, capture_output=True, check=False,
+    )
+    if completed.returncode or "video" not in completed.stdout.split():
+        detail = completed.stderr.strip().splitlines()
+        reason = detail[-1] if detail else "no decodable video frame"
+        raise WorkflowError(f"media decode validation failed for {path}: {reason}")
 
 
 def _record_key(record: Mapping[str, Any]) -> str:
@@ -291,7 +343,7 @@ def inspect_dataset(
     frame_rates: list[float] = []
     durations: list[float] = []
     task_metrics: dict[str, str] = {}
-    conversation_targets: dict[str, list[str]] = {}
+    answer_targets: dict[str, list[str]] = {}
     for annotation_index, annotation_id in enumerate(annotation_ids):
         # Keep dataset runtime paths in the caller's lexical namespace. A
         # shared-filesystem alias where the submitted and canonical roots differ
@@ -333,8 +385,17 @@ def inspect_dataset(
                     schema_errors.append(f"{annotation_path}:{index}: task-aware record has no task")
                 if requested_tasks and task not in requested_tasks:
                     continue
-                if not _record_media(record):
-                    schema_errors.append(f"{annotation_path}:{index}: task-aware record has no media field")
+                canonical_media = [
+                    field for field in TAO_VL_MEDIA_FIELDS
+                    if isinstance(record.get(field), str) and record.get(field)
+                ]
+                if len(canonical_media) != 1:
+                    aliases = [field for field in MEDIA_FIELDS if record.get(field)]
+                    schema_errors.append(
+                        f"{annotation_path}:{index}: task-aware tao-vl-reason-v1.0 "
+                        "record requires exactly one canonical video_id or image_id; "
+                        f"found {aliases or 'none'}"
+                    )
                 conversations = record.get("conversations") or record.get("messages")
                 has_conversation_target = isinstance(conversations, list) and len(conversations) >= 2
                 has_question_answer = (
@@ -364,10 +425,17 @@ def inspect_dataset(
             record_keys.append(_record_key(record))
             task_key = task or "default"
             task_counts[task_key] = task_counts.get(task_key, 0) + 1
-            if active_family == "video_conversation":
-                target = _conversation_target(record)
-                if target is not None:
-                    conversation_targets.setdefault(task_key, []).append(target)
+            target = _conversation_target(record)
+            if target is None:
+                raw_target = record.get("answer", record.get("references"))
+                if isinstance(raw_target, str) and raw_target.strip():
+                    target = raw_target.strip()
+                elif isinstance(raw_target, list):
+                    values = [str(value).strip() for value in raw_target if str(value).strip()]
+                    if len(values) == 1:
+                        target = values[0]
+            if target is not None:
+                answer_targets.setdefault(task_key, []).append(target)
             for relative in _record_media(record):
                 candidate = Path(relative)
                 media_path = candidate if candidate.is_absolute() else root / candidate
@@ -395,7 +463,7 @@ def inspect_dataset(
     media_manifest = sorted(media_entries.values(), key=lambda item: item["path"])
     media_sizes = [entry["size"] for entry in media_manifest]
     inferred_metrics: dict[str, str] = {}
-    for task, values in conversation_targets.items():
+    for task, values in answer_targets.items():
         normalized = {value.casefold() for value in values}
         if len(values) == task_counts[task] and any(
             normalized <= labels for labels in CLASSIFICATION_LABEL_SETS
@@ -408,6 +476,62 @@ def inspect_dataset(
         task for task in task_counts
         if task in ACCURACY_TASKS or task_metrics.get(task) in {"accuracy", "exact_match_accuracy"}
     )
+    task_semantics: dict[str, dict[str, Any]] = {}
+    for task in sorted(task_counts):
+        labels = {
+            value.casefold().strip()
+            for value in answer_targets.get(task, [])
+            if value.strip()
+        }
+        task_type = EVALUATOR_TASK_ALIASES.get(task)
+        source = "task_metadata" if task_type else None
+        if task_type is None:
+            if labels and labels <= {"yes", "no"}:
+                task_type, source = "binary", "complete_label_vocabulary"
+            elif labels and labels <= {"a", "b"}:
+                task_type, source = None, "ambiguous_a_b_label_vocabulary"
+            elif labels and labels <= {"a", "b", "c", "d"}:
+                task_type, source = "mcq", "complete_label_vocabulary"
+            elif task in accuracy_tasks:
+                task_type, source = None, "accuracy_declared_but_answer_semantics_unknown"
+            else:
+                task_type, source = "text", "non_accuracy_task"
+        task_semantics[task] = {
+            "task_type": task_type,
+            "source": source,
+            "target_count": len(answer_targets.get(task, [])),
+            "complete_target_coverage": len(answer_targets.get(task, [])) == task_counts[task],
+            "classification_vocabulary": (
+                sorted(labels)
+                if labels <= {"yes", "no", "a", "b", "c", "d"}
+                else []
+            ),
+            "declared_metric": task_metrics.get(task),
+        }
+    known_task_types = {
+        value["task_type"] for value in task_semantics.values() if value["task_type"]
+    }
+    unresolved_accuracy_tasks = sorted(
+        task for task, value in task_semantics.items()
+        if task in accuracy_tasks and value["task_type"] is None
+    )
+    inferred_task_type = next(iter(known_task_types)) if len(known_task_types) == 1 else ""
+    metric_names = sorted({
+        metric for metric in task_metrics.values()
+        if metric not in {"accuracy", "exact_match_accuracy"}
+    })
+    evaluation_profile = {
+        "inferred_task_type": inferred_task_type,
+        "answer_type": "letter" if known_task_types == {"mcq"} else "freeform",
+        "task_semantics": task_semantics,
+        "metric_names": metric_names,
+        "normalization": "tao-cosmos-shared-v2",
+        "requires_user_input": [
+            *(["task.type"] if unresolved_accuracy_tasks else []),
+            *(["metrics.names"] if set(task_counts) - set(accuracy_tasks) and not metric_names else []),
+        ],
+        "unresolved_accuracy_tasks": unresolved_accuracy_tasks,
+    }
     profile = {
         "family": resolved_family,
         "record_count": len(record_keys),
@@ -468,6 +592,7 @@ def inspect_dataset(
             "inferred_metrics": inferred_metrics,
             "aggregate": "example_weighted_over_accuracy_defined_tasks",
         },
+        "evaluation_profile": evaluation_profile,
     }
 
 
@@ -491,7 +616,7 @@ def optimization_parity(left: Mapping[str, Any], right: Mapping[str, Any]) -> di
     keys = (
         "training_mode", "epochs", "effective_global_batch", "optimizer", "learning_rate",
         "scheduler", "warmup", "weight_decay", "gradient_clip", "precision", "seed",
-        "sequence_length", "frames", "system_prompt", "validation_frequency_epochs",
+        "sequence_length", "frames", "vision", "system_prompt", "validation_frequency_epochs",
         "checkpoint_frequency_epochs", "lora",
     )
     differences = {key: {"left": left.get(key), "right": right.get(key)} for key in keys if left.get(key) != right.get(key)}
@@ -554,6 +679,11 @@ def selected_environment(environment: Mapping[str, str]) -> dict[str, str]:
     allow = {
         "PYTHONUNBUFFERED", "PYTHONHASHSEED", "NCCL_DEBUG", "TORCH_NCCL_ASYNC_ERROR_HANDLING",
         "PYTORCH_CUDA_ALLOC_CONF", "NVIDIA_DRIVER_CAPABILITIES", "CUDA_FORWARD_COMPAT",
+        "FORCE_QWENVL_VIDEO_READER", "TAO_SFT_BATCH_THREADS",
+        "TAO_PYNV_FRAME_TRANSFER", "TAO_PYNV_VIDEO_CACHE_SIZE",
+        "TAO_PYNV_DECODER_CACHE_SIZE", "COSMOS_CACHE",
+        "TAO_VIDEO_CACHE_SIZE", "TAO_FRAMEWORK_SFT_PROCESS_THREADS",
+        "TAO_VIDEO_DECODER_DEVICE", "TAO_VIDEO_DECODER_THREADS",
     }
     return {key: environment[key] for key in sorted(allow & set(environment))}
 
@@ -618,12 +748,14 @@ def _inspect_inputs_cli(argv: Sequence[str]) -> dict[str, Any]:
     parser.add_argument("--task", action="append", default=[])
     parser.add_argument("--runtime-path", action="append", default=[])
     parser.add_argument("--fast-media-fingerprint", action="store_true")
+    parser.add_argument("--fast-model-fingerprint", action="store_true")
     args = parser.parse_args(list(argv))
 
     model = inspect_model(
         args.base_model_path_or_uri,
         args.base_model_revision,
         args.prepared_checkpoint_path,
+        fast_weight_fingerprint=args.fast_model_fingerprint,
     )
     train = inspect_dataset(
         dataset_family=args.dataset_family,

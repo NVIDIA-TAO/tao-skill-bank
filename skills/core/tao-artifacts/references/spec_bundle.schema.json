@@ -48,6 +48,10 @@
     "gpu_spec_key": {
       "type": "string",
       "description": "Dotted pointer to where the GPU count is written in the spec (config mode), e.g. train.num_gpus."
+    },
+    "execution": {
+      "$ref": "#/$defs/executionContract",
+      "description": "Optional model-owned lifecycle around the primary command. Platforms consume this declarative contract instead of model-specific launch renderers."
     }
   },
   "allOf": [
@@ -111,6 +115,83 @@
       "properties": {
         "spec_key": { "type": "string", "minLength": 1 },
         "type": { "enum": ["file", "folder"] }
+      }
+    },
+    "executionContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "environment": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*$" },
+          "additionalProperties": { "type": "string" },
+          "description": "Non-secret container environment. Values may use the documented {job_id}, {results_dir}, and {config_path} placeholders, which the platform binds after opening the job record."
+        },
+        "pre_commands": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Model-owned runtime attestations or preparation commands, executed in order before the primary command in the same allocation/container."
+        },
+        "post_commands": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Model-owned result validation or aggregation commands, executed in order only after the primary command succeeds."
+        },
+        "post_scope": {
+          "enum": ["all", "leader"],
+          "default": "leader",
+          "description": "Whether post_commands run in every platform task or only task/rank zero."
+        },
+        "distributed": {
+          "type": "object",
+          "required": ["launcher", "processes_per_node"],
+          "additionalProperties": false,
+          "properties": {
+            "launcher": { "enum": ["direct", "torchrun"] },
+            "processes_per_node": { "type": "integer", "minimum": 1 },
+            "tasks_per_node": { "const": 1, "default": 1 }
+          }
+        },
+        "supporting_files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/supportingFile" },
+          "description": "Checked-in orchestration helpers to stage as immutable auxiliary inputs. These are not source overlays and must not replace code in the image."
+        },
+        "completion": {
+          "type": "object",
+          "required": ["child_exit_code_path"],
+          "additionalProperties": false,
+          "properties": {
+            "child_exit_code_path": { "type": "string", "minLength": 1 },
+            "structured_status_path": { "type": "string", "minLength": 1 },
+            "success_states": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "supportingFile": {
+      "type": "object",
+      "required": ["source", "destination", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))\\S+$",
+          "description": "Path relative to the producing skill root; absolute paths and parent traversal are forbidden."
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))\\S+$",
+          "description": "Relative path below the platform-owned staged helper directory."
+        },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
       }
     }
   }

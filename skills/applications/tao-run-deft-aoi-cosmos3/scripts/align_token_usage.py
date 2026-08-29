@@ -23,7 +23,7 @@ CLI:
 
     python scripts/align_token_usage.py \
         --state-path /abs/path/results/deft_state.json \
-        --project-dir ~/.claude/projects/-home-user-tao-skills-external
+        --project-dir ~/.claude/projects/-home-user-tao-skill-bank
 
     # or pass individual transcript files (repeatable):
     python scripts/align_token_usage.py \
@@ -34,7 +34,7 @@ CLI:
     # or auto-resolve the project dir from cwd (default: current cwd):
     python scripts/align_token_usage.py \
         --state-path /abs/path/results/deft_state.json \
-        --cwd ~/tao-skills-external
+        --cwd ~/tao-skill-bank
 
 The per-entry `tokens` field shape:
 

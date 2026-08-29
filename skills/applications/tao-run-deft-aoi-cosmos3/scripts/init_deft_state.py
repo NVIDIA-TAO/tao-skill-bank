@@ -91,6 +91,7 @@ BASE_MODEL_ALIASES = {
     "cosmos3-super": "nvidia/Cosmos3-Super",
     "nvidia/cosmos3-super": "nvidia/Cosmos3-Super",
 }
+SUPPORTED_BASE_MODELS = tuple(dict.fromkeys(BASE_MODEL_ALIASES.values()))
 
 
 def canonicalize_base_model(value: str) -> str:
@@ -98,6 +99,22 @@ def canonicalize_base_model(value: str) -> str:
     if not stripped:
         raise ValueError("--base-model must not be empty")
     return BASE_MODEL_ALIASES.get(stripped.lower(), stripped)
+
+
+def validate_base_model(value: str) -> str:
+    canonical = canonicalize_base_model(value)
+    if canonical not in SUPPORTED_BASE_MODELS:
+        allowed = ", ".join(SUPPORTED_BASE_MODELS)
+        raise ValueError(
+            f"unsupported --base-model {value!r}; allowed values: {allowed} "
+            "(aliases: nano, edge, super)"
+        )
+    return canonical
+
+
+def _absolute_executable(path: pathlib.Path | str) -> pathlib.Path:
+    """Make an interpreter path absolute without resolving a venv symlink."""
+    return pathlib.Path(os.path.abspath(pathlib.Path(path).expanduser()))
 
 
 def _resolve_specs(
@@ -236,16 +253,16 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     )
     benchmark_hash = _sha256(annotations["benchmark"])
     media_root = (args.media_root or workspace).expanduser().resolve()
-    base_model = canonicalize_base_model(args.base_model)
+    base_model = validate_base_model(args.base_model)
     network_mode = getattr(args, "network_mode", None) or (
         "airgap" if os.environ.get("AIR_GAPPED") == "1" else "network-enabled"
     )
     network_source = getattr(args, "network_mode_source", None) or (
         "environment:AIR_GAPPED" if os.environ.get("AIR_GAPPED") == "1" else "default"
     )
-    python_executable = pathlib.Path(
+    python_executable = _absolute_executable(
         getattr(args, "python_executable", None) or sys.executable
-    ).expanduser().resolve()
+    )
     offline = network_mode == "airgap"
 
     return {
@@ -323,7 +340,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 },
             },
             "anomalygen": {
-                "sub_skill": "paidf-anomalygen",
+                "sub_skill": "tao-generate-anomalies",
                 # The DEFT loop only needs Phases 2-3 (AMP routing + SDG
                 # diffusion); Phases 4-7 are SDG-quality optimization and
                 # contribute no training pairs.
@@ -508,13 +525,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     if args.python_executable is not None:
-        executable = args.python_executable.expanduser()
+        executable = _absolute_executable(args.python_executable)
         if not executable.is_file() or not os.access(executable, os.X_OK):
             print(
                 f"init_deft_state: --python-executable must be executable: {executable}",
                 file=sys.stderr,
             )
             return 2
+        args.python_executable = executable
     positive = {
         "max_iterations": args.max_iterations,
         "num_gpus": args.num_gpus,

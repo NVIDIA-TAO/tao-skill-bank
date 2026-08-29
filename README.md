@@ -1,17 +1,45 @@
-# NVIDIA [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skills-bank)
+# NVIDIA [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank)
 
 Portable agent skills for training, evaluating, and running inference on NVIDIA TAO models. Works with Claude Code, Codex, Gemini CLI, or any coding agent that speaks the [Agent Skills open standard](https://agentskills.io). Most local Docker model/data actions need only Docker plus NVIDIA Container Toolkit; application workflows may declare small host-Python requirements for deterministic state and analysis adapters. Advanced features—job tracking, multi-node, S3 I/O—are built in, not bolted on: platform skills implement a four-verb execution contract over their native CLI with no `nvidia-tao-sdk`. See [Execution: no SDK required](#execution-no-sdk-required).
+
+## Branching strategy
+
+`main` is our **development trunk**, not a stable branch — it moves
+continuously and can reference pre-release container builds. Each release is
+cut onto a **`release/X.Y.Z`** branch, QA'd there, and published as a matching
+Git tag on the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/releases).
+**Install from the latest published tag** — that is what every command below
+pins to — and treat both `main` and an unpublished `release/*` branch as
+work in progress. Contributors: see
+[CONTRIBUTING.md](CONTRIBUTING.md#trunk-based-development-and-backports) for how
+changes flow from `main` into a release.
+
+> **Known issue — internal image gating.** Skills on `main` (and on a
+> `release/*` branch before its tag is published) may pin release-candidate
+> container images under `nvcr.io/nvstaging/*`. Those are internal builds:
+> an external NGC account cannot pull them, however valid its `NGC_KEY`.
+> Publishing a release rewrites those pins to public `nvcr.io/nvidia/tao`
+> images, so **no published tag pins an `nvstaging` image**. We are working on a
+> way to host dev and nightly images publicly; until then, install from the
+> latest published tag.
 
 ## Install
 
 The skill bank works with both Claude Code and Codex. Pick the runtime you use.
 
+**The commands below install the latest release build, `7.1.0`.** Every install
+path pins the marketplace to that tag, so a fresh install gets the same
+validated build every time instead of whatever `main` happens to hold. Newer
+tags appear on the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/releases);
+substitute the tag you want, or use `@main` if you specifically need unreleased
+work.
+
 ### Claude Code
 
-In a Claude Code session, add the marketplace and install the plugin:
+In a Claude Code session, add the marketplace at the release tag and install the plugin:
 
 ```
-/plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
+/plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.1.0
 /plugin install tao-skills@tao-skill-bank
 ```
 
@@ -24,16 +52,23 @@ Codex setup has **two independent pieces** — the plugin (which surfaces the sk
 #### One command (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NVIDIA-TAO/tao-skills-bank/main/scripts/install-codex-agents.sh | bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA-TAO/tao-skill-bank/main/scripts/install-codex-agents.sh | bash
 ```
+
+The installer is fetched from `main` on purpose — it is the copy that knows
+which tag is current, and it registers the marketplace at that release tag. A
+copy fetched from a release tag only knows about refs that existed when the tag
+was cut.
 
 …or, if you've already cloned or extracted the repo from a zip, run
 `scripts/install-codex-agents.sh` from that directory. The script registers the
-marketplace, installs the TAO Skill Bank plugin, and copies `AGENTS.md` to
-`~/.codex/AGENTS.md` so the TAO identity loads in every Codex session. It's
-idempotent and backs up any existing `~/.codex/AGENTS.md` before overwriting.
-Override the source with `TAO_SKILL_BANK_MARKETPLACE=…` and
-`TAO_SKILL_BANK_REF=…` to use a fork, pinned ref, or local absolute path:
+marketplace **at the latest release tag** (`7.1.0`), installs the TAO Skill Bank
+plugin, and copies `AGENTS.md` to `~/.codex/AGENTS.md` so the TAO identity loads
+in every Codex session. It's idempotent and backs up any existing
+`~/.codex/AGENTS.md` before overwriting. Override the source with
+`TAO_SKILL_BANK_MARKETPLACE=…` and `TAO_SKILL_BANK_REF=…` to use a fork, a
+different tag or branch (`TAO_SKILL_BANK_REF=main` for unreleased work), or a
+local absolute path:
 
 ```bash
 cd /absolute/path/to/tao-skill-bank
@@ -48,7 +83,7 @@ If you'd rather drive each step yourself:
 **1. Install the plugin.** Either use the VS Code Codex extension's plugin UI (select **TAO Skill Bank**), or from the CLI:
 
 ```bash
-codex plugin marketplace add git@github.com:NVIDIA-TAO/tao-skills-bank.git
+codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.1.0
 codex plugin add tao-skill-bank@tao-local-plugins
 ```
 
@@ -101,16 +136,37 @@ Usually there is no up-front setup beyond the chosen platform prerequisites.
 Model and data skills run with just `docker run`; platform skills add job
 tracking, S3 I/O, and multi-node over their native CLI with no
 `nvidia-tao-sdk` — see [Execution: no SDK required](#execution-no-sdk-required).
-Application workflows such as IAA DEFT may provision documented host-Python
-dependencies into an isolated workspace environment, but only after the
-workflow's approval gate. AutoML search (`tao-run-automl`) remains the one
+Application workflows such as People Attribute Search (PAS) DEFT may provision
+documented host-Python dependencies into an isolated workspace environment,
+but only after the workflow's approval gate. AutoML search (`tao-run-automl`) remains the one
 special SDK exception: its Preflight lazily installs the
 `nvidia-tao-automl` wheel, whose pin lives in [`versions.yaml`](versions.yaml)
 (`wheels.tao_automl_*`).
 
 ### Updating
 
-**Claude Code:**
+Because the install pins a release tag, `update` / `upgrade` re-fetch **that same
+tag** — they do not move you to a newer release. To move to a new release, check
+the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/releases) and
+re-add the marketplace at the new tag; the existing entry is replaced in place.
+
+**Claude Code:** re-point the marketplace, then update the plugin — `/plugin
+install` is a no-op on an already-installed plugin, so it will leave you on the
+old build even after the marketplace moves.
+
+```
+/plugin marketplace add NVIDIA-TAO/tao-skill-bank@<new-tag>
+```
+
+Then update the installed plugin, either from `/plugin manage` in-session or
+from a shell:
+
+```bash
+claude plugin update tao-skills@tao-skill-bank
+```
+
+Restart, or run `/reload-plugins`, to apply. To re-fetch the currently pinned
+tag (e.g. after a cache wipe):
 
 ```
 /plugin marketplace update tao-skill-bank
@@ -128,8 +184,19 @@ then re-run `/plugin install`.
 **Codex:**
 
 ```bash
-codex plugin marketplace upgrade tao-skill-bank
+# Move to a new release. Codex refuses to re-add a marketplace that is already
+# registered at a different ref, so drop the old registration first.
+codex plugin marketplace remove tao-local-plugins
+codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@<new-tag>
+codex plugin add tao-skill-bank@tao-local-plugins
+
+# Or, to re-fetch the tag you are already pinned to:
+codex plugin marketplace upgrade tao-local-plugins
 ```
+
+Note the marketplace is named `tao-local-plugins` (the `name` field in
+`.agents/plugins/marketplace.json`); `tao-skill-bank` is the plugin name.
+Re-running `scripts/install-codex-agents.sh` does all three steps for you.
 
 If you copied `AGENTS.md` to `~/.codex/AGENTS.md`, re-copy from the upgraded plugin cache to pick up identity changes.
 
@@ -158,8 +225,9 @@ The agent will read `skills/models/tao-train-visual-changenet/SKILL.md` (skill n
 
 For more complex workflows, see `skills/applications/tao-run-deft-aoi/SKILL.md`
 (`tao-run-deft-aoi`, shorthand `tao-deft-aoi`) for AOI iterative fine-tuning,
-`skills/applications/tao-run-deft-iaa/SKILL.md` (`tao-run-deft-iaa`, shorthand
-`tao-deft-iaa`) for the self-contained local-Docker IAA loop, and
+`skills/applications/tao-run-deft-pas/SKILL.md` (`tao-run-deft-pas`, shorthand
+`tao-deft-pas`) for the self-contained local-Docker People Attribute Search
+(PAS) loop, and
 `skills/applications/tao-run-automl/SKILL.md` (`tao-run-automl`) for
 hyperparameter optimization. AutoML launch reviews should show the number of
 recommendations, metric, search space, expected runtime, and resolved train
@@ -172,7 +240,7 @@ image before long-running jobs start.
 | `skills/models/` | Network-centric skills: containers, commands, data formats, checkpoints | `tao-finetune-cosmos-reason`, `tao-train-visual-changenet`, `tao-finetune-clip`, `tao-train-dino`, `tao-train-segformer`, … |
 | `skills/data/` | Data preparation, analysis, and enhancement | `tao-mine-aoi-images`, `tao-analyze-gaps-visual-changenet`, `tao-route-visual-changenet-samples`, `tao-analyze-gaps-vlm-bcq`, `tao-convert-dataset-format`, `tao-validate-dataset-format`, `tao-generate-image-grounding`, `tao-generate-referring-expressions`, `tao-generate-video-reasoning-annotations` |
 | `skills/platform/` | Where and how jobs run | `tao-run-on-docker` (local daemon or `DOCKER_HOST=ssh://`), `tao-run-on-brev` (instance-based GPU), `tao-run-on-slurm` (remote SLURM cluster), `tao-run-on-kubernetes` (k8s), `tao-run-on-virtualenv` (docker-free local venv), `tao-data-io` (S3/data staging), `tao-setup-nvidia-gpu-host` (host runtime) |
-| `skills/applications/` | End-to-end workflows composing the layers above | `tao-run-deft-aoi`, `tao-run-deft-iaa`, `tao-run-automl-deft-pipeline`, `tao-analyze-changenet-rca`, `tao-train-single-step`, `tao-run-automl`, `tao-finetune-huggingface-model`, `tao-port-huggingface-model`, `tao-run-inference-service` |
+| `skills/applications/` | End-to-end workflows composing the layers above | `tao-run-deft-aoi`, `tao-run-deft-pas`, `tao-run-automl-deft-pipeline`, `tao-analyze-changenet-rca`, `tao-train-single-step`, `tao-run-automl`, `tao-finetune-huggingface-model`, `tao-port-huggingface-model`, `tao-run-inference-service` |
 
 Each skill is a directory with `SKILL.md` (agent-readable instructions). Optional `references/skill_info.yaml` provides structured metadata (container image, per-action command/mode/inputs/outputs) the agent uses to construct the container command; optional `scripts/` bundles supporting code.
 

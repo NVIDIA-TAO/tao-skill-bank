@@ -5,16 +5,22 @@
   },
   "metadata": {
     "description": "NVIDIA TAO skill bank with generated capability discovery for model training, data processing, application workflows, AutoML, and platform execution.",
-    "version": "0.1.12"
+    "version": "0.1.13"
   },
   "plugins": [
+    {
+      "name": "tao-skill-bank",
+      "description": "Canonical cross-client entry for the TAO Skill Bank plugin. Codex resolves this name from .codex-plugin/plugin.json; Claude users may continue using the tao-skills compatibility entry.",
+      "source": "./",
+      "strict": true
+    },
     {
       "name": "tao-skills",
       "description": "Full TAO skill bank \u2014 every model, data, platform, and application skill in one bundle. Install this for the standard agentic-fine-tuning experience.",
       "source": "./",
       "strict": true,
       "skills": [
-        "./skills/data/paidf-anomalygen",
+        "./skills/data/tao-generate-anomalies",
         "./skills/applications/tao-run-automl-deft-pipeline",
         "./skills/applications/tao-train-single-step",
         "./skills/applications/tao-analyze-changenet-rca",
@@ -24,7 +30,7 @@
         "./skills/applications/tao-port-huggingface-model",
         "./skills/applications/tao-run-deft-aoi",
         "./skills/applications/tao-run-deft-aoi-cosmos3",
-        "./skills/applications/tao-run-deft-iaa",
+        "./skills/applications/tao-run-deft-pas",
         "./skills/applications/tao-run-deft-cr-its-mining",
         "./skills/applications/tao-validate-recipe-transfer",
         "./skills/applications/tao-run-deft-object-detection",

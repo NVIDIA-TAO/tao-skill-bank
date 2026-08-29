@@ -58,6 +58,11 @@ _COMPLETED_STEP_VALUES = [
 _STATUS_VALUES = ["pending", "in_progress", "complete", "failed"]
 
 
+def _absolute_executable(path: pathlib.Path | str) -> pathlib.Path:
+    """Make an interpreter path absolute without resolving a venv symlink."""
+    return pathlib.Path(os.path.abspath(pathlib.Path(path).expanduser()))
+
+
 def _resolve_image_from_versions_yaml(*path: str) -> str | None:
     """Return a resolved image URI from versions.yaml at the given key path.
 
@@ -148,9 +153,9 @@ def build_state(args: argparse.Namespace) -> dict:
     network_source = getattr(args, "network_mode_source", None) or (
         "environment:AIR_GAPPED" if os.environ.get("AIR_GAPPED") == "1" else "default"
     )
-    python_executable = pathlib.Path(
+    python_executable = _absolute_executable(
         getattr(args, "python_executable", None) or sys.executable
-    ).expanduser().resolve()
+    )
     offline = network_mode == "airgap"
     state = {
         "version": 4,
@@ -203,11 +208,11 @@ def build_state(args: argparse.Namespace) -> dict:
             "batch_size": args.batch_size,
             "num_epochs": args.num_epochs,
             "anomalygen": {
-                "sub_skill": "paidf-anomalygen",
+                "sub_skill": "tao-generate-anomalies",
                 "mode": "inference_only",
                 "project": args.project,
                 # defect_spec lives under `datasets/<project>/` (sibling of
-                # `checkpoints/<project>/`), per references/paidf-anomalygen.md.
+                # `checkpoints/<project>/`), per references/tao-generate-anomalies.md.
                 "defect_spec": str(
                     ws
                     / "augmentation"
@@ -560,13 +565,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     if args.python_executable is not None:
-        executable = args.python_executable.expanduser()
+        executable = _absolute_executable(args.python_executable)
         if not executable.is_file() or not os.access(executable, os.X_OK):
             print(
                 f"init_deft_state: --python-executable must be executable: {executable}",
                 file=sys.stderr,
             )
             return 2
+        args.python_executable = executable
     positive_ints = {
         "max_iterations": args.max_iterations,
         "num_gpus": args.num_gpus,

@@ -29,14 +29,11 @@ Visual ChangeNet is a TAO Toolkit model for visual inspection and defect detecti
 - **Classify** — Binary image classification using a siamese-style architecture with a shared backbone (C-RADIO ViT) and a learnable difference module. Compares image pairs to classify defects as PASS/NO_PASS.
 - **Segment** — Pixel-level change segmentation using a ViT-Large NVDINOv2 backbone. Compares before/after image pairs to produce a binary change mask.
 
-The backbone weight (`c_radio_v2_vit_base_patch16_224`) is the **public** `nvidia/C-RADIOv2-B` model from HuggingFace, distributed as `model.safetensors` (~393 MB). **The TAO container does not auto-fetch from HF URLs** — `ptm_utils.load_pretrained_weights()` hands the `pretrained_backbone_path` value to `torch.load(path)` / `safetensors.torch.load_file(path)` directly. Passing an `https://huggingface.co/...` URL or a repo id produces `FileNotFoundError` and the run fails with `Execution status: FAIL` within a few seconds. Stage the file locally before launch with the bundled helper (idempotent — reuses an already-staged file):
-
-```bash
-python3 skills/models/tao-train-visual-changenet/scripts/stage_backbone.py --workspace <workspace>
-# -> <workspace>/pretrained_models/C-RADIOv2_B.safetensors
-```
-
-This is a **public** download — **no NGC CLI, no NGC org, and no credentials** are required, and there is **no `ngc://` transfer-learning checkpoint dependency** (VCN trains from this backbone). Run it in the CPU shell, where host network and `HF_TOKEN` live; `HF_TOKEN` is read only if set (gated mirror / rate limit) and is needed at staging time only, never inside the training container. Mount the staged file into the container (`-v <workspace>/pretrained_models/C-RADIOv2_B.safetensors:/data/pretrained_models/C-RADIOv2_B.safetensors`) and set the spec `model.backbone.pretrained_backbone_path` to the container path.
+Classify supports the public C-RADIOv2-B backbone and six frozen DINOv3
+variants. Read `references/dinov3-backbones.md` before selecting DINOv3; it
+contains the exact variant map, freeze requirement, Hugging Face access rules,
+and local-staging overlay. For C-RADIO, use the bundled
+`scripts/stage_backbone.py` and the mount in `references/local-docker.md`.
 
 Segment specs use `model.backbone.type: vit_large_nvdinov2` and the NVDINOv2
 checkpoint family. Keep the checkpoint architecture aligned with the backbone

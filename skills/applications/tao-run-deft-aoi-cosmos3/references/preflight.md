@@ -90,10 +90,16 @@ Resolve, do not guess:
 : "${TAO_SKILL_BANK_PATH:?set TAO_SKILL_BANK_PATH to the installed TAO skill-bank root containing versions.yaml and scripts/resolve_versions_key.py}"
 test -f "$TAO_SKILL_BANK_PATH/versions.yaml" || { echo "missing $TAO_SKILL_BANK_PATH/versions.yaml" >&2; exit 2; }
 test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" >&2; exit 2; }
+test -f "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" || { echo "missing $TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" >&2; exit 2; }
+COSMOS_MODEL_ID="${COSMOS_MODEL_ID:-nvidia/Cosmos3-Nano}"
 COSMOS_RL_IMAGE=$(
-  "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+  "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py" \
     --skill-bank "$TAO_SKILL_BANK_PATH" \
-    images.tao_toolkit.cosmos_rl
+    --model "$COSMOS_MODEL_ID" \
+    --action train \
+    --backend cosmos-rl \
+    --format json \
+  | "$PYTHON" -c 'import json, sys; image = json.load(sys.stdin).get("image"); assert image; print(image)'
 )
 TAO_DS_IMAGE=$(
   "$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
@@ -113,31 +119,31 @@ pulling requires a credential, report the missing variable name only. A
 `~/.docker/config.json`, not a missing key — retry once with a throwaway empty
 `DOCKER_CONFIG` before reporting a credential problem.
 
-Known defects in `images.tao_toolkit.cosmos_rl` as pinned (verified
-2026-07-29). Both break evaluation only; training is unaffected. Check whether
-the pinned tag still carries them, and report them in the Pre-Flight Summary
-rather than discovering them on the first GPU job:
+Run these evaluator compatibility checks against the model skill's selected
+`cosmos-rl` image and report them in the Pre-Flight Summary rather than
+discovering them on the first GPU job. Training is unaffected:
 
 - `cosmos_rl/evaluation/evaluator.py` hard-indexes `item["id"]` on the
   conversations branch, so evaluation annotations need an `id` (step 3).
-- `cosmos_rl/evaluation/base.py` hardcodes
-  `limit_mm_per_prompt={"video": 1, "image": 1}`, which rejects the two-image
-  AOI record outright. There is no spec key or env override.
-  `scripts/patch_eval_image_cap.py` handles this: it reads `base.py` out of the
-  pinned image, raises only that literal, and returns the read-only mount for
-  the evaluate jobs. Report its `cap_in_image` here so the Summary states
-  whether the workaround is still needed — the script emits nothing once the
-  image is fixed. Use `--probe` at this point: it reports the cap without
-  writing anything, which is what this gate requires. Run it again with
-  `--output-dir` after approval to produce the mount.
+- `scripts/patch_eval_image_cap.py` reads `cosmos_rl/evaluation/base.py` from
+  the selected image and reports `patch_required`, `already_sufficient`, or
+  `cap_absent` from the source rather than parsing its tag. Use `--probe` here:
+  it reports `classification`, `cap_in_image`, and `patch_needed` without
+  writing. After approval, run it with `--output-dir` and mount the emitted
+  file only for `patch_required`. If it reports `classification=unknown`, the
+  evaluator still references a changed cap/vLLM shape; hard-stop and verify it.
 
 Probe the AnomalyGen assets read-only and report each as present or
 `WILL_AUTO_FETCH`: the fine-tuned checkpoint directory holding `ag_config.yaml`,
 the dataset directory with `defect_spec.jsonl` and
 `semantic_segmentation_labels.json`, and the Cosmos base-checkpoints cache.
-Probing only — the bootstrap that populates them is post-gate and is owned by
-`references/paidf-anomalygen.md`. In air-gapped runs every asset must be
-pre-staged; report a missing one instead of planning a download.
+The default fine-tuned checkpoint is `nvidia/Cosmos-AnomalyGen-PCB-2B`; a BYO
+override must match the pinned container's PAIDF major.minor. Probing only —
+the bootstrap that populates missing assets is post-gate and is owned by
+`references/tao-generate-anomalies.md`. In air-gapped runs every asset must be
+pre-staged; report a missing one instead of planning a download. Before Phase
+3, use the executable file check in that reference to gate the AnomalyGen
+Guardrail safety model; a missing file is a hard stop.
 
 ## 6. Model and evaluator contract
 
@@ -195,9 +201,10 @@ one is a stop, not a silent regeneration:
 
 ## 7. Plan checkpoint preparation
 
-Read the `Cosmos3 Checkpoint Conversion` section in the model skill and the
-command in `references/cosmos-reason.md`. Before approval, perform read-only
-checks and show:
+Read the `Nano checkpoint model-type choice` section in the model skill, run
+`prepare_cosmos3_vlm_checkpoint.py --help`, and review the command in
+`references/cosmos-reason.md`. Before approval, perform read-only checks and
+show:
 
 - the selected reasoner by name and canonical ID, e.g.
   `Cosmos3 Nano Reasoner (nvidia/Cosmos3-Nano)`;
@@ -205,8 +212,10 @@ checks and show:
   Qwen3-VL checkpoint;
 - whether a complete prepared output can be reused;
 - the exact `prepare_cosmos3_vlm_checkpoint.py` command planned after approval;
-- the resolved Cosmos-RL image passed through `--validate-with-image`;
-- the variant-matched `--vlm-model-name`.
+- the selected backend image passed through `--runtime-image` and its resolved
+  image ID or digest passed through `--runtime-image-digest`;
+- the variant-matched `--vlm-architecture-model-path-or-uri` and, for a model
+  ID or URI, its immutable `--vlm-architecture-model-revision`.
 
 Nano may use the model helper's packaged Qwen3-VL 8B default. Edge and Super
 must have their own validated mapping; never inherit Nano's default. The
@@ -305,7 +314,7 @@ record-then-launch ordering must be explicit.
 | Iterations | <N> | user |
 | Train shape | <nodes x GPUs; exact GPU model/memory; epochs; batch; LR; LoRA> | user/spec/platform |
 | Mining | <top-K, default 5; cosine floor; history-aware filepath dedup> | user/default |
-| AnomalyGen | <project; num_SDG; asset status> | user/default |
+| AnomalyGen | <project; num_SDG; each asset path or will auto-fetch from HF (default)> | user/default |
 | Cosmos-RL image | <resolved URI> | versions.yaml |
 | Data-services image | <resolved URI> | versions.yaml |
 | AnomalyGen image | <resolved URI> | versions.yaml |

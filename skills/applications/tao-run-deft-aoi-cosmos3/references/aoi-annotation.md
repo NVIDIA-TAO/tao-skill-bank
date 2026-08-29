@@ -76,7 +76,7 @@ record:
 
 The prompt is inherited from the Mining pool so synthetic and mined records ask
 the same question. A missing or empty image on either side of a pair
-hard-stops. See `references/paidf-anomalygen.md`.
+hard-stops. See `references/tao-generate-anomalies.md`.
 
 ## Assemble monotonically
 

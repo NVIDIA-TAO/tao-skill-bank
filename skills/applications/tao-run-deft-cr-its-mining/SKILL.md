@@ -5,7 +5,7 @@ description: >-
   focused on the non-reasoning classification/evaluation path. Use when the user asks for a
   DEFT CR ITS mining workflow, traffic-camera Cosmos Reason improvement loop, collision-identification workflow with data mining, or iterative Cosmos-RL refinement driven by gap analysis.
 license: Apache-2.0
-compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
+compatibility: Requires Docker with NVIDIA Container Toolkit, Python 3.11 with venv/ensurepip, numpy, pandas, pyarrow, PyYAML, and huggingface_hub, plus the selected platform CLI.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -22,11 +22,15 @@ tags:
 
 # Skill: TAO Run DEFT CR ITS Mining
 
+## Prerequisites
+
+Before preflight, follow `references/host-prerequisites.md`; use its selected `DEFT_PYTHON` for every bundled helper and stop if the dependency probe fails.
+
 ## Bundled Resources
 
-Resolve `DEFT_SKILL_ROOT` to the absolute directory containing this installed `SKILL.md`. The agent or plugin runtime resolves this path; it is not a user input. Run bundled helpers with `run_script("scripts/<name>.py", ...)` when the runtime provides it. Otherwise invoke them directly with `python3 "$DEFT_SKILL_ROOT/scripts/<name>.py"`. Never require a `tao-skills-external` checkout or change the user's working directory to a repository root.
+Resolve `DEFT_SKILL_ROOT` to the absolute directory containing this installed `SKILL.md`. The agent or plugin runtime resolves this path; it is not a user input. Invoke bundled helpers with `"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/<name>.py" ...`. Never require a skill-bank checkout or change the user's working directory to a repository root.
 
-This workflow invokes `tao-finetune-cosmos-reason`, `tao-finetune-cosmos-embed`, `tao-analyze-gaps-vlm-bcq`, `tao-mine-nearest-neighbors`, and the selected platform skill by registered skill name. Those skills own their commands, credentials, and bundled assets. This workflow overrides only the Cosmos Reason runtime image: resolve `images.tao_toolkit.deft_cosmos_reason` from `versions.yaml` and pass that image as the planner `image_tag` and submitted action image for every Cosmos Reason train and evaluate launch instead of the image declared by `tao-finetune-cosmos-reason`. This workflow owns only the helpers under its own `scripts/` and `assets/` directories.
+This workflow invokes `tao-finetune-cosmos-embed`, `tao-analyze-gaps-vlm-bcq`, `tao-mine-nearest-neighbors`, and the selected platform skill by registered skill name. Those skills own their credentials, actions, and bundled assets. Cosmos Reason is workflow-owned: resolve `images.tao_toolkit.deft_cosmos_reason`, generate TOMLs with this workflow's helpers and configured base templates, and submit the exact train/evaluate commands in `references/mining-loop.md` through the selected platform. Do not invoke `tao-finetune-cosmos-reason` for planning, templates, action bundles, commands, or hook resolution.
 
 ## User Inputs (DEFT Workspace and Workflow Configuration Yaml)
 
@@ -100,7 +104,7 @@ train_dataset:
   media_dir: /abs/path/to/deft_workspace/data/train/media
 
 cosmos_reason:
-  baseline_model_path: /abs/path/to/deft_workspace/model/baseline
+  baseline_model_path: /abs/path/to/deft_workspace/model/reasoner_checkpoint
   base_evaluate_toml: /abs/path/to/deft_workspace/specs/cr_base_evaluate.toml
   base_train_toml: /abs/path/to/deft_workspace/specs/cr_base_train.toml
   continual_model: false
@@ -116,33 +120,35 @@ mining:
   mine_unique_only: true
 ```
 
-`run`, `kpi_dataset`, `train_dataset`, `cosmos_reason`, and `mining` are required. All configured paths should be absolute and inside `<deft_workspace>`. `cosmos_reason.continual_model` is optional and defaults to `false`; when false, every iteration trains from the baseline checkpoint. `mining.embeddings_modality` selects KPI target modalities; train/source embeddings always contain both text and video. `mining.mine_unique_only` is optional and defaults to `true`; when true, previously mined train/source filepaths are filtered out before later mining runs.
+`run`, `kpi_dataset`, `train_dataset`, `cosmos_reason`, and `mining` are required; configured paths must be absolute inside `<deft_workspace>`. `cosmos_reason.baseline_model_path` must be a Cosmos Reasoner checkpoint. Convert a native Omni checkpoint first with `tao-finetune-cosmos-reason`. The optional `continual_model` defaults to `false`, which starts every iteration from the baseline. `embeddings_modality` selects KPI targets; train/source embeddings always include text and video. The optional `mine_unique_only` defaults to `true` and filters previously mined train/source paths from later iterations.
 
-All workflow outputs go under `<deft_workspace>/results`; do not add a separate output root to `workflow.yaml`. `run.name` is not just a display label: if it is set, use `<deft_workspace>/results/<run.name>` as the run directory and explain that all stage outputs, including `baseline/`, `cosmos_embed_output/`, `embedding_parquets/`, and `iter_<N>/`, are nested under that run directory. If `run.name` is `null`, create `<deft_workspace>/results/run_<YYYYMMDD_HHMMSS>` and record the resolved run directory in `deft_state.json` so resume never recomputes it.
+Write all workflow outputs under `<deft_workspace>/results`; do not add another output root. When `run.name` is set, use `<deft_workspace>/results/<run.name>` and explain that `baseline/`, `cosmos_embed_output/`, `embedding_parquets/`, and `iter_<N>/` are nested there. When it is `null`, create `<deft_workspace>/results/run_<YYYYMMDD_HHMMSS>` and record that path in `deft_state.json` so resume never recomputes it.
 
 Before running any workflow stage, validate the config:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/verify_workflow_yaml.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/verify_workflow_yaml.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml"
 ```
 
-The validator checks that required fields are present, configured paths are absolute and inside `<deft_workspace>`, `embeddings_modality` is `text`, `video`, or `both`, every configured path exists, and the KPI/train LLaVA annotations are compatible with their configured `media_dir`. Every annotation must have a unique non-empty `id`; its `video` field must resolve to an existing file against that dataset's `media_dir`. The Cosmos Embed template must declare a positive `inference.num_gpus`; preflight prints that count so the agent can verify available hardware before launch. `mining.cosmos_embed_checkpoint_path` may be `null`, an absolute local path inside `<deft_workspace>`, or a Hugging Face model id such as `nvidia/Cosmos-Embed1-224p` or `hf_model://nvidia/Cosmos-Embed1-224p`. Optional `mining.embedding_parquets.kpi` and `.train` values must be absolute existing mining-ready Parquet files inside the workspace with `filepath`, `embedding`, and `modality` columns. The KPI file must contain exactly the selected modality or modalities; the train file must contain both text and video. The removed `text_embeddings` and `video_embeddings` fields are invalid. This validates the workflow input contract; each stage still follows the mount behavior of the underlying skill, container, or platform runner.
+The validator checks required fields, workspace-contained absolute paths, `embeddings_modality`, path existence, Omni baselines, and compatibility between KPI/train LLaVA annotations and their `media_dir`. Every annotation needs a unique non-empty `id`; its `video` must resolve against that dataset's media directory. The Cosmos Embed template must declare a positive `inference.num_gpus`, which preflight prints for hardware verification. `mining.cosmos_embed_checkpoint_path` accepts `null`, an absolute workspace-local path, or a Hugging Face model id with an optional `hf_model://` prefix. Optional `mining.embedding_parquets.kpi` and `.train` values must be absolute existing mining-ready Parquet files inside the workspace with `filepath`, `embedding`, and `modality` columns. KPI must contain exactly the selected modalities; train must contain both text and video. The removed `text_embeddings` and `video_embeddings` fields are invalid. Each stage still follows its underlying skill, container, or platform runner's mount behavior.
+
+If preflight rejects a Cosmos3 Omni baseline, tell the user that this workflow requires a Reasoner checkpoint, ask them to convert it first with `tao-finetune-cosmos-reason`, and exit without initializing the workflow.
 
 If the user does not provide custom Cosmos Reason or Cosmos Embed templates, copy `$DEFT_SKILL_ROOT/assets/cr_base_evaluate.toml`, `$DEFT_SKILL_ROOT/assets/cr_base_train.toml`, and `$DEFT_SKILL_ROOT/assets/default_cosmos_embed_inference.yaml` into `<deft_workspace>/specs/`. Use `tao-mine-nearest-neighbors` to copy its bundled `assets/default_nearest_neighbors.yaml` when the user does not provide a mining template. Point `workflow.yaml` at the workspace copies. The bundled Cosmos Embed template requests 8 GPUs; do not launch until preflight confirms the selected platform can satisfy that request, or the user approves a modified template.
 
 Initialize a run once after validation:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/initialize_workflow.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/initialize_workflow.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml"
 ```
 
 Use the printed `run_dir` as `RUN_DIR` for every later command. If `run.name` is `null`, never ask another preparation script to derive the run directory again; pass `--run-dir "$RUN_DIR"` so all stages write into the initialized run.
 
-Do not use `--force` for an ordinary resume. It rewrites the state/config snapshot but intentionally leaves `loop_log.jsonl` and all stage artifacts in place. Use it only to repair the snapshot for the same run; choose a new `run.name` for a clean restart. Before resuming, run `$DEFT_SKILL_ROOT/scripts/resume_position.py --run-dir "$RUN_DIR"` and continue from the reported stage.
+Do not use `--force` for an ordinary resume. It rewrites the state/config snapshot but intentionally leaves `loop_log.jsonl` and all stage artifacts in place. Use it only to repair the snapshot for the same run; choose a new `run.name` for a clean restart. Before resuming, run `"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/resume_position.py" --run-dir "$RUN_DIR"` and continue from the reported stage.
 
 ## Baseline Evaluation
 
@@ -159,7 +165,7 @@ The script downloads remote HF checkpoints before Cosmos Embed runs because Cosm
 Use `scripts/prepare_cosmos_embed_inference.py` once. It prepares both the KPI dataset and the train dataset:
 
 ```bash
-python3 "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_embed_inference.py" \
+"$DEFT_PYTHON" "$DEFT_SKILL_ROOT/scripts/prepare_cosmos_embed_inference.py" \
   --workspace "$WORKSPACE" \
   --workflow-yaml "$WORKSPACE/specs/workflow.yaml" \
   --run-dir "$RUN_DIR"
@@ -178,7 +184,7 @@ The KPI parquet contains only the selected modality or modalities. The train par
 
 ### Run Cosmos Embed Inference
 
-Use the `tao-finetune-cosmos-embed` skill's inference action for each generated inference spec. That model skill owns the Cosmos Embed container image, action command, credentials, and platform-specific mount behavior. This workflow skill owns only the generated specs and the downstream conversion into mining-ready parquet files. Do not run inference or conversion for a dataset whose combined Parquet was supplied and staged during preparation. See `references/mining-loop.md` for exact commands, permission repair, and conversion.
+Use `tao-finetune-cosmos-embed` for each generated inference spec. Follow the mandatory terminal-exit validation, permission repair, and conversion procedure in `references/mining-loop.md`. Do not run inference or conversion for a dataset whose combined Parquet was supplied during preparation.
 
 The generated lookup Parquet uses `annotation_id` for the original LLaVA `id` and `video_path` for resolved media. Do not rename either column to `video_id`; that external field belongs to Cosmos Reason and gap-analysis records.
 
@@ -194,14 +200,14 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 | `initialize_workflow` | `$RUN_DIR/workflow.yaml` and `$RUN_DIR/deft_state.json` exist. |
 | `baseline_evaluate` | The evaluate job exits successfully, exactly one baseline `results.json` is found, and `baseline/evaluate/bcq_accuracy_metrics.json` exists. |
 | `prepare_cosmos_embed_inference` | Each dataset has a lookup parquet and either all required Cosmos Embed specs or a staged combined embedding Parquet. |
-| `cosmos_embed` | Every generated Cosmos Embed inference spec has completed successfully through the underlying skill. |
+| `cosmos_embed` | Every generated inference spec has a current `completion_validation.json`; exit `0` is accepted after output validation, while exit `130` additionally records a teardown warning. |
 | `convert_embeddings` | `embedding_parquets/{kpi,train}/embeddings.parquet` exist; train contains both modalities and KPI contains the selected modalities. |
 | `gap_analysis` | `$RUN_DIR/iter_<N>/gaps/predictions.json` exists and the container exits successfully. The workflow counts valid rows directly from `kpi_gaps.jsonl`; missing or empty output after successful completion means zero weak samples. |
 | `prepare_nearest_neighbor_mining` | One target parquet, optional filtered source parquet, and one nearest-neighbor spec exist. |
 | `mine_nearest_neighbors` | One mined-neighbor parquet and mining summary exist. |
 | `record_mined_paths` | When `mine_unique_only` is true, `$RUN_DIR/mining/mined_paths_log.parquet` exists; otherwise the stage is logged as skipped. |
-| `prepare_cosmos_reason_train` | Mined and accumulated LLaVA annotations plus `train/specs/train.toml` exist. |
-| `train` | The Cosmos Reason training job reaches terminal success. |
+| `prepare_cosmos_reason_train` | Mined and accumulated LLaVA annotations plus `train/specs/train.toml` exist, with a positive expected optimizer-step count. |
+| `train` | The Cosmos Reason job reaches terminal success, reports at least one optimizer step, and has writable timestamped output and checkpoint directories. |
 | `evaluate` | Evaluation preparation finds the latest completed training checkpoint, the evaluation job exits successfully, exactly one iteration `results.json` is found, and its `bcq_accuracy_metrics.json` exists. |
 | `cleanup_cosmos_reason_training` | `train/checkpoint_cleanup.json` exists, raw checkpoint directories are gone, and its listed safetensors exports remain. |
 | `loop_stop` | Stop reason is logged and `bcq_accuracy_report.md` plus `bcq_accuracy_summary.json` compare the baseline with every completed iteration. |
@@ -216,7 +222,7 @@ Run iterations `1..run.max_iterations`. The loop is mining-only: no PAIDF or gen
 
 **Run directory looks nested under `results/<run.name>`**: This is expected. `run.name` is the run directory name under `<deft_workspace>/results`; all baseline, embedding, and iteration artifacts are nested there.
 
-**Docker-created output is not writable**: Use `restore_docker_mount_permissions.py` on the affected run subdirectory after informing the user which container produced root-owned files.
+**Docker output permissions or Cosmos Reason status paths fail**: Stop and follow the permission-repair and stage-local TAO status contracts in `references/mining-loop.md`.
 
 **Unparseable prediction count is nonzero**: Report the count to the user and inspect the corresponding raw `results.json` responses. These predictions count as incorrect in accuracy and class recall; the metrics script does not silently drop them. An unparseable ground truth stops metric computation because the expected class is undefined.
 

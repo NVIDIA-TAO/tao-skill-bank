@@ -113,16 +113,18 @@ dataset:
       augment: True
     num_classes: 2
 evaluate:
-  checkpoint: "${results_dir}/train/changenet_classify.pth"
-  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
+  # The loop discovers successful artifacts and passes explicit container
+  # paths. Never derive them from the action-local results_dir.
+  checkpoint: ''
+  trt_engine: ''
   batch_size: ${dataset.classify.batch_size}
 inference:
-  checkpoint: "${results_dir}/train/changenet_model_classify_latest.pth"
-  trt_engine: "${results_dir}/gen_trt_engine/changenet-classify.trt"
+  checkpoint: ''
+  trt_engine: ''
   batch_size: ${dataset.classify.batch_size}
 export:
   gpu_id: 0
-  checkpoint: "${results_dir}/train/changenet_classify.pth"
+  checkpoint: ''
   onnx_file: "${results_dir}/export/changenet-classify.onnx"
   input_width: 224
   input_height: 224

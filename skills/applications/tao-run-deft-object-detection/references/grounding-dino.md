@@ -19,7 +19,7 @@ architecture it was **trained** with. There is no "just use the pinned image" an
 the pairing in Pre-Flight, because the failure lands after the container has started and
 looks like a checkpoint problem rather than a config one.
 
-### `class_embed_bias` — the trap that actually bites
+### `class_embed_bias` must match the checkpoint
 
 `ContrastiveEmbed` (the `class_embed` head) takes a `bias` argument that defaults to
 **`False`**, sourced from the spec as `model.class_embed_bias`. A checkpoint trained with
@@ -44,7 +44,7 @@ kernel runs, so drivers cannot add or remove a `bias`. Genuine CUDA faults look 
 The field is easy to lose because it is absent from the shipped `infer.yaml` template and
 defaults to the value the checkpoint does *not* use.
 
-### `log_scale` — the second trap, and it fails silently
+### `log_scale` must be set, and a wrong value fails silently
 
 `ContrastiveEmbed.forward` scales the visual·text similarity before the sigmoid:
 
@@ -117,8 +117,10 @@ nobody applies. They are therefore held in `assets/overlays/grounding_dino_infer
 and applied on every run:
 
 ```bash
+INFER_SPEC="${RESULTS_DIR}/<phase>/infer_grounding_dino.yaml"
+
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
-  --spec "${RESULTS_DIR}/<phase>/infer_grounding_dino.yaml" \
+  --spec "$INFER_SPEC" \
   --apply-workflow-defaults <skill_root>/assets/overlays/grounding_dino_inference.yaml \
   --set inference.checkpoint=<checkpoint> \
   --set inference.num_gpus="$NUM_GPUS" \
@@ -153,16 +155,17 @@ Nothing about this is enforced by TAO, so check it before every inference:
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/verify_class_contract.py \
-  --inference-spec "$GDINO_INFER_SPEC" \
-  --kpi-mapping "$KPI_CLASS_MAPPING" \
+  --inference-spec "$INFER_SPEC" \
+  --kpi-mapping "$CLASS_MAPPING" \
   --state "${RESULTS_DIR}/deft_state.json" \
   --labelmap "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json"
 ```
 
 It compares the caption list against the KPI classes, the staged ODVG labelmap
 order, `max_labels`, and the run's target classes, and exits non-zero naming both
-sides of any disagreement. At baseline there is no staged labelmap yet — drop
-`--labelmap` and pass `--classes` instead.
+sides of any disagreement. At baseline there is no staged labelmap yet, so drop `--labelmap`. `--classes` is
+not its replacement — it is an independent fourth source and takes the **path** to the
+pool's `classes.yaml`, not a class list. Pass it in every phase.
 
 `inference.color_map` in the reference spec is cosmetic — it only tints `images_annotated/`.
 
@@ -171,8 +174,8 @@ sides of any disagreement. At baseline there is no staged labelmap yet — drop
 No training at baseline. Score the user-supplied zero-shot / pretrained checkpoint:
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+docker run --rm --name "deft_${PHASE}_infer" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   grounding_dino inference -e "$INFER_SPEC" \
   results_dir="${RESULTS_DIR}/baseline" \
@@ -180,14 +183,29 @@ docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
   inference.num_gpus="$NUM_GPUS"
 ```
 
-Labels land in `${RESULTS_DIR}/baseline/inference/labels/`.
+Wait on the labels, the same way training does — `results_dir` gains the action name,
+so both the labels and `status.json` sit under `inference/`:
+
+```bash
+LAUNCH_MARKER="${RESULTS_DIR}/<phase>/.inference_launched"
+mkdir -p "$(dirname "$LAUNCH_MARKER")" && touch "$LAUNCH_MARKER"
+# ... launch the container ...
+
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
+  --newer-than "$LAUNCH_MARKER" \
+  --status-json "${RESULTS_DIR}/<phase>/inference/status.json" \
+  --status-contains "finished successfully"
+```
+
+Labels land in `${RESULTS_DIR}/baseline/inference/labels/`. The same wait applies to
+each iteration's inference with `<phase>` set to `iter${N}`.
 
 Also copy the user's train-spec template to `${RESULTS_DIR}/train_grounding_dino.yaml`. Iteration 1 extends that copy; nothing trains from it at baseline.
 
 ## Iteration train
 
-Build the spec first. Every flag below is load-bearing — the script refuses to emit a spec
-that cannot train, because each of these failed silently or expensively at least once:
+Build the spec first. Every flag below is load-bearing: the script refuses to emit a spec
+that cannot train.
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/prepare_val_split_for_train.py \
@@ -214,8 +232,8 @@ that cannot train, because each of these failed silently or expensively at least
 Then:
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+docker run --rm --name "deft_iter${N}_train" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   grounding_dino train -e "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
   results_dir="${RESULTS_DIR}/iter${N}" \
@@ -223,8 +241,7 @@ docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
 ```
 
 **Wait on the artifact, never on a process name.** `pgrep -f "grounding_dino train"` matches
-the waiting shell's own command line, so the wait never ends — that cost 10h11m on a run whose
-training had already finished correctly in 14m20s:
+the waiting shell's own command line, so the wait never ends.
 
 Take a launch marker first, and pass it as `--newer-than`. Without it a retry of a
 failed job is satisfied instantly by the checkpoint and success line the previous
@@ -237,10 +254,14 @@ mkdir -p "$(dirname "$LAUNCH_MARKER")" && touch "$LAUNCH_MARKER"
 
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/await_stage.py \
   --newer-than "$LAUNCH_MARKER" \
-  --artifact "${RESULTS_DIR}/iter${N}/train/gdino_model_latest.pth" \
   --status-json "${RESULTS_DIR}/iter${N}/train/status.json" \
   --status-contains "finished successfully"
 ```
+
+`gdino_model_latest.pth` is deliberately not an `--artifact` here: training rewrites it
+at every checkpoint interval, so a wait naming it returns at the first interval and the
+stage is read as finished several epochs early. `status.json` is the only artifact that
+appears once, at the end.
 
 `results_dir` and `train.num_gpus` are Hydra overrides, not flags. Everything else must already be in the spec — do not add further overrides on the command line.
 
@@ -267,8 +288,8 @@ Required output: a newly emitted checkpoint under `${RESULTS_DIR}/iter${N}/train
 ## Iteration inference
 
 ```bash
-docker run --rm --gpus all --ipc=host --user "$(id -u):$(id -g)" \
-  -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+docker run --rm --name "deft_${PHASE}_infer" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+  -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_PYT_IMAGE" \
   grounding_dino inference -e "$INFER_SPEC" \
   results_dir="${RESULTS_DIR}/iter${N}" \
@@ -296,12 +317,14 @@ That is the reason to keep it at `0.0`. The labels then carry the full curve, an
   --results-dir "${RESULTS_DIR}" --iter-label "iter${N}" --stage train \
   --checkpoint "${RESULTS_DIR}/iter${N}/train/gdino_model_latest.pth" \
   --training-spec "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "trained iter${N}: <epochs> epochs, <N> data sources"
 
 # inference
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "<phase>" --stage inference \
   --inference-labels-dir "${RESULTS_DIR}/<phase>/inference/labels" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "inference: <N> label files"
 ```
 

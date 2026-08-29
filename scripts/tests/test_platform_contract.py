@@ -80,6 +80,16 @@ def test_platform_wires_the_job_record(platform):
         f"{platform}/SKILL.md never calls `tao_job_record.py mark` to update state")
 
 
+def test_brev_submit_contract_is_idempotent():
+    """The normative Brev submit verb must guard against CLI command replay."""
+    text = _skill_text("tao-run-on-brev")
+    execution = text.split("## Execution — the four verbs", 1)[1].split(
+        "### `brev exec` argument form", 1
+    )[0]
+    assert "docker inspect '$JOB_ID'" in execution
+    assert "$JOB_ID already submitted" in execution
+
+
 # Shell-assigned paths that point into the bank, e.g.
 #   SETUP_SCRIPT="${TAO_SKILL_BANK_ROOT}/skills/platform/.../setup.sh"
 BANK_PATH_RE = re.compile(
@@ -153,6 +163,50 @@ def test_slurm_enroot_conversion_uses_job_unique_node_local_temp():
     assert "ENROOT_TEMP_PATH=/tmp/enroot-tao-\\${SLURM_JOB_ID}" in text
     assert "SLURM_ENROOT_TEMP_PATH=\\${ENROOT_TEMP_PATH}" in text
     assert "--chdir=/tmp" in text
+
+
+def test_slurm_sqsh_conversion_uses_validated_cpu_long_resource_profile():
+    """Keep image conversion under the CS-OCI QOS memory ceiling.
+
+    SLURM job 32370651 established this profile. Inheriting an eight-GPU
+    training job's CPU request multiplies the site's implicit per-CPU memory
+    and leaves conversion pending under ``QOSGrpMemLimit``.
+    """
+    text = _skill_text("tao-run-on-slurm")
+    info = (PLATFORM_DIR / "tao-run-on-slurm" / "references" /
+            "skill_info.yaml").read_text()
+    assert "sqsh_conversion_partition: cpu_long" in info
+    assert "sqsh_conversion_timeout_minutes: 120" in info
+    assert "sqsh_conversion_cpus_per_task: 4" in info
+    assert "sqsh_conversion_memory_mb: 7200" in info
+    assert "--mem=7200M" in text
+    assert "QOSGrpMemLimit" in text
+
+
+def test_slurm_consumes_model_action_lifecycle_without_private_renderers():
+    text = _skill_text("tao-run-on-slurm") + (
+        PLATFORM_DIR
+        / "tao-run-on-slurm"
+        / "references"
+        / "slurm-container-execution.md"
+    ).read_text(encoding="utf-8")
+    guardrails = (
+        PLATFORM_DIR
+        / "tao-run-on-slurm"
+        / "references"
+        / "cosmos-slurm-guardrails.md"
+    ).read_text(encoding="utf-8")
+    for term in (
+        "pre_commands",
+        "post_commands",
+        "supporting_files",
+        "processes_per_node",
+        "child_exit_code_path",
+    ):
+        assert term in text
+    assert "model-specific retry launcher" in text
+    assert "Cosmos-only SLURM" in guardrails
+    assert "renderer" in guardrails
 
 
 # Required flags of `tao_job_record.py open`, per its argparse definition. A

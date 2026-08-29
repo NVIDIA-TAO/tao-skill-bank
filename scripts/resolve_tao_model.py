@@ -17,7 +17,7 @@ import yaml
 
 
 DEFAULT_SKILL_BANK = Path(
-    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
+    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")
 )
 UNMATCHED_EXIT = 3
 
@@ -86,18 +86,49 @@ def identifier_groups(candidate: Path, info: dict[str, Any]) -> dict[str, set[st
 
 
 def backend_contracts(candidate: Path, info: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Load optional backend contract files declared by a shared model frontend."""
+    """Load backend contracts and their skill-owned runtime metadata.
+
+    A legacy declaration may be a relative YAML path.  A shared frontend that
+    owns backend-specific runtime knowledge uses a mapping with ``path`` and
+    ``container_image``.  The referenced contract continues to own schemas,
+    topology, checkpoint semantics, and actions; image pins remain centralized
+    in ``references/skill_info.yaml``.
+    """
     declared = info.get("backend_contracts", {})
     if not isinstance(declared, dict):
         return {}
     contracts: dict[str, dict[str, Any]] = {}
-    for name, relative in declared.items():
+    for name, declaration in declared.items():
+        metadata: dict[str, Any] = {}
+        if isinstance(declaration, str):
+            relative = declaration
+        elif isinstance(declaration, dict):
+            relative = declaration.get("path")
+            metadata = declaration
+        else:
+            raise ValueError(
+                f"backend_contracts.{name} must be a relative YAML path or mapping"
+            )
         if not isinstance(relative, str) or not relative.strip():
-            raise ValueError(f"backend_contracts.{name} must be a relative YAML path")
+            raise ValueError(f"backend_contracts.{name}.path must be a relative YAML path")
         path = candidate / relative
         if not path.is_file():
             raise FileNotFoundError(f"Backend contract not found: {path}")
         contract = load_yaml(path)
+        if isinstance(declaration, dict):
+            image = metadata.get("container_image")
+            if not isinstance(image, str) or not image.strip():
+                raise ValueError(
+                    f"backend_contracts.{name}.container_image must be a non-empty image reference"
+                )
+            if "container_image" in contract:
+                raise ValueError(
+                    f"{path} must not duplicate container_image; keep backend image pins in skill_info.yaml"
+                )
+            contract["container_image"] = image.strip()
+            contract["container_image_source"] = (
+                f"skill_info.backend_contracts.{name}.container_image"
+            )
         contract["contract_path"] = str(path)
         contracts[str(name)] = contract
     return contracts

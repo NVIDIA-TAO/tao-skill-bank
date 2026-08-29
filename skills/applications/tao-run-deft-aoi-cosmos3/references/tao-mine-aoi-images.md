@@ -29,7 +29,8 @@ workflow already carries the fix — pass the account databases along with the
 mapping:
 
 ```bash
---user $(id -u):$(id -g) -e USER="$(id -un)" -e HOME=/tmp \
+--user $(id -u):$(id -g) \
+-e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
 -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro
 ```
 
@@ -38,13 +39,8 @@ resolves and `transformers` imports cleanly. This matters because mining writes
 into `${RESULTS_DIR}/iterN/mining`, a tree the operator owns; run as root and
 the parquet files come back root-owned and cannot be cleaned up afterwards.
 
-If a future image genuinely rejects the mapping, repair ownership through a
-container rather than assuming sudo:
-
-```bash
-docker run --pull=never --rm -v "$WORKSPACE:/ws" busybox:latest \
-  chown -R "$(id -u):$(id -g)" /ws/<relative/path/to/mining>
-```
+If a future image genuinely rejects the mapping, hard-stop and fix the image
+contract. Never launch mining as root or use a root repair container.
 
 ## Cosine floor
 

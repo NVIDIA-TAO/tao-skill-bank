@@ -679,10 +679,50 @@ for path in iter_metadata_files():
                     continue
                 hf_model_owners.setdefault(model_id.casefold(), []).append((model_id, skill_dir))
 
+    has_declared_image = False
     if isinstance(info.get('container_image'), str):
         validate_image(path, info['container_image'], 'container_image')
-    elif is_model_or_data and 'actions' in info:
-        print(f"WARN: {path} — has actions but no top-level container_image", file=sys.stderr)
+        has_declared_image = True
+
+    backend_contracts = info.get('backend_contracts')
+    if backend_contracts is not None:
+        if not isinstance(backend_contracts, dict) or not backend_contracts:
+            print(f"ERROR: {path} — backend_contracts must be a non-empty mapping", file=sys.stderr); errs += 1
+        else:
+            for backend_name, declaration in backend_contracts.items():
+                context = f'backend_contracts.{backend_name}'
+                if isinstance(declaration, str):
+                    continue
+                if not isinstance(declaration, dict):
+                    print(f"ERROR: {path} — {context} must be a path string or mapping", file=sys.stderr); errs += 1
+                    continue
+                unknown_keys = set(declaration) - {'path', 'container_image'}
+                if unknown_keys:
+                    print(f"ERROR: {path} — {context} has unknown keys: {sorted(unknown_keys)}", file=sys.stderr); errs += 1
+                relative_contract = declaration.get('path')
+                if not isinstance(relative_contract, str) or not relative_contract.strip():
+                    print(f"ERROR: {path} — {context}.path must be a non-empty string", file=sys.stderr); errs += 1
+                else:
+                    backend_path = os.path.normpath(os.path.join(skill_dir, relative_contract))
+                    if not os.path.isfile(backend_path):
+                        print(f"ERROR: {path} — {context}.path does not exist: {backend_path}", file=sys.stderr); errs += 1
+                    else:
+                        try:
+                            with open(backend_path) as backend_file:
+                                backend_contract = yaml.safe_load(backend_file) or {}
+                            if isinstance(backend_contract, dict) and 'container_image' in backend_contract:
+                                print(f"ERROR: {backend_path} — container_image must live only at {context}.container_image in {path}", file=sys.stderr); errs += 1
+                        except yaml.YAMLError as e:
+                            print(f"ERROR: {backend_path} — YAML parse error: {e}", file=sys.stderr); errs += 1
+                declared_backend_image = declaration.get('container_image')
+                if not isinstance(declared_backend_image, str) or not declared_backend_image.strip():
+                    print(f"ERROR: {path} — {context}.container_image must be a non-empty string", file=sys.stderr); errs += 1
+                else:
+                    validate_image(path, declared_backend_image, f'{context}.container_image')
+                    has_declared_image = True
+
+    if is_model_or_data and 'actions' in info and not has_declared_image:
+        print(f"WARN: {path} — has actions but no top-level or backend-specific container_image", file=sys.stderr)
 
     runtime_requirements = info.get('runtime_requirements')
     if runtime_requirements is not None:

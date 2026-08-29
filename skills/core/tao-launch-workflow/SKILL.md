@@ -109,6 +109,14 @@ cannot launch. This is what keeps a run recoverable across a context break:
 `results_dir` is recorded before the backend object (which K8s TTL or docker
 `--rm` may later delete) ever exists.
 
+When the producing spec-bundle declares `execution`, preserve it as model-owned
+action semantics across every application that reuses that model skill. The
+selected platform consumes the lifecycle; an application must not copy its
+commands into a private launcher. Platform-independent pre/post commands,
+runtime attestations, helper dependencies, distributed intent, and completion
+evidence belong in the producer's spec-bundle. Scheduler syntax, mounts,
+secrets, timeouts, ranks, and child-exit preservation remain platform-owned.
+
 ### External platform skills
 
 No registry, no interface file: a platform skill **declares the contract by
@@ -179,9 +187,11 @@ After model ownership resolution, inspect the selected model's
 implementation before selecting an image or authoring a spec. An explicit
 backend wins when it supports the model/action; otherwise apply the packaged
 `backend_selection` policy and show its rationale. The selected backend
-contract—not the legacy top-level fallback—owns the image, entrypoint,
-configuration schema, data mappings, topology, checkpoint format, output
-layout, and status behavior. Never treat one backend as a version of another.
+metadata in `skill_info.yaml` owns its image. The referenced backend contract
+owns the entrypoint, configuration schema, data mappings, topology, checkpoint
+format, output layout, and status behavior. Never use a legacy top-level image
+fallback for a multi-backend frontend, and never treat one backend as a version
+of another.
 
 Pass action, backend, and workload hints to the model resolver. When metadata
 declares a backend planner, use it. The shared Cosmos frontend, for example,
@@ -194,8 +204,8 @@ Before creating specs, runner scripts, workspaces, logs, state files, or
 submitting a job, resolve the image for the selected model/action:
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/resolve_tao_image.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} \
+${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/resolve_tao_image.py \
+  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} \
   --model <network> --action <action> --backend <auto-or-explicit> \
   --workload <workload-hint> --format text
 ```
@@ -203,10 +213,11 @@ ${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/resolve_tao_image.py \
 If the helper is unavailable, read `skills/models/<network>/config.json`
 directly. Resolve image fields in this order:
 
-1. `actions.<action>.container_image`
-2. `actions.<action>.image`
-3. top-level `container_image`
-4. top-level `image`
+1. `backend_contracts.<selected-backend>.container_image`, when present
+2. `actions.<action>.container_image`
+3. `actions.<action>.image`
+4. top-level `container_image`
+5. top-level `image`
 
 Show the exact image and ask:
 
@@ -331,6 +342,13 @@ search parameters, ranges, and generated/default recommendation details as
 described in `skills/applications/tao-run-automl/SKILL.md`. Ask for confirmation after
 this review. If the user supplied a time limit, flag any plan that exceeds it
 and offer concrete reductions before launch.
+
+Never end a successful launch review with only “nothing was launched.” End
+with one direct action prompt, for example: `Ready to materialize the sealed
+plan and submit the job. Reply "launch", "go ahead", or "yes" to proceed.`
+The next unambiguous affirmative chat message authorizes materialization,
+job-record creation, submission, and the previously reviewed monitoring mode;
+execute immediately without another intake or confirmation round.
 
 ## Structured Training Metrics
 

@@ -97,5 +97,6 @@ Point `--weak-parquet` at **iteration 1's** weak-images parquet on every iterati
   --label-map "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json" \
   --staged-images-dir "${RESULTS_DIR}/iter${N}/tmm/images" \
   --exclude-parquet "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet" \
+  --duration-sec "$(( SECONDS - started ))" \
   --summary "staged <N> images with annotations"
 ```

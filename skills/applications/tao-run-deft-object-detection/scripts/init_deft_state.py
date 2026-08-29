@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from deft_stages import (  # noqa: E402
     SCHEMA_VERSION,
     check_artifact,
+    derive_rare_classes,
     log_path,
     state_path,
     write_log_atomic,
@@ -46,6 +47,10 @@ from deft_stages import (  # noqa: E402
 )
 
 ALLOCATION_POLICIES = ("global", "class_stratified")
+# The encoder families the embedding stage accepts. Kept in step with
+# tao-generate-image-embeddings' verify_image_embeddings_spec.py, which enforces the
+# same set against the spec.
+EMBEDDING_MODELS = ("CLIP", "SigLIP")
 
 # AP50 gates from the reference ITS pipeline, used when the caller does not supply
 # their own. The asymmetry is deliberate: `car` is abundant and already well learned,
@@ -98,8 +103,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Run directory; holds deft_state.json and loop_log.jsonl.")
     parser.add_argument("--workspace", required=True,
                         help="Workspace root. Mounted into every container as itself.")
-    parser.add_argument("--max-iterations", type=int, required=True,
-                        help="Number of iterations after the baseline. No default; the user supplies it.")
+    parser.add_argument("--max-iterations", type=int, default=1,
+                        help="Number of iterations after the baseline. Default 1: one mine, "
+                             "train and score pass, which is the smallest run that produces a "
+                             "comparison against the baseline.")
 
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--num-epochs", type=int, required=True,
@@ -146,7 +153,9 @@ def _build_parser() -> argparse.ArgumentParser:
                              "COCO-trained checkpoint). Required only when `prep` must run.")
 
     parser.add_argument("--embedding-model", default="SigLIP",
-                        help="Encoder family. Must match the source-pool parquet's encoder.")
+                        help="Encoder family: SigLIP or CLIP. Not a model id — the weights "
+                             "are --embedding-model-path. Must match the source-pool "
+                             "parquet's encoder.")
     parser.add_argument("--embedding-model-path", required=True,
                         help="Resolved local snapshot directory, or a verified HuggingFace id.")
 
@@ -183,7 +192,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--candidate-expansion-factor", type=int, default=5,
                         help="Miner's internal candidate-pool growth seed. Not the loop iteration count.")
     parser.add_argument("--iou-threshold", type=float, default=0.5)
-    parser.add_argument("--kpi-conf-threshold", type=float, default=0.3)
+    parser.add_argument("--kpi-conf-threshold", type=float, default=0.0,
+                        help="kpi.conf_threshold for every phase. Default 0.0: inference\n"
+                             "writes its labels at 0.0, so scoring there covers the full\n"
+                             "PR curve. A higher value truncates the low-confidence tail\n"
+                             "and is not comparable to a run scored at 0.0.")
+
+    parser.add_argument("--extra-mount", action="append", default=None, metavar="PATH",
+                        help="Extra host path a container must read, repeatable. The mount "
+                             "list is otherwise derived from the run's own inputs, so this is "
+                             "the way to admit anything they do not name -- a spec, an "
+                             "auxiliary dataset, a checkpoint a template points at. Files are "
+                             "mounted by their parent directory.")
 
     parser.add_argument("--force", action="store_true",
                         help="Reinitialize over an existing run. The current state and a non-empty "
@@ -277,6 +297,18 @@ def main() -> int:
                 errors.append(f"--ap50-thresholds-json[{name!r}] must be a number, got {value!r}")
             elif not 0 <= float(value) <= 1:
                 errors.append(f"--ap50-thresholds-json[{name!r}] must be within [0, 1], got {value}")
+
+        # `model` selects the loader inside the container and nothing between here
+        # and there validates it, so a bad value is accepted at init and fails an
+        # hour later at embed. The common mistake is putting the model id here.
+        if args.embedding_model not in EMBEDDING_MODELS:
+            hint = ""
+            if "/" in args.embedding_model or args.embedding_model.count("-") >= 2:
+                hint = (f"; {args.embedding_model!r} looks like a model id — did you mean "
+                        "--embedding-model-path?")
+            errors.append(
+                f"--embedding-model takes the encoder family "
+                f"({' or '.join(sorted(EMBEDDING_MODELS))}), got {args.embedding_model!r}{hint}")
 
         # ── class lists ──────────────────────────────────────────────────────
         target_classes = requested_classes or sorted(thresholds)
@@ -389,18 +421,12 @@ def main() -> int:
                                     f"reuse it")
 
         if args.allocation_policy == "class_stratified" and not rare_classes and pool_counts:
-            backed = {c: pool_counts[c] for c in target_classes if pool_counts.get(c)}
-            if backed:
-                # Below-mean share: with one dominant class the median would call
-                # half the set rare regardless of how lopsided the pool actually is.
-                mean_share = sum(backed.values()) / len(backed)
-                rare_classes = sorted(c for c, n in backed.items() if n < mean_share)
-                if rare_classes:
-                    detail = ", ".join(f"{c}={backed[c]}" for c in sorted(backed, key=backed.get))
-                    warnings.append(
-                        f"--rare-class-list not given; derived {rare_classes} from the pool's "
-                        f"own class counts ({detail}). These are the classes the pool holds "
-                        "fewest of, which is what stratified allocation exists to protect")
+            rare_classes, detail = derive_rare_classes(pool_counts, target_classes)
+            if rare_classes:
+                warnings.append(
+                    f"--rare-class-list not given; derived {rare_classes} from the pool's "
+                    f"own class counts ({detail}). These are the classes the pool holds "
+                    "fewest of, which is what stratified allocation exists to protect")
 
         kpi_images_dir = _abs(args.kpi_images_dir)
         ground_truth_labels_dir = _abs(args.ground_truth_labels_dir)
@@ -461,7 +487,21 @@ def main() -> int:
         }
         if args.allocation_policy == "class_stratified":
             if not rare_classes:
-                errors.append("--allocation-policy class_stratified requires --rare-class-list")
+                # Which classes are rare is a property of the pool's annotation
+                # counts, and those counts are prep's output. Requiring the list
+                # here would make init and prep each other's precondition, so on a
+                # run that still has to prep it is left null and the prep commit
+                # derives it from pool_report.json. `mine` is the first stage that
+                # reads it, and prep is complete by then.
+                message = ("--allocation-policy class_stratified requires "
+                           "--rare-class-list")
+                if missing_pool and not absent_inputs:
+                    warnings.append(
+                        f"{message} — left unset; `commit_stage.py --stage prep` derives it "
+                        "from the pool's own class counts once prep has produced "
+                        "pool_report.json")
+                else:
+                    errors.append(message)
             if not args.pool_report:
                 # pool_report.json is the only artifact that cross-checks the prepared
                 # pool against the requested classes. It is also prep's own output, so
@@ -482,6 +522,12 @@ def main() -> int:
         elif rare_classes:
             warnings.append(
                 "--rare-class-list is set but --allocation-policy is global; rare classes are ignored")
+
+        # A mount may be either a file or a directory, so this is existence only --
+        # check_artifact would reject a directory as "not a file".
+        for extra in (args.extra_mount or []):
+            if not _abs(extra).exists():
+                errors.append(f"--extra-mount: does not exist: {_abs(extra)}")
 
         resolved_detection: dict[str, str | None] = {}
         for flag, raw in detection_files.items():
@@ -527,8 +573,38 @@ def main() -> int:
 
         # Containers see only "$WORKSPACE:$WORKSPACE"; anything outside is invisible inside them.
         # embedding_model_path is exempt: HF_HOME legitimately lives outside the workspace.
+        # Every path a container has to read, not a subset. The encoder is included
+        # despite living outside the workspace by design: prep's embed reads it from
+        # inside the container, and an unmounted local snapshot is passed to
+        # HuggingFace as a repo id, which fails as HFValidationError rather than as a
+        # missing mount. Prep's own inputs are here for the same reason -- Co-DETR
+        # reads the classmap and checkpoint from inside the container.
         mounted = [results_dir, zero_shot_checkpoint, train_spec_template, source_pool_embeddings,
                    source_pool_annotations, kpi_images_dir, ground_truth_labels_dir, class_mapping]
+        if looks_local:
+            # A HuggingFace hub snapshot is all symlinks into a sibling blobs/ dir, so
+            # mounting the snapshot alone gives the container dangling links and the
+            # loader reports "no file named model.safetensors found" -- a missing-model
+            # error for a model that is present. Mount the repo root, which holds both.
+            encoder = Path(model_path)
+            if "snapshots" in encoder.parts:
+                encoder = Path(*encoder.parts[:encoder.parts.index("snapshots")])
+            mounted.append(encoder)
+        for extra in (args.pool_images, args.codetr_checkpoint, args.codetr_classmap):
+            if extra:
+                mounted.append(_abs(extra))
+        # `tmm unique_neighbor_matching` opens both COCO detection files from inside the
+        # container under class_stratified allocation. The target file is the KPI
+        # detections, which live with the read-only dataset rather than in the per-run
+        # workspace, so without this the stage fails on a path the spec itself named.
+        for detection in resolved_detection.values():
+            if detection:
+                mounted.append(Path(detection))
+        # Whatever the derivation cannot know about. A run may legitimately reference a
+        # path none of its own config keys name, and without this the only remedy is
+        # editing the skill.
+        for extra in (args.extra_mount or []):
+            mounted.append(_abs(extra))
         # Anything outside the workspace needs its own -v or the container cannot read
         # it. Deriving the mounts here means the stages get a list to use rather than a
         # warning to act on, which is what left earlier runs to work it out mid-flight.

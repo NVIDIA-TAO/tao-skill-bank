@@ -99,10 +99,10 @@ echo
 echo "  About to remove TAO from sandbox '$SB':"
 echo "    - tao-mcp network policy preset"
 echo "    - openclaw.json: mcp.servers.tao + env.TAO_SKILL_BANK_PATH"
-echo "    - /sandbox/tao-skills-external and its skill symlinks"
+echo "    - /sandbox/tao-skill-bank and its skill symlinks"
 echo "    - the appended AGENTS.md block (a .bak is kept)"
 [ -n "$PIDS" ] && echo "    - host MCP server pid(s):$PIDS" || echo "    - host MCP server: none matching this workspace"
-[ "$PURGE_BANK" = 1 ] && echo "    - $WORKSPACE/tao-skills-external and tao-mcp-server.log  (--purge-bank)"
+[ "$PURGE_BANK" = 1 ] && echo "    - $WORKSPACE/tao-skill-bank and tao-mcp-server.log  (--purge-bank)"
 echo "  Datasets and results under $WORKSPACE are NOT touched."
 echo
 if [ "$ASSUME_YES" != 1 ]; then
@@ -179,7 +179,7 @@ fi
 # Two different privilege levels, because setup used two:
 #
 #   - the symlinks were made by `nemoclaw exec` (sandbox user), so remove them
-#     the same way. Only links resolving into /sandbox/tao-skills-external go,
+#     the same way. Only links resolving into /sandbox/tao-skill-bank go,
 #     so skills installed from another source survive.
 #   - the tree itself arrived by `docker cp`, which preserves the HOST uid — it
 #     lands root-owned, and the sandbox user cannot delete it ("Permission
@@ -199,17 +199,17 @@ if [ -d "$d" ]; then
   for l in "$d"/*; do
     [ -L "$l" ] || continue
     case "$(readlink "$l")" in
-      /sandbox/tao-skills-external/*) rm -f "$l"; n=$((n+1)) ;;
+      /sandbox/tao-skill-bank/*) rm -f "$l"; n=$((n+1)) ;;
     esac
   done
 fi
 echo "sandbox: removed $n skill symlink(s)"
 EOS
-  if docker exec -u 0 "$CID" rm -rf /sandbox/tao-skills-external /tmp/tao-AGENTS.md 2>/dev/null; then
-    log "sandbox: removed /sandbox/tao-skills-external (as root, matching docker cp)"
+  if docker exec -u 0 "$CID" rm -rf /sandbox/tao-skill-bank /tmp/tao-AGENTS.md 2>/dev/null; then
+    log "sandbox: removed /sandbox/tao-skill-bank (as root, matching docker cp)"
   else
-    warn "could not remove /sandbox/tao-skills-external — remove it by hand:"
-    warn "    docker exec -u 0 $CID rm -rf /sandbox/tao-skills-external /tmp/tao-AGENTS.md"
+    warn "could not remove /sandbox/tao-skill-bank — remove it by hand:"
+    warn "    docker exec -u 0 $CID rm -rf /sandbox/tao-skill-bank /tmp/tao-AGENTS.md"
   fi
 fi
 
@@ -247,12 +247,12 @@ fi
 
 # ── 8. Optionally remove what setup created inside the workspace ──────────────
 if [ "$PURGE_BANK" = 1 ]; then
-  rm -rf "$WORKSPACE/tao-skills-external"
+  rm -rf "$WORKSPACE/tao-skill-bank"
   rm -f  "$WORKSPACE/tao-mcp-server.log"
-  log "purged $WORKSPACE/tao-skills-external and tao-mcp-server.log"
+  log "purged $WORKSPACE/tao-skill-bank and tao-mcp-server.log"
 else
-  [ -d "$WORKSPACE/tao-skills-external" ] \
-    && log "kept $WORKSPACE/tao-skills-external (pass --purge-bank to remove)"
+  [ -d "$WORKSPACE/tao-skill-bank" ] \
+    && log "kept $WORKSPACE/tao-skill-bank (pass --purge-bank to remove)"
 fi
 
 # ── 9. Host firewall: print, never mutate ─────────────────────────────────────
