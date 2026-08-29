@@ -184,13 +184,12 @@ stop and report the blocker instead of silently falling back to a
 training-loss-only run.
 
 For training from scratch, record the baseline as unavailable and proceed; do
-not evaluate an empty checkpoint. See `automl-preflight-concepts.md` for the
-checkpoint, baseline, and from-scratch rules.
+not evaluate an empty checkpoint.
 
 The runner owns final evaluation. When eval is runnable, pass
 `final_eval_fn(best_rec, train_job_id)` to `AutoMLRunner.run`; the result then
 carries `result["final_evaluation"]`. See `automl-preflight-concepts.md` for
-the callback and from-scratch rules.
+the callback, checkpoint, baseline, and from-scratch rules.
 
 ## Dependency And Data Preflight
 
@@ -200,8 +199,7 @@ before continuing. After user approval, rerun
 `scripts/check_tao_launch_preflight.py` with `--install-missing-tools` so it
 installs the smallest needed package and immediately retries path verification.
 For S3 paths, verify both credentials and path readability from the launch
-platform before creating runner artifacts. Do not wait for the first training
-container to discover a missing AWS CLI, S3 client, or unreadable URI.
+platform before creating runner artifacts.
 
 For models that read large media archives or directories during every training
 trial, stage or extract the dataset once to storage visible from the execution
@@ -288,9 +286,7 @@ metric. Use one of these:
 Do not map `kpi` to a metric unless the model skill explicitly defines that
 mapping.
 
-For every AutoML run with a runnable evaluate action and validation/eval data,
-run the automatic baseline eval job after preflight and before recommendations.
-The final report must compare that baseline metric, each recommendation's
+The final report must compare the baseline metric, each recommendation's
 metric, and the selected best metric so users can see the impact of tuning. For
 model skills that require an `eval_fn` to compute the real task metric, use
 that evaluator instead of optimizing a convenient training loss unless the user
@@ -300,6 +296,11 @@ explicitly accepts the proxy metric.
 
 Use the selected platform SDK only after its preflight passes. Construct SDKs
 without embedding credentials in code.
+
+`sdk` is the platform SDK object; containerless venv models use
+`VirtualEnvSDK(venv_path=..., work_dir=...)`. Always pass `work_dir` -- the
+default `~/.tao_sdk/virtualenv` fills the home directory with trial
+checkpoints. See `automl-runner-configuration.md`.
 
 ```python
 import sys
