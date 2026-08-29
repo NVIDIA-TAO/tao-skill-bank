@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "scripts" / "cosmos_workflow.py"
 sys.path.insert(0, str(SCRIPT.parent))
 SPEC = importlib.util.spec_from_file_location("cosmos_workflow", SCRIPT)
@@ -568,6 +570,7 @@ def test_framework_repeated_media_auto_profile_emits_measured_validation_contrac
         args,
         train_data={"record_count": 5555, "profile": {"unique_media_count": 341}},
         val_data={"record_count": 2676, "profile": {"unique_media_count": 171}},
+        runtime_model_type="qwen3_vl",
     )
 
     assert runtime["validation_repeated_media"] is True
@@ -600,6 +603,7 @@ def test_framework_repeated_media_derives_frontload_from_user_batch() -> None:
         args,
         train_data={"record_count": 5555, "profile": {"unique_media_count": 341}},
         val_data={"record_count": 2676, "profile": {"unique_media_count": 171}},
+        runtime_model_type="qwen3_vl",
     )
 
     assert runtime["validation_batch_size"] == 16
@@ -787,3 +791,86 @@ def test_framework_validation_cache_preflight_attests_inherited_and_new_modules(
     startup = preflight["container_startup"]
     assert "/tao-patches-framework-c312482-evalval-lab-v13/modules" in startup
     assert "/tao-patches-framework-c312482-evalval-lab-v21/modules" in startup
+
+
+def test_framework_validation_feature_cache_is_gated_on_supported_model_type() -> None:
+    """NVBUG 6669758: Cosmos Framework supports the cache only for qwen3_vl.
+
+    Enabling it for cosmos3_edge aborts at model construction, so the planner
+    must not seal a nonzero size for unsupported families.
+    """
+    args = SimpleNamespace(
+        dataset_family="video_conversation",
+        run_mode="full",
+        nodes=1,
+        gpus_per_node=4,
+        validation_batch_size=1,
+        framework_validation_shard_strategy="auto",
+        framework_validation_video_feature_cache_size=None,
+        framework_validation_processed_video_cache_size=None,
+        framework_validation_cache_frontload_unique_per_batch=None,
+        framework_baked_overlay_pythonpath="",
+        framework_video_cache_size=None,
+        framework_sft_process_threads=0,
+        framework_video_decoder_threads=0,
+        framework_dataloader_num_workers=None,
+        framework_dataloader_prefetch_factor=None,
+    )
+    train_data = {"record_count": 5555, "profile": {"unique_media_count": 341}}
+    val_data = {"record_count": 2676, "profile": {"unique_media_count": 171}}
+
+    edge = MODULE._framework_video_runtime(
+        args, train_data, val_data, runtime_model_type="cosmos3_edge"
+    )
+    assert edge["validation_video_feature_cache_size"] == 0
+    assert edge["validation_cache_frontload_unique_per_batch"] == 0
+    assert edge["validation_video_feature_cache_supported"] is False
+    assert edge["validation_video_feature_cache_model_type"] == "cosmos3_edge"
+    # The gate disables only the GPU-embedding cache; grouped sharding and the
+    # processed-video cache are unrelated and must survive.
+    assert edge["validation_shard_strategy"] == "media_grouped"
+    assert edge["validation_processed_video_cache_size"] == 341
+
+    supported = MODULE._framework_video_runtime(
+        args, train_data, val_data, runtime_model_type="qwen3_vl"
+    )
+    assert supported["validation_video_feature_cache_size"] == 341
+    assert supported["validation_video_feature_cache_supported"] is True
+
+    # Unresolved family fails safe: cache off, never a model-init abort.
+    unknown = MODULE._framework_video_runtime(args, train_data, val_data)
+    assert unknown["validation_video_feature_cache_size"] == 0
+    assert unknown["validation_video_feature_cache_supported"] is False
+
+
+def test_framework_explicit_feature_cache_rejected_for_unsupported_model_type() -> None:
+    """An explicit request on an unsupported family fails at plan time.
+
+    Silently zeroing a user's explicit size would hide the incompatibility;
+    raising here replaces a post-distributed-init ChildFailedError with an
+    actionable planner error. NVBUG 6669758.
+    """
+    args = SimpleNamespace(
+        dataset_family="video_conversation",
+        run_mode="full",
+        nodes=1,
+        gpus_per_node=4,
+        validation_batch_size=1,
+        framework_validation_shard_strategy="auto",
+        framework_validation_video_feature_cache_size=512,
+        framework_validation_processed_video_cache_size=None,
+        framework_validation_cache_frontload_unique_per_batch=None,
+        framework_baked_overlay_pythonpath="",
+        framework_video_cache_size=None,
+        framework_sft_process_threads=0,
+        framework_video_decoder_threads=0,
+        framework_dataloader_num_workers=None,
+        framework_dataloader_prefetch_factor=None,
+    )
+    with pytest.raises(MODULE.WorkflowError, match="qwen3_vl"):
+        MODULE._framework_video_runtime(
+            args,
+            train_data={"record_count": 5555, "profile": {"unique_media_count": 341}},
+            val_data={"record_count": 2676, "profile": {"unique_media_count": 171}},
+            runtime_model_type="cosmos3_edge",
+        )
