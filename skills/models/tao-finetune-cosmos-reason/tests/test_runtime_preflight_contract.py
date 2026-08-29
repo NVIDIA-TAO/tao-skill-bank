@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -387,6 +388,105 @@ def test_slurm_renderer_creates_writable_mount_roots_before_pyxis() -> None:
     assert (
         "--container-mounts=/inputs:/data:ro,/runs/results:/results,"
         "/runs/checkpoints:/checkpoints,/runs/cache:/cache"
+    ) in script
+
+
+def _omni_preparation_args(platform: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        base_model_format="cosmos3_omni",
+        model="nvidia/Cosmos3-Nano",
+        prepared_checkpoint_path="",
+        base_model_path_or_uri="nvidia/Cosmos3-Nano",
+        base_model_revision="b" * 40,
+        checkpoint_dir="/checkpoints",
+        cache_dir="/cache",
+        container_cache_dir="/cache",
+        vlm_architecture_model_path_or_uri="Qwen/Qwen3-VL-8B-Instruct",
+        vlm_architecture_model_revision="a" * 40,
+        image_tag="registry.example.invalid/cosmos-rl:test",
+        sqsh_path="/images/cosmos-rl.sqsh" if platform == "slurm" else "",
+        platform=platform,
+        results_dir="/results",
+        tao_job_id="cosmos-reason-prepare-test",
+        experiment_id="prepare-test",
+        container_mount=[
+            "/results:/results",
+            "/checkpoints:/checkpoints",
+            "/cache:/cache",
+        ],
+    )
+
+
+def _omni_model() -> dict[str, object]:
+    return {
+        "format": "cosmos3_omni",
+        "source_type": "uri",
+        "fingerprint": "c" * 64,
+        "revision_resolution": {"repo_id": "nvidia/Cosmos3-Nano"},
+        "vlm_architecture_revision_resolution": {
+            "repo_id": "Qwen/Qwen3-VL-8B-Instruct"
+        },
+    }
+
+
+def test_docker_model_preparation_resolves_digest_without_placeholder() -> None:
+    args = _omni_preparation_args("docker")
+    _, preparation = MODULE._model_preparation(args, _omni_model(), "cosmos-rl")
+
+    command = preparation["command"]
+    assert isinstance(command, str)
+    assert "<" + "RESOLVE_AFTER_CLEAN_BUILD" + ">" not in command
+    assert command.count("--runtime-image-digest") == 1
+    assert "docker image inspect --format '{{index .RepoDigests 0}}'" in command
+    assert "docker image inspect --format '{{.Id}}'" in command
+    assert "unable to resolve runtime image digest" in command
+    syntax = subprocess.run(
+        ["bash", "-n"], input=command, text=True, capture_output=True, check=False
+    )
+    assert syntax.returncode == 0, syntax.stderr
+
+
+def test_slurm_model_preparation_resolves_authoritative_sqsh_digest() -> None:
+    args = _omni_preparation_args("slurm")
+    _, preparation = MODULE._model_preparation(args, _omni_model(), "cosmos-rl")
+    action = preparation["platform_action"]
+    assert isinstance(action, dict)
+
+    container_command = action["container_command"]
+    assert "<" + "RESOLVE_AFTER_CLEAN_BUILD" + ">" not in container_command
+    assert container_command.count("--runtime-image-digest") == 1
+    assert "TAO_COSMOS_PREPARATION_IMAGE_DIGEST" in container_command
+    assert "/images/cosmos-rl.sqsh" in container_command
+
+    args.partition = "polar3"
+    args.account = "tao"
+    args.use_requeue = False
+    args.timeout = "00:10:00"
+    args.nodes = 1
+    args.gpus_per_node = 8
+    args.cpus_per_task = 64
+    args.time_limit = "00:15:00"
+    args.stdout_path = "/results/main.out"
+    args.stderr_path = "/results/main.err"
+    args.qos = ""
+    args.reservation = ""
+    args.exclusive = True
+    args.master_port = 29500
+    script = MODULE.render_slurm(
+        args,
+        {
+            "environment": {},
+            "command": "true",
+            "decoder_artifact": {"required": False, "enabled": False},
+            "model_preparation": preparation,
+        },
+    )
+
+    assert "sha256sum -- /images/cosmos-rl.sqsh" in script
+    assert "unable to resolve runtime image digest" in script
+    assert (
+        "--container-env=HF_TOKEN,HUGGING_FACE_HUB_TOKEN,"
+        "TAO_COSMOS_PREPARATION_IMAGE_DIGEST"
     ) in script
 
 
