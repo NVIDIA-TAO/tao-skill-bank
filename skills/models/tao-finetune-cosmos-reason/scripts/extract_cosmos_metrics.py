@@ -176,7 +176,10 @@ def summarize_records(records: list[dict[str, Any]], evaluation: Mapping[str, An
         if phase in {"checkpoint_saved", "checkpoint_complete", "checkpoint_submitted"} or checkpoint_path:
             checkpoints.append({"path": checkpoint_path, "phase": phase, "epoch": values.get("epoch", record.get("epoch"))})
         # Step/heartbeat train loss is intentionally never treated as complete-run average.
-        if "train/avg_loss" in values or ("train/loss_numerator" in values and "train/valid_label_count" in values):
+        if (
+            "train/loss_numerator" in values
+            and "train/valid_label_count" in values
+        ):
             train_events.append(_weighted_event(record, "train"))
         # Only a validation-complete event is authoritative.
         if phase == "validation_complete" and ("val/avg_loss" in values or "val/loss_numerator" in values):
