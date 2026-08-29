@@ -8,11 +8,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STALE_NAMES = ("tao-skills-bank", "tao-skills-external")
-# PR #142 owns README's canonical checkout-name migration. Keep the exception
-# explicit so this PR neither duplicates nor conflicts with that focused diff.
-EXCEPTIONS = {Path("README.md")}
-
-
 def test_consumers_use_canonical_tao_skill_bank_name():
     violations = []
     this_file = Path(__file__).resolve()
@@ -25,8 +20,6 @@ def test_consumers_use_canonical_tao_skill_bank_name():
         ):
             continue
         relative = path.relative_to(REPO_ROOT)
-        if relative in EXCEPTIONS:
-            continue
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
