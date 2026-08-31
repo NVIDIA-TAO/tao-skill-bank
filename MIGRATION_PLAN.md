@@ -1,8 +1,8 @@
 # DEFT AOI Cosmos Framework Migration Plan — rebased revision
 
-Status: **approved by Sean; implementation complete on `dev/deft-aoi-cfw`;
-runtime launch remains approval-gated and the canonical exact-evaluator
-preflight is blocked by source data described below**
+Status: **approved by Sean; implementation and the approved 8-GPU zero-shot
+evaluation are complete on `dev/deft-aoi-cfw`; train, inference, and DCP-resume
+GPU validation remain approval-gated**
 
 This revision supersedes the earlier approved plan because Sean changed both
 the source base and the application scope. The branch is now rebased onto the
@@ -15,7 +15,7 @@ application rather than migrated.
 - Migration branch: `dev/deft-aoi-cfw`
 - Latest main base: `origin/main` at
   `95e0295a494469197ac5538d6d713a0965a78006`
-- Rebased task-balanced head:
+- Rebased source checkpoint:
   `fdc73655d7f70652b3431de8d0293bc92f82f17c`
 - Replayed NVPAW commits: task-aware routing, component-count history,
   frozen-task-group evaluation, and the task-balanced run recipe. The final
@@ -27,10 +27,10 @@ application rather than migrated.
 - Canonical workspace: `~/projects/deft/workspace`
 
 The dirty main worktree (`.codex-plugin/plugin.json`) was not touched. Sean
-approved this plan, so implementation performed code/config/doc changes and
-non-side-effecting tests. No image pull, model/data download, registry login,
-train, evaluate, inference, or platform submission is authorized. Every
-runtime launch still requires its own launch review and explicit confirmation.
+approved this plan and separately approved the exact 8-GPU zero-shot evaluate
+and batch-size probe recorded below. That evaluation is complete. No train,
+inference, DCP-resume, push, or MR action is authorized by that approval; each
+still requires its own explicit confirmation.
 
 ## Target outcome
 
@@ -51,11 +51,12 @@ synthetic-data producer, artifact, or failure mode in the migrated app.
 
 ## Implementation validation result
 
-- The adapted existing application suite passes all 19 tests. New migration
-  coverage is limited to one lightweight CLI contract smoke per runtime surface
-  (train, evaluate, inference). Model/workload routing passes both resolver
-  tests, repository skill validation passes, and static searches find no
-  removed runtime or application-local AnomalyGen surface.
+- The adapted existing application suite passes all 19 tests. Migration
+  coverage remains limited to the existing lightweight CLI contract smoke per
+  runtime surface (train, evaluate, inference); no per-function or fixture
+  matrix was added. Model/workload routing passes both resolver tests,
+  repository skill validation passes, and static searches find no removed
+  runtime or application-local AnomalyGen surface.
 - Train renders the reviewed Framework recipe and a platform-neutral DCP launch
   descriptor. Evaluate and inference share the packaged
   `cfw_jsonl_runtime.py`, which streams canonical JSONL, preserves ordered
@@ -66,13 +67,18 @@ synthetic-data producer, artifact, or failure mode in the migrated app.
   has 972,799 rows; 1,960 count/segmentation rows are outside the approved six
   task types and are ignored in memory with auditable counts. The complete
   canonical file remains hash-sealed and unmodified.
-- The exact evaluator preflight correctly remains a hard stop on the current
-  canonical workspace: `calculate_f1_metrics.py` rejects seven classification
-  Benchmark rows whose ground truth is `[]` (the first is
-  `Real-IAD/images/pcb/test/OK/S0096/pcb_0096_OK_C2_20231027165818.jpg#qa0`).
-  The migrated application does not patch, copy, or replace the evaluator and
-  does not reinterpret those labels. The canonical annotations/evaluator must
-  be reconciled before any approved runtime launch.
+- The stale workspace evaluator was replaced with Yi-Cheng's authoritative
+  2026-08-23 file, SHA-256
+  `f1f8d3fe2d9249fbe9c2b9325ddb41bd4855c8cca0887d758f18839e2c1048a3`.
+  Its exact preflight passes all 2,145 Benchmark rows. The seven literal `[]`
+  classification ground truths are recognized as `__EMPTY__`; the sealed
+  Benchmark source is unchanged.
+- Cosmos Framework is standalone rather than NeMo-descendant in the pinned
+  image, so every rendered train/evaluate/inference payload now bootstraps
+  `one-logger-utils` from the internal index under the `SLURM_LOCALID == 0`
+  guard, sleeps 30 seconds on nonzero ranks, conditionally mounts `.netrc`, and
+  unsets rather than exports `WANDB_API_KEY`. Smoke/probe tagging is external;
+  real DEFT plans do not set `ONE_LOGGER_JOB_CATEGORY`.
 
 ## Done versus remaining
 
@@ -90,16 +96,61 @@ Done in this branch:
 - removed all application-local AnomalyGen, SDG, Guardrail, synthetic-data,
   and Cosmos-RL compatibility surfaces; and
 - updated state schema, real-mining-only transitions, reports, references,
-  eval fixtures, and the adapted existing test suite.
+  eval fixtures, and the adapted existing test suite;
+- completed the approved OneLogger-instrumented 8-GPU zero-shot evaluation on
+  all 2,145 Benchmark rows at global batch 512; and
+- reconciled the seven empty-GT rows through the authoritative scorer without
+  modifying the source annotations.
 
 Remaining outside the code migration:
 
-- reconcile the seven canonical Benchmark `GT: []` classification rows with
-  `eval/calculate_f1_metrics.py`; until then exact-evaluator preflight must stop;
-- after that reconciliation, obtain a separate launch review/approval for the
-  container/GPU smoke (train to DCP, base and trained evaluate/inference, exact
-  F1, and DCP resume); and
+- obtain a separate launch review/approval for train-to-DCP, trained-checkpoint
+  evaluate/inference, inference-surface GPU smoke, and DCP resume validation;
 - push or open an MR only if Sean explicitly requests it.
+
+## Approved GPU zero-shot validation
+
+The approved full Benchmark evaluation completed through the migrated
+Cosmos Framework evaluate path. The scored run is job-record
+`cosmos3-nano-vlm-evaluate-582c06`, Slurm job `6829975`, which ended
+`COMPLETED` with exit code `0:0`. It ran in tmux session `smoke_gpu` with the
+pinned `.sqsh`, eight H100 GPUs, global batch 512 (64 per rank), and SDPA
+attested on every rank.
+
+- Maximum tested and stable batch: **512 global / 64 per GPU**. This was the
+  first and highest requested candidate, so 256/128/64 fallbacks were not run.
+- Evaluator elapsed time: **882 seconds** for 2,145 rows, approximately
+  **2.43 rows/second**, including model load.
+- Coverage: 2,145 predictions, 2,145 unique Benchmark IDs, zero missing, zero
+  unknown, and zero parse failures.
+- OneLogger: standalone-CFW package `one-logger-utils==2.8.6`
+  (`one-logger==1.5.5`), internal package index, `.netrc` mounted at
+  `/root/.netrc`, `ONE_LOGGER_JOB_CATEGORY=test`, and `WANDB_API_KEY` unset.
+  Sean confirmed the OneLogger login was already valid.
+- Results:
+  `workspace/results/baseline_cfw_zeroshot_20260901`; the authoritative raw
+  report, normalized predictions, run summary, install logs, shard outputs,
+  hashes, and empty-GT reconciliation are retained there.
+
+| Overall F1 (%) | Cosmos-RL baseline | Cosmos Framework | Delta (points) |
+| --- | ---: | ---: | ---: |
+| BCQ | 55.27 | 57.76 | +2.49 |
+| MCQ | 23.18 | 21.45 | -1.73 |
+| DET | 6.69 | 12.80 | +6.11 |
+
+Contract notes:
+
+- Sean's approved interactive fast lane was used (`srun` inside tmux) instead
+  of an `sbatch` round trip; record-before-launch and backend polling were
+  preserved.
+- The image virtualenv lacked `pip`, so the required runtime bootstrap first
+  runs `ensurepip`; the rendered payload now carries that prerequisite.
+- The Framework runtime emits upstream Mistral tokenizer-regex and
+  `torch_dtype` deprecation warnings plus ignored greedy-generation flag
+  warnings. They did not cause parse, coverage, rank, or scheduler failures.
+- A prior global-512 attempt (Slurm `6829915`) completed before the OneLogger
+  requirement arrived. It is retained as superseded provenance and excluded
+  from the reported score.
 
 ## Latest-main inventory findings
 
