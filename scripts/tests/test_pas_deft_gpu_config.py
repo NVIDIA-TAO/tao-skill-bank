@@ -12,19 +12,9 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-<<<<<<< HEAD:scripts/tests/test_iaa_deft_gpu_config.py
-IAA_ROOT = REPO_ROOT / "skills/applications/tao-run-deft-iaa"
-PREPARE = IAA_ROOT / "scripts/prepare_deft_config.py"
-INITIALIZE = IAA_ROOT / "scripts/init_deft_state.py"
-PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt"
-DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services"
-
-
-=======
 PAS_ROOT = REPO_ROOT / "skills/applications/tao-run-deft-pas"
 PREPARE = PAS_ROOT / "scripts/prepare_deft_config.py"
 INITIALIZE = PAS_ROOT / "scripts/init_deft_state.py"
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):scripts/tests/test_pas_deft_gpu_config.py
 def _base_args(tmp_path: Path, selected: str):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -96,9 +86,9 @@ def test_selected_host_gpu_shape_is_materialized_as_dense_container_ordinals(tmp
             "--max-iterations",
             "1",
             "--pyt-image",
-            PYT_IMAGE,
+            approval["pyt_image"],
             "--ds-image",
-            DS_IMAGE,
+            approval["ds_image"],
             "--deft-config",
             str(results / "config/deft_config.yaml"),
             "--tao-spec",

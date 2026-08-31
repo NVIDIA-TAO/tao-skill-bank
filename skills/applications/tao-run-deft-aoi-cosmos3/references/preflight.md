@@ -4,7 +4,7 @@ Run these checks in order. Resolve network mode through `references/air-gap.md`
 before checking Python dependencies. They are read-only until the single
 approval gate. Read exactly one branch after resolving the mode:
 `references/air-gap.md` or `references/network-bootstrap.md`. In air-gap mode,
-use only an interpreter selected by `scripts/deft_python.sh`; if none is
+use only an interpreter selected by `bash scripts/deft_python.sh`; if none is
 complete, report the missing imports and stop without invoking a package
 manager. Do not
 create `${RESULTS_DIR}`, write specs, pull images, or submit jobs before
@@ -41,7 +41,7 @@ Use the same selected host Python for every bundled script:
 
 ```bash
 SKILL_ROOT=<absolute-skill-root>
-PYTHON=$("$SKILL_ROOT/scripts/deft_python.sh")
+PYTHON=$(bash "$SKILL_ROOT/scripts/deft_python.sh")
 
 # MEDIA_ROOT is the base that annotation relative paths resolve against, and
 # that is the WORKSPACE ROOT — not workspace/images. The paths already begin

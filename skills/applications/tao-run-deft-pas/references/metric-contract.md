@@ -44,13 +44,8 @@ if [ -n "${METRIC_TARGET:-}" ]; then
 fi
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/references/metric-contract.md
-  "$SKILL_ROOT/scripts/parse_iaa_metrics.py" \
-    --metrics-csv "$PHASE_DIR/evaluate/nvidia_iaa_metrics_aggregate.csv" \
-=======
   "$SKILL_ROOT/scripts/parse_pas_metrics.py" \
     --metrics-csv "$PHASE_DIR/evaluate/nvidia_pas_metrics_aggregate.csv" \
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/references/metric-contract.md
     --metric-name "$METRIC_NAME" --query-type "$QUERY_TYPE" \
     --op "$METRIC_OP" "${TARGET_ARGS[@]}" \
     --iter-label "$LABEL" \

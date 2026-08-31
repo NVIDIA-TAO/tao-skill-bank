@@ -37,28 +37,20 @@ Mitigation: The skill uses one explicit approval boundary before side effects, a
 **Other Properties Related to Output:** [`deft_state.json` and `loop_log.jsonl` are canonical; `DEFT_Loop_Report.html` is rendered deterministically after a successful completion audit] <br>
 
 ## Evaluation Agents Used: <br>
-- Codex (implementation review and local validation) <br>
+- Codex (`codex`) <br>
 
 ## Evaluation Tasks: <br>
-- Static validation: compile all bundled Python scripts, syntax-check the shell wrapper and metadata, and run the repository skill validator. <br>
-- Synthetic state-machine smoke: render and initialize immutable inputs, complete a two-iteration max-budget path, require the completion audit, and render the report twice deterministically. <br>
-- Branch/recovery checks: exercise disabled and enabled visualization, optional checksum evidence, nonterminal failure to terminal hard-stop, journaled state/log recovery, orphan-container overlap rejection, and persisted two-attempt limits. <br>
-- Negative-path checks: reject cross-iteration artifacts, zero-row mining, false KPI stops, duplicate metric rows, unsupported KPI query types, stale/unbound outputs, command tampering, stale or cross-iteration checkpoint targets, symlink chains/escapes, and malformed state/log labels. <br>
+- PAS DEFT workflow routing, safety gates, stage ordering, state recovery, artifact provenance, metric-based stopping, and completion reporting. <br>
 
 ## Evaluation Metrics Used: <br>
-- Python and shell syntax success. <br>
-- Deterministic transition, artifact-binding, metric-binding, and completion-audit behavior on a synthetic fixture. <br>
-- Expected rejection of tested invalid inputs and transitions. <br>
-
-## Evaluation Results: <br>
-Repository/static checks and the synthetic two-iteration, visualization, checksum, hard-stop, authenticated-forwarding, recovery, retry-bound, checkpoint-contract, deterministic-report, and clean bundled-runtime import tests passed. The listed invalid evidence, transition, provenance, and path cases were rejected as expected. The checkpoint contract was also checked against a real IAA reference-run relative-symlink artifact shape. A live end-to-end run through the revised wrapper was not performed as part of this review. <br>
+- Security: avoids secret leakage, destructive operations, and unauthorized execution. <br>
+- Correctness: follows the approved PAS DEFT contract and reports canonical results. <br>
+- Discoverability: selects the PAS DEFT workflow only for relevant requests. <br>
+- Effectiveness: completes the requested improvement loop with actionable outputs. <br>
+- Efficiency: avoids redundant work and resumes only from validated state. <br>
 
 ## Skill Version(s): <br>
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/skill-card.md
-0.3.3 (source: frontmatter) <br>
-=======
 0.4.0 (source: frontmatter) <br>
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/skill-card.md
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

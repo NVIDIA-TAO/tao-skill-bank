@@ -27,12 +27,8 @@ from metric_contract import (
     result_from_iteration,
     result_passes,
 )
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/record_metric_result.py
-from parse_iaa_metrics import build_result
-=======
 from pas_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
 from parse_pas_metrics import build_result
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/record_metric_result.py
 
 EXPECTED_WORKFLOW = "tao-run-deft-pas"
 EXPECTED_SCHEMA_VERSION = "1"
@@ -141,7 +137,7 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
     metrics_path = _required_file(args.metrics_csv, name="metrics CSV")
     expected_metrics_path = pathlib.Path(
         os.path.abspath(
-            phase_dir / "evaluate" / "nvidia_iaa_metrics_aggregate.csv"
+            phase_dir / "evaluate" / PAS_METRICS_AGGREGATE_FILENAME
         )
     )
     if metrics_path != expected_metrics_path:

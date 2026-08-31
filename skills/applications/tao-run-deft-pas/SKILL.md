@@ -16,11 +16,7 @@ license: Apache-2.0 AND CC-BY-4.0
 compatibility: Requires Docker, NVIDIA Container Toolkit, accessible NVIDIA GPUs, the two PAS dataset export archives, and Python 3.9+ with the documented runtime dependencies.
 metadata:
   author: NVIDIA Corporation
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/SKILL.md
-  version: "0.3.3"
-=======
   version: "0.4.0"
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/SKILL.md
 allowed-tools: Read Bash Write
 tags:
 - application
@@ -108,8 +104,6 @@ summary. `max_iterations` has no default. An absent metric target means an
 ungated run that stops after `max_iterations`. Hugging Face token forwarding
 defaults to disabled because the bundled model is public.
 
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/SKILL.md
-=======
 The authoritative parameter contract is the nested dataclass schema in
 `scripts/pas_deft/config.py`, adapted from the PAS reference notebook. Read
 that schema when a request needs the meaning, default, numeric bounds, or valid
@@ -118,7 +112,6 @@ metadata constraint. Config preparation, initialization, audit, and every
 host-side stage validate the materialized bundle through that same schema;
 the `pas` YAML section is validated through the typed PAS configuration model.
 
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/SKILL.md
 If required information remains missing after full discovery, ask one
 consolidated follow-up. A normal invocation should need no knowledge of stage
 modules, container mounts, state files, or bundled-runtime function
@@ -214,7 +207,7 @@ stage is next:
 
 | Stage | Reference | Required result |
 |---|---|---|
-| dataset setup | `references/data-layout.md` | verified rebuilt dataset, five split files, non-empty source-pool parquet |
+| dataset setup | `references/data-layout.md` | verified rebuilt dataset, transparent layout report, five split files, non-empty source-pool parquet |
 | pool embedding and mining | `references/mining.md` | fresh command evidence plus non-empty, schema-checked parquet outputs |
 | evaluate and train | `references/clip-train-eval.md`, `references/metric-contract.md` | successful TAO status, bound metric evidence; for train, a fresh best and normalized checkpoint |
 | gap analysis | `references/gap-analysis.md` | non-empty iteration-scoped gaps parquet |
@@ -267,7 +260,7 @@ failing visualization mid-run without revising and reapproving the config.
 ## Metric and Stop Semantics
 
 The approved metric contract is immutable for the run. Evaluation must parse
-the exact iteration's `nvidia_iaa_metrics_aggregate.csv`; the result records
+the exact iteration's `nvidia_pas_metrics_aggregate.csv`; the result records
 its source path and is re-derived during commit and audit. Checkpoint ranking
 and best-run reporting follow the approved operator (`>=`/`>` chooses the
 higher value, `<=`/`<` the lower), not a hard-coded metric convention.

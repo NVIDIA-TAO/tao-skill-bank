@@ -47,12 +47,8 @@ from metric_contract import (
     pick_best,
     validate_contract,
 )
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/audit_deft_run.py
-from parse_iaa_metrics import build_result
-=======
 from pas_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
 from parse_pas_metrics import build_result
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/audit_deft_run.py
 
 
 WORKFLOW = "tao-run-deft-pas"
@@ -86,8 +82,8 @@ RUN_SPEC_NAMES = (
     "mining_spec.yaml",
     "approval.json",
 )
-PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.pyt
-PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.data_services
+PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
+PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
 
 # Artifact fields recorded by commit_stage._apply_success, grouped by the
 # containment scope commit_stage enforced at commit time.
@@ -449,7 +445,7 @@ def _expected_artifact_path(
         "dataset_materialize_status": results_dir / "dataset_setup" / "dataset-materialize.host.status.json",
         "pool_embeddings_parquet": results_dir / "embeddings" / "source" / "embeddings.parquet",
         "pool_embed_command_status": results_dir / "embeddings" / "source" / "pool_embed.status.json",
-        "metrics_aggregate_csv": phase / "evaluate" / "nvidia_iaa_metrics_aggregate.csv",
+        "metrics_aggregate_csv": phase / "evaluate" / PAS_METRICS_AGGREGATE_FILENAME,
         "eval_status_json": phase / "evaluate" / "status.json",
         "eval_command_status": phase / "evaluate" / "evaluate.status.json",
         "iteration_summary": phase / "iteration_summary.json",
@@ -1183,9 +1179,6 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
 
             deft_path = config_dir_path / "deft_config.yaml"
             tao_path = config_dir_path / "tao_spec.yaml"
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/audit_deft_run.py
-            if deft_path.is_file() and tao_path.is_file():
-=======
             text_embed_path = config_dir_path / "text_embed_spec.yaml"
             image_embed_path = config_dir_path / "image_embed_spec.yaml"
             mining_spec_path = config_dir_path / "mining_spec.yaml"
@@ -1206,15 +1199,26 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     typed_config = PasDeftConfig(str(deft_path))
                 except Exception as exc:
                     errors.append(f"approved DEFT config fails typed schema validation: {exc}")
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/audit_deft_run.py
                 try:
                     deft_payload = yaml.safe_load(deft_path.read_text())
                     tao_payload = yaml.safe_load(tao_path.read_text())
+                    text_embed_payload = yaml.safe_load(text_embed_path.read_text())
+                    image_embed_payload = yaml.safe_load(image_embed_path.read_text())
+                    mining_spec_payload = yaml.safe_load(mining_spec_path.read_text())
                 except (OSError, yaml.YAMLError) as exc:
                     errors.append(f"approved run config is not readable YAML: {exc}")
                 else:
-                    if not isinstance(deft_payload, dict) or not isinstance(tao_payload, dict):
-                        errors.append("approved DEFT and TAO config roots must be objects")
+                    if not all(
+                        isinstance(payload, dict)
+                        for payload in (
+                            deft_payload,
+                            tao_payload,
+                            text_embed_payload,
+                            image_embed_payload,
+                            mining_spec_payload,
+                        )
+                    ):
+                        errors.append("approved run config roots must be objects")
                     else:
                         experiment = _config_section(
                             deft_payload, "experiment", "deft_config", errors
@@ -1222,20 +1226,11 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         iteration = _config_section(
                             deft_payload, "iteration", "deft_config", errors
                         )
-                        training = _config_section(
-                            deft_payload, "training", "deft_config", errors
-                        )
                         mining = _config_section(
                             deft_payload, "mining", "deft_config", errors
                         )
-                        history = _config_section(
-                            mining, "history_aware", "deft_config.mining", errors
-                        )
                         gap_config = _config_section(
                             deft_payload, "gap_analysis", "deft_config", errors
-                        )
-                        iaa = _config_section(
-                            deft_payload, "iaa", "deft_config", errors
                         )
                         tao_train = _config_section(
                             tao_payload, "train", "tao_spec", errors
@@ -1243,26 +1238,61 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         tao_evaluate = _config_section(
                             tao_payload, "evaluate", "tao_spec", errors
                         )
-                        derived = {
-                            "training_epochs": tao_train.get("num_epochs"),
-                            "num_gpus": tao_train.get("num_gpus"),
-                            "container_gpu_ids": tao_train.get("gpu_ids"),
-                            "history_aware": history.get("enabled"),
-                            "replay_fraction": history.get("replay_fraction"),
-                            "mining_topn": mining.get("topn"),
-                            "knn_metric": mining.get("knn_metric"),
-                            "target_query_count": gap_config.get("target_query_count"),
-                            "continual_dataset": training.get("continual_dataset"),
-                            "continual_model": training.get("continual_model"),
-                            "visualize": experiment.get("visualize"),
-                            "visualize_embeddings": experiment.get("visualize_embeddings"),
-                        }
-                        for field, expected_value in derived.items():
-                            if config.get(field) != expected_value:
-                                errors.append(
-                                    f"state.config.{field}={config.get(field)!r} "
-                                    f"disagrees with approved config {expected_value!r}"
-                                )
+                        tao_dataset = _config_section(
+                            tao_payload, "dataset", "tao_spec", errors
+                        )
+                        tao_dataset_train = _config_section(
+                            tao_dataset, "train", "tao_spec.dataset", errors
+                        )
+                        tao_dataset_val = _config_section(
+                            tao_dataset, "val", "tao_spec.dataset", errors
+                        )
+                        tao_optim = _config_section(
+                            tao_train, "optim", "tao_spec.train", errors
+                        )
+                        eval_pairs_path = pathlib.Path(
+                            typed_config.pas.eval_pairs_source_file
+                            if typed_config is not None
+                            else ""
+                        ).expanduser()
+                        eval_split = (
+                            eval_pairs_path.name.removesuffix("_pairs.json")
+                            if eval_pairs_path.name in {
+                                "val_pairs.json",
+                                "test_pairs.json",
+                            }
+                            else None
+                        )
+                        if typed_config is not None:
+                            derived = {
+                                "training_epochs": tao_train.get("num_epochs"),
+                                "num_gpus": tao_train.get("num_gpus"),
+                                "container_gpu_ids": tao_train.get("gpu_ids"),
+                                "history_aware": typed_config.mining.history_aware.enabled,
+                                "replay_fraction": typed_config.mining.history_aware.replay_fraction,
+                                "mining_topn": typed_config.mining.topn,
+                                "knn_metric": typed_config.mining.knn_metric,
+                                "target_query_count": typed_config.gap_analysis.target_query_count,
+                                "eval_split": eval_split,
+                                "queries_per_slice": typed_config.gap_analysis.queries_per_slice,
+                                "gap_query_types": typed_config.gap_analysis.query_types,
+                                "vision_lr": tao_optim.get("vision_lr"),
+                                "text_lr": tao_optim.get("text_lr"),
+                                "train_batch_size": tao_dataset_train.get("batch_size"),
+                                "val_batch_size": tao_dataset_val.get("batch_size"),
+                                "eval_batch_size": tao_evaluate.get("batch_size"),
+                                "text_embed_model": text_embed_payload.get("model"),
+                                "continual_dataset": typed_config.training.continual_dataset,
+                                "continual_model": typed_config.training.continual_model,
+                                "visualize": typed_config.visualization.enabled,
+                                "visualize_embeddings": typed_config.visualization.embeddings,
+                            }
+                            for field, expected_value in derived.items():
+                                if config.get(field) != expected_value:
+                                    errors.append(
+                                        f"state.config.{field}={config.get(field)!r} "
+                                        f"disagrees with approved config {expected_value!r}"
+                                    )
                         if iteration.get("start") != 1 or iteration.get("end") != max_iterations:
                             errors.append(
                                 "approved deft_config iteration range must be 1..max_iterations"
@@ -1286,6 +1316,30 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                             or tao_evaluate.get("gpu_ids") != tao_train.get("gpu_ids")
                         ):
                             errors.append("approved TAO train/evaluate GPU shapes must match")
+                        if image_embed_payload.get("model") != text_embed_payload.get(
+                            "model"
+                        ):
+                            errors.append(
+                                "approved image/text embedding model names must match"
+                            )
+                        text_model_path = text_embed_payload.get("model_path")
+                        if (
+                            not isinstance(text_model_path, str)
+                            or not text_model_path.strip()
+                            or image_embed_payload.get("model_path") != text_model_path
+                        ):
+                            errors.append(
+                                "approved image/text embedding model paths must match"
+                            )
+                        if any(
+                            key in mining
+                            and mining_spec_payload.get(key) != mining.get(key)
+                            for key in ("topn", "knn_metric")
+                        ):
+                            errors.append(
+                                "legacy deft_config.mining topn/knn_metric duplicates "
+                                "must match the authoritative mining_spec"
+                            )
                         if gate is not None and gap_config.get("metric_name") != gate["metric_name"]:
                             errors.append(
                                 "approved gap metric does not match the immutable metric contract"
@@ -1293,7 +1347,8 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         dataset_base = pathlib.Path(str(config.get("dataset_root", ""))).resolve()
                         expected_pas_paths = {
                             "pool_pairs_source_file": dataset_base / "train_pairs.json",
-                            "eval_pairs_source_file": dataset_base / "val_pairs.json",
+                            "eval_pairs_source_file": dataset_base
+                            / f"{config.get('eval_split')}_pairs.json",
                             "train_image_dir": dataset_base / "images",
                             "train_caption_dir": dataset_base / "captions",
                             "source_image_dir": dataset_base / "images",
@@ -1301,14 +1356,6 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                             "eval_image_dir": dataset_base / "images",
                             "eval_caption_dir": dataset_base / "captions",
                         }
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/audit_deft_run.py
-                        for field, expected_path in expected_iaa_paths.items():
-                            actual_path = pathlib.Path(str(iaa.get(field, ""))).expanduser()
-                            if actual_path.resolve() != expected_path.resolve():
-                                errors.append(
-                                    f"approved deft_config iaa.{field} must be {expected_path}"
-                                )
-=======
                         if typed_config is not None:
                             for field, expected_path in expected_pas_paths.items():
                                 actual_path = pathlib.Path(
@@ -1318,7 +1365,6 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                                     errors.append(
                                         f"approved deft_config pas.{field} must be {expected_path}"
                                     )
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/audit_deft_run.py
         for field in ("platform", "pyt_image", "ds_image"):
             value = config.get(field)
             if not isinstance(value, str) or not value.strip():
@@ -1328,10 +1374,6 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         if config.get("pyt_image") != PINNED_PYT_IMAGE:
             errors.append("state.config.pyt_image must be the pinned PAS PyTorch image")
         if config.get("ds_image") != PINNED_DS_IMAGE:
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/audit_deft_run.py
-            errors.append("state.config.ds_image must be the pinned IAA data-services image")
-        for field in ("training_epochs", "num_gpus", "mining_topn", "target_query_count"):
-=======
             errors.append("state.config.ds_image must be the pinned PAS data-services image")
         for field in (
             "training_epochs",
@@ -1343,10 +1385,24 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             "val_batch_size",
             "eval_batch_size",
         ):
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/audit_deft_run.py
             value = config.get(field)
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
                 errors.append(f"state.config.{field} must be an integer >= 1")
+        if config.get("eval_split") not in {"val", "test"}:
+            errors.append("state.config.eval_split must be 'val' or 'test'")
+        if not isinstance(config.get("gap_query_types"), str) or not config.get(
+            "gap_query_types"
+        ).strip():
+            errors.append("state.config.gap_query_types must be a non-empty string")
+        if config.get("text_embed_model") != "SigLIP":
+            errors.append(
+                "state.config.text_embed_model must be the TAO 7.2 shared "
+                "image/text adapter token SigLIP"
+            )
+        for field in ("vision_lr", "text_lr"):
+            value = config.get(field)
+            if not _is_finite_number(value) or value <= 0.0:
+                errors.append(f"state.config.{field} must be greater than zero")
         gpu_ids = config.get("gpu_ids")
         if not isinstance(gpu_ids, list) or len(gpu_ids) != config.get("num_gpus"):
             errors.append("state.config.gpu_ids must match state.config.num_gpus")
@@ -2268,7 +2324,11 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                                     "evidence root must be an object"
                                 )
                                 raw_evidence = {}
-                            metrics_path = phase_root / "evaluate" / "nvidia_iaa_metrics_aggregate.csv"
+                            metrics_path = (
+                                phase_root
+                                / "evaluate"
+                                / PAS_METRICS_AGGREGATE_FILENAME
+                            )
                             if raw_evidence.get("iter_label") != label:
                                 errors.append(
                                     f"metric evidence iter_label={raw_evidence.get('iter_label')!r} "

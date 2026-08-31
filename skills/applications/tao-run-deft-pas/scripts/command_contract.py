@@ -11,11 +11,8 @@ import re
 import pathlib
 from typing import Any
 
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/command_contract.py
-=======
 from pas_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
 
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/command_contract.py
 
 _MODEL_COMMANDS = {
     "pool_embed",
@@ -251,7 +248,7 @@ def expected_fresh_outputs(
     )
     if name == "evaluate":
         return [
-            phase / "evaluate" / "nvidia_iaa_metrics_aggregate.csv",
+            phase / "evaluate" / PAS_METRICS_AGGREGATE_FILENAME,
             phase / "evaluate" / "status.json",
         ]
     number = _iteration_number(label)

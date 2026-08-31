@@ -68,10 +68,7 @@ def analyze_clip_inference_gaps(
     import os
 
     import pandas as pd
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/iaa_deft/analyze_gaps.py
-=======
     from pas_deft.pas_artifacts import PAS_METRICS_FILENAME
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/pas_deft/analyze_gaps.py
 
     _ = (kpi_caption_dir, caption_file_suffix)
 
@@ -260,21 +257,15 @@ def analyze_clip_inference_gaps(
 
     def _metrics_path(base_dir):
         candidates = [
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/iaa_deft/analyze_gaps.py
-            os.path.join(base_dir, "nvidia_iaa_metrics.csv"),
-            os.path.join(base_dir, "evaluate", "nvidia_iaa_metrics.csv"),
-            os.path.join(base_dir, "iaa_eval", "nvidia_iaa_metrics.csv"),
-=======
             os.path.join(base_dir, PAS_METRICS_FILENAME),
             os.path.join(base_dir, "evaluate", PAS_METRICS_FILENAME),
             os.path.join(base_dir, "pas_eval", PAS_METRICS_FILENAME),
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/pas_deft/analyze_gaps.py
         ]
         for path in candidates:
             if os.path.isfile(path):
                 return path
         raise FileNotFoundError(
-            "Could not find nvidia_iaa_metrics.csv under "
+            "Could not find nvidia_pas_metrics.csv under "
             f"{base_dir}. Checked: {candidates}"
         )
 

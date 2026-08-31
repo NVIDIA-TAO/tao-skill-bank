@@ -1,6 +1,6 @@
 # Cosmos3 DEFT Report Rendering
 
-Use `scripts/render_report.py` as the only renderer for the source template at
+Use `"$PYTHON" scripts/render_report.py` as the only renderer for the source template at
 `references/DEFT_Loop_Report.html`. It writes one self-contained
 `${RESULTS_DIR}/DEFT_Loop_Report.html` from canonical disk evidence through a
 temporary sibling and atomic replacement. `init_deft_state.py` invokes it at

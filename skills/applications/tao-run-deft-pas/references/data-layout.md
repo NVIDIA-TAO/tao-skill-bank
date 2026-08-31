@@ -7,6 +7,7 @@ Read during pre-flight and when the audit selects
 
 - [Input contract](#input-contract)
 - [Approved extraction and rebuild](#approved-extraction-and-rebuild)
+- [Inspect the rebuilt layout](#inspect-the-rebuilt-layout)
 - [Materialize run splits and pool](#materialize-run-splits-and-pool)
 - [Run output layout](#run-output-layout)
 
@@ -72,8 +73,6 @@ DATASET_ROOT/
 └── rebuild.py
 ```
 
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/references/data-layout.md
-=======
 ## Inspect the rebuilt layout
 
 Do not make users infer the dataset paths from the archive name or a fixed
@@ -93,7 +92,6 @@ against the approved materialized config before continuing. The report is
 read-only: it does not rewrite paths or generalize the export-specific
 `rebuild.py` into a skill-owned dataset builder.
 
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/references/data-layout.md
 ## Materialize run splits and pool
 
 Run the deterministic adapter; it calls the bundled
@@ -153,13 +151,8 @@ RESULTS_DIR/
 ├── config/                         immutable copied specs
 ├── deft_state.json
 ├── loop_log.jsonl
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/references/data-layout.md
-├── dataset_setup/                  rebuild_verify.log; optional checksum_verify.log
-├── iaa_splits/                     eval, validation, and mining-pool files
-=======
 ├── dataset_setup/                  rebuild_verify.log; dataset_layout.log; optional checksum_verify.log
 ├── pas_splits/                     eval, validation, and mining-pool files
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/references/data-layout.md
 ├── embeddings/source/              source_pool.parquet, embeddings.parquet
 ├── caption_selection_history.json
 ├── mining_selection_history.json
@@ -177,5 +170,6 @@ RESULTS_DIR/
 ```
 
 The caption mining pool comes from training pairs. The eval split comes from
-validation pairs. History selection still rechecks basename disjointness
-before every training iteration; source assumptions never replace that gate.
+the approved `val_pairs.json` or `test_pairs.json` selection. History selection
+still rechecks basename disjointness before every training iteration; source
+assumptions never replace that gate.

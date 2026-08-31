@@ -2510,6 +2510,59 @@ def _source_build_image_plan(
     }
 
 
+_MODEL_PREPARATION_IMAGE_DIGEST_ENV = "TAO_COSMOS_PREPARATION_IMAGE_DIGEST"
+
+
+def _model_preparation_command_with_digest(command: Sequence[str]) -> str:
+    invocation = shlex.join([*command, "--runtime-image-digest"])
+    error = "runtime image digest was not resolved"
+    return (
+        f'{invocation} "${{{_MODEL_PREPARATION_IMAGE_DIGEST_ENV}:?{error}}}"'
+    )
+
+
+def _docker_model_preparation_command(
+    command: Sequence[str], preparation_image: str
+) -> str:
+    repo_digest_command = shlex.join(
+        [
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            "{{index .RepoDigests 0}}",
+            preparation_image,
+        ]
+    )
+    image_id_command = shlex.join(
+        [
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            preparation_image,
+        ]
+    )
+    digest = _MODEL_PREPARATION_IMAGE_DIGEST_ENV
+    error = shlex.quote(
+        f"ERROR: unable to resolve runtime image digest for {preparation_image!r}"
+    )
+    return "\n".join(
+        [
+            f'{digest}="$({repo_digest_command} 2>/dev/null || true)"',
+            f'if [[ -z "${{{digest}}}" || "${{{digest}}}" == "<no value>" ]]; then',
+            f'  {digest}="$({image_id_command} 2>/dev/null || true)"',
+            "fi",
+            f'if [[ -z "${{{digest}}}" || "${{{digest}}}" == "<no value>" ]]; then',
+            f"  echo {error} >&2",
+            "  exit 2",
+            "fi",
+            _model_preparation_command_with_digest(command),
+        ]
+    )
+
+
 def _model_preparation(
     args: argparse.Namespace,
     model: Mapping[str, Any],
@@ -2657,8 +2710,6 @@ def _model_preparation(
         args.cache_dir,
         "--runtime-image",
         preparation_image,
-        "--runtime-image-digest",
-        "<RESOLVE_AFTER_CLEAN_BUILD>",
     ]
     if args.base_model_revision:
         command.extend(["--base-model-revision", args.base_model_revision])
@@ -2667,7 +2718,9 @@ def _model_preparation(
             ["--vlm-architecture-model-revision", args.vlm_architecture_model_revision]
         )
     platform_action: dict[str, Any] | None = None
-    preparation_command: str | None = shlex.join(command)
+    preparation_command: str | None = _docker_model_preparation_command(
+        command, preparation_image
+    )
     if args.platform == "slurm":
         helper_host_path = str(
             Path(args.results_dir).expanduser()
@@ -2709,9 +2762,7 @@ def _model_preparation(
             "--cache-dir",
             args.container_cache_dir,
             "--runtime-image",
-            preparation_image,
-            "--runtime-image-digest",
-            "<RESOLVE_AFTER_CLEAN_BUILD>",
+            preparation_sqsh,
         ]
         if args.base_model_revision:
             container_command.extend(
@@ -2733,7 +2784,9 @@ def _model_preparation(
             "helper_host_path": helper_host_path,
             "helper_container_path": helper_container_path,
             "helper_sha256": sha256_file(script),
-            "container_command": shlex.join(container_command),
+            "container_command": _model_preparation_command_with_digest(
+                container_command
+            ),
             "output_container_path": output_container,
         }
         preparation_command = None
@@ -4860,11 +4913,31 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     )
     preparation_action = plan.get("model_preparation", {}).get("platform_action")
     preparation_srun = ""
+    preparation_digest_lines: list[str] = []
     if isinstance(preparation_action, Mapping):
         preparation_sqsh = str(preparation_action.get("container_image") or "")
         preparation_native = str(preparation_action.get("container_command") or "")
         if not preparation_sqsh or not preparation_native:
             raise WorkflowError("SLURM model-preparation action is incomplete")
+        digest = _MODEL_PREPARATION_IMAGE_DIGEST_ENV
+        digest_error = shlex.quote(
+            f"ERROR: unable to resolve runtime image digest for {preparation_sqsh!r}"
+        )
+        preparation_digest_lines = [
+            (
+                "if ! preparation_image_sha256_output="
+                f'"$(sha256sum -- {shlex.quote(preparation_sqsh)} 2>/dev/null)"; then'
+            ),
+            f"  echo {digest_error} >&2",
+            "  exit 2",
+            "fi",
+            'preparation_image_sha256="${preparation_image_sha256_output%% *}"',
+            'if [[ ! "$preparation_image_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then',
+            f"  echo {digest_error} >&2",
+            "  exit 2",
+            "fi",
+            f'export {digest}="sha256:$preparation_image_sha256"',
+        ]
         preparation_wrapped = "\n".join(
             [
                 "set -Eeuo pipefail",
@@ -4886,7 +4959,10 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
                 f"--cpus-per-task={args.cpus_per_task}",
                 "--no-container-remap-root",
                 "--no-container-mount-home",
-                "--container-env=HF_TOKEN,HUGGING_FACE_HUB_TOKEN",
+                (
+                    "--container-env=HF_TOKEN,HUGGING_FACE_HUB_TOKEN,"
+                    f"{_MODEL_PREPARATION_IMAGE_DIGEST_ENV}"
+                ),
                 f"--container-image={shlex.quote(preparation_sqsh)}",
                 mount_args,
                 "bash -lc",
@@ -5025,6 +5101,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
             env_exports,
             'export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)"',
             f"export MASTER_PORT={args.master_port}",
+            *preparation_digest_lines,
             *preparation_lines,
             "child_rc=0",
             "set +e",

@@ -62,11 +62,7 @@ adapter; a byte change after generation blocks launch and invalidates audit.
 
 | State stage | Producer | Adapter or launch | Read first |
 |---|---|---|---|
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/references/scripts-and-agents.md
-| `dataset_setup` | archive `rebuild.py` plus bundled IAA data utilities | `run_iaa_stage.py dataset-materialize` | `data-layout.md` |
-=======
 | `dataset_setup` | archive `rebuild.py`, read-only layout reporter, and bundled PAS data utilities | `pas_deft.dataset_layout`; `run_pas_stage.py dataset-materialize` | `data-layout.md` |
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/references/scripts-and-agents.md
 | `pool_embed` | TAO data services | `run_deft_container.py` | `mining.md` |
 | `evaluate` | TAO CLIP plus bound parser | `run_pas_stage.py eval-config`, container wrapper, parser | `clip-train-eval.md`, `metric-contract.md` |
 | `gap_analysis` | bundled PAS gap analysis | `run_pas_stage.py gap-analysis` | `gap-analysis.md` |

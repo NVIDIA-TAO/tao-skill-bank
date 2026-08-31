@@ -71,8 +71,8 @@ different tag or branch (`TAO_SKILL_BANK_REF=main` for unreleased work), or a
 local absolute path:
 
 ```bash
-cd /absolute/path/to/tao-skills-external
-TAO_SKILL_BANK_MARKETPLACE=/absolute/path/to/tao-skills-external \
+cd /absolute/path/to/tao-skill-bank
+TAO_SKILL_BANK_MARKETPLACE=/absolute/path/to/tao-skill-bank \
   scripts/install-codex-agents.sh
 ```
 
@@ -92,7 +92,7 @@ This installs the bundle to `~/.codex/plugins/cache/tao-local-plugins/tao-skill-
 For a local zip or clone, use the absolute path instead of the Git URL:
 
 ```bash
-codex plugin marketplace add /absolute/path/to/tao-skills-external
+codex plugin marketplace add /absolute/path/to/tao-skill-bank
 codex plugin add tao-skill-bank@tao-local-plugins
 ```
 
@@ -295,7 +295,7 @@ In brief:
 ## Repository structure
 
 ```
-tao-skills-external/
+tao-skill-bank/
 ├── .claude-plugin/
 │   ├── marketplace.json              # marketplace catalog (plugin definitions)
 │   └── plugin.json                   # plugin manifest (fallback when loaded directly)

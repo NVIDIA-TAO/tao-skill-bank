@@ -1,21 +1,26 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Bundled and adapted from the Apache-2.0 NVIDIA TAO Tutorials IAA DEFT utilities so the
-# customer workflow does not depend on an external source checkout.
 
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/iaa_deft/config.py
-"""Parsed configuration for an IAA CLIP DEFT experiment."""
-=======
 """Typed configuration for the bundled PAS CLIP DEFT runtime.
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/pas_deft/config.py
 
+The schema is adapted from the PAS reference notebook. Every supported field
+is a dataclass member whose metadata documents its meaning and, where
+applicable, its bounds or choices. The bundled structured loader enforces
+required fields, types, and unknown-key rejection before a stage can consume
+the configuration without adding a host-side configuration-library dependency.
+"""
+
+from __future__ import annotations
+
+import dataclasses
 import json
 import os
+import pathlib
+from collections.abc import Mapping
+from typing import Any, get_type_hints
+
 import yaml
 
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/iaa_deft/config.py
-=======
 from pas_deft.config_fields import (
     BOOL_FIELD,
     DATACLASS_FIELD,
@@ -23,39 +28,67 @@ from pas_deft.config_fields import (
     INT_FIELD,
     STR_FIELD,
 )
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/pas_deft/config.py
 
-def _bool_str(value) -> str:
-    """Convert a config value to the 'true'/'false' string expected by pipeline functions."""
+
+QUERY_TYPES = (
+    "easy",
+    "medium",
+    "hard",
+    "natural_caption",
+    "original_captions",
+)
+
+# Match the missing-value spelling used by the notebook's structured config
+# while keeping the host-side skill runtime self-contained.
+MISSING = "???"
+
+
+def bool_str(value: Any) -> str:
+    """Convert a value to the lowercase Boolean string used by PAS helpers."""
     return "true" if str(value).strip().lower() in ("true", "1", "yes", "y") else "false"
 
 
-def _abs_data_path(value: str) -> str:
-    """Absolutize an IAA data path, leaving blanks and absolute paths untouched.
-
-    These values are handed to both host-side code (which reads the files) and
-    the TAO container specs (which read them again through a bind mount), so a
-    single string has to be valid on both sides. The workflow mounts the data
-    root at its own host path to make that true, which only holds if the path
-    is absolute — a relative ``data/...`` resolves against the container's
-    working directory (``/opt/nvidia``) and silently finds nothing.
-    """
-    value = str(value or "")
-    return os.path.abspath(value) if value else value
+def _abs_data_path(value: Any) -> str:
+    """Make a PAS data path absolute, preserving a deliberately blank path."""
+    text = str(value or "")
+    return os.path.abspath(text) if text else text
 
 
-class IaaDeftConfig:
-    """All parsed parameters for an IAA CLIP DEFT experiment.
+@dataclasses.dataclass
+class ExperimentSection:
+    """``experiment``: experiment identity, result root, and TAO spec paths."""
 
-    Loads a YAML spec file once and exposes every pipeline parameter as an
-    attribute, so callers never touch raw dicts directly.
+    name: str = STR_FIELD(value=MISSING, description="Name of this PAS DEFT experiment.")
+    results_path: str = STR_FIELD(
+        value=MISSING,
+        description="Absolute host result directory materialized for this immutable skill run.",
+    )
+    train_config: str = STR_FIELD(
+        value=MISSING,
+        description="Absolute path to the approved TAO CLIP training spec YAML.",
+    )
+    eval_config: str = STR_FIELD(
+        value=MISSING,
+        description="Absolute path to the approved TAO CLIP evaluation spec YAML.",
+    )
+    visualize: bool = BOOL_FIELD(
+        value=False,
+        description="Enable mined/weak-sample contact sheets when no visualization block overrides it.",
+    )
+    visualize_embeddings: bool = BOOL_FIELD(
+        value=False,
+        description="Enable t-SNE visualization when no visualization block overrides it.",
+    )
+    tao_pytorch_root: str = STR_FIELD(
+        value="",
+        description="Optional tao-pytorch checkout root inferred from TAO spec paths when blank.",
+    )
 
-    Usage::
 
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/iaa_deft/config.py
-        cfg = IaaDeftConfig("configs/clip_config.yaml")
-    """
-=======
+@dataclasses.dataclass
+class VisualizationSection:
+    """``visualization``: contact-sheet and embedding-plot controls."""
+
     enabled: bool = BOOL_FIELD(
         value=False,
         description="Create contact sheets for weak and mined PAS samples.",
@@ -787,66 +820,53 @@ def config_field_metadata() -> dict[str, dict[str, Any]]:
 
 class PasDeftConfig:
     """Load and validate one immutable PAS DEFT configuration bundle."""
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/pas_deft/config.py
 
     CLIP_CKPT_RELPATH = "best/clip_best_val_t2i_mAP.pth"
-    # Model-only copy of the above with the LightningModule "model." prefix
-    # stripped, written by normalize_clip_pretrained_checkpoint. This is what
-    # carries into the next iteration's train.pretrained_model_path; the raw
-    # checkpoint above is what eval consumes.
     CLIP_PRETRAINED_RELPATH = "pretrained/model_state.pth"
 
-    def __init__(
-        self,
-        config_path: str,
-    ):
+    def __init__(self, config_path: str):
         self.config_path = config_path
+        with open(config_path, encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle)
+        if not isinstance(raw, dict):
+            raise ValueError("deft_config.yaml root must be an object")
+        mining_spec_path = os.path.join(os.path.dirname(config_path), "mining_spec.yaml")
+        with open(mining_spec_path, encoding="utf-8") as handle:
+            mining_spec = yaml.safe_load(handle)
+        if not isinstance(mining_spec, dict):
+            raise ValueError("mining_spec.yaml root must be an object")
 
-        with open(config_path) as f:
-            _cfg = yaml.safe_load(f)
+        source = _build_source_dict(raw, mining_spec)
+        try:
+            self.cfg: DeftExperimentConfig = _materialize_dataclass(
+                DeftExperimentConfig,
+                source,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid typed DEFT configuration: {exc}") from exc
+        _validate_field_constraints(self.cfg)
 
-        self.sweep_args_str: str = json.dumps({
-            "config": config_path,
-        })
+        self.experiment = self.cfg.experiment
+        self.visualization = self.cfg.visualization
+        self.iteration = self.cfg.iteration
+        self.training = self.cfg.training
+        self.mining = self.cfg.mining
+        self.pas = self.cfg.pas
+        self.gap_analysis = self.cfg.gap_analysis
+        self._validate_business_rules()
+        self.sweep_args_str = json.dumps({"config": config_path})
 
-        # ── Experiment ─────────────────────────────────────────────────────
-        _exp = _cfg["experiment"]
-        self.experiment_name: str = _exp["name"]
-        self.base_experiment_path: str = _exp["results_path"]
-        self.train_config: str = _exp["train_config"]
-        self.eval_config: str = _exp["eval_config"]
-
-        self.tao_pytorch_root: str = _exp.get("tao_pytorch_root", "")
-        if not self.tao_pytorch_root:
-            for _p in (self.train_config, self.eval_config):
-                _marker = "/nvidia_tao_pytorch/"
-                if _marker in _p:
-                    self.tao_pytorch_root = _p.split(_marker, 1)[0]
-                    break
-
-        self.visualize: bool = bool(_exp.get("visualize", False))
-        self.visualize_embeddings: bool = bool(_exp.get("visualize_embeddings", False))
-
-        # ── Training ───────────────────────────────────────────────────────
-        _train = _cfg["training"]
-        self.init_checkpoint: str = _train["init_checkpoint"]
-        self.continual_model: bool = bool(_train["continual_model"])
-        self.continual_dataset: bool = bool(_train["continual_dataset"])
-
-        # ── Mining ─────────────────────────────────────────────────────────
-        _mining = _cfg["mining"]
-        self.mining_topn: int = int(_mining.get("topn", 5) or 5)
-        self.knn_metric: str = _mining.get("knn_metric", "cosine")
-
-        _history_aware = _mining.get("history_aware", {}) or {}
-        self.history_aware_enabled: str = _bool_str(_history_aware.get("enabled", False))
-        self.history_aware_history_file: str = (
-            f"{self.base_experiment_path}/mining_selection_history.json"
+    def _validate_business_rules(self) -> None:
+        if self.iteration.end < self.iteration.start:
+            raise ValueError(
+                f"iteration.end ({self.iteration.end}) must be >= "
+                f"iteration.start ({self.iteration.start})"
+            )
+        _validate_query_types(self.pas.query_types, "pas.query_types")
+        _validate_query_types(
+            self.gap_analysis.query_types,
+            "gap_analysis.query_types",
         )
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/iaa_deft/config.py
-        self.history_aware_replay_fraction: float = float(
-            _history_aware.get("replay_fraction", 0.20) or 0.0
-=======
         if not os.path.isabs(self.experiment.results_path):
             raise ValueError("experiment.results_path must be an absolute skill result path")
         for field_name in (
@@ -894,139 +914,23 @@ class PasDeftConfig:
                 pathlib.Path(self.base_experiment_path)
                 / self.gap_analysis.caption_diversity.history_file
             ).resolve()
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/pas_deft/config.py
         )
-
-        _cap_exp = (_mining.get("recovery") or {}).get("caption_expansion") or {}
-        self.caption_expansion_enabled: str = _bool_str(_cap_exp.get("enabled", False))
-        self.caption_expansion_mode: str = _cap_exp.get("mode", "nearest")
-        self.caption_expansion_max_pairs_per_image_path: int = int(
-            _cap_exp.get("max_pairs_per_image_path", 2) or 0
-        )
-        self.caption_expansion_max_expanded_pair_fraction: float = float(
-            _cap_exp.get("max_expanded_pair_fraction", 0.25) or 0.0
-        )
-        self.caption_expansion_dedupe_normalized_caption: str = _bool_str(
-            _cap_exp.get("dedupe_normalized_caption", True)
-        )
-        self.caption_expansion_count_expanded_pairs_toward_target: str = str(
-            _cap_exp.get("count_expanded_pairs_toward_target", "auto")
-        ).lower()
-
-        # ── Visualization (contact sheets / t-SNE) ─────────────────────────
-        _viz = _cfg.get("lepton_e2e", {}) or {}
-        self.viz_max_samples_per_group: int = int(_viz.get("viz_max_samples_per_group", 12) or 12)
-        self.viz_max_total_samples: int = int(_viz.get("viz_max_total_samples", 96) or 96)
-        self.viz_tile_size: int = int(_viz.get("viz_tile_size", 192) or 192)
-
-        # ── IAA ────────────────────────────────────────────────────────────
-        _iaa = _cfg["iaa"]
-        self.iaa_splits_dir: str = f"{self.base_experiment_path}/iaa_splits"
-        self.iaa_seed_exclude_datasets: str = _iaa.get(
-            "seed_exclude_datasets", "CUHK_PEDES,ICFG_PEDES"
-        )
-        self.iaa_augmented_suffix: str = _iaa.get("augmented_suffix", "_Aug")
-        self.iaa_query_types: str = _iaa.get(
-            "query_types", "easy,medium,hard,natural_caption,original_captions"
-        )
-        self.iaa_max_seed_rows: int = int(_iaa.get("max_seed_rows", 0) or 0)
-        self.iaa_max_aug_pool_rows: int = int(_iaa.get("max_aug_pool_rows", 0) or 0)
-        self.iaa_mining_pool_mode: str = _iaa.get("mining_pool_mode", "real_and_augmented")
-        self.iaa_val_sample_size: int = int(_iaa.get("val_sample_size", 512) or 512)
-        self.iaa_train_pairs_source_file: str = _abs_data_path(
-            _iaa.get("train_pairs_source_file", "")
-        )
-        self.iaa_pool_pairs_source_file: str = (
-            _abs_data_path(_iaa.get("pool_pairs_source_file", ""))
-            or self.iaa_train_pairs_source_file
-        )
-        self.iaa_eval_pairs_source_file: str = _abs_data_path(
-            _iaa["eval_pairs_source_file"]
-        )
-        self.iaa_train_image_dir: str = _abs_data_path(_iaa["train_image_dir"])
-        self.iaa_train_caption_dir: str = _abs_data_path(_iaa["train_caption_dir"])
-        self.iaa_source_image_dir: str = _abs_data_path(_iaa["source_image_dir"])
-        self.iaa_source_caption_dir: str = _abs_data_path(_iaa["source_caption_dir"])
-        self.iaa_eval_image_dir: str = _abs_data_path(_iaa["eval_image_dir"])
-        self.iaa_eval_caption_dir: str = _abs_data_path(_iaa["eval_caption_dir"])
-
-        # ── Gap analysis ───────────────────────────────────────────────────
-        _gap = _cfg.get("gap_analysis", {}) or {}
-        self.gap_metric_name: str = _gap.get("metric_name", "Rank-1")
-        self.queries_per_slice: int = int(_gap.get("queries_per_slice", 256) or 0)
-        self.min_gap_num_queries: int = int(_gap.get("min_num_queries", 1) or 0)
-        self.gap_query_types: str = _gap.get("query_types", "easy,medium")
-        self.weak_attribute_topk: int = int(_gap.get("weak_attribute_topk", 8) or 0)
-        self.target_query_count: int = int(_gap.get("target_query_count", 100000) or 0)
-        self.gap_total_queries_map: int = int(_gap.get("total_queries_mAP", 768) or 768)
-        self.analyze_by_map: bool = bool(_gap.get("analyze_by_mAP", False))
-
-        _cap_div = _gap.get("caption_diversity", {}) or {}
-        self.caption_diversity_enabled: str = _bool_str(_cap_div.get("enabled", False))
-        self.caption_history_file: str = (
-            f"{self.base_experiment_path}/"
-            f"{_cap_div.get('history_file', 'caption_selection_history.json')}"
-        )
-        self.caption_history_policy: str = _cap_div.get("history_policy", "auto")
-        self.caption_coverage_target: float = float(
-            _cap_div.get("coverage_target", 1.0) or 0.0
-        )
-        self.min_unique_texts_per_attribute: int = int(
-            _cap_div.get("min_unique_texts_per_attribute", 0) or 0
-        )
-        self.max_unique_texts_per_attribute: int = int(
-            _cap_div.get("max_unique_texts_per_attribute", 0) or 0
-        )
-        self.max_rows_per_unique_text: int = int(
-            _cap_div.get("max_rows_per_unique_text", 1) or 1
-        )
-        self.max_rows_per_image_path: int = int(
-            _cap_div.get("max_rows_per_image_path", 1) or 1
-        )
-        self.recent_exclude_iters: int = int(
-            _cap_div.get("recent_exclude_iters", 0) or 0
-        )
-        self.replay_fraction_when_noncontinual: float = float(
-            _cap_div.get("replay_fraction_when_noncontinual", 0.25) or 0.0
-        )
-
-        # ── Misc ───────────────────────────────────────────────────────────
-        self.kratos_namespace: str = _cfg.get("kratos_namespace", "")
-        self.iter_start: int = _cfg["iteration"]["start"]
-        self.iter_end: int = _cfg["iteration"]["end"]
-
-    # ──────────────────────────────────────────────────────────────────────
 
     def training_checkpoint_for_iter(self, iter_num: int) -> str:
-        """Resolve the training checkpoint to use at the start of a DEFT iteration.
-
-        Returns a *container* path (leading ``/``), since the value is written
-        into the TAO spec as ``train.pretrained_model_path``. The normalized model-only
-        checkpoint is used rather than the raw Lightning one.
-        """
-        if not self.continual_model:
-            return self.init_checkpoint
+        if not self.training.continual_model:
+            return self.training.init_checkpoint
         if iter_num == 1:
-            host_ckpt = (
-                f"{self.base_experiment_path}/sft/{self.CLIP_PRETRAINED_RELPATH}"
+            host_checkpoint = os.path.join(
+                self.base_experiment_path,
+                "sft",
+                self.CLIP_PRETRAINED_RELPATH,
             )
             return (
-                f"/{host_ckpt}"
-                if (bool(self.iaa_train_pairs_source_file)
-                    and os.path.exists(host_ckpt))
-                else self.init_checkpoint
+                "/results/sft/" + self.CLIP_PRETRAINED_RELPATH
+                if self.pas.train_pairs_source_file and os.path.exists(host_checkpoint)
+                else self.training.init_checkpoint
             )
-        return (
-            f"/{self.base_experiment_path}/iter_{iter_num - 1}"
-            f"/{self.CLIP_PRETRAINED_RELPATH}"
-        )
+        return f"/results/iter_{iter_num - 1}/{self.CLIP_PRETRAINED_RELPATH}"
 
     def __repr__(self) -> str:
-<<<<<<< HEAD:skills/applications/tao-run-deft-iaa/scripts/iaa_deft/config.py
-        return (
-            f"IaaDeftConfig(experiment={self.experiment_name!r}, "
-            f"path={self.config_path!r})"
-        )
-=======
         return f"PasDeftConfig(experiment={self.experiment.name!r}, path={self.config_path!r})"
->>>>>>> 0ea1223 ([TAO-6655434][Bugfix] Rename DEFT workflow from IAA to PAS (#194)):skills/applications/tao-run-deft-pas/scripts/pas_deft/config.py
