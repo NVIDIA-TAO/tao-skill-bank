@@ -261,21 +261,15 @@ def _load_model(
     attn_implementation: str,
 ) -> tuple[Any, Any]:
     _register_cosmos_attention(attn_implementation)
-    from transformers import AutoProcessor
-    from transformers_cosmos3 import Cosmos3ForConditionalGeneration
+    from cosmos_rl.framework.runtime import CosmosFrameworkRuntime
 
-    processor = AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True)
-    if getattr(processor, "tokenizer", None) is not None:
-        processor.tokenizer.padding_side = "left"
-    model = Cosmos3ForConditionalGeneration.from_pretrained(
+    runtime = CosmosFrameworkRuntime(
         str(model_path),
-        torch_dtype=_torch_dtype(dtype),
+        dtype=dtype,
         device_map=device_map,
         attn_implementation=attn_implementation,
-        trust_remote_code=True,
     )
-    model.eval()
-    return processor, model
+    return runtime.processor, runtime.model
 
 
 def _model_input_device(model: Any, requested: str) -> Any:
