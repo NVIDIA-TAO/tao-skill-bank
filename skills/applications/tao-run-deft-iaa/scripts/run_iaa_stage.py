@@ -24,8 +24,13 @@ import tempfile
 import time
 from typing import Any
 
-from checkpoint_contract import METADATA_RELPATH, validate_best_checkpoint
+from checkpoint_contract import (
+    METADATA_RELPATH,
+    checkpoint_lineage_started_ns,
+    validate_best_checkpoint,
+)
 from command_contract import (
+    fresh_output_sha256,
     command_sha256,
     expected_container_command,
     expected_hf_forwarding,
@@ -495,7 +500,8 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
 
     results = _results(args.results_dir)
     _config(args.deft_config, results)
-    state_config = _state(results).get("config")
+    state = _state(results)
+    state_config = state.get("config")
     if not isinstance(state_config, dict):
         raise ValueError("state.config must be an object")
     current = _iter_dir(results, args.iter_num)
@@ -542,8 +548,9 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise ValueError("--train-command-status does not prove the approved train command")
     started_ns = payload.get("started_ns")
-    if not isinstance(started_ns, int) or isinstance(started_ns, bool) or started_ns < 1:
-        raise ValueError("train command status started_ns must be a positive integer")
+    lineage_started_ns = checkpoint_lineage_started_ns(
+        payload, state.get("started_at")
+    )
     log_path = pathlib.Path(str(payload.get("log_path", "")))
     if (
         not log_path.is_absolute()
@@ -589,10 +596,16 @@ def publish_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
             output.unlink()
         except FileNotFoundError:
             pass
-    published = pathlib.Path(get_current_checkpoint(str(train_dir)))
+    published = pathlib.Path(
+        get_current_checkpoint(
+            str(train_dir), earliest_mtime_ns=lineage_started_ns
+        )
+    )
     if pathlib.Path(os.path.abspath(published)) != best:
         raise ValueError(f"checkpoint publisher returned {published}, expected {best}")
-    provenance = validate_best_checkpoint(best, train_dir, started_ns=started_ns)
+    provenance = validate_best_checkpoint(
+        best, train_dir, started_ns=lineage_started_ns
+    )
     normalize_clip_pretrained_checkpoint(str(best), str(normalized))
     _require([best, metadata, normalized])
     if normalized.is_symlink() or normalized.resolve() != normalized:
@@ -893,6 +906,7 @@ def _execute_stage(
             print(f"run_iaa_stage[{args.stage}]: {exc}", file=sys.stderr)
             return 2
         fresh_outputs = _result_paths(report, results, args.stage)
+        output_hashes = fresh_output_sha256(fresh_outputs)
         finished_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
         _atomic_json(
             status_path,
@@ -902,6 +916,7 @@ def _execute_stage(
                 "status": "ok",
                 "exit_code": 0,
                 "fresh_outputs": fresh_outputs,
+                "fresh_output_sha256": output_hashes,
             },
         )
         report = dict(report)

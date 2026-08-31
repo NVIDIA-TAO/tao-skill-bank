@@ -31,12 +31,16 @@ from typing import Any
 
 import yaml
 
-from checkpoint_contract import validate_best_checkpoint
+from checkpoint_contract import (
+    checkpoint_lineage_started_ns,
+    validate_best_checkpoint,
+)
 from command_contract import (
     command_sha256,
     expected_container_command,
     expected_hf_forwarding,
     expected_image_kind,
+    validate_content_bound_outputs,
 )
 from metric_contract import (
     compare,
@@ -710,6 +714,65 @@ def _validate_command_status(
     return payload
 
 
+def _validate_derived_specs_on_disk(
+    results_dir: pathlib.Path, max_iterations: int, errors: list[str]
+) -> None:
+    candidates = [
+        (
+            results_dir / "zs" / "specs" / "eval_config.yaml",
+            results_dir / "zs" / "specs" / "eval-config.host.status.json",
+            "eval-config",
+            results_dir / "zs",
+        )
+    ]
+    for number in range(1, max_iterations + 1):
+        phase = results_dir / f"iter_{number}"
+        candidates.extend(
+            [
+                (
+                    phase / "specs" / "train_config.yaml",
+                    phase / "specs" / "train-config.host.status.json",
+                    "train-config",
+                    phase,
+                ),
+                (
+                    phase / "specs" / "eval_config.yaml",
+                    phase / "specs" / "eval-config.host.status.json",
+                    "eval-config",
+                    phase,
+                ),
+            ]
+        )
+    for spec_path, status_path, producer, scope in candidates:
+        if not spec_path.exists() and not status_path.exists():
+            continue
+        if not status_path.is_file():
+            errors.append(f"derived spec lacks producer evidence: {spec_path}")
+            continue
+        try:
+            raw_payload = json.loads(status_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            raw_payload = None
+        # A failed/running producer is retry evidence, not a trusted spec. The
+        # container gate rejects it; audit content-checks only successful output.
+        if not isinstance(raw_payload, dict) or raw_payload.get("status") != "ok":
+            continue
+        payload = _validate_command_status(
+            status_path,
+            f"derived {producer} status",
+            errors,
+            scope,
+            required_name=producer,
+        )
+        if payload is not None:
+            try:
+                validate_content_bound_outputs(
+                    payload, [spec_path], f"derived {producer} status"
+                )
+            except (OSError, ValueError) as exc:
+                errors.append(str(exc))
+
+
 def _history_iteration_numbers(
     payload: dict[str, Any], errors: list[str]
 ) -> list[int]:
@@ -878,6 +941,8 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         errors.append("state.current_iteration must be >= 0")
     if valid_max and valid_current and current_iteration > max_iterations:
         errors.append("state.current_iteration must not exceed max_iterations")
+    if valid_max and max_iterations >= 1:
+        _validate_derived_specs_on_disk(results_dir, max_iterations, errors)
 
     gate = _gate_from_state(state, errors)
     gate_met = state.get("gate_met")
@@ -1085,7 +1150,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     errors.append(f"approval manifest is invalid JSON: {exc}")
                 else:
                     expected_approval = {
-                        "schema_version": "2",
+                        "schema_version": "3",
                         "workflow": WORKFLOW,
                         "workspace": str(pathlib.Path(str(config.get("workspace", ""))).resolve()),
                         "results_dir": str(results_dir.resolve()),
@@ -1100,6 +1165,8 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         ),
                         "requires_hf_token": config.get("requires_hf_token"),
                         "max_iterations": max_iterations,
+                        "host_gpu_ids": config.get("gpu_ids"),
+                        "container_gpu_ids": config.get("container_gpu_ids"),
                         "metric_contract": gate,
                         "pyt_image": config.get("pyt_image"),
                         "ds_image": config.get("ds_image"),
@@ -1151,7 +1218,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                         derived = {
                             "training_epochs": tao_train.get("num_epochs"),
                             "num_gpus": tao_train.get("num_gpus"),
-                            "gpu_ids": tao_train.get("gpu_ids"),
+                            "container_gpu_ids": tao_train.get("gpu_ids"),
                             "history_aware": history.get("enabled"),
                             "replay_fraction": history.get("replay_fraction"),
                             "mining_topn": mining.get("topn"),
@@ -1229,6 +1296,23 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         gpu_ids = config.get("gpu_ids")
         if not isinstance(gpu_ids, list) or len(gpu_ids) != config.get("num_gpus"):
             errors.append("state.config.gpu_ids must match state.config.num_gpus")
+        container_gpu_ids = config.get("container_gpu_ids")
+        num_gpus = config.get("num_gpus")
+        expected_container_gpu_ids = (
+            list(range(num_gpus))
+            if isinstance(num_gpus, int)
+            and not isinstance(num_gpus, bool)
+            and num_gpus >= 1
+            else None
+        )
+        if (
+            expected_container_gpu_ids is None
+            or container_gpu_ids != expected_container_gpu_ids
+        ):
+            errors.append(
+                "state.config.container_gpu_ids must be a dense zero-based list "
+                "matching state.config.num_gpus"
+            )
         for field in (
             "history_aware",
             "continual_dataset",
@@ -1783,11 +1867,13 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                 )
                 if not isinstance(train_payload, dict):
                     raise ValueError("train command status root must be an object")
-                started_ns = train_payload.get("started_ns")
+                lineage_started_ns = checkpoint_lineage_started_ns(
+                    train_payload, state.get("started_at")
+                )
                 provenance = validate_best_checkpoint(
                     pathlib.Path(str(info.get("best_ckpt_path", ""))),
                     phase_root / "train",
-                    started_ns=started_ns,
+                    started_ns=lineage_started_ns,
                 )
             except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
                 errors.append(

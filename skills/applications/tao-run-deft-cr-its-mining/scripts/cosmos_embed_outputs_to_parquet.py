@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from workflow_common import MODALITY_CHOICES, atomic_write_parquet, modality_list
+from workflow_common import MODALITY_CHOICES, atomic_write_parquet, load_yaml, modality_list
 
 
 def load_metadata(path: Path) -> dict[str, Any]:
@@ -60,9 +60,24 @@ def text_filepath_queues(output_dir: Path) -> dict[str, deque[str]] | None:
     return dict(queues)
 
 
+def inference_dir_from_spec(output_dir: Path, mode: str) -> Path:
+    """Return the inference output directory declared by a generated spec."""
+    spec_path = output_dir / "specs" / f"inference_{mode}.yaml"
+    if not spec_path.is_file():
+        raise FileNotFoundError(f"Cosmos Embed inference spec is missing: {spec_path}")
+    spec = load_yaml(spec_path)
+    results_dir = spec.get("results_dir")
+    if not isinstance(results_dir, str) or not results_dir:
+        raise ValueError(f"{spec_path}: results_dir must be a non-empty string")
+    results_path = Path(results_dir).expanduser()
+    if not results_path.is_absolute():
+        raise ValueError(f"{spec_path}: results_dir must be absolute: {results_path}")
+    return results_path / "inference"
+
+
 def raw_embeddings_dataframe(mode: str, output_dir: Path) -> pd.DataFrame:
     """Convert one modality's Cosmos Embed JSON/NPY output to a dataframe."""
-    inference_dir = output_dir / "results" / mode / "inference"
+    inference_dir = inference_dir_from_spec(output_dir, mode)
     metadata_path = inference_dir / f"{mode}_embeddings.json"
     metadata = load_metadata(metadata_path)
     embeddings = np.load(npy_path(inference_dir, metadata))

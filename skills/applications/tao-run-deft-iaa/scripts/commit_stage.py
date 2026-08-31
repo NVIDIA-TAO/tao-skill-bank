@@ -30,12 +30,16 @@ import sys
 import tempfile
 from typing import Any
 
-from checkpoint_contract import validate_best_checkpoint
+from checkpoint_contract import (
+    checkpoint_lineage_started_ns,
+    validate_best_checkpoint,
+)
 from command_contract import (
     command_sha256,
     expected_container_command,
     expected_hf_forwarding,
     expected_image_kind,
+    validate_content_bound_outputs,
 )
 from log_stage import append_stage, next_seq
 
@@ -321,6 +325,8 @@ def _required_command_status(
                 raise ValueError(
                     f"{output} is older than the command recorded by {name}"
                 )
+        if required_name in {"eval-config", "train-config"}:
+            validate_content_bound_outputs(payload, outputs, name)
     return str(resolved)
 
 
@@ -1062,10 +1068,13 @@ def _apply_success(
         )
         phase["train_tao_status_json"] = train_tao_status
         train_payload = json.loads(pathlib.Path(train_command_status).read_text())
+        lineage_started_ns = checkpoint_lineage_started_ns(
+            train_payload, state.get("started_at")
+        )
         provenance = validate_best_checkpoint(
             args.best_ckpt,
             train_dir,
-            started_ns=train_payload["started_ns"],
+            started_ns=lineage_started_ns,
         )
         phase.update(provenance)
         publish_status = _required_command_status(

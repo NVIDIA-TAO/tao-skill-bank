@@ -5,16 +5,59 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
+REQUIRED_IMPORT_PACKAGES = {
+    "huggingface_hub": "huggingface_hub",
+    "numpy": "numpy",
+    "pandas": "pandas",
+    "pyarrow": "pyarrow",
+    "yaml": "pyyaml",
+}
+INSTALL_PACKAGES = "numpy pandas pyarrow pyyaml huggingface_hub"
+KNOWN_STDLIB_IMPORTS = {
+    "__future__",
+    "argparse",
+    "collections",
+    "copy",
+    "datetime",
+    "hashlib",
+    "json",
+    "os",
+    "pathlib",
+    "re",
+    "shutil",
+    "subprocess",
+    "sys",
+    "tempfile",
+    "tomllib",
+    "typing",
+}
+
+
+def third_party_script_imports() -> set[str]:
+    """Return non-stdlib imports used by the workflow's Python helpers."""
+    local_modules = {path.stem for path in SCRIPTS.glob("*.py")}
+    imported: set[str] = set()
+    for path in SCRIPTS.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.partition(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.partition(".")[0])
+    stdlib_modules = getattr(sys, "stdlib_module_names", KNOWN_STDLIB_IMPORTS)
+    return imported - stdlib_modules - local_modules - {"tomli"}
 
 
 class PythonSelectorTests(unittest.TestCase):
@@ -65,12 +108,18 @@ class PythonSelectorTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 2)
-            self.assertIn(f'python3 -m venv "{workspace}/.venv"', result.stderr)
-            self.assertIn(
-                "-m pip install pandas pyarrow pyyaml huggingface_hub",
-                result.stderr,
-            )
+            self.assertIn(f'-m venv "{workspace}/.venv"', result.stderr)
+            self.assertIn("-m pip --version", result.stderr)
+            self.assertIn("-m ensurepip --upgrade", result.stderr)
+            self.assertIn(f"-m pip install {INSTALL_PACKAGES}", result.stderr)
+            self.assertIn("a global pip executable is not required", result.stderr)
             self.assertNotIn("requirements.txt", result.stderr)
+
+    def test_probe_covers_every_third_party_script_import(self) -> None:
+        selector = (SCRIPTS / "deft_python.sh").read_text(encoding="utf-8")
+        self.assertEqual(third_party_script_imports(), set(REQUIRED_IMPORT_PACKAGES))
+        for import_name in REQUIRED_IMPORT_PACKAGES:
+            self.assertIn(import_name, selector)
 
 
 class DocumentationTests(unittest.TestCase):
@@ -96,7 +145,11 @@ class DocumentationTests(unittest.TestCase):
         )
         documentation = skill + prerequisites
         self.assertNotIn("requirements.txt", documentation)
-        self.assertIn("pip install pandas pyarrow pyyaml huggingface_hub", documentation)
+        self.assertIn(f"pip install {INSTALL_PACKAGES}", documentation)
+        self.assertIn("ensurepip", documentation)
+        self.assertIn("a globally installed `pip` executable is\nnot required", documentation)
+        for package_name in REQUIRED_IMPORT_PACKAGES.values():
+            self.assertIn(package_name, documentation)
         self.assertIn("references/host-prerequisites.md", skill)
 
 

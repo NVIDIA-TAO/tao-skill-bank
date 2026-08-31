@@ -67,7 +67,7 @@ The default template is `assets/default_unique_neighbor_matching.yaml`.
 
 ## Quick Start
 
-Run from the `tao-skills-external` repo root. Resolve the pinned TAO Data Services image from `versions.yaml`, verify the spec, mount the run root with identical host/container paths, and stream the Docker logs.
+Run from the `tao-skill-bank` repo root. Resolve the pinned TAO Data Services image from `versions.yaml`, verify the spec, mount the run root with identical host/container paths, and stream the Docker logs.
 
 **Write the spec into the output directory.** The run does not retain it, so a mined
 set otherwise carries no record of the budget, allocation policy or rare-class list
@@ -83,7 +83,7 @@ GPU_COUNT=1
 python3 skills/data/tao-mine-od-images/scripts/verify_unique_neighbor_matching_spec.py \
   --spec "$SPEC"
 
-DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.8.10-rc-26-multiarch  # versions-key: images.tao_toolkit.data_services_nightly
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
 
 docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
@@ -147,7 +147,7 @@ nvidia-smi -L
 2. Resolve and pull the data-services image if needed:
 
 ```bash
-DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.8.10-rc-26-multiarch  # versions-key: images.tao_toolkit.data_services_nightly
+DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 

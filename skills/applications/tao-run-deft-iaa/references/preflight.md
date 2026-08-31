@@ -144,13 +144,11 @@ Run this section only after required intake is resolved.
 
    ```bash
    docker version --format '{{.Server.Version}}'
-<<<<<<< HEAD
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.pyt
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.data_services
+   TAO_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.pyt
+   TAO_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
+   docker image inspect "$TAO_PYT_IMAGE" >/dev/null 2>&1
+   docker image inspect "$TAO_DS_IMAGE" >/dev/null 2>&1
    nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
-=======
-   docker image inspect nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt >/dev/null 2>&1  # versions-key: images.tao_toolkit.pyt
-   docker image inspect nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services >/dev/null 2>&1  # versions-key: images.tao_toolkit.data_services
    TARGET_GPU_ARGS=()
    IFS=, read -r -a GPU_ID_LIST <<< "$GPU_IDS"
    for GPU_ID in "${GPU_ID_LIST[@]}"; do
@@ -158,9 +156,8 @@ Run this section only after required intake is resolved.
    done
    "${TAO_SKILL_BANK_PATH:?}/scripts/check_tao_launch_preflight.py" \
      --skill-bank "$TAO_SKILL_BANK_PATH" --platform docker \
-     --container-image nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt \
+     --container-image "$TAO_PYT_IMAGE" \
      --gpu-min-count "$NUM_GPUS" "${TARGET_GPU_ARGS[@]}"
->>>>>>> 661a7f9 ([Bugfix] GPU preflight treated physical inventory as CUDA-visible capacity (#156))
    ```
 
    Missing local images are planned pulls. Do not run a CUDA container probe
@@ -182,7 +179,10 @@ Run this section only after required intake is resolved.
    `nvidia-smi` for utilization and memory on the selected devices. SigLIP2-so400m training commonly needs
    roughly 30–45 GB free per selected GPU at the bundled batch size. Treat this
    as a planning estimate, not a capability guarantee. Surface occupied GPUs;
-   do not silently reshape `gpu_ids`.
+   do not silently reshape the selected host `gpu_ids`. These are launcher
+   device selectors. The immutable preparation step separately derives TAO's
+   in-container ordinals as `0..num_gpus-1`, because Docker renumbers every
+   exposed allocation into a dense container-local CUDA namespace.
 7. Resolve all run values and their sources. Validate the metric contract
    vocabulary against `references/metric-contract.md`. Do not create a config
    to discover defaults; read the bundled templates.
@@ -301,10 +301,9 @@ For a new run, perform the following in order.
    login without placing it in argv or output, then pull only the pinned images:
 
    ```bash
-   set -a; source /path/to/.env; set +a   # omit if already exported
    (
      if [ -z "${NGC_KEY:-}" ]; then
-       echo "NGC_KEY is not set. Export it, or point the loader above at a user-approved env file." >&2
+       echo "NGC_KEY is not set. Export it in the shell that launches the agent." >&2
        exit 2
      fi
      printf '%s' "$NGC_KEY" | docker login nvcr.io \
@@ -325,7 +324,9 @@ For a new run, perform the following in order.
      nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch python3 -c 'import torch; torch.zeros(1).cuda()'  # versions-key: images.tao_toolkit.pyt
    ```
 
-   `GPU_IDS` is the exact approved `gpu_ids` list (for example `0` or `0,2`).
+   `GPU_IDS` is the exact approved host `gpu_ids` list (for example `0` or
+   `0,2`). The Docker selector remains `device=0,2`, while the TAO spec uses
+   container-local `gpu_ids: [0, 1]` for that two-device allocation.
    CUDA initialization or unsupported-architecture failure is a hard stop.
 3. Reuse a complete workspace venv if the runtime probe passes. Otherwise
    create it and install only the bundled runtime's third-party dependencies:

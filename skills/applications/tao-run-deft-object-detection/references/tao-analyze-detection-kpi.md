@@ -30,12 +30,15 @@ Do not hand-write it. Emit `analytics default_specs`, then apply the overlay —
 cannot keep a TAO default just because nobody typed it:
 
 ```bash
+PHASE=<baseline|iter${N}>          # names the container and this phase's output tree
+KPI_SPEC="${RESULTS_DIR}/${PHASE}/kpi_spec.yaml"
+
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
   --stage kpi_analyze --ds-image "$TAO_DS_IMAGE" \
-  --out "${RESULTS_DIR}/<phase>/kpi_spec.yaml"
+  --out "$KPI_SPEC"
 
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/apply_spec_overrides.py \
-  --spec "${RESULTS_DIR}/<phase>/kpi_spec.yaml" \
+  --spec "$KPI_SPEC" \
   --apply-workflow-defaults <skill_root>/assets/overlays/kpi_analyze.yaml \
   --set results_dir="${RESULTS_DIR}/<phase>/kpi" \
   --set kpi.conf_threshold=<state.config.kpi_conf_threshold> \
@@ -154,7 +157,28 @@ docker run -d --name "deft_${PHASE}_kpi" --gpus all --ipc=host --user "$(id -u):
 #   docker rm "deft_${PHASE}_kpi"
 ```
 
-Tee the log: the aggregate **mAP is printed to stdout only** and is not written into `kpi_calc.csv`. Parse it from the log line `mAP: <value>` and record it in state; otherwise the trend across iterations cannot be reported.
+The aggregate **mAP is printed to stdout only** — nothing writes it into `kpi_calc.csv`,
+which carries one row per class and no aggregate row. Do not depend on holding that stream:
+the stage runs tens of minutes on a large KPI set, and a driver whose shell calls time out,
+a dropped pipe, or a container reaped before `docker logs` runs all lose the one number the
+loop compares phases on.
+
+Derive it from the CSV instead. The aggregate is the unweighted mean of the per-class APs,
+so it recomputes exactly:
+
+```bash
+MAP_VALUE=$(<skill_root>/scripts/deft_python.sh <skill_root>/scripts/summarize_kpi.py \
+  --kpi-csv "${RESULTS_DIR}/${PHASE}/kpi/kpi_calc.csv" \
+  --expect-classes <number of target classes> | tail -1)
+```
+
+It writes `kpi_summary.json` beside the CSV and prints the value for `--map-value`.
+`--expect-classes` is what makes the mean trustworthy: the CSV has no class column, so a
+row that is not a target class — the `Summary` row `kpi.is_internal: true` appends — would
+shift the mean silently. A disagreement is an error instead.
+
+Still capture the log. On an image predating tao-data-services#31 it is the only place the
+per-row class names appear, and it remains the record of what the stage actually reported.
 
 ## Outputs
 
@@ -162,9 +186,17 @@ Tee the log: the aggregate **mAP is printed to stdout only** and is not written 
 |---|---|
 | Per-class metrics | `${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv` |
 | PR curve plot | `${RESULTS_DIR}/<phase>/kpi/` |
-| Captured log (mAP source) | `${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log` |
+| Captured log (class names for the CSV rows) | `${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log` |
+| Aggregate mAP | `${RESULTS_DIR}/<phase>/kpi/kpi_summary.json` |
 
-`kpi_calc.csv` columns: `Sequence Name`, `TP`, `FP`, `FN`, `TN`, `Pr`, `Re`, `Acc`, `AP`.
+`kpi_calc.csv` columns: `Sequence Name`, `class_name`, `TP`, `FP`, `FN`, `TN`, `Pr`, `Re`,
+`Acc`, `AP`.
+
+`class_name` arrived with tao-data-services#31. On an image built before it the column is
+absent and the rows are unlabeled — one per class, in the order `kpi_analyze.log` prints
+them. `summarize_kpi.py` handles both: with the column it labels each AP and drops any
+`Summary` row by name; without it, `--expect-classes` is the only thing standing between a
+stray row and a quietly wrong mean. Pass `--expect-classes` either way.
 
 `Sequence Name` is derived as the **second-to-last** component of `image_dir`, not configured. Keep `image_dir` free of a trailing slash and laid out so that component is the sequence identifier you want; two sources can otherwise collide under one name.
 
@@ -175,7 +207,7 @@ Tee the log: the aggregate **mAP is printed to stdout only** and is not written 
   --results-dir "${RESULTS_DIR}" --iter-label "<phase>" --stage kpi_analyze \
   --kpi-csv "${RESULTS_DIR}/<phase>/kpi/kpi_calc.csv" \
   --kpi-log "${RESULTS_DIR}/<phase>/kpi/kpi_analyze.log" \
-  --map-value "<parsed mAP>" \
+  --map-value "$MAP_VALUE" \
   --duration-sec "$(( SECONDS - started ))" \
   --summary "kpi: mAP=<value>"
 ```

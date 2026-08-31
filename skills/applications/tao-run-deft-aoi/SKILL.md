@@ -3,11 +3,11 @@ name: tao-run-deft-aoi
 description: >
   Run the full DEFT AOI improvement loop for NVIDIA TAO VisualChangeNet / ChangeNet PCB inspection models:
   baseline evaluate, RCA, Cosmos AnomalyGen / AMP synthetic defects, k-NN mining, retraining, and deployment
-  gating against a customer-defined primary metric and optional constraints. Supports air-gapped/offline runs
-  with pre-staged assets. Use for prompts like "run the DEFT loop", "fine-tune until the configured quality
-  metric meets its target", "optimize a customer metric", or "improve my AOI ChangeNet model with RCA and synthetic
-  defects"; do not use
-  for standalone TAO training, one-off inference, generic anomaly generation, or RCA-only analysis.
+  gating against a customer-defined primary metric and optional constraints. Use only when the request identifies
+  an AOI / automated-optical-inspection, PCB-defect, VisualChangeNet, or ChangeNet workflow. Supports air-gapped/offline
+  runs with pre-staged assets. Never infer AOI from generic iterative-improvement language. Do not use for CLIP / SigLIP
+  image retrieval, attribute-labelled image data, standalone TAO training, one-off inference, generic anomaly generation,
+  or RCA-only analysis.
 license: Apache-2.0 AND CC-BY-4.0
 compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
 metadata:
@@ -37,14 +37,14 @@ Treat this as a disk-backed state machine, not as a prose recipe.
    Preserve the customer's metric name, operator, target, unit, evaluator, and
    constraints. The approved `metric_contract` is the source of truth for
    evaluation, checkpoint selection, completion, and reporting.
-2. After the user approves the Summary, initialize `deft_state.json` once with
-   `scripts/init_deft_state.py`, passing Preflight's exact GPU model/memory,
+2. After the user approves the Summary, set
+   `PYTHON=$(bash scripts/deft_python.sh)`, then initialize `deft_state.json`
+   once with `"$PYTHON" scripts/init_deft_state.py`, passing Preflight's exact GPU model/memory,
    resolved `--network-mode`, activation source, and selected absolute Python.
    The resulting `execution_policy` is immutable run state. Never hand-author
    or reinitialize it on resume.
-3. Run host Python through `scripts/deft_python.sh`. On startup, after context
-   compaction, before every stage, and before any
-   completion claim, run `scripts/deft_context.py --state ... --stage ...`.
+3. On startup, after context compaction, before every stage, and before any
+   completion claim, run `"$PYTHON" scripts/deft_context.py --state ... --stage ...`.
    Use its durable `next_stage` plus the state file's
    `status`, `current_iteration`, `iterations.*.status`, `stage_completed`,
    and latest `events` entry to resume. Do not infer progress from assistant
@@ -54,10 +54,10 @@ Treat this as a disk-backed state machine, not as a prose recipe.
    shell commands, inline Python, a different output tree, or data fabricated
    from the KPI set.
 5. After initialization, run install/fetch/login/container commands through
-   `scripts/deft_exec.py --state ... -- <command>`. Air-gap mode rejects egress
+   `"$PYTHON" scripts/deft_exec.py --state ... -- <command>`. Air-gap mode rejects egress
    and installs, injects offline flags, and enforces no-pull. Selected
    platforms must enforce the equivalent policy.
-6. Commit every stage with `scripts/commit_stage.py`; it verifies the stage's
+6. Commit every stage with `"$PYTHON" scripts/commit_stage.py`; it verifies the stage's
    required inputs and atomically updates both the resume snapshot and ordered
    `events` array inside `deft_state.json`. Never edit the state file with
    inline Python, jq, heredocs, or an editor. Fix rejected evidence; never
@@ -66,7 +66,7 @@ Treat this as a disk-backed state machine, not as a prose recipe.
    Pass positive measured `--duration-sec` from backend elapsed time or a host
    timer for executed stages. A documented `--skip` may record `0`; negative
    durations are always rejected.
-7. Claim the loop complete only after `scripts/finalize_run.py` creates the
+7. Claim the loop complete only after `"$PYTHON" scripts/finalize_run.py` creates the
    handoff artifacts, successfully commits `loop_stop`, and a
    fresh read of `deft_state.json` shows `status == "complete"`,
    `iterations.baseline.status == "complete"`, and the final iteration's
@@ -212,14 +212,14 @@ Execute the loop in this order (full detail in `references/pipeline-and-state.md
 2. **Baseline.** If `deft_state.json` already has `iterations.baseline.stage_completed == "train"` and a `best_ckpt_path` pointing at an existing file (the upstream `automl-deft-pipeline` pre-seeds these from its Phase 1 AutoML winner — see its Phase 1 → Phase 2 handoff), **skip the train sub-step** and resume at `inference -> evaluate` against the pre-seeded checkpoint. Otherwise run `train -> inference -> evaluate` by invoking the `tao-skill-bank:tao-train-visual-changenet` skill. Evaluate with the approved contract and evaluator in `references/metric-contract.md`. Either way, then `rca` by invoking `tao-skill-bank:tao-analyze-gaps-visual-changenet`. Read `references/visual-changenet.md`, `references/metric-contract.md`, and `references/tao-analyze-gaps-visual-changenet.md` first for DEFT-loop-specific args.
 3. **Iterate.** For each iteration up to `max_iterations`, execute Pipeline steps 1-7. Between steps re-read `deft_state.json` and continue from its `stage_completed` value; do not print the full state.
 4. **Stop** when the KPI target is met or `max_iterations` is reached by running
-   `scripts/finalize_run.py` with the matching reason. Hard-stop failures are
+   `"$PYTHON" scripts/finalize_run.py` with the matching reason. Hard-stop failures are
    committed as errors and are never relabeled as successful `loop_stop`.
 5. **Render automatically.** `scripts/init_deft_state.py` writes the initial
    `results/DEFT_Loop_Report.html`; every successful `commit_stage.py` call
-   then refreshes it through the deterministic `scripts/render_report.py`
-   post-commit hook. The `loop_stop` commit therefore produces the final
+   then refreshes it with the deterministic report hook implemented in
+   `scripts/render_report.py`. The `loop_stop` commit therefore produces the final
    report even when the parent context is saturated. If a hook reports an
-   error, run `scripts/render_report.py --results-dir "${RESULTS_DIR}"`
+   error, run `"$PYTHON" scripts/render_report.py --results-dir "${RESULTS_DIR}"`
    directly after repairing the named presentation input; never hand-author
    report HTML.
 
@@ -227,9 +227,9 @@ All pipeline stages run inline in the parent context. Prefer invoking the underl
 
 ### Using Bundled Scripts
 
-Run bundled scripts through `<skill_root>/scripts/deft_python.sh`; do not rely
-on harness-specific helpers or a shell export surviving the next tool call.
-Resolve every path argument to an absolute host path first. Use
+For each tool call, set `PYTHON=$(bash <skill_root>/scripts/deft_python.sh)`;
+then use `"$PYTHON" <skill_root>/scripts/<name>.py`. Resolve every path
+argument to an absolute host path first. Use
 `deft_context.py` before each stage, `deft_exec.py` for external execution, and
 `commit_stage.py` for all state writes. See
 `references/scripts-and-agents.md` for script invocations, the automatic

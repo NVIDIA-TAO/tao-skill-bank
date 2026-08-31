@@ -172,7 +172,8 @@ not run inference or evaluation on it.
 ## analyze_kpi.py
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/analyze_kpi.py \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" <skill_root>/scripts/analyze_kpi.py \
     ${RESULTS_DIR}/iter${N}/inference/<label>/inference.csv \
     --output-dir ${RESULTS_DIR}/iter${N}/inference/<label>
 ```
@@ -236,7 +237,8 @@ Accepted forms (TAO 7.0.0-rc-224):
 Pre-Flight **must stage the backbone locally** before launch. The HuggingFace repo `nvidia/C-RADIOv2-B` ships only `model.safetensors` (no `.pth`). Use the packaged staging script (idempotent; reuses an existing staged file; hard-fails if it cannot produce one):
 
 ```bash
-STAGED=$(<skill_root>/scripts/deft_python.sh <skill_root>/scripts/stage_backbone.py --workspace <workspace>)
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+STAGED=$("$PYTHON" <skill_root>/scripts/stage_backbone.py --workspace <workspace>)
 BACKBONE_CONTAINER_PATH="/data/pretrained_models/$(basename "$STAGED")"
 # Rewrite model.backbone.pretrained_backbone_path in the baseline and derived
 # specs to exactly ${BACKBONE_CONTAINER_PATH}.
@@ -245,7 +247,8 @@ BACKBONE_CONTAINER_PATH="/data/pretrained_models/$(basename "$STAGED")"
 Equivalent manual recipe (only if running the script is not possible):
 
 ```bash
-<skill_root>/scripts/deft_python.sh - <<'PY'
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" - <<'PY'
 from huggingface_hub import hf_hub_download
 import shutil, os
 src = hf_hub_download(repo_id="nvidia/C-RADIOv2-B", filename="model.safetensors")
@@ -291,7 +294,8 @@ In network mode, accept the DINOv3 license and export `HF_TOKEN`; Pre-Flight
 then stages the matching `timm/vit_*_patch16_dinov3.lvd1689m` file with:
 
 ```bash
-STAGED=$(<skill_root>/scripts/deft_python.sh \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+STAGED=$("$PYTHON" \
   <skill_root>/scripts/stage_backbone.py \
   --workspace <workspace> --backbone-type vit_large_dinov3)
 BACKBONE_CONTAINER_PATH="/data/pretrained_models/$(basename "$STAGED")"
@@ -325,7 +329,8 @@ row["label"] = row["label"] if row["label"] == "PASS" else row["label"].lower().
 ## Log Stage
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" <skill_root>/scripts/commit_stage.py \
     --results-dir "${RESULTS_DIR}" \
     --iter-label <baseline|iter${N}> \
     --stage train \
@@ -337,7 +342,7 @@ row["label"] = row["label"] if row["label"] == "PASS" else row["label"].lower().
     --summary "Train: val_loss=Z best_ckpt=<kind>:<absolute path>"
 
 # Commit the evaluator result and ordered evaluate event together.
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+"$PYTHON" <skill_root>/scripts/commit_stage.py \
     --results-dir "${RESULTS_DIR}" \
     --iter-label <baseline|iter${N}> \
     --stage evaluate \

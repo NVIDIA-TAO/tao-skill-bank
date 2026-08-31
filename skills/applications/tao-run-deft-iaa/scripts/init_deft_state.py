@@ -98,6 +98,17 @@ def _parse_gpu_ids(raw: str, num_gpus: int) -> list[int]:
     return gpu_ids
 
 
+def _approval_gpu_ids(value: object, field: str) -> list[int]:
+    """Parse one approval GPU namespace without coercing malformed JSON types."""
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(item, int) or isinstance(item, bool) for item in value)
+    ):
+        raise ValueError(f"approval.json {field} must be a non-empty integer list")
+    return _parse_gpu_ids(",".join(str(item) for item in value), len(value))
+
+
 def _resolve_dataset_root(root: pathlib.Path) -> pathlib.Path:
     """Resolve the intended dataset root before dataset_setup materializes it."""
     resolved = root.expanduser().resolve()
@@ -228,8 +239,23 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         spec_sha256[name] = _sha256(spec_path)
     approval_path = config_dir / "approval.json"
     approval = json.loads(approval_path.read_text())
+    approved_host_gpu_ids = _approval_gpu_ids(
+        approval.get("host_gpu_ids"), "host_gpu_ids"
+    )
+    approved_container_gpu_ids = _approval_gpu_ids(
+        approval.get("container_gpu_ids"), "container_gpu_ids"
+    )
+    if len(approved_container_gpu_ids) != len(approved_host_gpu_ids):
+        raise ValueError(
+            "approval.json host_gpu_ids and container_gpu_ids must have equal length"
+        )
+    if approved_container_gpu_ids != list(range(len(approved_host_gpu_ids))):
+        raise ValueError(
+            "approval.json container_gpu_ids must be the dense zero-based "
+            "namespace for the approved host GPU allocation"
+        )
     expected_approval = {
-        "schema_version": "2",
+        "schema_version": "3",
         "workflow": WORKFLOW,
         "workspace": str(args.workspace.resolve()),
         "results_dir": str(args.results_dir.resolve()),
@@ -244,6 +270,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         ),
         "requires_hf_token": args.requires_hf_token,
         "max_iterations": args.max_iterations,
+        "host_gpu_ids": approved_host_gpu_ids,
+        "container_gpu_ids": approved_container_gpu_ids,
         "metric_contract": args.metric_contract,
         "pyt_image": args.pyt_image,
         "ds_image": args.ds_image,
@@ -280,6 +308,14 @@ def _load_run_config(args: argparse.Namespace) -> dict:
     if not isinstance(gpu_ids, list):
         raise ValueError("prepared tao_spec train.gpu_ids must be a list")
     parsed_gpu_ids = _parse_gpu_ids(",".join(str(item) for item in gpu_ids), num_gpus)
+    if parsed_gpu_ids != approved_container_gpu_ids:
+        raise ValueError(
+            "prepared TAO gpu_ids must match approval.json container_gpu_ids"
+        )
+    if num_gpus != len(approved_host_gpu_ids):
+        raise ValueError(
+            "prepared TAO num_gpus must match the approved host GPU allocation"
+        )
     if evaluate.get("num_gpus") != num_gpus or evaluate.get("gpu_ids") != gpu_ids:
         raise ValueError("prepared TAO train/evaluate GPU shapes must match")
     training_epochs = train.get("num_epochs")
@@ -326,7 +362,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "tao_spec_sha256": _sha256(args.tao_spec),
         "training_epochs": training_epochs,
         "num_gpus": num_gpus,
-        "gpu_ids": parsed_gpu_ids,
+        "gpu_ids": approved_host_gpu_ids,
+        "container_gpu_ids": parsed_gpu_ids,
         "history_aware": history.get("enabled"),
         "replay_fraction": replay,
         "mining_topn": int(mining.get("topn")),

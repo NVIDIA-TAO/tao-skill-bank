@@ -6,7 +6,8 @@ description: Run container-backed AutoML / hyperparameter optimization (HPO) for
   optimization, HPO, automl, automl_settings, AutoMLRunner, tao_automl, bayesian search, hyperband, ASHA, LLM-guided search,
   autoresearch, or wants to tune train/evaluate/inference/distill/prune/quantize for a TAO network. Model actions use the resolved
   image; venv training requires an explicit request. Platform-agnostic — runs on any SDK (Brev,
-  SLURM, Kubernetes, Docker).
+  SLURM, Kubernetes, Docker). Do not use generic "keep improving" language alone to override a matching domain-specific
+  DEFT workflow; attribute-labelled CLIP / SigLIP image-retrieval loops belong to tao-run-deft-iaa unless HPO is explicit.
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit. Workflows declare additional requirements.
 metadata:
@@ -24,7 +25,7 @@ tags:
 
 # TAO AutoML
 
-> **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run the `tao-setup` skill first (host preflight, credentials, cross-skill discovery).
+> **Standalone install?** If this session was not initialized by the TAO skill bank plugin, run `tao-setup` first (host preflight, credentials, cross-skill discovery).
 
 Run automated hyperparameter optimization for a TAO model by combining:
 
@@ -91,7 +92,7 @@ If missing, show the exact install command from `versions.yaml` and ask before
 installing:
 
 ```bash
-SB="${TAO_SKILL_BANK_PATH:-~/tao-skills-external}"
+SB="${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}"
 pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_automl_<platform>)"
 ```
 
@@ -121,11 +122,11 @@ Collect these before runner construction:
 
 | Input | Requirement |
 |---|---|
-| `model_skill` | Resolved model skill directory under `skills/models/`. Accept user aliases such as `network_arch` only after resolving them to the packaged skill directory. |
+| `model_skill` | Resolved model skill directory under `skills/models/`. Resolve user aliases such as `network_arch` to the packaged skill directory first. |
 | `network_arch` | Read from the resolved model skill metadata. |
-| `action` | Action to optimize, usually `train`, `evaluate`, `inference`, `distill`, `prune`, or `quantize` when that action has a packaged schema/template. |
+| `action` | Action to optimize — `train`, `evaluate`, `inference`, `distill`, `prune`, or `quantize` with a packaged schema/template. |
 | `platform` | One of the supported TAO platform skills. |
-| `train_dataset` / `eval_dataset` / action inputs | Use model-specific spec keys and dataset layout. Non-train actions often also require parent checkpoints, teacher checkpoints, calibration data, or pruned artifacts. |
+| `train_dataset` / `eval_dataset` / action inputs | Use model-specific spec keys and layout. Non-train actions may also need parent/teacher checkpoints, calibration data, or pruned artifacts. |
 | `results_root` | Local, Lustre, or S3 path appropriate for the platform. |
 | `gpu_count`, `num_nodes` | Respect model and platform limits. |
 | `container_image` | Resolve through model metadata and `versions.yaml`; show it to the user. |
@@ -229,10 +230,10 @@ adjustment in `result["history"][i]["adjustments"]`.
 | Algorithm | Good fit | Required knobs |
 |---|---|---|
 | `bayesian` | Default for small/medium budgets and few parameters. | `num_recommendations`, metric, direction |
-| `hyperband`, `asha` | Many configs with cheap early rungs; ASHA supports parallelism. | `max_epochs`, `reduction_factor`, optional `max_concurrent` |
+| `hyperband`, `asha` | Many configs, cheap early rungs; ASHA is parallel-friendly. | `max_epochs`, `reduction_factor`, optional `max_concurrent` |
 | `bohb`, `dehb` | Mixed Bayesian/evolutionary search with multi-fidelity budgets. | same rung budget fields as Hyperband |
 | `pbt` | Long training where schedules should mutate during training. | population and generation budget |
-| `llm`, `hybrid`, `autoresearch` | User explicitly wants LLM-guided search and has an endpoint configured. | LLM endpoint config plus budget |
+| `llm`, `hybrid`, `autoresearch` | User explicitly wants LLM-guided search with a configured endpoint. | LLM endpoint config plus budget |
 
 For `evaluate` or `inference`, default to Bayesian/BFBO-style search over the
 selected action's prompt, decoding, preprocessing, or runtime config knobs.
@@ -301,12 +302,17 @@ Use the selected platform SDK only after its preflight passes. Construct SDKs
 without embedding credentials in code.
 
 ```python
+import sys
 from pathlib import Path
 from tao_automl.runner import AutoMLRunner
 
 skill_bank = Path("<absolute-tao-skill-bank>")
 model_skill = "<resolved-model-skill-directory>"
 skill_dir = skill_bank / "skills" / "models" / model_skill
+sys.path.insert(
+    0, str(skill_bank / "skills/applications/tao-run-automl/scripts")
+)
+from resolve_automl_session import validate_session_settings
 
 runner = AutoMLRunner(
     sdk=sdk,
@@ -314,21 +320,35 @@ runner = AutoMLRunner(
     action=action,                      # train, distill, prune, quantize, ...
 )
 
+workspace_path = Path("<automl_workspace>")
+resume = False
+# Mandatory fail-closed gate from this skill's bundled scripts directory.
+validate_session_settings(
+    automl_settings,
+    resume=resume,
+    workspace=workspace_path if resume else None,
+)
 result = runner.run(
-    workspace_path="<automl_workspace>",   # timestamp it to avoid collisions
-    automl_settings=automl_settings,
+    workspace_path=str(workspace_path),    # timestamp it to avoid collisions
+    automl_settings=automl_settings,       # must contain an explicit session_id
     spec_overrides=spec_overrides,
     automl_hyperparameters=automl_hyperparameters,
     custom_param_ranges=custom_param_ranges,
     metric_extractor=metric_extractor,  # optional
     eval_fn=eval_fn,                    # optional
     final_eval_fn=final_eval_fn,        # optional but required when final eval is runnable
+    resume=resume,
 )
 ```
 
-Only resume an existing workspace when the user explicitly asks to resume,
-continue, recover, or inspect an existing experiment. Treat a plain "run
-AutoML" request as a fresh run.
+Set `automl_settings["session_id"]` explicitly and call
+`validate_session_settings` before every run. Generate a fresh ID once with
+`scripts/resolve_automl_session.py new`. Resume only when explicitly requested;
+resolve its controller with
+`scripts/resolve_automl_session.py resolve --workspace <full-run-path>`.
+Missing or ambiguous state is a blocker. See the
+resume section of `references/automl-advanced-monitoring.md` for the complete
+fresh/resume pattern.
 
 ## Monitoring
 

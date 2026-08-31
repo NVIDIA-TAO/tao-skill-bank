@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import copy
 import hashlib
 import json
@@ -23,6 +24,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,6 +34,7 @@ import yaml
 from cosmos_common import (
     WorkflowError,
     assert_no_overlap,
+    decode_media,
     dataset_parity,
     inspect_dataset,
     inspect_model,
@@ -1945,6 +1948,7 @@ def _env(
     val_media: Sequence[str],
     rl_video_runtime: Mapping[str, Any] | None = None,
     framework_video_runtime: Mapping[str, Any] | None = None,
+    model_profile: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
     tao_job_id = args.tao_job_id or args.experiment_id
     status_path = str(Path(args.container_results_dir) / tao_job_id / "status.json")
@@ -1990,6 +1994,10 @@ def _env(
                     "baked container path below /tao-patches-framework-*"
                 )
             common["PYTHONPATH"] = str(overlay)
+        resolved_profile = model_profile or {
+            "frame_width": args.video_resized_width or args.video_frame_width or 1280,
+            "frame_height": args.video_resized_height or args.video_frame_height or 720,
+        }
         common.update(
             {
                 "PYTHONNOUSERSITE": "1",
@@ -2010,6 +2018,8 @@ def _env(
                 "TAO_VIDEO_VAL_MEDIA": val_media[0],
                 "TAO_VIDEO_VAL_MEDIA_ROOTS": json.dumps(framework_val_media),
                 "TAO_VIDEO_NUM_FRAMES": str(args.frames),
+                "TAO_VIDEO_FRAME_WIDTH": str(resolved_profile["frame_width"]),
+                "TAO_VIDEO_FRAME_HEIGHT": str(resolved_profile["frame_height"]),
                 "TAO_VIDEO_SYSTEM_PROMPT": args.system_prompt,
                 "TAO_VIDEO_CACHE_SIZE": str(
                     framework_video_runtime["video_cache_size"]
@@ -2500,6 +2510,59 @@ def _source_build_image_plan(
     }
 
 
+_MODEL_PREPARATION_IMAGE_DIGEST_ENV = "TAO_COSMOS_PREPARATION_IMAGE_DIGEST"
+
+
+def _model_preparation_command_with_digest(command: Sequence[str]) -> str:
+    invocation = shlex.join([*command, "--runtime-image-digest"])
+    error = "runtime image digest was not resolved"
+    return (
+        f'{invocation} "${{{_MODEL_PREPARATION_IMAGE_DIGEST_ENV}:?{error}}}"'
+    )
+
+
+def _docker_model_preparation_command(
+    command: Sequence[str], preparation_image: str
+) -> str:
+    repo_digest_command = shlex.join(
+        [
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            "{{index .RepoDigests 0}}",
+            preparation_image,
+        ]
+    )
+    image_id_command = shlex.join(
+        [
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            preparation_image,
+        ]
+    )
+    digest = _MODEL_PREPARATION_IMAGE_DIGEST_ENV
+    error = shlex.quote(
+        f"ERROR: unable to resolve runtime image digest for {preparation_image!r}"
+    )
+    return "\n".join(
+        [
+            f'{digest}="$({repo_digest_command} 2>/dev/null || true)"',
+            f'if [[ -z "${{{digest}}}" || "${{{digest}}}" == "<no value>" ]]; then',
+            f'  {digest}="$({image_id_command} 2>/dev/null || true)"',
+            "fi",
+            f'if [[ -z "${{{digest}}}" || "${{{digest}}}" == "<no value>" ]]; then',
+            f"  echo {error} >&2",
+            "  exit 2",
+            "fi",
+            _model_preparation_command_with_digest(command),
+        ]
+    )
+
+
 def _model_preparation(
     args: argparse.Namespace,
     model: Mapping[str, Any],
@@ -2647,8 +2710,6 @@ def _model_preparation(
         args.cache_dir,
         "--runtime-image",
         preparation_image,
-        "--runtime-image-digest",
-        "<RESOLVE_AFTER_CLEAN_BUILD>",
     ]
     if args.base_model_revision:
         command.extend(["--base-model-revision", args.base_model_revision])
@@ -2657,7 +2718,9 @@ def _model_preparation(
             ["--vlm-architecture-model-revision", args.vlm_architecture_model_revision]
         )
     platform_action: dict[str, Any] | None = None
-    preparation_command: str | None = shlex.join(command)
+    preparation_command: str | None = _docker_model_preparation_command(
+        command, preparation_image
+    )
     if args.platform == "slurm":
         helper_host_path = str(
             Path(args.results_dir).expanduser()
@@ -2699,9 +2762,7 @@ def _model_preparation(
             "--cache-dir",
             args.container_cache_dir,
             "--runtime-image",
-            preparation_image,
-            "--runtime-image-digest",
-            "<RESOLVE_AFTER_CLEAN_BUILD>",
+            preparation_sqsh,
         ]
         if args.base_model_revision:
             container_command.extend(
@@ -2723,7 +2784,9 @@ def _model_preparation(
             "helper_host_path": helper_host_path,
             "helper_container_path": helper_container_path,
             "helper_sha256": sha256_file(script),
-            "container_command": shlex.join(container_command),
+            "container_command": _model_preparation_command_with_digest(
+                container_command
+            ),
             "output_container_path": output_container,
         }
         preparation_command = None
@@ -3170,7 +3233,16 @@ def _preflight_contract(
         )
     else:
         allocation = path_checks
-        container = f"docker run --rm --gpus all {shlex.quote(plan_image['tag'])} bash -lc {shlex.quote(container_check)}"
+        docker_gpu_ids = list(getattr(args, "docker_gpu_ids", []))
+        gpu_request = (
+            f"device={','.join(docker_gpu_ids)}"
+            if docker_gpu_ids
+            else str(args.gpus_per_node)
+        )
+        container = (
+            f"docker run --rm --gpus {shlex.quote(gpu_request)} "
+            f"{shlex.quote(plan_image['tag'])} bash -lc {shlex.quote(container_check)}"
+        )
     return {
         "submission_host": host,
         "target_compute_node": allocation,
@@ -3515,6 +3587,81 @@ def _slurm_node_exclusion_contract(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _docker_visible_gpu_inventory(
+    cuda_visibility: str | None,
+) -> list[dict[str, str | int]]:
+    """Return physical Docker GPUs allowed by the CUDA visibility contract."""
+    detected = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,uuid,memory.total",
+            "--format=csv,noheader,nounits",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if detected.returncode:
+        raise WorkflowError(
+            "could not inventory Docker host GPUs with nvidia-smi; "
+            "correct host access before resolving GPU resources"
+        )
+    inventory: list[dict[str, str | int]] = []
+    for row in csv.reader(detected.stdout.splitlines()):
+        if len(row) != 3:
+            raise WorkflowError("nvidia-smi returned malformed Docker GPU inventory")
+        index, gpu_uuid, memory = (value.strip() for value in row)
+        try:
+            memory_mib = int(memory)
+        except ValueError as exc:
+            raise WorkflowError(
+                f"nvidia-smi returned invalid GPU memory for index {index!r}: {memory!r}"
+            ) from exc
+        if not index or not gpu_uuid:
+            raise WorkflowError("nvidia-smi returned incomplete Docker GPU inventory")
+        inventory.append(
+            {"index": index, "uuid": gpu_uuid, "memory_mib": memory_mib}
+        )
+    if not inventory:
+        raise WorkflowError("nvidia-smi found no Docker host GPUs")
+    if cuda_visibility is None:
+        return inventory
+
+    raw = cuda_visibility.strip()
+    if not raw or raw == "-1":
+        raise WorkflowError("CUDA_VISIBLE_DEVICES exposes no Docker training GPUs")
+    tokens = [token.strip() for token in raw.split(",")]
+    if any(not token for token in tokens):
+        raise WorkflowError("CUDA_VISIBLE_DEVICES contains an empty device token")
+    by_index = {str(gpu["index"]): gpu for gpu in inventory}
+    visible: list[dict[str, str | int]] = []
+    selected_indices: set[str] = set()
+    for token in tokens:
+        match = by_index.get(token) if token.isdigit() else None
+        if match is None and token.upper().startswith("GPU-"):
+            matches = [
+                gpu
+                for gpu in inventory
+                if str(gpu["uuid"]).upper().startswith(token.upper())
+            ]
+            if len(matches) == 1:
+                match = matches[0]
+        if match is None:
+            raise WorkflowError(
+                "CUDA_VISIBLE_DEVICES cannot be resolved against Docker host "
+                f"inventory: token={token!r}"
+            )
+        index = str(match["index"])
+        if index in selected_indices:
+            raise WorkflowError(
+                "CUDA_VISIBLE_DEVICES selects the same Docker host GPU more than "
+                f"once: index={index}"
+            )
+        selected_indices.add(index)
+        visible.append(match)
+    return visible
+
+
 def build_plan(
     args: argparse.Namespace,
     *,
@@ -3531,6 +3678,33 @@ def build_plan(
         raise WorkflowError(
             "base_model_path_or_uri is required for every Cosmos training request"
         )
+    docker_gpu_ids: list[str] = []
+    cuda_visibility = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if args.platform == "docker" and (
+        args.gpus_per_node <= 0 or cuda_visibility is not None
+    ):
+        visible_gpus = _docker_visible_gpu_inventory(cuda_visibility)
+        eligible = [gpu for gpu in visible_gpus if gpu["memory_mib"] >= 16 * 1024]
+        requested = args.gpus_per_node if args.gpus_per_node > 0 else len(eligible)
+        if len(eligible) < requested:
+            raise WorkflowError(
+                "Docker GPU selection has fewer CUDA-visible >=16 GiB devices "
+                f"than requested: requested={requested}, eligible={len(eligible)}"
+            )
+        selected = eligible[:requested]
+        if not selected:
+            raise WorkflowError(
+                "no CUDA-visible >=16 GiB training GPU was detected; "
+                "specify --gpus-per-node explicitly only after correcting GPU visibility"
+            )
+        args.gpus_per_node = len(selected)
+        docker_gpu_ids = [str(gpu["index"]) for gpu in selected]
+    elif args.gpus_per_node <= 0:
+        if args.platform != "docker":
+            raise WorkflowError(
+                "--gpus-per-node is required when the target platform is not docker"
+            )
+    args.docker_gpu_ids = docker_gpu_ids
     try:
         runtime_model_hint = resolve_model_name(args.model, args.base_model_path_or_uri)
     except WorkflowError:
@@ -3892,6 +4066,7 @@ def build_plan(
         val_media_container,
         rl_video_runtime,
         framework_video_runtime,
+        model_profile,
     )
     command = _command(args, backend)
     if decoder_artifact["enabled"]:
@@ -4006,6 +4181,7 @@ def build_plan(
             "gpus_per_node": args.gpus_per_node,
             "total_gpus": total_gpus,
             "cpus_per_task": args.cpus_per_task,
+            "host_gpu_ids": docker_gpu_ids,
         },
         "slurm_node_exclusions": node_exclusions,
         "cache_prewarm": {
@@ -4456,11 +4632,77 @@ def load_plan_artifact(
     args.plan_artifact = str(path)
     args.render_output = getattr(current_args, "render_output", "")
     args.tao_job_id = str(getattr(current_args, "tao_job_id", "") or "")
-    if args.verb == "render-slurm" and not args.tao_job_id:
+    if args.verb in {"render-slurm", "render-docker"} and not args.tao_job_id:
         raise WorkflowError(
-            "render-slurm requires --tao-job-id from a newly opened job record"
+            f"{args.verb} requires --tao-job-id from a newly opened job record"
         )
     return args, plan
+
+
+def render_docker(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
+    """Render the reviewed single-node Docker submit command without launching it."""
+    if plan.get("compute", {}).get("platform") != "docker":
+        raise WorkflowError("render-docker requires a Docker plan")
+    if int(plan.get("compute", {}).get("nodes", 0)) != 1:
+        raise WorkflowError("render-docker supports only single-node plans")
+    if not args.tao_job_id:
+        raise WorkflowError("render-docker requires --tao-job-id")
+    image = str(plan.get("image", {}).get("tag") or "")
+    if not image:
+        raise WorkflowError("Docker plan has no resolved image")
+    results_host = str(plan.get("paths", {}).get("results_dir", {}).get("original") or args.results_dir)
+    home = f"{args.container_results_dir.rstrip('/')}/.tao-runtime/home"
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -Eeuo pipefail",
+        'HOST_UID="$(id -u)"',
+        'HOST_GID="$(id -g)"',
+        '[ "$HOST_UID" -ne 0 ] || { echo "Refusing writable Docker launch as UID 0" >&2; exit 1; }',
+        'HOST_USER_NAME="$(id -un)"',
+        'HOST_IDENTITY_ARGS=(--user "$HOST_UID:$HOST_GID")',
+        'for group_id in $(id -G); do [ "$group_id" = "$HOST_GID" ] || HOST_IDENTITY_ARGS+=(--group-add "$group_id"); done',
+        f"mkdir -p {shlex.quote(results_host + '/.tao-runtime/home/.cache/huggingface')} "
+        f"{shlex.quote(results_host + '/.tao-runtime/home/.cache/torchinductor')}",
+        f"docker inspect {shlex.quote(args.tao_job_id)} >/dev/null 2>&1 && "
+        f"{{ echo {shlex.quote(args.tao_job_id + ' already submitted')}; exit 0; }}",
+    ]
+    compute = plan.get("compute", {})
+    host_gpu_ids = compute.get("host_gpu_ids", [])
+    if not isinstance(host_gpu_ids, list) or not all(
+        isinstance(value, str) and value for value in host_gpu_ids
+    ):
+        raise WorkflowError("Docker plan has invalid compute.host_gpu_ids")
+    gpu_request = (
+        f"device={','.join(host_gpu_ids)}"
+        if host_gpu_ids
+        else str(int(compute.get("gpus_per_node", 0)))
+    )
+    if gpu_request == "0":
+        raise WorkflowError("Docker plan has no resolved GPU allocation")
+    command = [
+        "docker", "run", "-d", "--name", args.tao_job_id,
+        "--label", f"tao-job={args.tao_job_id}", "--gpus", gpu_request, "--ipc=host",
+        "--shm-size=32g", '"${HOST_IDENTITY_ARGS[@]}"',
+    ]
+    for mount in args.container_mount:
+        command.extend(["-v", mount])
+    identity_env = {
+        "HOME": home,
+        "USER": '"$HOST_USER_NAME"',
+        "LOGNAME": '"$HOST_USER_NAME"',
+        "XDG_CACHE_HOME": f"{home}/.cache",
+        "HF_HOME": f"{home}/.cache/huggingface",
+        "TORCHINDUCTOR_CACHE_DIR": f"{home}/.cache/torchinductor",
+    }
+    for name, value in {**dict(plan.get("environment", {})), **identity_env}.items():
+        command.extend(["-e", f"{name}={value}"])
+    for name in ("HF_TOKEN", "NGC_KEY"):
+        command.extend(["-e", name])
+    command.extend([image, "bash", "-lc", str(plan.get("command") or "")])
+    rendered = shlex.join(command).replace("'\"${HOST_IDENTITY_ARGS[@]}\"'", '"${HOST_IDENTITY_ARGS[@]}"')
+    rendered = rendered.replace("'\"$HOST_USER_NAME\"'", '"$HOST_USER_NAME"')
+    lines.append(rendered)
+    return "\n".join(lines) + "\n"
 
 
 def _retry_identity(value: str, kind: str) -> dict[str, object]:
@@ -4671,11 +4913,31 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
     )
     preparation_action = plan.get("model_preparation", {}).get("platform_action")
     preparation_srun = ""
+    preparation_digest_lines: list[str] = []
     if isinstance(preparation_action, Mapping):
         preparation_sqsh = str(preparation_action.get("container_image") or "")
         preparation_native = str(preparation_action.get("container_command") or "")
         if not preparation_sqsh or not preparation_native:
             raise WorkflowError("SLURM model-preparation action is incomplete")
+        digest = _MODEL_PREPARATION_IMAGE_DIGEST_ENV
+        digest_error = shlex.quote(
+            f"ERROR: unable to resolve runtime image digest for {preparation_sqsh!r}"
+        )
+        preparation_digest_lines = [
+            (
+                "if ! preparation_image_sha256_output="
+                f'"$(sha256sum -- {shlex.quote(preparation_sqsh)} 2>/dev/null)"; then'
+            ),
+            f"  echo {digest_error} >&2",
+            "  exit 2",
+            "fi",
+            'preparation_image_sha256="${preparation_image_sha256_output%% *}"',
+            'if [[ ! "$preparation_image_sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then',
+            f"  echo {digest_error} >&2",
+            "  exit 2",
+            "fi",
+            f'export {digest}="sha256:$preparation_image_sha256"',
+        ]
         preparation_wrapped = "\n".join(
             [
                 "set -Eeuo pipefail",
@@ -4697,7 +4959,10 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
                 f"--cpus-per-task={args.cpus_per_task}",
                 "--no-container-remap-root",
                 "--no-container-mount-home",
-                "--container-env=HF_TOKEN,HUGGING_FACE_HUB_TOKEN",
+                (
+                    "--container-env=HF_TOKEN,HUGGING_FACE_HUB_TOKEN,"
+                    f"{_MODEL_PREPARATION_IMAGE_DIGEST_ENV}"
+                ),
                 f"--container-image={shlex.quote(preparation_sqsh)}",
                 mount_args,
                 "bash -lc",
@@ -4836,6 +5101,7 @@ def render_slurm(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
             env_exports,
             'export MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)"',
             f"export MASTER_PORT={args.master_port}",
+            *preparation_digest_lines,
             *preparation_lines,
             "child_rc=0",
             "set +e",
@@ -5099,6 +5365,22 @@ def local_preflight(
     env = os.environ if env is None else env
     errors: list[str] = []
     warnings: list[str] = []
+    if plan.get("input_frame", {}).get("kind") != "slurm_remote":
+        media_paths = [
+            Path(media["path"])
+            for split in ("train", "validation")
+            for media in plan.get("datasets", {}).get(split, {}).get(
+                "media_manifest", []
+            )
+        ]
+        if media_paths:
+            with ThreadPoolExecutor(max_workers=min(8, len(media_paths))) as executor:
+                futures = [executor.submit(decode_media, path) for path in media_paths]
+                for future in futures:
+                    try:
+                        future.result()
+                    except WorkflowError as exc:
+                        errors.append(str(exc))
     decoder_artifact = plan["decoder_artifact"]
     if decoder_artifact["required"] and not decoder_artifact["enabled"]:
         errors.append(
@@ -5670,7 +5952,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     parser.add_argument("--container-checkpoint-dir", default="/results/checkpoints")
     parser.add_argument("--container-cache-dir", default="/cache")
     parser.add_argument("--nodes", type=int, default=1)
-    parser.add_argument("--gpus-per-node", type=int, default=8)
+    parser.add_argument("--gpus-per-node", type=int, default=0)
     parser.add_argument("--cpus-per-task", type=int, default=64)
     parser.add_argument("--gpu-architecture", default="")
     parser.add_argument("--slurm-user", default="")
@@ -5715,7 +5997,7 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest="verb", required=True)
-    for verb in ("resolve", "plan", "preflight", "materialize", "render-slurm"):
+    for verb in ("resolve", "plan", "preflight", "materialize", "render-slurm", "render-docker"):
         child = subs.add_parser(verb)
         add_arguments(child, require_inputs=verb != "resolve")
     child = subs.add_parser("validate-metadata")
@@ -5750,6 +6032,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     child.add_argument("--slurm-node-inventory", type=Path, required=True)
     child.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
+    for name in ("lora_target_modules", "lora_modules_to_save"):
+        if hasattr(args, name):
+            values = []
+            for raw in getattr(args, name):
+                values.extend(part.strip() for part in raw.split(",") if part.strip())
+            setattr(args, name, values)
     if getattr(args, "experiment_id", None) is None:
         args.experiment_id = ""
     if (
@@ -5887,6 +6175,19 @@ def main(argv: list[str] | None = None) -> int:
                         "sha256": sha256_file(rendered),
                         "approved_plan": plan.get("plan_artifact"),
                         "node_exclusions": plan.get("slurm_node_exclusions", {}),
+                    }
+                else:
+                    result = script
+            elif args.verb == "render-docker":
+                verify_materialized_spec(args, plan)
+                script = render_docker(args, plan)
+                if args.render_output:
+                    rendered = _atomic_write_text(Path(args.render_output), script)
+                    result = {
+                        "ok": True,
+                        "output": str(rendered),
+                        "sha256": sha256_file(rendered),
+                        "approved_plan": plan.get("plan_artifact"),
                     }
                 else:
                     result = script

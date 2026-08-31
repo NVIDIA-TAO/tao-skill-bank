@@ -25,6 +25,10 @@ Iteration N uses its freshly published best checkpoint and `iter_N/`.
        --iter-label "$LABEL"
    ```
 
+   The adjacent `eval-config.host.status.json` content-binds this generated
+   YAML. The container wrapper verifies that digest before launch and the
+   commit/audit paths verify it again; do not hand-edit the spec.
+
 2. Set `PHASE_DIR="$RESULTS_DIR/zs"` and `CONTAINER_PHASE=zs` for `baseline`;
    otherwise set `PHASE_DIR="$RESULTS_DIR/iter_$N"` and
    `CONTAINER_PHASE="iter_$N"`. Launch evaluation with both canonical outputs
@@ -102,6 +106,10 @@ another label/path even when its numeric value is plausible.
        --deft-config "$RESULTS_DIR/config/deft_config.yaml" --iter-num "$N"
    ```
 
+   The adjacent `train-config.host.status.json` content-binds this generated
+   YAML. Any post-generation edit is an integrity failure, not a supported
+   override; revise approval and start a new immutable run instead.
+
    In the default continual-dataset/non-continual-model mode, the accumulated
    mined datasets are included but training starts from the configured base
    model each iteration. With approved continual-model mode, the adapter uses
@@ -149,7 +157,15 @@ another label/path even when its numeric value is plausible.
    ```
 
    The first is the raw evaluation checkpoint; the second is the normalized
-   model-only warm-start form.
+   model-only warm-start form. Selection uses `val/t2i_mAP` when metric
+   evidence exists; otherwise checkpoint metadata records
+   `selection_strategy=newest_fallback`. Freshness is anchored to the first
+   attempt in the bounded train-attempt lineage, and is validated before the
+   canonical link/copy is created, so a retry can safely reuse a checkpoint
+   produced by its earlier attempt. The lower bound can never precede the
+   immutable run's `started_at`, which excludes checkpoints left by an earlier
+   occupant of the results path. Legacy retry statuses that predate explicit
+   lineage recording use that run start rather than the retry timestamp.
 5. Commit:
 
    ```bash
@@ -169,7 +185,7 @@ another label/path even when its numeric value is plausible.
 
 The validator requires TAO's `Train finished successfully.` marker, an exact
 approved `clip train` argv digest, and a selected raw checkpoint newer than
-that launch. The canonical relative symlink is allowed only when it
+the train attempt lineage. The canonical relative symlink is allowed only when it
 resolves directly to a regular checkpoint inside this iteration's `train/`;
 its metadata-backed hardlink/copy fallbacks are also accepted. Symlink chains,
 stale targets, and cross-iteration targets are rejected.

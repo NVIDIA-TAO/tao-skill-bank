@@ -204,7 +204,11 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--replay-fraction must be in [0, 1]")
     if args.knn_metric not in {"cosine", "euclidean"}:
         raise ValueError("--knn-metric must be cosine or euclidean")
-    gpu_ids = _gpu_ids(args.gpu_ids, args.num_gpus)
+    # ``gpu_ids`` is an allocation in the launcher/host namespace. Container
+    # runtimes expose that allocation as a dense zero-based CUDA namespace, so
+    # TAO must never receive the host ordinals directly.
+    host_gpu_ids = _gpu_ids(args.gpu_ids, args.num_gpus)
+    container_gpu_ids = list(range(args.num_gpus))
     metric_contract = validate_contract(
         {
             "metric_name": args.metric_name,
@@ -265,10 +269,13 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         {
             "num_epochs": args.training_epochs,
             "num_gpus": args.num_gpus,
-            "gpu_ids": gpu_ids,
+            "gpu_ids": container_gpu_ids,
         }
     )
-    tao["evaluate"].update({"num_gpus": args.num_gpus, "gpu_ids": gpu_ids})
+    for action in ("evaluate", "inference"):
+        tao[action].update(
+            {"num_gpus": args.num_gpus, "gpu_ids": container_gpu_ids}
+        )
 
     _atomic_yaml(config_dir / "deft_config.yaml", deft)
     _atomic_yaml(config_dir / "tao_spec.yaml", tao)
@@ -277,7 +284,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     _atomic_json(
         config_dir / "approval.json",
         {
-            "schema_version": "2",
+            "schema_version": "3",
             "workflow": "tao-run-deft-iaa",
             "workspace": str(workspace),
             "results_dir": str(results_dir),
@@ -288,6 +295,8 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "checksums_file": str(checksums_file) if checksums_file else None,
             "requires_hf_token": args.requires_hf_token,
             "max_iterations": args.max_iterations,
+            "host_gpu_ids": host_gpu_ids,
+            "container_gpu_ids": container_gpu_ids,
             "metric_contract": metric_contract,
             "pyt_image": PINNED_PYT_IMAGE,
             "ds_image": PINNED_DS_IMAGE,
@@ -301,7 +310,8 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "max_iterations": args.max_iterations,
         "training_epochs": args.training_epochs,
         "num_gpus": args.num_gpus,
-        "gpu_ids": gpu_ids,
+        "gpu_ids": host_gpu_ids,
+        "container_gpu_ids": container_gpu_ids,
         "requires_hf_token": args.requires_hf_token,
         "iaa_deft_bundle_sha256": runtime_sha256,
         "approval_manifest": str(config_dir / "approval.json"),

@@ -40,7 +40,7 @@ transitive dependency. Both packages are pinned in `versions.yaml` under
 
 ```bash
 python -c "import tao_automl" 2>/dev/null || {
-  SB="${TAO_SKILL_BANK_PATH:-~/tao-skills-external}"
+  SB="${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}"
   echo "MISSING: nvidia-tao-automl not installed. Pick the platform extra you need:"
   echo "  pip install \"$($SB/scripts/resolve_versions_key.py wheels.tao_automl_slurm)\"       # on-prem SLURM cluster"
   echo "  pip install \"$($SB/scripts/resolve_versions_key.py wheels.tao_automl_kubernetes)\"  # K8s (EKS / GKE / on-prem)"
@@ -88,10 +88,10 @@ Before running AutoML:
    `custom.train_dataset.media_path=/lustre/.../videos.tar.gz`; do not force
    both files to share one parent directory.
 3. **Skill bank available**: the runner takes an explicit `skill_dir` — the **absolute path to a model directory** inside the skill bank, e.g. `<bank-root>/skills/models/tao-train-dino`. No global env var; pass per run. The agent already knows the bank root (it loaded this SKILL.md from there) — use that same root. Resolve user model aliases to a packaged skill directory before constructing this path; do not assume `network_arch` equals the directory name. Common locations:
-   - cloned standalone: `~/tao-skills-external/` (or wherever the user cloned).
+   - cloned standalone: `~/tao-skill-bank/` (or wherever the user cloned).
    - Installed skill-bank cache: `<agent-cache>/tao-skill-bank/<version>/`.
    - Codex plugin: `~/.codex/plugins/cache/<marketplace>/tao-skill-bank/<version>/`.
-   - submodule inside a cloned SDK: `<sdk>/tao-skills-external/`.
+   - submodule inside a cloned SDK: `<sdk>/tao-skill-bank/`.
    ```python
    from pathlib import Path
    SKILL_BANK = Path("<bank-root>")        # substitute the actual path
@@ -99,7 +99,7 @@ Before running AutoML:
    ```
    The bank structure is:
    ```
-   tao-skills-external/
+   tao-skill-bank/
    └── skills/
        ├── applications/         # workflow configs (this skill)
        ├── models/               # per-network skill packages
@@ -120,7 +120,7 @@ Before running AutoML:
 4. **`nvidia-tao-automl` installed** with the platform extra you want. Resolve
    the pinned install command from `versions.yaml`:
    ```bash
-   SB="${TAO_SKILL_BANK_PATH:-~/tao-skills-external}"
+   SB="${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}"
    pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_automl_brev)"   # or _slurm, _kubernetes, _docker, _all
    # With LLM/agentic algorithms, append ,llm to the resolved extra:
    pip install "$($SB/scripts/resolve_versions_key.py wheels.tao_automl_brev | sed 's/]/,llm]/')"
@@ -171,15 +171,15 @@ model metadata, then validates whether the model also has packaged,
 parseable selected-action dataclass schemas:
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_tao_models.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} --scope automl --format text
+${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/list_tao_models.py \
+  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} --scope automl --format text
 ```
 
 The compatibility wrapper below is also valid and delegates to the same logic:
 
 ```bash
-${TAO_SKILL_BANK_PATH:-~/tao-skills-external}/scripts/list_automl_support.py \
-  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skills-external} --format text
+${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/list_automl_support.py \
+  --skill-bank ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank} --format text
 ```
 
 Return both sections from that output: runnable AutoML model/actions and
