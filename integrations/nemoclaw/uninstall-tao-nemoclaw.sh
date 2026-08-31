@@ -50,10 +50,13 @@ command -v nemoclaw >/dev/null || die "nemoclaw not on PATH (use a login shell)"
 command -v docker   >/dev/null || die "docker not on PATH"
 
 # ── 0. Resolve the sandbox container, if it still exists ──────────────────────
-# Same UUID-suffixed match as setup. A missing container is not an error: the
-# sandbox may already be destroyed, leaving only the host server to clean up.
-CID=$(docker ps --format '{{.ID}} {{.Names}}' \
-      | awk -v p="openshell-${SB}-" '$2 ~ "^"p {print $1; exit}' || true)
+# Same label lookup as setup — see the rationale on _sandbox_cid there. A
+# missing container is not an error: the sandbox may already be destroyed,
+# leaving only the host server to clean up. It is only *not* an error when the
+# lookup is trustworthy, though: while this matched on the container name, a
+# renamed-by-OpenShell container made uninstall silently skip every
+# sandbox-side step and report success.
+CID=$(docker ps -q --filter "label=openshell.ai/sandbox-name=$SB" | head -1 || true)
 if [ -n "$CID" ]; then
   log "sandbox=$SB container=$CID workspace=$WORKSPACE"
 else
