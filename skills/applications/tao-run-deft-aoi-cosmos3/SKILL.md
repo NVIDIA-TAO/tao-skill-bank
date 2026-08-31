@@ -166,6 +166,15 @@ owns native submission. Every GPU stage uses the four verbs
 Monitor the backend and map states to `PENDING RUNNING COMPLETE ERROR CANCELED
 UNKNOWN`.
 
+Every rendered launch descriptor also carries the required OneLogger runtime
+bootstrap. Cosmos Framework is standalone rather than NeMo-descendant, so the
+platform installs `one-logger-utils` from the internal MLWFO PyPI index under
+the `SLURM_LOCALID == 0` guard while nonzero ranks wait 30 seconds. When the
+container does not inherit the submitter's home, mount the existing host
+`.netrc` at `/root/.netrc`; never export `WANDB_API_KEY`. Smoke/probe launches
+set `ONE_LOGGER_JOB_CATEGORY=test`; real DEFT launches leave that variable
+unset.
+
 ## Completion
 
 A run is complete only after a successful `loop_stop` commit, terminal

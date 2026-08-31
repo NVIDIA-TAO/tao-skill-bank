@@ -14,6 +14,27 @@ import sys
 from typing import Any
 
 
+ONE_LOGGER_BOOTSTRAP = {
+    "framework_lineage": "standalone_cosmos_framework_not_nemo_descendant",
+    "package": "one-logger-utils",
+    "pip_index_url": (
+        "https://sc-hw-artf.nvidia.com/artifactory/api/pypi/"
+        "hwinf-mlwfo-pypi/simple"
+    ),
+    "rank_zero_install_guard": "${SLURM_LOCALID:-0} == 0",
+    "nonzero_rank_wait_seconds": 30,
+    "requires_netrc_mount_when_home_unmounted": True,
+    "container_netrc_path": "/root/.netrc",
+    "forbidden_environment": ["WANDB_API_KEY"],
+    "smoke_environment": {"ONE_LOGGER_JOB_CATEGORY": "test"},
+    "real_run_environment": {},
+}
+
+
+def _one_logger_bootstrap() -> dict[str, Any]:
+    return json.loads(json.dumps(ONE_LOGGER_BOOTSTRAP))
+
+
 def _image(value: str) -> str:
     if not re.search(r"@sha256:[0-9a-f]{64}$", value):
         raise ValueError("action descriptor requires an immutable image digest")
@@ -77,6 +98,7 @@ def build_train_plan(
         "working_directory": results_dir,
         "resources": {"gpus": num_gpus, "nodes": 1, "distributed": num_gpus > 1},
         "supporting_files": [adapter_root],
+        "runtime_bootstrap": {"one_logger": _one_logger_bootstrap()},
         "submission_owner": "selected_platform_four_verb_contract",
     }
 
@@ -174,6 +196,7 @@ def build_action_plan(
             "complete_coverage_required": action == "evaluate",
         },
         "supporting_files": [runtime_adapter],
+        "runtime_bootstrap": {"one_logger": _one_logger_bootstrap()},
         "submission_owner": "selected_platform_four_verb_contract",
     }
     if config_path:
