@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import itertools
 import json
 import os
 import pathlib
@@ -42,11 +43,19 @@ def _content_text(content: Any) -> str:
     return ""
 
 
-def iter_source_rows(path: pathlib.Path) -> Iterator[dict[str, Any]]:
+def iter_source_rows(
+    path: pathlib.Path, *, num_shards: int = 1, shard_index: int = 0
+) -> Iterator[dict[str, Any]]:
     """Stream validated rows without materializing a JSON array."""
+
+    if num_shards <= 0:
+        raise ValueError("num_shards must be positive")
+    if not 0 <= shard_index < num_shards:
+        raise ValueError("shard_index must be in [0, num_shards)")
 
     with path.open(encoding="utf-8") as stream:
         yielded = 0
+        source_index = 0
         for line_number, line in enumerate(stream, start=1):
             if not line.strip():
                 continue
@@ -67,10 +76,16 @@ def iter_source_rows(path: pathlib.Path) -> Iterator[dict[str, Any]]:
                 )
             if not isinstance(messages, list) or not messages:
                 raise ValueError(f"{path}:{line_number}: messages must be a non-empty list")
+            selected = source_index % num_shards == shard_index
+            source_index += 1
+            if not selected:
+                continue
             yielded += 1
             yield row
         if not yielded:
-            raise ValueError(f"{path}: JSONL is empty")
+            raise ValueError(
+                f"{path}: shard {shard_index}/{num_shards} contains no JSONL rows"
+            )
 
 
 def _resolve_media_item(
@@ -242,7 +257,7 @@ def _load_model(
     model_path: pathlib.Path,
     *,
     dtype: str,
-    device_map: str,
+    device_map: str | dict[str, str],
     attn_implementation: str,
 ) -> tuple[Any, Any]:
     _register_cosmos_attention(attn_implementation)
@@ -250,6 +265,8 @@ def _load_model(
     from transformers_cosmos3 import Cosmos3ForConditionalGeneration
 
     processor = AutoProcessor.from_pretrained(str(model_path), trust_remote_code=True)
+    if getattr(processor, "tokenizer", None) is not None:
+        processor.tokenizer.padding_side = "left"
     model = Cosmos3ForConditionalGeneration.from_pretrained(
         str(model_path),
         torch_dtype=_torch_dtype(dtype),
@@ -272,28 +289,47 @@ def _model_input_device(model: Any, requested: str) -> Any:
         return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def _generate(
+def _generate_batch(
     processor: Any,
     model: Any,
-    messages: list[dict[str, Any]],
+    conversations: list[list[dict[str, Any]]],
     *,
     max_new_tokens: int,
     input_device: str,
-) -> str:
+) -> list[str]:
     import torch
     from qwen_vl_utils import process_vision_info
 
-    rendered = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+    rendered = [
+        processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        for messages in conversations
+    ]
+    image_inputs, video_inputs, video_kwargs = process_vision_info(
+        conversations,
+        image_patch_size=16,
+        return_video_kwargs=True,
+        return_video_metadata=True,
     )
-    image_inputs, video_inputs = process_vision_info(messages)
-    inputs = processor(
-        text=[rendered],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    ).to(_model_input_device(model, input_device))
+    processor_kwargs: dict[str, Any] = {
+        "text": rendered,
+        "images": image_inputs,
+        "padding": True,
+        "return_tensors": "pt",
+    }
+    if video_inputs:
+        videos, video_metadata = zip(*video_inputs)
+        processor_kwargs.update(
+            {
+                "videos": list(videos),
+                "video_metadata": list(video_metadata),
+                "do_resize": False,
+            }
+        )
+    inputs = processor(**processor_kwargs, **video_kwargs).to(
+        _model_input_device(model, input_device)
+    )
     tokenizer = getattr(processor, "tokenizer", None)
     pad_token_id = None
     if tokenizer is not None:
@@ -306,11 +342,14 @@ def _generate(
             pad_token_id=pad_token_id,
         )
     input_length = int(inputs["input_ids"].shape[1])
-    return processor.batch_decode(
-        generated[:, input_length:],
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False,
-    )[0].strip()
+    return [
+        output.strip()
+        for output in processor.batch_decode(
+            generated[:, input_length:],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+    ]
 
 
 def _atomic_predictions(
@@ -321,6 +360,7 @@ def _atomic_predictions(
     processor: Any,
     model: Any,
     max_new_tokens: int,
+    batch_size: int,
     input_device: str,
     require_ground_truth: bool,
 ) -> int:
@@ -329,28 +369,39 @@ def _atomic_predictions(
     count = 0
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            for row in rows:
-                messages = prepare_prompt_messages(row, media_root)
-                prediction = _generate(
+            while True:
+                batch = list(itertools.islice(rows, batch_size))
+                if not batch:
+                    break
+                conversations = [
+                    prepare_prompt_messages(row, media_root) for row in batch
+                ]
+                predictions = _generate_batch(
                     processor,
                     model,
-                    messages,
+                    conversations,
                     max_new_tokens=max_new_tokens,
                     input_device=input_device,
                 )
-                stream.write(
-                    json.dumps(
-                        normalized_result(
-                            row,
-                            prediction,
-                            require_ground_truth=require_ground_truth,
-                        ),
-                        ensure_ascii=False,
-                        separators=(",", ":"),
+                if len(predictions) != len(batch):
+                    raise RuntimeError(
+                        "Framework generation returned a different number of outputs "
+                        "than inputs"
                     )
-                    + "\n"
-                )
-                count += 1
+                for row, prediction in zip(batch, predictions):
+                    stream.write(
+                        json.dumps(
+                            normalized_result(
+                                row,
+                                prediction,
+                                require_ground_truth=require_ground_truth,
+                            ),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    )
+                    count += 1
             stream.flush()
             os.fsync(stream.fileno())
         if not count:
@@ -408,6 +459,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--device-map", default="auto")
     parser.add_argument("--input-device", default="auto")
     parser.add_argument("--attn-implementation")
+    parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--num-shards", type=int)
+    parser.add_argument("--shard-index", type=int)
     parser.add_argument("--validate-only", action="store_true")
     return parser
 
@@ -424,7 +478,21 @@ def main(argv: list[str] | None = None) -> int:
             model_config = config["model"]
             source = pathlib.Path(dataset.get("annotation_path", "")).expanduser().resolve(strict=True)
             media_root = pathlib.Path(dataset.get("media_dir", "")).expanduser().resolve(strict=True)
-            rows: Iterator[dict[str, Any]] = iter_source_rows(source)
+            evaluation = config.get("evaluation", {})
+            if not isinstance(evaluation, dict):
+                raise ValueError("evaluation TOML table must be an object")
+            num_shards = args.num_shards or int(
+                os.environ.get("WORLD_SIZE") or os.environ.get("SLURM_NTASKS") or 1
+            )
+            shard_index = (
+                args.shard_index
+                if args.shard_index is not None
+                else int(os.environ.get("RANK") or os.environ.get("SLURM_PROCID") or 0)
+            )
+            rows = iter_source_rows(
+                source, num_shards=num_shards, shard_index=shard_index
+            )
+            batch_size = args.batch_size or int(evaluation.get("batch_size", 1))
             max_new_tokens = args.max_new_tokens or int(generation.get("max_tokens", 1024))
             dtype = args.dtype or str(model_config.get("dtype", "bfloat16"))
             attention = args.attn_implementation or str(
@@ -436,11 +504,16 @@ def main(argv: list[str] | None = None) -> int:
             media = pathlib.Path(args.media).expanduser().resolve(strict=True)
             media_root = media.parent
             rows = iter((_inference_row(argparse.Namespace(**{**vars(args), "media": media.name})),))
+            num_shards = 1
+            shard_index = 0
+            batch_size = args.batch_size or 1
             max_new_tokens = args.max_new_tokens or 1024
             dtype = args.dtype or "bfloat16"
             attention = args.attn_implementation or "cosmos"
         if max_new_tokens <= 0:
             raise ValueError("max_new_tokens must be positive")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
         model_path = args.model_path.expanduser().resolve(strict=True)
         if not model_path.is_dir():
             raise NotADirectoryError(f"model path is not a directory: {model_path}")
@@ -455,28 +528,56 @@ def main(argv: list[str] | None = None) -> int:
                         "backend": "cosmos-framework",
                         "model_path": str(model_path),
                         "selected_rows": len(selected),
+                        "batch_size": batch_size,
+                        "num_shards": num_shards,
+                        "shard_index": shard_index,
                     },
                     sort_keys=True,
                 )
             )
             return 0
+        if num_shards > 1:
+            import torch
+
+            local_rank = int(os.environ.get("LOCAL_RANK") or shard_index)
+            torch.cuda.set_device(local_rank)
+            device_map: str | dict[str, str]
+            device_map = {"": f"cuda:{local_rank}"} if args.device_map == "auto" else args.device_map
+            input_device = f"cuda:{local_rank}" if args.input_device == "auto" else args.input_device
+        else:
+            device_map = args.device_map
+            input_device = args.input_device
+        if num_shards > 1 and "{rank}" not in str(args.output_jsonl):
+            raise ValueError("distributed evaluate requires {rank} in --output-jsonl")
         processor, model = _load_model(
             model_path,
             dtype=dtype,
-            device_map=args.device_map,
+            device_map=device_map,
             attn_implementation=attention,
         )
+        output = pathlib.Path(str(args.output_jsonl).format(rank=shard_index))
         count = _atomic_predictions(
-            args.output_jsonl.expanduser().resolve(),
+            output.expanduser().resolve(),
             rows,
             media_root=media_root,
             processor=processor,
             model=model,
             max_new_tokens=max_new_tokens,
-            input_device=args.input_device,
+            batch_size=batch_size,
+            input_device=input_device,
             require_ground_truth=args.action == "evaluate",
         )
-        print(json.dumps({"predictions": count, "output": str(args.output_jsonl.resolve())}))
+        print(
+            json.dumps(
+                {
+                    "predictions": count,
+                    "output": str(output.resolve()),
+                    "batch_size": batch_size,
+                    "num_shards": num_shards,
+                    "shard_index": shard_index,
+                }
+            )
+        )
         return 0
     except (OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
         print(f"cfw_jsonl_runtime: {exc}", file=sys.stderr)

@@ -26,11 +26,15 @@ def build_config(
     media_root: str,
     model_path: str,
     results_dir: str,
+    num_gpus: int,
+    batch_size: int,
 ) -> dict[str, Any]:
     if action != "evaluate":
         raise ValueError("this renderer only accepts action=evaluate")
+    if num_gpus <= 0 or batch_size <= 0:
+        raise ValueError("num_gpus and batch_size must be positive")
     config = {
-        "num_gpus": 1,
+        "num_gpus": num_gpus,
         "results_dir": results_dir,
         "task": {"type": ""},
         "dataset": {
@@ -48,17 +52,17 @@ def build_config(
             "config_file": "",
             "export_dir": "",
             "vit_checkpoint_path": "",
-            "attn_implementation": "cosmos",
+            "attn_implementation": "sdpa",
         },
         "evaluation": {
             "answer_type": "freeform",
-            "num_processes": 1,
+            "num_processes": num_gpus,
             "skip_saved": False,
             "seed": 42,
             "limit": -1,
             "shard_strategy": "stride",
             "shard_id": 0,
-            "batch_size": 1,
+            "batch_size": batch_size,
             "barrier_timeout_seconds": 14400,
         },
         "vision": {
@@ -93,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--media-root", required=True)
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--results-dir", required=True)
+    parser.add_argument("--num-gpus", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     args = parser.parse_args(argv)
     try:
@@ -102,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
             media_root=args.media_root,
             model_path=args.model_path,
             results_dir=args.results_dir,
+            num_gpus=args.num_gpus,
+            batch_size=args.batch_size,
         )
         _atomic_text(args.output.expanduser().resolve(), dump_toml(config))
     except (OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:

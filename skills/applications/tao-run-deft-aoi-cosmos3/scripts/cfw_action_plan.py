@@ -99,9 +99,14 @@ def build_action_plan(
     prompt: str = "",
     media_type: str = "image",
     max_new_tokens: int = 1024,
+    num_gpus: int = 1,
 ) -> dict[str, Any]:
     if action not in {"evaluate", "inference"}:
         raise ValueError("action must be evaluate or inference")
+    if num_gpus <= 0:
+        raise ValueError("num_gpus must be positive")
+    if action == "inference" and num_gpus != 1:
+        raise ValueError("single-media inference requires num_gpus=1")
     if not runtime_adapter or not output_jsonl:
         raise ValueError("evaluate/inference require runtime_adapter and output_jsonl")
     handoff = [bool(framework_config), bool(action_model_dir)]
@@ -157,7 +162,11 @@ def build_action_plan(
             "format": "jsonl",
         },
         "working_directory": results_dir,
-        "resources": {"gpus": 1, "nodes": 1, "distributed": False},
+        "resources": {
+            "gpus": num_gpus,
+            "nodes": 1,
+            "distributed": action == "evaluate" and num_gpus > 1,
+        },
         "prediction_contract": {
             "producer": "cfw_jsonl_runtime.py",
             "output_schema": ["id", "task_type", "message", "GT", "raw_prediction"],
