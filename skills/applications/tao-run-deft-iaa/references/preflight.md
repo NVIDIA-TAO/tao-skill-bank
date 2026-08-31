@@ -144,8 +144,10 @@ Run this section only after required intake is resolved.
 
    ```bash
    docker version --format '{{.Server.Version}}'
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.pyt
-   docker image inspect nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch >/dev/null 2>&1  # versions-key: images.tao_toolkit.data_services
+   TAO_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.pyt
+   TAO_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.data_services
+   docker image inspect "$TAO_PYT_IMAGE" >/dev/null 2>&1
+   docker image inspect "$TAO_DS_IMAGE" >/dev/null 2>&1
    nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
    ```
 
