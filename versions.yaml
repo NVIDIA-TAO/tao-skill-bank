@@ -29,16 +29,19 @@
 
 images:
   tao_toolkit:
-    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
-    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-53-multiarch
-    data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
+    pyt:                    nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
+    deploy:                 nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-53-multiarch
+    data_services:          nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
+    # PAS pins independently; review both dedicated keys on every TAO image bump.
+    deft_pas_pyt:           nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
+    deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
-    cosmos_framework:   nvcr.io/nvstaging/tao/cosmos_framework:7.2.0-rc-290-multiarch
-    cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-290-multiarch
-    deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
-    cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
-    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
-    vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
+    cosmos_framework:       nvcr.io/nvstaging/tao/cosmos_framework:7.2.0-rc-290-multiarch
+    cosmos_rl:              nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-290-multiarch
+    deft_cosmos_reason:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
+    cosmos_predict:         nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
+    cosmos_embed:           nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
+    vila:                   nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
     paidf_anomalygen: nvcr.io/nvidia/paidf-anomalygen:1.0.1

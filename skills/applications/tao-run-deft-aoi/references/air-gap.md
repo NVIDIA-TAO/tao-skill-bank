@@ -26,14 +26,14 @@ bootstrap without changing the global mode.
 In global air-gap mode:
 
 - Initialize state with `--network-mode airgap` and its activation source.
-  After initialization, run external commands through `scripts/deft_exec.py`;
+  After initialization, run external commands through `"$PYTHON" scripts/deft_exec.py`;
   it re-reads `execution_policy`, injects offline variables, and adds
   `--pull=never` to direct Docker/Podman runs.
 - Do not run package managers, registry login or pull, downloads, APIs, or
   network probes.
 - Convert every fetch/pull instruction into a local presence check. A missing
   image, model, dataset, or required host dependency is a hard stop.
-- Use `scripts/deft_python.sh` for host Python. On `ModuleNotFoundError`, retry
+- Use `bash scripts/deft_python.sh` to select host Python. On `ModuleNotFoundError`, retry
   through this orchestrator's launcher and hard-stop if no complete interpreter
   exists. Never run `pip`, even as a probe or after a failed bare-Python call; a
   package-manager attempt invalidates the air-gap run and requires a fresh run

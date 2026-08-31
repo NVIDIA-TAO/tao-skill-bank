@@ -91,7 +91,8 @@ parquets, and exact positive row count. The next stage uses
 bare label.
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" <skill_root>/scripts/commit_stage.py \
   --results-dir "$RESULTS_DIR" --iter-label "iter$ITERATION" \
   --stage data_mining \
   --mining-parquet "$MINING_DIR/mined_filtered.parquet" \

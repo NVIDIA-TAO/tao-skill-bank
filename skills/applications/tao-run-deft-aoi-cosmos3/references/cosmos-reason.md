@@ -138,7 +138,8 @@ Read the current `tao-finetune-cosmos-reason` model skill and
 `references/skill_info.yaml`. The action contract is:
 
 - image: resolve the `cosmos-rl` backend image from the Cosmos model skill's
-  `references/skill_info.yaml` with `scripts/resolve_tao_image.py`;
+  `references/skill_info.yaml` with
+  `"$PYTHON" "$TAO_SKILL_BANK_PATH/scripts/resolve_tao_image.py"`;
 - command: `cosmos-rl --config {config_path}
   /opt/cosmos_rl/tao_sft_example.py`;
 - mode/format: `config` / TOML;

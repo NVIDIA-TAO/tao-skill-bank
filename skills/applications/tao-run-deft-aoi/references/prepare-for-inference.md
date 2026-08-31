@@ -12,7 +12,7 @@ downstream inference skills can consume the trained checkpoint without reading
 | `best_model_inference_spec.yaml` | Ready-to-run TAO inference spec. The executable artifact. |
 
 Both are written by `scripts/prepare_inference_spec.py`. At ordinary loop end,
-use `scripts/finalize_run.py`; it writes these first and refuses the terminal
+use `"$PYTHON" scripts/finalize_run.py`; it writes these first and refuses the terminal
 commit if either is absent. Never hand-edit either file.
 
 ### `best_model.json`

@@ -35,9 +35,9 @@ iteration executes:
    produced zero rows. This is a
    documented branch skip, not a fabricated artifact.
 
-   **SDG training contribution (INLINE).** Convert returned AnomalyGen outputs into ChangeNet paired training rows. Pre-create `${RESULTS_DIR}/iter${N}/mining_filter/` and `${RESULTS_DIR}/iter${N}/dataset/images/` before running the row-prep script. Stage NG/OK image pairs under `results/iter${N}/dataset/images/synthetic_iter${N}_{ng,ok}/`, run `scripts/changenet_data_pair_prepare.py` with `--input-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/reconstructed_image`, `--golden-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/original_image`, `--images-dir`, `--subdir synthetic_iter${N}`, `--light SolderLight`, `--image-ext .jpg` (or the exact `dataset.classify.image_ext` from the training spec), and `--output-csv ${RESULTS_DIR}/iter${N}/mining_filter/sdg_rows_raw.csv`. Rewrite the script's bare `synthetic_iter${N}_ng/` paths to workspace-root-relative form (`results/run_<TS>/iter${N}/dataset/images/synthetic_iter${N}_ng`) before appending into `mining_filter/mining_pool.csv`, since the per-iter training spec sets `images_dir=/data/workspace`. SDG rows skip k-NN filtering; only real-image mining applies the cosine threshold.
+   **SDG training contribution (INLINE).** Convert returned AnomalyGen outputs into ChangeNet paired training rows. Pre-create `${RESULTS_DIR}/iter${N}/mining_filter/` and `${RESULTS_DIR}/iter${N}/dataset/images/` before running the row-prep script. Stage NG/OK image pairs under `results/iter${N}/dataset/images/synthetic_iter${N}_{ng,ok}/`, run `"$PYTHON" scripts/changenet_data_pair_prepare.py` with `--input-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/reconstructed_image`, `--golden-dir ${RESULTS_DIR}/iter${N}/anomalygen/sdg/original_image`, `--images-dir`, `--subdir synthetic_iter${N}`, `--light SolderLight`, `--image-ext .jpg` (or the exact `dataset.classify.image_ext` from the training spec), and `--output-csv ${RESULTS_DIR}/iter${N}/mining_filter/sdg_rows_raw.csv`. Rewrite the script's bare `synthetic_iter${N}_ng/` paths to workspace-root-relative form (`results/run_<TS>/iter${N}/dataset/images/synthetic_iter${N}_ng`) before appending into `mining_filter/mining_pool.csv`, since the per-iter training spec sets `images_dir=/data/workspace`. SDG rows skip k-NN filtering; only real-image mining applies the cosine threshold.
 
-4. **[SKILL — `tao-skill-bank:tao-mine-aoi-images`] Mining pool — real-image contribution.** First run `scripts/resolve_mining_pool.py` with `state.config.mining_pool_csv`, `state.config.mining_images_root`, and `state.config.resolved_mining_pool_csv`; use only the resolved output. It fails on every missing or ambiguous file, so never guess an `augmentation/mining_pool/images` directory. Mine the resolved rows against the current iteration's weak samples (`routing_mining_parquet` from state) using SigLIP k-NN embeddings. **Retain only entries with cosine similarity ≥ `state.config.mining_filter.min_similarity`**, then apply history-aware filtering. Append only final novel rows into `mining_filter/mining_pool.csv`; never append raw/candidate parquets. `commit_stage.py` verifies the reported count against the mined parquet and rejects placeholder logs. See `references/tao-mine-aoi-images.md`.
+4. **[SKILL — `tao-skill-bank:tao-mine-aoi-images`] Mining pool — real-image contribution.** First run `"$PYTHON" scripts/resolve_mining_pool.py` with `state.config.mining_pool_csv`, `state.config.mining_images_root`, and `state.config.resolved_mining_pool_csv`; use only the resolved output. It fails on every missing or ambiguous file, so never guess an `augmentation/mining_pool/images` directory. Mine the resolved rows against the current iteration's weak samples (`routing_mining_parquet` from state) using SigLIP k-NN embeddings. **Retain only entries with cosine similarity ≥ `state.config.mining_filter.min_similarity`**, then apply history-aware filtering. Append only final novel rows into `mining_filter/mining_pool.csv`; never append raw/candidate parquets. `commit_stage.py` verifies the reported count against the mined parquet and rejects placeholder logs. See `references/tao-mine-aoi-images.md`.
 
    If history filtering leaves zero novel real rows, surface its recommendation
    to increase `topn` or expand the source pool. Continue only when AnomalyGen
@@ -52,7 +52,7 @@ iteration executes:
    This is the only legal mining skip: an invalid source CSV or failed mining
    command with routed rows remaining is a hard stop.
 
-   **Mid-iteration leakage check.** Right after the mining stage finishes — before any further CSV assembly — diff `mining_filter/mining_pool.csv` against `train/base/validation_set.csv` on `(input_path, golden_path, label, object_name, boardname)` (use `scripts/validate_training_csv.py --csv <mining_pool.csv> --workspace-root <ws> --validation-csv <validation_set.csv>`). Hard-stop on any hit. Catching leakage here, with only the new rows in scope, is cheap and isolates the offending source. The post-assembly leakage check in step 6b stays as a defence-in-depth backstop.
+   **Mid-iteration leakage check.** Right after the mining stage finishes — before any further CSV assembly — diff `mining_filter/mining_pool.csv` against `train/base/validation_set.csv` on `(input_path, golden_path, label, object_name, boardname)` (use `"$PYTHON" scripts/validate_training_csv.py --csv <mining_pool.csv> --workspace-root <ws> --validation-csv <validation_set.csv>`). Hard-stop on any hit. Catching leakage here, with only the new rows in scope, is cheap and isolates the offending source. The post-assembly leakage check in step 6b stays as a defence-in-depth backstop.
 
 5. **[INLINE] Assemble training CSV** with monotonic growth:
    - Iter 1: `train/base/training_set.csv` + `mining_filter/mining_pool.csv`.
@@ -68,7 +68,7 @@ iteration executes:
 
 6. **[INLINE] Pre-train CSV validation** — run **both** checks below; hard stop on either failure. Both must pass before launching the training container; an invalid CSV burns a full GPU run before the container surfaces the root cause.
 
-   a. **Existence check.** Run `scripts/validate_training_csv.py --csv ${RESULTS_DIR}/iter${ITER}/dataset/train_combined_iter${ITER}.csv --workspace-root <workspace> --validation-csv <workspace>/train/base/validation_set.csv --report-json ${RESULTS_DIR}/iter${ITER}/dataset/merge_validation.json`. It hard-stops if any `input_path` / `golden_path` refers to a file missing on disk or if a required column is missing.
+   a. **Existence check.** Run `"$PYTHON" scripts/validate_training_csv.py --csv ${RESULTS_DIR}/iter${ITER}/dataset/train_combined_iter${ITER}.csv --workspace-root <workspace> --validation-csv <workspace>/train/base/validation_set.csv --report-json ${RESULTS_DIR}/iter${ITER}/dataset/merge_validation.json`. It hard-stops if any `input_path` / `golden_path` refers to a file missing on disk or if a required column is missing.
 
    b. **Train/validation leakage check.** `scripts/validate_training_csv.py` accepts `--validation-csv`; pass `train/base/validation_set.csv` so the diff on `(input_path, golden_path, label, object_name, boardname)` runs as part of the single validation pass. Hard stop on any validation row appearing in training. (Step 4 already runs the mid-iteration variant on `mining_filter/mining_pool.csv`; this check is the defence-in-depth backstop against leakage introduced by base-CSV reassembly.)
 
@@ -90,7 +90,8 @@ iteration executes:
    The snippet documents the schema only. Commit it with:
 
    ```bash
-   <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+   PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+   "$PYTHON" <skill_root>/scripts/commit_stage.py \
      --results-dir "${RESULTS_DIR}" --iter-label iter${ITER} \
      --stage data_merge \
      --combined-csv "${RESULTS_DIR}/iter${ITER}/dataset/train_combined_iter${ITER}.csv" \
@@ -103,7 +104,7 @@ iteration executes:
    Do not launch training while the last committed stage is still
    `data_mining`; this commit is the proof that all path/leakage checks passed.
 
-7. **[SKILL — `tao-skill-bank:tao-train-visual-changenet`] Fine-tune + evaluate.** Invoke the skill for separate `train`, `inference`, and `evaluate` tasks, committing `train` through `scripts/commit_stage.py` **before** evaluate; preserve the documented `data_merge → train → evaluate` order. Do not fold train into the evaluate commit. Iter N's committed checkpoint must be a newly emitted file under `${RESULTS_DIR}/iter${N}/train/`; reusing or copying the baseline/previous checkpoint is not an iteration train. For the train task, pass `automl_policy: off` as a **workflow argument** (to the Skill tool call or SDK runner), **not** as a spec field — see `## Train AutoML Policy` in SKILL.md. For direct `docker run visual_changenet train -e <spec>`, plain training is already the default. A nonzero train exit or a TAO status `FAILURE`, or a zero-step `PASS` that emits no new iteration checkpoint, is a hard stop; never evaluate a checkpoint written before that failure. Run the configured evaluator for every candidate checkpoint, select by its operator, then pass the winner and evaluator JSON to `commit_stage.py`; it records the metric and `evaluate` event transactionally. See `references/visual-changenet.md` and `references/metric-contract.md`.
+7. **[SKILL — `tao-skill-bank:tao-train-visual-changenet`] Fine-tune + evaluate.** Invoke the skill for separate `train`, `inference`, and `evaluate` tasks, committing `train` through `"$PYTHON" scripts/commit_stage.py` **before** evaluate; preserve the documented `data_merge → train → evaluate` order. Do not fold train into the evaluate commit. Iter N's committed checkpoint must be a newly emitted file under `${RESULTS_DIR}/iter${N}/train/`; reusing or copying the baseline/previous checkpoint is not an iteration train. For the train task, pass `automl_policy: off` as a **workflow argument** (to the Skill tool call or SDK runner), **not** as a spec field — see `## Train AutoML Policy` in SKILL.md. For direct `docker run visual_changenet train -e <spec>`, plain training is already the default. A nonzero train exit or a TAO status `FAILURE`, or a zero-step `PASS` that emits no new iteration checkpoint, is a hard stop; never evaluate a checkpoint written before that failure. Run the configured evaluator for every candidate checkpoint, select by its operator, then pass the winner and evaluator JSON to `commit_stage.py`; it records the metric and `evaluate` event transactionally. See `references/visual-changenet.md` and `references/metric-contract.md`.
 
 ## State
 
@@ -153,8 +154,9 @@ Three stage types:
 
 - **SKILL** — read `references/<stage>.md` first, then invoke the matching `tao-skill-bank:*` skill via the Skill tool or its documented direct-container fallback. Stage→skill mapping and fallback contract are in `references/scripts-and-agents.md`.
 - **INLINE** — parent does the work directly (pre-flight, CSV assembly, leakage check).
-- **HOOK** — `commit_stage.py` invokes `scripts/render_report.py` after each
-  valid commit. Report generation is deterministic and never delegated.
+- **HOOK** — after each valid commit, `commit_stage.py` starts
+  `scripts/render_report.py` with its current Python interpreter. Report
+  generation is deterministic and never delegated.
 
 For `tao-skill-bank:tao-train-visual-changenet`, pass a separate task name (`train`, `inference`, or `evaluate`); the state event's `stage` value is still only `train` or `evaluate`.
 
@@ -182,8 +184,8 @@ After every stage finishes, before advancing:
 - `results/iter${ITER}_summary.md` — ≤300 words; readable after context compaction.
 - `results/iter${ITER}/report.html` — RCA targets, branch outputs, filter decision, metric delta.
 - `results/DEFT_Loop_Report.html` — initialized by `init_deft_state.py` and
-  re-rendered after every committed stage by `commit_stage.py` through
-  `scripts/render_report.py`. The script reads the source template and disk
+  re-rendered after every committed stage by `commit_stage.py`; the hook starts
+  `scripts/render_report.py` with its current Python interpreter. The script reads the source template and disk
   evidence, validates the full output, and writes atomically.
 
 ## Runtime Behavior
@@ -196,14 +198,16 @@ at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call
 
 **Loop-end sequence** (run in order, each step depends on the previous):
 
-1. Run `deft_context.py --stage finalize`, then call `finalize_run.py` with
+1. Run `"$PYTHON" scripts/deft_context.py --stage finalize`, then call
+   `"$PYTHON" scripts/finalize_run.py` with
    `--stop-reason metric_met` or `max_iterations`. It first writes
    `best_model.json` and `best_model_inference_spec.yaml`, then commits
    `loop_stop`; terminal state cannot exist without those artifacts.
 2. Optionally backfill real per-stage token usage into `deft_state.json` from the Claude Code transcript:
 
    ```bash
-   <this-skill-dir>/scripts/deft_python.sh <this-skill-dir>/scripts/align_token_usage.py \
+   PYTHON=$(bash <this-skill-dir>/scripts/deft_python.sh)
+   "$PYTHON" <this-skill-dir>/scripts/align_token_usage.py \
        --state-path ${RESULTS_DIR}/deft_state.json \
        --project-dir ~/.claude/projects/$(pwd | sed 's|/|-|g')
    ```
@@ -213,7 +217,8 @@ at intervals no longer than 30s, and always `wait`; never poll a Skill-tool call
    the backfilled usage fields:
 
    ```bash
-   <this-skill-dir>/scripts/deft_python.sh \
+   PYTHON=$(bash <this-skill-dir>/scripts/deft_python.sh)
+   "$PYTHON" \
      <this-skill-dir>/scripts/render_report.py \
      --results-dir "${RESULTS_DIR}" --require-terminal
    ```
@@ -240,7 +245,8 @@ if one was requested, and end the session.
 or recovery before terminal state, the lower-level command is:
 
 ```bash
-<this-skill-dir>/scripts/deft_python.sh <this-skill-dir>/scripts/prepare_inference_spec.py --results-dir ${RESULTS_DIR}
+PYTHON=$(bash <this-skill-dir>/scripts/deft_python.sh)
+"$PYTHON" <this-skill-dir>/scripts/prepare_inference_spec.py --results-dir ${RESULTS_DIR}
 ```
 
 This writes two artifacts under `${RESULTS_DIR}/`:
