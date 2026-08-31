@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -15,8 +15,6 @@ import unittest
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
-for module_name in ("init_deft_state", "metric_contract", "render_report"):
-    sys.modules.pop(module_name, None)
 sys.path.insert(0, str(SCRIPTS))
 
 import init_deft_state  # noqa: E402
@@ -28,84 +26,65 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
         workspace = root / "workspace"
         (workspace / "annotations").mkdir(parents=True)
         (workspace / "specs").mkdir()
-        for filename in (
-            "proxy_kpi.json",
-            "benchmark_kpi.json",
-            "mining_pool.json",
-        ):
-            (workspace / "annotations" / filename).write_text(
-                "[]\n", encoding="utf-8"
-            )
-        (workspace / "specs/train_spec.toml").write_text(
-            "value = 1\n", encoding="utf-8"
-        )
-        (workspace / "specs/evaluate_spec.toml").write_text(
-            "value = 1\n", encoding="utf-8"
-        )
+        (workspace / "eval").mkdir()
+        model = workspace / "models/Cosmos3-Nano-VLM"
+        model.mkdir(parents=True)
+        for name in ("preprocessor_config.json", "tokenizer_config.json", "tokenizer.json"):
+            (model / name).write_text("{}\n", encoding="utf-8")
+        (model / "config.json").write_text('{"model_type":"qwen3_vl"}\n', encoding="utf-8")
+        (model / "model.safetensors").write_bytes(b"weights")
+        for filename in ("proxy_kpi.jsonl", "benchmark.jsonl", "mining.jsonl"):
+            (workspace / "annotations" / filename).write_text("{}\n", encoding="utf-8")
+        for filename in ("train_spec.toml", "evaluate_spec.toml"):
+            (workspace / "specs" / filename).write_text("value = 1\n", encoding="utf-8")
+        (workspace / "eval/calculate_f1_metrics.py").write_text("pass\n", encoding="utf-8")
         return workspace
 
     @staticmethod
-    def _argv(
-        root: pathlib.Path,
-        workspace: pathlib.Path,
-        *extra: str,
-    ) -> list[str]:
+    def _argv(root: pathlib.Path, workspace: pathlib.Path, *extra: str) -> list[str]:
+        immutable = "example/image:1@sha256:" + "a" * 64
         return [
-            "--results-dir",
-            str(root / "results"),
-            "--workspace",
-            str(workspace),
-            "--platform",
-            "docker",
-            "--max-iterations",
-            "1",
-            "--num-epochs",
-            "1",
-            "--num-sdg",
-            "20",
-            "--num-gpus",
-            "1",
-            "--num-nodes",
-            "1",
-            "--gpu-model",
-            "NVIDIA H100 80GB",
-            "--cosmos-container",
-            "example/cosmos:1",
-            "--mining-container",
-            "example/mining:1",
+            "--results-dir", str(root / "results"),
+            "--workspace", str(workspace),
+            "--platform", "docker",
+            "--max-iterations", "1",
+            "--num-gpus", "1",
+            "--num-nodes", "1",
+            "--recipe-profile", "smoke",
+            "--gpu-model", "NVIDIA H100 80GB",
+            "--framework-container", immutable,
+            "--mining-container", immutable,
             *extra,
         ]
 
-    def test_valid_base_model_alias_is_accepted_and_canonicalized(self) -> None:
+    def test_local_model_is_recorded_in_framework_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             workspace = self._workspace(root)
-
-            rc = init_deft_state.main(
-                self._argv(root, workspace, "--base-model", "EDGE")
-            )
-
+            rc = init_deft_state.main(self._argv(root, workspace))
             self.assertEqual(rc, 0)
             state = json.loads((root / "results/deft_state.json").read_text())
-            self.assertEqual(state["config"]["base_model"], "nvidia/Cosmos3-Edge")
+            self.assertEqual(state["version"], 7)
+            self.assertEqual(state["config"]["training"]["backend"], "cosmos-framework")
+            self.assertEqual(
+                state["config"]["training"]["annotation_source"],
+                "mined_real_samples_only",
+            )
 
-    def test_unknown_base_model_is_rejected_with_allowed_values(self) -> None:
+    def test_invalid_local_model_is_rejected_before_state_write(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             workspace = self._workspace(root)
+            invalid = root / "invalid-model"
+            invalid.mkdir()
             stderr = io.StringIO()
-
             with contextlib.redirect_stderr(stderr):
                 rc = init_deft_state.main(
-                    self._argv(root, workspace, "--base-model", "bogus-model")
+                    self._argv(root, workspace, "--base-model", str(invalid))
                 )
-
             self.assertEqual(rc, 2)
             self.assertFalse((root / "results/deft_state.json").exists())
-            message = stderr.getvalue()
-            self.assertIn("unsupported --base-model 'bogus-model'", message)
-            for model in init_deft_state.SUPPORTED_BASE_MODELS:
-                self.assertIn(model, message)
+            self.assertIn("config, tokenizer, and processor", stderr.getvalue())
 
     def test_venv_python_symlink_survives_state_initialization(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -116,23 +95,12 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
             (venv_bin / "python3").symlink_to(sys.executable)
             venv_python = venv_bin / "python"
             venv_python.symlink_to("python3")
-
             rc = init_deft_state.main(
-                self._argv(
-                    root,
-                    workspace,
-                    "--python-executable",
-                    str(venv_python),
-                )
+                self._argv(root, workspace, "--python-executable", str(venv_python))
             )
-
             self.assertEqual(rc, 0)
             state = json.loads((root / "results/deft_state.json").read_text())
-            self.assertEqual(
-                state["execution_policy"]["python_executable"],
-                str(venv_python),
-            )
-            self.assertNotEqual(str(venv_python), str(venv_python.resolve()))
+            self.assertEqual(state["execution_policy"]["python_executable"], str(venv_python))
 
 
 if __name__ == "__main__":

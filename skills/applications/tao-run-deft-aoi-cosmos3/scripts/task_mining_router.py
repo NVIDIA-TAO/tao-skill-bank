@@ -14,7 +14,14 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
-from validate_sharegpt import load_records, prompt_and_response, resolve_image
+from nvpaw_annotations import TASK_SPECS
+from validate_sharegpt import (
+    image_paths,
+    load_records,
+    prompt_and_response,
+    resolve_image,
+    target_path,
+)
 
 
 MINING_ROUTER_MODES = ("image_only", "task_strict", "task_then_fallback")
@@ -68,28 +75,28 @@ def _path_keys(path_text: str, media_root: pathlib.Path) -> set[str]:
 
 def _source_catalog(
     records: list[dict[str, Any]], media_root: pathlib.Path
-) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]], set[str]]:
     catalog: dict[str, dict[str, Any]] = {}
     aliases: dict[str, set[str]] = {}
+    ignored_aliases: set[str] = set()
     for index, record in enumerate(records):
         context = f"source annotation[{index}]"
-        images = record.get("images")
-        roles = record.get("image_roles")
-        if not isinstance(images, list) or not isinstance(roles, list) or len(images) != len(roles):
-            raise ValueError(f"{context}: images must match image_roles")
-        if roles.count("target") != 1:
-            raise ValueError(f"{context}: image_roles requires one target")
-        prompt_and_response(record, context=context)
         task_type = record.get("task_type")
-        target_id = record.get("target_id")
+        if task_type not in TASK_SPECS:
+            paths = image_paths(record, context=context)
+            if paths:
+                ignored_aliases.update(_path_keys(paths[-1], media_root))
+            continue
+        prompt_and_response(record, context=context)
         record_id = record.get("id")
+        source_target_path = target_path(record, context=context)
+        target_id = record.get("target_id", source_target_path)
         if not all(
             isinstance(value, str) and value
             for value in (task_type, target_id, record_id)
         ):
             raise ValueError(f"{context}: id, target_id, and task_type are required")
-        target_path = str(images[roles.index("target")])
-        canonical = str(resolve_image(target_path, media_root))
+        canonical = str(resolve_image(source_target_path, media_root))
         entry = catalog.setdefault(
             canonical,
             {
@@ -100,13 +107,13 @@ def _source_catalog(
         )
         if entry["target_id"] != target_id:
             raise ValueError(
-                f"{context}: target path {target_path!r} maps to conflicting target_ids"
+                f"{context}: target path {source_target_path!r} maps to conflicting target_ids"
             )
         entry["task_types"].add(task_type)
         entry["record_ids"].add(record_id)
-        for key in _path_keys(target_path, media_root):
+        for key in _path_keys(source_target_path, media_root):
             aliases.setdefault(key, set()).add(canonical)
-    return catalog, aliases
+    return catalog, aliases, ignored_aliases
 
 
 def _source_metadata(
@@ -138,10 +145,12 @@ def _prepare_sources(
     media_root: pathlib.Path,
     catalog: dict[str, dict[str, Any]],
     aliases: dict[str, set[str]],
-) -> tuple[list[dict[str, Any]], int]:
+    ignored_aliases: set[str],
+) -> tuple[list[dict[str, Any]], int, int]:
     prepared: list[dict[str, Any]] = []
     dimensions: set[int] = set()
     seen: set[str] = set()
+    ignored = 0
     for index, row in enumerate(rows):
         filepath = row.get("filepath")
         if not isinstance(filepath, str) or not filepath:
@@ -151,13 +160,21 @@ def _prepare_sources(
             raise ValueError(f"duplicate source embedding filepath: {filepath!r}")
         seen.add(path_key)
         vector = _embedding(row.get("embedding"), context=f"source embedding[{index}]")
+        try:
+            metadata = _source_metadata(
+                filepath,
+                media_root=media_root,
+                catalog=catalog,
+                aliases=aliases,
+            )
+        except ValueError as exc:
+            if "has no Mining annotation" in str(exc) and (
+                _path_keys(filepath, media_root) & ignored_aliases
+            ):
+                ignored += 1
+                continue
+            raise
         dimensions.add(len(vector))
-        metadata = _source_metadata(
-            filepath,
-            media_root=media_root,
-            catalog=catalog,
-            aliases=aliases,
-        )
         prepared.append(
             {
                 "filepath": filepath,
@@ -171,7 +188,7 @@ def _prepare_sources(
         raise ValueError("source embeddings are empty")
     if len(dimensions) != 1:
         raise ValueError("source embedding dimensions are inconsistent")
-    return prepared, next(iter(dimensions))
+    return prepared, next(iter(dimensions)), ignored
 
 
 def _prepare_targets(
@@ -269,9 +286,13 @@ def route_candidates(
     if not -1.0 <= min_similarity <= 1.0:
         raise ValueError("min_similarity must be between -1 and 1")
     media_root = media_root.expanduser().resolve()
-    catalog, aliases = _source_catalog(source_annotations, media_root)
-    sources, dimension = _prepare_sources(
-        source_rows, media_root=media_root, catalog=catalog, aliases=aliases
+    catalog, aliases, ignored_aliases = _source_catalog(source_annotations, media_root)
+    sources, dimension, ignored_sources = _prepare_sources(
+        source_rows,
+        media_root=media_root,
+        catalog=catalog,
+        aliases=aliases,
+        ignored_aliases=ignored_aliases,
     )
     targets = _prepare_targets(target_rows, expected_dimension=dimension)
     try:
@@ -439,6 +460,7 @@ def route_candidates(
         "min_similarity": min_similarity,
         "target_queries": len(targets),
         "source_images": len(sources),
+        "ignored_out_of_scope_source_images": ignored_sources,
         "embedding_dimension": dimension,
         "similarity_batch_size": target_batch_size,
         "raw_selections": sum(raw_tiers.values()),

@@ -64,9 +64,9 @@ class GapProfileTests(unittest.TestCase):
         invalid["surprise"] = True
         with self.assertRaisesRegex(ValueError, "unknown gap-analysis keys.*surprise"):
             validate_config(invalid)
-        incompatible = load_profile("legacy_bare_okng")
-        incompatible["scorer"] = {"name": "sample_metric_deficit"}
-        with self.assertRaisesRegex(ValueError, "requires the binary_error scorer"):
+        incompatible = load_profile("global_topk")
+        incompatible["candidate_builder"] = "old_profile"
+        with self.assertRaisesRegex(ValueError, "must be multitask_v1"):
             validate_config(incompatible)
 
     def test_equal_round_robin_balances_an_imbalanced_candidate_set(self) -> None:

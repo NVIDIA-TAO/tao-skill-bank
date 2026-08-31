@@ -9,7 +9,6 @@ import yaml
 
 
 PACKAGED_PROFILES = (
-    "legacy_bare_okng",
     "global_topk",
     "equal_task_round_robin",
     "deficit_weighted_round_robin",
@@ -42,8 +41,8 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"unknown gap-analysis keys: {unknown}")
     if config.get("schema_version") != "gap_analysis_v1":
         raise ValueError("schema_version must be gap_analysis_v1")
-    if config.get("candidate_builder") not in {"legacy_bare_okng", "multitask_v1"}:
-        raise ValueError("candidate_builder must be legacy_bare_okng or multitask_v1")
+    if config.get("candidate_builder") != "multitask_v1":
+        raise ValueError("candidate_builder must be multitask_v1")
 
     component_contracts = {
         "scorer": (
@@ -100,12 +99,6 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("global_topk requires empty group_by and no subgroup_by")
     if allocator["name"] == "task_dataset_round_robin" and not subgroup:
         raise ValueError("task_dataset_round_robin requires subgroup_by")
-    if (
-        normalized["candidate_builder"] == "legacy_bare_okng"
-        and normalized["scorer"]["name"] != "binary_error"
-    ):
-        raise ValueError("legacy_bare_okng requires the binary_error scorer")
-
     budget = config.get("budget")
     if type(budget) is not int or budget <= 0:
         raise ValueError("budget must be a positive integer")

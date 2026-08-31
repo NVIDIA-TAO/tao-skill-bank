@@ -167,29 +167,29 @@ def validate_contract(contract: dict[str, Any]) -> dict[str, Any]:
     rich_profile = contract.get("kpi_profile")
     rich_fields: dict[str, Any] = {}
     if rich_profile is not None:
-        if rich_profile not in {"task_balanced_v1", "task_dataset_balanced_v1"}:
+        if rich_profile != "f1_cohort_balanced_v1":
             raise ValueError(f"unsupported metric_contract.kpi_profile {rich_profile!r}")
-        required_groups = contract.get("required_groups")
-        if not isinstance(required_groups, list) or not required_groups or not all(
-            isinstance(group, str) and group for group in required_groups
+        required_components = contract.get("required_components")
+        if (
+            not isinstance(required_components, list)
+            or not required_components
+            or not all(isinstance(item, str) and item for item in required_components)
         ):
-            raise ValueError("rich metric_contract.required_groups must be a non-empty string list")
-        if len(required_groups) != len(set(required_groups)):
-            raise ValueError("metric_contract.required_groups must be unique")
-        group_target = finite_number(
-            contract.get("group_metric_target"),
-            field="metric_contract.group_metric_target",
+            raise ValueError(
+                "f1 metric_contract.required_components must be a non-empty string list"
+            )
+        if len(required_components) != len(set(required_components)):
+            raise ValueError("metric_contract.required_components must be unique")
+        component_threshold = finite_number(
+            contract.get("component_threshold"),
+            field="metric_contract.component_threshold",
         )
-        if not 0.0 <= group_target <= 1.0:
-            raise ValueError("metric_contract.group_metric_target must be in [0, 1]")
-        minimum = contract.get("min_group_support")
-        if type(minimum) is not int or minimum < 1:
-            raise ValueError("metric_contract.min_group_support must be a positive integer")
+        if not 0.0 < component_threshold <= 1.0:
+            raise ValueError("metric_contract.component_threshold must be in (0, 1]")
         rich_fields = {
             "kpi_profile": rich_profile,
-            "required_groups": sorted(required_groups),
-            "group_metric_target": group_target,
-            "min_group_support": minimum,
+            "required_components": list(required_components),
+            "component_threshold": component_threshold,
         }
 
     normalized = dict(contract)
@@ -281,12 +281,70 @@ def result_from_iteration(
             result_groups = result.get("required_groups")
             if not isinstance(result_groups, list) or sorted(result_groups) != sorted(expected_groups):
                 raise ValueError("metric_result.required_groups do not match the frozen contract")
+        expected_components = contract.get("required_components")
+        if expected_components is not None:
+            result_components = result.get("required_components")
+            if result_components != expected_components:
+                raise ValueError(
+                    "metric_result.required_components do not match the frozen contract"
+                )
+            components = result.get("components")
+            if not isinstance(components, dict) or list(components) != expected_components:
+                raise ValueError(
+                    "metric_result.components must contain the frozen components in order"
+                )
+            component_values: list[float] = []
+            attainments: list[float] = []
+            for component_name in expected_components:
+                entry = components[component_name]
+                if not isinstance(entry, dict):
+                    raise ValueError(
+                        f"metric_result.components.{component_name} must be an object"
+                    )
+                f1 = finite_number(
+                    entry.get("f1"),
+                    field=f"metric_result.components.{component_name}.f1",
+                )
+                if not 0.0 <= f1 <= 1.0:
+                    raise ValueError(
+                        f"metric_result.components.{component_name}.f1 must be in [0, 1]"
+                    )
+                if entry.get("threshold") != contract["component_threshold"]:
+                    raise ValueError(
+                        f"metric_result.components.{component_name}.threshold changed"
+                    )
+                attainment = finite_number(
+                    entry.get("attainment"),
+                    field=f"metric_result.components.{component_name}.attainment",
+                )
+                expected_attainment = min(f1 / contract["component_threshold"], 1.0)
+                if not math.isclose(attainment, expected_attainment, abs_tol=1.0e-12):
+                    raise ValueError(
+                        f"metric_result.components.{component_name}.attainment is inconsistent"
+                    )
+                if entry.get("passed") is not (f1 >= contract["component_threshold"]):
+                    raise ValueError(
+                        f"metric_result.components.{component_name}.passed is inconsistent"
+                    )
+                component_values.append(f1)
+                attainments.append(attainment)
+            minimum_f1 = finite_number(
+                result.get("minimum_f1"), field="metric_result.minimum_f1"
+            )
+            if not math.isclose(minimum_f1, min(component_values), abs_tol=1.0e-12):
+                raise ValueError("metric_result.minimum_f1 is inconsistent")
+            if not math.isclose(result["value"], min(attainments), abs_tol=1.0e-12):
+                raise ValueError("metric_result.value is inconsistent with component attainment")
         for field in ("group_metric_target", "min_group_support"):
             if field in contract and result.get(field) != contract[field]:
                 raise ValueError(
                     f"metric_result.{field}={result.get(field)!r} does not match "
                     f"contract value {contract[field]!r}"
                 )
+        if "component_threshold" in contract and result.get("component_threshold") != contract["component_threshold"]:
+            raise ValueError(
+                "metric_result.component_threshold does not match the frozen contract"
+            )
         tie_values = result.get("tie_breakers", {})
         if not isinstance(tie_values, dict):
             raise ValueError("metric_result.tie_breakers must be an object")
@@ -311,6 +369,13 @@ def result_passes(
     value = finite_number(result.get("value"), field="metric_result.value")
     if not compare(value, contract["operator"], contract["target"]):
         failures.append(contract["name"])
+    required_components = contract.get("required_components")
+    if required_components is not None:
+        components = result.get("components", {})
+        for name in required_components:
+            entry = components.get(name, {}) if isinstance(components, dict) else {}
+            if entry.get("passed") is not True:
+                failures.append(name)
     failures.extend(constraint_failures(contract, result))
     return not failures, failures
 

@@ -7,17 +7,20 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import pathlib
 import sys
 from collections import Counter
 from typing import Any, Iterable
 
+from nvpaw_annotations import TASK_SPECS
 from validate_sharegpt import (
+    image_paths,
     load_records,
-    prompt_and_label,
     prompt_and_response,
     resolve_image,
+    target_path,
 )
 
 
@@ -105,28 +108,14 @@ def _normalize_mined_rows(
 def _source_index(
     records: list[dict[str, Any]],
     media_root: pathlib.Path,
-    annotation_profile: str,
 ) -> dict[str, list[tuple[int, dict[str, Any]]]]:
     index: dict[str, list[tuple[int, dict[str, Any]]]] = {}
     for record_index, record in enumerate(records):
-        images = record.get("images")
-        if annotation_profile == "nvpaw_multitask_v1":
-            roles = record.get("image_roles")
-            if not isinstance(images, list) or not isinstance(roles, list) or len(images) != len(roles):
-                raise ValueError(f"source record[{record_index}]: images must match image_roles")
-            if roles.count("target") != 1:
-                raise ValueError(f"source record[{record_index}]: image_roles requires one target")
-            target_index = roles.index("target")
-            prompt_and_response(record, context=f"source record[{record_index}]")
-        else:
-            if not isinstance(images, list) or len(images) != 2:
-                raise ValueError(
-                    f"source record[{record_index}]: images must contain "
-                    "[AOI, golden_reference]"
-                )
-            target_index = 0
-            prompt_and_label(record, context=f"source record[{record_index}]")
-        for key in _path_keys(str(images[target_index]), media_root):
+        if record.get("task_type") not in TASK_SPECS:
+            continue
+        prompt_and_response(record, context=f"source record[{record_index}]")
+        target = target_path(record, context=f"source record[{record_index}]")
+        for key in _path_keys(target, media_root):
             index.setdefault(key, []).append((record_index, record))
     return index
 
@@ -153,10 +142,9 @@ def _match(
         )
     resolved_targets = set()
     for record in candidates.values():
-        roles = record.get("image_roles")
-        images = record.get("images", [])
-        target_index = roles.index("target") if isinstance(roles, list) and "target" in roles else 0
-        resolved_targets.add(str(resolve_image(str(images[target_index]), media_root)))
+        resolved_targets.add(
+            str(resolve_image(target_path(record, context="source match"), media_root))
+        )
     if len(resolved_targets) != 1:
         raise ValueError(
             f"ambiguous source match for mined path {mined_path!r}; "
@@ -188,11 +176,13 @@ def emit_records(
     *,
     media_root: pathlib.Path,
     relative: bool,
-    annotation_profile: str = "bare_okng",
+    annotation_profile: str = "nvpaw_multitask_v1",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     media_root = media_root.expanduser().resolve()
     mined_rows, duplicates_skipped = _normalize_mined_rows(mined_paths, media_root)
-    index = _source_index(source_records, media_root, annotation_profile)
+    if annotation_profile != "nvpaw_multitask_v1":
+        raise ValueError("Cosmos Framework mining emission requires nvpaw_multitask_v1")
+    index = _source_index(source_records, media_root)
     output: list[dict[str, Any]] = []
     matches: Counter[str] = Counter()
     route_tiers: Counter[str] = Counter()
@@ -206,47 +196,27 @@ def emit_records(
         matched, match_mode = _match(
             mined_path, media_root=media_root, index=index
         )
-        if annotation_profile == "bare_okng" and len(matched) != 1:
-            raise ValueError(
-                f"ambiguous source match for mined path {mined_path!r}; "
-                f"candidate_indexes={[index for index, _ in matched]}"
-            )
         seen_targets.add(resolved_target)
         matches[match_mode] += 1
         route_tiers[mined["route_tier"]] += 1
         emitted_for_target = 0
         for source_index, source in matched:
-            source_images = source["images"]
-            if annotation_profile == "nvpaw_multitask_v1":
-                routed_tasks = mined.get("routed_task_types")
-                if routed_tasks is not None and source.get("task_type") not in routed_tasks:
+            routed_tasks = mined.get("routed_task_types")
+            if routed_tasks is not None and source.get("task_type") not in routed_tasks:
+                continue
+            record = copy.deepcopy(source)
+            for message in record["messages"]:
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list):
                     continue
-                record = dict(source)
-                record["images"] = [
-                    _format_path(str(image), media_root=media_root, relative=relative)
-                    for image in source_images
-                ]
-                output.append(record)
-                tasks[str(source["task_type"])] += 1
-                emitted_for_target += 1
-            else:
-                prompt, label = prompt_and_label(
-                    source, context=f"source record[{source_index}]"
-                )
-                record = {
-                    "images": [
-                        _format_path(mined_path, media_root=media_root, relative=relative),
-                        _format_path(str(source_images[1]), media_root=media_root, relative=relative),
-                    ],
-                    "conversations": [
-                        {"from": "human", "value": prompt},
-                        {"from": "gpt", "value": label},
-                    ],
-                }
-                if source.get("video_fps") is not None:
-                    record["video_fps"] = source["video_fps"]
-                output.append(record)
-                emitted_for_target += 1
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image":
+                        item["image"] = _format_path(
+                            str(item["image"]), media_root=media_root, relative=relative
+                        )
+            output.append(record)
+            tasks[str(source["task_type"])] += 1
+            emitted_for_target += 1
         if emitted_for_target == 0:
             raise ValueError(
                 f"mined path {mined_path!r} has no source record matching "
@@ -275,11 +245,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--summary", type=pathlib.Path)
     parser.add_argument("--filepath-column", default="filepath")
     parser.add_argument("--emit-relative", action="store_true")
-    parser.add_argument(
-        "--annotation-profile",
-        choices=("bare_okng", "nvpaw_multitask_v1"),
-        default="bare_okng",
-    )
     args = parser.parse_args(argv)
     try:
         mined_paths = _load_mined_rows(args.mined_parquet, args.filepath_column)
@@ -288,10 +253,12 @@ def main(argv: list[str] | None = None) -> int:
             load_records(args.source_annotations),
             media_root=args.media_root.expanduser().resolve(),
             relative=args.emit_relative,
-            annotation_profile=args.annotation_profile,
+            annotation_profile="nvpaw_multitask_v1",
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(records, indent=2) + "\n")
+        args.output.write_text(
+            "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records)
+        )
         summary_path = args.summary or args.output.with_name(
             "emit_mined_summary.json"
         )
@@ -300,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"emit_mined_sharegpt: {exc}", file=sys.stderr)
         return 2
     print(
-        f"emit_mined_sharegpt: wrote {len(records)} {args.annotation_profile} records "
+        f"emit_mined_sharegpt: wrote {len(records)} nvpaw_multitask_v1 JSONL records "
         f"to {args.output}"
     )
     return 0

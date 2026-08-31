@@ -19,7 +19,6 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
         raise ValueError("selected gaps are empty")
     targets: dict[str, dict[str, Any]] = {}
     task_counts: Counter[str] = Counter()
-    anomalygen_eligible = 0
     for row in rows:
         if row.get("evaluation_role") != "proxy":
             raise ValueError("routing accepts only Proxy selected gaps")
@@ -30,11 +29,6 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
         if not all(isinstance(value, str) and value for value in (record_id, target_id, target_path, task_type)):
             raise ValueError("every selected gap requires id, target_id, target_path, and task_type")
         task_counts[task_type] += 1
-        can_sdg = task_type in {
-            "Defect Classification",
-            "Ref_based Defect Classification",
-        }
-        anomalygen_eligible += int(can_sdg)
         target = targets.setdefault(
             target_id,
             {
@@ -44,7 +38,6 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
                 "task_types": [],
                 "datasets": [],
                 "mining_eligible": True,
-                "anomalygen_eligible": False,
             },
         )
         if target["filepath"] != target_path:
@@ -57,7 +50,6 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
         dataset = str(row.get("dataset", "unknown"))
         if dataset not in target["datasets"]:
             target["datasets"].append(dataset)
-        target["anomalygen_eligible"] = target["anomalygen_eligible"] or can_sdg
     output = []
     for target in targets.values():
         target["record_ids"].sort()
@@ -71,8 +63,7 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
         "unique_targets": len(output),
         "embedding_queries": len(output),
         "task_records": dict(sorted(task_counts.items())),
-        "anomalygen_eligible_records": anomalygen_eligible,
-        "mining_only_records": len(rows) - anomalygen_eligible,
+        "mining_eligible_records": len(rows),
     }
 
 

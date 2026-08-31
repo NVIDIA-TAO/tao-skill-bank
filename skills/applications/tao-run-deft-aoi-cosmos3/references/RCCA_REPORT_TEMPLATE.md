@@ -1,41 +1,26 @@
-# Cosmos3 Proxy RCCA Report: `<baseline|iterN>`
+# RCCA report template
 
-Build this report from `gaps_summary.json`, `false_accepts.json`, and
-`false_rejects.json`. Replace the guidance below with concrete evidence before
-committing `proxy_rcca`. The machine-readable artifact and heading contract is
-`references/rcca-artifact-manifest.json`.
+## Executive Summary
 
-## 1. Verdict
+State the Proxy coverage, incorrect/parse-failure counts, and selected real
+Mining targets. Proxy does not gate the loop.
 
-State KPI reachability, Proxy accuracy/RCCA numbers, and the headline finding.
+## Failure Mode Analysis
 
-## 2. False-Accept Breakdown
+Summarize weaknesses by task type, evaluator family, reference cohort, and
+dataset. Link claims to `gap_candidates.parquet` rows.
 
-Summarize counts and share by defect type from `false_accepts.json`.
+## Root Cause Analysis
 
-| Defect type | Count | Share |
-|---|---:|---:|
-| `<type>` | `<count>` | `<percent>` |
+Separate observed evidence from hypotheses. Identify prompt, visual,
+localization, reference-comparison, or data-coverage causes.
 
-## 3. False-Reject Breakdown
+## Corrective Actions
 
-Summarize counts and share by defect type from `false_rejects.json`.
+List the routed Mining targets, task-aware quotas, similarity policy, history
+deduplication, and expected training-data contribution.
 
-| Defect type | Count | Share |
-|---|---:|---:|
-| `<type>` | `<count>` | `<percent>` |
+## Validation Plan
 
-## 4. Top-K Worst Samples
-
-List the worst sample IDs and explain why each is high priority.
-
-## 5. Per-Defect Analysis
-
-| Defect type | False accepts | False rejects | RCCA finding |
-|---|---:|---:|---|
-| `<type>` | `<count>` | `<count>` | `<finding>` |
-
-## 6. Recommended Actions
-
-Name concrete mining targets and SDG defect/count targets for the next
-iteration.
+Require split isolation, canonical JSONL validation, complete Framework DCP,
+exact prediction coverage, and the frozen Benchmark F1 gate.

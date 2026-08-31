@@ -232,7 +232,7 @@ class ExecBitAndPackagingTests(unittest.TestCase):
                     "-s",
                     "tests",
                     "-p",
-                    "test_cosmos3_*.py",
+                    "test_cfw_*.py",
                 ],
                 cwd=skills_root / "tao-run-deft-aoi-cosmos3",
                 env=environment,

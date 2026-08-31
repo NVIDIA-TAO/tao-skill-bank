@@ -82,7 +82,6 @@ def _parser() -> argparse.ArgumentParser:
     choice = parser.add_mutually_exclusive_group(required=True)
     choice.add_argument("--profile", choices=PACKAGED_PROFILES)
     choice.add_argument("--config", type=pathlib.Path)
-    parser.add_argument("--task-metrics", type=pathlib.Path)
     parser.add_argument("--budget", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--output-dir", required=True, type=pathlib.Path)
@@ -96,9 +95,6 @@ def main(argv: list[str] | None = None) -> int:
         _, candidates = read_candidates(args.candidates)
         selected, summary = run_selection(candidates, config)
         summary["candidate_file_sha256"] = file_sha256(args.candidates)
-        summary["task_metrics_sha256"] = (
-            file_sha256(args.task_metrics) if args.task_metrics is not None else None
-        )
         summary["profile"] = args.profile or "custom"
         write_selection(args.output_dir, selected, summary)
     except (OSError, ValueError, json.JSONDecodeError) as exc:

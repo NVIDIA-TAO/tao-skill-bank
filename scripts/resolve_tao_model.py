@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workload",
         default="",
-        help="Optional workload hint such as wts, aetc, automl, or hpo.",
+        help="Optional workload hint such as deft-aoi, wts, aetc, automl, or hpo.",
     )
     parser.add_argument(
         "--format",
@@ -165,6 +165,13 @@ def select_implementation_backend(
         if workload in {"automl", "hpo"} and "cosmos-rl" in contracts:
             selected = "cosmos-rl"
             reason = "AutoML/HPO requires the Cosmos-RL train schema"
+        elif (
+            workload == "deft-aoi"
+            and action in {"train", "evaluate", "inference"}
+            and "cosmos-framework" in contracts
+        ):
+            selected = "cosmos-framework"
+            reason = "DEFT AOI uses the Cosmos Framework JSONL and DCP contract"
         if "edge" in requested_model.casefold() and "cosmos-framework" in contracts:
             selected = "cosmos-framework"
             reason = "Cosmos3-Edge uses the Framework-native model and checkpoint action route"

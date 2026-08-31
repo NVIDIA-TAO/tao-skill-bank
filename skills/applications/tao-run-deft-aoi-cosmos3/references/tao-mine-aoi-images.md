@@ -1,57 +1,25 @@
-# Cosmos3 AOI Real-Pair Mining
+# Cosmos3 AOI real-pair Mining
 
-Read `skills/data/tao-mine-aoi-images/SKILL.md` before launch. Reuse its first
-two steps unchanged: embed unique Proxy targets, then embed the Mining source
-pool with the same encoder. Bare mode also reuses its native nearest-neighbor
-step. Rich mode instead runs the host-side `task_mining_router.py` so task
-eligibility and fallback provenance survive into training. Dispatch each GPU
-embedding invocation through the selected platform's four verbs and give it
-its own job-record.
+Read `skills/data/tao-mine-aoi-images/SKILL.md` before launch. Embed unique
+Proxy target images and the recorded Mining source pool with the same encoder.
+Dispatch each GPU invocation through the selected platform's four verbs and
+track it with its own job-record.
 
-## Inputs
+## Inputs and isolation
 
-- targets: Proxy false accepts/rejects only;
-- source pool: recorded Mining annotations/media;
-- model: the mining skill's configured SigLIP embedding model;
-- top-K and metric: recorded DEFT config;
-- router mode: recorded `config.mining.router_mode` (`image_only`,
-  `task_strict`, or `task_then_fallback`);
+- query targets: selected Proxy RCCA gaps only;
+- source pool: canonical `annotations/mining.jsonl` and its media;
+- top-K, cosine floor, and router mode: frozen DEFT state;
 - output root: `${RESULTS_DIR}/iterN/mining`.
 
-Never use Benchmark errors as targets. The candidate/source side contains only
-the recorded Mining pool; Proxy errors are query targets, not source samples.
-The DEFT default top-K is 5. Preserve a user-supplied value; increase it only
-when the history summary shows that the current neighborhood contains too few
-novel candidates.
+Benchmark records or errors must never enter query or source inputs. Proxy
+records are query targets, not trainable source samples.
 
-## Container user
+## Task-aware routing
 
-The mining skill's setup notes tell you to drop `--user` because it raises a
-`getpwuid()` `KeyError` during the `transformers` import. Do not drop it here.
-That error is only the mapped uid having no entry inside the image, and this
-workflow already carries the fix — pass the account databases along with the
-mapping:
-
-```bash
---user $(id -u):$(id -g) \
--e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
--v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro
-```
-
-Verified 2026-07-30 against the pinned data-services image: `pwd.getpwuid`
-resolves and `transformers` imports cleanly. This matters because mining writes
-into `${RESULTS_DIR}/iterN/mining`, a tree the operator owns; run as root and
-the parquet files come back root-owned and cannot be cleaned up afterwards.
-
-If a future image genuinely rejects the mapping, hard-stop and fix the image
-contract. Never launch mining as root or use a root repair container.
-
-## Rich task-aware router
-
-The target embedding parquet carries the `task_types` retained by
-`route_selected_gaps.py`. Mining annotations provide the supported task types
-for every source target. Run one deterministic policy over the same embedding
-artifacts for every ablation arm:
+The target embedding parquet carries the physical target IDs and selected task
+types emitted by `route_selected_gaps.py`. The Mining annotation provides the
+available task types for every real source target.
 
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/task_mining_router.py" \
@@ -66,39 +34,15 @@ artifacts for every ablation arm:
   --summary "$MINING_DIR/router_summary.json"
 ```
 
-`image_only` selects one global cosine top-K per physical target and fans out
-the source's available tasks. `task_strict` reuses that target embedding but
-allocates a separate top-K for each selected task and emits only the matching
-task. `task_then_fallback` takes those per-task strict neighbors first and fills
-each target-task top-K shortfall from the global pool;
-those additions are visibly marked `route_tier=fallback`. A zero-row output is
-a hard stop. Do not run `filter_mined_by_cosine.py` afterward: this router
-already applies and records the same floor.
-
-## Bare cosine floor
-
-For `bare_okng`, the native nearest-neighbor output is not sufficient proof of
-the configured floor. Preserve raw outputs, then write cosine-qualified rows
-to the distinct pre-history candidate parquet:
-
-```bash
-"$PYTHON" "$SKILL_ROOT/scripts/filter_mined_by_cosine.py" \
-  --mined-parquet "$MINING_DIR/mined_raw.parquet" \
-  --source-embeddings "$MINING_DIR/source_embeddings.parquet" \
-  --target-embeddings "$MINING_DIR/target_embeddings.parquet" \
-  --min-similarity "$MIN_SIMILARITY" \
-  --output "$MINING_DIR/mined_candidates.parquet" \
-  --summary "$MINING_DIR/cosine_filter_summary.json"
-```
-
-The output must differ from the raw parquet. A missing embedding, dimension
-mismatch, zero-norm vector, non-finite value, missing path, or zero kept rows
-is a hard stop.
+`image_only` applies global cosine top-K, `task_strict` requires an exact task
+match, and `task_then_fallback` fills strict shortfalls from the global pool.
+All modes use the same deterministic router and record rank, cosine, task
+types, query IDs, and route tier. A zero-row result is a hard stop.
 
 ## History-aware selection
 
-After the rich router or bare cosine floor, drop filepaths selected by prior
-iterations:
+Remove filepaths selected by previous iterations while preserving the
+pre-history candidate parquet:
 
 ```bash
 "$PYTHON" "$BANK_ROOT/skills/data/tao-mine-aoi-images/scripts/filter_mined_history.py" \
@@ -110,34 +54,29 @@ iterations:
   --topn "$TOPN"
 ```
 
-`mined_filtered.parquet` is now the final novel-only handoff. Preserve
-`mined_candidates.parquet`, `mining_history_summary.json`, and the run-level
-ledger. Cosmos3 requires at least one mined row, so an all-duplicate result is a
-hard stop with the summary's recommendation to increase `topn` or expand the
-Mining pool; do not replay an earlier sample into the monotonic Train lineage.
+The filtered parquet must contain at least one new real target. An all-duplicate
+result is a hard stop; increase top-K or expand the recorded Mining pool after
+review rather than replaying old samples.
 
 ## Handoff
 
-Commit `data_mining` with the final filtered parquet, pre-history candidate
-parquet, router summary (rich) or cosine summary (bare), history ledger plus
-per-iteration summary, both embedding
-parquets, and exact positive row count. Set `MINING_SELECTION_SUMMARY` to
-`router_summary.json` for rich mode or `cosine_filter_summary.json` for bare
-mode. The next stage uses `emit_mined_sharegpt.py` to recover the compatible
-Mining prompts, golden images, and labels.
+Commit the final filtered parquet, the pre-history candidate parquet, router
+summary, history ledger and summary, both embedding parquets, and the exact
+positive row count. `emit_mined_sharegpt.py` then recovers the canonical JSONL
+messages and ordered media for the selected real records.
 
 ```bash
-PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
-"$PYTHON" <skill_root>/scripts/commit_stage.py \
+"$PYTHON" "$SKILL_ROOT/scripts/commit_stage.py" \
   --results-dir "$RESULTS_DIR" --iter-label "iter$ITERATION" \
   --stage data_mining \
   --mining-parquet "$MINING_DIR/mined_filtered.parquet" \
   --mining-candidates "$MINING_DIR/mined_candidates.parquet" \
-  --mining-summary "$MINING_DIR/$MINING_SELECTION_SUMMARY" \
+  --mining-summary "$MINING_DIR/router_summary.json" \
   --mining-history "$RESULTS_DIR/mining_history.json" \
   --mining-history-summary "$MINING_DIR/mining_history_summary.json" \
   --mining-target-embeddings "$MINING_DIR/target_embeddings.parquet" \
   --mining-source-embeddings "$MINING_DIR/source_embeddings.parquet" \
   --mining-count <positive-int> \
-  --summary "history-aware mining selected novel real pairs"
+  --duration-sec <measured-positive-seconds> \
+  --summary "task-aware history-filtered Mining selected novel real records"
 ```

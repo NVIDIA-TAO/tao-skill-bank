@@ -19,8 +19,7 @@ AFTER = {
     "evaluate_benchmark": "benchmark_metrics",
     "evaluate_proxy": "proxy_rcca",
     "proxy_rcca": "routing",
-    "routing": "anomalygen",
-    "anomalygen": "data_mining",
+    "routing": "data_mining",
     "data_mining": "assemble_data",
     "assemble_data": "validate_data",
     "validate_data": "train",
@@ -57,6 +56,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         state = json.loads(args.state.expanduser().read_text())
+        if not isinstance(state, dict) or state.get("version") != 7:
+            raise ValueError(
+                "state schema is not the Cosmos Framework v7 contract; initialize a new run"
+            )
         label, next_stage = _next_stage(state)
         policy = state.get("execution_policy", {})
         print(json.dumps({

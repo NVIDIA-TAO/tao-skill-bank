@@ -20,40 +20,30 @@ import sys
 from validate_sharegpt import load_records, validate_records
 
 
-# Required/optional per role. `id` is required only where cosmos-rl-evaluate
-# reads it: it hard-indexes item["id"] and reuses it as the per-sample output
-# filename. The training loader reads media with .get(), so Mining and the
-# generated Train file do not need one — though carrying it is harmless and
-# makes a mined record traceable back to its source row.
 ROLE_CONTRACT = {
     "proxy": {
-        "filename": "proxy_kpi.json",
-        "required": ("images", "conversations", "id"),
-        "optional": ("video_fps",),
-        "consumer": "cosmos-rl-evaluate (RCCA source)",
+        "filename": "proxy_kpi.jsonl",
+        "required": ("id", "task_type", "messages"),
+        "optional": ("dataset", "subset", "category"),
+        "consumer": "Cosmos Framework evaluate (RCCA source)",
     },
     "benchmark": {
-        "filename": "benchmark_kpi.json",
-        "required": ("images", "conversations", "id"),
-        "optional": ("video_fps",),
-        "consumer": "cosmos-rl-evaluate (frozen stop gate)",
+        "filename": "benchmark.jsonl",
+        "required": ("id", "task_type", "messages"),
+        "optional": ("dataset", "subset", "category"),
+        "consumer": "Cosmos Framework evaluate (frozen F1 gate)",
     },
     "mining": {
-        "filename": "mining_pool.json",
-        "required": ("images", "conversations"),
-        "optional": ("id", "video_fps"),
-        "consumer": "emit_mined_sharegpt.py -> tao_sft_example.py",
+        "filename": "mining.jsonl",
+        "required": ("id", "task_type", "messages"),
+        "optional": ("dataset", "subset", "category"),
+        "consumer": "real-data mining -> indexed CFW dataset",
     },
 }
-ALWAYS = "images is [AOI, golden_reference]; final assistant value is exactly OK or NG"
 
 
-def _print_contract(annotation_profile: str = "bare_okng") -> None:
-    if annotation_profile == "bare_okng":
-        detail = ALWAYS
-    else:
-        detail = "explicit image_roles, task_type, metric_family, target_id, answer"
-    print(f"{annotation_profile} field contract  ({detail})\n")
+def _print_contract(annotation_profile: str = "nvpaw_multitask_v1") -> None:
+    print(f"{annotation_profile} JSONL contract (native messages; sealed image bounds)\n")
     print(f"{'role':<10} {'file':<22} {'required':<34} optional")
     print("-" * 92)
     for role, spec in ROLE_CONTRACT.items():
@@ -89,13 +79,13 @@ def check(
     *,
     media_root: pathlib.Path,
     require_files: bool,
-    annotation_profile: str = "bare_okng",
+    annotation_profile: str = "nvpaw_multitask_v1",
 ) -> tuple[dict[str, dict], list[str]]:
     report: dict[str, dict] = {}
     failures: list[str] = []
     for role, spec in ROLE_CONTRACT.items():
         path = paths[role]
-        needs_id = "id" in spec["required"]
+        needs_id = True
         try:
             summary = validate_records(
                 load_records(path),
@@ -103,6 +93,7 @@ def check(
                 require_files=require_files,
                 require_id=needs_id,
                 annotation_profile=annotation_profile,
+                skip_unsupported_tasks=role == "mining",
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             message = str(exc)
@@ -143,8 +134,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--annotation-profile",
-        choices=("bare_okng", "nvpaw_multitask_v1"),
-        default="bare_okng",
+        choices=("nvpaw_multitask_v1",),
+        default="nvpaw_multitask_v1",
     )
     return parser
 
@@ -178,10 +169,16 @@ def main(argv: list[str] | None = None) -> int:
         if not entry.get("ok"):
             print(f"  {role:<10} FAIL  {entry['error']}")
             continue
+        scope = ""
+        if entry["records_total"] != entry["records"]:
+            scope = (
+                f" raw={entry['records_total']}"
+                f" ignored={entry['unsupported_tasks']}"
+            )
         print(
             f"  {role:<10} OK    records={entry['records']:<5} "
             f"labels={entry['labels']} id={entry['id_coverage']}"
-            + ("" if "id" in spec["required"] else "  (id optional)")
+            + scope
         )
     if args.summary is not None:
         args.summary.parent.mkdir(parents=True, exist_ok=True)

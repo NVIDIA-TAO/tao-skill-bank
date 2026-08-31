@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Assemble monotonic bare or NVPaw multi-task Cosmos3 training JSON."""
+"""Assemble monotonic, real-mining-only NVPAW training JSONL."""
 
 from __future__ import annotations
 
@@ -11,217 +11,118 @@ import json
 import pathlib
 import sys
 from collections import Counter
+from typing import Any
 
-from validate_sharegpt import load_records, prompt_and_label, prompt_and_response
-
-
-def _load_json_list(
-    path: pathlib.Path, annotation_profile: str = "bare_okng"
-) -> list[dict]:
-    data = load_records(path)
-    for index, record in enumerate(data):
-        images = record.get("images")
-        if annotation_profile == "nvpaw_multitask_v1":
-            roles = record.get("image_roles")
-            if not isinstance(images, list) or not isinstance(roles, list) or len(images) != len(roles):
-                raise ValueError(f"{path}[{index}]: images must match image_roles")
-            if roles.count("target") != 1:
-                raise ValueError(f"{path}[{index}]: image_roles requires one target")
-            prompt_and_response(record, context=f"{path}[{index}]")
-        else:
-            if not isinstance(images, list) or len(images) != 2:
-                raise ValueError(
-                    f"{path}[{index}]: images must contain [AOI, golden_reference]"
-                )
-            prompt_and_label(record, context=f"{path}[{index}]")
-    return data
+from validate_sharegpt import load_records, target_path
 
 
-def _assistant_label(record: dict, annotation_profile: str = "bare_okng") -> str:
-    if annotation_profile == "nvpaw_multitask_v1":
-        answer = record.get("answer", {})
-        return str(answer.get("kind", "unknown"))
-    return prompt_and_label(record, context="record")[1]
-
-
-def _pair_key(
-    record: dict, annotation_profile: str = "bare_okng"
-) -> tuple[str, ...]:
-    if annotation_profile == "nvpaw_multitask_v1":
-        return (
-            json.dumps(record, sort_keys=True, separators=(",", ":")),
-        )
-    images = record.get("images")
-    return tuple(images) if isinstance(images, list) else tuple()
-
-
-def _target_key(record: dict, annotation_profile: str = "bare_okng") -> str:
-    images = record.get("images")
-    if not isinstance(images, list) or not images:
-        return ""
-    if annotation_profile == "nvpaw_multitask_v1":
-        roles = record.get("image_roles")
-        if not isinstance(roles, list) or roles.count("target") != 1:
-            return ""
-        return str(images[roles.index("target")])
-    return str(images[0])
-
-
-def _unique_target_images(
-    records: list[dict], annotation_profile: str = "bare_okng"
-) -> set[str]:
-    """Return distinct, non-empty target image paths (the first image in each pair)."""
-    return {
-        target
-        for record in records
-        if (target := _target_key(record, annotation_profile))
-    }
+def _fingerprint(record: dict[str, Any]) -> str:
+    return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def assemble(
-    seed_path: pathlib.Path | None,
-    new_paths: list[pathlib.Path],
+    previous_path: pathlib.Path | None,
+    mined_path: pathlib.Path,
     *,
-    dedupe: bool,
     validation_paths: list[pathlib.Path],
-    annotation_profile: str = "bare_okng",
-) -> tuple[list[dict], dict]:
-    if not new_paths:
-        raise ValueError("at least one --new-json input is required")
-    seed = (
-        _load_json_list(seed_path, annotation_profile)
-        if seed_path is not None
-        else []
-    )
-    seed_targets = _unique_target_images(seed, annotation_profile)
-    sources: list[tuple[pathlib.Path, list[dict]]] = []
-    if seed_path is not None:
-        sources.append((seed_path, seed))
-    new_records: list[dict] = []
-    for path in new_paths:
-        records = _load_json_list(path, annotation_profile)
-        sources.append((path, records))
-        new_records.extend(records)
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    mined = load_records(mined_path)
+    if not mined:
+        raise ValueError("the current iteration must contribute at least one mined record")
+    previous = load_records(previous_path) if previous_path is not None else []
+    evaluation_targets: dict[str, str] = {}
+    for path in validation_paths:
+        for index, record in enumerate(load_records(path)):
+            evaluation_targets[target_path(record, context=f"{path}:{index}")] = str(path)
 
-    validation_targets: dict[str, pathlib.Path] = {}
-    for validation_path in validation_paths:
-        for record in _load_json_list(validation_path, annotation_profile):
-            key = _target_key(record, annotation_profile)
-            if key:
-                validation_targets[key] = validation_path
-
-    merged: list[dict] = []
-    provenance: list[dict] = []
-    seen: set[tuple[str, ...]] = set()
-    duplicates = 0
-    leakage: list[dict] = []
-    labels: Counter[str] = Counter()
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    duplicate_count = 0
     tasks: Counter[str] = Counter()
-
-    for source_path, records in sources:
+    provenance: list[dict[str, Any]] = []
+    for source_kind, source_path, records in (
+        ("previous_iteration", previous_path, previous),
+        ("current_mining", mined_path, mined),
+    ):
+        if source_path is None:
+            continue
         for index, record in enumerate(records):
-            key = _pair_key(record, annotation_profile)
-            if dedupe and key and key in seen:
-                duplicates += 1
-                continue
-            if key:
-                seen.add(key)
-            target_key = _target_key(record, annotation_profile)
-            if validation_targets and target_key in validation_targets:
-                leakage.append(
-                    {
-                        "source": str(source_path),
-                        "index": index,
-                        "target": target_key,
-                        "evaluation_split": str(validation_targets[target_key]),
-                    }
+            target = target_path(record, context=f"{source_path}:{index}")
+            if target in evaluation_targets:
+                raise ValueError(
+                    f"train/evaluation leakage: target {target!r} also occurs in "
+                    f"{evaluation_targets[target]}"
                 )
+            key = _fingerprint(record)
+            if key in seen:
+                duplicate_count += 1
+                continue
+            seen.add(key)
             merged.append(record)
-            labels[_assistant_label(record, annotation_profile)] += 1
-            if annotation_profile == "nvpaw_multitask_v1":
-                tasks[str(record.get("task_type", "unknown"))] += 1
-            provenance.append({"source": str(source_path), "source_index": index})
-
-    if leakage:
-        raise ValueError(f"train/evaluation leakage detected: {leakage[:5]}")
-
-    new_input_targets = _unique_target_images(new_records, annotation_profile)
-    output_targets = _unique_target_images(merged, annotation_profile)
-
-    summary = {
-        "seed": str(seed_path) if seed_path is not None else None,
-        "new_inputs": [str(p) for p in new_paths],
+            tasks[str(record.get("task_type", "unknown"))] += 1
+            provenance.append(
+                {
+                    "source_kind": source_kind,
+                    "source": str(source_path),
+                    "source_index": index,
+                    "id": record.get("id"),
+                }
+            )
+    if not merged:
+        raise ValueError("real-mining assembly produced no training records")
+    mined_fingerprints = {_fingerprint(record) for record in mined}
+    if not any(_fingerprint(record) in mined_fingerprints for record in merged):
+        raise ValueError("current mined records were all lost during assembly")
+    return merged, {
+        "schema_version": 1,
+        "format": "jsonl",
+        "annotation_profile": "nvpaw_multitask_v1",
+        "training_source": "mined_real_samples_only",
+        "previous_iteration": str(previous_path) if previous_path else None,
+        "mined_input": str(mined_path),
+        "validation_inputs": [str(path) for path in validation_paths],
+        "previous_records": len(previous),
+        "mined_records": len(mined),
         "output_records": len(merged),
-        "mode": annotation_profile,
-        "dedupe": dedupe,
-        "dedupe_key": (
-            "media" if annotation_profile == "bare_okng" else "record_fingerprint"
-        ),
-        "label_source": "assistant",
-        "duplicates_skipped": duplicates,
-        "unique_target_images": {
-            "seed": len(seed_targets),
-            "new_inputs": len(new_input_targets),
-            "new_after_dedup": len(output_targets - seed_targets),
-            "output_total": len(output_targets),
-        },
-        "labels": dict(labels),
+        "duplicates_skipped": duplicate_count,
         "tasks": dict(sorted(tasks.items())),
-        "validation_jsons": [str(path) for path in validation_paths],
         "provenance": provenance,
     }
-    return merged, summary
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--previous-json",
-        type=pathlib.Path,
-        help="Previous iteration training JSON. Omit for iter1.",
+def _write_jsonl(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(
+            json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
     )
-    parser.add_argument(
-        "--annotation-profile",
-        choices=("bare_okng", "nvpaw_multitask_v1"),
-        default="bare_okng",
-    )
-    parser.add_argument("--new-json", action="append", default=[], type=pathlib.Path)
-    parser.add_argument("--output", required=True, type=pathlib.Path)
-    parser.add_argument("--summary", default=None, type=pathlib.Path)
-    parser.add_argument("--dedupe", action="store_true")
-    parser.add_argument(
-        "--validation-json",
-        action="append",
-        default=[],
-        type=pathlib.Path,
-        help="Evaluation JSON excluded from training. Repeat for Proxy val and Benchmark test.",
-    )
-    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--previous-jsonl", type=pathlib.Path)
+    parser.add_argument("--mined-jsonl", required=True, type=pathlib.Path)
+    parser.add_argument("--output", required=True, type=pathlib.Path)
+    parser.add_argument("--summary", type=pathlib.Path)
+    parser.add_argument("--validation-jsonl", action="append", default=[], type=pathlib.Path)
+    args = parser.parse_args(argv)
     try:
-        merged, summary = assemble(
-            args.previous_json,
-            args.new_json,
-            dedupe=args.dedupe,
-            validation_paths=args.validation_json,
-            annotation_profile=args.annotation_profile,
+        rows, summary = assemble(
+            args.previous_jsonl,
+            args.mined_jsonl,
+            validation_paths=args.validation_jsonl,
         )
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(merged, indent=2) + "\n")
+        _write_jsonl(args.output, rows)
         summary_path = args.summary or args.output.with_name("assemble_summary.json")
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"assemble_training_json: {exc}", file=sys.stderr)
         return 2
-
-    print(
-        f"assemble_training_json: wrote {len(merged)} records to {args.output}; "
-        f"duplicates_skipped={summary['duplicates_skipped']}"
-    )
-    print(f"assemble_training_json: wrote summary to {summary_path}")
+    print(f"assemble_training_json: wrote {len(rows)} real records to {args.output}")
     return 0
 
 

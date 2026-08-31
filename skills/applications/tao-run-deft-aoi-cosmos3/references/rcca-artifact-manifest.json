@@ -1,43 +1,37 @@
 {
-  "schema_version": 1,
-  "contract_version": "7.2",
+  "schema_version": 2,
+  "stage": "proxy_rcca",
   "artifact_classes": {
-    "container_or_script_produced_required": [
+    "script_produced_required": [
       {
         "path": "gaps_summary.json",
-        "kind": "file",
         "state_field": "proxy_gaps_summary",
-        "validation": "non_empty"
+        "format": "json"
       },
       {
-        "path": "false_accepts.json",
-        "kind": "file",
-        "state_field": "false_accepts_json",
-        "validation": "non_empty"
+        "path": "gap_candidates.parquet",
+        "state_field": "gap_candidates_parquet",
+        "format": "parquet",
+        "minimum_rows": 1
       },
       {
-        "path": "false_rejects.json",
-        "kind": "file",
-        "state_field": "false_rejects_json",
-        "validation": "non_empty"
+        "path": "selected_gaps.parquet",
+        "state_field": "selected_gaps_parquet",
+        "format": "parquet"
       }
     ],
     "agent_produced_required": [
       {
         "path": "RCCA_Report.md",
-        "kind": "file",
         "state_field": "rcca_report",
-        "validation": {
-          "type": "markdown_sections",
-          "required_headings": [
-            "Verdict",
-            "False-Accept Breakdown",
-            "False-Reject Breakdown",
-            "Top-K Worst Samples",
-            "Per-Defect Analysis",
-            "Recommended Actions"
-          ]
-        }
+        "format": "markdown",
+        "required_headings": [
+          "Executive Summary",
+          "Failure Mode Analysis",
+          "Root Cause Analysis",
+          "Corrective Actions",
+          "Validation Plan"
+        ]
       }
     ]
   }

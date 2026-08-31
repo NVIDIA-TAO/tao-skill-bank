@@ -545,6 +545,11 @@ def select_backend(
                 "cosmos-framework",
                 "Framework DCP export is owned by Cosmos Framework",
             )
+        if workload == "deft-aoi" and action in {"train", "evaluate", "inference"}:
+            return (
+                "cosmos-framework",
+                "DEFT AOI uses the Cosmos Framework JSONL and DCP contract",
+            )
         if action != "train" or workload in {"automl", "hpo"}:
             return "cosmos-rl", "the requested action/schema is native to Cosmos-RL"
         return (
@@ -5589,7 +5594,9 @@ def add_arguments(parser: argparse.ArgumentParser, *, require_inputs: bool) -> N
     )
     parser.add_argument("--comparative", action="store_true")
     parser.add_argument(
-        "--workload", choices=("training", "automl"), default="training"
+        "--workload",
+        choices=("training", "deft-aoi", "automl", "hpo"),
+        default="training",
     )
     parser.add_argument(
         "--dataset-family",

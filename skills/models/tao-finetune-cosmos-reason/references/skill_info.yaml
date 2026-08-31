@@ -28,6 +28,8 @@ backend_selection:
     inference_microservice: cosmos-rl
     quantize: cosmos-rl
   rules:
+  - match: Cosmos3-Nano DEFT AOI train, evaluate, or inference
+    backend: cosmos-framework
   - match: Cosmos3-Edge train
     backend: cosmos-framework
   - match: Cosmos3-Edge export, evaluate, inference, or inference_microservice
