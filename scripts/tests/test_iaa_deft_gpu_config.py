@@ -15,9 +15,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 IAA_ROOT = REPO_ROOT / "skills/applications/tao-run-deft-iaa"
 PREPARE = IAA_ROOT / "scripts/prepare_deft_config.py"
 INITIALIZE = IAA_ROOT / "scripts/init_deft_state.py"
-VERSIONS = yaml.safe_load((REPO_ROOT / "versions.yaml").read_text())
-PYT_IMAGE = VERSIONS["images"]["tao_toolkit"]["pyt"]
-DS_IMAGE = VERSIONS["images"]["tao_toolkit"]["data_services"]
 
 
 def _base_args(tmp_path: Path, selected: str):
@@ -91,9 +88,9 @@ def test_selected_host_gpu_shape_is_materialized_as_dense_container_ordinals(tmp
             "--max-iterations",
             "1",
             "--pyt-image",
-            PYT_IMAGE,
+            approval["pyt_image"],
             "--ds-image",
-            DS_IMAGE,
+            approval["ds_image"],
             "--deft-config",
             str(results / "config/deft_config.yaml"),
             "--tao-spec",

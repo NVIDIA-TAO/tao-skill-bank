@@ -62,7 +62,7 @@ adapter; a byte change after generation blocks launch and invalidates audit.
 
 | State stage | Producer | Adapter or launch | Read first |
 |---|---|---|---|
-| `dataset_setup` | archive `rebuild.py` plus bundled IAA data utilities | `run_iaa_stage.py dataset-materialize` | `data-layout.md` |
+| `dataset_setup` | archive `rebuild.py`, read-only layout reporter, and bundled IAA data utilities | `iaa_deft.dataset_layout`; `run_iaa_stage.py dataset-materialize` | `data-layout.md` |
 | `pool_embed` | TAO data services | `run_deft_container.py` | `mining.md` |
 | `evaluate` | TAO CLIP plus bound parser | `run_iaa_stage.py eval-config`, container wrapper, parser | `clip-train-eval.md`, `metric-contract.md` |
 | `gap_analysis` | bundled IAA gap analysis | `run_iaa_stage.py gap-analysis` | `gap-analysis.md` |
