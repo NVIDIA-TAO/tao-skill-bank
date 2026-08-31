@@ -113,16 +113,16 @@ class ApplicationDockerIdentityTests(unittest.TestCase):
 
     def test_other_deft_variants_already_map_writable_launches(self) -> None:
         applications = SKILL_ROOT.parent
-        iaa_runner = (
-            applications / "tao-run-deft-iaa/scripts/run_deft_container.py"
+        pas_runner = (
+            applications / "tao-run-deft-pas/scripts/run_deft_container.py"
         ).read_text(encoding="utf-8")
         object_detection = (
             applications
             / "tao-run-deft-object-detection/references/pipeline-and-state.md"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('"--user",', iaa_runner)
-        self.assertIn('f"{os.getuid()}:{os.getgid()}"', iaa_runner)
+        self.assertIn('"--user",', pas_runner)
+        self.assertIn('f"{os.getuid()}:{os.getgid()}"', pas_runner)
         self.assertIn(
             'Every TAO invocation in this skill passes `--user "$(id -u):$(id -g)"`',
             object_detection,
