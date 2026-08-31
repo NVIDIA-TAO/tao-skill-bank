@@ -73,18 +73,36 @@ _server_arg() {
     | awk -v f="$2" 'p{print;exit} $0==f{p=1}'
 }
 
+# Running container id for a sandbox, by label — never by name.
+#
+# OpenShell stamps every sandbox container with openshell.ai/sandbox-name, and
+# has since well before this integration existed. The container *name* is an
+# internal convention that has already changed under us once: it was
+# 'openshell-<sb>-<id>' through OpenShell v0.0.87 and became
+# 'openshell-<workspace>--<sb>-<id>' in v0.0.88 (the workspace resource model),
+# which silently broke every host whose gateway got redeployed onto the newer
+# image. The label is the supported lookup; use it and stop guessing.
+_sandbox_cid() {
+  docker ps -q --filter "label=openshell.ai/sandbox-name=$1" | head -1
+}
+
+# What docker *did* return, so a lookup miss diagnoses itself instead of
+# sending the operator back to re-check onboarding.
+_sandbox_candidates() {
+  _c=$(docker ps --filter 'label=openshell.ai/sandbox-name' \
+       --format '{{.Names}}' | paste -sd' ' -)
+  printf '%s\n' "${_c:-<none>}"
+}
+
 command -v nemoclaw >/dev/null || die "nemoclaw not on PATH (use a login shell)"
 command -v docker   >/dev/null || die "docker not on PATH"
 command -v uv       >/dev/null || die "uv not on PATH"
 [ -f "$SERVER" ] || die "server.py not found next to this script"
 
 # ── 0. Resolve the sandbox container and its docker-bridge gateway ────────────
-# Name-scope the filter: a bare 'openshell' matches every sandbox's container,
-# and 'openshell-<sb>' can still match 'openshell-<sb>-local' — so match the
-# UUID-suffixed form exactly.
-CID=$(docker ps --format '{{.ID}} {{.Names}}' \
-      | awk -v p="openshell-${SB}-" '$2 ~ "^"p {print $1; exit}')
-[ -n "$CID" ] || die "no running container for sandbox '$SB' (nemoclaw list?)"
+CID=$(_sandbox_cid "$SB")
+[ -n "$CID" ] || die "no running container for sandbox '$SB' (nemoclaw list?)
+  running sandbox containers: $(_sandbox_candidates)"
 # The sandbox reaches the host at this gateway IP (== host.openshell.internal).
 # Binding the server here (not 0.0.0.0) keeps it off the LAN.
 GW=$(docker inspect "$CID" -f '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}')
