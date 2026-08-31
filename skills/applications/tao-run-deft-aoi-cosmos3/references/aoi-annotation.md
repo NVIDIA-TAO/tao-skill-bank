@@ -54,12 +54,11 @@ typed manifest and one Cosmos ShareGPT JSON array:
 
 Each record has a filesystem-safe `id`, original `source_id`, physical
 `target_id`, `task_type`, `metric_family`, `image_roles`, `option_map`, typed
-`answer`, and `prompt_format`. Count answers use
-`{"kind":"count","value":<non-negative integer>}`. A non-reference record has role `target`; a
+`answer`, and `prompt_format`. A non-reference record has role `target`; a
 reference record has `golden,target`. Duplicate `id` is invalid; several
 prompt records may intentionally share one `target_id`. Detection boxes are
 positive-area integer `xyxy` in `[0,1000]`. See
-`nvpaw-prompt-formats.md` for the seven task contracts.
+`nvpaw-prompt-formats.md` for the six task contracts.
 
 ## Align mined paths
 

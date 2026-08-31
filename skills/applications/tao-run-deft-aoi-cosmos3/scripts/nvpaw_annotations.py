@@ -23,14 +23,6 @@ TASK_SPECS: dict[str, dict[str, Any]] = {
         "anomalygen": False,
         "mining": True,
     },
-    "Component Count": {
-        "metric_family": "counting",
-        "reference_cohort": "single_target",
-        "image_roles": ("target",),
-        "prompt_format": "nvpaw.component_count.single.official_v1",
-        "anomalygen": False,
-        "mining": True,
-    },
     "Component Detection": {
         "metric_family": "detection",
         "reference_cohort": "single_target",
@@ -335,15 +327,6 @@ def parse_detection_answer(answer_text: str, *, record_id: str) -> dict[str, Any
     }
 
 
-def parse_count_answer(answer_text: str, *, record_id: str) -> dict[str, Any]:
-    cleaned = _strip_fence(answer_text)
-    if re.fullmatch(r"[0-9]+", cleaned) is None:
-        raise ValueError(
-            f"{record_id}: count answer must be a non-negative integer"
-        )
-    return {"kind": "count", "value": int(cleaned)}
-
-
 def materialize_records(
     records: list[dict[str, Any]], *, prompt_variant: str = "official_v1"
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -390,20 +373,11 @@ def materialize_records(
             canonical_answer, options = _classification_answer(
                 answer_text, prompt, source_id
             )
-        elif spec["metric_family"] == "detection":
+        else:
             canonical_answer = parse_detection_answer(
                 answer_text, record_id=source_id
             )
             options = {}
-        elif spec["metric_family"] == "counting":
-            canonical_answer = parse_count_answer(
-                answer_text, record_id=source_id
-            )
-            options = {}
-        else:
-            raise ValueError(
-                f"{source_id}: unsupported metric family {spec['metric_family']!r}"
-            )
 
         normalized: dict[str, Any] = {
             "schema_version": "nvpaw_multitask_v1",
