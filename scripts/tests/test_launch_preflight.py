@@ -82,6 +82,59 @@ def test_target_gpu_selection_rejects_missing_index(capsys):
     assert "missing index(es)=2" in capsys.readouterr().out
 
 
+def _host_gpus():
+    return [
+        {
+            "index": str(index),
+            "uuid": f"GPU-0000000{index}",
+            "name": "A100",
+            "driver_version": "600.0",
+            "memory_mib": 81920.0,
+            "sm": "sm_80",
+        }
+        for index in range(4)
+    ]
+
+
+def test_cuda_visible_devices_filters_and_renumbers_host_inventory(capsys):
+    ok, visible = preflight.filter_cuda_visible_gpus(_host_gpus(), "2,0")
+    assert ok
+    assert [gpu["index"] for gpu in visible] == ["2", "0"]
+    assert [gpu["visible_index"] for gpu in visible] == ["0", "1"]
+    assert "physical=4, visible=2" in capsys.readouterr().out
+
+
+def test_cuda_visible_devices_accepts_unique_gpu_uuid_prefix():
+    ok, visible = preflight.filter_cuda_visible_gpus(_host_gpus(), "GPU-00000002")
+    assert ok
+    assert [gpu["index"] for gpu in visible] == ["2"]
+
+
+@pytest.mark.parametrize("visibility", ["", "-1"])
+def test_cuda_visible_devices_rejects_empty_allocation(visibility):
+    ok, visible = preflight.filter_cuda_visible_gpus(_host_gpus(), visibility)
+    assert not ok
+    assert visible == []
+
+
+@pytest.mark.parametrize("visibility", ["0,,1", "7", "GPU-unknown", "0,0"])
+def test_cuda_visible_devices_fails_closed_on_invalid_selection(visibility):
+    ok, visible = preflight.filter_cuda_visible_gpus(_host_gpus(), visibility)
+    assert not ok
+    assert visible == []
+
+
+def test_gpu_resource_count_uses_cuda_visible_inventory(monkeypatch, capsys):
+    monkeypatch.setattr(
+        preflight,
+        "query_host_gpus",
+        lambda **_kwargs: (True, _host_gpus()[:2]),
+    )
+    assert not preflight.check_gpu_resources(4, None, None, None, [], False)
+    output = capsys.readouterr().out
+    assert "qualifying_gpus=2 < required=4" in output
+
+
 def test_multi_device_docker_gpu_request_preserves_csv_quotes():
     assert preflight.docker_gpu_request(["0", "1", "2", "4"]) == '"device=0,1,2,4"'
     assert preflight.docker_gpu_request([]) == "all"
