@@ -10,6 +10,7 @@ import argparse
 import json
 import pathlib
 import re
+import shlex
 import sys
 from typing import Any
 
@@ -30,9 +31,36 @@ ONE_LOGGER_BOOTSTRAP = {
     "real_run_environment": {},
 }
 
+ONE_LOGGER_NETRC_MOUNT = {
+    "source": "${HOME}/.netrc",
+    "target": "/root/.netrc",
+    "condition": "container_home_not_auto_mounted",
+}
+
 
 def _one_logger_bootstrap() -> dict[str, Any]:
     return json.loads(json.dumps(ONE_LOGGER_BOOTSTRAP))
+
+
+def _one_logger_command(command: list[str]) -> list[str]:
+    """Render the required OneLogger bootstrap into the launched payload."""
+
+    python = "/workspace/.venv/bin/python"
+    index = ONE_LOGGER_BOOTSTRAP["pip_index_url"]
+    package = ONE_LOGGER_BOOTSTRAP["package"]
+    script = "\n".join(
+        (
+            'if [ "${SLURM_LOCALID:-0}" -eq 0 ]; then',
+            f"  {python} -m ensurepip --upgrade",
+            f"  {python} -m pip install --index-url {shlex.quote(index)} {shlex.quote(package)}",
+            "else",
+            "  sleep 30",
+            "fi",
+            "unset WANDB_API_KEY",
+            f"exec {shlex.join(command)}",
+        )
+    )
+    return ["/bin/bash", "-lc", script]
 
 
 def _image(value: str) -> str:
@@ -67,13 +95,14 @@ def build_train_plan(
     )
     if not all(required_paths):
         raise ValueError("train descriptor requires all model/data/config paths")
-    command = [
+    workload_command = [
         "/workspace/.venv/bin/python",
         "-m",
         "nvpaw_cfw.train",
         f"--sft-toml={config_path}",
         *hydra_overrides,
     ]
+    command = _one_logger_command(workload_command)
     return {
         "schema_version": 1,
         "application": "tao-run-deft-aoi-cosmos3",
@@ -98,6 +127,7 @@ def build_train_plan(
         "working_directory": results_dir,
         "resources": {"gpus": num_gpus, "nodes": 1, "distributed": num_gpus > 1},
         "supporting_files": [adapter_root],
+        "conditional_container_mounts": [dict(ONE_LOGGER_NETRC_MOUNT)],
         "runtime_bootstrap": {"one_logger": _one_logger_bootstrap()},
         "submission_owner": "selected_platform_four_verb_contract",
     }
@@ -137,7 +167,7 @@ def build_action_plan(
             "Framework DCP handoff requires framework_config and action_model_dir"
         )
     selected_model_path = action_model_dir if framework_config else checkpoint_path
-    command = [
+    workload_command = [
         "/workspace/.venv/bin/python",
         runtime_adapter,
         f"--action={action}",
@@ -149,7 +179,7 @@ def build_action_plan(
             raise ValueError("evaluate requires config_path")
         if not source_jsonl or not media_root:
             raise ValueError("evaluate requires source_jsonl and media_root")
-        command.append(f"--config={config_path}")
+        workload_command.append(f"--config={config_path}")
     else:
         if not media_path or not prompt:
             raise ValueError("inference requires media_path and prompt")
@@ -157,7 +187,7 @@ def build_action_plan(
             raise ValueError("media_type must be image or video")
         if max_new_tokens <= 0:
             raise ValueError("max_new_tokens must be positive")
-        command.extend(
+        workload_command.extend(
             [
                 f"--media-type={media_type}",
                 f"--media={media_path}",
@@ -165,6 +195,7 @@ def build_action_plan(
                 f"--max-new-tokens={max_new_tokens}",
             ]
         )
+    command = _one_logger_command(workload_command)
     result = {
         "schema_version": 1,
         "application": "tao-run-deft-aoi-cosmos3",
@@ -196,6 +227,7 @@ def build_action_plan(
             "complete_coverage_required": action == "evaluate",
         },
         "supporting_files": [runtime_adapter],
+        "conditional_container_mounts": [dict(ONE_LOGGER_NETRC_MOUNT)],
         "runtime_bootstrap": {"one_logger": _one_logger_bootstrap()},
         "submission_owner": "selected_platform_four_verb_contract",
     }
