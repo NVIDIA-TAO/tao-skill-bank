@@ -15,6 +15,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 IAA_ROOT = REPO_ROOT / "skills/applications/tao-run-deft-iaa"
 PREPARE = IAA_ROOT / "scripts/prepare_deft_config.py"
 INITIALIZE = IAA_ROOT / "scripts/init_deft_state.py"
+
+
 def _base_args(tmp_path: Path, selected: str):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

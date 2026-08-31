@@ -15,7 +15,7 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    canonical `<workspace>/images`; accept `<workspace>/kpi/images` only as a
    legacy fallback. Resolve symlinks, export the absolute result as
    `IMAGES_DIR`, and hard-stop if neither directory exists. Run
-   `scripts/validate_training_csv.py` against each base CSV so at least the
+   `"$PYTHON" scripts/validate_training_csv.py` against each base CSV so at least the
    CSV-declared input and golden paths are proven to resolve on disk:
 
    ```bash
@@ -24,8 +24,8 @@ activation source; never load or execute the network bootstrap in air-gap mode.
      "$WORKSPACE/train/base/validation_set.csv" \
      "$WORKSPACE/kpi/testing_set.csv"
    do
-     "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/scripts/deft_python.sh" \
-       "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/scripts/validate_training_csv.py" \
+     PYTHON=$(bash "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/scripts/deft_python.sh")
+     "$PYTHON" "$TAO_SKILL_BANK_PATH/skills/applications/tao-run-deft-aoi/scripts/validate_training_csv.py" \
        --csv "$BASE_CSV" \
        --workspace-root "$IMAGES_DIR"
    done
@@ -44,9 +44,10 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    Do not assume an `augmentation/mining_pool/images/` directory exists merely
    because the CSV is under `augmentation/mining_pool/`.
 
-   **Host Python deps.** The DEFT loop needs `pandas`, `numpy`, `matplotlib` (KPI analysis), `pyarrow` (parquet I/O for routing and mining), `huggingface_hub` (backbone staging), and `boto3` (S3 ops). Verify through `scripts/deft_python.sh`; do not probe a different bare interpreter first:
+   **Host Python deps.** The DEFT loop needs `pandas`, `numpy`, `matplotlib` (KPI analysis), `pyarrow` (parquet I/O for routing and mining), `huggingface_hub` (backbone staging), and `boto3` (S3 ops). Select the interpreter with `bash scripts/deft_python.sh`; do not probe a different bare interpreter first:
    ```bash
-   <skill_root>/scripts/deft_python.sh -c \
+   PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+   "$PYTHON" -c \
      "import pandas, numpy, matplotlib, pyarrow, huggingface_hub, boto3"
    ```
    If imports are missing in **air-gap mode**, hard-stop and report the missing
@@ -82,18 +83,19 @@ activation source; never load or execute the network bootstrap in air-gap mode.
 5. **Resolve and export the version-managed container image env vars.** The rest of this skill — including the Pre-Flight Summary's `docker image inspect` line, every stage launch, and the `references/*.md` files — references three env vars. Resolve every value from the installed skill bank's `versions.yaml`; never copy a tag into this document or preserve a tag from an earlier run:
 
    ```bash
+   PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
    TAO_PYT_IMAGE=$(
-     <skill_root>/scripts/deft_python.sh \
+     "$PYTHON" \
        "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
        images.tao_toolkit.pyt --skill-bank "$TAO_SKILL_BANK_PATH"
    )
    TAO_DS_IMAGE=$(
-     <skill_root>/scripts/deft_python.sh \
+     "$PYTHON" \
        "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
        images.tao_toolkit.data_services --skill-bank "$TAO_SKILL_BANK_PATH"
    )
    AG_IMAGE=$(
-     <skill_root>/scripts/deft_python.sh \
+     "$PYTHON" \
        "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
        images.metropolis_sdg.paidf_anomalygen --skill-bank "$TAO_SKILL_BANK_PATH"
    )
@@ -157,7 +159,7 @@ activation source; never load or execute the network bootstrap in air-gap mode.
    executable file check in `references/tao-generate-anomalies.md` to gate the
    AnomalyGen Guardrail safety model; a missing file is a hard stop.
    Stage the ChangeNet pretrained
-   backbone by running `scripts/stage_backbone.py --workspace <workspace>`,
+   backbone by running `"$PYTHON" scripts/stage_backbone.py --workspace <workspace>`,
    then set `specs/baseline_spec.yaml::model.backbone.pretrained_backbone_path`
    to the staged file and bind-mount it per `references/visual-changenet.md` →
    *Pre-Flight responsibility*. Staging is mandatory — hard-stop if the script

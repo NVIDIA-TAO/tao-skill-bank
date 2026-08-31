@@ -53,7 +53,7 @@ The pinned `paidf-anomalygen:1.0.1` container is compatible with the published
 2B Cosmos-Predict2 finetunes, which download through the container helper:
 
 ```bash
-scripts/utilities/download_anomalygen_checkpoints.sh --uc {pcb|metal|glass|all} \
+bash scripts/utilities/download_anomalygen_checkpoints.sh --uc {pcb|metal|glass|all} \
     [--checkpoint-dir checkpoints]
 ```
 
@@ -258,7 +258,7 @@ if [ -z "$(find -L "$AG_CHECKPOINT_ROOT" -path '*/ag_config.yaml' -print -quit)"
     -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
     -e HF_TOKEN -e HF_HUB_DISABLE_XET=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
     -v $WS:$WS -w /workspace/paidf-anomalygen $AG_IMAGE \
-    bash -lc "scripts/utilities/download_anomalygen_checkpoints.sh \
+    bash -lc "bash scripts/utilities/download_anomalygen_checkpoints.sh \
       --uc pcb --checkpoint-dir $AG_CHECKPOINT_ROOT"
 fi
 CKPT=$(find -L "$AG_CHECKPOINT_ROOT" -path '*/ag_config.yaml' -print -quit | xargs -r dirname)
@@ -373,7 +373,8 @@ This snippet documents the schema only; never execute it as inline Python.
 ## Log Stage
 
 ```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
+PYTHON=$(bash <skill_root>/scripts/deft_python.sh)
+"$PYTHON" <skill_root>/scripts/commit_stage.py \
     --results-dir "${RESULTS_DIR}" \
     --iter-label iter${N} \
     --stage anomalygen \
