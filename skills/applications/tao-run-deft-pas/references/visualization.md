@@ -4,6 +4,10 @@ Visualization is one ordered stage with two independently configured outputs:
 contact sheets (`visualize`) and an embedding t-SNE
 (`visualize_embeddings`). It is the only skippable stage.
 
+Every `run_deft_action.py prepare` call only writes an action request. Execute
+and finalize each one through `platform-execution.md` before starting the next
+embedding or the finish adapter.
+
 ## Contents
 
 - [Prepare host artifacts](#prepare-host-artifacts)
@@ -45,7 +49,7 @@ MINED_EMBED_DIR="$ITER_DIR/embeddings/augmented"
 MINED_EMBED_OUT="$MINED_EMBED_DIR/mined_embeddings.parquet"
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-  "$SKILL_ROOT/scripts/run_deft_container.py" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
     --results-dir "$RESULTS_DIR" --image ds \
     --stage-dir "$WEAK_DIR" --name viz_weak_embed \
     "${HF_ARGS[@]}" \
@@ -55,7 +59,7 @@ MINED_EMBED_OUT="$MINED_EMBED_DIR/mined_embeddings.parquet"
     output_parquet=/results/iter_$N/embeddings/viz_weak/embeddings.parquet
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-  "$SKILL_ROOT/scripts/run_deft_container.py" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
     --results-dir "$RESULTS_DIR" --image ds \
     --stage-dir "$MINED_EMBED_DIR" --name viz_mined_embed \
     "${HF_ARGS[@]}" \
@@ -77,7 +81,7 @@ if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
 fi
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" \
-  "$SKILL_ROOT/scripts/run_deft_container.py" \
+  "$SKILL_ROOT/scripts/run_deft_action.py" prepare \
     --results-dir "$RESULTS_DIR" --image ds \
     --stage-dir "$PREV_DIR" --name viz_previous_embed \
     "${HF_ARGS[@]}" \
@@ -93,7 +97,7 @@ a seed training set is the normal branch.
 ## Finish and commit
 
 When `VISUALIZE_EMBEDDINGS=true`, run t-SNE only after all required embedding
-launches succeed. Do not run this adapter for contact-sheets-only mode:
+actions finalize successfully. Do not run this adapter for contact-sheets-only mode:
 
 ```bash
 if [ "$VISUALIZE_EMBEDDINGS" = true ]; then

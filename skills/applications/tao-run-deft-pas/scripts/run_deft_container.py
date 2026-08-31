@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run one PAS DEFT Docker command with persistent mounts and status evidence.
+"""Legacy schema-v1 Docker adapter for existing PAS DEFT runs.
 
-This wrapper reconstructs every value from ``deft_state.json`` on each call;
+New runs use ``run_deft_action.py`` and a selected platform consumer. This
+compatibility wrapper reconstructs every value from ``deft_state.json`` on each call;
 it never relies on a previous shell export.  It records the Docker exit code
 and log path atomically and never places credential values in argv or status.
 """
