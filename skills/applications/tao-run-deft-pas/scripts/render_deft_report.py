@@ -172,10 +172,10 @@ def _format_duration(value: Any) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
-def _format_delta(value: float, reference: float | None) -> str:
-    if reference is None:
+def _format_delta(value: float | None) -> str:
+    if value is None:
         return "—"
-    return f"{value - reference:+.6g}"
+    return f"{value:+.6g}"
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -241,12 +241,15 @@ def _metric_rows(
         if result is None:
             continue
         passed, _ = metric_contract.result_passes(contract, result)
+        relative = metric_contract.relative_metric_summary(state, label)
         rows.append(
             {
                 "label": label,
                 "value": float(result["value"]),
                 "passed": passed,
                 "evidence_path": result.get("evidence_path"),
+                "delta_from_baseline": relative["delta_from_baseline"],
+                "delta_from_previous": relative["delta_from_previous"],
             }
         )
     if not rows:
@@ -389,10 +392,6 @@ def _render_html(
     for name, value in _flatten_config(_redact_config(state.get("config", {}))):
         config_rows.append([html.escape(name), html.escape(value)])
 
-    baseline_value = next(
-        (row["value"] for row in metric_rows if row["label"] == "baseline"), None
-    )
-    previous: float | None = None
     kpi_rows: list[list[str]] = []
     for row in metric_rows:
         evidence = row.get("evidence_path")
@@ -408,13 +407,12 @@ def _render_html(
             [
                 html.escape(str(row["label"])) + marker,
                 html.escape(_format_value(row["value"])),
-                html.escape(_format_delta(row["value"], baseline_value)),
-                html.escape(_format_delta(row["value"], previous)),
+                html.escape(_format_delta(row["delta_from_baseline"])),
+                html.escape(_format_delta(row["delta_from_previous"])),
                 html.escape(gate),
                 evidence_html,
             ]
         )
-        previous = row["value"]
 
     notes: list[str] = []
     iteration_rows: list[list[str]] = []

@@ -474,6 +474,10 @@ def build_state(args: argparse.Namespace) -> dict:
         "max_iterations": args.max_iterations,
         "current_iteration": 0,
         "gate_met": False,
+        # Versioned independently so schema-v3 runs created by older plugin
+        # revisions remain auditable while new runs require durable per-round
+        # regression evidence.
+        "metric_evidence_version": "1",
         # The canonical contract shape record_metric_result.py and
         # metric_contract.contract_from_state consume.
         "metric_contract": dict(args.metric_contract),

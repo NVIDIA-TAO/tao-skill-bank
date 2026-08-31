@@ -51,6 +51,7 @@ from deft_action_contract import (
 from metric_contract import (
     compare,
     pick_best,
+    relative_metric_summary,
     validate_contract,
 )
 from pas_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
@@ -2544,6 +2545,67 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
                     f"gap_analysis, got {completed!r}"
                 )
 
+    # Relative metric evidence is computed at metric commit, not deferred to
+    # the optional HTML renderer. New runs require it in canonical state and
+    # in each iteration summary; legacy schema-v3 runs remain readable.
+    metric_summaries: list[dict[str, Any]] = []
+    require_relative_evidence = state.get("metric_evidence_version") == "1"
+    for label, raw_result in metric_candidates:
+        try:
+            expected_summary = relative_metric_summary(state, label)
+        except (TypeError, ValueError) as exc:
+            errors.append(f"state.iterations.{label} relative metric evidence: {exc}")
+            continue
+        metric_summaries.append(expected_summary)
+        recorded_summary = raw_result.get("relative_change")
+        if recorded_summary != expected_summary:
+            message = (
+                f"state.iterations.{label}.metric_result.relative_change "
+                "does not match canonical metric evidence"
+            )
+            if recorded_summary is not None or require_relative_evidence:
+                errors.append(message)
+            else:
+                warnings.append(
+                    f"legacy run lacks {label} relative metric evidence; "
+                    "the audit derived it read-only"
+                )
+        if label == "baseline":
+            continue
+        info = iterations.get(label)
+        summary_value = (
+            info.get("iteration_summary") if isinstance(info, dict) else None
+        )
+        if not summary_value:
+            continue
+        try:
+            summary_payload = json.loads(
+                pathlib.Path(str(summary_value)).read_text()
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(
+                f"state.iterations.{label}.iteration_summary metric evidence "
+                f"is unreadable: {exc}"
+            )
+            continue
+        recorded_metric = (
+            summary_payload.get("metric")
+            if isinstance(summary_payload, dict)
+            else None
+        )
+        if recorded_metric != expected_summary:
+            message = (
+                f"state.iterations.{label}.iteration_summary.metric does not "
+                "match canonical metric evidence"
+            )
+            if recorded_metric is not None or require_relative_evidence:
+                errors.append(message)
+            else:
+                warnings.append(
+                    f"legacy run lacks {label} metric evidence in "
+                    "iteration_summary.json"
+                )
+
     # ---- log -> state proof validation --------------------------------------
     for entry in entries:
         label = str(entry.get("iteration"))
@@ -2977,6 +3039,7 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
         "last_committed": last,
         "best_iteration": best_label,
         "best_metric_result": best_result,
+        "metric_results": metric_summaries,
         "next_action": next_action,
         "required_reference": required_reference,
         "errors": errors,
@@ -3007,6 +3070,18 @@ def _print_text(report: dict[str, Any]) -> None:
             f"best={report['best_iteration']} "
             f"metric={gate['metric_name']}({gate['query_type']}) "
             f"value={float(result['value']):.6g} target={_render_target(gate)}"
+        )
+    for metric in report.get("metric_results", []):
+        if metric.get("iter_label") == "baseline":
+            continue
+        print(
+            "metric_result="
+            f"{metric['iter_label']} "
+            f"value={float(metric['value']):.6g} "
+            f"delta_baseline={float(metric['delta_from_baseline']):+.6g} "
+            f"({metric['comparison_to_baseline']}) "
+            f"delta_previous={float(metric['delta_from_previous']):+.6g} "
+            f"({metric['comparison_to_previous']})"
         )
     print(f"next_action={report['next_action']}")
     if report["required_reference"]:
