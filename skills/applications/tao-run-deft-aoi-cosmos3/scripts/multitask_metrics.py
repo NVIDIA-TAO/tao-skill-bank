@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Task-aware classification, counting, and detection metrics for NVPaw."""
+"""Task-aware classification and detection metrics for NVPaw annotations."""
 
 from __future__ import annotations
 
@@ -14,12 +14,7 @@ import re
 from collections import Counter, defaultdict
 from typing import Any, Iterable
 
-from nvpaw_annotations import (
-    DIRECT_CLASS_LABELS,
-    TASK_SPECS,
-    parse_count_answer,
-    parse_detection_answer,
-)
+from nvpaw_annotations import DIRECT_CLASS_LABELS, TASK_SPECS, parse_detection_answer
 
 
 def _field(row: dict[str, Any], names: tuple[str, ...]) -> Any:
@@ -284,43 +279,6 @@ def _detection_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _counting_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    tp = sum(int(row["tp"]) for row in rows)
-    fp = sum(int(row["fp"]) for row in rows)
-    fn = sum(int(row["fn"]) for row in rows)
-    value = _f1(tp, fp, fn, both_empty=(tp == fp == fn == 0))
-    absolute_errors = [
-        abs(int(row["prediction_count"]) - int(row["ground_truth_count"]))
-        for row in rows
-        if row.get("prediction_count") is not None
-    ]
-    return {
-        "support": len(rows),
-        "metric_family": "counting",
-        "primary_metric": "count_micro_f1",
-        "primary_value": value,
-        "count_micro_f1": value,
-        "exact_count_accuracy": sum(row["exact_match"] for row in rows) / len(rows),
-        "mean_absolute_error": (
-            sum(absolute_errors) / len(absolute_errors) if absolute_errors else None
-        ),
-        "parsed_support": len(absolute_errors),
-        "tp": tp,
-        "fp": fp,
-        "fn": fn,
-    }
-
-
-def _group_metrics(rows: list[dict[str, Any]], family: str) -> dict[str, Any]:
-    if family == "classification":
-        return _classification_group(rows)
-    if family == "counting":
-        return _counting_group(rows)
-    if family == "detection":
-        return _detection_group(rows)
-    raise ValueError(f"unsupported metric family {family!r}")
-
-
 def _target_path(annotation: dict[str, Any]) -> str:
     roles = annotation["image_roles"]
     return annotation["images"][roles.index("target")]
@@ -389,8 +347,6 @@ def evaluate(
         exact_match = False
         ground_truth_labels: list[str] = []
         prediction_labels: list[str] = []
-        ground_truth_count: int | None = None
-        prediction_count: int | None = None
         prediction_value: Any = []
         if metric_family == "classification":
             ground_truth_labels = list(answer.get("labels", []))
@@ -433,35 +389,6 @@ def evaluate(
                 both_empty=parse_ok and not ground_truth_objects and not prediction_objects,
             )
             prediction_value = {"kind": "detections", "objects": prediction_objects}
-        elif metric_family == "counting":
-            ground_truth_count = answer.get("value")
-            if type(ground_truth_count) is not int or ground_truth_count < 0:
-                raise ValueError(
-                    f"annotation {record_id!r} has an invalid canonical count"
-                )
-            try:
-                parsed_answer = parse_count_answer(
-                    response if isinstance(response, str) else "",
-                    record_id=record_id,
-                )
-                prediction_count = parsed_answer["value"]
-                parsed = True
-            except ValueError:
-                prediction_count = None
-                parsed = False
-            parse_ok = parse_ok and parsed
-            scored_prediction = prediction_count if prediction_count is not None else 0
-            tp = min(ground_truth_count, scored_prediction)
-            fp = max(scored_prediction - ground_truth_count, 0)
-            fn = max(ground_truth_count - scored_prediction, 0)
-            exact_match = parse_ok and prediction_count == ground_truth_count
-            score = _f1(
-                tp,
-                fp,
-                fn,
-                both_empty=parse_ok and ground_truth_count == scored_prediction == 0,
-            )
-            prediction_value = {"kind": "count", "value": prediction_count}
         else:
             raise ValueError(f"annotation {record_id!r} has unsupported metric_family")
         if sample is None:
@@ -496,8 +423,6 @@ def evaluate(
             "fn": fn,
             "ground_truth_labels": ground_truth_labels,
             "prediction_labels": prediction_labels,
-            "ground_truth_count": ground_truth_count,
-            "prediction_count": prediction_count,
             "prediction_json": json.dumps(prediction_value, sort_keys=True),
             "ground_truth_json": json.dumps(answer, sort_keys=True),
             "metadata_json": json.dumps(
@@ -531,7 +456,11 @@ def evaluate(
         if len(families) != 1:
             raise ValueError(f"task {task_type!r} mixes metric families")
         family = next(iter(families))
-        task_metrics[task_type] = _group_metrics(task_rows, family)
+        task_metrics[task_type] = (
+            _classification_group(task_rows)
+            if family == "classification"
+            else _detection_group(task_rows)
+        )
 
     expected_tasks = set(TASK_SPECS) if required_tasks is None else set(required_tasks)
     unknown_tasks = set(task_metrics) - set(TASK_SPECS)
@@ -547,7 +476,11 @@ def evaluate(
     dataset_metrics: dict[str, dict[str, Any]] = {}
     for (task_type, dataset), group_rows in sorted(dataset_groups.items()):
         family = str(group_rows[0]["metric_family"])
-        metrics = _group_metrics(group_rows, family)
+        metrics = (
+            _classification_group(group_rows)
+            if family == "classification"
+            else _detection_group(group_rows)
+        )
         metrics.update(
             {
                 "task_type": task_type,
@@ -572,7 +505,11 @@ def evaluate(
         for cohort, group_rows in sorted(cohort_rows.items())
     }
     family_metrics = {
-        family: _group_metrics(group_rows, family)
+        family: (
+            _classification_group(group_rows)
+            if family == "classification"
+            else _detection_group(group_rows)
+        )
         for family, group_rows in sorted(family_rows.items())
     }
 

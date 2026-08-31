@@ -8,8 +8,8 @@ description: >
   from selected Mining samples, train with cosmos-rl LoRA SFT, and repeat
   through the selected platform's submit/status/logs/cancel contract.
   The default bare_okng profile uses exact OK/NG labels; the opt-in
-  nvpaw_multitask_v1 profile supports component counting, component/defect
-  classification, and normalized-box detection with optional golden references, task-balanced
+  nvpaw_multitask_v1 profile supports component/defect classification and
+  normalized-box detection with optional golden references, task-balanced
   KPI gates, and pluggable gap-analysis ablations. Use for "run Cosmos3 DEFT
   AOI", "CR3 AOI loop", or "improve Cosmos3 PCB inspection"; do not use for
   one-off Cosmos training or generic anomaly generation.
@@ -17,7 +17,7 @@ license: Apache-2.0 AND CC-BY-4.0
 compatibility: Requires the companion TAO skill-bank skills from `eval.config`, host Python with `numpy`, `pyarrow`, and `yaml`, and the selected platform's native CLI.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.1"
+  version: "0.1.0"
 allowed-tools: Read Task Bash Write
 tags:
 - application
@@ -180,14 +180,14 @@ default; never infer a profile from annotation contents.
 
 ### `nvpaw_multitask_v1`
 
-- Supports the seven task types in `references/nvpaw-prompt-formats.md`:
-  component counting plus component/defect classification and detection, each
-  with the documented single-image or golden-then-target role contract.
+- Supports the six task types in `references/nvpaw-prompt-formats.md`:
+  component/defect classification and detection, each with the documented
+  single-image or golden-then-target role contract.
 - `id` identifies one prompt/answer record; `target_id` identifies one physical
   target. Multiple records may share a target without duplicate embedding work.
 - Classification answers are prompt-local semantic choice sets, including
-  valid `[]`. Count answers are non-negative integers. Detection answers are
-  labeled `xyxy` integer boxes normalized to `[0,1000]`, also allowing `[]`.
+  valid `[]`. Detection answers are labeled `xyxy` integer boxes normalized to
+  `[0,1000]`, also allowing `[]`.
 - JSONL OpenAI `messages` is an authoring format only. Run
   `materialize_nvpaw_annotations.py`; Cosmos consumes the deterministic JSON
   array it produces.
@@ -295,23 +295,70 @@ small-Python-helper remediation.
 
 ## Workflow
 
-Read `references/pipeline-and-state.md` before initialization or stage
-execution; it owns the exact transition graph, commit evidence, resume rules,
-and stop procedure. Benchmark is always the first and only stop gate. Proxy
-evaluation and RCCA run only when that gate is unmet and may feed routing;
-Benchmark sample errors never may.
+The full transition graph is in `references/pipeline-and-state.md`.
 
-Each iteration routes Proxy gaps, commits the frozen AnomalyGen policy, mines
-and history-deduplicates real samples, assembles a monotonic Train JSON,
-validates its lineage and split isolation, trains, then Benchmark-evaluates.
-Only a continuing iteration runs Proxy evaluation afterward. Rich strict
-routing fans out only to `routed_task_types`; image-only and explicit fallback
-rows retain the source target's available tasks.
+The frozen Benchmark gate is always evaluated before any Proxy work. Proxy
+evaluate and RCCA exist only to seed the next iteration's mining, so they run
+only when the gate is unmet. A run that passes the gate stops without spending
+a Proxy evaluation.
 
-Use only `init_deft_state.py`, `commit_stage.py`, and `finalize_run.py` for
-state transitions. Their deterministic report hook owns
-`DEFT_Loop_Report.html`; never delegate or hand-author it. Read
-`references/REPORT_RENDERING.md` before final rendering.
+Baseline starts with zero-shot frozen Benchmark evaluation of the unmodified
+base model, which establishes the zero-shot KPI:
+
+1. `evaluate_benchmark`
+2. `benchmark_metrics` — stop here when the gate already passes.
+3. `evaluate_proxy` — only when the gate is unmet.
+4. `proxy_rcca`
+
+For each `iterN` when the frozen Benchmark gate is unmet:
+
+1. `routing` — derive mining targets from Proxy gaps only.
+   Write both formats from the same rows: `mining_targets.json` for state
+   (`--mining-targets` takes the JSON) and a `filepath[,label]` parquet for the
+   embedding container. Bare rows join back to Proxy by `id`; rich rows already
+   carry explicit target identity and collapse record gaps by `target_id` — see
+   `references/gap-analysis.md`.
+2. `anomalygen` — when the frozen policy is `disabled`, commit an unconditional
+   `--skip` and continue to mining. Under `auto`, generate synthetic defects
+   with `paidf-anomalygen` in `inference_only` mode or use its evidence-gated
+   skip. Bare output becomes exact `NG`; rich output is limited to defect-
+   classification tasks with a known label. Detection SDG is a hard error
+   without validated geometry. See `references/paidf-anomalygen.md`.
+3. `data_mining` — use `tao-mine-aoi-images` to embed each unique Proxy target
+   and Mining source image once. Bare mode keeps the native nearest-neighbor
+   plus `filter_mined_by_cosine.py` path. Rich mode passes both embedding
+   artifacts through `task_mining_router.py`, which applies the frozen
+   `image_only`, `task_strict`, or `task_then_fallback` policy, top-K, and cosine
+   floor while retaining routed task provenance. Then run the mapped skill's
+   history-aware post-processing. The default top-K remains 5.
+4. `assemble_data` — align mined target paths to Mining source prompts,
+   golden references, and exact labels with `scripts/emit_mined_sharegpt.py`;
+   task-aware rows fan out only to `routed_task_types`, while `image_only` and
+   explicit fallback rows retain the source target's available tasks;
+   create `train_iter_1.json` from mined records plus synthetic records only
+   when AnomalyGen produced them, after Proxy RCA and Mining selection; then
+   append monotonically into
+   `train_iter_N.json` in later iterations with
+   `scripts/assemble_training_json.py`.
+5. `validate_data` — validate the selected profile, files, record-level
+   duplicates, generated-Train lineage, and Proxy/Benchmark target leakage.
+6. `train`
+7. `evaluate_benchmark`
+8. `benchmark_metrics` — stop here when the gate passes or
+   `N = max_iterations`.
+9. `evaluate_proxy` — only when the loop continues.
+10. `proxy_rcca`
+
+`init_deft_state.py` writes the first `DEFT_Loop_Report.html`; every successful
+`commit_stage.py` call then refreshes it through the deterministic
+`scripts/render_report.py` post-commit hook. Stop when the Benchmark contract
+passes, `max_iterations` is reached, or a hard stop occurs. For an ordinary
+stop, run `scripts/finalize_run.py` with the explicit reason, then run
+`render_report.py --require-terminal` after optional token alignment.
+The report includes a bounded prompt showcase; rich runs also show task KPI
+attainment, task×dataset diagnostics, and prediction coverage. Keep every other visual convention aligned with
+ChangeNet. See `references/REPORT_RENDERING.md`. Never delegate or hand-author
+report rendering.
 
 ## Stage References
 
