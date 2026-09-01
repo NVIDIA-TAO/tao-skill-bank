@@ -48,7 +48,7 @@ def bool_str(value: Any) -> str:
     return "true" if str(value).strip().lower() in ("true", "1", "yes", "y") else "false"
 
 
-def _abs_data_path(value: Any) -> str:
+def _abs_data_path(value: Any, path: str) -> str:
     """Make a PAS data path absolute, preserving a deliberately blank path.
 
     Path normalization must not erase the typed-config boundary.  In
@@ -58,7 +58,7 @@ def _abs_data_path(value: Any) -> str:
     """
     if not isinstance(value, str):
         raise ValueError(
-            f"PAS data path {value!r} has type {type(value).__name__}; expected str"
+            f"{path}={value!r} has type {type(value).__name__}; expected str"
         )
     return os.path.abspath(value) if value else value
 
@@ -657,8 +657,8 @@ def _materialize_dataclass(
     return config_type(**values)
 
 
-def _abs_or_missing(value: Any) -> Any:
-    return value if value == MISSING else _abs_data_path(value)
+def _abs_or_missing(value: Any, path: str) -> Any:
+    return value if value == MISSING else _abs_data_path(value, path)
 
 
 def _build_source_dict(raw: dict[str, Any], mining_spec: dict[str, Any]) -> dict[str, Any]:
@@ -722,8 +722,17 @@ def _build_source_dict(raw: dict[str, Any], mining_spec: dict[str, Any]) -> dict
     mining_out["knn_metric"] = mining_spec["knn_metric"]
 
     pas = _mapping(raw.get("pas"), "pas")
-    train_pairs = _abs_data_path(pas.get("train_pairs_source_file", ""))
-    pool_pairs = _abs_data_path(pas.get("pool_pairs_source_file", "")) or train_pairs
+    train_pairs = _abs_data_path(
+        pas.get("train_pairs_source_file", ""),
+        "pas.train_pairs_source_file",
+    )
+    pool_pairs = (
+        _abs_data_path(
+            pas.get("pool_pairs_source_file", ""),
+            "pas.pool_pairs_source_file",
+        )
+        or train_pairs
+    )
     path_keys = {
         "train_pairs_source_file",
         "pool_pairs_source_file",
@@ -741,18 +750,33 @@ def _build_source_dict(raw: dict[str, Any], mining_spec: dict[str, Any]) -> dict
             "train_pairs_source_file": train_pairs,
             "pool_pairs_source_file": pool_pairs,
             "eval_pairs_source_file": _abs_or_missing(
-                pas.get("eval_pairs_source_file", MISSING)
+                pas.get("eval_pairs_source_file", MISSING),
+                "pas.eval_pairs_source_file",
             ),
-            "train_image_dir": _abs_or_missing(pas.get("train_image_dir", MISSING)),
+            "train_image_dir": _abs_or_missing(
+                pas.get("train_image_dir", MISSING),
+                "pas.train_image_dir",
+            ),
             "train_caption_dir": _abs_or_missing(
-                pas.get("train_caption_dir", MISSING)
+                pas.get("train_caption_dir", MISSING),
+                "pas.train_caption_dir",
             ),
-            "source_image_dir": _abs_or_missing(pas.get("source_image_dir", MISSING)),
+            "source_image_dir": _abs_or_missing(
+                pas.get("source_image_dir", MISSING),
+                "pas.source_image_dir",
+            ),
             "source_caption_dir": _abs_or_missing(
-                pas.get("source_caption_dir", MISSING)
+                pas.get("source_caption_dir", MISSING),
+                "pas.source_caption_dir",
             ),
-            "eval_image_dir": _abs_or_missing(pas.get("eval_image_dir", MISSING)),
-            "eval_caption_dir": _abs_or_missing(pas.get("eval_caption_dir", MISSING)),
+            "eval_image_dir": _abs_or_missing(
+                pas.get("eval_image_dir", MISSING),
+                "pas.eval_image_dir",
+            ),
+            "eval_caption_dir": _abs_or_missing(
+                pas.get("eval_caption_dir", MISSING),
+                "pas.eval_caption_dir",
+            ),
         }
     )
 
@@ -850,15 +874,17 @@ class PasDeftConfig:
         if not isinstance(mining_spec, dict):
             raise ValueError("mining_spec.yaml root must be an object")
 
-        source = _build_source_dict(raw, mining_spec)
         try:
+            source = _build_source_dict(raw, mining_spec)
             self.cfg: DeftExperimentConfig = _materialize_dataclass(
                 DeftExperimentConfig,
                 source,
             )
+            _validate_field_constraints(self.cfg)
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid typed DEFT configuration: {exc}") from exc
-        _validate_field_constraints(self.cfg)
+            raise ValueError(
+                f"invalid typed DEFT configuration {config_path}: {exc}"
+            ) from exc
 
         self.experiment = self.cfg.experiment
         self.visualization = self.cfg.visualization

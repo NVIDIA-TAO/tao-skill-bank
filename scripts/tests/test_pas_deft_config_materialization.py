@@ -491,7 +491,10 @@ def test_typed_runtime_rejects_non_string_pas_path_before_normalization(tmp_path
     payload["pas"]["eval_caption_dir"] = -1
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
 
-    with pytest.raises(ValueError, match=r"PAS data path -1.*expected str"):
+    with pytest.raises(
+        ValueError,
+        match=r"deft_config.yaml: pas.eval_caption_dir=-1.*expected str",
+    ):
         PasDeftConfig(str(config_path))
 
 
