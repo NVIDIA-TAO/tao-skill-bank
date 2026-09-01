@@ -33,8 +33,8 @@ images:
     deploy:                 nvcr.io/nvidia/tao/tao-toolkit:7.2.0-deploy
     data_services:          nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
     # PAS pins independently; review both dedicated keys on every TAO image bump.
-    deft_pas_pyt:           nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
-    deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
+    deft_pas_pyt:           nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt
+    deft_pas_data_services: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
     cosmos_framework:       nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-framework
     cosmos_rl:              nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl

@@ -158,8 +158,8 @@ Run this section only after required intake is resolved.
    container-oriented shared checker. Platform-native checks are:
 
    ```bash
-   PAS_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
-   PAS_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
+   PAS_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt  # versions-key: images.tao_toolkit.deft_pas_pyt
+   PAS_DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.deft_pas_data_services
    TARGET_GPU_ARGS=()
    if [[ "$PLATFORM" == docker ]]; then
      IFS=, read -r -a GPU_ID_LIST <<< "$GPU_IDS"
@@ -251,8 +251,8 @@ hardware, pool size, and accumulated data can change this substantially.
 | continual behavior | dataset `true`, model `false` |
 | visualization | contact sheets `true`, embedding plot `true` |
 | Hugging Face token forwarding | disabled; enable only when the approved model/environment requires it |
-| PyTorch image | `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch` | <!-- versions-key: images.tao_toolkit.deft_pas_pyt -->
-| data-services image | `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch` | <!-- versions-key: images.tao_toolkit.deft_pas_data_services -->
+| PyTorch image | `nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt` | <!-- versions-key: images.tao_toolkit.deft_pas_pyt -->
+| data-services image | `nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services` | <!-- versions-key: images.tao_toolkit.deft_pas_data_services -->
 | monitoring | attached, poll every `5 minutes` |
 
 An ungated run evaluates every allowed iteration and completes with
@@ -315,9 +315,9 @@ Inputs
                NGC_KEY=<set | not needed | missing>;
                HF_TOKEN=<set | optional/unset | missing>
   token forwarding: requires_hf_token=<bool> (source=<user | default>)
-  PyTorch image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
+  PyTorch image: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt  # versions-key: images.tao_toolkit.deft_pas_pyt
                  (source=versions.yaml; status=<available | acquire after approval>)
-  data-services image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
+  data-services image: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.deft_pas_data_services
                        (source=versions.yaml; status=<available | acquire after approval>)
   virtualenv profiles: pyt=<absolute path | n/a>; ds=<absolute path | n/a>;
                        ABI/packages/entrypoints/imports/pip/CUDA=<pass | fail | n/a>
@@ -368,8 +368,8 @@ For a new run, perform the following in order.
      printf '%s' "$NGC_KEY" | docker login nvcr.io \
        --username '$oauthtoken' --password-stdin >/dev/null
    )
-   docker pull nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
-   docker pull nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
+   docker pull nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt  # versions-key: images.tao_toolkit.deft_pas_pyt
+   docker pull nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.deft_pas_data_services
    ```
 
    Virtualenv:
@@ -534,8 +534,8 @@ For a new run, perform the following in order.
      INIT_OPTIONAL_ARGS+=(--requires-hf-token)
    fi
 
-   PAS_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
-   PAS_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
+   PAS_PYT_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt  # versions-key: images.tao_toolkit.deft_pas_pyt
+   PAS_DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.deft_pas_data_services
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
      "$SKILL_ROOT/scripts/init_deft_state.py" \

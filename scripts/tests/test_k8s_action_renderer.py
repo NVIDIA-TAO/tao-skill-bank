@@ -18,7 +18,7 @@ import yaml
 
 
 REPO = Path(__file__).resolve().parents[2]
-PAS_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
+PAS_DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services"  # versions-key: images.tao_toolkit.deft_pas_data_services
 SCRIPT = (
     REPO
     / "skills/platform/tao-run-on-kubernetes/scripts/render_action_job.py"

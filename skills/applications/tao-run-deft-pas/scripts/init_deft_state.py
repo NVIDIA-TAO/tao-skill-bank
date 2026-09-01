@@ -57,8 +57,8 @@ from metric_contract import validate_contract
 
 
 WORKFLOW = "tao-run-deft-pas"
-PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
-PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
+PINNED_PYT_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt"  # versions-key: images.tao_toolkit.deft_pas_pyt
+PINNED_DS_IMAGE = "nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services"  # versions-key: images.tao_toolkit.deft_pas_data_services
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
     "tao_spec.yaml",
