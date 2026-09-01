@@ -16,8 +16,14 @@ This skill is AutoML-enabled for both fine-tuning and DARR inference. When an HP
 arrives, route it through `tao-skill-bank:tao-run-automl` with this model's `skill_dir`.
 
 > **Note:** `VirtualEnvSDK` and `python_script` execution require the AutoML
-> control-plane dependencies managed by `tao-run-automl`. This model reference
-> lists NV-Tesseract Forecasting search spaces, overrides, and trial payloads.
+> control-plane dependencies managed by `tao-run-automl`. Construct the SDK as
+> `VirtualEnvSDK(venv_path=..., work_dir=...)` -- see that skill's **Runner
+> Construction** section and
+> `skills/applications/tao-run-automl/references/automl-runner-configuration.md`
+> section "VirtualEnvSDK (containerless venv runs)". **Always pass `work_dir=`**;
+> the default is a hidden state directory under `$HOME`, and each fine-tuning
+> trial writes roughly 1.4 GB of checkpoint there. This model reference lists
+> NV-Tesseract Forecasting search spaces, overrides, and trial payloads.
 
 ### Fine-tuning AutoML
 
@@ -56,7 +62,8 @@ from pathlib import Path
 forecasting_dir = Path("/path/to/NV-Tesseract/forecasting")
 skill_dir = Path("/path/to/tao-skill-bank/skills/models/tao-finetune-nv-tesseract-forecasting")
 
-# Use tao-run-automl to create the VirtualEnvSDK-backed AutoMLRunner for this skill/action.
+# Build sdk + runner per tao-run-automl section "Runner Construction":
+# sdk = VirtualEnvSDK(venv_path=<venv>, work_dir=<scratch>)  # work_dir is not optional in practice
 
 result = runner.run(
     automl_settings={

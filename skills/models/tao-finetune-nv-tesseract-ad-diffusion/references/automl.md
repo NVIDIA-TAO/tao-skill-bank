@@ -63,8 +63,18 @@ per strategy and compare F1 to pick the winner.
 
 ### Runner setup
 
-Use `tao-run-automl` for AutoML control-plane setup, preflight, VirtualEnvSDK
+Use `tao-run-automl` for AutoML control-plane setup, preflight, runner
 construction, `AutoMLRunner.run()` invocation, monitoring, and result handoff.
+Build the containerless SDK exactly as its **Runner Construction** section
+shows: `VirtualEnvSDK(venv_path=..., work_dir=...)`, documented in
+`skills/applications/tao-run-automl/references/automl-runner-configuration.md`
+under "VirtualEnvSDK (containerless venv runs)".
+
+> **Always pass `work_dir=`.** Omitted, `VirtualEnvSDK` defaults to a hidden
+> state directory under `$HOME` and every trial's checkpoints land in the home
+> directory. Point it at a scratch filesystem with room for
+> `automl_max_recommendations` checkpoints.
+
 This model reference lists NV-Tesseract AD Diffusion search spaces, overrides,
 constraints, and trial payloads.
 
@@ -76,7 +86,8 @@ from pathlib import Path
 ad_diffusion_dir = Path("/path/to/NV-Tesseract/ad_diffusion")
 skill_dir = Path("/path/to/tao-skill-bank/skills/models/tao-finetune-nv-tesseract-ad-diffusion")
 
-# Use tao-run-automl to create the VirtualEnvSDK-backed AutoMLRunner for this skill/action.
+# Build sdk + runner per tao-run-automl section "Runner Construction":
+# sdk = VirtualEnvSDK(venv_path=<venv>, work_dir=<scratch>)  # work_dir is not optional in practice
 
 result = runner.run(
     automl_settings={
@@ -213,7 +224,8 @@ from pathlib import Path
 ad_diffusion_dir = Path("/path/to/NV-Tesseract/ad_diffusion")
 skill_dir = Path("/path/to/tao-skill-bank/skills/models/tao-finetune-nv-tesseract-ad-diffusion")
 
-# Use tao-run-automl to create the VirtualEnvSDK-backed AutoMLRunner for this skill/action.
+# Build sdk + runner per tao-run-automl section "Runner Construction":
+# sdk = VirtualEnvSDK(venv_path=<venv>, work_dir=<scratch>)  # work_dir is not optional in practice
 
 results_by_strategy = {}
 for strategy in ["scs", "macs"]:

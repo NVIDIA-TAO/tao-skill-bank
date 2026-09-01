@@ -12,6 +12,7 @@ Load this file only when the compact `SKILL.md` points here for the current task
 - from tao_sdk.platforms.slurm      import SlurmSDK      # SLURM cluster
 - from tao_sdk.platforms.kubernetes import KubernetesSDK # K8s (EKS / GKE / on-prem)
 - from tao_sdk.platforms.docker     import DockerSDK     # local Docker daemon
+- VirtualEnvSDK (containerless venv runs)
 - Full Example (all options)
 - LLM-Powered Algorithm Example
 - Programmatic API (without runner)
@@ -72,6 +73,78 @@ result = runner.run(
     gpu_type="H100",                             # Brev-specific
 )
 ```
+
+### VirtualEnvSDK (containerless venv runs)
+
+Model skills with `container_image: null` and `execution.type: python_script`
+(the NV-Tesseract Forecasting and AD Diffusion skills) run trials as local
+Python processes instead of containers. Their SDK is `VirtualEnvSDK`, and
+unlike the credential-reading platform SDKs it takes constructor arguments:
+
+```python
+from tao_sdk.platforms.virtualenv import VirtualEnvSDK
+from tao_automl.runner import AutoMLRunner
+
+sdk = VirtualEnvSDK(
+    venv_path="/abs/path/to/model-venv",   # must contain pyvenv.cfg + bin/python
+    work_dir="/scratch/automl-jobs",       # ALWAYS set this - see caution below
+)
+runner = AutoMLRunner(sdk=sdk, skill_dir=str(skill_dir), action="train")
+```
+
+Full signature: `VirtualEnvSDK(venv_path, work_dir=None, state_file=None)`.
+
+> **Caution - `work_dir` defaults into your home directory.** When `work_dir`
+> is omitted the SDK resolves it to `$TAO_SDK_STATE_DIR/virtualenv`, or
+> `~/.tao_sdk/virtualenv` when that env var is unset, and creates
+> `<work_dir>/jobs/` on construction. Every trial's checkpoints then land under
+> `$HOME` - roughly 1.4 GB per NV-Tesseract Forecasting trial. Always pass an
+> explicit `work_dir` on a filesystem with room for
+> `automl_max_recommendations` checkpoints. Setting `TAO_SDK_STATE_DIR`
+> relocates the default, but an explicit `work_dir` is the reviewable form and
+> is what the launch review must show.
+
+Job layout (this is where trial artifacts actually land):
+
+```text
+<work_dir>/jobs/<job-id>/spec/spec.<yaml|json|toml>
+<work_dir>/jobs/<job-id>/results/<declared_output_key_with_dots_as_underscores>/
+<work_dir>/jobs/<job-id>/logs/job.log
+```
+
+Declared outputs from `references/skill_info.yaml` are rewritten into that
+per-job results directory, so `train.output_dir` becomes
+`<work_dir>/jobs/<job-id>/results/train_output_dir`. Resolve it at runtime with
+`sdk.get_job_results_dir(job_id)`; do not precompute it.
+
+Do not pass `image=` for `python_script` execution - the venv is the runtime.
+Verify construction during preflight. Importing the class is not enough: the
+constructor is what validates `venv_path`, so an import-only check reports
+success against a venv that cannot run a single trial.
+
+```bash
+VENV_PATH=/abs/path/to/model-venv \
+WORK_DIR=/scratch/automl-jobs \
+python - <<'PY'
+import os
+from tao_sdk.platforms.virtualenv import VirtualEnvSDK
+
+VirtualEnvSDK(
+    venv_path=os.environ["VENV_PATH"],
+    work_dir=os.environ["WORK_DIR"],
+)
+print("OK")
+PY
+```
+
+Use the same `venv_path` and `work_dir` the runner will use. A missing or
+malformed venv exits non-zero with
+`ValueError: Virtual environment does not exist: <venv_path>`, so the check
+fails before any trial launches. Construction also creates `<work_dir>/jobs/`,
+which is the second reason to pass `work_dir` explicitly here.
+
+The `virtualenv` extra is not exposed as its own `versions.yaml` wheel key;
+`wheels.tao_automl_all` is currently the only key that includes it.
 
 ### Full Example (all options)
 
