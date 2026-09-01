@@ -125,7 +125,7 @@ new release is published. After tagging release `X.Y.Z` on GitHub, update:
 
 | File | What to change |
 |---|---|
-| [`README.md`](../README.md) | the tag in the Install section prose, the Claude Code `/plugin marketplace add NVIDIA-TAO/tao-skill-bank@X.Y.Z` block, and the manual `codex plugin marketplace add` block |
+| [`README.md`](../README.md) | the tag in the Install section prose, the Claude Code HTTPS `...tao-skill-bank.git#X.Y.Z` block, and the manual `codex plugin marketplace add` block |
 | [`scripts/install-codex-agents.sh`](../scripts/install-codex-agents.sh) | `DEFAULT_MARKETPLACE_REF="X.Y.Z"` |
 
 Leave the curl one-liner pointing at `main`. It fetches the installer, and only

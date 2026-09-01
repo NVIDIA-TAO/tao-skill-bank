@@ -64,3 +64,34 @@ def test_pas_stamped_pins_match_published_versions():
         text = path.read_text()
         assert images["deft_pas_pyt"] in text
         assert images["deft_pas_data_services"] in text
+
+
+def test_unpublished_7_2_branch_has_a_runnable_install_path():
+    """NVBug 6602338: release candidates must be reachable before tagging."""
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert (
+        "/plugin marketplace add "
+        "https://github.com/NVIDIA-TAO/tao-skill-bank.git#release/7.2.0"
+    ) in readme
+    assert (
+        "codex plugin marketplace add NVIDIA-TAO/tao-skill-bank "
+        "--ref release/7.2.0"
+    ) in readme
+    assert "immutable `@7.2.0` tag after it appears" in readme
+
+
+def test_claude_marketplace_install_uses_https_for_every_documented_ref():
+    """NVBug 6597811: Claude's GitHub shorthand must not select SSH."""
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "/plugin marketplace add NVIDIA-TAO/tao-skill-bank" not in readme
+    assert "git@github.com:NVIDIA-TAO/tao-skill-bank" not in readme
+    assert (
+        "/plugin marketplace add "
+        "https://github.com/NVIDIA-TAO/tao-skill-bank.git#7.1.0"
+    ) in readme
+    assert (
+        "/plugin marketplace add "
+        "https://github.com/NVIDIA-TAO/tao-skill-bank.git#<new-tag>"
+    ) in readme

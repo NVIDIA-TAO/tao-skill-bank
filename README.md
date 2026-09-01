@@ -34,12 +34,38 @@ tags appear on the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/
 substitute the tag you want, or use `@main` if you specifically need unreleased
 work.
 
+### Validate the unpublished TAO 7.2 branch
+
+TAO Skill Bank 7.2 is currently QA'd on `release/7.2.0` and has not yet been
+published as a `7.2.0` tag. The stable commands below therefore continue to
+install 7.1.0. Internal users who need the 7.2 PAS/DEFT release candidate must
+select its branch explicitly and have access to the `nvcr.io/nvstaging` images
+described above.
+
+For Claude Code:
+
+```
+/plugin marketplace add https://github.com/NVIDIA-TAO/tao-skill-bank.git#release/7.2.0
+/plugin install tao-skills@tao-skill-bank
+```
+
+For Codex:
+
+```bash
+codex plugin marketplace remove tao-local-plugins  # omit if not registered
+codex plugin marketplace add NVIDIA-TAO/tao-skill-bank --ref release/7.2.0
+codex plugin add tao-skill-bank@tao-local-plugins
+```
+
+This branch is a moving, unpublished release candidate. Switch to the
+immutable `@7.2.0` tag after it appears on the Releases page.
+
 ### Claude Code
 
 In a Claude Code session, add the marketplace at the release tag and install the plugin:
 
 ```
-/plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.1.0
+/plugin marketplace add https://github.com/NVIDIA-TAO/tao-skill-bank.git#7.1.0
 /plugin install tao-skills@tao-skill-bank
 ```
 
@@ -155,7 +181,7 @@ install` is a no-op on an already-installed plugin, so it will leave you on the
 old build even after the marketplace moves.
 
 ```
-/plugin marketplace add NVIDIA-TAO/tao-skill-bank@<new-tag>
+/plugin marketplace add https://github.com/NVIDIA-TAO/tao-skill-bank.git#<new-tag>
 ```
 
 Then update the installed plugin, either from `/plugin manage` in-session or
