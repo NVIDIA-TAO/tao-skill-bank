@@ -273,6 +273,10 @@ the exact iteration's `nvidia_pas_metrics_aggregate.csv`; the result records
 its source path and is re-derived during commit and audit. Checkpoint ranking
 and best-run reporting follow the approved operator (`>=`/`>` chooses the
 higher value, `<=`/`<` the lower), not a hard-coded metric convention.
+Every committed result also records its value and operator-directed change
+against baseline and the previous round. For iterN the same evidence is bound
+into `iteration_summary.json`, so an improvement or regression remains visible
+in canonical JSON and audit output even before the HTML report is rendered.
 
 Successful completion is exactly one of:
 

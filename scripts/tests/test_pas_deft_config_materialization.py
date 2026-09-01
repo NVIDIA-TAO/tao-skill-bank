@@ -449,6 +449,9 @@ def test_runtime_interpreter_probe_does_not_require_omegaconf(tmp_path, monkeypa
     [
         ("iteration", "start", 1.5, "cannot be converted to int"),
         ("training", "continual_model", "sometimes", "cannot be converted to bool"),
+        ("training", "continual_model", -1, "integer booleans must be 0 or 1"),
+        ("training", "continual_model", 2, "integer booleans must be 0 or 1"),
+        ("experiment", "name", -1, "cannot be converted to str"),
         ("gap_analysis", "metric_name", None, "cannot be null"),
     ],
 )
@@ -466,6 +469,32 @@ def test_typed_runtime_rejects_values_outside_declared_scalar_types(
     config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
 
     with pytest.raises(ValueError, match=expected):
+        PasDeftConfig(str(config_path))
+
+
+@pytest.mark.parametrize("value", [0, 1])
+def test_typed_runtime_accepts_unambiguous_integer_booleans(tmp_path, value):
+    _, results, _ = _materialize(tmp_path)
+    config_path = results / "config" / "deft_config.yaml"
+    payload = _yaml(config_path)
+    payload["training"]["continual_model"] = value
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    typed = PasDeftConfig(str(config_path))
+    assert typed.training.continual_model is bool(value)
+
+
+def test_typed_runtime_rejects_non_string_pas_path_before_normalization(tmp_path):
+    _, results, _ = _materialize(tmp_path)
+    config_path = results / "config" / "deft_config.yaml"
+    payload = _yaml(config_path)
+    payload["pas"]["eval_caption_dir"] = -1
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    with pytest.raises(
+        ValueError,
+        match=r"deft_config.yaml: pas.eval_caption_dir=-1.*expected str",
+    ):
         PasDeftConfig(str(config_path))
 
 

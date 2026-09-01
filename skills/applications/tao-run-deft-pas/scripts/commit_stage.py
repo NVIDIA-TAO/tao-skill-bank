@@ -43,6 +43,7 @@ from command_contract import (
 )
 from deft_action_contract import platform_evidence_error, remote_freshness_attested
 from log_stage import append_stage, next_seq
+from metric_contract import relative_metric_summary
 from pas_deft.pas_artifacts import PAS_METRICS_AGGREGATE_FILENAME
 
 try:
@@ -188,6 +189,26 @@ def _required_json(
     if nonempty and not payload:
         raise ValueError(f"{name} JSON must not be empty: {resolved}")
     return str(resolved), payload
+
+
+def _validate_iteration_summary_metric(
+    payload: dict[str, Any],
+    state: dict[str, Any],
+    iter_label: str,
+) -> None:
+    expected = relative_metric_summary(state, iter_label)
+    if payload.get("metric") != expected:
+        raise ValueError(
+            "--iteration-summary.metric does not match the committed metric "
+            "and relative-change evidence"
+        )
+    info = state.get("iterations", {}).get(iter_label)
+    result = info.get("metric_result") if isinstance(info, dict) else None
+    if not isinstance(result, dict) or result.get("relative_change") != expected:
+        raise ValueError(
+            f"state.iterations.{iter_label}.metric_result.relative_change "
+            "does not match canonical metric evidence"
+        )
 
 
 def _required_parquet(
@@ -682,15 +703,17 @@ def _apply_success(
                 f"{missing or ['status=complete']}"
             )
         if iter_label != "baseline":
+            summary_path, summary_payload = _required_json(
+                args.iteration_summary,
+                "--iteration-summary",
+                root_type=dict,
+            )
             summary = _require_exact(
-                _required_json(
-                    args.iteration_summary,
-                    "--iteration-summary",
-                    root_type=dict,
-                )[0],
+                summary_path,
                 phase_root / "iteration_summary.json",
                 "--iteration-summary",
             )
+            _validate_iteration_summary_metric(summary_payload, state, iter_label)
             phase["iteration_summary"] = summary
             summary_status = _required_command_status(
                 args.iteration_summary_status,

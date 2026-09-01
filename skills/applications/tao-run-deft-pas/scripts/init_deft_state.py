@@ -53,7 +53,7 @@ import yaml
 from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
 from virtualenv_runtime import resolve_virtualenv_profiles
 
-from metric_contract import validate_contract
+from metric_contract import METRIC_EVIDENCE_VERSION, validate_contract
 
 
 WORKFLOW = "tao-run-deft-pas"
@@ -474,6 +474,10 @@ def build_state(args: argparse.Namespace) -> dict:
         "max_iterations": args.max_iterations,
         "current_iteration": 0,
         "gate_met": False,
+        # Versioned independently so schema-v3 runs created by older plugin
+        # revisions remain auditable while new runs require durable per-round
+        # regression evidence.
+        "metric_evidence_version": METRIC_EVIDENCE_VERSION,
         # The canonical contract shape record_metric_result.py and
         # metric_contract.contract_from_state consume.
         "metric_contract": dict(args.metric_contract),

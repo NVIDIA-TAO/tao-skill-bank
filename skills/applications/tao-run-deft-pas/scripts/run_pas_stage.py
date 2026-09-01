@@ -38,6 +38,7 @@ from command_contract import (
     expected_image_kind,
 )
 from deft_action_contract import platform_evidence_error, remote_freshness_attested
+from metric_contract import relative_metric_summary
 
 
 def _atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
@@ -682,6 +683,16 @@ def iteration_summary(args: argparse.Namespace) -> dict[str, Any]:
     results = _results(args.results_dir)
     cfg = _config(args.deft_config, results)
     current = _iter_dir(results, args.iter_num)
+    metric_path = current / "evaluate" / "metric_result.json"
+    _require([metric_path])
+    metric_result = json.loads(metric_path.read_text())
+    if not isinstance(metric_result, dict):
+        raise ValueError(f"metric result must be a JSON object: {metric_path}")
+    metric = relative_metric_summary(
+        _state(results),
+        f"iter{args.iter_num}",
+        current_result=metric_result,
+    )
     output = pathlib.Path(
         write_iteration_summary(
             experiment_dir=str(current),
@@ -691,6 +702,7 @@ def iteration_summary(args: argparse.Namespace) -> dict[str, Any]:
             mined_pairs_file=str(current / "mining" / "mined_pairs.json"),
             training_checkpoint=_training_checkpoint(cfg, args.iter_num),
             next_checkpoint_path=f"/results/iter_{args.iter_num}/train/best/clip_best_val_t2i_mAP.pth",
+            metric=metric,
         )
     ).resolve()
     _require([output])
