@@ -49,9 +49,18 @@ def bool_str(value: Any) -> str:
 
 
 def _abs_data_path(value: Any) -> str:
-    """Make a PAS data path absolute, preserving a deliberately blank path."""
-    text = str(value or "")
-    return os.path.abspath(text) if text else text
+    """Make a PAS data path absolute, preserving a deliberately blank path.
+
+    Path normalization must not erase the typed-config boundary.  In
+    particular, stringifying YAML numbers here would turn an invalid path
+    value such as ``-1`` into a valid-looking host path before dataclass
+    materialization has a chance to reject it.
+    """
+    if not isinstance(value, str):
+        raise ValueError(
+            f"PAS data path {value!r} has type {type(value).__name__}; expected str"
+        )
+    return os.path.abspath(value) if value else value
 
 
 @dataclasses.dataclass
@@ -557,7 +566,12 @@ def _coerce_scalar(value: Any, expected_type: type, path: str) -> Any:
         if type(value) is bool:
             return value
         if type(value) is int:
-            return bool(value)
+            if value in {0, 1}:
+                return bool(value)
+            raise ValueError(
+                f"{path}={value!r} cannot be converted to bool; "
+                "integer booleans must be 0 or 1"
+            )
         if isinstance(value, str):
             normalized = value.strip().lower()
             if normalized in {"true", "yes", "y", "on", "1"}:
@@ -587,9 +601,9 @@ def _coerce_scalar(value: Any, expected_type: type, path: str) -> Any:
         raise ValueError(f"{path}={value!r} cannot be converted to float")
 
     if expected_type is str:
-        if isinstance(value, (Mapping, list, tuple, set)):
+        if not isinstance(value, str):
             raise ValueError(f"{path}={value!r} cannot be converted to str")
-        return str(value)
+        return value
 
     if isinstance(value, expected_type):
         return value
