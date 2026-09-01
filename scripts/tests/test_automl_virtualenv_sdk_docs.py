@@ -15,7 +15,10 @@ both halves, including that trap.
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -78,3 +81,113 @@ def test_model_refs_do_not_leak_sdk_symbols(ref: Path) -> None:
     ``~/.tao_sdk/virtualenv``, which fails CI in a model skill.
     """
     assert re.search(r"tao_sdk", ref.read_text()) is None
+
+
+def _preflight_block() -> str:
+    """The fenced block the docs tell an operator to run as the preflight."""
+    text = RUNNER_CFG.read_text()
+    after = text.split("Verify construction during preflight", 1)[1]
+    return after.split("```bash", 1)[1].split("```", 1)[0]
+
+
+def _preflight_python_body() -> str:
+    """The python the preflight block feeds to the interpreter."""
+    block = _preflight_block()
+    assert "<<'PY'" in block, (
+        "preflight is not a python heredoc; an import-only one-liner cannot "
+        "validate venv_path"
+    )
+    return block.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+
+def test_preflight_check_constructs_rather_than_imports() -> None:
+    """An import-only preflight reports OK on a venv that cannot run a trial.
+
+    ``VirtualEnvSDK`` validates ``venv_path`` in its constructor, so
+    ``python -c "from ... import VirtualEnvSDK; print('OK')"`` exits 0 even
+    when the selected venv does not exist.
+    """
+    block = _preflight_block()
+    assert "VirtualEnvSDK(" in block, "preflight never constructs the SDK"
+    assert "venv_path=" in block, "preflight does not pass the selected venv_path"
+    assert "work_dir=" in block, "preflight does not pass an explicit work_dir"
+
+
+def test_documented_preflight_fails_on_a_missing_venv(tmp_path: Path) -> None:
+    """Execute the documented command against a stub with the real contract.
+
+    The stub raises the ``ValueError`` the real constructor raises for a
+    missing ``venv_path``. An import-only command exits 0 under this stub; a
+    constructing one exits non-zero. String assertions alone cannot show that.
+    """
+    pkg = tmp_path / "tao_sdk" / "platforms"
+    pkg.mkdir(parents=True)
+    (pkg.parent / "__init__.py").write_text("")
+    (pkg / "__init__.py").write_text("")
+    (pkg / "virtualenv.py").write_text(
+        "import os\n"
+        "\n"
+        "\n"
+        "class VirtualEnvSDK:\n"
+        "    def __init__(self, venv_path, work_dir=None, state_file=None):\n"
+        "        if not os.path.isdir(venv_path):\n"
+        "            raise ValueError(\n"
+        "                f'Virtual environment does not exist: {venv_path}'\n"
+        "            )\n"
+    )
+
+    proc = subprocess.run(
+        [sys.executable, "-"],
+        input=_preflight_python_body(),
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(tmp_path),
+            "VENV_PATH": str(tmp_path / "not-a-venv"),
+            "WORK_DIR": str(tmp_path / "jobs"),
+        },
+    )
+
+    assert proc.returncode != 0, "documented preflight passed on a missing venv"
+    assert "Virtual environment does not exist" in proc.stderr
+
+
+def test_documented_preflight_passes_on_a_valid_venv(tmp_path: Path) -> None:
+    """The same command must still succeed when the venv is real."""
+    pkg = tmp_path / "tao_sdk" / "platforms"
+    pkg.mkdir(parents=True)
+    (pkg.parent / "__init__.py").write_text("")
+    (pkg / "__init__.py").write_text("")
+    (pkg / "virtualenv.py").write_text(
+        "import os\n"
+        "\n"
+        "\n"
+        "class VirtualEnvSDK:\n"
+        "    def __init__(self, venv_path, work_dir=None, state_file=None):\n"
+        "        if not os.path.isdir(venv_path):\n"
+        "            raise ValueError(\n"
+        "                f'Virtual environment does not exist: {venv_path}'\n"
+        "            )\n"
+        "        os.makedirs(os.path.join(work_dir, 'jobs'), exist_ok=True)\n"
+    )
+    venv_path = tmp_path / "model-venv"
+    venv_path.mkdir()
+
+    proc = subprocess.run(
+        [sys.executable, "-"],
+        input=_preflight_python_body(),
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(tmp_path),
+            "VENV_PATH": str(venv_path),
+            "WORK_DIR": str(tmp_path / "jobs"),
+        },
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+    # Construction creates <work_dir>/jobs/ - the caution's second reason.
+    assert (tmp_path / "jobs" / "jobs").is_dir()

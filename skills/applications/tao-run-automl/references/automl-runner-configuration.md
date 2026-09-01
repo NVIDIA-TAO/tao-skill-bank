@@ -118,11 +118,30 @@ per-job results directory, so `train.output_dir` becomes
 `sdk.get_job_results_dir(job_id)`; do not precompute it.
 
 Do not pass `image=` for `python_script` execution - the venv is the runtime.
-Verify construction during preflight:
+Verify construction during preflight. Importing the class is not enough: the
+constructor is what validates `venv_path`, so an import-only check reports
+success against a venv that cannot run a single trial.
 
 ```bash
-python -c "from tao_sdk.platforms.virtualenv import VirtualEnvSDK; print('OK')"
+VENV_PATH=/abs/path/to/model-venv \
+WORK_DIR=/scratch/automl-jobs \
+python - <<'PY'
+import os
+from tao_sdk.platforms.virtualenv import VirtualEnvSDK
+
+VirtualEnvSDK(
+    venv_path=os.environ["VENV_PATH"],
+    work_dir=os.environ["WORK_DIR"],
+)
+print("OK")
+PY
 ```
+
+Use the same `venv_path` and `work_dir` the runner will use. A missing or
+malformed venv exits non-zero with
+`ValueError: Virtual environment does not exist: <venv_path>`, so the check
+fails before any trial launches. Construction also creates `<work_dir>/jobs/`,
+which is the second reason to pass `work_dir` explicitly here.
 
 The `virtualenv` extra is not exposed as its own `versions.yaml` wheel key;
 `wheels.tao_automl_all` is currently the only key that includes it.
