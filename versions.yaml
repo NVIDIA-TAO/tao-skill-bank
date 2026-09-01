@@ -29,7 +29,7 @@
 
 images:
   tao_toolkit:
-    pyt:                    nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
+    pyt:                    nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-60-multiarch
     deploy:                 nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-53-multiarch
     data_services:          nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
     # PAS pins independently; review both dedicated keys on every TAO image bump.

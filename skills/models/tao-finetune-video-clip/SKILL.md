@@ -44,7 +44,7 @@ AutoML is not packaged for this model skill. Always use direct `video_clip` acti
 Use the pinned TAO container declared in `references/skill_info.yaml`. Pull with `NGC_KEY` when the image is not cached locally.
 
 ```bash
-VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.pyt
+VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-60-multiarch"  # versions-key: images.tao_toolkit.pyt
 VIDEO_CLIP_IMAGE="${VIDEO_CLIP_IMAGE:-$VIDEO_CLIP_IMAGE_DEFAULT}"
 docker pull "$VIDEO_CLIP_IMAGE"
 ```
@@ -72,7 +72,7 @@ workspace/
 Docker options for all actions (skill-eval CI uses the same `$WORKSPACE_DIR` bind-mount pattern):
 
 ```bash
-VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.pyt
+VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-60-multiarch"  # versions-key: images.tao_toolkit.pyt
 VIDEO_CLIP_IMAGE="${VIDEO_CLIP_IMAGE:-$VIDEO_CLIP_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
 DOCKER_COMMON=(
