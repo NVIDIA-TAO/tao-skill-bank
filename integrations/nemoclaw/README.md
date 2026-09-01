@@ -158,12 +158,27 @@ input tokens returned HTTP 200, and `thinking` blocks come back signed.
 | Component | Verified | Notes |
 |---|---|---|
 | NemoClaw | **v0.0.97** (`lkg`) | v0.0.97–v0.0.101 were previously blocked by an `npm audit` gate against a live advisory feed (upstream issue #8177) |
-| OpenShell CLI | **0.0.85** | pinned exactly by `nemoclaw-blueprint/blueprint.yaml` (`min == max`), so it is not a floor — 0.0.72 in earlier docs is not reproducible |
+| OpenShell CLI | **0.0.85** | pinned exactly by `nemoclaw-blueprint/blueprint.yaml` (`min == max`), so it is not a floor — 0.0.72 in earlier docs is not reproducible. **This pin is NemoClaw's, not ours, and it moves:** 0.0.72 (07-03) → 0.0.85 (07-17) → 0.0.99 (08-07) → 0.0.101 (08-10) → 0.0.106 (08-20). Upgrading NemoClaw upgrades OpenShell with it, so never assume a version observed here still holds — see the note below |
 | OpenClaw agent | **2026.7.1** (`2d2ddc4`) | the `nemoclaw onboard --agent openclaw` path; Hermes and Deep Agents are untested here |
 | Agent brain | **Claude Opus 5** (`aws/anthropic/bedrock-claude-opus-5`) | supersedes Opus 4.8; see capability note below |
 | Node | **≥ 22.19.0** | declared by `tools/mcp-tool-discovery-runtime/package.json`; the quickstart's "Node 20+" is wrong. The installer bootstraps 22.x itself |
 | Python `mcp` | **< 2** (resolves 1.29.0) | `mcp` 2.x removed `mcp.server.fastmcp`, which `server.py` imports. Pinned in this script |
 | TAO toolkit image | **7.1.0-pyt** | from the bank's `versions.yaml`; also the default `TAO_SHELL_IMAGE` for `tao_exec` |
+
+This table records what was *verified*, not what is *enforced*. Nothing here
+pins anything on our side — the versions an operator actually gets come from
+whichever NemoClaw release they installed.
+
+That distinction has already cost us one P0 (NVBug 6682592). OpenShell v0.0.88
+renamed sandbox containers from `openshell-<name>-<id>` to
+`openshell-<workspace>--<name>-<id>`, and NemoClaw's exact pin jumped 0.0.85 →
+0.0.99 on 2026-08-07, straight over it. Both setup and uninstall were matching
+that name and broke — on newer hosts only, so it looked like a flaky recurrence
+rather than a version boundary. They now resolve the container by its
+`openshell.ai/sandbox-name` label instead, which is stable across the rename.
+
+The lesson generalises: **do not re-derive OpenShell's internal conventions**
+(container names, network names, paths). Ask for them, or key off labels.
 
 ### Custom inference endpoints
 
