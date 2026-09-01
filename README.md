@@ -27,7 +27,7 @@ changes flow from `main` into a release.
 
 The skill bank works with both Claude Code and Codex. Pick the runtime you use.
 
-**The commands below install the latest release build, `7.1.0`.** Every install
+**The commands below install the latest release build, `7.2.0`.** Every install
 path pins the marketplace to that tag, so a fresh install gets the same
 validated build every time instead of whatever `main` happens to hold. Newer
 tags appear on the [Releases page](https://github.com/NVIDIA-TAO/tao-skill-bank/releases);
@@ -39,7 +39,7 @@ work.
 In a Claude Code session, add the marketplace at the release tag and install the plugin:
 
 ```
-/plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.1.0
+/plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.2.0
 /plugin install tao-skills@tao-skill-bank
 ```
 
@@ -62,7 +62,7 @@ was cut.
 
 …or, if you've already cloned or extracted the repo from a zip, run
 `scripts/install-codex-agents.sh` from that directory. The script registers the
-marketplace **at the latest release tag** (`7.1.0`), installs the TAO Skill Bank
+marketplace **at the latest release tag** (`7.2.0`), installs the TAO Skill Bank
 plugin, and copies `AGENTS.md` to `~/.codex/AGENTS.md` so the TAO identity loads
 in every Codex session. It's idempotent and backs up any existing
 `~/.codex/AGENTS.md` before overwriting. Override the source with
@@ -83,7 +83,7 @@ If you'd rather drive each step yourself:
 **1. Install the plugin.** Either use the VS Code Codex extension's plugin UI (select **TAO Skill Bank**), or from the CLI:
 
 ```bash
-codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.1.0
+codex plugin marketplace add NVIDIA-TAO/tao-skill-bank@7.2.0
 codex plugin add tao-skill-bank@tao-local-plugins
 ```
 
