@@ -24,7 +24,7 @@
 set -euo pipefail
 
 # Latest release tag — keep in sync with the pins in README.md on every release.
-DEFAULT_MARKETPLACE_REF="7.1.0"
+DEFAULT_MARKETPLACE_REF="7.2.0"
 
 MARKETPLACE_SOURCE="${TAO_SKILL_BANK_MARKETPLACE:-https://github.com/NVIDIA-TAO/tao-skill-bank.git}"
 MARKETPLACE_REF="${TAO_SKILL_BANK_REF-$DEFAULT_MARKETPLACE_REF}"

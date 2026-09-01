@@ -127,6 +127,7 @@ new release is published. After tagging release `X.Y.Z` on GitHub, update:
 |---|---|
 | [`README.md`](../README.md) | the tag in the Install section prose, the Claude Code `/plugin marketplace add NVIDIA-TAO/tao-skill-bank@X.Y.Z` block, and the manual `codex plugin marketplace add` block |
 | [`scripts/install-codex-agents.sh`](../scripts/install-codex-agents.sh) | `DEFAULT_MARKETPLACE_REF="X.Y.Z"` |
+| [`skills/core/tao-setup/scripts/install-codex-agents.sh`](../skills/core/tao-setup/scripts/install-codex-agents.sh) | packaged copy — must stay **byte-identical**, so `cp` the top-level file over it |
 
 Leave the curl one-liner pointing at `main`. It fetches the installer, and only
 the copy on `main` knows the current release tag — a copy served from tag
@@ -134,8 +135,15 @@ the copy on `main` knows the current release tag — a copy served from tag
 tags cut before this pin existed).
 
 ```bash
-grep -rn "7\.1\.0" README.md scripts/install-codex-agents.sh   # find every pin to bump
+# find every pin to bump (the packaged installer copy is easy to miss)
+grep -rn "7\.2\.0" README.md scripts/install-codex-agents.sh \
+  skills/core/tao-setup/scripts/install-codex-agents.sh
 ```
+
+`scripts/tests/test_install_codex_agents.py` enforces both halves of this: the
+packaged copy must match the top-level one byte for byte, and the tag in
+`DEFAULT_MARKETPLACE_REF` must appear in the README install commands. Run
+`pytest scripts/tests/test_install_codex_agents.py` after the bump.
 
 Verify against the published tag before merging — a pin to a tag that does not
 exist yet fails at `marketplace add` time, not in CI:
