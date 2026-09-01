@@ -1,0 +1,6 @@
+version: 2
+# Reviewed false positives — NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "TP*"
+    path: "SKILL.md"
+    reason: "Reviewed FP (#67): the description accurately states the skill purpose; no deceptive tooling."
