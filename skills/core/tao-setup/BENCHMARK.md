@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-analyze-changenet-rca
+# Skill Benchmark: tao-setup
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,12 +8,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-analyze-changenet-rca`
+- Skill: `tao-setup`
 - Evaluation date: 2026-09-01
 - Evaluator version: `1.3.2`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:0f59e0d0e9480172b2f30333f8d1e5c4879d9904763edbe80d78be71db557687` (skill-evaluator-dataset-snapshot/1)
+- Dataset digest: `sha256:646cc2eff75323f4c19ef8aa7bab21af9f0d483032dbd24c960e512200242a6c` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 1
 - Environment: `k8s-sandbox`
 - Tier 3 evidence: required for publication
@@ -45,12 +45,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 23% → 100% (+77 points) | 34% → 95% (+62 points) |
+| Overall | 23% → 95% (+72 points) | 23% → 50% (+26 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
-| Correctness | 0% → 100% (+100 points) | 20% → 100% (+80 points) |
-| Discoverability | 0% → 100% (+100 points) | 0% → 94% (+94 points) |
-| Effectiveness | 17% → 100% (+83 points) | 48% → 83% (+35 points) |
-| Efficiency | 0% → 100% (+100 points) | 0% → 100% (+100 points) |
+| Correctness | 0% → 100% (+100 points) | 0% → 100% (+100 points) |
+| Discoverability | 0% → 100% (+100 points) | 0% → 0% (±0 points) |
+| Effectiveness | 17% → 100% (+83 points) | 17% → 48% (+32 points) |
+| Efficiency | 0% → 75% (+75 points) | 0% → 0% (±0 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Uplift is `skill score - baseline score`, shown in percentage points.
 
@@ -60,7 +60,7 @@ Example: `47% → 92% (+45 points)` means the skill-assisted run scored 92%, 45 
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 1 validator(s); 6 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 1 validator(s); 5 finding(s) |
 | Tier 2 | Semantic deduplication | **NOT RUN** | No result was recorded |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
 
@@ -69,12 +69,11 @@ Example: `47% → 92% (+45 points)` means the skill-assisted run scored 92%, 45 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/applications/tao-analyze-changenet-rca/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/applications/tao-analyze-changenet-rca`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/applications/tao-analyze-changenet-rca/SKILL.md`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/applications/tao-analyze-changenet-rca/SKILL.md`)
-- **LOW** SCHEMA/unexpected_file: Unexpected 'hooks' in skill root (`skills/applications/tao-analyze-changenet-rca/hooks`)
-- 1 additional finding(s) are available in the full evaluation artifacts.
+- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/core/tao-setup/SKILL.md`)
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/core/tao-setup`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/core/tao-setup/SKILL.md`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/core/tao-setup/SKILL.md`)
+- **LOW** SCHEMA/author_format: Author must be of the form 'Name <email@host>' (`skills/core/tao-setup/SKILL.md`)
 
 </details>
 

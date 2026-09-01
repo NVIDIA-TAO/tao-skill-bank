@@ -1,5 +1,5 @@
 ## Description: <br>
-Local or remote Docker execution for TAO SDK job containers using a Docker daemon with NVIDIA GPU runtime. <br>
+One-time session setup and orchestration map for the TAO skill bank that provides cross-skill discovery flow, credential checks, and host preflight when TAO skills are installed individually. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,13 +9,13 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need to run TAO SDK training and inference jobs on a local or remote Docker daemon with NVIDIA GPU runtime for development, debugging, and single-node workflows. <br>
+Developers and engineers who install TAO skills individually from a public catalog and need session-level bootstrap — host preflight, credential presence checks, NGC registry login, and the cross-skill discovery flow — before running multi-skill TAO workflows. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Optional] <br>
+**Requires API Key or External Credential:** [Yes] <br>
 **Credential Type(s):** [API key] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
@@ -25,12 +25,12 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [skill_info.yaml](references/skill_info.yaml) <br>
-- [NVIDIA TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+- [TAO Skill Bank repository](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+- [Agent Skills open standard](https://agentskills.io) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Configuration instructions, Code] <br>
+**Output Type(s):** [Shell commands, Configuration instructions] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -42,35 +42,40 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive), each attempt run in an isolated sandbox pod. <br>
+Evaluated against 1 skill-specific task (1 positive) in isolated k8s-sandbox pods. Each task verifies skill identification, documented workflow summarization, and adherence to no-execution constraints. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
 - Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
 - Correctness: Checks final-answer correctness against the reference answer. <br>
 - Discoverability: Checks whether the expected skill was found and executed when needed. <br>
-- Effectiveness: Checks whether the skill helped complete the user's goal and expected workflow (equal-weight mean of goal completion and workflow adherence). <br>
+- Effectiveness: Checks whether the skill helped complete the user's goal (goal completion + expected workflow adherence). <br>
 - Efficiency: Checks routing quality, workspace-aware skill reads, and productive tool use. <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Evaluates unsafe operations, secret leakage, and unauthorized access. <br>
-- `accuracy`: Evaluates final-answer correctness against the reference answer. <br>
-- `skill_execution`: Evaluates whether the expected skill was found and executed. <br>
-- `skill_efficiency`: Evaluates routing quality, workspace-aware skill reads, and productive tool use. <br>
-- `goal_accuracy`: Evaluates whether the user's goal was achieved. <br>
-- `behavior_check`: Evaluates whether the expected workflow behavior was followed. <br>
+- `security`: Verifies absence of unsafe operations, secret leakage, and unauthorized access. <br>
+- `accuracy`: Verifies final-answer correctness against the reference answer. <br>
+- `skill_execution`: Verifies whether the expected skill was found and executed. <br>
+- `goal_accuracy`: Verifies whether the user's goal was achieved. <br>
+- `behavior_check`: Verifies whether the expected workflow behavior was followed. <br>
+- `skill_efficiency`: Verifies routing quality, workspace-aware skill reads, and productive tool use. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 23% → 95% (+72 points) | 23% → 92% (+69 points) |
+| Overall | 23% → 95% (+72 points) | 23% → 50% (+26 points) |
 | Security | 100% → 100% (±0 points) | 100% → 100% (±0 points) |
 | Correctness | 0% → 100% (+100 points) | 0% → 100% (+100 points) |
-| Discoverability | 0% → 100% (+100 points) | 0% → 94% (+94 points) |
-| Effectiveness | 17% → 100% (+83 points) | 17% → 68% (+52 points) |
-| Efficiency | 0% → 75% (+75 points) | 0% → 100% (+100 points) |
+| Discoverability | 0% → 100% (+100 points) | 0% → 0% (±0 points) |
+| Effectiveness | 17% → 100% (+83 points) | 17% → 48% (+32 points) |
+| Efficiency | 0% → 75% (+75 points) | 0% → 0% (±0 points) |
+
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
