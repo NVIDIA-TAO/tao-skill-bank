@@ -72,6 +72,23 @@ actions:
         type: file
     upload_excludes:
     - inputs/
+  gen_trt_engine:
+    container_image: nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deploy
+    command: video_clip gen_trt_engine -e {config_path}
+    config_format: yaml
+    mode: config
+    inputs:
+      gen_trt_engine.onnx_file:
+        type: file
+      gen_trt_engine.trt_engine:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+      gen_trt_engine.trt_engine:
+        type: file
+    upload_excludes:
+    - inputs/
 data_sources:
   train:
     dataset.train.video_text.metadata:
