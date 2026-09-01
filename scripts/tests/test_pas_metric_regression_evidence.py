@@ -25,6 +25,7 @@ import metric_contract  # noqa: E402
 import parse_pas_metrics  # noqa: E402
 import prepare_deft_config  # noqa: E402
 import record_metric_result  # noqa: E402
+import render_deft_report  # noqa: E402
 import run_pas_stage  # noqa: E402
 
 
@@ -99,6 +100,102 @@ def test_relative_metric_summary_distinguishes_baseline_and_previous_round():
     assert summary["previous_label"] == "iter1"
     assert summary["delta_from_previous"] == pytest.approx(0.05)
     assert summary["comparison_to_previous"] == "improved"
+
+
+def test_relative_metric_summary_treats_float_noise_as_unchanged():
+    baseline = 0.25
+    current = baseline + 1e-14
+    state = {
+        "metric_contract": {
+            "metric_name": "Rank-1",
+            "query_type": "medium",
+            "op": ">=",
+            "target": None,
+        },
+        "iterations": {
+            "baseline": {"metric_result": _result("baseline", baseline)},
+            "iter1": {"metric_result": _result("iter1", current)},
+        },
+    }
+
+    summary = metric_contract.relative_metric_summary(state, "iter1")
+
+    assert summary["delta_from_baseline"] == pytest.approx(current - baseline)
+    assert summary["comparison_to_baseline"] == "unchanged"
+    assert summary["comparison_to_previous"] == "unchanged"
+
+
+def test_baseline_summary_has_no_self_comparison():
+    state = {
+        "metric_contract": {
+            "metric_name": "Rank-1",
+            "query_type": "medium",
+            "op": ">=",
+            "target": None,
+        },
+        "iterations": {
+            "baseline": {"metric_result": _result("baseline", 0.25)},
+        },
+    }
+
+    summary = metric_contract.relative_metric_summary(state, "baseline")
+
+    assert summary["value"] == pytest.approx(0.25)
+    for field in (
+        "baseline_value",
+        "delta_from_baseline",
+        "comparison_to_baseline",
+        "previous_label",
+        "previous_value",
+        "delta_from_previous",
+        "comparison_to_previous",
+    ):
+        assert summary[field] is None
+
+
+def test_metric_evidence_versions_fail_closed():
+    assert metric_contract.relative_evidence_required({}) is False
+    assert (
+        metric_contract.relative_evidence_required(
+            {"metric_evidence_version": "1"}
+        )
+        is True
+    )
+    with pytest.raises(ValueError, match="unsupported metric_evidence_version"):
+        metric_contract.relative_evidence_required(
+            {"metric_evidence_version": "2"}
+        )
+
+
+def test_report_rows_tolerate_missing_previous_metric():
+    state = {
+        "metric_contract": {
+            "metric_name": "Rank-1",
+            "query_type": "medium",
+            "op": ">=",
+            "target": None,
+        },
+        "iterations": {
+            "baseline": {"metric_result": _result("baseline", 0.2)},
+            "iter2": {"metric_result": _result("iter2", 0.15)},
+        },
+    }
+    entries = [
+        {"iteration": "baseline", "stage": "evaluate", "status": "ok"},
+        {"iteration": "iter2", "stage": "evaluate", "status": "ok"},
+    ]
+
+    rows, best = render_deft_report._metric_rows(  # noqa: SLF001
+        state,
+        entries,
+        state["metric_contract"],
+    )
+
+    assert best == "baseline"
+    assert [row["label"] for row in rows] == ["baseline", "iter2"]
+    assert rows[1]["value"] == pytest.approx(0.15)
+    assert rows[1]["delta_from_baseline"] is None
+    assert rows[1]["delta_from_previous"] is None
 
 
 def test_audit_text_surfaces_the_round_regression_without_html(capsys):

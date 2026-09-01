@@ -72,6 +72,10 @@ classifications. Classification follows the approved operator, including
 lower-is-better contracts. Commit and audit independently re-derive these
 fields; the HTML renderer consumes the same helper rather than owning a
 separate delta implementation.
+The baseline record has no comparison target, so all baseline-relative and
+previous-relative fields are null rather than describing a self-comparison.
+Evidence-version bumps must evolve the state marker and nested summary schema
+together; an older audit fails closed on an unsupported declared version.
 
 ## Decision after commit
 

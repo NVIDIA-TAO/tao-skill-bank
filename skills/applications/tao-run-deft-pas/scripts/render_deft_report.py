@@ -241,15 +241,22 @@ def _metric_rows(
         if result is None:
             continue
         passed, _ = metric_contract.result_passes(contract, result)
-        relative = metric_contract.relative_metric_summary(state, label)
+        try:
+            relative = metric_contract.relative_metric_summary(state, label)
+        except (TypeError, ValueError):
+            # Rendering is intentionally defensive for partially recovered or
+            # legacy disk state. The audit remains authoritative; retain the
+            # current metric row and render unavailable comparisons as em
+            # dashes instead of crashing the optional presentation layer.
+            relative = {}
         rows.append(
             {
                 "label": label,
                 "value": float(result["value"]),
                 "passed": passed,
                 "evidence_path": result.get("evidence_path"),
-                "delta_from_baseline": relative["delta_from_baseline"],
-                "delta_from_previous": relative["delta_from_previous"],
+                "delta_from_baseline": relative.get("delta_from_baseline"),
+                "delta_from_previous": relative.get("delta_from_previous"),
             }
         )
     if not rows:

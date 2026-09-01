@@ -51,6 +51,7 @@ from deft_action_contract import (
 from metric_contract import (
     compare,
     pick_best,
+    relative_evidence_required,
     relative_metric_summary,
     validate_contract,
 )
@@ -2549,7 +2550,14 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
     # the optional HTML renderer. New runs require it in canonical state and
     # in each iteration summary; legacy schema-v3 runs remain readable.
     metric_summaries: list[dict[str, Any]] = []
-    require_relative_evidence = state.get("metric_evidence_version") == "1"
+    try:
+        require_relative_evidence = relative_evidence_required(state)
+    except ValueError as exc:
+        # Unsupported evidence versions are never treated as legacy. Continue
+        # validating the current shape, but keep the run invalid until a
+        # runtime that understands the declared version audits it.
+        require_relative_evidence = True
+        errors.append(str(exc))
     for label, raw_result in metric_candidates:
         try:
             expected_summary = relative_metric_summary(state, label)
