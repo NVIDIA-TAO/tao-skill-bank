@@ -76,6 +76,10 @@ SUPPORTED_ACTIONS = {
 PLAN_ARTIFACT_SCHEMA_VERSION = 1
 _PLAN_ARTIFACT_TRANSIENT_ARGS = {"verb", "format", "plan_artifact", "render_output"}
 DEFAULT_NANO_VLM_ARCHITECTURE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
+# Cosmos Framework implements HFModel._configure_validation_video_feature_cache
+# for these runtime model types only; every other family raises at model
+# construction. Keep this allowlist authoritative for the planner. NVBUG 6669758.
+FRAMEWORK_VALIDATION_FEATURE_CACHE_MODEL_TYPES = frozenset({"qwen3_vl"})
 
 
 def _huggingface_repo_id(value: str) -> str | None:
@@ -1481,8 +1485,14 @@ def _framework_video_runtime(
     args: argparse.Namespace,
     train_data: Mapping[str, Any],
     val_data: Mapping[str, Any],
+    runtime_model_type: str = "unknown",
 ) -> dict[str, Any]:
-    """Resolve the native Framework on-demand TorchCodec throughput profile."""
+    """Resolve the native Framework on-demand TorchCodec throughput profile.
+
+    ``runtime_model_type`` is the config.json ``model_type`` Cosmos Framework
+    will actually instantiate after model preparation. It gates the validation
+    video-feature cache; an unresolved value keeps the cache off.
+    """
     unique_media_capacity = max(
         int(train_data["profile"]["unique_media_count"]),
         int(val_data["profile"]["unique_media_count"]),
@@ -1525,9 +1535,21 @@ def _framework_video_runtime(
         raise WorkflowError(
             "Framework validation video feature cache size must be nonnegative"
         )
+    validation_feature_cache_supported = (
+        runtime_model_type in FRAMEWORK_VALIDATION_FEATURE_CACHE_MODEL_TYPES
+    )
+    if not validation_feature_cache_supported and validation_feature_cache_override:
+        raise WorkflowError(
+            "Cosmos Framework implements the validation video feature cache only "
+            "for model_type in "
+            f"{sorted(FRAMEWORK_VALIDATION_FEATURE_CACHE_MODEL_TYPES)}; the "
+            f"resolved runtime model_type is {runtime_model_type!r}. Re-plan with "
+            "--framework-validation-video-feature-cache-size 0"
+        )
     validation_feature_cache_size = (
         min(unique_media_capacity, 512)
         if validation_feature_cache_override is None
+        and validation_feature_cache_supported
         and repeated_validation_media
         and validation_shard_strategy == "media_grouped"
         else (validation_feature_cache_override or 0)
@@ -1653,6 +1675,8 @@ def _framework_video_runtime(
         ),
         "validation_video_feature_cache_scope": "rank_local_gpu_embeddings",
         "validation_video_feature_cache_population": "on_demand_during_validation",
+        "validation_video_feature_cache_model_type": runtime_model_type,
+        "validation_video_feature_cache_supported": validation_feature_cache_supported,
         "unique_media_capacity_basis": unique_media_capacity,
         "dataset_prewarm": False,
         "actual_device_attestation": "first_successful_decode_per_rank",
@@ -3986,8 +4010,15 @@ def build_plan(
         if backend == "cosmos-rl"
         else None
     )
+    framework_runtime_model_type = (
+        "qwen3_vl"
+        if model_preparation.get("kind") == "cosmos3_omni_to_exact_qwen3_vl"
+        else str(model_preparation.get("selected_input_model_type") or "unknown")
+    )
     framework_video_runtime = (
-        _framework_video_runtime(args, train_data, val_data)
+        _framework_video_runtime(
+            args, train_data, val_data, framework_runtime_model_type
+        )
         if backend == "cosmos-framework"
         else None
     )
