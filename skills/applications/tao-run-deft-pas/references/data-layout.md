@@ -18,7 +18,7 @@ The PAS TAO-FT export contains:
 | File | Required | Expected content |
 |---|---|---|
 | `images_raw.tar` | yes | source images under `images_raw/<source_split>/...` |
-| `meta.tar.gz` | yes | pair/list metadata, README/vocabulary files, and `rebuild.py` |
+| `meta.tar.gz` | yes | pair/list metadata and README/vocabulary files; legacy exports may also contain an untrusted `rebuild.py`, which extraction excludes |
 | `SHA256SUMS` | no | checksums for the two archives |
 
 There is no download branch. Preserve the archives in place; extraction goes
@@ -48,18 +48,23 @@ if [ -n "${CHECKSUMS_FILE:-}" ]; then
   fi
 fi
 
-tar -xzf "$METADATA_ARCHIVE" -C "$DATASET_ROOT"
+# The export may contain a legacy rebuild.py. It is data, not trusted workflow
+# code; exclude it so only the builder pinned with this skill can execute.
+tar -xzf "$METADATA_ARCHIVE" -C "$DATASET_ROOT" \
+  --exclude='rebuild.py' --exclude='./rebuild.py' --exclude='*/rebuild.py'
 tar -xf "$IMAGES_ARCHIVE" -C "$DATASET_ROOT"
 
 "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
-  "$DATASET_ROOT/rebuild.py" --workers 16 \
+  "$SKILL_ROOT/scripts/rebuild.py" \
+    --dataset-root "$DATASET_ROOT" --workers 16 \
   2>&1 | tee "$RESULTS_DIR/dataset_setup/rebuild_verify.log"
 ```
 
 Omit the checksum command when no manifest was approved. A checksum mismatch,
-tar failure, missing `rebuild.py`, or nonzero rebuild is a hard stop. The
-rebuild log must contain `VERIFY: PASS`; `VERIFY: FAIL` or a missing pass line
-is not valid evidence. Do not continue using a partly rebuilt dataset.
+tar failure, metadata/schema error, unsafe relative path, conflicting existing
+output, or nonzero rebuild is a hard stop. The rebuild log must contain
+`VERIFY: PASS`; `VERIFY: FAIL` or a missing pass line is not valid evidence.
+Do not continue using a partly rebuilt dataset.
 
 The rebuild creates the canonical TAO-facing structure:
 
@@ -69,8 +74,7 @@ DATASET_ROOT/
 ├── images/
 ├── captions/
 ├── train_pairs.json
-├── val_pairs.json
-└── rebuild.py
+└── val_pairs.json
 ```
 
 ## Inspect the rebuilt layout
@@ -89,8 +93,8 @@ The report shows every discovered pairs/query JSON file with its row count and
 query-type distribution, the directories containing image crops, and the
 directories containing caption `.txt` files. Review these discovered paths
 against the approved materialized config before continuing. The report is
-read-only: it does not rewrite paths or generalize the export-specific
-`rebuild.py` into a skill-owned dataset builder.
+read-only and does not rewrite paths. The preceding skill-owned builder is the
+only executable that materializes the export-specific image/caption trees.
 
 ## Materialize run splits and pool
 

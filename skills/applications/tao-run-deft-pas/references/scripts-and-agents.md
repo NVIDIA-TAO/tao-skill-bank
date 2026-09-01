@@ -22,6 +22,7 @@ through deterministic scripts.
 | `manage_pas_virtualenv.py` | non-mutating lock plan, approved hash-locked install, or full profile/CUDA verification | control Python plus selected profile |
 | `virtualenv_runtime.py` | enforce the schema-validated `pyt`/`ds` ABI, package, console-script, import, pip, and CUDA contract | control Python plus selected profile |
 | `prepare_deft_config.py` | copy templates into a run and apply approved values | PAS runtime |
+| `rebuild.py` | materialize the export-specific image/caption trees from approved PAS metadata | PAS runtime |
 | `init_deft_state.py` | validate config/metric inputs and create schema-v3 state once | PAS runtime |
 | `audit_deft_run.py` | read-only state, transition, evidence, and artifact audit | PAS runtime (parquet/YAML validation) |
 | `run_deft_action.py` | prepare one platform-neutral TAO bundle and finalize native job/output evidence | control Python |
@@ -67,7 +68,7 @@ adapter; a byte change after generation blocks launch and invalidates audit.
 
 | State stage | Producer | Adapter or launch | Read first |
 |---|---|---|---|
-| `dataset_setup` | archive `rebuild.py`, read-only layout reporter, and bundled PAS data utilities | `pas_deft.dataset_layout`; `run_pas_stage.py dataset-materialize` | `data-layout.md` |
+| `dataset_setup` | bundled `rebuild.py`, read-only layout reporter, and PAS data utilities | `rebuild.py`; `pas_deft.dataset_layout`; `run_pas_stage.py dataset-materialize` | `data-layout.md` |
 | `pool_embed` | TAO data services | `run_deft_action.py` + selected platform | `mining.md`, `platform-execution.md` |
 | `evaluate` | TAO CLIP plus bound parser | `run_pas_stage.py eval-config`, platform action, parser | `clip-train-eval.md`, `metric-contract.md`, `platform-execution.md` |
 | `gap_analysis` | bundled PAS gap analysis | `run_pas_stage.py gap-analysis` | `gap-analysis.md` |

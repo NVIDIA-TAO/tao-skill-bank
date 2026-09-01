@@ -69,7 +69,7 @@ questions:
    Classify a candidate from direct-child metadata only:
 
    - `archive-only`: the required pair is present and extracted-dataset markers
-     such as `images_raw/`, `images/`, `captions/`, `rebuild.py`, or
+     such as `images_raw/`, `images/`, `captions/`, or
      `train_pairs.json` are absent. Auto-select it only when it is the sole
      candidate.
    - `archive-with-extracted-data`: the pair is present alongside one or more
@@ -145,7 +145,7 @@ Run this section only after required intake is resolved.
    ```
 
    Record the presence of adjacent `SHA256SUMS`. Its absence is a warning, not
-   a blocker; `rebuild.py` verification remains mandatory.
+   a blocker; the skill-owned rebuild verification remains mandatory.
 4. Read the selected platform skill and run its read-only access preflight.
    For Docker, SLURM, Kubernetes, and Brev, also run the shared checker with
    the exact platform, pinned image, and approved GPU requirements. Do not pass
