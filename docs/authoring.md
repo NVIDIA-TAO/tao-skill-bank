@@ -11,7 +11,7 @@
 - 3. Body structure (DAFT-style)
 - 4. When to add `references/`
   - Version references
-  - Skills that require the SDK
+  - Skills that require a Python wheel
   - `references/skill_info.yaml` schema
 - 5. Optional: `example/` reference output
 - 5b. Required: `evals/evals.json` (Tier-3 signing)
@@ -32,7 +32,7 @@ The minimum viable skill is a single `SKILL.md`. Everything else — `references
 |---|---|---|
 | `skills/models/` | A trainable network with `train` / `evaluate` / `inference` / `export` actions | `tao-finetune-cosmos-reason`, `tao-train-visual-changenet`, `tao-finetune-clip` |
 | `skills/data/` | A data transformation — preparation, analysis, embedding, filtering | `omniverse-sdg`, `mining`, `changenet-data-prepare` |
-| `skills/platform/` | A compute backend or runtime convention (where/how jobs run) | `tao-run-on-docker`, `tao-run-on-brev`, `tao-run-on-slurm`, `tao-run-platform` |
+| `skills/platform/` | A compute backend or runtime convention (where/how jobs run) | `tao-run-on-docker`, `tao-run-on-brev`, `tao-run-on-slurm`, `tao-run-on-kubernetes`, `tao-data-io` |
 | `skills/applications/` | A workflow composing multiple skills (orchestrator) | `tao-run-deft-aoi`, `tao-train-single-step` |
 
 If you're unsure: produces a trained model artifact → model. Transforms data → data. Infrastructure → platform. Orchestrates → application.
@@ -112,7 +112,7 @@ words against it. Follow these rules:
 
 Examples that pass:
 `tao-train-visual-changenet`, `tao-deploy-dino`, `tao-run-automl`,
-`tao-run-deft-aoi`, `tao-finetune-huggingface-model`, `tao-run-platform`,
+`tao-run-deft-aoi`, `tao-finetune-huggingface-model`, `tao-run-on-kubernetes`,
 `tao-setup-nvidia-gpu-host`, `tao-launch-workflow`, `tao-list-capabilities`.
 
 Examples that fail:
@@ -138,7 +138,7 @@ The validator fails CI when any of the required fields above is missing or malfo
 | Containerized model/data | `Requires docker + nvidia-container-toolkit + NGC API key.` |
 | `skills/platform/tao-run-on-docker` | `Requires docker + nvidia-container-toolkit.` |
 | `skills/platform/tao-run-on-brev` | `Requires the brev CLI (https://github.com/brevdev/brev-cli) and an active brev login.` |
-| `skills/platform/tao-run-platform` | `Requires Python 3.10+ and the nvidia-tao-sdk package (pip install nvidia-tao-sdk).` |
+| `skills/applications/tao-run-automl` | `Requires Python 3.10+ and the nvidia-tao-automl package (pip install nvidia-tao-automl).` |
 | Local Python script (no container) | `Requires Python 3.8+ and Pillow.` (or whatever) |
 | Agent-prompt-driven | `Standalone — no external runtime requirements.` |
 
@@ -171,7 +171,6 @@ Body must contain at least one of:
 - A `docker run` code block
 - A `references/skill_info.yaml` file on disk
 - A `scripts/` or `hooks/` directory on disk
-- An SDK invocation example (`sdk.create_job`, `BrevSDK`, etc.) — for skills like `skills/platform/tao-run-platform`
 
 The validator enforces this.
 
@@ -213,7 +212,7 @@ Add a `references/` directory when one or more applies:
 
 | Add this file | When |
 |---|---|
-| `references/skill_info.yaml` | Multi-action skill (train/evaluate/inference) AND/OR you want SDK-orchestrated execution. The TAO SDK reads this for structured action metadata. |
+| `references/skill_info.yaml` | Multi-action skill (train/evaluate/inference) AND/OR the agent needs structured action metadata (image, command, mode, inputs/outputs) to construct the container command. |
 | `deploy/skill_info.yaml` | Deploy-only metadata paired with a `deploy/SKILL.md`. It follows the same schema and validator rules as `references/skill_info.yaml`. |
 | `references/spec_template_<action>.yaml` | Action takes a config file (YAML/TOML) and you want users to start from a known-good default. |
 | `references/scripts/<file>.py` | The skill ships a reference implementation of a script that runs inside the container. |
@@ -222,7 +221,9 @@ Pure agent-only skills (e.g., HF model wrappers driven by a single `docker run`)
 
 ### Version references
 
-Skills reference container images and SDK wheel versions through a single canonical file: `versions.yaml` at the bank's repo root. This is the **only** place to bump TAO container tags, IVA images, or SDK wheel versions when an RC ships.
+Release-managed container images and SDK wheel versions use the repo-root
+`versions.yaml` as their canonical source. Skills carry stamped runtime
+literals so they remain standalone.
 
 `references/skill_info.yaml` carries a stamped literal for `container_image`,
 annotated with the versions.yaml key it is stamped from — skills stay standalone
@@ -256,7 +257,7 @@ stray:
 
    ```bash
    container_image: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-pyt  # versions-key: images.tao_toolkit.pyt
-   pip install "nvidia-tao-sdk[slurm]==7.0.1"  # versions-key: wheels.tao_sdk_slurm
+   pip install "nvidia-tao-automl[slurm]==7.0.1"  # versions-key: wheels.tao_automl_slurm
    ```
 
 2. **Deliberate one-off** — third-party registry, experimental image, or
@@ -294,34 +295,50 @@ To add a new image, edit `versions.yaml`:
 images:
   tao_toolkit:
     pyt:        nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt
-    cosmos_rl:  nvcr.io/nvidia/tao/tao-toolkit:6.26.3-cosmos-rl
+    deploy:     nvcr.io/nvidia/tao/tao-toolkit:6.26.3-deploy
     # ← add new entries here
 ```
 
 To bump an RC, change one line — that's the entire diff.
 
-### Skills that require the SDK
+For a multi-backend model, add one `versions.yaml` key per backend and stamp it
+onto `backend_contracts.<backend>.container_image` in the model skill's
+`references/skill_info.yaml`. Referenced backend contracts must not duplicate
+the image field.
 
-Most skills run with just docker (no Python SDK). A few skills are SDK-orchestrated by design (e.g., `skills/platform/tao-run-platform` (`tao-run-platform`), `skills/applications/tao-run-automl` (`tao-run-automl`)). These need a **preflight** block at the top of `SKILL.md`:
+### Skills that require a Python wheel
+
+The bank runs SDK-free: model/data skills need only docker, and platform skills
+drive execution over a native CLI (`docker`/`kubectl`/`ssh`/`brev`) via the
+four-verb contract. The **one** exception is `skills/applications/tao-run-automl`,
+which needs the `nvidia-tao-automl` wheel (and its transitive `nvidia-tao-sdk`)
+to run the hyperparameter search. Such a skill needs a **preflight** block at the
+top of `SKILL.md`:
 
 ````markdown
 ## Preflight
 
-This skill needs the TAO SDK. `nvidia-tao-sdk` is on public PyPI and pinned in `versions.yaml`; Preflight blocks resolve the pin via `scripts/resolve_versions_key.py` (swap `wheels.tao_sdk_brev` for the extra you need — `_docker`, `_slurm`, `_kubernetes`, `_all`):
+This skill needs `nvidia-tao-automl`. It is on public PyPI and pinned in
+`versions.yaml`; the pin below is a stamped literal + `# versions-key:` marker
+(pick the platform extra you need — `_slurm`, `_kubernetes`, `_docker`, `_brev`,
+`_all`):
 
 ```bash
-PIN="nvidia-tao-sdk[brev]==7.0.1"  # versions-key: wheels.tao_sdk_brev
-python -c "import tao_sdk" 2>/dev/null || {
-  echo "MISSING: nvidia-tao-sdk not installed. Run:"
+PIN="nvidia-tao-automl[brev]==7.0.1"  # versions-key: wheels.tao_automl_brev
+python -c "import tao_automl" 2>/dev/null || {
+  echo "MISSING: nvidia-tao-automl not installed. Run:"
   echo "  pip install \"$PIN\""
   exit 1
 }
 ```
 
-If missing, the agent prompts the user to authorize the install via Bash, then re-runs the preflight before continuing. Never auto-install silently.
+If missing, the agent prompts the user to authorize the install via Bash, then
+re-runs the preflight before continuing. Never auto-install silently.
 ````
 
-The preflight is documentation-only; the validator does not enforce it. But every SDK-dependent skill is expected to start with this block so users get a clean install instruction instead of a `ModuleNotFoundError`.
+The preflight is documentation-only; the validator does not enforce it. But a
+wheel-dependent skill is expected to start with this block so users get a clean
+install instruction instead of a `ModuleNotFoundError`.
 
 ### `references/skill_info.yaml` schema
 
@@ -348,13 +365,15 @@ actions:
       results_dir: { type: folder }
     upload_excludes:
       - inputs/
+    execution_contract:
+      producer: planner output spec_bundle.execution
 
 # Action mode controls how launch tooling serializes the spec:
 # - config: write a YAML/TOML/JSON spec file and substitute {config_path}
 # - args: build command arguments from actions.<action>.args
 # - passthrough: run the command as declared, without generated config or args
 
-# Models only — parallelism wiring for SDK orchestration
+# Models only — parallelism wiring (which spec keys carry the GPU/node counts)
 gpu_spec_key: train.num_gpus
 node_spec_key: train.num_nodes
 
@@ -363,11 +382,17 @@ stages:
   - { skill: omniverse-sdg, action: generate, condition: always }
 
 # Platform skills
-sdk_module: tao_sdk.platforms.brev.sdk
 features: [tracking, multi-node, lustre]
 
 tags: [classification, my-domain]
 ```
+
+An action that needs runtime environment, pre/post commands, distributed-launch
+intent, completion evidence, or checked-in orchestration helpers emits the
+optional `spec_bundle.execution` contract defined by `tao-artifacts`. This
+keeps semantics reusable by every application that routes through the model
+skill. Platforms own launch syntax; do not add a model-specific SLURM/K8s
+renderer.
 
 ## 5. Optional: `example/` reference output
 
@@ -482,7 +507,7 @@ Errors (fail CI — at parity with the signing pipeline; see [`skill-requirement
   - `tags` present and non-empty.
 - `SKILL.md` body must have runnable info (Quick Start, docker run, scripts/, hooks/, or `references/skill_info.yaml`).
 - `evals/evals.json` must exist at the skill root, parse as a non-empty JSON array, and each entry must have `id`, `question`, `expected_skill`, `ground_truth`, and a non-empty `expected_behavior` list.
-- No `tao_sdk` symbol leaks into model/data/application skills (skills/platform/* exempt; tao-run-automl exempted as SDK-native workflow).
+- No `tao_sdk` symbol leaks anywhere under `skills/` except `skills/applications/tao-run-automl/` (the one skill keeping the `nvidia-tao-automl` wheel + its transitive SDK). Scanned across `SKILL.md` and `references/*.md`.
 - Hook paths in frontmatter must resolve.
 - Any `skill_info.yaml` or `model_info.yaml` parses, including `deploy/skill_info.yaml`.
 - Container image keys resolve through `versions.yaml` (top-level and action-level).
@@ -497,7 +522,7 @@ CI runs the same script — fix errors before opening a PR; address warnings opp
 ## 9. Test locally
 
 Use the applicable local plugin/runtime command for the target environment and
-point it at `/path/to/tao-skills-external`.
+point it at `/path/to/tao-skill-bank`.
 
 Start a session, ask the agent to exercise the skill. Verify the agent reads it, constructs a valid invocation, and produces the expected output.
 
@@ -508,12 +533,12 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 - [ ] Optional: `compatibility`, `metadata.author`, `metadata.version`, `allowed-tools` populated.
 - [ ] Body has Quick Start (or scripts/, hooks/, references/skill_info.yaml) — agent-runnable.
 - [ ] If the skill is non-trivial: External Dependencies, CLI Reference, Output Structure, Known Pitfalls sections present.
-- [ ] If using `skill_info.yaml`: `container_image` set, each model/data action has `command`, `mode`, `inputs`, `outputs`, and `upload_excludes`.
+- [ ] If using `skill_info.yaml`: a top-level or per-backend `container_image` is set; each model/data action has `command`, `mode`, `inputs`, `outputs`, and `upload_excludes`.
 - [ ] If a model skill owns training/fine-tuning for a Hugging Face repo ID: add every exact public ID to `huggingface_model_ids`; do not rely only on prose, tags, or human aliases.
 - [ ] Every release-managed image/wheel pin carries a `# versions-key:` marker (or a stamped variable for multi-line commands); one-off images are annotated `# unpinned: <reason>`.
 - [ ] SKILL.md carries the standalone breadcrumb under its title (run `tao-setup` first when the session was not plugin-initialized) — copy it from any existing skill or the skeleton.
 - [ ] `scripts/stamp_versions.py --check` reports no errors and no new stray-pin warnings from your skill.
-- [ ] No SDK symbols (`tao_sdk`, `sdk.create_job`, etc.) in model/data/application skills (allowed in `skills/platform/*`).
+- [ ] No SDK symbols (`tao_sdk`, `sdk.create_job`, `build_entrypoint`, etc.) anywhere under `skills/` except `skills/applications/tao-run-automl/`.
 - [ ] Added to the marketplace manifest under the right plugin(s), when the packaging surface requires it.
 - [ ] No mirrored copy or symlink added under `skills/core/`.
 - [ ] `scripts/validate-skills.sh` passes (no errors; warnings are informational).
@@ -533,9 +558,9 @@ Start a session, ask the agent to exercise the skill. Verify the agent reads it,
 
 **Over-long SKILL.md.** Keep it under ~500 lines. Move long reference material to `references/` and link.
 
-**Assuming the SDK is available.** Write the skill to be runnable with just docker. SDK usage should be in an "Optional: via TAO SDK" section, not the primary path.
+**Assuming a Python wheel is available.** Write the skill to be runnable with just docker. The bank runs SDK-free; only `tao-run-automl` depends on a wheel (`nvidia-tao-automl`), gated behind its Preflight.
 
-**Stale `skill_info.yaml`.** When you change the docker command in `SKILL.md`, update the YAML too, including deploy metadata under `deploy/skill_info.yaml`. The SDK reads the YAML; if they drift, agent and SDK diverge.
+**Stale `skill_info.yaml`.** When you change the docker command in `SKILL.md`, update the YAML too, including deploy metadata under `deploy/skill_info.yaml`. The agent reads the YAML to construct the command; if they drift, it builds a stale invocation.
 
 ## Agent identity (cross-cutting)
 

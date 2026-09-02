@@ -1,5 +1,11 @@
 # TAO Skill Bank Agent Performance Review
 
+> **Historical note (M9, 2026-07-10):** the `tao-run-platform` and
+> `tao-run-on-local-docker` skills were removed in the SDK-elimination milestone;
+> execution now runs SDK-free over native platform CLIs (the four-verb contract).
+> References to those skills and to `build_entrypoint`/`*SDK` below are records of
+> the bank's state at review time, kept for provenance.
+
 ## Contents
 
 - Scope
@@ -156,7 +162,8 @@ Fixed:
 
 Impact:
 
-- Agents can select the correct `build_entrypoint(...)` shape from metadata.
+- Agents can select the correct spec serialization from the declared
+  `actions.<action>.mode` metadata (`config` / `args` / `passthrough`).
 - No launch path needs to guess whether to write a spec file, expand args, or
   run a passthrough command.
 
@@ -238,7 +245,7 @@ Fixed several non-application descriptions to use the recommended literal
 "Use when..." trigger form:
 
 - `skills/data/tao-analyze-gaps-vlm-bcq/SKILL.md`
-- `skills/data/paidf-anomalygen/SKILL.md`
+- `skills/data/tao-generate-anomalies/SKILL.md`
 - `skills/data/tao-route-visual-changenet-samples/SKILL.md`
 - `skills/platform/tao-run-on-docker/SKILL.md`
 - `skills/platform/tao-setup-nvidia-gpu-host/SKILL.md`
@@ -417,7 +424,7 @@ skills that should be split before adding more detail:
 - `skills/applications/tao-finetune-huggingface-model/SKILL.md`: 496 lines.
 - `skills/models/tao-train-depth-anything-v2/SKILL.md`: 492 lines.
 - `skills/models/tao-train-visual-changenet/SKILL.md`: 490 lines.
-- `skills/data/paidf-anomalygen/SKILL.md`: 490 lines.
+- `skills/data/tao-generate-anomalies/SKILL.md`: 490 lines.
 - `skills/models/tao-train-dino/SKILL.md`: 488 lines.
 - `skills/models/tao-train-fast-foundation-stereo/SKILL.md`: 476 lines.
 - `skills/platform/tao-run-platform/SKILL.md`: 473 lines.

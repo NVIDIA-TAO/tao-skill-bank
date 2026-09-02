@@ -19,8 +19,10 @@ from typing import Any
 
 import yaml
 
+from resolve_tao_model import backend_contracts, select_implementation_backend
+
 DEFAULT_SKILL_BANK = Path(
-    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
+    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")
 )
 
 
@@ -47,6 +49,16 @@ def parse_args() -> argparse.Namespace:
         "--action",
         default="train",
         help="Model action to resolve, for example train, evaluate, inference, or export.",
+    )
+    parser.add_argument(
+        "--backend",
+        default="auto",
+        help="Explicit implementation backend or auto (default).",
+    )
+    parser.add_argument(
+        "--workload",
+        default="",
+        help="Optional workload hint such as wts, aetc, automl, or hpo.",
     )
     parser.add_argument(
         "--format",
@@ -148,9 +160,81 @@ def resolve_image_key(skill_bank: Path, image: str) -> tuple[str, str]:
     return cursor.strip(), "versions.yaml"
 
 
-def resolve_image(skill_bank: Path, model: str, action: str) -> dict[str, Any]:
+def resolve_image(
+    skill_bank: Path,
+    model: str,
+    action: str,
+    *,
+    backend: str = "auto",
+    workload: str = "",
+) -> dict[str, Any]:
     """Resolve action-level image first, then model-level image."""
     resolved_model, metadata_path, skill_info = load_model_metadata(skill_bank, model)
+    contracts = backend_contracts(metadata_path.parent.parent, skill_info)
+    selected_backend = ""
+    backend_reason = ""
+    if contracts:
+        selection = select_implementation_backend(
+            info=skill_info,
+            contracts=contracts,
+            requested_model=model,
+            action=action,
+            backend=backend,
+            workload=workload,
+        )
+        if selection:
+            selected_backend, backend_reason = selection
+            backend_contract = contracts[selected_backend]
+            action_config = backend_contract.get("actions", {}).get(action, {})
+            candidates = [
+                ("backend.action.container_image", action_config.get("container_image") if isinstance(action_config, dict) else None),
+                (
+                    backend_contract.get(
+                        "container_image_source", "backend.container_image"
+                    ),
+                    backend_contract.get("container_image"),
+                ),
+            ]
+            for source, image in candidates:
+                if isinstance(image, dict) and image.get("policy") == "repository_derived":
+                    return {
+                        "schema_version": 4,
+                        "requested_model": model,
+                        "model": resolved_model,
+                        "network_arch": skill_info.get("network_arch", resolved_model),
+                        "action": action,
+                        "backend": selected_backend,
+                        "backend_selection_reason": backend_reason,
+                        "backend_contract_path": backend_contract["contract_path"],
+                        "image": None,
+                        "declared_image": None,
+                        "resolved_from": "clean repository build required",
+                        "source": source,
+                        "metadata_path": str(metadata_path),
+                        "build_required": True,
+                        "runtime_input": image.get("runtime_input", "image_tag"),
+                        "confirmation_required": True,
+                        "override_key": "image_tag",
+                    }
+                if isinstance(image, str) and image.strip():
+                    resolved_image, resolved_from = resolve_image_key(skill_bank, image)
+                    return {
+                        "schema_version": 3,
+                        "requested_model": model,
+                        "model": resolved_model,
+                        "network_arch": skill_info.get("network_arch", resolved_model),
+                        "action": action,
+                        "backend": selected_backend,
+                        "backend_selection_reason": backend_reason,
+                        "backend_contract_path": backend_contract["contract_path"],
+                        "image": resolved_image,
+                        "declared_image": image.strip(),
+                        "resolved_from": resolved_from,
+                        "source": source,
+                        "metadata_path": str(metadata_path),
+                        "confirmation_required": True,
+                        "override_key": "image",
+                    }
     actions = skill_info.get("actions", {})
     if not isinstance(actions, dict):
         actions = {}
@@ -198,25 +282,33 @@ def resolve_image(skill_bank: Path, model: str, action: str) -> dict[str, Any]:
 
 def format_text(data: dict[str, Any]) -> str:
     """Format resolved image metadata for launch prompts."""
-    return "\n".join(
-        [
+    lines = [
             "TAO container image resolution:",
             f"- requested model: {data.get('requested_model', data['model'])}",
             f"- model: {data['model']} ({data['network_arch']})",
             f"- action: {data['action']}",
-            f"- default image: {data['image']}",
+            f"- default image: {data['image'] or 'none; clean repository build required'}",
             f"- declared image: {data['declared_image']}",
             f"- source: {data['source']} in {data['metadata_path']}",
             f"- resolved from: {data['resolved_from']}",
             "- confirmation: ask the user to use this image or provide image=<override> before launch",
         ]
-    )
+    if data.get("backend"):
+        lines.insert(3, f"- backend: {data['backend']} ({data['backend_selection_reason']})")
+        lines.insert(4, f"- backend contract: {data['backend_contract_path']}")
+    return "\n".join(lines)
 
 
 def main() -> int:
     """Run the image resolver."""
     args = parse_args()
-    data = resolve_image(args.skill_bank, args.model, args.action)
+    data = resolve_image(
+        args.skill_bank,
+        args.model,
+        args.action,
+        backend=args.backend,
+        workload=args.workload,
+    )
     if args.format == "json":
         print(json.dumps(data, indent=2, sort_keys=True))
     else:

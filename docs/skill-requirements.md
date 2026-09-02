@@ -234,10 +234,11 @@ references. Move a block to exactly one place; leave a pointer, not a copy.
 
 ### 2.6 SDK leak (model / data / application skills)
 
-No SDK symbols (`tao_sdk`, `script_runner`, `agent_runner`, `execute_step`,
-`sdk.create_job`, …) in a model / data / application `SKILL.md` **unless**
-inside a section whose heading starts exactly with
-`## Optional: running via the TAO SDK`. Platform skills are exempt.
+No SDK symbols (`tao_sdk`, `script_runner`, `sdk.create_job`,
+`build_entrypoint`, …) anywhere under `skills/` — SKILL.md **or** a
+reference — **except** `skills/applications/tao-run-automl/`, which keeps the
+`nvidia-tao-automl` wheel and its transitive SDK. `scripts/validate-skills.sh`
+enforces this.
 
 ### 2.7 Security scanner — PII / paths (HIGH, blocking)
 

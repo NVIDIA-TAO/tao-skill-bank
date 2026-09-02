@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skill-bank",
         type=Path,
-        default=Path(os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")),
+        default=Path(os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")),
         help="Path to the packaged TAO skill bank.",
     )
     parser.add_argument(
@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--action",
         default="",
-        help="Filter support to one action such as train, distill, prune, or quantize.",
+        help="Filter support to one action such as train, evaluate, inference, distill, prune, or quantize.",
     )
     return parser.parse_args()
 

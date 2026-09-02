@@ -10,13 +10,13 @@
 # Responsibilities:
 #   1. Emit TAO orchestration guidance (the agent's identity + discovery flow).
 #   2. Report which credential env vars are present in the session (names only).
-#      This hook does NOT read or load any credentials file — users export
-#      credentials in their own shell; the session inherits that environment.
+#      Credentials arrive from the user's own shell or from a user-approved env
+#      file the agent sources; this hook never reads or prints values.
 #   3. Surface clear setup hints if docker is missing.
 #
-# This hook does NOT install Python packages. The TAO SDK is opt-in and
-# installed lazily by the skills that need it (skills/platform/tao-run-platform,
-# skills/applications/tao-run-automl) via their Preflight blocks.
+# This hook does NOT install Python packages. The bank runs SDK-free over native
+# platform CLIs; the one wheel-dependent skill, skills/applications/tao-run-automl,
+# installs nvidia-tao-automl lazily via its Preflight block.
 
 set -u
 
@@ -40,21 +40,17 @@ if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -f "${CLAUDE_PLUGIN_ROOT}/AGENTS.md" ]]; t
   echo
 fi
 
-# ─── 1b. Make versions.yaml + skill bank discoverable to the SDK ──────────
-# The SDK's tao_sdk.versions module checks $TAO_SKILL_BANK_PATH for
-# versions.yaml. Plugin-installed users (pip install nvidia-tao-sdk + plugin
-# install tao-skill-bank) need this to resolve container_image keys like
-# `tao_toolkit.pyt`.
+# ─── 1b. Make versions.yaml + skill bank discoverable to the helper scripts ──
+# The bank's scripts (resolve_tao_image.py, tao_job_record.py) and templates/
+# read $TAO_SKILL_BANK_PATH to find versions.yaml. Plugin-installed users need
+# this set to resolve container_image keys like `tao_toolkit.pyt`.
 if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" && -n "${CLAUDE_ENV_FILE:-}" ]]; then
   echo "export TAO_SKILL_BANK_PATH=\"${CLAUDE_PLUGIN_ROOT}\"" >> "$CLAUDE_ENV_FILE"
 fi
 
 # ─── 2. Credentials ───────────────────────────────────────────────────────
-# This hook does NOT read or load any credentials file. Export credentials in
-# your own shell (or shell rc / secrets manager) before launching; the session
-# inherits that environment. Whether and how to persist secrets to disk is the
-# user's own responsibility — the skill bank neither writes nor reads a
-# credentials file. The agent only checks presence (names), never values.
+# Presence only: names, never values. The credential policy itself lives in
+# AGENTS.md, which this hook already emits above.
 echo "## Credentials"
 echo
 # Known credential vars across the platform/model skills. Names only.
@@ -72,15 +68,15 @@ else
 fi
 echo
 echo "Credentials are read from the environment — export what you need in your"
-echo "shell **before launching**, e.g.:"
+echo "shell **before launching**, or source a user-approved env file, e.g.:"
 echo "\`\`\`bash"
 echo "export NGC_KEY=...            # nvcr.io image pulls"
 echo "export HF_TOKEN=...           # gated HuggingFace models"
 echo "# platform-specific: BREV_API_TOKEN, ACCESS_KEY/SECRET_KEY/S3_*"
 echo "\`\`\`"
+echo "Have an env file (~/.tao/secrets.env, ~/.config/tao/.env, or one you"
+echo "point the agent at)? Load it with \`set -a; source /path/to/.env; set +a\`."
 echo "See the Credentials section of the skill bank README for the full var list."
-echo "The skill bank does not create or load a credentials file; persisting"
-echo "secrets to disk is your own responsibility."
 echo
 
 # ─── 3. Docker preflight ──────────────────────────────────────────────────

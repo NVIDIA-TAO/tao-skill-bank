@@ -30,11 +30,13 @@ run this skill first.
 ## Quick Start
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
+
 # 1. Host preflight — most TAO skills dispatch docker containers on a GPU host.
 docker info > /dev/null && echo "OK: docker" || echo "MISSING: docker"
 nvidia-smi > /dev/null && echo "OK: GPU" || echo "MISSING: NVIDIA GPU/driver"
 
-# 2. Credential presence check — names only, never read values.
+# 2. Credential presence check — names only, never print values.
 for v in NGC_KEY HF_TOKEN WANDB_API_KEY ACCESS_KEY SECRET_KEY S3_BUCKET_NAME S3_ENDPOINT_URL BREV_API_TOKEN; do
   [ -n "${!v:-}" ] && echo "SET:   $v" || echo "unset: $v"
 done
@@ -54,10 +56,10 @@ those model-specific minimums to the host setup skill instead.
 
 ## Credentials
 
-Credentials come from the session environment — export them in your shell
-before launching the agent. This skill (and the bank) never reads credential
-values and never creates or loads a credentials file; verify presence only
-with `[ -n "$VAR" ]`.
+Load a user-approved env file with `set -a; source /path/to/.env; set +a` in the
+same bash call as the command that consumes the variable. This skill never
+creates a credentials file for you; the one credential write here is step 3's
+`docker login`, which stores an nvcr.io token in `~/.docker/config.json`.
 
 - `NGC_KEY` — nvcr.io image pulls (most skills)
 - `HF_TOKEN` — gated HuggingFace weights (several model skills)
@@ -73,21 +75,31 @@ with `[ -n "$VAR" ]`.
    `tao-run-deft-aoi`, …) compose model + data + platform into workflows.
 
 2. **Read the skill's `references/skill_info.yaml`** (when present) for the
-   structured contract: `container_image` (a pinned URI), per-action
-   `command`, `mode`, `config_format`, `inputs`, `outputs`, and optional
-   `runtime_requirements.gpu_host`. Model runtime requirements override the
-   TAO-wide platform defaults for that workflow.
+   structured contract: `container_image` (a pinned URI), or
+   `backend_contracts.<backend>.container_image` for a multi-backend frontend;
+   per-action `command`, `mode`, `config_format`, `inputs`, `outputs`, and
+   optional `runtime_requirements.gpu_host`. Model runtime requirements
+   override the TAO-wide platform defaults for that workflow.
 
 3. **Pick an execution platform and read its skill** for mounts, env vars,
    and resource conventions: `tao-run-on-docker` conventions apply to any
-   local `docker run`; `tao-run-on-slurm`, `tao-run-on-kubernetes`,
-   `tao-run-on-brev`, and `tao-run-on-local-docker` cover managed dispatch.
+   local `docker run`; `tao-run-on-slurm`, `tao-run-on-kubernetes`, and
+   `tao-run-on-brev` cover managed dispatch; `tao-run-on-virtualenv` runs a
+   Python script docker-free in a local venv. Externally installed platform
+   skills (e.g. kratos) join as peers — no registration needed.
    The platforms are equal-class peers — if the user has not chosen, ask;
-   never default silently.
+   never default silently. Every platform skill implements the same
+   **four-verb consumer contract** (`submit`/`status`/`logs`/`cancel`) over its
+   native CLI (`docker`/`kubectl`/`ssh`+`sbatch`/`brev exec`) — there is no
+   `nvidia-tao-sdk`.
 
 4. **Construct the spec as nested dicts** (`{"train": {"num_epochs": 12}}`,
-   never flat dotted keys), confirm with the user, then dispatch via the
-   chosen platform's pattern and monitor per that platform's skill.
+   never flat dotted keys), confirm with the user, then **execute the four
+   verbs**: `tao-launch-workflow` drives the shared launch gate;
+   `scripts/tao_job_record.py open` mints the job id and binds `results_dir`
+   *before* launch (record-then-launch); the platform skill runs `submit`; then
+   monitor with `status`/`logs`, mapping native states to the fixed vocabulary
+   `PENDING RUNNING COMPLETE ERROR CANCELED UNKNOWN`.
 
 ## Conventions all TAO skills follow
 
@@ -95,8 +107,9 @@ with `[ -n "$VAR" ]`.
   file mutations outside the working directory need user confirmation first.
   Installing a missing Python package prerequisite is the one exception:
   install it by default and report what was installed.
-- **Never ask for credentials in chat** and never read credential values or
-  files; name the missing variable and let the user export it.
+- **Never ask for credentials in chat** and never print credential values or
+  the contents of a credentials file; name the missing variable so the user can
+  export it or add it to an env file you then source.
 - **Container images are pinned per skill.** Each skill carries the exact
   image URI it was validated against; do not swap tags silently. Offer
   overrides only when the skill documents an override path.
@@ -105,6 +118,12 @@ with `[ -n "$VAR" ]`.
   minimum versions it has validated by declaring `runtime_requirements.gpu_host`
   in `references/skill_info.yaml`; pass those values to the shared host setup
   check rather than changing the defaults for unrelated models.
+- **Execution is SDK-free.** Job tracking (`scripts/tao_job_record.py`),
+  S3/data staging (`tao-data-io`, storage tiers A/B/C), and multi-node (the
+  SLURM/K8s templates + `scripts/nccl_allreduce_probe.py`) are built into the
+  bank — no `nvidia-tao-sdk`. The one exception is AutoML search
+  (`tao-run-automl`), which uses the `nvidia-tao-automl` wheel and its
+  transitive SDK.
 
 ## Optional: Codex agent identity
 

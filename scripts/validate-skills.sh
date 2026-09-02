@@ -9,10 +9,10 @@
 #   1a. Reverse of 1: every non-core skill dir with a SKILL.md is listed in marketplace.json,
 #       so a skill added on disk without a marketplace entry cannot silently never ship.
 #   1c. Every skills/<layer>/<dir> contains a SKILL.md (catches assets stranded by a rename).
-#   3c. Every models/ skill has a `docker run` somewhere, or an explicit
+#   3c. Every models/ skill has a `docker run` somewhere, a self-contained venv/uv
+#       Quick Start (uv run / uv sync / python -m venv), or an explicit
 #       requires_external:true frontmatter marker (README "Docker-native first").
-#   1d. All three plugin manifests carry the same version, and README's "bundles all N skills"
-#       matches the tao-skills array length.
+#   1d. All three plugin manifests carry the same version.
 #   2. The Codex-facing skills/ directory has no symlink mirror of canonical skills.
 #   3. Every SKILL.md has valid YAML frontmatter satisfying the signing pipeline's
 #      strict checks (parity with docs/skill-requirements.md § 2.1):
@@ -55,6 +55,38 @@ MARKETPLACE=".claude-plugin/marketplace.json"
 errors=0
 
 ok()  { echo "  OK: $*"; }
+
+# ─── scope: per-skill checks validate only the skills this branch changed ─────
+# Per-skill checks (1c, 2, 3, 3b, 3c, 4, 5, 5b, 6, 7) run only on the skills
+# changed vs the base ref, so an unrelated skill's pre-existing issue can't fail
+# your PR and a failure maps to what you touched. Repo-wide checks (1, 1a, 1b, 1d)
+# always run whole-tree. Falls back to whole-tree when no base ref is available
+# (a local full run) or when invoked with --all.
+#   Base ref: $VALIDATE_BASE_REF, else auto-detect origin/main.
+SCOPE_CHANGED=0
+CHANGED_SKILL_DIRS=""
+BASE_REF="${VALIDATE_BASE_REF:-}"
+for _arg in "$@"; do [ "$_arg" = "--all" ] && BASE_REF="--all-forced"; done
+if [ -z "$BASE_REF" ]; then
+  # auto-detect the base ref from the CI environment, falling back to origin/main.
+  for _cand in "${GITHUB_BASE_REF:+origin/$GITHUB_BASE_REF}" "${CHANGE_TARGET:+origin/$CHANGE_TARGET}" origin/main main; do
+    [ -n "$_cand" ] || continue
+    if git rev-parse -q --verify "$_cand" >/dev/null 2>&1; then BASE_REF="$_cand"; break; fi
+  done
+fi
+if [ -n "$BASE_REF" ] && [ "$BASE_REF" != "--all-forced" ]; then
+  base_sha="$(git merge-base "$BASE_REF" HEAD 2>/dev/null || git rev-parse -q --verify "$BASE_REF" 2>/dev/null || true)"
+  if [ -n "$base_sha" ] && [ "$base_sha" != "$(git rev-parse HEAD 2>/dev/null)" ]; then
+    CHANGED_SKILL_DIRS="$(git diff --name-only "$base_sha" HEAD -- 'skills/' 2>/dev/null \
+        | awk -F/ 'NF>=3 && $1=="skills"{print $1"/"$2"/"$3}' | sort -u || true)"
+    SCOPE_CHANGED=1
+    n_changed="$(printf '%s' "$CHANGED_SKILL_DIRS" | grep -c . || true)"
+    echo "Scope: changed-only — ${n_changed:-0} skill dir(s) changed vs ${BASE_REF}"
+    [ "${n_changed:-0}" -gt 0 ] && printf '  %s\n' $CHANGED_SKILL_DIRS
+    echo
+  fi
+fi
+export SCOPE_CHANGED CHANGED_SKILL_DIRS
 
 # ─── 1. marketplace paths ───────────────────────────────────────────────────
 echo "=== 1. marketplace.json skill paths ==="
@@ -105,6 +137,9 @@ PY
 echo
 echo "=== 1c. every skill directory has a SKILL.md ==="
 orphans="$(find skills -mindepth 2 -maxdepth 2 -type d '!' -exec test -f '{}/SKILL.md' ';' -print | sort || true)"
+if [ "$SCOPE_CHANGED" = 1 ] && [ -n "$orphans" ]; then
+  orphans="$(printf '%s\n' "$orphans" | grep -Fxf <(printf '%s\n' "$CHANGED_SKILL_DIRS") || true)"
+fi
 if [ -n "$orphans" ]; then
   orphan_errors=0
   while IFS= read -r path; do
@@ -117,11 +152,11 @@ else
   ok "no asset-only skill directories"
 fi
 
-# ─── 1d. manifest version parity + README skill count ───────────────────────
+# ─── 1d. manifest version parity ─────────────────────────────────────────────
 echo
-echo "=== 1d. manifest version parity and README skill count ==="
+echo "=== 1d. manifest version parity ==="
 python3 - <<'PY'
-import json, os, re, sys
+import json, os, sys
 errs = 0
 manifests = ['.claude-plugin/marketplace.json', '.claude-plugin/plugin.json', '.codex-plugin/plugin.json']
 versions = {}
@@ -130,25 +165,13 @@ for p in manifests:
         continue
     d = json.load(open(p))
     versions[p] = d.get('metadata', {}).get('version') if p.endswith('marketplace.json') else d.get('version')
-if len(set(versions.values())) > 1:
+base_versions = {p: value.split('+', 1)[0] if value else value for p, value in versions.items()}
+if len(set(base_versions.values())) > 1:
     print(f"ERROR: plugin manifest versions disagree: {versions}", file=sys.stderr)
     errs += 1
-
-mp = json.load(open('.claude-plugin/marketplace.json'))
-plug = next((p for p in mp.get('plugins', []) if p['name'] == 'tao-skills'), None)
-if plug and os.path.isfile('README.md'):
-    shipped = len(plug['skills'])
-    readme = open('README.md', encoding='utf-8').read()
-    m = re.search(r'bundles all (\d+) skills', readme)
-    if not m:
-        print("ERROR: README.md has no 'bundles all N skills' claim to check", file=sys.stderr)
-        errs += 1
-    elif int(m.group(1)) != shipped:
-        print(f"ERROR: README.md says 'bundles all {m.group(1)} skills' but tao-skills ships {shipped}", file=sys.stderr)
-        errs += 1
 sys.exit(errs)
 PY
-[ $? -eq 0 ] && ok "manifest versions agree and README count matches" || errors=$((errors + $?))
+[ $? -eq 0 ] && ok "manifest versions agree" || errors=$((errors + $?))
 
 # ─── 1b. Codex skills/ should not mirror canonical skills ──────────────────
 echo
@@ -173,12 +196,15 @@ python3 - <<'PY'
 import os, sys, yaml, re
 errs = 0
 warns = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 
 def iter_skill_files():
     for root, dirs, files in os.walk('.', followlinks=False):
         dirs[:] = [
             d for d in dirs
-            if d not in ('.git', 'plugins')
+            if d not in ('.git', 'plugins', '.venv', '.venv-tao')
             and 'templates/skill-skeleton' not in os.path.join(root, d)
             and not os.path.islink(os.path.join(root, d))
         ]
@@ -186,6 +212,8 @@ def iter_skill_files():
             yield os.path.join(root, 'SKILL.md').lstrip('./')
 
 for skill_md in iter_skill_files():
+    if _oos(os.path.dirname(skill_md)):
+        continue
     with open(skill_md) as f:
         content = f.read()
     m = re.match(r'^---\n(.*?)\n---\n', content, re.DOTALL)
@@ -245,16 +273,18 @@ import os, sys, re
 # A SKILL.md is "runnable" if any of:
 #   - body has a "## Quick Start" or "## Quick start" heading
 #   - body has a `docker run` code block
-#   - body has a Python `sdk.create_job` call (for SDK-driven skills)
 #   - the skill dir has references/skill_info.yaml or references/model_info.yaml on disk
 # Skips templates/.
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 
 def iter_skill_files():
     for root, dirs, files in os.walk('.', followlinks=False):
         dirs[:] = [
             d for d in dirs
-            if d not in ('.git', 'plugins')
+            if d not in ('.git', 'plugins', '.venv', '.venv-tao')
             and 'templates/skill-skeleton' not in os.path.join(root, d)
             and not os.path.islink(os.path.join(root, d))
         ]
@@ -263,18 +293,19 @@ def iter_skill_files():
 
 for skill_md in iter_skill_files():
     skill_dir = os.path.dirname(skill_md)
+    if _oos(skill_dir):
+        continue
     with open(skill_md) as f:
         content = f.read()
     has_qs = re.search(r'^##\s+quick ?start', content, re.IGNORECASE | re.MULTILINE)
     has_dr = 'docker run' in content
-    has_sdk = re.search(r'sdk\.create_job|BrevSDK', content)
     has_refs = (os.path.isfile(os.path.join(skill_dir, 'references/skill_info.yaml'))
                 or os.path.isfile(os.path.join(skill_dir, 'references/model_info.yaml')))
     # Local-Python or agent-prompt-driven skills: presence of scripts/ or hooks/ counts as runnable.
     has_scripts = os.path.isdir(os.path.join(skill_dir, 'scripts'))
     has_hooks = os.path.isdir(os.path.join(skill_dir, 'hooks'))
-    if not (has_qs or has_dr or has_sdk or has_refs or has_scripts or has_hooks):
-        print(f"ERROR: {skill_md} — no runnable info found. Add a Quick Start, docker run block, SDK call, references/skill_info.yaml, scripts/, or hooks/.", file=sys.stderr)
+    if not (has_qs or has_dr or has_refs or has_scripts or has_hooks):
+        print(f"ERROR: {skill_md} — no runnable info found. Add a Quick Start, docker run block, references/skill_info.yaml, scripts/, or hooks/.", file=sys.stderr)
         errs += 1
 sys.exit(errs)
 PY
@@ -282,10 +313,13 @@ PY
 
 # ─── 3c. docker-native rule for models/ and data/ ───────────────────────────
 echo
-echo "=== 3c. models/ skills are docker-native ==="
+echo "=== 3c. models/ skills are docker-native or venv-native ==="
 python3 - <<'PY'
 import os, re, sys
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 # skills/data/ is deliberately not gated yet: 5 of 10 data skills are agent-native or
 # pip-CLI with no container at all, a category the docker-native rule does not describe.
 for layer in ('models',):
@@ -297,6 +331,8 @@ for layer in ('models',):
         skill_md = os.path.join(skill_dir, 'SKILL.md')
         if not os.path.isfile(skill_md):
             continue
+        if _oos(skill_dir):
+            continue
         # explicit, reviewable exemption for upstream workflows that are not TAO containers
         head = open(skill_md, encoding='utf-8').read(4000)
         if re.search(r'^\s*requires_external:\s*true\s*$', head, re.M):
@@ -305,23 +341,30 @@ for layer in ('models',):
         for dirpath, _, files in os.walk(skill_dir):
             for f in files:
                 try:
-                    if 'docker run' in open(os.path.join(dirpath, f), encoding='utf-8', errors='ignore').read():
-                        found = True
-                        break
+                    text = open(os.path.join(dirpath, f), encoding='utf-8', errors='ignore').read()
                 except OSError:
                     continue
+                # "runnable from SKILL.md alone" is satisfied by a docker-native run
+                # path OR a self-contained local venv/uv Quick Start (the 7.1.0
+                # VirtualEnv platform option, e.g. NV-Tesseract / AutoML venv skills).
+                if ('docker run' in text
+                        or 'uv run' in text or 'uv sync' in text or 'uv pip install' in text
+                        or 'python -m venv' in text or 'uv venv' in text or 'virtualenv' in text):
+                    found = True
+                    break
             if found:
                 break
         if not found:
-            print(f"ERROR: {skill_dir} — no `docker run` anywhere in the skill. README's "
-                  f"'Docker-native first' rule requires model/data skills to be runnable from "
-                  f"SKILL.md alone. Add a docker Quick Start, or set `requires_external: true` "
-                  f"in frontmatter metadata if the upstream workflow is not a TAO container.",
+            print(f"ERROR: {skill_dir} — no runnable path found: neither a `docker run` nor a "
+                  f"venv/uv Quick Start (e.g. `uv run`, `uv sync`, `python -m venv`). README's "
+                  f"'Docker-native first' rule requires model skills to be runnable from SKILL.md "
+                  f"alone — add a docker Quick Start OR a local venv/uv Quick Start, or set "
+                  f"`requires_external: true` if the upstream workflow is not a TAO container.",
                   file=sys.stderr)
             errs += 1
 sys.exit(errs)
 PY
-[ $? -eq 0 ] && ok "all models/ skills are docker-native or explicitly external" || errors=$((errors + $?))
+[ $? -eq 0 ] && ok "all models/ skills are docker-native, venv-native, or explicitly external" || errors=$((errors + $?))
 
 # ─── 3b. SKILL.md size + no nested SKILL.md (signing parity) ────────────────
 echo
@@ -332,16 +375,20 @@ import os, sys
 # hard ceiling; recommend ≤ 18000 in docs for margin.
 SIZE_CEILING = 20000
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 for root, dirs, files in os.walk('.', followlinks=False):
     dirs[:] = [
         d for d in dirs
-        if d not in ('.git', 'plugins')
+        if d not in ('.git', 'plugins', '.venv', '.venv-tao')
         and 'templates/skill-skeleton' not in os.path.join(root, d)
         and not os.path.islink(os.path.join(root, d))
     ]
     if 'SKILL.md' not in files: continue
     skill_md = os.path.join(root, 'SKILL.md').lstrip('./')
     skill_dir = os.path.dirname(skill_md)
+    if _oos(skill_dir): continue
     # Size
     with open(skill_md) as f: size = len(f.read())
     if size > SIZE_CEILING:
@@ -359,42 +406,40 @@ sys.exit(errs)
 PY
 [ $? -eq 0 ] && ok "no oversize or nested SKILL.md" || errors=$((errors + $?))
 
-# ─── 4. no SDK leaks in model/data/application skills ───────────────────────
+# ─── 4. no SDK leaks (M9: SDK allowed only under tao-run-automl) ─────────────
 echo
-echo "=== 4. no SDK leaks in model/data/application skills ==="
+echo "=== 4. no SDK leaks (SDK allowed only under tao-run-automl) ==="
 python3 - <<'PY'
 import re, os, sys
-leak_re = re.compile(r'tao_sdk|TaoExecutionSDK|sdk\.create_job|sdk\.list_path|sdk\.check_path|execute_step|agent_runner|script_runner')
+# M9 eliminated the TAO execution SDK from the bank. Direct SDK symbols are
+# allowed ONLY under skills/applications/tao-run-automl/ — it keeps the
+# nvidia-tao-automl wheel and its transitive nvidia-tao-sdk dependency. A match
+# anywhere else (SKILL.md or a references/*.md) is a leak. Accurate negatives
+# ("no tao_sdk", "without the TAO SDK") are fine.
+leak_re = re.compile(r'tao_sdk|TaoExecutionSDK|sdk\.create_job|sdk\.list_path|sdk\.check_path|build_entrypoint|BrevSDK|SlurmSDK|KubernetesSDK|DockerSDK|script_runner')
+neg_re  = re.compile(r"no [`']?tao_sdk|no [`']?nvidia-tao-sdk|without the TAO SDK|there is no [`']?tao_sdk|SDK-free|no in-container", re.IGNORECASE)
+EXEMPT = './skills/applications/tao-run-automl/'
 errs = 0
-for root, dirs, files in os.walk('.'):
-    if any(x in root for x in ('.git', 'templates/skill-skeleton')):
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
+for root, dirs, files in os.walk('./skills'):
+    if any(x in root for x in ('.git', '.venv', '__pycache__')):
         continue
-    if 'SKILL.md' in files:
-        path = os.path.join(root, 'SKILL.md')
-        # Platform skills legitimately document the SDK
-        if path.startswith('./skills/platform/'):
+    in_refs = os.path.basename(root) == 'references'
+    if _oos('/'.join(root.lstrip('./').split('/')[:3])):
+        continue
+    for fn in files:
+        if fn != 'SKILL.md' and not (in_refs and fn.endswith('.md')):
             continue
-        # Application skills that are SDK-orchestrated (AutoML, etc.) are exempt.
-        # Add new ones here only after confirming they cannot run without the SDK.
-        if path in ('./skills/applications/tao-run-automl/SKILL.md',):
+        path = os.path.join(root, fn)
+        if path.startswith(EXEMPT):
             continue
-        # Models may have an "Optional: running via the TAO SDK" section
-        is_model = path.startswith('./skills/models/')
         with open(path) as f:
-            content = f.read()
-        matches = leak_re.findall(content)
-        if not matches:
-            continue
-        if is_model:
-            opt = re.search(r'##\s*Optional:.*?(?=\n##\s|\Z)', content, re.DOTALL | re.IGNORECASE)
-            if opt:
-                outside = leak_re.findall(content.replace(opt.group(0), ''))
-                if outside:
-                    print(f"ERROR: {path} — SDK symbols outside Optional SDK section: {outside[:3]}", file=sys.stderr); errs += 1
-                continue
-            print(f"ERROR: {path} — SDK symbols found: {matches[:3]}. Wrap in an 'Optional: running via the TAO SDK' section or remove.", file=sys.stderr); errs += 1
-        else:
-            print(f"ERROR: {path} — SDK symbols in non-model skill: {matches[:3]}", file=sys.stderr); errs += 1
+            hits = [ln.strip() for ln in f if leak_re.search(ln) and not neg_re.search(ln)]
+        if hits:
+            print(f"ERROR: {path} — SDK symbols (M9: allowed only under {EXEMPT}): {hits[:2]}", file=sys.stderr)
+            errs += 1
 sys.exit(errs)
 PY
 [ $? -eq 0 ] && ok "no SDK symbol leaks" || errors=$((errors + $?))
@@ -405,10 +450,15 @@ echo "=== 5. hook paths resolve ==="
 python3 - <<'PY'
 import re, os, sys, yaml
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 for root, dirs, files in os.walk('.'):
-    if any(x in root for x in ('.git', 'templates/skill-skeleton')):
+    if any(x in root for x in ('.git', 'templates/skill-skeleton', '.venv')):
         continue
     if 'SKILL.md' not in files: continue
+    if _oos(root):
+        continue
     path = os.path.join(root, 'SKILL.md')
     with open(path) as f:
         content = f.read()
@@ -438,12 +488,17 @@ echo "=== 5b. evals/evals.json exists ==="
 python3 - <<'PY'
 import json, os, sys
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 for root, dirs, files in os.walk('.'):
-    if any(x in root for x in ('.git', 'templates/skill-skeleton', 'plugins')):
+    if any(x in root for x in ('.git', 'templates/skill-skeleton', 'plugins', '.venv')):
         continue
     if 'SKILL.md' not in files:
         continue
     skill_dir = root.lstrip('./')
+    if _oos(skill_dir):
+        continue
     evals_path = os.path.join(skill_dir, 'evals/evals.json')
     if not os.path.isfile(evals_path):
         print(f"ERROR: {skill_dir} — missing `evals/evals.json`. Required for Tier-3 signing; see docs/skill-requirements.md § 2.3.", file=sys.stderr)
@@ -473,7 +528,12 @@ echo
 echo "=== 6. AutoML baseline eval guardrail ==="
 python3 - <<'PY'
 from pathlib import Path
-import sys
+import os, sys
+
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+if _SC and 'skills/applications/tao-run-automl' not in _CH:
+    sys.exit(0)
 
 required = {
     "skills/applications/tao-run-automl/SKILL.md": [
@@ -523,6 +583,9 @@ if [ "${1:-}" != "--quick" ]; then
   python3 - <<'PY'
 import os, re, sys, yaml
 errs = 0
+_SC = os.environ.get('SCOPE_CHANGED') == '1'
+_CH = set(filter(None, os.environ.get('CHANGED_SKILL_DIRS', '').split('\n')))
+_oos = lambda d: _SC and d.lstrip('./').rstrip('/') not in _CH
 VALID_MODES = {'config', 'args', 'passthrough'}
 VALID_CONFIG_FORMATS = {'yaml', 'toml', 'json'}
 VALID_GPU_RUNTIME_KEYS = {
@@ -544,7 +607,7 @@ def iter_metadata_files():
     for root, dirs, files in os.walk('.'):
         dirs[:] = [
             d for d in dirs
-            if d not in ('.git', 'templates', '.claude-plugin', '.codex-plugin')
+            if d not in ('.git', 'templates', '.claude-plugin', '.codex-plugin', '.venv', '.venv-tao')
         ]
         for fname in ('skill_info.yaml', 'model_info.yaml'):
             if fname in files:
@@ -591,6 +654,8 @@ for path in iter_metadata_files():
         print(f"ERROR: {path} — metadata file must contain a YAML mapping", file=sys.stderr); errs += 1; continue
 
     skill_dir = skill_dir_for(path)
+    if _oos(skill_dir):
+        continue
     is_model_or_data = skill_dir.startswith('./skills/models/') or skill_dir.startswith('./skills/data/')
     is_primary_model_metadata = (
         path.startswith('./skills/models/')
@@ -614,10 +679,50 @@ for path in iter_metadata_files():
                     continue
                 hf_model_owners.setdefault(model_id.casefold(), []).append((model_id, skill_dir))
 
+    has_declared_image = False
     if isinstance(info.get('container_image'), str):
         validate_image(path, info['container_image'], 'container_image')
-    elif is_model_or_data and 'actions' in info:
-        print(f"WARN: {path} — has actions but no top-level container_image", file=sys.stderr)
+        has_declared_image = True
+
+    backend_contracts = info.get('backend_contracts')
+    if backend_contracts is not None:
+        if not isinstance(backend_contracts, dict) or not backend_contracts:
+            print(f"ERROR: {path} — backend_contracts must be a non-empty mapping", file=sys.stderr); errs += 1
+        else:
+            for backend_name, declaration in backend_contracts.items():
+                context = f'backend_contracts.{backend_name}'
+                if isinstance(declaration, str):
+                    continue
+                if not isinstance(declaration, dict):
+                    print(f"ERROR: {path} — {context} must be a path string or mapping", file=sys.stderr); errs += 1
+                    continue
+                unknown_keys = set(declaration) - {'path', 'container_image'}
+                if unknown_keys:
+                    print(f"ERROR: {path} — {context} has unknown keys: {sorted(unknown_keys)}", file=sys.stderr); errs += 1
+                relative_contract = declaration.get('path')
+                if not isinstance(relative_contract, str) or not relative_contract.strip():
+                    print(f"ERROR: {path} — {context}.path must be a non-empty string", file=sys.stderr); errs += 1
+                else:
+                    backend_path = os.path.normpath(os.path.join(skill_dir, relative_contract))
+                    if not os.path.isfile(backend_path):
+                        print(f"ERROR: {path} — {context}.path does not exist: {backend_path}", file=sys.stderr); errs += 1
+                    else:
+                        try:
+                            with open(backend_path) as backend_file:
+                                backend_contract = yaml.safe_load(backend_file) or {}
+                            if isinstance(backend_contract, dict) and 'container_image' in backend_contract:
+                                print(f"ERROR: {backend_path} — container_image must live only at {context}.container_image in {path}", file=sys.stderr); errs += 1
+                        except yaml.YAMLError as e:
+                            print(f"ERROR: {backend_path} — YAML parse error: {e}", file=sys.stderr); errs += 1
+                declared_backend_image = declaration.get('container_image')
+                if not isinstance(declared_backend_image, str) or not declared_backend_image.strip():
+                    print(f"ERROR: {path} — {context}.container_image must be a non-empty string", file=sys.stderr); errs += 1
+                else:
+                    validate_image(path, declared_backend_image, f'{context}.container_image')
+                    has_declared_image = True
+
+    if is_model_or_data and 'actions' in info and not has_declared_image:
+        print(f"WARN: {path} — has actions but no top-level or backend-specific container_image", file=sys.stderr)
 
     runtime_requirements = info.get('runtime_requirements')
     if runtime_requirements is not None:

@@ -1,4 +1,4 @@
-# versions.yaml — build-time source of truth for TAO container images and SDK wheels.
+# versions.yaml — build-time source of truth for TAO container images and Python wheels.
 #
 # Skills are standalone: they carry literal image URIs and wheel pins, each
 # annotated with the key it came from ("# versions-key: images.tao_toolkit.pyt").
@@ -29,17 +29,23 @@
 
 images:
   tao_toolkit:
-    pyt:                nvcr.io/nvidia/tao/tao-toolkit:7.1.0-pyt
-    deploy:             nvcr.io/nvidia/tao/tao-toolkit:7.1.0-deploy
-    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services
-    cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-rl
-    cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
-    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
-    vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
+    pyt:                    nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt
+    deploy:                 nvcr.io/nvidia/tao/tao-toolkit:7.2.0-deploy
+    data_services:          nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
+    # PAS pins independently; review both dedicated keys on every TAO image bump.
+    deft_pas_pyt:           nvcr.io/nvidia/tao/tao-toolkit:7.2.0-pyt
+    deft_pas_data_services: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
+    # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
+    cosmos_framework:       nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-framework
+    cosmos_rl:              nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
+    deft_cosmos_reason:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
+    cosmos_predict:         nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
+    cosmos_embed:           nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
+    vila:                   nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
-    paidf_anomalygen: nvcr.io/nvidia/paidf-anomalygen:1.0.0
-
+    paidf_anomalygen: nvcr.io/nvidia/paidf-anomalygen:1.0.1
+    paidf_augmentation: nvcr.io/nvidia/paidf-augmentation:1.0.0
 wheels:
   # TAO Python wheels, published to public PyPI. Skill Preflight sections
   # resolve these keys via `scripts/resolve_versions_key.py wheels.<key>` —
@@ -52,17 +58,23 @@ wheels:
   #
   # The `nvidia-tao-sdk` package consolidates what used to be multiple wheels
   # (tao-sdk, tao-sdk-brev). One entry per platform extra.
-  tao_sdk:            nvidia-tao-sdk==7.1.0
-  tao_sdk_brev:       nvidia-tao-sdk[brev]==7.1.0
-  tao_sdk_slurm:      nvidia-tao-sdk[slurm]==7.1.0
-  tao_sdk_kubernetes: nvidia-tao-sdk[kubernetes]==7.1.0
-  tao_sdk_docker:     nvidia-tao-sdk[docker]==7.1.0
-  tao_sdk_all:        nvidia-tao-sdk[all]==7.1.0
+  #
+  # RETAINED ONLY AS THE TRANSITIVE DEPENDENCY OF nvidia-tao-automl (AutoML).
+  # The skill bank no longer uses the TAO SDK execution abstraction directly:
+  # platform skills run containers via docker/kubectl/srun and the SDK-free
+  # 4-verb consumer path (tao-data-io + tao_job_record + tao-launch-workflow).
+  # These `tao_sdk_*` keys exist so nvidia-tao-automl can pull a matching SDK.
+  tao_sdk:            nvidia-tao-sdk==7.2.0
+  tao_sdk_brev:       nvidia-tao-sdk[brev]==7.2.0
+  tao_sdk_slurm:      nvidia-tao-sdk[slurm]==7.2.0
+  tao_sdk_kubernetes: nvidia-tao-sdk[kubernetes]==7.2.0
+  tao_sdk_docker:     nvidia-tao-sdk[docker]==7.2.0
+  tao_sdk_all:        nvidia-tao-sdk[all]==7.2.0
   # nvidia-tao-automl pulls nvidia-tao-sdk as a transitive dep. One entry per
   # platform extra; append `,llm` or `,wandb` to an extra at install time for
   # the agentic-search or experiment-tracking deps.
-  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.1.0
-  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.1.0
-  tao_automl_docker:     nvidia-tao-automl[docker]==7.1.0
-  tao_automl_brev:       nvidia-tao-automl[brev]==7.1.0
-  tao_automl_all:        nvidia-tao-automl[all]==7.1.0
+  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.2.0
+  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.2.0
+  tao_automl_docker:     nvidia-tao-automl[docker]==7.2.0
+  tao_automl_brev:       nvidia-tao-automl[brev]==7.2.0
+  tao_automl_all:        nvidia-tao-automl[all]==7.2.0

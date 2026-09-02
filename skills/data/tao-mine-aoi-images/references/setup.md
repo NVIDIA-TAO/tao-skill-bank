@@ -4,7 +4,7 @@ The mining and embedding tasks live inside the pinned TAO data-services image be
 
 ```bash
 # Pinned TAO data-services container URI (stamped from the release manifest)
-DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.1.0-data-services  # versions-key: images.tao_toolkit.data_services
+DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.data_services
 echo "DS_IMAGE=$DS_IMAGE"
 
 docker info > /dev/null && echo "OK: docker"

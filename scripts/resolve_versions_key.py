@@ -26,8 +26,12 @@ from typing import Any
 
 import yaml
 
+# The bank this script is part of, so resolution works from a git clone, a plugin
+# install, or anywhere else the tree is unpacked. $TAO_SKILL_BANK_PATH overrides it
+# for the case where the caller means a different bank than the one it lives in.
+_BUNDLED_SKILL_BANK = Path(__file__).resolve().parents[1]
 DEFAULT_SKILL_BANK = Path(
-    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
+    os.environ.get("TAO_SKILL_BANK_PATH") or _BUNDLED_SKILL_BANK
 )
 
 

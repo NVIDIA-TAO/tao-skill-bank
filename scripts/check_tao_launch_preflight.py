@@ -16,14 +16,16 @@ import shlex
 import socket
 import subprocess
 import sys
+
+import yaml
+
 from pathlib import Path
 from typing import Any
 
 
 DEFAULT_SKILL_BANK = Path(
-    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skills-external")
+    os.environ.get("TAO_SKILL_BANK_PATH", Path.home() / "tao-skill-bank")
 )
-MANIFEST_REL = Path("skills") / "platform" / "platforms.manifest.json"
 REMOTE_SCHEMES = ("s3://", "azure://", "gs://", "http://", "https://")
 DEFAULT_GPU_SMOKE_IMAGE = os.environ.get("TAO_GPU_SMOKE_IMAGE", "ubuntu:22.04")
 DEFAULT_LOW_VRAM_THRESHOLD_GB = 50.0
@@ -45,7 +47,7 @@ def parse_args() -> argparse.Namespace:
         "--docker-host",
         help=(
             "Optional Docker daemon URL such as ssh://user@host. Sets "
-            "DOCKER_HOST for local-docker/remote-docker preflight."
+            "DOCKER_HOST for the docker platform (remote GPU box) preflight."
         ),
     )
     parser.add_argument(
@@ -54,6 +56,16 @@ def parse_args() -> argparse.Namespace:
         default=[],
         metavar="LABEL=PATH",
         help="Dataset/spec path to verify. May be repeated.",
+    )
+    parser.add_argument(
+        "--min-free-disk-gb",
+        action="append",
+        default=[],
+        metavar="LABEL=GIB",
+        help=(
+            "Require at least GIB GiB free on the filesystem containing a "
+            "previously supplied local --path LABEL=PATH. May be repeated."
+        ),
     )
     parser.add_argument(
         "--json-required-field",
@@ -126,6 +138,16 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Known target GPU memory in GiB. May be repeated once per GPU, or "
             "provided once with --target-gpu-count to apply to all target GPUs."
+        ),
+    )
+    parser.add_argument(
+        "--target-gpu-index",
+        action="append",
+        default=[],
+        metavar="INDEX",
+        help=(
+            "Restrict local/remote Docker GPU validation and the smoke container "
+            "to an explicitly allocated GPU index. May be repeated."
         ),
     )
     parser.add_argument(
@@ -205,19 +227,41 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_manifest(skill_bank: Path) -> dict[str, Any]:
-    with (skill_bank.expanduser() / MANIFEST_REL).open("r", encoding="utf-8") as f:
-        return json.load(f)
+# Docker is one daemon reachable three ways (local, DOCKER_HOST=ssh://, sudo);
+# they share one self-describing skill.
+PLATFORM_ALIASES = {"local-docker": "docker", "remote-docker": "docker"}
 
 
 def resolve_platform(skill_bank: Path, requested: str) -> dict[str, Any]:
-    normalized = requested.strip().lower()
-    for platform in load_manifest(skill_bank).get("platforms", []):
-        names = [platform.get("name", "")]
-        names.extend(platform.get("aliases", []))
-        if normalized in {str(name).lower() for name in names}:
-            return platform
-    raise SystemExit(f"Unknown platform: {requested}")
+    """Load the platform's SELF-DESCRIBING record from its own skill —
+    skills/platform/tao-run-on-<name>/references/skill_info.yaml — with no central
+    manifest. A credential-free platform may ship only a SKILL.md; then fall back to
+    a minimal record and SAY SO loudly, so the empty credential gate is never silent.
+    Only require-one-of credential groups and numeric wall-time caps genuinely need
+    the structured record; a single required env var is checked fine from prose."""
+    name = PLATFORM_ALIASES.get(requested.strip().lower(), requested.strip().lower())
+    info = (
+        skill_bank.expanduser()
+        / "skills" / "platform" / f"tao-run-on-{name}" / "references" / "skill_info.yaml"
+    )
+    if info.is_file():
+        record = yaml.safe_load(info.read_text(encoding="utf-8")) or {}
+        record.setdefault("name", name)
+        return record
+    print(
+        f"NOTE: no references/skill_info.yaml for platform '{name}' "
+        f"(skills/platform/tao-run-on-{name}/) — treating it as a self-describing, "
+        f"credential-free platform. The structured credential/resource gate is empty; "
+        f"rely on the skill's own Preflight prose. Add a skill_info.yaml only if this "
+        f"platform needs a require-one-of credential group or a wall-time cap.",
+        file=sys.stderr,
+    )
+    return {
+        "name": name,
+        "required_credentials": [],
+        "credential_groups": [],
+        "resource_defaults": {},
+    }
 
 
 def parse_paths(values: list[str]) -> list[tuple[str, str]]:
@@ -325,6 +369,85 @@ def parse_effective_batch_limits(values: list[str]) -> dict[str, list[tuple[int,
     return limits
 
 
+def parse_min_free_disk_gb(values: list[str]) -> dict[str, float]:
+    requirements: dict[str, float] = {}
+    for value in values:
+        if "=" not in value:
+            raise SystemExit("--min-free-disk-gb must use LABEL=GIB syntax")
+        label, raw_gib = value.split("=", 1)
+        label = label.strip()
+        try:
+            gib = float(raw_gib)
+        except ValueError as exc:
+            raise SystemExit("--min-free-disk-gb GIB must be numeric") from exc
+        if not label or gib <= 0:
+            raise SystemExit(
+                "--min-free-disk-gb must include a label and a positive GIB value"
+            )
+        requirements[label] = gib
+    return requirements
+
+
+def _existing_disk_probe_path(path: Path) -> Path:
+    candidate = path.expanduser().resolve(strict=False)
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    if not candidate.exists():
+        raise FileNotFoundError(path)
+    return candidate
+
+
+def check_free_disk_space(
+    paths: list[tuple[str, str]],
+    requirements: dict[str, float],
+    *,
+    skip_access: bool,
+) -> bool:
+    if not requirements:
+        return True
+    if skip_access:
+        print(
+            "Free-disk requirements present; skipped filesystem capacity checks. "
+            "Verify them on the target host before launch."
+        )
+        return True
+
+    path_by_label = dict(paths)
+    ok = True
+    for label, required_gib in requirements.items():
+        raw_path = path_by_label.get(label)
+        if raw_path is None:
+            print(f"Free-disk check failed: no --path found for label {label}")
+            ok = False
+            continue
+        path = normalize_local_path(raw_path)
+        if path is None:
+            print(
+                f"Free-disk check failed: {label}={raw_path} is not a local filesystem path"
+            )
+            ok = False
+            continue
+        try:
+            probe = _existing_disk_probe_path(Path(path))
+            free_gib = shutil.disk_usage(probe).free / 1024**3
+        except OSError as exc:
+            print(f"Free-disk check failed: {label}={path}: {exc}")
+            ok = False
+            continue
+        if free_gib < required_gib:
+            print(
+                "Free-disk check failed: "
+                f"{label}={path}, free={free_gib:.1f}GiB < required={required_gib:g}GiB"
+            )
+            ok = False
+        else:
+            print(
+                "Free-disk OK: "
+                f"{label}={path}, free={free_gib:.1f}GiB, required={required_gib:g}GiB"
+            )
+    return ok
+
+
 def env_missing(platform: dict[str, Any]) -> list[str]:
     missing = []
     for item in platform.get("required_credentials", []):
@@ -376,42 +499,21 @@ def run(
 
 
 def detect_local_gpu_arches() -> list[str]:
-    if not shutil.which("nvidia-smi"):
+    ok, gpus = query_host_gpus(print_result=False)
+    if not ok:
         return []
-    result = run(
-        ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
-        timeout=20,
-    )
-    if result.returncode != 0:
-        return []
-    arches = []
-    for line in result.stdout.splitlines():
-        value = line.strip()
-        if not value:
-            continue
-        arches.append(normalize_gpu_arch(value))
-    return arches
+    return [gpu["sm"] for gpu in gpus if gpu.get("sm")]
 
 
 def detect_local_gpu_memory_gb() -> list[float]:
-    if not shutil.which("nvidia-smi"):
+    ok, gpus = query_host_gpus(print_result=False)
+    if not ok:
         return []
-    result = run(
-        ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-        timeout=20,
-    )
-    if result.returncode != 0:
-        return []
-    memory_gb = []
-    for line in result.stdout.splitlines():
-        value = line.strip()
-        if not value:
-            continue
-        try:
-            memory_gb.append(float(value) / 1024.0)
-        except ValueError:
-            continue
-    return memory_gb
+    return [
+        float(gpu["memory_mib"]) / 1024.0
+        for gpu in gpus
+        if gpu.get("memory_mib") is not None
+    ]
 
 
 def check_gpu_arch_allowlists(
@@ -482,8 +584,23 @@ def check_gpu_resources(
         memory_gb = list(target_memory_gb)
         if target_count and len(memory_gb) == 1:
             memory_gb = memory_gb * target_count
+    elif target_count and not skip_access:
+        detected_memory = detect_local_gpu_memory_gb()
+        if len(detected_memory) < target_count:
+            print(
+                "GPU resource check failed: detected fewer GPUs than "
+                f"--target-gpu-count={target_count}"
+            )
+            return False
+        memory_gb = detected_memory[:target_count]
     elif target_count:
-        memory_gb = [0.0] * target_count
+        if min_memory_gb is not None or min_total_memory_gb is not None:
+            print(
+                "GPU memory requirements cannot be verified from --target-gpu-count alone; "
+                "provide --target-gpu-memory-gb or allow target access."
+            )
+            return False
+        memory_gb = [1.0] * target_count
     elif skip_access:
         print(
             "GPU resource requirement present but target GPU detection was skipped. "
@@ -543,6 +660,42 @@ def check_gpu_resources(
         f"detected={detected}"
     )
     return True
+
+
+def parse_target_gpu_indices(values: list[str]) -> list[str]:
+    indices: list[str] = []
+    for value in values:
+        index = value.strip()
+        if not index.isdigit():
+            raise SystemExit("--target-gpu-index must be a nonnegative integer")
+        if index not in indices:
+            indices.append(index)
+    return indices
+
+
+def filter_target_gpus(
+    gpus: list[dict[str, Any]], target_indices: list[str]
+) -> tuple[bool, list[dict[str, Any]]]:
+    if not target_indices:
+        return True, gpus
+    by_index = {str(gpu.get("index")): gpu for gpu in gpus}
+    missing = [index for index in target_indices if index not in by_index]
+    if missing:
+        print(
+            "Target GPU selection failed: missing index(es)=" + ",".join(missing)
+        )
+        return False, []
+    selected = [by_index[index] for index in target_indices]
+    print("Target GPU selection OK: indices=" + ",".join(target_indices))
+    return True, selected
+
+
+def docker_gpu_request(target_indices: list[str]) -> str:
+    if not target_indices:
+        return "all"
+    # Docker parses --gpus with encoding/csv. Preserve literal quotes around a
+    # comma-separated device selector even when subprocess bypasses a shell.
+    return '"device=' + ",".join(target_indices) + '"'
 
 
 def command_detail(result: subprocess.CompletedProcess[str]) -> str:
@@ -704,7 +857,7 @@ def has_unverified_remote_mounts(
     paths: list[tuple[str, str]],
     skip_access: bool,
 ) -> bool:
-    if skip_access or platform_name in {"slurm", "local-docker", "remote-docker"}:
+    if skip_access or platform_name in {"slurm", "docker", "local-docker", "remote-docker"}:
         return False
 
     failed = False
@@ -945,27 +1098,107 @@ def docker_runtimes() -> tuple[bool, set[str]]:
     return True, runtimes
 
 
-def parse_gpu_query_output(stdout: str, has_compute_cap: bool) -> list[dict[str, Any]]:
+def parse_gpu_query_output(
+    stdout: str, has_compute_cap: bool, *, has_uuid: bool = False
+) -> list[dict[str, Any]]:
     gpus: list[dict[str, Any]] = []
     for row in csv.reader(stdout.splitlines()):
-        if len(row) < 4:
+        minimum_columns = 5 if has_uuid else 4
+        if len(row) < minimum_columns:
             continue
+        offset = 1 if has_uuid else 0
         memory_mib = None
         try:
-            memory_mib = float(row[3].strip())
+            memory_mib = float(row[3 + offset].strip())
         except ValueError:
             pass
-        compute_cap = row[4].strip() if has_compute_cap and len(row) > 4 else ""
+        compute_cap_index = 4 + offset
+        compute_cap = (
+            row[compute_cap_index].strip()
+            if has_compute_cap and len(row) > compute_cap_index
+            else ""
+        )
         gpus.append(
             {
                 "index": row[0].strip(),
-                "name": row[1].strip(),
-                "driver_version": row[2].strip(),
+                "uuid": row[1].strip() if has_uuid else "",
+                "name": row[1 + offset].strip(),
+                "driver_version": row[2 + offset].strip(),
                 "memory_mib": memory_mib,
                 "sm": sm_from_compute_cap(compute_cap) if compute_cap else "",
             }
         )
     return gpus
+
+
+def filter_cuda_visible_gpus(
+    gpus: list[dict[str, Any]], raw_visibility: str | None
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Apply the launcher process's CUDA visibility contract to host inventory.
+
+    ``nvidia-smi`` intentionally reports physical inventory. CUDA workloads see
+    only ``CUDA_VISIBLE_DEVICES`` and renumber the selected devices densely, so
+    preflight must preserve both namespaces instead of treating inventory as
+    availability.
+    """
+    physical_count = len(gpus)
+    if raw_visibility is None:
+        visible = [dict(gpu, visible_index=str(index)) for index, gpu in enumerate(gpus)]
+        print(
+            "CUDA-visible GPU comparison: "
+            f"physical={physical_count}, visible={len(visible)}, "
+            "source=unrestricted"
+        )
+        return True, visible
+
+    raw = raw_visibility.strip()
+    if not raw or raw == "-1":
+        print(
+            "CUDA-visible GPU comparison: "
+            f"physical={physical_count}, visible=0, source=CUDA_VISIBLE_DEVICES"
+        )
+        return False, []
+
+    tokens = [token.strip() for token in raw.split(",")]
+    if any(not token for token in tokens):
+        print("CUDA_VISIBLE_DEVICES is invalid: empty device token")
+        return False, []
+
+    by_index = {str(gpu.get("index")): gpu for gpu in gpus}
+    selected: list[dict[str, Any]] = []
+    selected_host_ids: set[str] = set()
+    for token in tokens:
+        match = by_index.get(token) if token.isdigit() else None
+        if match is None and token.upper().startswith("GPU-"):
+            candidates = [
+                gpu
+                for gpu in gpus
+                if str(gpu.get("uuid", "")).upper().startswith(token.upper())
+            ]
+            if len(candidates) == 1:
+                match = candidates[0]
+        if match is None:
+            print(
+                "CUDA_VISIBLE_DEVICES cannot be resolved against host inventory: "
+                f"token={token!r}"
+            )
+            return False, []
+        host_id = str(match.get("index"))
+        if host_id in selected_host_ids:
+            print(
+                "CUDA_VISIBLE_DEVICES selects the same host GPU more than once: "
+                f"index={host_id}"
+            )
+            return False, []
+        selected_host_ids.add(host_id)
+        selected.append(dict(match, visible_index=str(len(selected))))
+
+    print(
+        "CUDA-visible GPU comparison: "
+        f"physical={physical_count}, visible={len(selected)}, "
+        "source=CUDA_VISIBLE_DEVICES"
+    )
+    return True, selected
 
 
 def print_gpus(gpus: list[dict[str, Any]], prefix: str = "Host GPU OK") -> None:
@@ -980,14 +1213,14 @@ def print_gpus(gpus: list[dict[str, Any]], prefix: str = "Host GPU OK") -> None:
         )
 
 
-def query_host_gpus() -> tuple[bool, list[dict[str, Any]]]:
+def query_host_gpus(*, print_result: bool = True) -> tuple[bool, list[dict[str, Any]]]:
     if not shutil.which("nvidia-smi"):
         print("nvidia-smi not found on host PATH")
         return False, []
 
     command = [
         "nvidia-smi",
-        "--query-gpu=index,name,driver_version,memory.total,compute_cap",
+        "--query-gpu=index,uuid,name,driver_version,memory.total,compute_cap",
         "--format=csv,noheader,nounits",
     ]
     result = run(command, timeout=20)
@@ -995,7 +1228,7 @@ def query_host_gpus() -> tuple[bool, list[dict[str, Any]]]:
     if not has_compute_cap:
         command = [
             "nvidia-smi",
-            "--query-gpu=index,name,driver_version,memory.total",
+            "--query-gpu=index,uuid,name,driver_version,memory.total",
             "--format=csv,noheader,nounits",
         ]
         result = run(command, timeout=20)
@@ -1003,15 +1236,21 @@ def query_host_gpus() -> tuple[bool, list[dict[str, Any]]]:
         print(f"nvidia-smi GPU query failed: {command_detail(result)}")
         return False, []
 
-    gpus = parse_gpu_query_output(result.stdout, has_compute_cap)
+    gpus = parse_gpu_query_output(result.stdout, has_compute_cap, has_uuid=True)
     if not gpus:
         print("nvidia-smi did not report any GPUs")
         return False, []
-    print_gpus(gpus)
-    return True, gpus
+    visibility_ok, visible_gpus = filter_cuda_visible_gpus(
+        gpus, os.environ.get("CUDA_VISIBLE_DEVICES")
+    )
+    if print_result and visibility_ok:
+        print_gpus(visible_gpus)
+    return visibility_ok, visible_gpus
 
 
-def query_docker_gpus(image: str, pull_smoke_image: bool) -> tuple[bool, list[dict[str, Any]]]:
+def query_docker_gpus(
+    image: str, pull_smoke_image: bool, target_gpu_indices: list[str]
+) -> tuple[bool, list[dict[str, Any]]]:
     if not pull_smoke_image and not docker_image_exists(image):
         print(
             "Remote Docker GPU query image is not present on the Docker host: "
@@ -1025,7 +1264,7 @@ def query_docker_gpus(image: str, pull_smoke_image: bool) -> tuple[bool, list[di
         "--rm",
         "--runtime=nvidia",
         "--gpus",
-        "all",
+        docker_gpu_request(target_gpu_indices),
         image,
         "nvidia-smi",
         "--query-gpu=index,name,driver_version,memory.total,compute_cap",
@@ -1040,7 +1279,7 @@ def query_docker_gpus(image: str, pull_smoke_image: bool) -> tuple[bool, list[di
             "--rm",
             "--runtime=nvidia",
             "--gpus",
-            "all",
+            docker_gpu_request(target_gpu_indices),
             image,
             "nvidia-smi",
             "--query-gpu=index,name,driver_version,memory.total",
@@ -1162,6 +1401,7 @@ def check_docker_gpu_smoke(
     container_image: str | None,
     gpu_smoke_image: str,
     pull_smoke_image: bool,
+    target_gpu_indices: list[str],
 ) -> bool:
     image = container_image or gpu_smoke_image
     if not image:
@@ -1181,7 +1421,7 @@ def check_docker_gpu_smoke(
         "--rm",
         "--runtime=nvidia",
         "--gpus",
-        "all",
+        docker_gpu_request(target_gpu_indices),
         image,
         "nvidia-smi",
         "-L",
@@ -1359,6 +1599,25 @@ def check_slurm(
     else:
         working_host = hosts[0]
 
+    if not skip_access:
+        runtime_command = (
+            "command -v sbatch >/dev/null && "
+            "command -v srun >/dev/null && "
+            "command -v sacct >/dev/null && "
+            "command -v enroot >/dev/null && "
+            "srun --help 2>&1 | grep -q -- --container-image"
+        )
+        result = run(ssh_command(working_host, runtime_command), timeout=30)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            reason = detail[-1] if detail else f"exit {result.returncode}"
+            print(
+                "Remote SLURM/Pyxis/Enroot preflight failed: "
+                f"host={working_host}: {reason}"
+            )
+            return False
+        print(f"Remote SLURM/Pyxis/Enroot tools OK: {working_host}")
+
     for label, raw_path in paths:
         path = normalize_local_path(raw_path)
         if path is None:
@@ -1456,8 +1715,10 @@ def check_local_docker(
     min_gpu_memory_gb: float | None,
     low_vram_threshold_gb: float,
     require_remote_docker: bool,
+    target_gpu_indices: list[str],
 ) -> bool:
     ok = True
+    effective_target_gpu_indices = list(target_gpu_indices)
     docker_host = os.environ.get("DOCKER_HOST")
     remote_docker = docker_host_is_remote(docker_host)
     if require_remote_docker and not remote_docker:
@@ -1492,9 +1753,15 @@ def check_local_docker(
 
             if remote_docker:
                 print(f"Remote Docker daemon requested: DOCKER_HOST={os.environ.get('DOCKER_HOST')}")
-                gpu_ok, gpus = query_docker_gpus(gpu_smoke_image, pull_smoke_image)
+                gpu_ok, gpus = query_docker_gpus(
+                    gpu_smoke_image, pull_smoke_image, target_gpu_indices
+                )
             else:
                 gpu_ok, gpus = query_host_gpus()
+                selection_ok, gpus = filter_target_gpus(gpus, target_gpu_indices)
+                gpu_ok = gpu_ok and selection_ok
+                if gpu_ok and not effective_target_gpu_indices:
+                    effective_target_gpu_indices = [str(gpu["index"]) for gpu in gpus]
             ok = gpu_ok and ok
             if gpu_ok:
                 ok = (
@@ -1513,14 +1780,20 @@ def check_local_docker(
                     )
                     and ok
                 )
-            ok = (
-                check_docker_gpu_smoke(
-                    container_image,
-                    gpu_smoke_image,
-                    pull_smoke_image,
+            if gpu_ok:
+                ok = (
+                    check_docker_gpu_smoke(
+                        container_image,
+                        gpu_smoke_image,
+                        pull_smoke_image,
+                        effective_target_gpu_indices,
+                    )
+                    and ok
                 )
-                and ok
-            )
+            else:
+                print(
+                    "Docker GPU smoke skipped: effective GPU allocation failed validation"
+                )
 
     for label, raw_path in paths:
         path = normalize_local_path(raw_path)
@@ -1584,6 +1857,8 @@ def main() -> int:
     required_json_fields = parse_required_fields(args.json_required_field)
     gpu_arch_allowlists = parse_gpu_arch_allowlists(args.gpu_arch_allowlist)
     effective_batch_limits = parse_effective_batch_limits(args.effective_batch_limit)
+    min_free_disk_gb = parse_min_free_disk_gb(args.min_free_disk_gb)
+    target_gpu_indices = parse_target_gpu_indices(args.target_gpu_index)
     name = platform["name"]
 
     if name == "slurm":
@@ -1594,7 +1869,7 @@ def main() -> int:
             args.json_sample_limit,
             args.skip_platform_access,
         )
-    elif name in {"local-docker", "remote-docker"}:
+    elif name in {"docker", "local-docker", "remote-docker"}:
         platform_ok = check_local_docker(
             paths,
             required_json_fields,
@@ -1606,7 +1881,8 @@ def main() -> int:
             parse_sm_list(args.image_supported_sm),
             args.min_gpu_memory_gb,
             args.low_vram_threshold_gb,
-            name == "remote-docker",
+            name == "remote-docker" or bool(args.docker_host or os.environ.get("DOCKER_HOST")),
+            target_gpu_indices,
         )
     elif name == "brev":
         platform_ok = check_brev(platform, args.skip_platform_access)
@@ -1643,6 +1919,11 @@ def main() -> int:
         effective_batch_limits,
         args.skip_platform_access,
     )
+    free_disk_ok = check_free_disk_space(
+        paths,
+        min_free_disk_gb,
+        skip_access=args.skip_platform_access,
+    )
     ok = (
         platform_ok
         and storage_ok
@@ -1650,6 +1931,7 @@ def main() -> int:
         and gpu_arch_ok
         and gpu_resources_ok
         and effective_batch_ok
+        and free_disk_ok
     )
 
     if ok:

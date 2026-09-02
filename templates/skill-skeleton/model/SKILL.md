@@ -38,6 +38,7 @@ Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows st
 ### Train
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 docker run --gpus all --rm \
   -e HF_TOKEN \
   -v /path/to/spec.yaml:/spec.yaml \
@@ -50,6 +51,7 @@ docker run --gpus all --rm \
 ### Evaluate
 
 ```bash
+set -a; source /path/to/.env; set +a   # omit if already exported
 docker run --gpus all --rm \
   -e HF_TOKEN \
   -v /path/to/eval_spec.yaml:/spec.yaml \
@@ -133,22 +135,11 @@ Group by subsystem — training loop, model, optimization, vision, checkpointing
 | `FileNotFoundError` on pretrained model | Missing mount | Add `-v` for the checkpoint dir |
 | `OOM` during training | Batch size too large | Reduce `train.batch_size` or add GPUs |
 
-## Optional: running via the TAO SDK
+## Running on a platform
 
-If `nvidia-tao-sdk` is installed and you want job tracking + S3 I/O wrapping:
-
-```python
-from tao_sdk.platforms.brev import BrevSDK   # or: from tao_sdk.platforms.slurm import SlurmSDK
-sdk = BrevSDK()
-job = sdk.create_job(
-    image='nvcr.io/nvidia/tao/tao-toolkit:<tag>',
-    command='<entrypoint-cmd> train -e /spec.yaml',
-    gpu_count=1,
-    env_vars={'HF_TOKEN': os.environ['HF_TOKEN']},
-    inputs={'/spec.yaml': 's3://bucket/specs/train.yaml',
-            '/data/':     's3://bucket/datasets/...'},
-    outputs=['/results/'],
-)
-```
-
-See `tao-skill-bank:tao-run-platform` for full SDK semantics.
+This skill describes the model, its container command, and the spec. To run with
+job tracking, S3 staging, or on a remote/multi-node cluster, hand the spec to a
+**platform skill** — `tao-run-on-docker`, `-slurm`, `-kubernetes`, `-brev`,
+`-virtualenv`, or any installed external platform skill —
+which executes it through the four-verb contract (`submit`/`status`/`logs`/
+`cancel`) with no SDK. See `tao-skill-bank:tao-launch-workflow`.

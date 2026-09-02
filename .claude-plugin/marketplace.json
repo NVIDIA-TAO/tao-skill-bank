@@ -5,16 +5,22 @@
   },
   "metadata": {
     "description": "NVIDIA TAO skill bank with generated capability discovery for model training, data processing, application workflows, AutoML, and platform execution.",
-    "version": "0.1.11"
+    "version": "0.1.13"
   },
   "plugins": [
     {
+      "name": "tao-skill-bank",
+      "description": "Canonical cross-client entry for the TAO Skill Bank plugin. Codex resolves this name from .codex-plugin/plugin.json; Claude users may continue using the tao-skills compatibility entry.",
+      "source": "./",
+      "strict": true
+    },
+    {
       "name": "tao-skills",
-      "description": "Full TAO skill bank — every model, data, platform, and application skill in one bundle. Install this for the standard agentic-fine-tuning experience.",
+      "description": "Full TAO skill bank \u2014 every model, data, platform, and application skill in one bundle. Install this for the standard agentic-fine-tuning experience.",
       "source": "./",
       "strict": true,
       "skills": [
-        "./skills/data/paidf-anomalygen",
+        "./skills/data/tao-generate-anomalies",
         "./skills/applications/tao-run-automl-deft-pipeline",
         "./skills/applications/tao-train-single-step",
         "./skills/applications/tao-analyze-changenet-rca",
@@ -23,9 +29,17 @@
         "./skills/applications/tao-finetune-huggingface-model",
         "./skills/applications/tao-port-huggingface-model",
         "./skills/applications/tao-run-deft-aoi",
+        "./skills/applications/tao-run-deft-aoi-cosmos3",
+        "./skills/applications/tao-run-deft-pas",
+        "./skills/applications/tao-run-deft-cr-its-mining",
+        "./skills/applications/tao-validate-recipe-transfer",
+        "./skills/applications/tao-run-deft-object-detection",
+        "./skills/data/tao-mine-nearest-neighbors",
         "./skills/data/tao-mine-aoi-images",
         "./skills/data/tao-analyze-gaps-visual-changenet",
+        "./skills/data/tao-analyze-gaps-od-map",
         "./skills/data/tao-route-visual-changenet-samples",
+        "./skills/data/paidf-cosmos-predict",
         "./skills/data/tao-generate-video-reasoning-annotations",
         "./skills/models/tao-train-action-recognition",
         "./skills/models/tao-train-bevfusion",
@@ -33,6 +47,7 @@
         "./skills/models/tao-train-image-classification",
         "./skills/models/tao-finetune-clip",
         "./skills/models/tao-finetune-cosmos-reason",
+        "./skills/models/tao-train-codetr",
         "./skills/models/tao-train-deformable-detr",
         "./skills/models/tao-train-fast-foundation-stereo",
         "./skills/models/tao-train-depth-anything-v2",
@@ -61,18 +76,22 @@
         "./skills/models/tao-finetune-cosmos-embed",
         "./skills/models/tao-finetune-nv-tesseract-ad-diffusion",
         "./skills/models/tao-finetune-nv-tesseract-forecasting",
+        "./skills/models/tao-finetune-video-clip",
         "./skills/platform/tao-run-on-brev",
+        "./skills/platform/tao-run-on-virtualenv",
         "./skills/platform/tao-run-on-docker",
         "./skills/platform/tao-run-on-kubernetes",
-        "./skills/platform/tao-run-on-local-docker",
         "./skills/platform/tao-setup-nvidia-gpu-host",
         "./skills/platform/tao-run-on-slurm",
-        "./skills/platform/tao-run-platform",
+        "./skills/platform/tao-data-io",
         "./skills/data/tao-convert-dataset-format",
         "./skills/data/tao-validate-dataset-format",
         "./skills/data/tao-analyze-gaps-vlm-bcq",
         "./skills/data/tao-generate-image-grounding",
-        "./skills/data/tao-generate-referring-expressions"
+        "./skills/data/tao-generate-image-embeddings",
+        "./skills/data/tao-generate-referring-expressions",
+        "./skills/data/tao-mine-od-images",
+        "./skills/data/tao-analyze-detection-kpi"
       ]
     },
     {

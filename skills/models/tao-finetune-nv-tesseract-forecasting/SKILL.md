@@ -5,22 +5,21 @@ description: >-
   with DARR (context-enhanced kNN retrieval), interpretability, and fine-tuning.
   Use when the user asks to "forecast with NV-Tesseract", "run forecasting inference",
   "use perform_forecasting", "DARR mode", "context-enhanced forecasting",
-  "lag horizon attribution", "interpretability", or "fine-tune forecasting",
+  "lag horizon attribution", "interpretability", "fine-tune forecasting",
+  "fine-tune forecasting with automl", "hyper-parameter optimization with forecasting", or
   or mentions "nv-tesseract-forecasting", "moment_head_512_6hr", or "run8_best_model_cr".
 license: Apache-2.0
 compatibility: Requires Python 3.10+ and uv. CUDA GPU recommended; Apple Silicon (MPS) and CPU supported.
 metadata:
-  # Upstream NV-Tesseract repo + uv workflow, not a TAO container: exempt from the
-  # docker-native rule for skills/models/. See README "Docker-native first".
-  requires_external: true
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.2.0"
 allowed-tools: Read Bash
 tags:
   - forecasting
   - time-series
   - darr
   - interpretability
+  - automl
   - finetune
   - inference
   - nv-tesseract
@@ -34,7 +33,7 @@ and **interpretability** (latent trajectory extraction, semantic flow, lag×hori
 trajectory stability, and diagnostic ratios — full explanation bundle with PDF report).
 Fine-tuning adapts the forecasting head — and optionally the cross-channel layer — to your domain.
 
-**Source code:** https://github.com/NVIDIA/NV-Tesseract  
+**Source code:** https://github.com/NVIDIA/NV-Tesseract
 **Pretrained weights:** https://huggingface.co/nvidia/nv-tesseract-forecasting
 
 ## External dependencies
@@ -54,7 +53,7 @@ If you hit a `401`/`403` (gated access or license not accepted) or a `504` on fi
 ## Quick start
 
 ```bash
-git clone https://github.com/NVIDIA/NV-Tesseract
+git clone --branch main --single-branch https://github.com/NVIDIA/NV-Tesseract
 cd NV-Tesseract/forecasting
 uv sync --group dev
 uv pip install -e .          # editable install — required for clean sdk.* imports
@@ -71,7 +70,7 @@ with `{target_column}_forecast` rows for the requested horizon.
 
 ```python
 import sys, pandas as pd
-sys.path.append("/path/to/NV-Tesseract/forecasting")  # git clone https://github.com/NVIDIA/NV-Tesseract
+sys.path.append("/path/to/NV-Tesseract/forecasting")  # clone NV-Tesseract with --branch main
 from sdk.forecasting import perform_forecasting
 
 df = pd.read_csv("your_data.csv")   # must have timestamp + numeric target column
@@ -89,7 +88,6 @@ results = perform_forecasting(
 # Returns DataFrame: timestamp | {target_column}_forecast  (forecast_horizon rows)
 print(results.head())
 ```
-
 
 ### Checkpoints
 
@@ -164,27 +162,38 @@ uv run python examples/finetune_example.py \
 
 | Argument | Default | Description |
 |---|---|---|
+| `--run-config` | — | YAML config from AutoMLRunner (`{config_path}`). CLI flags override file values. |
 | `--csv` | **required*** | Single CSV split temporally into train/val |
 | `--train-csv` | **required*** | Training CSV (mutually exclusive with `--csv`) |
 | `--val-csv` | — | Validation CSV when `--train-csv` is used |
 | `--timestamp-col` | `timestamp` | Datetime column to exclude from features |
 | `--target-cols` | all numeric | Comma-separated columns to forecast |
-| `--ckpt-init` | `auto` | `auto` = published NV-Tesseract weights; `none` = fresh head |
+| `--model-name` | `AutonLab/MOMENT-1-large` | Backbone model identifier |
+| `--ckpt-init` | `auto` | `auto` = published NV-Tesseract weights; `none` = fresh head; or path to `.pt` |
+| `--standardizer-init` | `standardizer.pkl` | Standardizer pickle used when `--ckpt-init auto` |
+| `--repo-id` | `nvidia/nv-tesseract-forecasting` | HuggingFace repo for auto-download |
 | `--seq-len` | `512` | Input context length |
 | `--forecast-horizon` | `72` | Steps ahead to predict |
+| `--stride` | `forecast_horizon` | Sliding window stride (`None` → horizon) |
 | `--val-ratio` | `0.1` | Validation fraction when `--csv` is used |
+| `--test-ratio` | `0.0` | Test holdout fraction when `--csv` is used |
+| `--no-standardize` | false | Disable per-dataset standardization |
 | `--epochs` | `5` | Training epochs |
-| `--batch-size` | `8` | Batch size |
+| `--batch-size` | `8` | Per-GPU batch size |
 | `--lr` | `1e-4` | AdamW learning rate (OneCycleLR scheduler) |
 | `--weight-decay` | `0.0` | AdamW weight decay |
 | `--head-dropout` | `0.1` | Forecasting head dropout |
 | `--max-norm` | `5.0` | Gradient norm clip |
+| `--num-workers` | `0` | DataLoader workers |
+| `--seed` | `13` | Random seed |
+| `--output-dir` | `artifacts/finetune` | Output directory |
+| `--local-files-only` | false | Do not download backbone weights from HuggingFace |
 | `--unfreeze-encoder` | false | Train the transformer encoder too |
 | `--unfreeze-embedder` | false | Train the patch embedder too |
 | `--use-cross-channel` | false | Add cross-channel attention layer |
 | `--cross-channel-heads` | `8` | Attention heads in cross-channel layer |
-| `--seed` | `13` | Random seed |
-| `--output-dir` | `artifacts/finetune` | Output directory |
+| `--cross-channel-dropout` | `0.1` | Dropout in the cross-channel layer |
+| `--num-gpus` | all available | Number of GPUs for DDP fine-tuning; set `1` to force single-GPU |
 
 *One of `--csv` or `--train-csv` is required.
 
@@ -203,17 +212,6 @@ results = perform_forecasting(
     use_cross_channel=False,   # set True if trained with --use-cross-channel
 )
 ```
-
-> **Fair comparison rule:** `perform_forecasting` defaults to `use_cross_channel=True`
-> (loads `run8_best_model_cr.pt`). When comparing pretrained inference against a finetuned
-> checkpoint, both must use the same base architecture. Either:
-> - Finetune with `--use-cross-channel` (warm-starts from `run8_best_model_cr.pt`) and
->   run inference with `use_cross_channel=True` (default), or
-> - Run inference with `use_cross_channel=False` and finetune without `--use-cross-channel`
->   (warm-starts from `moment_head_512_6hr.pt`, the finetune default).
->
-> Mixing architectures — cross-channel pretrained vs standard finetuned — conflates model
-> quality with architectural differences and makes the comparison uninterpretable.
 
 ## Data requirements
 
@@ -236,10 +234,11 @@ DataFrame: timestamp | {target_column}_forecast   (forecast_horizon rows)
 **Fine-tuning** (`--output-dir artifacts/finetune_my_data`):
 ```
 artifacts/finetune_my_data/
-├── best_model.pt            # checkpoint with lowest validation loss
+├── best_model.pt            # checkpoint with lowest validation MSE
 ├── standardizer.pkl         # normalization statistics for this dataset
 ├── finetune_metadata.json   # model config, channels, best epoch, all args
-└── metrics.json             # per-epoch train/val loss and MAE
+├── metrics.json             # scalar summary: {"val_mse": float, "val_mae": float} — consumed by AutoML runner
+└── epoch_metrics.json       # per-epoch list: [{epoch, train_mse, val_mse, val_mae}, ...]
 ```
 
 
@@ -250,7 +249,13 @@ artifacts/finetune_my_data/
 | Minimum | 1× CPU | Functional; slow for long horizons |
 | Recommended | 1× NVIDIA GPU (≥8 GB VRAM) | Strongly recommended for fine-tuning |
 | Apple Silicon | MPS | Auto-detected; on par with CPU for this workload |
-| Multi-GPU | Not supported | Single-device only |
+| Multi-GPU fine-tuning | 2+× NVIDIA GPUs | Auto DDP via `--num-gpus` (defaults to all visible GPUs) |
+
+## AutoML (HPO: hyperparameter optimization)
+
+This skill is AutoML-enabled for both fine-tuning and DARR inference. When an HPO request arrives, route it through `tao-skill-bank:tao-run-automl` with this model's `skill_dir`.
+
+Read `references/automl.md` when the user asks for AutoML/HPO setup, tunable parameters, runner examples, inference trial scripts, DARR HPO, or AutoML result handoff details.
 
 ## Known pitfalls
 
@@ -266,4 +271,3 @@ artifacts/finetune_my_data/
 | `Interpretability PDF skipped: matplotlib not installed` | Missing optional dep | `uv add matplotlib` or use `interpretability_output="json"` |
 | `ValueError: No training windows` (finetune) | Data too short for windows | Reduce `--seq-len` / `--forecast-horizon`, or increase dataset size |
 | Stale environment errors mentioning `backbone` package | Old lock file | `uv cache clean && uv sync --group dev` |
-
