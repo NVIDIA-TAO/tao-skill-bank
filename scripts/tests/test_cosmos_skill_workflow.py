@@ -3220,7 +3220,10 @@ def test_nvbug_terminal_success_average_does_not_displace_weighted_event():
 
 def test_nvbug_brev_contract_is_retry_safe():
     brev = (ROOT / "skills" / "platform" / "tao-run-on-brev" / "SKILL.md").read_text()
-    assert "grep -qx ok" in brev
+    assert "brev_transport.py" in brev
+    assert "ready --instance <instance>" in brev
+    assert "TAO_BREV_READY" in brev
+    assert "grep -qx ok" not in brev
     assert "docker inspect '$JOB_ID'" in brev
 
 

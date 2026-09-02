@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "scripts"))
 import check_tao_launch_preflight as preflight  # noqa: E402
 
 
@@ -163,6 +164,36 @@ def test_free_disk_requirement_rejects_insufficient_capacity(monkeypatch, tmp_pa
         [("results", str(tmp_path))], {"results": 256}, skip_access=False
     )
     assert "free=50.0GiB < required=256GiB" in capsys.readouterr().out
+
+
+def test_brev_preflight_accepts_authenticated_cached_session(monkeypatch, capsys):
+    monkeypatch.delenv("BREV_API_TOKEN", raising=False)
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: f"/usr/bin/{name}")
+    commands = []
+
+    def fake_run(command, timeout=30, env=None):
+        commands.append(command)
+        assert command == ["/usr/bin/brev", "ls", "--json"]
+        return subprocess.CompletedProcess(
+            command, 0, stdout='{"workspaces": null}\n', stderr=""
+        )
+
+    monkeypatch.setattr(preflight, "run", fake_run)
+    platform = {"required_credentials": []}
+
+    assert preflight.check_brev(platform, skip_access=False)
+    assert commands == [["/usr/bin/brev", "ls", "--json"]]
+    assert "Brev CLI/API OK" in capsys.readouterr().out
+
+
+def test_brev_platform_metadata_makes_headless_token_optional():
+    platform = preflight.resolve_platform(REPO, "brev")
+
+    assert platform["required_credentials"] == []
+    assert any(
+        item.get("name") == "BREV_API_TOKEN"
+        for item in platform.get("optional_credentials", [])
+    )
 
 
 def test_slurm_preflight_checks_remote_scheduler_pyxis_and_enroot(monkeypatch, tmp_path):
