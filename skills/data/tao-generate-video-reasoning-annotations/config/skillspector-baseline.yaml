@@ -1,0 +1,6 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "SQP-2"
+    path: "SKILL.md"
+    reason: "Reviewed: documented practice for a dev-only scratch/report path; accepted."

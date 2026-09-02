@@ -137,3 +137,4 @@ the full output and partial-read if huge.
   flags (media handling, task subset) via leaf `--help`; a misset
   flag often produces a structurally valid but semantically wrong
   target.
+

@@ -7,3 +7,6 @@ rules:
   - id: "PE*"
     path: "references/slurm-ssh-credentials.md"
     reason: "Reviewed FP (#67): standard infra path/flag refs in docs (SSH/kubeconfig/keyring/etc-passwd/docker), not privilege escalation."
+  - id: "PE3"
+    path: "SKILL.md"
+    reason: "Reviewed FP: documentation reference to a standard infra/credential path (SSH, kubeconfig, .env, keyring, docker config). The skill does not read or exfiltrate credentials."

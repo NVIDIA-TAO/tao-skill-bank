@@ -152,7 +152,7 @@ min_recall: $MIN_RECALL
 top_k_per_label: $TOP_K
 EOF
 
-docker run --gpus all --rm --ipc=host \
+docker run --gpus all --rm --shm-size=8g \
     -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
     "$IMG" gap_analysis vcn_aoi \
     -e "$SPEC" \

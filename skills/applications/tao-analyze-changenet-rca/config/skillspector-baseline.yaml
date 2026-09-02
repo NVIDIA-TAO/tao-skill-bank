@@ -7,3 +7,6 @@ rules:
   - id: "LP*"
     path: "hooks/rca-script-check.sh"
     reason: "Reviewed FP (#67): declared capability matches the skill's documented required function."
+  - id: "SQP-2"
+    path: "hooks/rca-package.sh"
+    reason: "Reviewed: documented practice for a dev-only scratch/report path; accepted."
