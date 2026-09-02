@@ -99,3 +99,4 @@ path across docker/slurm/kubernetes/brev.
   that skipped the gate has no id, so it cannot launch.
 - `transitions` is append-only; `.tao/` lives outside every synced results
   tree.
+

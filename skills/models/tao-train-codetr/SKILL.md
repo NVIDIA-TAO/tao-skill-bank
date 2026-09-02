@@ -355,3 +355,4 @@ Accuracy-first with large backbones and high query counts (900–1500). Expect s
 ## References
 
 - `references/checkpoint-spec-pairing.md` — deriving `backbone`, `num_queries`, `num_feature_levels` and `num_classes` from a checkpoint's tensors. A mismatch fails silently: PASS, exit 0, empty labels.
+

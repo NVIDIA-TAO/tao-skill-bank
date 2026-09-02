@@ -148,7 +148,7 @@ PAIDF_IMAGE="$(scripts/resolve_versions_key.py images.metropolis_sdg.paidf_augme
 set -o pipefail
 docker run --rm \
   --gpus "$PAIDF_NUM_GPUS" \
-  --ipc=host \
+  --shm-size=8g \
   --network host \
   -e HF_TOKEN \
   -e VLM_API_KEY \

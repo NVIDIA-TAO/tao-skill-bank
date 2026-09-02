@@ -1,0 +1,15 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "PE3"
+    path: "SKILL.md"
+    reason: "Reviewed FP: documentation reference to a standard infra/credential path (SSH, kubeconfig, .env, keyring, docker config). The skill does not read or exfiltrate credentials."
+  - id: "PE5"
+    path: "SKILL.md"
+    reason: "Reviewed FP: documented container flags / rootless UID:GID mapping - the secure pattern, not privilege escalation."
+  - id: "YR4"
+    path: "SKILL.md"
+    reason: "Reviewed FP: pattern match on documented ML tooling/config (e.g. Hydra) or a scoped command."
+  - id: "LP1"
+    path: "scripts/prepare_nearest_neighbors_spec.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."

@@ -150,3 +150,4 @@ brev exec <instance> "docker inspect '$JOB_ID' >/dev/null 2>&1 && { echo '$JOB_I
 coordination. Multi-GPU **on a single instance** is supported (up to 8× H100 /
 A100 / L40S); `torchrun --nproc-per-node=N` or PyTorch DDP work within the
 instance.
+

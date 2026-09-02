@@ -1,0 +1,6 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "YR4"
+    path: "SKILL.md"
+    reason: "Reviewed FP: pattern match on documented ML tooling/config (e.g. Hydra) or a scoped command."

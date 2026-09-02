@@ -371,3 +371,4 @@ ground truth; or a program error.
 Infrastructure errors may follow the chosen platform skill's bounded retry
 policy with a new job-record linked by `--retry-of`; the DEFT stage is committed
 only once, after a successful terminal backend result.
+
