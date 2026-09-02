@@ -50,6 +50,7 @@ import tempfile
 
 import yaml
 
+from archive_contract import approved_sha256, verify_archive
 from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
 from virtualenv_runtime import resolve_virtualenv_profiles
 
@@ -265,7 +266,9 @@ def _load_run_config(args: argparse.Namespace) -> dict:
         "dataset_root": str(args.dataset_root.resolve()),
         "pas_deft_bundle_sha256": args.pas_deft_bundle_sha256,
         "images_archive": str(args.images_archive.resolve()),
+        "images_archive_sha256": args.images_archive_sha256,
         "metadata_archive": str(args.metadata_archive.resolve()),
+        "metadata_archive_sha256": args.metadata_archive_sha256,
         "checksums_file": (
             str(args.checksums_file.resolve())
             if args.checksums_file is not None
@@ -308,6 +311,8 @@ def _load_run_config(args: argparse.Namespace) -> dict:
                 "rerun config preparation for another platform"
             )
         expected_approval.pop("pas_deft_bundle_sha256")
+        expected_approval.pop("images_archive_sha256")
+        expected_approval.pop("metadata_archive_sha256")
     else:
         raise ValueError(
             "approval.json schema_version must be 2, 3, or 4"
@@ -482,7 +487,9 @@ def build_state(args: argparse.Namespace) -> dict:
             "dataset_root": str(args.dataset_root),
             "pas_deft_bundle_sha256": args.pas_deft_bundle_sha256,
             "images_archive": str(args.images_archive),
+            "images_archive_sha256": args.images_archive_sha256,
             "metadata_archive": str(args.metadata_archive),
+            "metadata_archive_sha256": args.metadata_archive_sha256,
             "checksums_file": (
                 str(args.checksums_file) if args.checksums_file is not None else None
             ),
@@ -562,7 +569,9 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--images-archive", required=True, type=pathlib.Path)
+    parser.add_argument("--images-archive-sha256", required=True)
     parser.add_argument("--metadata-archive", required=True, type=pathlib.Path)
+    parser.add_argument("--metadata-archive-sha256", required=True)
     parser.add_argument("--checksums-file", type=pathlib.Path)
     parser.add_argument(
         "--requires-hf-token",
@@ -697,6 +706,24 @@ def main(argv: list[str] | None = None) -> int:
             )
         args.images_archive = _required_input_file(args.images_archive, "--images-archive")
         args.metadata_archive = _required_input_file(args.metadata_archive, "--metadata-archive")
+        args.images_archive_sha256 = approved_sha256(
+            args.images_archive_sha256, "--images-archive-sha256"
+        )
+        args.metadata_archive_sha256 = approved_sha256(
+            args.metadata_archive_sha256, "--metadata-archive-sha256"
+        )
+        verify_archive(
+            args.images_archive,
+            args.images_archive_sha256,
+            "--images-archive",
+            "--images-archive-sha256",
+        )
+        verify_archive(
+            args.metadata_archive,
+            args.metadata_archive_sha256,
+            "--metadata-archive",
+            "--metadata-archive-sha256",
+        )
         if args.checksums_file is not None:
             args.checksums_file = _required_input_file(args.checksums_file, "--checksums-file")
             _validate_checksum_manifest(

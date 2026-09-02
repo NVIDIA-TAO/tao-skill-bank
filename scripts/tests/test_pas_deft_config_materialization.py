@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import subprocess
 import sys
@@ -54,8 +55,12 @@ def _base_argv(tmp_path: Path) -> tuple[list[str], Path, Path]:
             str(dataset),
             "--images-archive",
             str(images_archive),
+            "--images-archive-sha256",
+            hashlib.sha256(images_archive.read_bytes()).hexdigest(),
             "--metadata-archive",
             str(metadata_archive),
+            "--metadata-archive-sha256",
+            hashlib.sha256(metadata_archive.read_bytes()).hexdigest(),
             "--platform",
             "docker",
             "--max-iterations",
@@ -90,8 +95,12 @@ def _init_command(results: Path, dataset: Path, approval: dict) -> list[str]:
         str(dataset),
         "--images-archive",
         approval["images_archive"],
+        "--images-archive-sha256",
+        approval["images_archive_sha256"],
         "--metadata-archive",
         approval["metadata_archive"],
+        "--metadata-archive-sha256",
+        approval["metadata_archive_sha256"],
         "--max-iterations",
         "10",
         "--metric-name",
