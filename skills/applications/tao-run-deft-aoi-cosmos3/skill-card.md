@@ -1,5 +1,5 @@
 ## Description: <br>
-Run the disk-backed DEFT AOI improvement loop for Cosmos Reason 3 / Cosmos3 with Nano as the default and explicit Edge or Super selection. Use cosmos-rl SFT over two-image ShareGPT records whose assistant label is exactly OK or NG. Proxy KPI errors drive RCCA and real-pair mining; a frozen Benchmark KPI metric alone stops the loop. <br>
+Run the disk-backed DEFT AOI improvement loop for Cosmos Reason 3 / Cosmos3 with Nano as the default and explicit Edge or Super selection. Prepare the selected reasoner as a Qwen3-VL safetensors PTM, then use Cosmos Framework SFT over two-image ShareGPT records whose assistant label is exactly OK or NG. Proxy KPI errors drive RCCA and real-pair mining; a frozen Benchmark KPI metric alone stops the loop. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
