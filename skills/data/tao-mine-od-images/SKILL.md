@@ -85,7 +85,7 @@ python3 skills/data/tao-mine-od-images/scripts/verify_unique_neighbor_matching_s
 
 DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.data_services
 
-docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
+docker run --rm --gpus "$GPU_COUNT" --shm-size=8g --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
   -w "$RUN_ROOT" \
   "$DS_IMAGE" \

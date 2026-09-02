@@ -80,7 +80,7 @@ python3 skills/data/tao-analyze-detection-kpi/scripts/verify_kpi_analyze_spec.py
 
 DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.data_services
 
-docker run --rm --gpus all --ipc=host --network=host \
+docker run --rm --gpus all --shm-size=8g --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
   -w "$RUN_ROOT" \
   "$DS_IMAGE" \
