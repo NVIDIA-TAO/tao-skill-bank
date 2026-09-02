@@ -4,3 +4,6 @@ rules:
   - id: "TP*"
     path: "SKILL.md"
     reason: "Reviewed FP (#67): the description accurately states the skill purpose; no deceptive tooling."
+  - id: "PE3"
+    path: "SKILL.md"
+    reason: "Reviewed FP: documentation reference to a standard infra/credential path (SSH, kubeconfig, .env, keyring, docker config). The skill does not read or exfiltrate credentials."

@@ -21,3 +21,6 @@ rules:
     reason: "Reviewed FP (#67): standard infra path/flag refs in docs (SSH/kubeconfig/keyring/etc-passwd/docker), not privilege escalation."
   - path: "hooks/mining-package.sh"
     reason: "Reviewed FP (#67): Report-bundle hook copies the session transcript into the skill's own output package in the user workspace; reviewed, not exfiltration."
+  - id: "LP1"
+    path: "scripts/filter_mined_history.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
