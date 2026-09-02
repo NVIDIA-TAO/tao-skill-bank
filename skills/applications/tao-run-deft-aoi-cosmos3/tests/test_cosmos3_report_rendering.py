@@ -60,6 +60,82 @@ class CosmosReportRenderingTests(unittest.TestCase):
             self.assertIn("&lt;img src=x onerror=alert(1)&gt;", text)
             self.assertNotIn("<img src=x onerror=alert(1)>", text)
 
+    def test_operator_overlap_exception_is_rendered_as_selection_bias_disclosure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = {
+                "version": 7,
+                "status": "in_progress",
+                "config": {"kpi": {}, "training": {"backend": "cosmos-framework"}},
+                "iterations": {},
+                "events": [],
+                "operator_contract_changes": [
+                    {
+                        "schema": "deft_operator_contract_change_audit_v1",
+                        "active_benchmark_rows": 20657,
+                        "active_benchmark_sha256": "1a385f67" + "0" * 56,
+                        "authorized_overlap_exception": {
+                            "physical_target_overlap": 797,
+                            "benchmark_rows_on_overlapping_targets": 2001,
+                            "proxy_rows_on_overlapping_targets": 918,
+                            "disclosure": "Known selection bias from approved cohort overlap.",
+                        },
+                    }
+                ],
+            }
+            (results / "deft_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+            text = render_report.render(results).read_text(encoding="utf-8")
+
+            self.assertIn("Known selection-bias disclosure", text)
+            self.assertIn("797 physical targets", text)
+            self.assertIn("2,001 Benchmark rows", text)
+            self.assertIn("918 Proxy rows", text)
+            self.assertIn("20,657", text)
+            self.assertIn("1a385f67", text)
+
+    def test_replacement_benchmark_trajectory_supersedes_iteration_cards(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            results = pathlib.Path(temporary)
+            state = {
+                "version": 7,
+                "status": "in_progress",
+                "config": {"kpi": {}, "training": {"backend": "cosmos-framework"}},
+                "iterations": {
+                    "baseline": {
+                        "status": "complete",
+                        "stage_completed": "benchmark_metrics",
+                        "metric_result": {"minimum_f1": 0.12, "passed": False},
+                    }
+                },
+                "events": [],
+                "benchmark_trajectory": {
+                    "cohort_rows": 20657,
+                    "cohort_sha256": "1a385f67" + "0" * 56,
+                    "evaluations": {
+                        "baseline": {
+                            "metric_result": {
+                                "minimum_f1": 0.34,
+                                "passed": False,
+                                "components": {
+                                    "non_reference_based.tasks.BCQ.macro_f1": {"f1": 0.61},
+                                    "non_reference_based.tasks.DET.f1": {"f1": 0.34},
+                                },
+                            }
+                        }
+                    },
+                },
+            }
+            (results / "deft_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+            text = render_report.render(results).read_text(encoding="utf-8")
+
+            self.assertIn("Replacement Benchmark trajectory", text)
+            self.assertIn("20,657 rows", text)
+            self.assertIn("replacement cohort minimum F1=0.34", text)
+            self.assertIn("non_reference_based.tasks.DET.f1: 0.34", text)
+            self.assertNotIn("minimum F1=0.12", text)
+
 
 if __name__ == "__main__":
     unittest.main()

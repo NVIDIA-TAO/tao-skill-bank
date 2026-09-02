@@ -51,12 +51,15 @@ pre-history candidate parquet:
   --history-file "$RESULTS_DIR/mining_history.json" \
   --summary "$MINING_DIR/mining_history_summary.json" \
   --iteration "$ITERATION" \
-  --topn "$TOPN"
+  --topn "$TOPN" \
+  --pool-size "$UNIQUE_MINING_TARGETS" \
+  --max-cumulative-fraction "$MINING_POOL_FRACTION_CAP"
 ```
 
-The filtered parquet must contain at least one new real target. An all-duplicate
-result is a hard stop; increase top-K or expand the recorded Mining pool after
-review rather than replaying old samples.
+The filtered parquet must contain at least one new real target. The history
+ledger hard-caps cumulative unique target-image selection against the sealed
+pool size and fraction. An all-duplicate or budget-exhausted result is a hard
+stop; never silently exceed the recorded Mining budget.
 
 ## Handoff
 

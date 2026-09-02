@@ -42,6 +42,11 @@ then applies the immutable `config.mining.router_mode`:
 
 Every routed row records its tier, task types, matched query IDs, rank, and
 cosine. Benchmark annotations or predictions are forbidden at this boundary.
+When the launch contract enables detection calibration,
+`select_detection_calibration.py` may prepend bounded empty/few-box examples
+from the Mining annotations. These rows carry the explicit `calibration` tier,
+pass through the same history and cumulative-pool budget, and never weaken the
+`task_strict` policy applied to gap-routed neighbors.
 
 ## Frozen Benchmark gate
 

@@ -24,8 +24,11 @@ Run `$PYTHON scripts/check_annotations.py --workspace WORKSPACE --require-files`
 Training assembly writes JSONL directly. `scripts/assemble_training_json.py`
 accepts one current `--mined-jsonl`, an optional preceding
 `--previous-jsonl`, and both evaluation inputs as repeated
-`--validation-jsonl`. It rejects evaluation leakage, retains prior rows, and
-requires a current real Mining contribution. `validate_split_contract.py`
+`--validation-jsonl`. A reviewed materialization cap uses `--max-rows` and
+`--row-multiple`; current Mining rows receive first claim on capped slots and
+the output is truncated to an exact effective-global-batch multiple for native
+epoch scheduling. It rejects evaluation leakage and requires a current real
+Mining contribution. `validate_split_contract.py`
 proves the same lineage independently and verifies the frozen Benchmark hash.
 Its Mining record count is the eligible six-task count; preflight also reports
 the raw count and ignored task-family counts.

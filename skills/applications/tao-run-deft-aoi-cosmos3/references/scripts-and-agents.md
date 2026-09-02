@@ -16,6 +16,7 @@
 | `analyze_gaps.py` | Reuse the recorded evaluator's parsers for Proxy record-level weakness and task-aware RCCA selection. |
 | `route_selected_gaps.py` | Collapse Proxy gap rows into real-image Mining queries. |
 | `task_mining_router.py` | Apply deterministic task-aware neighbor routing and history policy. |
+| `select_detection_calibration.py` | Prepend auditable empty/few-box Mining calibration candidates before history filtering. |
 | `emit_mined_sharegpt.py` | Emit selected canonical Mining rows as JSONL; the legacy filename is retained for CLI compatibility. |
 | `assemble_training_json.py` | Assemble monotonic real-only training JSONL. |
 | `validate_sharegpt.py` | Validate canonical NVPAW JSONL; the legacy filename is retained for CLI compatibility. |

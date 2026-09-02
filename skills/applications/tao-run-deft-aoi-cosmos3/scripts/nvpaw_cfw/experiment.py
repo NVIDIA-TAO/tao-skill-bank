@@ -17,14 +17,14 @@ def register_experiment() -> None:
     from cosmos_framework.callbacks.cosmos_dataloader_state import (
         CosmosDataLoaderStateCallback,
     )
-    from cosmos_framework.configs.base.vlm.experiment.dataflow_roles import VLMCollator
-    from cosmos_framework.configs.base.vlm.experiment.videophy2_sft_nano import (
+    from cosmos_framework.configs.base.reasoner.experiment.dataflow_roles import VLMCollator
+    from cosmos_framework.configs.base.reasoner.experiment.videophy2_sft_nano import (
         videophy2_sft_nano,
     )
-    from cosmos_framework.data.vfm.dataflow import CosmosDataLoader, SimpleBatcher
-    from cosmos_framework.data.vfm.processors import build_processor
+    from cosmos_framework.data.generator.dataflow import CosmosDataLoader, SimpleBatcher
+    from cosmos_framework.data.generator.processors import build_processor
     from cosmos_framework.utils.lazy_config import LazyCall as L
-    from cosmos_framework.utils.vlm.constant import IGNORE_INDEX
+    from cosmos_framework.utils.reasoner.constant import IGNORE_INDEX
 
     Processor = runtime_processor_class()
 
@@ -64,7 +64,9 @@ def register_experiment() -> None:
     experiment.optimizer.betas = [0.9, 0.999]
     experiment.optimizer.fused = True
     experiment.optimizer.keys_to_select = []
-    experiment.optimizer.lr_multipliers = {"merger": 20.0}
+    # The pinned reasoner recipe matches multipliers by full parameter prefix.
+    # The multimodal merger lives below model.visual in Qwen3-VL.
+    experiment.optimizer.lr_multipliers = {"model.visual": 20.0}
     experiment.scheduler.warm_up_steps = [5]
     experiment.scheduler.cycle_lengths = [500]
     experiment.scheduler.f_start = [0.05]

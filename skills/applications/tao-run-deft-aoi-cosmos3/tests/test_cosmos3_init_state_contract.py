@@ -71,6 +71,38 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
                 "mined_real_samples_only",
             )
 
+    def test_requested_epoch_and_probed_batch_policy_are_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(
+                self._argv(
+                    root,
+                    workspace,
+                    "--epochs-per-iteration", "5",
+                    "--micro-batch-per-rank", "8",
+                    "--gradient-accumulation", "16",
+                    "--max-training-rows-per-iteration", "20000",
+                    "--mining-pool-fraction-cap", "0.5",
+                )
+            )
+            self.assertEqual(rc, 0)
+            training = json.loads(
+                (root / "results/deft_state.json").read_text()
+            )["config"]["training"]
+            self.assertEqual(training["epochs_per_iteration"], 5)
+            self.assertEqual(training["micro_batch_per_rank"], 8)
+            self.assertEqual(training["gradient_accumulation"], 16)
+            self.assertEqual(training["global_batch"], 128)
+            self.assertEqual(training["optimizer"]["learning_rate"], 2.5e-7)
+            self.assertEqual(training["learning_rate_scaling"], "linear_from_global_batch_512")
+            mining = json.loads(
+                (root / "results/deft_state.json").read_text()
+            )["config"]["mining"]
+            self.assertEqual(mining["pool_fraction_cap"], 0.5)
+            self.assertEqual(mining["max_training_rows_per_iteration"], 20_000)
+            self.assertEqual(mining["calibration_policy"], "empty_and_few_box_from_mining")
+
     def test_invalid_local_model_is_rejected_before_state_write(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

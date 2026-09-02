@@ -17,6 +17,18 @@ IMAGE = "nvcr.io/example/cosmos-framework@sha256:" + "a" * 64
 
 
 class CosmosFrameworkSurfaceSmokeTests(unittest.TestCase):
+    def test_adapter_imports_match_pinned_reasoner_generator_layout(self) -> None:
+        adapter = SCRIPTS / "nvpaw_cfw"
+        source = "\n".join(
+            (adapter / name).read_text(encoding="utf-8")
+            for name in ("train.py", "experiment.py", "processor.py", "distributor.py")
+        )
+        self.assertNotIn("cosmos_framework.configs.base.vlm", source)
+        self.assertNotIn("cosmos_framework.data.vfm", source)
+        self.assertNotIn("cosmos_framework.utils.vlm", source)
+        self.assertIn("cosmos_framework.configs.base.reasoner", source)
+        self.assertIn("cosmos_framework.data.generator", source)
+
     def _run(self, script: str, *args: str) -> subprocess.CompletedProcess[str]:
         completed = subprocess.run(
             [sys.executable, str(SCRIPTS / script), *args],

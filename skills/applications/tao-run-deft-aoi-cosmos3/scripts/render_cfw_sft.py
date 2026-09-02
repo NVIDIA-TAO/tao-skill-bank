@@ -22,8 +22,52 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 
 
 FULL_GPUS = 8
-MICRO_BATCH_PER_RANK = 4
-GRAD_ACCUMULATION = 16
+DEFAULT_MICRO_BATCH_PER_RANK = 4
+DEFAULT_GRAD_ACCUMULATION = 16
+DEFAULT_EPOCHS_PER_ITERATION = 5
+BASE_GLOBAL_BATCH = 512
+BASE_LEARNING_RATE = 1.0e-6
+
+
+def _full_training_schedule(
+    *,
+    expected_rows: int,
+    num_gpus: int,
+    epochs_per_iteration: int,
+    micro_batch_per_rank: int,
+    gradient_accumulation: int,
+) -> dict[str, int | float]:
+    values = {
+        "epochs_per_iteration": epochs_per_iteration,
+        "micro_batch_per_rank": micro_batch_per_rank,
+        "gradient_accumulation": gradient_accumulation,
+    }
+    invalid = {name: value for name, value in values.items() if value <= 0}
+    if invalid:
+        raise ValueError(f"positive training schedule values required: {invalid}")
+    global_batch = num_gpus * micro_batch_per_rank * gradient_accumulation
+    if global_batch < BASE_GLOBAL_BATCH:
+        raise ValueError(
+            f"full profile global batch must be at least {BASE_GLOBAL_BATCH}; "
+            f"resolved {global_batch}"
+        )
+    if expected_rows % global_batch:
+        raise ValueError(
+            "full profile expected_rows must be a multiple of global batch so "
+            "each native epoch ends on an optimizer-update boundary; "
+            f"resolved rows={expected_rows}, global_batch={global_batch}"
+        )
+    steps_per_epoch = expected_rows // global_batch
+    if steps_per_epoch <= 0:
+        raise ValueError("full profile requires at least one optimizer update per epoch")
+    total_updates = steps_per_epoch * epochs_per_iteration
+    return {
+        "epochs_per_iteration": epochs_per_iteration,
+        "steps_per_epoch": steps_per_epoch,
+        "total_updates": total_updates,
+        "global_batch": global_batch,
+        "learning_rate": BASE_LEARNING_RATE * global_batch / BASE_GLOBAL_BATCH,
+    }
 
 
 def _scalar(value: Any) -> str:
@@ -37,9 +81,15 @@ def _scalar(value: Any) -> str:
         return "[" + ", ".join(_scalar(item) for item in value) + "]"
     if isinstance(value, dict):
         return "{ " + ", ".join(
-            f"{key} = {_scalar(item)}" for key, item in value.items()
+            f"{_toml_key(key)} = {_scalar(item)}" for key, item in value.items()
         ) + " }"
     raise TypeError(f"unsupported TOML value: {type(value).__name__}")
+
+
+def _toml_key(value: str) -> str:
+    """Keep dotted optimizer parameter prefixes as literal TOML keys."""
+
+    return value if re.fullmatch(r"[A-Za-z0-9_-]+", value) else json.dumps(value)
 
 
 def dump_toml(value: dict[str, Any]) -> str:
@@ -51,7 +101,8 @@ def dump_toml(value: dict[str, Any]) -> str:
         scalars = [
             (key, item)
             for key, item in table.items()
-            if not isinstance(item, dict) or key == "lr_multipliers"
+            if (not isinstance(item, dict) or key == "lr_multipliers")
+            and not (prefix == ("optimizer",) and key == "lr_multipliers")
         ]
         children = [
             (key, item)
@@ -84,6 +135,9 @@ def build_profile(
     results_dir: str,
     resume_checkpoint: str | None = None,
     num_gpus: int | None = None,
+    epochs_per_iteration: int = DEFAULT_EPOCHS_PER_ITERATION,
+    micro_batch_per_rank: int = DEFAULT_MICRO_BATCH_PER_RANK,
+    gradient_accumulation: int = DEFAULT_GRAD_ACCUMULATION,
 ) -> dict[str, Any]:
     if profile not in {"full", "smoke"}:
         raise ValueError("profile must be full or smoke")
@@ -97,9 +151,29 @@ def build_profile(
     if profile == "full" and selected_gpus != FULL_GPUS:
         raise ValueError("full profile is fixed to 8 GPUs")
 
-    max_iter = 500 if profile == "full" else 5
-    save_iter = 100 if profile == "full" else 5
-    warm_up_steps = 5 if profile == "full" else 1
+    if min(epochs_per_iteration, micro_batch_per_rank, gradient_accumulation) <= 0:
+        raise ValueError("epochs, micro-batch, and gradient accumulation must be positive")
+    global_batch = selected_gpus * micro_batch_per_rank * gradient_accumulation
+    learning_rate = BASE_LEARNING_RATE * global_batch / BASE_GLOBAL_BATCH
+    if profile == "full":
+        schedule = _full_training_schedule(
+            expected_rows=expected_rows,
+            num_gpus=selected_gpus,
+            epochs_per_iteration=epochs_per_iteration,
+            micro_batch_per_rank=micro_batch_per_rank,
+            gradient_accumulation=gradient_accumulation,
+        )
+        max_iter = int(schedule["total_updates"])
+        steps_per_epoch = int(schedule["steps_per_epoch"])
+        save_iter = max_iter
+        save_freq_in_epoch = epochs_per_iteration
+        warm_up_steps = min(5, max_iter)
+    else:
+        max_iter = 5
+        steps_per_epoch = None
+        save_iter = 5
+        save_freq_in_epoch = 0
+        warm_up_steps = 1
     config: dict[str, Any] = {
         "job": {
             "task": "vlm",
@@ -136,8 +210,8 @@ def build_profile(
             "eps": 1.0e-8,
             "fused": True,
             "keys_to_select": [],
-            "lr": 1.0e-6,
-            "lr_multipliers": {"merger": 20.0},
+            "lr": learning_rate,
+            "lr_multipliers": {"model.visual": 20.0},
             "weight_decay": 0.05,
         },
         "scheduler": {
@@ -150,7 +224,7 @@ def build_profile(
         },
         "trainer": {
             "distributed_parallelism": "fsdp",
-            "grad_accum_iter": GRAD_ACCUMULATION,
+            "grad_accum_iter": gradient_accumulation,
             "logging_iter": 1,
             "max_iter": max_iter,
             "callbacks": {
@@ -161,10 +235,13 @@ def build_profile(
             "keys_to_skip_loading": [],
             "load_path": resume_checkpoint or "???",
             "save_iter": save_iter,
-            "save_freq_in_epoch": 0,
+            "save_freq_in_epoch": save_freq_in_epoch,
             "dcp_async_mode_enabled": False,
         },
     }
+    if profile == "full":
+        config["trainer"]["num_epochs"] = epochs_per_iteration
+        config["trainer"]["steps_per_epoch"] = steps_per_epoch
     freeze = {
         "vision_encoder": True,
         "multimodal_projector": False,
@@ -183,8 +260,8 @@ def build_profile(
         f"dataloader_train.processor.resample_dataset.expected_rows={expected_rows}",
         f"dataloader_train.processor.resample_dataset.expected_sha256={expected_sha256}",
         f"dataloader_train.processor.resample_dataset.expected_image_items={expected_image_items}",
-        f"dataloader_train.distributor.micro_batch_size={MICRO_BATCH_PER_RANK}",
-        f"dataloader_train.batcher.batch_size={MICRO_BATCH_PER_RANK}",
+        f"dataloader_train.distributor.micro_batch_size={micro_batch_per_rank}",
+        f"dataloader_train.batcher.batch_size={micro_batch_per_rank}",
         "model.config.freeze.freeze_vision_encoder=true",
         "model.config.freeze.freeze_mm_projector=false",
         "model.config.freeze.freeze_llm=false",
@@ -201,11 +278,14 @@ def build_profile(
             "expected_rows": expected_rows,
             "expected_sha256": expected_sha256,
             "expected_image_items": expected_image_items,
-            "micro_batch_per_rank": MICRO_BATCH_PER_RANK,
-            "gradient_accumulation": GRAD_ACCUMULATION,
-            "global_batch": MICRO_BATCH_PER_RANK
-            * selected_gpus
-            * GRAD_ACCUMULATION,
+            "epochs_per_iteration": epochs_per_iteration,
+            "steps_per_epoch": steps_per_epoch,
+            "micro_batch_per_rank": micro_batch_per_rank,
+            "gradient_accumulation": gradient_accumulation,
+            "global_batch": global_batch,
+            "base_global_batch": BASE_GLOBAL_BATCH,
+            "base_learning_rate": BASE_LEARNING_RATE,
+            "learning_rate_scaling": "linear_from_global_batch_512",
         },
         "results_dir": results_dir,
         "hydra_overrides": hydra_overrides,
@@ -228,16 +308,18 @@ def validate_profile(descriptor: dict[str, Any], *, profile: str) -> None:
         raise ValueError("CFW profile must use BF16")
     if optimizer.get("keys_to_select") != []:
         raise ValueError("CFW profile must use full-parameter tuning")
-    if optimizer.get("lr") != 1.0e-6 or optimizer.get("weight_decay") != 0.05:
+    data = descriptor.get("data", {})
+    expected_lr = BASE_LEARNING_RATE * data.get("global_batch", 0) / BASE_GLOBAL_BATCH
+    if optimizer.get("lr") != expected_lr or optimizer.get("weight_decay") != 0.05:
         raise ValueError("CFW profile optimizer differs from the reviewed recipe")
     if optimizer.get("betas") != [0.9, 0.999] or optimizer.get("fused") is not True:
         raise ValueError("CFW profile must use fused AdamW betas 0.9/0.999")
-    if optimizer.get("lr_multipliers") != {"merger": 20.0}:
+    if optimizer.get("lr_multipliers") != {"model.visual": 20.0}:
         raise ValueError("CFW profile must use merger LR multiplier 20")
     if trainer.get("distributed_parallelism") != "fsdp":
         raise ValueError("CFW profile must use FSDP")
-    if trainer.get("grad_accum_iter") != GRAD_ACCUMULATION:
-        raise ValueError("CFW profile must use gradient accumulation 16")
+    if trainer.get("grad_accum_iter") != data.get("gradient_accumulation"):
+        raise ValueError("CFW gradient accumulation is inconsistent")
     if parallelism.get("data_parallel_replicate_degree") != 1:
         raise ValueError("CFW profile is a one-node recipe")
     if profile == "full" and parallelism.get("data_parallel_shard_degree") != FULL_GPUS:
@@ -254,7 +336,6 @@ def validate_profile(descriptor: dict[str, Any], *, profile: str) -> None:
         "language_model": False,
     }:
         raise ValueError("CFW freeze policy differs from the reviewed recipe")
-    data = descriptor.get("data", {})
     expected_global = (
         data.get("micro_batch_per_rank", 0)
         * parallelism.get("data_parallel_shard_degree", 0)
@@ -263,10 +344,21 @@ def validate_profile(descriptor: dict[str, Any], *, profile: str) -> None:
     if data.get("global_batch") != expected_global:
         raise ValueError("CFW global batch is inconsistent")
     if profile == "full":
-        if trainer.get("max_iter") != 500 or checkpoint.get("save_iter") != 100:
-            raise ValueError("full CFW profile must run 500 iterations and save every 100")
-        if scheduler.get("cycle_lengths") != [500] or scheduler.get("warm_up_steps") != [5]:
-            raise ValueError("full CFW scheduler differs from the reviewed recipe")
+        epochs = data.get("epochs_per_iteration")
+        steps = data.get("steps_per_epoch")
+        total_updates = epochs * steps
+        if trainer.get("num_epochs") != epochs or trainer.get("steps_per_epoch") != steps:
+            raise ValueError("full CFW profile must use the sealed native epoch schedule")
+        if trainer.get("max_iter") != total_updates:
+            raise ValueError("full CFW max_iter must match epochs times steps_per_epoch")
+        if checkpoint.get("save_iter") != total_updates:
+            raise ValueError("full CFW fallback checkpoint must be the final update")
+        if checkpoint.get("save_freq_in_epoch") != epochs:
+            raise ValueError("full CFW profile must retain only the final epoch checkpoint")
+        if scheduler.get("cycle_lengths") != [total_updates]:
+            raise ValueError("full CFW scheduler must span the epoch-derived update count")
+        if data.get("global_batch", 0) < BASE_GLOBAL_BATCH:
+            raise ValueError("full CFW global batch is below the 512 floor")
     rendered = dump_toml(config)
     tomllib.loads(rendered)
 
@@ -299,6 +391,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results-dir", required=True)
     parser.add_argument("--resume-checkpoint")
     parser.add_argument("--num-gpus", type=int)
+    parser.add_argument("--epochs-per-iteration", type=int, default=DEFAULT_EPOCHS_PER_ITERATION)
+    parser.add_argument("--micro-batch-per-rank", type=int, default=DEFAULT_MICRO_BATCH_PER_RANK)
+    parser.add_argument("--gradient-accumulation", type=int, default=DEFAULT_GRAD_ACCUMULATION)
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--descriptor-output", type=pathlib.Path, required=True)
     args = parser.parse_args(argv)
@@ -316,6 +411,9 @@ def main(argv: list[str] | None = None) -> int:
             results_dir=args.results_dir,
             resume_checkpoint=args.resume_checkpoint,
             num_gpus=args.num_gpus,
+            epochs_per_iteration=args.epochs_per_iteration,
+            micro_batch_per_rank=args.micro_batch_per_rank,
+            gradient_accumulation=args.gradient_accumulation,
         )
         _atomic_text(args.output.expanduser().resolve(), dump_toml(descriptor["config"]))
         _atomic_text(

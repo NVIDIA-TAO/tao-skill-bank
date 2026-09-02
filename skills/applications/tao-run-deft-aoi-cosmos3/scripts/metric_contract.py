@@ -289,10 +289,14 @@ def result_from_iteration(
                     "metric_result.required_components do not match the frozen contract"
                 )
             components = result.get("components")
-            if not isinstance(components, dict) or list(components) != expected_components:
+            if not isinstance(components, dict) or set(components) != set(expected_components):
                 raise ValueError(
-                    "metric_result.components must contain the frozen components in order"
+                    "metric_result.components must contain exactly the frozen components"
                 )
+            # JSON object member order is not semantic. Normalize to the frozen
+            # contract order before recording the result in durable state.
+            components = {name: components[name] for name in expected_components}
+            result["components"] = components
             component_values: list[float] = []
             attainments: list[float] = []
             for component_name in expected_components:

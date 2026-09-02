@@ -29,7 +29,6 @@ eps = 1e-8
 fused = true
 keys_to_select = []
 lr = 1e-6
-lr_multipliers = { merger = 20.0 }
 weight_decay = 0.05
 
 [scheduler]

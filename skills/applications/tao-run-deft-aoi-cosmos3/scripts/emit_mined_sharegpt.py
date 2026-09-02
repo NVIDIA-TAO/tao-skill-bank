@@ -79,7 +79,7 @@ def _normalize_mined_rows(
         if not isinstance(filepath, str) or not filepath:
             raise ValueError(f"mined row[{index}]: filepath is required")
         tier = row.get("route_tier", "image_only")
-        if tier not in {"image_only", "strict", "fallback"}:
+        if tier not in {"image_only", "strict", "fallback", "calibration"}:
             raise ValueError(f"mined row[{index}]: unsupported route_tier {tier!r}")
         routed = row.get("routed_task_types")
         if routed is not None:
@@ -96,8 +96,10 @@ def _normalize_mined_rows(
             continue
         existing = merged[key]
         existing["route_tiers"] = sorted(set(existing["route_tiers"]) | {tier})
-        if tier == "strict":
+        if tier in {"strict", "calibration"}:
             existing["route_tier"] = "strict"
+        if tier == "calibration":
+            existing["route_tier"] = "calibration"
         if routed is not None:
             existing["routed_task_types"] = sorted(
                 set(existing.get("routed_task_types") or []) | set(routed)

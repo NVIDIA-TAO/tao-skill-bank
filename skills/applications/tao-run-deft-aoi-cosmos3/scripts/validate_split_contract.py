@@ -63,6 +63,7 @@ def validate(
     *,
     media_root: pathlib.Path,
     expected_benchmark_sha256: str | None = None,
+    allowed_target_overlaps: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     missing = set(ROLE_PATHS) - set(role_paths)
     if missing:
@@ -79,11 +80,34 @@ def validate(
         if ignored:
             ignored_unsupported_tasks[role] = ignored
 
+    allowed_target_overlaps = dict(allowed_target_overlaps or {})
+    supported_exceptions = {"proxy:benchmark"}
+    unknown_exceptions = set(allowed_target_overlaps) - supported_exceptions
+    if unknown_exceptions:
+        raise ValueError(
+            "target-overlap exceptions are only supported for proxy:benchmark; "
+            f"got {sorted(unknown_exceptions)}"
+        )
+    for pair, count in allowed_target_overlaps.items():
+        if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+            raise ValueError(f"authorized target overlap must be a positive integer: {pair}={count}")
+
     overlaps: dict[str, int] = {}
+    authorized_exceptions: dict[str, dict[str, int]] = {}
     for left, right in combinations(("proxy", "benchmark", "mining"), 2):
         shared = targets[left] & targets[right]
-        overlaps[f"{left}:{right}"] = len(shared)
-        if shared:
+        pair = f"{left}:{right}"
+        observed = len(shared)
+        overlaps[pair] = observed
+        if pair in allowed_target_overlaps:
+            allowed = allowed_target_overlaps[pair]
+            if observed != allowed:
+                raise ValueError(
+                    "authorized target overlap mismatch for "
+                    f"{pair}: allowed {allowed}, observed {observed}"
+                )
+            authorized_exceptions[pair] = {"allowed": allowed, "observed": observed}
+        elif shared:
             raise ValueError(f"target leakage between {left} and {right}: {sorted(shared)[:5]}")
 
     for role in ("previous_train", "train"):
@@ -136,6 +160,7 @@ def validate(
         "unique_targets": {role: len(value) for role, value in targets.items()},
         "ignored_unsupported_tasks": ignored_unsupported_tasks,
         "target_overlap": overlaps,
+        "authorized_target_overlap_exceptions": authorized_exceptions,
         "benchmark_sha256": benchmark_hash,
         "benchmark_hash_verified": bool(expected_benchmark_sha256),
     }
@@ -149,6 +174,16 @@ def main(argv: list[str] | None = None) -> int:
     for role in ROLE_PATHS:
         parser.add_argument(f"--{role}", type=pathlib.Path)
     parser.add_argument("--benchmark-sha256")
+    parser.add_argument(
+        "--allow-target-overlap",
+        action="append",
+        default=[],
+        metavar="ROLE:ROLE=COUNT",
+        help=(
+            "Authorize one exact physical-target overlap count. Only "
+            "proxy:benchmark is supported; any mismatch fails closed."
+        ),
+    )
     parser.add_argument("--summary", type=pathlib.Path)
     args = parser.parse_args(argv)
     workspace = args.workspace.expanduser().resolve()
@@ -161,10 +196,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.train:
         role_paths["train"] = args.train.expanduser().resolve()
     try:
+        allowed_target_overlaps: dict[str, int] = {}
+        for value in args.allow_target_overlap:
+            pair, separator, count_text = value.partition("=")
+            if not separator or pair in allowed_target_overlaps:
+                raise ValueError(f"invalid --allow-target-overlap value: {value}")
+            try:
+                allowed_target_overlaps[pair] = int(count_text)
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid --allow-target-overlap count: {value}"
+                ) from exc
         summary = validate(
             role_paths,
             media_root=workspace,
             expected_benchmark_sha256=args.benchmark_sha256,
+            allowed_target_overlaps=allowed_target_overlaps,
         )
         if args.summary:
             args.summary.parent.mkdir(parents=True, exist_ok=True)

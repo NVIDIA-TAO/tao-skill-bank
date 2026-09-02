@@ -1,4 +1,5 @@
-# Rendered contract template. Use scripts/render_cfw_sft.py to seal concrete paths.
+# Rendered baseline for 19,968 rows at global batch 512. Use
+# scripts/render_cfw_sft.py to seal probe-selected batch and concrete paths.
 [job]
 task = "vlm"
 experiment = "nvpaw_omni_vlm_sft"
@@ -29,11 +30,10 @@ eps = 1e-8
 fused = true
 keys_to_select = []
 lr = 1e-6
-lr_multipliers = { merger = 20.0 }
 weight_decay = 0.05
 
 [scheduler]
-cycle_lengths = [500]
+cycle_lengths = [195]
 f_max = [1.0]
 f_min = [0.1]
 f_start = [0.05]
@@ -43,11 +43,13 @@ warm_up_steps = [5]
 distributed_parallelism = "fsdp"
 grad_accum_iter = 16
 logging_iter = 1
-max_iter = 500
+max_iter = 195
+num_epochs = 5
+steps_per_epoch = 39
 
 [checkpoint]
 keys_to_skip_loading = []
 load_path = "???"
-save_iter = 100
-save_freq_in_epoch = 0
+save_iter = 195
+save_freq_in_epoch = 5
 dcp_async_mode_enabled = false

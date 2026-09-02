@@ -12,7 +12,7 @@ except ImportError:  # Host-side contract tests retain a deterministic fallback.
     torch = None  # type: ignore[assignment]
 
 try:
-    from cosmos_framework.data.vfm.dataflow.base import DataDistributor
+    from cosmos_framework.data.generator.dataflow.base import DataDistributor
 except ImportError:  # The packaged class binds to the real base in the image.
     class DataDistributor:  # type: ignore[no-redef]
         pass

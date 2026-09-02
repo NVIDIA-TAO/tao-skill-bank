@@ -8,11 +8,11 @@ from typing import Any
 
 try:
     from PIL import Image
-    from cosmos_framework.configs.base.vlm.experiment.videophy2_dataflow_roles import (
+    from cosmos_framework.configs.base.reasoner.experiment.videophy2_dataflow_roles import (
         VideoPhy2Processor,
     )
     from cosmos_framework.utils import log
-    from cosmos_framework.utils.vlm.constant import PROCESSOR_KEYS_TO_ADD
+    from cosmos_framework.utils.reasoner.constant import PROCESSOR_KEYS_TO_ADD
 except ImportError:  # Host-side tests exercise only the deterministic selector.
     Image = None  # type: ignore[assignment]
     log = None

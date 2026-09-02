@@ -102,20 +102,27 @@ required artifacts validate. Durations must be measured positive seconds.
 
 Render nested TOML with `$PYTHON scripts/render_cfw_sft.py`, passing the
 canonical workspace root as `--media-root`, and plan with
-`$PYTHON scripts/cfw_action_plan.py`. Full profile is fixed:
+`$PYTHON scripts/cfw_action_plan.py`. Before rendering a full profile, run a
+short platform probe and pass its largest stable `--micro-batch-per-rank`.
+The full profile contract is:
 
 - experiment `nvpaw_omni_vlm_sft`, BF16, full parameters;
 - 8 GPUs on one node, FSDP shard 8 / replicate 1;
-- micro-batch 4 per rank, gradient accumulation 16, global batch 512;
-- fused AdamW, LR `1e-6`, weight decay `0.05`, betas `0.9/0.999`, merger
-  multiplier 20;
+- the probed micro-batch per rank, gradient accumulation 16, and an effective
+  global batch of at least 512; maximize the effective batch within the probed
+  recipe and scale LR linearly from `1e-6` at global batch 512;
+- fused AdamW, weight decay `0.05`, betas `0.9/0.999`, merger multiplier 20;
 - vision encoder frozen; projector and language model trainable;
 - full activation checkpointing;
-- 500 iterations, save every 100, cycle 500, warmup 5,
-  `f_start=.05`, `f_max=1`, `f_min=.1`;
+- native `num_epochs` / `steps_per_epoch` scheduling, with the requested epoch
+  count per DEFT iteration; materialized rows must be an exact global-batch
+  multiple so epochs end on optimizer-update boundaries;
+- one synchronous checkpoint at the final epoch, an LR cycle spanning the
+  epoch-derived update count, warmup at most 5 updates, `f_start=.05`,
+  `f_max=1`, `f_min=.1`;
 - synchronous DCP.
 
-The smoke profile must be explicitly named. It may reduce rows, iterations,
+The smoke profile must be explicitly named. It may reduce rows, updates,
 checkpoint interval, and GPU count, but does not change precision,
 full-parameter tuning, freeze policy, direct JSONL semantics, or DCP format.
 
@@ -166,15 +173,14 @@ owns native submission. Every GPU stage uses the four verbs
 Monitor the backend and map states to `PENDING RUNNING COMPLETE ERROR CANCELED
 UNKNOWN`.
 
-Every rendered launch descriptor wraps the workload command with the required
-OneLogger runtime bootstrap. Cosmos Framework is standalone rather than
-NeMo-descendant, so rank zero runs `ensurepip` and installs
-`one-logger-utils` from the internal MLWFO PyPI index under the
-`SLURM_LOCALID == 0` guard while nonzero ranks wait 30 seconds. When the
-container does not inherit the submitter's home, the descriptor requires the
-existing host `.netrc` at `/root/.netrc`; the wrapper unsets rather than
-exports `WANDB_API_KEY`. Smoke/probe launches set
-`ONE_LOGGER_JOB_CATEGORY=test`; real DEFT launches leave that variable unset.
+Every rendered launch descriptor also carries the required OneLogger runtime
+bootstrap. Cosmos Framework is standalone rather than NeMo-descendant, so the
+platform installs `one-logger-utils` from the internal MLWFO PyPI index under
+the `SLURM_LOCALID == 0` guard while nonzero ranks wait 30 seconds. When the
+container does not inherit the submitter's home, mount the existing host
+`.netrc` at `/root/.netrc`; never export `WANDB_API_KEY`. Smoke/probe launches
+set `ONE_LOGGER_JOB_CATEGORY=test`; real DEFT launches leave that variable
+unset.
 
 ## Completion
 

@@ -20,12 +20,50 @@ def _fingerprint(record: dict[str, Any]) -> str:
     return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def _task_balanced_indices(
+    indices: list[int], records: list[dict[str, Any]], limit: int
+) -> list[int]:
+    """Select deterministically across tasks while preserving order within each task."""
+
+    if limit >= len(indices):
+        return indices
+    groups: dict[str, list[int]] = {}
+    for index in indices:
+        task = str(records[index].get("task_type") or "unknown")
+        groups.setdefault(task, []).append(index)
+    positions = {task: 0 for task in groups}
+    selected: list[int] = []
+    while len(selected) < limit:
+        advanced = False
+        for task in sorted(groups):
+            position = positions[task]
+            if position >= len(groups[task]):
+                continue
+            selected.append(groups[task][position])
+            positions[task] = position + 1
+            advanced = True
+            if len(selected) == limit:
+                break
+        if not advanced:
+            break
+    if len(selected) != limit:
+        raise ValueError(
+            f"task-balanced materialization selected {len(selected)} rows, expected {limit}"
+        )
+    return selected
+
+
 def assemble(
     previous_path: pathlib.Path | None,
     mined_path: pathlib.Path,
     *,
     validation_paths: list[pathlib.Path],
+    max_rows: int | None = None,
+    row_multiple: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    for name, value in (("max_rows", max_rows), ("row_multiple", row_multiple)):
+        if value is not None and (type(value) is not int or value <= 0):
+            raise ValueError(f"{name} must be a positive integer")
     mined = load_records(mined_path)
     if not mined:
         raise ValueError("the current iteration must contribute at least one mined record")
@@ -70,6 +108,46 @@ def assemble(
             )
     if not merged:
         raise ValueError("real-mining assembly produced no training records")
+    uncapped_records = len(merged)
+    if max_rows is not None or row_multiple is not None:
+        materialized_rows = min(uncapped_records, max_rows or uncapped_records)
+        if row_multiple is not None:
+            materialized_rows -= materialized_rows % row_multiple
+            if materialized_rows < row_multiple:
+                raise ValueError(
+                    "training materialization cannot form one complete global batch: "
+                    f"available={uncapped_records}, row_multiple={row_multiple}"
+                )
+        # Retain the full prior iteration to make the training set monotonic.
+        # Current Mining owns the remaining slots under the cap, selected in
+        # task-balanced order and emitted first so fresh corrective examples
+        # are not pushed to the tail of a deterministic epoch.
+        current = [
+            index
+            for index, item in enumerate(provenance)
+            if item["source_kind"] == "current_mining"
+        ]
+        prior = [
+            index
+            for index, item in enumerate(provenance)
+            if item["source_kind"] == "previous_iteration"
+        ]
+        if len(prior) > materialized_rows:
+            raise ValueError(
+                "training materialization cannot retain all previous iteration records: "
+                f"previous={len(prior)}, materialized={materialized_rows}"
+            )
+        current_limit = min(len(current), materialized_rows - len(prior))
+        if current and current_limit == 0:
+            raise ValueError(
+                "training materialization cannot retain all previous iteration records "
+                "and include current Mining data under the configured cap"
+            )
+        selected = _task_balanced_indices(current, merged, current_limit)
+        selected.extend(prior)
+        merged = [merged[index] for index in selected]
+        provenance = [provenance[index] for index in selected]
+        tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)
     mined_fingerprints = {_fingerprint(record) for record in mined}
     if not any(_fingerprint(record) in mined_fingerprints for record in merged):
         raise ValueError("current mined records were all lost during assembly")
@@ -84,7 +162,18 @@ def assemble(
         "previous_records": len(previous),
         "mined_records": len(mined),
         "output_records": len(merged),
+        "uncapped_records": uncapped_records,
+        "materialization_cap": max_rows,
+        "row_multiple": row_multiple,
+        "selection_policy": "monotonic_current_fill_task_balanced_v1",
+        "records_truncated": uncapped_records - len(merged),
         "duplicates_skipped": duplicate_count,
+        "retained_previous_records": sum(
+            item["source_kind"] == "previous_iteration" for item in provenance
+        ),
+        "selected_current_records": sum(
+            item["source_kind"] == "current_mining" for item in provenance
+        ),
         "tasks": dict(sorted(tasks.items())),
         "provenance": provenance,
     }
@@ -108,12 +197,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--summary", type=pathlib.Path)
     parser.add_argument("--validation-jsonl", action="append", default=[], type=pathlib.Path)
+    parser.add_argument("--max-rows", type=int)
+    parser.add_argument("--row-multiple", type=int)
     args = parser.parse_args(argv)
     try:
         rows, summary = assemble(
             args.previous_jsonl,
             args.mined_jsonl,
             validation_paths=args.validation_jsonl,
+            max_rows=args.max_rows,
+            row_multiple=args.row_multiple,
         )
         _write_jsonl(args.output, rows)
         summary_path = args.summary or args.output.with_name("assemble_summary.json")

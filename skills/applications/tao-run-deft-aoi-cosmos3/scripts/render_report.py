@@ -38,27 +38,102 @@ def _rows(state: dict[str, Any]) -> str:
 
 def _iteration_cards(state: dict[str, Any]) -> str:
     cards: list[str] = []
-    for label, phase in state.get("iterations", {}).items():
+    iterations = state.get("iterations", {})
+    if not isinstance(iterations, dict):
+        iterations = {}
+    trajectory = state.get("benchmark_trajectory", {})
+    trajectory_evaluations = (
+        trajectory.get("evaluations", {}) if isinstance(trajectory, dict) else {}
+    )
+    if not isinstance(trajectory_evaluations, dict):
+        trajectory_evaluations = {}
+    labels = list(iterations)
+    labels.extend(label for label in trajectory_evaluations if label not in iterations)
+    for label in labels:
+        phase = iterations.get(label, {})
         if not isinstance(phase, dict):
             continue
-        metric = phase.get("metric_result")
+        replacement = trajectory_evaluations.get(label)
+        metric = (
+            replacement.get("metric_result")
+            if isinstance(replacement, dict)
+            else phase.get("metric_result")
+        )
         metric_text = "not evaluated"
+        components_text = ""
         if isinstance(metric, dict):
+            prefix = "replacement cohort " if isinstance(replacement, dict) else ""
             metric_text = (
-                f"minimum F1={metric.get('minimum_f1', '—')} · "
+                f"{prefix}minimum F1={metric.get('minimum_f1', '—')} · "
                 f"gate={'PASS' if metric.get('passed') else 'FAIL'}"
             )
+            components = metric.get("components")
+            if isinstance(components, dict):
+                rendered = []
+                for name, value in components.items():
+                    if isinstance(value, dict):
+                        rendered.append(f"{name}: {value.get('f1', '—')}")
+                if rendered:
+                    components_text = f"<p>{_escape(' · '.join(rendered))}</p>"
         cards.append(
             '<section class="card">'
             f"<h3>{_escape(label)}</h3>"
             f"<p>Status: {_escape(phase.get('status', 'pending'))}</p>"
             f"<p>Last stage: {_escape(phase.get('stage_completed'))}</p>"
             f"<p>{_escape(metric_text)}</p>"
+            f"{components_text}"
             f"<p>Mined records: {_escape(phase.get('mining_mined_count'))}</p>"
             f"<p>Framework DCP: {_escape(phase.get('best_ckpt_path'))}</p>"
             "</section>"
         )
     return "".join(cards) or '<section class="card"><p>No iterations committed.</p></section>'
+
+
+def _operator_disclosures(state: dict[str, Any]) -> str:
+    disclosures: list[str] = []
+    for change in state.get("operator_contract_changes", []):
+        if not isinstance(change, dict):
+            continue
+        overlap = change.get("authorized_overlap_exception")
+        if not isinstance(overlap, dict):
+            continue
+        physical = overlap.get("physical_target_overlap")
+        benchmark_rows = overlap.get("benchmark_rows_on_overlapping_targets")
+        proxy_rows = overlap.get("proxy_rows_on_overlapping_targets")
+        active_rows = change.get("active_benchmark_rows")
+        active_sha = str(change.get("active_benchmark_sha256", ""))
+        disclosure = overlap.get("disclosure")
+        disclosures.append(
+            '<section class="card warning">'
+            "<h3>Known selection-bias disclosure</h3>"
+            f"<p>The approved Proxy–Benchmark exception covers {_escape(f'{physical:,}' if isinstance(physical, int) else physical)} physical targets, "
+            f"{_escape(f'{benchmark_rows:,}' if isinstance(benchmark_rows, int) else benchmark_rows)} Benchmark rows, and "
+            f"{_escape(f'{proxy_rows:,}' if isinstance(proxy_rows, int) else proxy_rows)} Proxy rows.</p>"
+            f"<p>Active Benchmark: {_escape(f'{active_rows:,}' if isinstance(active_rows, int) else active_rows)} rows · SHA-256 {_escape(active_sha[:8])}…</p>"
+            f"<p>{_escape(disclosure)}</p>"
+            "</section>"
+        )
+    if not disclosures:
+        return ""
+    return '<h2>Operator contract changes</h2><div class="grid">' + "".join(disclosures) + "</div>"
+
+
+def _benchmark_trajectory(state: dict[str, Any]) -> str:
+    trajectory = state.get("benchmark_trajectory")
+    if not isinstance(trajectory, dict):
+        return ""
+    evaluations = trajectory.get("evaluations", {})
+    completed = len(evaluations) if isinstance(evaluations, dict) else 0
+    rows = trajectory.get("cohort_rows")
+    sha = str(trajectory.get("cohort_sha256", ""))
+    return (
+        '<h2>Replacement Benchmark trajectory</h2><div class="grid">'
+        '<section class="card">'
+        f"<p>{_escape(f'{rows:,}' if isinstance(rows, int) else rows)} rows · SHA-256 {_escape(sha[:8])}…</p>"
+        f"<p>Completed re-evaluations: {_escape(completed)}</p>"
+        "<p>These values supersede retired-cohort metrics for trajectory reporting; historical artifacts remain intact.</p>"
+        "</section></div>"
+    )
 
 
 def render(results_dir: pathlib.Path) -> pathlib.Path:
@@ -78,7 +153,7 @@ main{{max-width:1180px;margin:auto;padding:32px}} h1{{margin-bottom:4px}} .lede{
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin:22px 0}}
 .card{{background:white;border:1px solid #dfe3e6;border-radius:10px;padding:16px}}
 table{{width:100%;border-collapse:collapse;background:white}} th,td{{padding:10px;border-bottom:1px solid #e6eaed;text-align:left;vertical-align:top}} th{{background:#eef3f5}}
-code{{overflow-wrap:anywhere}} .status{{color:#3b7d23;font-weight:700}}
+code{{overflow-wrap:anywhere}} .status{{color:#3b7d23;font-weight:700}} .warning{{border-left:5px solid #d97706}}
 </style></head><body><main>
 <h1>DEFT AOI · Cosmos Framework</h1>
 <p class="lede">Real-mining-only iterative adaptation with canonical NVPAW JSONL and Framework DCP checkpoints.</p>
@@ -87,6 +162,8 @@ code{{overflow-wrap:anywhere}} .status{{color:#3b7d23;font-weight:700}}
 <section class="card"><h3>KPI authority</h3><p>{_escape(kpi.get('profile'))}</p><p>Component F1 threshold: {_escape(kpi.get('component_threshold'))}</p><code>{_escape(kpi.get('evaluator'))}</code></section>
 <section class="card"><h3>Runtime</h3><p>Backend: {_escape(config.get('training', {}).get('backend') if isinstance(config, dict) else None)}</p><p>Checkpoint: Framework DCP</p><p>Training source: mined real samples</p></section>
 </div>
+{_operator_disclosures(state)}
+{_benchmark_trajectory(state)}
 <h2>Iterations</h2><div class="grid">{_iteration_cards(state)}</div>
 <h2>Committed stages</h2><table><thead><tr><th>#</th><th>Iteration</th><th>Stage</th><th>Status</th><th>Seconds</th><th>Summary</th></tr></thead><tbody>{_rows(state)}</tbody></table>
 </main></body></html>"""

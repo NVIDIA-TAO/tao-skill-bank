@@ -357,6 +357,10 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         getattr(args, "python_executable", None) or sys.executable
     )
     offline = network_mode == "airgap"
+    global_batch = (
+        args.micro_batch_per_rank * args.num_gpus * args.gradient_accumulation
+    )
+    learning_rate = 1.0e-6 * global_batch / 512
     return {
         "version": 7,
         "workflow": WORKFLOW,
@@ -441,13 +445,16 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "gpu_model": args.gpu_model,
                 "full_parameter": True,
                 "precision": "bfloat16",
-                "micro_batch_per_rank": 4,
-                "gradient_accumulation": 16,
-                "global_batch": 4 * args.num_gpus * 16,
+                "epochs_per_iteration": args.epochs_per_iteration,
+                "micro_batch_per_rank": args.micro_batch_per_rank,
+                "gradient_accumulation": args.gradient_accumulation,
+                "global_batch": global_batch,
+                "base_global_batch": 512,
+                "learning_rate_scaling": "linear_from_global_batch_512",
                 "optimizer": {
                     "name": "AdamW",
                     "fused": True,
-                    "learning_rate": 1.0e-6,
+                    "learning_rate": learning_rate,
                     "weight_decay": 0.05,
                     "betas": [0.9, 0.999],
                     "merger_lr_multiplier": 20.0,
@@ -460,6 +467,10 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             },
             "mining": {
                 "router_mode": mining_router_mode,
+                "pool_fraction_cap": args.mining_pool_fraction_cap,
+                "pool_budget_unit": "unique_target_image",
+                "max_training_rows_per_iteration": args.max_training_rows_per_iteration,
+                "calibration_policy": "empty_and_few_box_from_mining",
                 "top_k_scope": (
                     "target" if mining_router_mode == "image_only" else "target_task"
                 ),
@@ -562,7 +573,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--recipe-profile", choices=("full", "smoke"), default="full")
+    parser.add_argument("--epochs-per-iteration", type=int, default=5)
+    parser.add_argument("--micro-batch-per-rank", type=int, default=4)
+    parser.add_argument("--gradient-accumulation", type=int, default=16)
     parser.add_argument("--top-k-per-target", type=int, default=5)
+    parser.add_argument("--max-training-rows-per-iteration", type=int, default=20_000)
+    parser.add_argument("--mining-pool-fraction-cap", type=float, default=1.0)
     parser.add_argument("--min-similarity", type=float, default=0.9)
     parser.add_argument(
         "--mining-router-mode",
@@ -611,7 +627,11 @@ def main(argv: list[str] | None = None) -> int:
         "max_iterations": args.max_iterations,
         "num_gpus": args.num_gpus,
         "num_nodes": args.num_nodes,
+        "epochs_per_iteration": args.epochs_per_iteration,
+        "micro_batch_per_rank": args.micro_batch_per_rank,
+        "gradient_accumulation": args.gradient_accumulation,
         "top_k_per_target": args.top_k_per_target,
+        "max_training_rows_per_iteration": args.max_training_rows_per_iteration,
     }
     if args.gap_analysis_budget is not None:
         positive["gap_analysis_budget"] = args.gap_analysis_budget
@@ -625,9 +645,24 @@ def main(argv: list[str] | None = None) -> int:
     if not -1.0 <= args.min_similarity <= 1.0:
         print("init_deft_state: --min-similarity must be in [-1, 1]", file=sys.stderr)
         return 2
+    if not 0.0 < args.mining_pool_fraction_cap <= 1.0:
+        print(
+            "init_deft_state: --mining-pool-fraction-cap must be in (0, 1]",
+            file=sys.stderr,
+        )
+        return 2
     if args.recipe_profile == "full" and (args.num_gpus != 8 or args.num_nodes != 1):
         print(
             "init_deft_state: full recipe requires exactly one 8-GPU node",
+            file=sys.stderr,
+        )
+        return 2
+    if (
+        args.recipe_profile == "full"
+        and args.micro_batch_per_rank * args.num_gpus * args.gradient_accumulation < 512
+    ):
+        print(
+            "init_deft_state: full recipe effective global batch must be at least 512",
             file=sys.stderr,
         )
         return 2
