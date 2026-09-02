@@ -1,0 +1,12 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "PE3"
+    path: "SKILL.md"
+    reason: "Reviewed FP: documentation reference to a standard infra/credential path (SSH, kubeconfig, .env, keyring, docker config). The skill does not read or exfiltrate credentials."
+  - id: "LP1"
+    path: "references/selective_download.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - id: "LP1"
+    path: "references/tests/test_selective_download.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
