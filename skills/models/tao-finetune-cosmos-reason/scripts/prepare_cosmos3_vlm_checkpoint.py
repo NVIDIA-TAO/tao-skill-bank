@@ -23,7 +23,18 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_NANO_VLM_ARCHITECTURE_MODEL = "Qwen/Qwen3-VL-8B-Instruct"
-CONVERTER_ENTRYPOINT_MODULE = "cosmos_rl.model_preparation.vlm_safetensors"
+CONVERTER_ENTRYPOINT_MODULES = {
+    "cosmos-framework": "cosmos_framework.scripts.convert_model_to_vlm_safetensors",
+    "cosmos-rl": "cosmos_rl.model_preparation.vlm_safetensors",
+}
+
+
+def converter_entrypoint(args: argparse.Namespace) -> str:
+    backend = getattr(args, "backend", "cosmos-rl")
+    try:
+        return CONVERTER_ENTRYPOINT_MODULES[backend]
+    except KeyError as exc:
+        raise ValueError(f"unsupported Cosmos preparation backend: {backend!r}") from exc
 
 
 def sha256(path: Path) -> str:
@@ -115,7 +126,8 @@ def command(args: argparse.Namespace, output: Path, cache: Path) -> list[str]:
     architecture_input = huggingface_model_id(args.vlm_architecture_model_path_or_uri)
     source_mount, source = docker_mount(source_input, "/inputs/base")
     donor_mount, donor = docker_mount(architecture_input, "/inputs/architecture")
-    script = r"""
+    entrypoint = converter_entrypoint(args)
+    script = f"""
 set -Eeuo pipefail
 source_value="$BASE_MODEL"
 architecture_value="$ARCHITECTURE_MODEL"
@@ -135,7 +147,7 @@ print(snapshot_download(os.environ['ARCHITECTURE_MODEL'], revision=os.environ['A
 PY
 )"
 fi
-python -m cosmos_rl.model_preparation.vlm_safetensors \
+python -m {entrypoint} \
   --checkpoint-path "$source_value" --output-path "/output/$OUTPUT_NAME" \
   --vlm-model-name "$architecture_value"
 """
@@ -220,7 +232,7 @@ def inside_container_command(
     return [
         sys.executable,
         "-m",
-        CONVERTER_ENTRYPOINT_MODULE,
+        converter_entrypoint(args),
         "--checkpoint-path",
         source,
         "--output-path",
@@ -232,6 +244,12 @@ def inside_container_command(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--backend",
+        choices=tuple(CONVERTER_ENTRYPOINT_MODULES),
+        default="cosmos-rl",
+        help="Selected backend whose packaged converter must be used.",
+    )
     parser.add_argument("--base-model-path-or-uri", required=True)
     parser.add_argument("--base-model-revision", default="")
     parser.add_argument(
