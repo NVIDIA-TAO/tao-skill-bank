@@ -18,6 +18,9 @@ actions:
       dataset.train.datasets[0].image_list_file:
         type: file
         optional: true
+      dataset.train.datasets[0].train_pairs_file:
+        type: file
+        optional: true
       dataset.train.wds.root_dir:
         type: folder
         optional: true
@@ -31,6 +34,9 @@ actions:
         type: folder
         optional: true
       dataset.val.datasets[0].image_list_file:
+        type: file
+        optional: true
+      dataset.val.datasets[0].attribute_pairs_file:
         type: file
         optional: true
       train.pretrained_model_path:
@@ -54,6 +60,9 @@ actions:
       dataset.val.datasets[0].caption_dir:
         type: folder
       dataset.val.datasets[0].image_list_file:
+        type: file
+        optional: true
+      dataset.val.datasets[0].attribute_pairs_file:
         type: file
         optional: true
       evaluate.checkpoint:
@@ -131,6 +140,9 @@ data_sources:
         image_list_file:
           path: image_list.txt
           optional: true
+        train_pairs_file:
+          path: train_pairs.json
+          optional: true
         caption_dir:
           path: captions.tar.gz
         caption_file_suffix:
@@ -155,6 +167,9 @@ data_sources:
         image_list_file:
           path: image_list.txt
           optional: true
+        attribute_pairs_file:
+          path: val_pairs.json
+          optional: true
         caption_dir:
           path: captions.tar.gz
         caption_file_suffix:
@@ -168,6 +183,9 @@ data_sources:
           path: images.tar.gz
         image_list_file:
           path: image_list.txt
+          optional: true
+        attribute_pairs_file:
+          path: val_pairs.json
           optional: true
         caption_dir:
           path: captions.tar.gz
