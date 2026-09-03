@@ -48,6 +48,12 @@ from the Mining annotations. These rows carry the explicit `calibration` tier,
 pass through the same history and cumulative-pool budget, and never weaken the
 `task_strict` policy applied to gap-routed neighbors.
 
+When the frozen Proxy has no Component Count cohort, a launch may separately
+prepend a bounded `count_replay` tier selected directly from real Mining rows.
+That tier is restricted to `Component Count`, passes through the identical
+history and cumulative-pool budget, is included in training, and does not
+relax strict routing for any gap-derived neighbor.
+
 ## Frozen Benchmark gate
 
 The app has no F1 implementation. Invoke the recorded workspace evaluator

@@ -42,6 +42,12 @@ def _row(record_id: str, boxes: list[dict], task: str = "Defect Detection") -> d
     }
 
 
+def _count_row(record_id: str, answer: int) -> dict:
+    row = _row(record_id, [], task="Component Count")
+    row["messages"][1]["content"][0]["text"] = str(answer)
+    return row
+
+
 class Cosmos3DetectionCalibrationContractTests(unittest.TestCase):
     def test_selects_bounded_empty_and_few_box_rows_and_excludes_many_boxes(self) -> None:
         rows = [
@@ -100,6 +106,41 @@ class Cosmos3DetectionCalibrationContractTests(unittest.TestCase):
             ["empty1.png", "few1.png"],
         )
         self.assertEqual(summary["excluded_previously_mined"], 2)
+
+    def test_selects_component_count_replay_outside_strict_gap_routing(self) -> None:
+        selected, summary = select_detection_calibration.select_component_count_replay(
+            [_count_row("count0", 2), _count_row("count1", 1)],
+            media_root=pathlib.Path("/data"),
+            max_count=1,
+        )
+
+        self.assertEqual(pathlib.Path(selected[0]["filepath"]).name, "count0.png")
+        self.assertEqual(selected[0]["route_tier"], "count_replay")
+        self.assertEqual(selected[0]["routed_task_types"], ["Component Count"])
+        self.assertEqual(summary["selected_component_count"], 1)
+
+    def test_count_replay_remains_strict_when_all_rows_are_excluded(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no eligible Component Count"):
+            select_detection_calibration.select_component_count_replay(
+                [_count_row("count0", 2)],
+                media_root=pathlib.Path("/data"),
+                max_count=1,
+                excluded_identities={"/data/images/count0.png"},
+            )
+
+    def test_count_replay_can_explicitly_allow_an_exhausted_optional_tier(self) -> None:
+        selected, summary = select_detection_calibration.select_component_count_replay(
+            [_count_row("count0", 2)],
+            media_root=pathlib.Path("/data"),
+            max_count=1,
+            excluded_identities={"/data/images/count0.png"},
+            allow_empty=True,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(summary["selected_component_count"], 0)
+        self.assertEqual(summary["excluded_previously_mined"], 1)
+        self.assertEqual(summary["empty_reason"], "eligible_tier_exhausted")
 
 
 if __name__ == "__main__":

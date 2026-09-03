@@ -108,9 +108,11 @@ The full profile contract is:
 
 - experiment `nvpaw_omni_vlm_sft`, BF16, full parameters;
 - 8 GPUs on one node, FSDP shard 8 / replicate 1;
-- the probed micro-batch per rank, gradient accumulation 16, and an effective
-  global batch of at least 512; maximize the effective batch within the probed
-  recipe and scale LR linearly from `1e-6` at global batch 512;
+- the probed micro-batch per rank plus launch-recorded gradient accumulation,
+  minimum-global-batch, and learning-rate policy; the legacy defaults remain
+  accumulation 16, a global-batch floor of 512, and linear scaling from
+  `1e-6`, while an operator-reviewed launch may explicitly disable the floor
+  and use a fixed recipe LR;
 - fused AdamW, weight decay `0.05`, betas `0.9/0.999`, merger multiplier 20;
 - vision encoder frozen; projector and language model trainable;
 - full activation checkpointing;

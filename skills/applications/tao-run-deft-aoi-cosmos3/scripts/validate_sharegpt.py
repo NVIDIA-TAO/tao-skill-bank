@@ -183,7 +183,7 @@ def validate_records(
         max_images = max(max_images, len(items))
         supported_records += 1
     if not supported_records:
-        raise ValueError("annotations contain no supported six-task DEFT records")
+        raise ValueError("annotations contain no supported DEFT task records")
     return {
         "mode": annotation_profile,
         "format": "jsonl",

@@ -76,6 +76,25 @@ class Cosmos3RenderCfwSftContractTests(unittest.TestCase):
                 gradient_accumulation=16,
             )
 
+    def test_full_profile_allows_reviewed_fixed_lr_low_batch_override(self) -> None:
+        descriptor = self._full(
+            expected_rows=19_456,
+            micro_batch_per_rank=8,
+            gradient_accumulation=1,
+            learning_rate=1.0e-6,
+            learning_rate_policy="fixed",
+            minimum_global_batch=0,
+        )
+        config = descriptor["config"]
+
+        self.assertEqual(descriptor["data"]["global_batch"], 64)
+        self.assertEqual(descriptor["data"]["learning_rate_policy"], "fixed")
+        self.assertEqual(descriptor["data"]["minimum_global_batch"], 0)
+        self.assertEqual(config["optimizer"]["lr"], 1.0e-6)
+        self.assertEqual(config["trainer"]["steps_per_epoch"], 304)
+        self.assertEqual(config["trainer"]["max_iter"], 1_520)
+        self.assertEqual(config["checkpoint"]["save_iter"], 1_520)
+
     def test_full_profile_requires_exact_epoch_boundary(self) -> None:
         with self.assertRaisesRegex(ValueError, "multiple of global batch"):
             self._full(expected_rows=20_000)

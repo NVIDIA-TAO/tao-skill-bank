@@ -118,6 +118,38 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
             self.assertFalse((root / "results/deft_state.json").exists())
             self.assertIn("config, tokenizer, and processor", stderr.getvalue())
 
+    def test_operator_batch_lr_override_and_kpi_alias_are_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(
+                self._argv(
+                    root,
+                    workspace,
+                    "--micro-batch-per-rank", "8",
+                    "--gradient-accumulation", "1",
+                    "--learning-rate", "1e-6",
+                    "--learning-rate-policy", "fixed",
+                    "--minimum-global-batch", "0",
+                    "--kpi-profile", "task_balanced_v1",
+                    "--component-count-replay-per-iteration", "1000",
+                )
+            )
+            self.assertEqual(rc, 0)
+            state = json.loads((root / "results/deft_state.json").read_text())
+            training = state["config"]["training"]
+            self.assertEqual(training["global_batch"], 8)
+            self.assertEqual(training["gradient_accumulation"], 1)
+            self.assertEqual(training["minimum_global_batch"], 0)
+            self.assertEqual(training["learning_rate_scaling"], "fixed")
+            self.assertEqual(training["optimizer"]["learning_rate"], 1e-6)
+            self.assertEqual(state["config"]["kpi"]["requested_profile"], "task_balanced_v1")
+            self.assertEqual(state["config"]["kpi"]["profile"], "f1_cohort_balanced_v1")
+            self.assertEqual(
+                state["config"]["mining"]["component_count_replay_per_iteration"],
+                1000,
+            )
+
     def test_venv_python_symlink_survives_state_initialization(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

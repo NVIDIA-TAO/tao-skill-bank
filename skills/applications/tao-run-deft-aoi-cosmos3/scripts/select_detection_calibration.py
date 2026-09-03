@@ -23,6 +23,66 @@ DETECTION_TASKS = {
 }
 
 
+def select_component_count_replay(
+    records: Iterable[dict[str, Any]],
+    *,
+    media_root: pathlib.Path,
+    max_count: int,
+    excluded_identities: set[str] | None = None,
+    allow_empty: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Select bounded real Component Count rows independently of KPI gap routing."""
+
+    if max_count <= 0:
+        raise ValueError("max_count must be positive")
+    media_root = media_root.expanduser().resolve()
+    excluded = {
+        str(pathlib.Path(value).expanduser().resolve())
+        for value in (excluded_identities or set())
+    }
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    excluded_previously_mined = 0
+    examined = 0
+    for index, record in enumerate(records):
+        if record.get("task_type") != "Component Count":
+            continue
+        examined += 1
+        prompt_and_response(record, context=f"component-count record[{index}]")
+        filepath = target_path(record, context=f"component-count record[{index}]")
+        identity = str(resolve_image(filepath, media_root))
+        if identity in excluded:
+            excluded_previously_mined += 1
+            continue
+        if identity in seen:
+            continue
+        seen.add(identity)
+        selected.append(
+            {
+                "filepath": filepath,
+                "route_tier": "count_replay",
+                "route_tiers": ["count_replay"],
+                "routed_task_types": ["Component Count"],
+                "count_record_id": record.get("id"),
+            }
+        )
+        if len(selected) >= max_count:
+            break
+    if not selected and not allow_empty:
+        raise ValueError("no eligible Component Count replay examples were found")
+    summary = {
+        "schema_version": "component_count_replay_v1",
+        "policy": "bounded_real_mining_replay",
+        "requested_component_count": max_count,
+        "selected_component_count": len(selected),
+        "examined_component_count_records": examined,
+        "excluded_previously_mined": excluded_previously_mined,
+    }
+    if not selected:
+        summary["empty_reason"] = "eligible_tier_exhausted"
+    return selected, summary
+
+
 def _json_answer(text: str, *, context: str) -> Any:
     value = text.strip()
     if value.startswith("```"):

@@ -330,6 +330,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     prompt_variant = getattr(args, "prompt_variant", "official_v1")
     if prompt_variant != "official_v1":
         raise ValueError(f"unsupported prompt variant {prompt_variant!r}")
+    requested_kpi_profile = getattr(args, "kpi_profile", "f1_cohort_balanced_v1")
     kpi_profile = "f1_cohort_balanced_v1"
     gap_analysis = _resolve_gap_analysis(args, annotation_profile)
     contract = _metric_contract(
@@ -360,7 +361,11 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     global_batch = (
         args.micro_batch_per_rank * args.num_gpus * args.gradient_accumulation
     )
-    learning_rate = 1.0e-6 * global_batch / 512
+    learning_rate = (
+        args.learning_rate * global_batch / 512
+        if args.learning_rate_policy == "linear_global_batch"
+        else args.learning_rate
+    )
     return {
         "version": 7,
         "workflow": WORKFLOW,
@@ -407,6 +412,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             },
             "kpi": {
                 "profile": kpi_profile,
+                "requested_profile": requested_kpi_profile,
                 "component_threshold": args.kpi_threshold,
                 "evaluator": str(evaluator),
                 "evaluator_sha256": _sha256(evaluator),
@@ -450,7 +456,12 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "gradient_accumulation": args.gradient_accumulation,
                 "global_batch": global_batch,
                 "base_global_batch": 512,
-                "learning_rate_scaling": "linear_from_global_batch_512",
+                "minimum_global_batch": args.minimum_global_batch,
+                "learning_rate_scaling": (
+                    "linear_from_global_batch_512"
+                    if args.learning_rate_policy == "linear_global_batch"
+                    else "fixed"
+                ),
                 "optimizer": {
                     "name": "AdamW",
                     "fused": True,
@@ -471,6 +482,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "pool_budget_unit": "unique_target_image",
                 "max_training_rows_per_iteration": args.max_training_rows_per_iteration,
                 "calibration_policy": "empty_and_few_box_from_mining",
+                "component_count_replay_per_iteration": args.component_count_replay_per_iteration,
                 "top_k_scope": (
                     "target" if mining_router_mode == "image_only" else "target_task"
                 ),
@@ -530,6 +542,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--platform", required=True)
     parser.add_argument("--max-iterations", required=True, type=int)
     parser.add_argument("--kpi-threshold", type=float, default=0.8)
+    parser.add_argument(
+        "--kpi-profile",
+        choices=("f1_cohort_balanced_v1", "task_balanced_v1"),
+        default="f1_cohort_balanced_v1",
+        help="task_balanced_v1 is an alias for the packaged f1_cohort_balanced_v1 contract.",
+    )
     parser.add_argument("--prompt-variant", default="official_v1")
     parser.add_argument("--evaluator", type=pathlib.Path)
     gap_choice = parser.add_mutually_exclusive_group()
@@ -576,10 +594,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs-per-iteration", type=int, default=5)
     parser.add_argument("--micro-batch-per-rank", type=int, default=4)
     parser.add_argument("--gradient-accumulation", type=int, default=16)
+    parser.add_argument("--learning-rate", type=float, default=1.0e-6)
+    parser.add_argument(
+        "--learning-rate-policy",
+        choices=("linear_global_batch", "fixed"),
+        default="linear_global_batch",
+    )
+    parser.add_argument("--minimum-global-batch", type=int, default=512)
     parser.add_argument("--top-k-per-target", type=int, default=5)
     parser.add_argument("--max-training-rows-per-iteration", type=int, default=20_000)
     parser.add_argument("--mining-pool-fraction-cap", type=float, default=1.0)
     parser.add_argument("--min-similarity", type=float, default=0.9)
+    parser.add_argument("--component-count-replay-per-iteration", type=int, default=0)
     parser.add_argument(
         "--mining-router-mode",
         choices=MINING_ROUTER_MODES,
@@ -642,6 +668,15 @@ def main(argv: list[str] | None = None) -> int:
     if not 0.0 < args.kpi_threshold <= 1.0:
         print("init_deft_state: --kpi-threshold must be in (0, 1]", file=sys.stderr)
         return 2
+    if args.learning_rate <= 0:
+        print("init_deft_state: --learning-rate must be positive", file=sys.stderr)
+        return 2
+    if args.minimum_global_batch < 0 or args.component_count_replay_per_iteration < 0:
+        print(
+            "init_deft_state: minimum global batch and Component Count replay must be non-negative",
+            file=sys.stderr,
+        )
+        return 2
     if not -1.0 <= args.min_similarity <= 1.0:
         print("init_deft_state: --min-similarity must be in [-1, 1]", file=sys.stderr)
         return 2
@@ -659,10 +694,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if (
         args.recipe_profile == "full"
-        and args.micro_batch_per_rank * args.num_gpus * args.gradient_accumulation < 512
+        and args.micro_batch_per_rank * args.num_gpus * args.gradient_accumulation
+        < args.minimum_global_batch
     ):
         print(
-            "init_deft_state: full recipe effective global batch must be at least 512",
+            "init_deft_state: full recipe effective global batch is below the configured floor",
             file=sys.stderr,
         )
         return 2

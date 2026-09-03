@@ -27,6 +27,19 @@ DEFAULT_GRAD_ACCUMULATION = 16
 DEFAULT_EPOCHS_PER_ITERATION = 5
 BASE_GLOBAL_BATCH = 512
 BASE_LEARNING_RATE = 1.0e-6
+LEARNING_RATE_POLICIES = ("linear_global_batch", "fixed")
+
+
+def _resolve_learning_rate(
+    *, base_learning_rate: float, global_batch: int, policy: str
+) -> float:
+    if base_learning_rate <= 0:
+        raise ValueError("learning_rate must be positive")
+    if policy == "linear_global_batch":
+        return base_learning_rate * global_batch / BASE_GLOBAL_BATCH
+    if policy == "fixed":
+        return base_learning_rate
+    raise ValueError(f"unsupported learning_rate_policy {policy!r}")
 
 
 def _full_training_schedule(
@@ -36,6 +49,9 @@ def _full_training_schedule(
     epochs_per_iteration: int,
     micro_batch_per_rank: int,
     gradient_accumulation: int,
+    learning_rate: float = BASE_LEARNING_RATE,
+    learning_rate_policy: str = "linear_global_batch",
+    minimum_global_batch: int = BASE_GLOBAL_BATCH,
 ) -> dict[str, int | float]:
     values = {
         "epochs_per_iteration": epochs_per_iteration,
@@ -46,9 +62,11 @@ def _full_training_schedule(
     if invalid:
         raise ValueError(f"positive training schedule values required: {invalid}")
     global_batch = num_gpus * micro_batch_per_rank * gradient_accumulation
-    if global_batch < BASE_GLOBAL_BATCH:
+    if minimum_global_batch < 0:
+        raise ValueError("minimum_global_batch must be non-negative")
+    if global_batch < minimum_global_batch:
         raise ValueError(
-            f"full profile global batch must be at least {BASE_GLOBAL_BATCH}; "
+            f"full profile global batch must be at least {minimum_global_batch}; "
             f"resolved {global_batch}"
         )
     if expected_rows % global_batch:
@@ -66,7 +84,11 @@ def _full_training_schedule(
         "steps_per_epoch": steps_per_epoch,
         "total_updates": total_updates,
         "global_batch": global_batch,
-        "learning_rate": BASE_LEARNING_RATE * global_batch / BASE_GLOBAL_BATCH,
+        "learning_rate": _resolve_learning_rate(
+            base_learning_rate=learning_rate,
+            global_batch=global_batch,
+            policy=learning_rate_policy,
+        ),
     }
 
 
@@ -138,6 +160,9 @@ def build_profile(
     epochs_per_iteration: int = DEFAULT_EPOCHS_PER_ITERATION,
     micro_batch_per_rank: int = DEFAULT_MICRO_BATCH_PER_RANK,
     gradient_accumulation: int = DEFAULT_GRAD_ACCUMULATION,
+    learning_rate: float = BASE_LEARNING_RATE,
+    learning_rate_policy: str = "linear_global_batch",
+    minimum_global_batch: int = BASE_GLOBAL_BATCH,
 ) -> dict[str, Any]:
     if profile not in {"full", "smoke"}:
         raise ValueError("profile must be full or smoke")
@@ -154,7 +179,11 @@ def build_profile(
     if min(epochs_per_iteration, micro_batch_per_rank, gradient_accumulation) <= 0:
         raise ValueError("epochs, micro-batch, and gradient accumulation must be positive")
     global_batch = selected_gpus * micro_batch_per_rank * gradient_accumulation
-    learning_rate = BASE_LEARNING_RATE * global_batch / BASE_GLOBAL_BATCH
+    resolved_learning_rate = _resolve_learning_rate(
+        base_learning_rate=learning_rate,
+        global_batch=global_batch,
+        policy=learning_rate_policy,
+    )
     if profile == "full":
         schedule = _full_training_schedule(
             expected_rows=expected_rows,
@@ -162,6 +191,9 @@ def build_profile(
             epochs_per_iteration=epochs_per_iteration,
             micro_batch_per_rank=micro_batch_per_rank,
             gradient_accumulation=gradient_accumulation,
+            learning_rate=learning_rate,
+            learning_rate_policy=learning_rate_policy,
+            minimum_global_batch=minimum_global_batch,
         )
         max_iter = int(schedule["total_updates"])
         steps_per_epoch = int(schedule["steps_per_epoch"])
@@ -210,7 +242,7 @@ def build_profile(
             "eps": 1.0e-8,
             "fused": True,
             "keys_to_select": [],
-            "lr": learning_rate,
+            "lr": resolved_learning_rate,
             "lr_multipliers": {"model.visual": 20.0},
             "weight_decay": 0.05,
         },
@@ -284,8 +316,15 @@ def build_profile(
             "gradient_accumulation": gradient_accumulation,
             "global_batch": global_batch,
             "base_global_batch": BASE_GLOBAL_BATCH,
-            "base_learning_rate": BASE_LEARNING_RATE,
-            "learning_rate_scaling": "linear_from_global_batch_512",
+            "base_learning_rate": learning_rate,
+            "learning_rate": resolved_learning_rate,
+            "learning_rate_policy": learning_rate_policy,
+            "minimum_global_batch": minimum_global_batch,
+            "learning_rate_scaling": (
+                "linear_from_global_batch_512"
+                if learning_rate_policy == "linear_global_batch"
+                else "fixed"
+            ),
         },
         "results_dir": results_dir,
         "hydra_overrides": hydra_overrides,
@@ -309,7 +348,11 @@ def validate_profile(descriptor: dict[str, Any], *, profile: str) -> None:
     if optimizer.get("keys_to_select") != []:
         raise ValueError("CFW profile must use full-parameter tuning")
     data = descriptor.get("data", {})
-    expected_lr = BASE_LEARNING_RATE * data.get("global_batch", 0) / BASE_GLOBAL_BATCH
+    expected_lr = _resolve_learning_rate(
+        base_learning_rate=data.get("base_learning_rate", 0),
+        global_batch=data.get("global_batch", 0),
+        policy=data.get("learning_rate_policy", "linear_global_batch"),
+    )
     if optimizer.get("lr") != expected_lr or optimizer.get("weight_decay") != 0.05:
         raise ValueError("CFW profile optimizer differs from the reviewed recipe")
     if optimizer.get("betas") != [0.9, 0.999] or optimizer.get("fused") is not True:
@@ -357,8 +400,11 @@ def validate_profile(descriptor: dict[str, Any], *, profile: str) -> None:
             raise ValueError("full CFW profile must retain only the final epoch checkpoint")
         if scheduler.get("cycle_lengths") != [total_updates]:
             raise ValueError("full CFW scheduler must span the epoch-derived update count")
-        if data.get("global_batch", 0) < BASE_GLOBAL_BATCH:
-            raise ValueError("full CFW global batch is below the 512 floor")
+        minimum_global_batch = data.get("minimum_global_batch", BASE_GLOBAL_BATCH)
+        if not isinstance(minimum_global_batch, int) or minimum_global_batch < 0:
+            raise ValueError("full CFW minimum global batch is invalid")
+        if data.get("global_batch", 0) < minimum_global_batch:
+            raise ValueError("full CFW global batch is below the configured floor")
     rendered = dump_toml(config)
     tomllib.loads(rendered)
 
@@ -394,6 +440,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--epochs-per-iteration", type=int, default=DEFAULT_EPOCHS_PER_ITERATION)
     parser.add_argument("--micro-batch-per-rank", type=int, default=DEFAULT_MICRO_BATCH_PER_RANK)
     parser.add_argument("--gradient-accumulation", type=int, default=DEFAULT_GRAD_ACCUMULATION)
+    parser.add_argument("--learning-rate", type=float, default=BASE_LEARNING_RATE)
+    parser.add_argument(
+        "--learning-rate-policy",
+        choices=LEARNING_RATE_POLICIES,
+        default="linear_global_batch",
+    )
+    parser.add_argument("--minimum-global-batch", type=int, default=BASE_GLOBAL_BATCH)
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--descriptor-output", type=pathlib.Path, required=True)
     args = parser.parse_args(argv)
@@ -414,6 +467,9 @@ def main(argv: list[str] | None = None) -> int:
             epochs_per_iteration=args.epochs_per_iteration,
             micro_batch_per_rank=args.micro_batch_per_rank,
             gradient_accumulation=args.gradient_accumulation,
+            learning_rate=args.learning_rate,
+            learning_rate_policy=args.learning_rate_policy,
+            minimum_global_batch=args.minimum_global_batch,
         )
         _atomic_text(args.output.expanduser().resolve(), dump_toml(descriptor["config"]))
         _atomic_text(

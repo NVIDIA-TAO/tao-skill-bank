@@ -10,6 +10,13 @@ from typing import Any
 
 
 TASK_SPECS: dict[str, dict[str, Any]] = {
+    "Component Count": {
+        "metric_family": "counting",
+        "reference_cohort": "non_reference_based",
+        "image_roles": ("target",),
+        "prompt_format": "nvpaw.component_count.single.official_v1",
+        "mining": True,
+    },
     "Component Classification": {
         "metric_family": "classification",
         "reference_cohort": "non_reference_based",
