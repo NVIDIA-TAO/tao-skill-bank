@@ -1691,6 +1691,9 @@ def test_omni_conversion_uses_platform_checkpoint_storage_and_rebinds_training_m
     )
     assert plan["prepared_model_container_path"] != str(source)
     assert preparation["preparation_sqsh_path"] == args.sqsh_path
+    assert "--backend cosmos-framework" in preparation["platform_action"][
+        "container_command"
+    ]
     workflow.write_spec(args, plan)
     workflow.verify_model_preparation_helper(args, plan)
     args.tao_job_id = "cosmos-reason-train-omni-prepare"
@@ -1780,6 +1783,31 @@ def test_checkpoint_preparation_targets_the_requested_output_directory(tmp_path)
     assert f"{output.parent}:/output" in command
 
 
+def test_framework_checkpoint_preparation_uses_native_converter(tmp_path):
+    output = tmp_path / "checkpoints" / "prepared" / "fingerprint"
+    cache = tmp_path / "cache"
+    output.parent.mkdir(parents=True)
+    cache.mkdir()
+    source = tmp_path / "source"
+    donor = tmp_path / "donor"
+    source.mkdir()
+    donor.mkdir()
+    args = SimpleNamespace(
+        backend="cosmos-framework",
+        base_model_path_or_uri=str(source),
+        base_model_revision="",
+        vlm_architecture_model_path_or_uri=str(donor),
+        vlm_architecture_model_revision="",
+        runtime_image="example/cosmos-framework:test",
+    )
+
+    command = checkpoint_preparation.command(args, output, cache)
+    shell = command[-1]
+
+    assert "python -m cosmos_framework.scripts.convert_model_to_vlm_safetensors" in shell
+    assert "cosmos_rl" not in shell
+
+
 def test_sqsh_model_preparation_contract_reports_only_missing_entries(monkeypatch):
     results = iter(
         [
@@ -1815,6 +1843,33 @@ def test_sqsh_model_preparation_contract_reports_only_missing_entries(monkeypatc
         "cosmos_rl/model_preparation/vlm_safetensors.py",
         "opt/tao/framework-converter-runtime.json",
     ]
+
+
+def test_framework_sqsh_preparation_requires_only_native_converter(monkeypatch):
+    result = SimpleNamespace(returncode=0, stdout="", stderr="")
+    commands = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        return result
+
+    monkeypatch.setattr(workflow.subprocess, "run", fake_run)
+    args = SimpleNamespace(
+        ssh_key_path="/tmp/key",
+        slurm_user="user",
+        ssh_option=[],
+    )
+
+    assert workflow._remote_sqsh_missing_entries(
+        args,
+        path="/shared/cosmos-framework.sqsh",
+        host="login.example",
+        entries=workflow.FRAMEWORK_MODEL_PREPARATION_SQSH_ENTRIES,
+    ) == []
+    command = commands[0][-1]
+    assert "cosmos_framework/scripts/convert_model_to_vlm_safetensors.py" in command
+    assert "cosmos_rl/model_preparation" not in command
+    assert "framework-converter-runtime.json" not in command
 
 
 def test_sqsh_model_preparation_contract_rejects_presence_only_attestation(
