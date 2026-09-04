@@ -57,6 +57,28 @@ class Cosmos3RenderCfwSftContractTests(unittest.TestCase):
             descriptor["hydra_overrides"],
         )
 
+    def test_full_profile_renders_required_exp40_photometric_augmentation(self) -> None:
+        descriptor = self._full()
+        config = descriptor["config"]
+        expected = {
+            "enabled": True,
+            "seed": 314159,
+            "same_on_all_images": True,
+            "color_jitter_probability": 0.5,
+            "brightness": 0.1,
+            "contrast": 0.1,
+            "saturation": 0.1,
+            "hue": 0.02,
+            "random_crop_probability": 0.0,
+            "horizontal_flip_probability": 0.0,
+            "vertical_flip_probability": 0.0,
+            "text_media_order_probability": 0.0,
+        }
+
+        self.assertEqual(config["augmentation"], expected)
+        parsed = tomllib.loads(render_cfw_sft.dump_toml(config))
+        self.assertEqual(parsed["augmentation"], expected)
+
     def test_toml_omits_literal_multiplier_owned_by_python_adapter(self) -> None:
         descriptor = self._full()
 

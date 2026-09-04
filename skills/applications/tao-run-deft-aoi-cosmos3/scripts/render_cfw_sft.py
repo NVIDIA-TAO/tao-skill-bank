@@ -28,6 +28,20 @@ DEFAULT_EPOCHS_PER_ITERATION = 5
 BASE_GLOBAL_BATCH = 512
 BASE_LEARNING_RATE = 1.0e-6
 LEARNING_RATE_POLICIES = ("linear_global_batch", "fixed")
+EXP40_PHOTOMETRIC_AUGMENTATION = {
+    "enabled": True,
+    "seed": 314159,
+    "same_on_all_images": True,
+    "color_jitter_probability": 0.5,
+    "brightness": 0.1,
+    "contrast": 0.1,
+    "saturation": 0.1,
+    "hue": 0.02,
+    "random_crop_probability": 0.0,
+    "horizontal_flip_probability": 0.0,
+    "vertical_flip_probability": 0.0,
+    "text_media_order_probability": 0.0,
+}
 
 
 def _resolve_learning_rate(
@@ -270,6 +284,7 @@ def build_profile(
             "save_freq_in_epoch": save_freq_in_epoch,
             "dcp_async_mode_enabled": False,
         },
+        "augmentation": dict(EXP40_PHOTOMETRIC_AUGMENTATION),
     }
     if profile == "full":
         config["trainer"]["num_epochs"] = epochs_per_iteration
@@ -340,6 +355,7 @@ def validate_profile(descriptor: dict[str, Any], *, profile: str) -> None:
     trainer = config.get("trainer", {})
     checkpoint = config.get("checkpoint", {})
     scheduler = config.get("scheduler", {})
+    augmentation = config.get("augmentation", {})
     parallelism = model.get("parallelism", {})
     if config.get("job", {}).get("experiment") != "nvpaw_omni_vlm_sft":
         raise ValueError("CFW profile must select nvpaw_omni_vlm_sft")
@@ -373,6 +389,8 @@ def validate_profile(descriptor: dict[str, Any], *, profile: str) -> None:
         raise ValueError("CFW profile must use synchronous DCP")
     if checkpoint.get("keys_to_skip_loading") != []:
         raise ValueError("CFW DCP resume must restore all keys")
+    if augmentation != EXP40_PHOTOMETRIC_AUGMENTATION:
+        raise ValueError("CFW augmentation differs from the exp40 photometric recipe")
     if descriptor.get("freeze") != {
         "vision_encoder": True,
         "multimodal_projector": False,

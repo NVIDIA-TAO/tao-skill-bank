@@ -54,6 +54,9 @@ def install_checkpoint_memory_release_hook() -> None:
 
 
 def main() -> None:
+    from .augmentation import install_augmentation_toml_hook
+
+    install_augmentation_toml_hook()
     install_registration_hook()
     install_checkpoint_memory_release_hook()
     runpy.run_module("cosmos_framework.scripts.train", run_name="__main__")

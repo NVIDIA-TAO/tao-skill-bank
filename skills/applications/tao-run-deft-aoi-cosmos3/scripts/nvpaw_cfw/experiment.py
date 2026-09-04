@@ -6,6 +6,7 @@ import copy
 
 from .dataset import NVPAWJsonlDataset
 from .distributor import NVPAWMapDistributor
+from .augmentation import NVPAWPhotometricAugmentation
 from .processor import runtime_processor_class
 
 
@@ -88,6 +89,7 @@ def register_experiment() -> None:
             model_max_length=4096,
             max_retries=50,
             resample_seed=271828,
+            augmentation=L(NVPAWPhotometricAugmentation)(),
         ),
         batcher=L(SimpleBatcher)(batch_size=4, drop_last=True),
         collator=L(VLMCollator)(),

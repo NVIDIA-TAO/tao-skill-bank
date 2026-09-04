@@ -64,14 +64,18 @@ class NVPAWResamplingProcessor(VideoPhy2Processor):
         model_max_length: int = 4096,
         max_retries: int = 50,
         resample_seed: int = 271828,
+        augmentation: Any | None = None,
     ) -> None:
         super().__init__(processor=processor, ignore_index=ignore_index)
         if max_retries < 2:
             raise ValueError("max_retries must be at least 2")
+        if augmentation is not None and not callable(augmentation):
+            raise TypeError("augmentation must be callable")
         self._resample_dataset = resample_dataset
         self._model_max_length = int(model_max_length)
         self._max_retries = int(max_retries)
         self._resample_seed = int(resample_seed)
+        self._augmentation = augmentation
         self._replacement_count = 0
 
     def _tokenize(self, item: dict[str, Any]) -> dict[str, Any]:
@@ -104,6 +108,15 @@ class NVPAWResamplingProcessor(VideoPhy2Processor):
                 image_part["image"] = decoded[key]
                 rewritten.append(image_part)
             messages.append({**message, "content": rewritten})
+        if self._augmentation is not None:
+            augmented = self._augmentation(
+                {
+                    "conversation": messages,
+                    "_nvpaw_source_index": int(item["_nvpaw_source_index"]),
+                    "_nvpaw_epoch": int(item.get("_nvpaw_epoch", 0)),
+                }
+            )
+            messages = augmented["conversation"]
         inputs = self._processor.apply_chat_template(
             messages, tokenize=True, add_generation_prompt=False
         )
