@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import pathlib
 import posixpath
@@ -181,6 +182,8 @@ def select_novel_samples(
     topn: int,
     filepath_column: str = "filepath",
     resume: bool = False,
+    pool_size: int | None = None,
+    max_cumulative_fraction: float | None = None,
 ) -> dict[str, Any]:
     """Write the current iteration's novel candidates and append the ledger."""
     try:
@@ -197,6 +200,19 @@ def select_novel_samples(
         raise ValueError("iteration must be >= 1")
     if topn < 1:
         raise ValueError("topn must be >= 1")
+    if (pool_size is None) != (max_cumulative_fraction is None):
+        raise ValueError(
+            "pool_size and max_cumulative_fraction must be supplied together"
+        )
+    cumulative_budget_cap: int | None = None
+    if pool_size is not None and max_cumulative_fraction is not None:
+        if type(pool_size) is not int or pool_size <= 0:
+            raise ValueError("pool_size must be a positive integer")
+        if not 0.0 < max_cumulative_fraction <= 1.0:
+            raise ValueError("max_cumulative_fraction must be in (0, 1]")
+        cumulative_budget_cap = math.floor(pool_size * max_cumulative_fraction)
+        if cumulative_budget_cap < 1:
+            raise ValueError("the cumulative mining budget must permit at least one sample")
     if candidate_parquet == output_parquet:
         raise ValueError("candidate and output parquet paths must differ")
     if not candidate_parquet.is_file():
@@ -206,6 +222,19 @@ def select_novel_samples(
 
     state = _validated_history(history_file, iteration)
     entries: list[dict[str, Any]] = state["iterations"]
+    recorded_cap = state.get("cumulative_budget_cap")
+    if entries and recorded_cap is not None and cumulative_budget_cap is None:
+        raise ValueError("the existing mining history requires its cumulative budget inputs")
+    if entries and recorded_cap != cumulative_budget_cap:
+        raise ValueError("cumulative mining budget differs from the existing history")
+    if not entries and cumulative_budget_cap is not None:
+        state.update(
+            {
+                "pool_size": pool_size,
+                "max_cumulative_fraction": max_cumulative_fraction,
+                "cumulative_budget_cap": cumulative_budget_cap,
+            }
+        )
     committed = next(
         (entry for entry in entries if int(entry["iteration"]) == iteration), None
     )
@@ -263,6 +292,13 @@ def select_novel_samples(
         selected_names.append(identity)
         selected_indices.append(index)
 
+    budget_excluded_count = 0
+    if cumulative_budget_cap is not None:
+        remaining_budget = max(0, cumulative_budget_cap - len(historical))
+        budget_excluded_count = max(0, len(selected_names) - remaining_budget)
+        selected_names = selected_names[:remaining_budget]
+        selected_indices = selected_indices[:remaining_budget]
+
     filtered = table.take(pa.array(selected_indices, type=pa.int64()))
     _atomic_parquet(filtered, output_parquet)
 
@@ -270,7 +306,9 @@ def select_novel_samples(
         already_mined_count / len(candidate_seen) if candidate_seen else 0.0
     )
     recommendation = None
-    if not selected_names and candidate_seen:
+    if cumulative_budget_cap is not None and len(historical) >= cumulative_budget_cap:
+        recommendation = "the configured cumulative mining-pool budget is exhausted"
+    elif not selected_names and candidate_seen:
         recommendation = (
             "all candidates were selected in earlier iterations; increase topn "
             "or expand the source pool"
@@ -295,6 +333,10 @@ def select_novel_samples(
         "historical_candidate_rate": historical_candidate_rate,
         "selected_count": len(selected_names),
         "cumulative_unique_count": len(historical) + len(selected_names),
+        "pool_size": pool_size,
+        "max_cumulative_fraction": max_cumulative_fraction,
+        "cumulative_budget_cap": cumulative_budget_cap,
+        "budget_excluded_count": budget_excluded_count,
         "output_parquet": str(output_parquet),
         "output_sha256": _sha256(output_parquet),
         "recommendation": recommendation,
@@ -331,6 +373,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--iteration", required=True, type=int)
     parser.add_argument("--topn", required=True, type=int)
     parser.add_argument("--filepath-column", default="filepath")
+    parser.add_argument("--pool-size", type=int)
+    parser.add_argument("--max-cumulative-fraction", type=float)
     parser.add_argument("--resume", action="store_true")
     return parser
 
@@ -347,6 +391,8 @@ def main(argv: list[str] | None = None) -> int:
             topn=args.topn,
             filepath_column=args.filepath_column,
             resume=args.resume,
+            pool_size=args.pool_size,
+            max_cumulative_fraction=args.max_cumulative_fraction,
         )
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         print(f"filter_mined_history: {exc}", file=sys.stderr)

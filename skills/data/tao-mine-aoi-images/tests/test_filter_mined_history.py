@@ -42,6 +42,8 @@ class HistoryAwareMiningTests(unittest.TestCase):
         *,
         topn: int = 5,
         resume: bool = False,
+        pool_size: int | None = None,
+        max_cumulative_fraction: float | None = None,
     ) -> tuple[dict, pathlib.Path]:
         candidate = write_candidates(root / f"iter{iteration}/candidates.parquet", values)
         output = root / f"iter{iteration}/mined.parquet"
@@ -54,6 +56,8 @@ class HistoryAwareMiningTests(unittest.TestCase):
             iteration=iteration,
             topn=topn,
             resume=resume,
+            pool_size=pool_size,
+            max_cumulative_fraction=max_cumulative_fraction,
         )
         return payload, output
 
@@ -136,6 +140,34 @@ class HistoryAwareMiningTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "candidate_parquet hash mismatch"):
                 self.select(root, 1, ["different.png"], resume=True)
+
+    def test_cumulative_selection_is_hard_capped_by_pool_fraction(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            first, first_output = self.select(
+                root,
+                1,
+                ["a.png", "b.png", "c.png", "d.png"],
+                pool_size=6,
+                max_cumulative_fraction=0.5,
+            )
+            second, second_output = self.select(
+                root,
+                2,
+                ["e.png", "f.png"],
+                pool_size=6,
+                max_cumulative_fraction=0.5,
+            )
+
+            self.assertEqual(first["cumulative_budget_cap"], 3)
+            self.assertEqual(first["selected_count"], 3)
+            self.assertEqual(
+                pq.read_table(first_output)["filepath"].to_pylist(),
+                ["a.png", "b.png", "c.png"],
+            )
+            self.assertEqual(first["budget_excluded_count"], 1)
+            self.assertEqual(second["selected_count"], 0)
+            self.assertEqual(pq.read_table(second_output).num_rows, 0)
 
 
 if __name__ == "__main__":
