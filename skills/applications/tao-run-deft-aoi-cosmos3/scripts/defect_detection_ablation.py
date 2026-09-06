@@ -293,7 +293,7 @@ def _quota_payload(
 
 
 def _balanced_positive_selection(
-    entries: list[dict[str, Any]], target: int
+    entries: list[dict[str, Any]], target: int, *, max_novel: int
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not entries or target <= 0:
         return [], {
@@ -322,7 +322,16 @@ def _balanced_positive_selection(
     counts = {name: Counter() for name, _, _ in margins}
     remaining = list(entries)
     selected: list[dict[str, Any]] = []
+    novel_count = 0
     while remaining and len(selected) < target:
+        eligible = [
+            item
+            for item in remaining
+            if item["is_replay"] or novel_count < max_novel
+        ]
+        if not eligible:
+            break
+
         def priority(item: dict[str, Any]) -> tuple[Any, ...]:
             deficit = 0.0
             for name, field, _ in margins:
@@ -331,11 +340,18 @@ def _balanced_positive_selection(
                     quota = max(1, requested.get(stratum, 0))
                     deficit += max(0, quota - counts[name][stratum]) / quota
             evidence_rank = 0 if "hard_positive_proxy_false_negative" in item["evidence"] else 1
-            return (-deficit, evidence_rank, -item["similarity"], item["record_id"])
+            return (
+                -deficit,
+                item["is_replay"],
+                evidence_rank,
+                -item["similarity"],
+                item["record_id"],
+            )
 
-        chosen = min(remaining, key=priority)
+        chosen = min(eligible, key=priority)
         remaining.remove(chosen)
         selected.append(chosen)
+        novel_count += not chosen["is_replay"]
         for name, field, _ in margins:
             counts[name].update(chosen[field])
     quota_report = {
@@ -345,24 +361,40 @@ def _balanced_positive_selection(
     return selected, quota_report
 
 
-def _task_balanced(entries: list[dict[str, Any]], target: int) -> list[dict[str, Any]]:
+def _task_balanced(
+    entries: list[dict[str, Any]], target: int, *, max_novel: int
+) -> list[dict[str, Any]]:
     groups = {
         task: sorted(
             (item for item in entries if item["task_type"] == task),
-            key=lambda item: (-item["similarity"], item["record_id"]),
+            key=lambda item: (
+                item["is_replay"],
+                -item["similarity"],
+                item["record_id"],
+            ),
         )
         for task in MAINTENANCE_TASK_TYPES
     }
     selected: list[dict[str, Any]] = []
+    novel_count = 0
     positions = Counter()
     while len(selected) < target:
         advanced = False
         for task in MAINTENANCE_TASK_TYPES:
             position = positions[task]
+            while (
+                position < len(groups[task])
+                and not groups[task][position]["is_replay"]
+                and novel_count >= max_novel
+            ):
+                position += 1
+            positions[task] = position
             if position >= len(groups[task]):
                 continue
-            selected.append(groups[task][position])
-            positions[task] += 1
+            chosen = groups[task][position]
+            selected.append(chosen)
+            novel_count += not chosen["is_replay"]
+            positions[task] = position + 1
             advanced = True
             if len(selected) == target:
                 break
@@ -405,8 +437,11 @@ def _validation_identities(
     fingerprints: set[str] = set()
     for record in records:
         path = resolve_image(target_path(record, context="validation"), media_root)
-        paths.add(str(path))
         fingerprints.add(_record_fingerprint(record))
+        path_text = str(path)
+        if path_text in paths:
+            continue
+        paths.add(path_text)
         if path.is_file():
             content.add(_sha256(path))
             phashes.add(_perceptual_hash(path))
@@ -426,6 +461,7 @@ def materialize(
     epochs: int,
     global_batch: int,
     near_duplicate_hamming_distance: int,
+    novel_image_limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if min(max_rows, row_multiple, epochs, global_batch) <= 0:
         raise ValueError("row, epoch, and global-batch values must be positive")
@@ -443,6 +479,10 @@ def materialize(
     dd_target = math.ceil(target_rows * defect_detection_fraction)
     empty_target = math.floor(dd_target * proxy_empty_rate + 0.5)
     positive_target = dd_target - empty_target
+    if novel_image_limit is None:
+        novel_image_limit = target_rows
+    if not 0 <= novel_image_limit <= target_rows:
+        raise ValueError("novel_image_limit must be in [0, target_rows]")
 
     media_root = media_root.expanduser().resolve()
     by_path: dict[str, list[dict[str, Any]]] = {}
@@ -507,6 +547,7 @@ def materialize(
                 "perceptual_hash": phash,
                 "similarity": float(candidate.get("max_cosine_similarity", 0.0)),
                 "evidence": evidence,
+                "is_replay": bool(candidate.get("is_replay", False)),
             }
             if task == DEFECT_DETECTION_TASK:
                 objects = _ground_truth_objects(record)
@@ -551,18 +592,40 @@ def materialize(
             item["area_strata"] = [item["area_quartile"]]
             item["contrast_strata"] = [item["contrast_quartile"]]
 
-    empty.sort(key=lambda item: (-item["similarity"], item["record_id"]))
-    selected_empty = _without_visual_duplicates(
+    # Prefer newly mined examples within every quota.  Previously selected rows
+    # remain eligible as bounded replay so iteration 5 can reach the requested
+    # corpus size without violating the cumulative 50% mining-pool cap.
+    empty.sort(
+        key=lambda item: (
+            item["is_replay"],
+            -item["similarity"],
+            item["record_id"],
+        )
+    )
+    eligible_empty = _without_visual_duplicates(
         empty, selected=[], hamming_distance=near_duplicate_hamming_distance, counters=counters
-    )[:empty_target]
+    )
+    selected_empty: list[dict[str, Any]] = []
+    empty_novel_limit = min(empty_target, novel_image_limit)
+    empty_novel_count = 0
+    for item in eligible_empty:
+        if not item["is_replay"] and empty_novel_count >= empty_novel_limit:
+            continue
+        selected_empty.append(item)
+        empty_novel_count += not item["is_replay"]
+        if len(selected_empty) == empty_target:
+            break
     positive_unique = _without_visual_duplicates(
         positive,
         selected=selected_empty,
         hamming_distance=near_duplicate_hamming_distance,
         counters=counters,
     )
+    selected_empty_novel = empty_novel_count
     selected_positive, marginal_quotas = _balanced_positive_selection(
-        positive_unique, positive_target
+        positive_unique,
+        positive_target,
+        max_novel=min(positive_target, novel_image_limit - selected_empty_novel),
     )
     selected_dd = selected_empty + selected_positive
     maintenance_unique = _without_visual_duplicates(
@@ -571,8 +634,11 @@ def materialize(
         hamming_distance=near_duplicate_hamming_distance,
         counters=counters,
     )
+    selected_dd_novel = sum(not item["is_replay"] for item in selected_dd)
     selected_maintenance = _task_balanced(
-        maintenance_unique, target_rows - len(selected_dd)
+        maintenance_unique,
+        target_rows - len(selected_dd),
+        max_novel=novel_image_limit - selected_dd_novel,
     )
     selected_entries = selected_dd + selected_maintenance
     selected_records = [item["record"] for item in selected_entries]
@@ -588,6 +654,7 @@ def materialize(
         verification_index.add(phash)
     selected_empty_count = len(selected_empty)
     selected_positive_count = len(selected_positive)
+    selected_replay_count = sum(item["is_replay"] for item in selected_entries)
     row_count = len(selected_entries)
     expected_steps = row_count // global_batch * epochs if row_count % global_batch == 0 else None
     maintenance_target = target_rows - dd_target
@@ -606,6 +673,7 @@ def materialize(
         "unique_image_content": len(selected_content) == row_count,
         "near_duplicate_free": near_duplicate_pairs == 0,
         "optimizer_boundary_aligned": expected_steps is not None,
+        "novel_image_limit_respected": row_count - selected_replay_count <= novel_image_limit,
         "task_strict_only": counters["non_strict_routes_excluded"] >= 0,
         "all_five_maintenance_tasks_present": all(
             maintenance_selected[task] > 0 for task in MAINTENANCE_TASK_TYPES
@@ -621,6 +689,7 @@ def materialize(
             "target_rows_after_global_batch_alignment": target_rows,
             "defect_detection_minimum_fraction": defect_detection_fraction,
             "near_duplicate_hamming_distance": near_duplicate_hamming_distance,
+            "novel_mining_pool_image_limit": novel_image_limit,
             "annotation_profile": "nvpaw_multitask_v1",
             "prompt_variant": "official_v1",
             "box_serialization_policy": "corpus_native_unmodified",
@@ -636,6 +705,8 @@ def materialize(
             "maintenance": len(selected_maintenance),
             "maintenance_target": maintenance_target,
             "by_task": dict(sorted(tasks.items())),
+            "novel_mining_pool_images": row_count - selected_replay_count,
+            "replayed_mining_pool_images": selected_replay_count,
         },
         "maintenance_task_types": list(MAINTENANCE_TASK_TYPES),
         "maintenance_marginal_quota": {
@@ -774,6 +845,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--epochs", required=True, type=int)
     parser.add_argument("--global-batch", required=True, type=int)
     parser.add_argument("--near-duplicate-hamming-distance", default=3, type=int)
+    parser.add_argument("--novel-image-limit", type=int)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--manifest", required=True, type=pathlib.Path)
     args = parser.parse_args(argv)
@@ -795,6 +867,7 @@ def main(argv: list[str] | None = None) -> int:
             epochs=args.epochs,
             global_batch=args.global_batch,
             near_duplicate_hamming_distance=args.near_duplicate_hamming_distance,
+            novel_image_limit=args.novel_image_limit,
         )
         manifest["empty_ground_truth"]["proxy_empty_rows"] = proxy_empty
         manifest["empty_ground_truth"]["proxy_defect_detection_rows"] = proxy_rows

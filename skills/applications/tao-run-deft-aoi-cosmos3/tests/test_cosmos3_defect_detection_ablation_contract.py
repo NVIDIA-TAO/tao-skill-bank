@@ -70,7 +70,13 @@ def _row(
     }
 
 
-def _candidate(record: dict, *, evidence: list[str] | None = None, phash: str) -> dict:
+def _candidate(
+    record: dict,
+    *,
+    evidence: list[str] | None = None,
+    phash: str,
+    is_replay: bool = False,
+) -> dict:
     image = [
         item["image"]
         for item in record["messages"][0]["content"]
@@ -84,6 +90,7 @@ def _candidate(record: dict, *, evidence: list[str] | None = None, phash: str) -
         "perceptual_hash": phash,
         "local_contrast": (int(phash, 16) % 100) / 100.0,
         "max_cosine_similarity": 0.99,
+        "is_replay": is_replay,
     }
 
 
@@ -178,12 +185,69 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
         self.assertEqual(counts["total"], 24)
         self.assertEqual(counts["defect_detection"], 12)
         self.assertEqual(counts["maintenance"], 12)
+        self.assertEqual(counts["novel_mining_pool_images"], 24)
+        self.assertEqual(counts["replayed_mining_pool_images"], 0)
         self.assertEqual(counts["by_task"]["Component Detection"], 3)
         self.assertEqual(manifest["empty_ground_truth"]["selected_empty"], 4)
         self.assertEqual(manifest["empty_ground_truth"]["selected_non_empty"], 8)
         self.assertAlmostEqual(manifest["empty_ground_truth"]["selected_rate"], 1 / 3)
         self.assertEqual(manifest["optimizer_schedule"]["expected_optimizer_steps"], 20)
         self.assertEqual(len({row["id"] for row in selected}), 24)
+
+    def test_replay_fills_target_without_counting_as_novel_pool_use(self) -> None:
+        rows: list[dict] = []
+        candidates: list[dict] = []
+        for index in range(5):
+            row = _row(
+                f"positive-{index}",
+                "Defect Detection",
+                boxes=[{"bbox_2d": [10, 10, 100, 100], "label": "open"}],
+            )
+            rows.append(row)
+            candidates.append(
+                _candidate(
+                    row,
+                    evidence=["hard_positive_proxy_false_negative"],
+                    phash=f"{index + 300:016x}",
+                    is_replay=index >= 1,
+                )
+            )
+        for index, task in enumerate(
+            (
+                "Component Classification",
+                "Component Detection",
+                "Defect Classification",
+                "Ref_based Defect Classification",
+                "Ref_based Defect Detection",
+            )
+        ):
+            row = _row(f"maintenance-{index}", task)
+            rows.append(row)
+            candidates.append(
+                _candidate(
+                    row,
+                    phash=f"{index + 400:016x}",
+                    is_replay=index >= 1,
+                )
+            )
+
+        _, manifest = defect_detection_ablation.materialize(
+            candidate_rows=candidates,
+            source_records=rows,
+            validation_records=[],
+            media_root=pathlib.Path("/data"),
+            max_rows=10,
+            row_multiple=2,
+            defect_detection_fraction=0.5,
+            proxy_empty_rate=0.0,
+            epochs=1,
+            global_batch=2,
+            near_duplicate_hamming_distance=0,
+        )
+
+        self.assertTrue(manifest["verified"])
+        self.assertEqual(manifest["row_counts"]["novel_mining_pool_images"], 2)
+        self.assertEqual(manifest["row_counts"]["replayed_mining_pool_images"], 8)
 
     def test_manifest_reports_stratum_shortage_without_off_task_backfill(self) -> None:
         rows: list[dict] = []
