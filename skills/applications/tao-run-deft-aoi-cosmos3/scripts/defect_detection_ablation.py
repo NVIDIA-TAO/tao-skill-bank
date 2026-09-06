@@ -32,6 +32,7 @@ POSITIVE_EVIDENCE = {
     "hard_positive_best_overlap_0_lt_iou_lte_0p5",
 }
 NEGATIVE_EVIDENCE = {"hard_negative_proxy_false_positive"}
+CALIBRATION_EMPTY_EVIDENCE = "calibration_empty_ground_truth"
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -499,7 +500,8 @@ def materialize(
     entries: list[dict[str, Any]] = []
     seen_record_fingerprints: set[str] = set()
     for candidate in candidate_rows:
-        if candidate.get("route_tier") != "strict":
+        route_tier = candidate.get("route_tier")
+        if route_tier not in {"strict", "calibration"}:
             counters["non_strict_routes_excluded"] += 1
             continue
         if not isinstance(candidate.get("filepath"), str):
@@ -521,6 +523,9 @@ def materialize(
             routed = json.loads(routed)
         if not isinstance(routed, list):
             raise ValueError("every candidate requires routed_task_types")
+        if route_tier == "calibration" and routed != [DEFECT_DETECTION_TASK]:
+            counters["invalid_calibration_routes_excluded"] += 1
+            continue
         for record in by_path.get(resolved_path, []):
             task = str(record.get("task_type"))
             if task not in routed:
@@ -538,6 +543,9 @@ def materialize(
             ):
                 raise ValueError("defect_detection_evidence must be a string list")
             evidence = sorted(set(evidence_value))
+            if route_tier == "calibration" and CALIBRATION_EMPTY_EVIDENCE not in evidence:
+                counters["invalid_calibration_routes_excluded"] += 1
+                continue
             entry = {
                 "record": record,
                 "record_id": str(record.get("id")),
@@ -553,6 +561,9 @@ def materialize(
                 objects = _ground_truth_objects(record)
                 entry["objects"] = objects
                 if objects:
+                    if route_tier == "calibration":
+                        counters["non_empty_calibration_rows_excluded"] += 1
+                        continue
                     if not POSITIVE_EVIDENCE.intersection(evidence):
                         counters["off_evidence_positive_excluded"] += 1
                         continue
@@ -570,7 +581,10 @@ def materialize(
                         if candidate.get("local_contrast") is not None
                         else _local_contrast(record, objects, media_root)
                     )
-                elif not NEGATIVE_EVIDENCE.intersection(evidence):
+                elif not (
+                    NEGATIVE_EVIDENCE.intersection(evidence)
+                    or CALIBRATION_EMPTY_EVIDENCE in evidence
+                ):
                     counters["off_evidence_empty_excluded"] += 1
                     continue
             entries.append(entry)
@@ -674,7 +688,7 @@ def materialize(
         "near_duplicate_free": near_duplicate_pairs == 0,
         "optimizer_boundary_aligned": expected_steps is not None,
         "novel_image_limit_respected": row_count - selected_replay_count <= novel_image_limit,
-        "task_strict_only": counters["non_strict_routes_excluded"] >= 0,
+        "task_strict_with_authorized_empty_calibration_only": True,
         "all_five_maintenance_tasks_present": all(
             maintenance_selected[task] > 0 for task in MAINTENANCE_TASK_TYPES
         ),
@@ -690,6 +704,7 @@ def materialize(
             "defect_detection_minimum_fraction": defect_detection_fraction,
             "near_duplicate_hamming_distance": near_duplicate_hamming_distance,
             "novel_mining_pool_image_limit": novel_image_limit,
+            "calibration_policy": "direct_empty_ground_truth_only_when_proxy_fp_hard_negatives_do_not_fill_proxy_matched_empty_quota",
             "annotation_profile": "nvpaw_multitask_v1",
             "prompt_variant": "official_v1",
             "box_serialization_policy": "corpus_native_unmodified",

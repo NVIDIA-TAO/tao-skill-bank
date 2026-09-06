@@ -15,6 +15,7 @@ sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 import analyze_gaps  # noqa: E402
 import defect_detection_ablation  # noqa: E402
+import route_selected_gaps  # noqa: E402
 
 
 def _row(
@@ -76,6 +77,7 @@ def _candidate(
     evidence: list[str] | None = None,
     phash: str,
     is_replay: bool = False,
+    route_tier: str = "strict",
 ) -> dict:
     image = [
         item["image"]
@@ -84,7 +86,7 @@ def _candidate(
     ][-1]
     return {
         "filepath": image,
-        "route_tier": "strict",
+        "route_tier": route_tier,
         "routed_task_types": [record["task_type"]],
         "defect_detection_evidence": evidence or [],
         "perceptual_hash": phash,
@@ -107,6 +109,51 @@ class _Evaluator:
 
 
 class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
+    def test_dd_supplement_preserves_selected_rows_and_adds_approved_evidence(self) -> None:
+        selected = [
+            {"id": "maintenance", "task_type": "Component Detection"},
+            {"id": "positive", "task_type": "Defect Detection"},
+        ]
+        all_gaps = [
+            {
+                "id": "positive",
+                "evaluation_role": "proxy",
+                "task_type": "Defect Detection",
+                "defect_detection_evidence": {
+                    "evidence_types": ["hard_positive_proxy_false_negative"]
+                },
+            },
+            {
+                "id": "negative",
+                "evaluation_role": "proxy",
+                "task_type": "Defect Detection",
+                "defect_detection_evidence": {
+                    "evidence_types": ["hard_negative_proxy_false_positive"]
+                },
+            },
+            {
+                "id": "easy-dd",
+                "evaluation_role": "proxy",
+                "task_type": "Defect Detection",
+                "defect_detection_evidence": {"evidence_types": []},
+            },
+            {
+                "id": "off-task",
+                "evaluation_role": "proxy",
+                "task_type": "Defect Classification",
+            },
+        ]
+
+        augmented, summary = route_selected_gaps.augment_defect_detection_targets(
+            selected, all_gaps
+        )
+
+        self.assertEqual([row["id"] for row in augmented], ["maintenance", "positive", "negative"])
+        self.assertEqual(summary["selected_input_rows"], 2)
+        self.assertEqual(summary["eligible_defect_detection_rows"], 2)
+        self.assertEqual(summary["supplemental_rows"], 1)
+        self.assertEqual(summary["output_rows"], 3)
+
     def test_proxy_detection_evidence_separates_fn_partial_overlap_and_fp(self) -> None:
         evidence = analyze_gaps._detection_evidence(
             _Evaluator(),
@@ -152,7 +199,18 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
         for index in range(4):
             row = _row(f"dd-empty-{index}", "Defect Detection", boxes=[])
             rows.append(row)
-            candidates.append(_candidate(row, evidence=negative_evidence, phash=f"{index + 20:016x}"))
+            candidates.append(
+                _candidate(
+                    row,
+                    evidence=(
+                        negative_evidence
+                        if index < 3
+                        else ["calibration_empty_ground_truth"]
+                    ),
+                    phash=f"{index + 20:016x}",
+                    route_tier="strict" if index < 3 else "calibration",
+                )
+            )
 
         maintenance_tasks = (
             "Component Classification",
@@ -190,6 +248,10 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
         self.assertEqual(counts["by_task"]["Component Detection"], 3)
         self.assertEqual(manifest["empty_ground_truth"]["selected_empty"], 4)
         self.assertEqual(manifest["empty_ground_truth"]["selected_non_empty"], 8)
+        self.assertEqual(
+            manifest["defect_detection_evidence"]["by_type"]["calibration_empty_ground_truth"],
+            1,
+        )
         self.assertAlmostEqual(manifest["empty_ground_truth"]["selected_rate"], 1 / 3)
         self.assertEqual(manifest["optimizer_schedule"]["expected_optimizer_steps"], 20)
         self.assertEqual(len({row["id"] for row in selected}), 24)
