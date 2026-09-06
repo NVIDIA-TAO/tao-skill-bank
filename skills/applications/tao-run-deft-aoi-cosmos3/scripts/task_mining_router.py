@@ -217,6 +217,11 @@ def _prepare_targets(
                 "task_types": _string_list(
                     row.get("task_types"), context=f"target embedding[{index}].task_types"
                 ),
+                "defect_detection_evidence": _string_list(
+                    row.get("defect_detection_evidence", []),
+                    context=f"target embedding[{index}].defect_detection_evidence",
+                    allow_empty=True,
+                ),
                 "embedding": vector,
             }
         )
@@ -247,13 +252,20 @@ def _candidate(
         "routed_task_types": sorted(set(routed_task_types)),
         "route_tier": route_tier,
         "route_tiers": [route_tier],
+        "defect_detection_evidence": target["defect_detection_evidence"],
         "max_cosine_similarity": similarity,
         "best_rank": rank,
     }
 
 
 def _merge_candidate(existing: dict[str, Any], candidate: dict[str, Any]) -> None:
-    for field in ("matched_target_ids", "query_task_types", "routed_task_types", "route_tiers"):
+    for field in (
+        "matched_target_ids",
+        "query_task_types",
+        "routed_task_types",
+        "route_tiers",
+        "defect_detection_evidence",
+    ):
         existing[field] = sorted(set(existing[field]) | set(candidate[field]))
     existing["best_rank"] = min(existing["best_rank"], candidate["best_rank"])
     if candidate["max_cosine_similarity"] > existing["max_cosine_similarity"]:

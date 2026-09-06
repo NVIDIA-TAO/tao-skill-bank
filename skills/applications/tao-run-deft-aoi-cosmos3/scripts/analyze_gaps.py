@@ -39,6 +39,7 @@ def _load_evaluator(path: pathlib.Path) -> Any:
         "parse_direct_bcq",
         "parse_boxes",
         "canonicalize_prediction_boxes",
+        "box_iou",
         "one_to_one_detection_counts",
     )
     missing = [name for name in required if not callable(getattr(module, name, None))]
@@ -51,7 +52,7 @@ def _score_row(
     evaluator: Any,
     source: dict[str, Any],
     prediction: dict[str, Any],
-) -> tuple[float, bool, str]:
+) -> tuple[float, bool, str, dict[str, Any] | None]:
     row_id = str(source["id"])
     raw = str(prediction.get("raw_prediction", ""))
     classification = evaluator.build_classification_examples({row_id: source})
@@ -64,7 +65,7 @@ def _score_row(
                 raw, example["option_letters"], example["option_text"]
             )
         correct = bool(parse_ok and labels == example["gt_labels"])
-        return float(correct), bool(parse_ok), "classification_mismatch"
+        return float(correct), bool(parse_ok), "classification_mismatch", None
     detection = evaluator.build_detection_examples({row_id: source}, 1.0)
     if not detection:
         raise ValueError(f"exact evaluator does not classify source row {row_id!r}")
@@ -78,7 +79,67 @@ def _score_row(
     else:
         tp, fp, fn = 0, 0, len(example["gt_boxes"])
     correct = bool(parse_ok and fp == 0 and fn == 0)
-    return float(correct), bool(parse_ok), "detection_mismatch"
+    evidence = _detection_evidence(
+        evaluator,
+        example["gt_boxes"],
+        predicted,
+        parse_ok=bool(parse_ok),
+        threshold=0.5,
+    )
+    return float(correct), bool(parse_ok), "detection_mismatch", evidence
+
+
+def _detection_evidence(
+    evaluator: Any,
+    gt_boxes: list[tuple[float, ...]],
+    predicted_boxes: list[tuple[float, ...]],
+    *,
+    parse_ok: bool,
+    threshold: float,
+) -> dict[str, Any]:
+    """Classify proxy box errors without changing the packaged KPI evaluator."""
+
+    if parse_ok and callable(getattr(evaluator, "one_to_one_detection_counts", None)):
+        tp, fp, fn = evaluator.one_to_one_detection_counts(
+            gt_boxes, predicted_boxes, threshold
+        )
+    elif parse_ok:
+        matched = sum(
+            max(
+                (evaluator.box_iou(gt_box, predicted) for predicted in predicted_boxes),
+                default=0.0,
+            )
+            > threshold
+            for gt_box in gt_boxes
+        )
+        tp = min(matched, len(predicted_boxes))
+        fp = len(predicted_boxes) - tp
+        fn = len(gt_boxes) - tp
+    else:
+        tp, fp, fn = 0, 0, len(gt_boxes)
+    best_overlaps = [
+        max(
+            (evaluator.box_iou(gt_box, predicted) for predicted in predicted_boxes),
+            default=0.0,
+        )
+        for gt_box in gt_boxes
+    ]
+    partial = sum(0.0 < value <= threshold for value in best_overlaps)
+    evidence_types: list[str] = []
+    if fp:
+        evidence_types.append("hard_negative_proxy_false_positive")
+    if partial:
+        evidence_types.append("hard_positive_best_overlap_0_lt_iou_lte_0p5")
+    if fn:
+        evidence_types.append("hard_positive_proxy_false_negative")
+    return {
+        "true_positive_count": tp,
+        "false_positive_count": fp,
+        "false_negative_count": fn,
+        "best_overlap_0_lt_iou_lte_0p5_count": partial,
+        "best_iou_by_ground_truth_box": best_overlaps,
+        "evidence_types": evidence_types,
+    }
 
 
 def build_candidates(
@@ -100,11 +161,12 @@ def build_candidates(
     candidates: list[dict[str, Any]] = []
     for source in source_rows:
         row_id = str(source["id"])
-        score, parse_ok, gap_type = _score_row(evaluator, source, predictions[row_id])
+        score, parse_ok, gap_type, detection_evidence = _score_row(
+            evaluator, source, predictions[row_id]
+        )
         paths = image_paths(source, context=row_id)
         target = target_path(source, context=row_id)
-        candidates.append(
-            {
+        candidate = {
                 "id": row_id,
                 "evaluation_role": "proxy",
                 "task_type": str(source["task_type"]),
@@ -124,8 +186,20 @@ def build_candidates(
                 "parse_ok": parse_ok,
                 "gap_type": gap_type,
                 "raw_prediction": predictions[row_id].get("raw_prediction"),
+                # Keep a stable parquet schema even when the first Proxy row is
+                # classification; only exact Defect Detection rows carry
+                # nonzero evidence.
+                "defect_detection_evidence": detection_evidence
+                or {
+                    "true_positive_count": 0,
+                    "false_positive_count": 0,
+                    "false_negative_count": 0,
+                    "best_overlap_0_lt_iou_lte_0p5_count": 0,
+                    "best_iou_by_ground_truth_box": [],
+                    "evidence_types": [],
+                },
             }
-        )
+        candidates.append(candidate)
     return candidates
 
 

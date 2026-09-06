@@ -79,6 +79,31 @@ class Cosmos3RenderCfwSftContractTests(unittest.TestCase):
         parsed = tomllib.loads(render_cfw_sft.dump_toml(config))
         self.assertEqual(parsed["augmentation"], expected)
 
+    def test_full_profile_can_disable_all_image_augmentation(self) -> None:
+        descriptor = self._full(augmentation_profile="off")
+
+        self.assertEqual(
+            descriptor["config"]["augmentation"],
+            {
+                "enabled": False,
+                "seed": 314159,
+                "same_on_all_images": True,
+                "color_jitter_probability": 0.0,
+                "brightness": 0.0,
+                "contrast": 0.0,
+                "saturation": 0.0,
+                "hue": 0.0,
+                "random_crop_probability": 0.0,
+                "horizontal_flip_probability": 0.0,
+                "vertical_flip_probability": 0.0,
+                "text_media_order_probability": 0.0,
+            },
+        )
+
+    def test_defect_detection_ablation_refuses_render_without_manifest(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires a verified quota manifest"):
+            self._full(require_defect_detection_quota_manifest=True)
+
     def test_toml_omits_literal_multiplier_owned_by_python_adapter(self) -> None:
         descriptor = self._full()
 

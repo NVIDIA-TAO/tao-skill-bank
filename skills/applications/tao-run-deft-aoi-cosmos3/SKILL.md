@@ -98,6 +98,45 @@ against `${RESULTS_DIR}/deft_state.json`. Its `next_stage` is authoritative.
 Commit a successful stage with `$PYTHON scripts/commit_stage.py` only after all
 required artifacts validate. Durations must be measured positive seconds.
 
+### Single-image Defect Detection ablation
+
+Enable this launch-recorded policy with `init_deft_state.py
+--defect-detection-ablation`. It requires `task_strict` routing and forbids
+Component Count replay. `analyze_gaps.py` annotates only single-image `Defect
+Detection` proxy failures with box-level evidence: false negatives,
+best-overlap predictions with `0 < IoU <= 0.5`, and false positives. The
+packaged KPI evaluator and its `f1_cohort_balanced_v1` contract are unchanged;
+`task_balanced_v1` remains only a state-recorded alias.
+
+After task-strict top-K routing, materialize with
+`$PYTHON scripts/defect_detection_ablation.py`. Pass the routed candidate
+parquet, canonical Mining/Proxy JSONL, both Proxy and Benchmark as validation
+inputs, the canonical media root, the launch global batch as `--row-multiple`,
+and the launch epochs/global batch. The selector:
+
+- reserves the configured fraction (at least 50 percent) for exactly `Defect
+  Detection`; `Component Detection` is one of five maintenance tasks and never
+  counts toward that reserve;
+- admits positive Defect Detection rows only from proxy-FN or partial-overlap
+  routes and empty hard negatives only from proxy-FP routes;
+- balances positive marginal quotas over source, defect phenotype,
+  source-by-phenotype, 1024-canvas box-area quartile, local-contrast quartile,
+  and GT-count bins `1`, `2-3`, `4+`, reporting capacity shortages rather than
+  filling them with another task;
+- matches the Proxy single-image Defect Detection empty-GT rate after integer
+  rounding; and
+- rejects target-path, content-SHA, perceptual near-duplicate, Proxy, and
+  Benchmark collisions while leaving every selected source record and its
+  `official_v1` messages, coordinates, box order, and image controls unchanged.
+
+The command writes the materialized JSONL and a bound
+`defect_detection_quota_manifest_v1`. A shortfall leaves the manifest on disk
+with `verified=false` and exits nonzero. For an enabled ablation,
+`commit_stage.py ... --stage assemble_data` requires `--quota-manifest`, and
+`render_cfw_sft.py` must receive both `--quota-manifest` and
+`--require-defect-detection-quota-manifest`; each gate re-hashes the JSONL and
+recomputes the optimizer schedule. Never launch Train unless both gates pass.
+
 ## Train contract
 
 Render nested TOML with `$PYTHON scripts/render_cfw_sft.py`, passing the
@@ -123,6 +162,11 @@ The full profile contract is:
   epoch-derived update count, warmup at most 5 updates, `f_start=.05`,
   `f_max=1`, `f_min=.1`;
 - synchronous DCP.
+
+Image augmentation is launch-configurable as `exp40_photometric` or `off`.
+The `off` profile sets the augmentation switch and every photometric/geometric
+probability or magnitude to zero and is recorded in state and the rendered
+descriptor.
 
 The smoke profile must be explicitly named. It may reduce rows, updates,
 checkpoint interval, and GPU count, but does not change precision,

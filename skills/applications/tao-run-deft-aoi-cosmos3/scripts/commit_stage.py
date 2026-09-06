@@ -25,6 +25,7 @@ from render_report import render as render_html_report
 from cfw_dcp import validate_checkpoint
 from cfw_predictions import read_prediction_jsonl
 from deft_context import _next_stage
+from defect_detection_ablation import verify_bound_manifest
 from validate_sharegpt import load_records
 
 
@@ -388,6 +389,30 @@ def _apply_success(
             phase_root,
             "--assemble-summary",
         )
+        ablation = (
+            state.get("config", {})
+            .get("mining", {})
+            .get("defect_detection_ablation", {})
+        )
+        if ablation.get("enabled"):
+            manifest_path = pathlib.Path(
+                _within(
+                    _required_file(args.quota_manifest, "--quota-manifest"),
+                    phase_root,
+                    "--quota-manifest",
+                )
+            )
+            training = state["config"]["training"]
+            training_path = pathlib.Path(phase["combined_training_jsonl"])
+            expected_rows = len(load_records(training_path))
+            verify_bound_manifest(
+                manifest_path,
+                training_jsonl=training_path,
+                expected_rows=expected_rows,
+                epochs=int(training["epochs_per_iteration"]),
+                global_batch=int(training["global_batch"]),
+            )
+            phase["defect_detection_quota_manifest"] = str(manifest_path)
     elif stage == "validate_data":
         phase["validation_report"] = _within(
             _required_file(args.validation_report, "--validation-report"),
@@ -606,6 +631,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mined-jsonl", type=pathlib.Path)
     parser.add_argument("--combined-training-jsonl", type=pathlib.Path)
     parser.add_argument("--assemble-summary", type=pathlib.Path)
+    parser.add_argument("--quota-manifest", type=pathlib.Path)
     parser.add_argument("--validation-report", type=pathlib.Path)
     parser.add_argument(
         "--stop-reason", choices=("metric_met", "max_iterations")

@@ -15,6 +15,8 @@ import sys
 import tempfile
 from typing import Any
 
+from defect_detection_ablation import verify_bound_manifest
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
@@ -41,6 +43,24 @@ EXP40_PHOTOMETRIC_AUGMENTATION = {
     "horizontal_flip_probability": 0.0,
     "vertical_flip_probability": 0.0,
     "text_media_order_probability": 0.0,
+}
+NO_IMAGE_AUGMENTATION = {
+    "enabled": False,
+    "seed": 314159,
+    "same_on_all_images": True,
+    "color_jitter_probability": 0.0,
+    "brightness": 0.0,
+    "contrast": 0.0,
+    "saturation": 0.0,
+    "hue": 0.0,
+    "random_crop_probability": 0.0,
+    "horizontal_flip_probability": 0.0,
+    "vertical_flip_probability": 0.0,
+    "text_media_order_probability": 0.0,
+}
+AUGMENTATION_PROFILES = {
+    "exp40_photometric": EXP40_PHOTOMETRIC_AUGMENTATION,
+    "off": NO_IMAGE_AUGMENTATION,
 }
 
 
@@ -177,6 +197,9 @@ def build_profile(
     learning_rate: float = BASE_LEARNING_RATE,
     learning_rate_policy: str = "linear_global_batch",
     minimum_global_batch: int = BASE_GLOBAL_BATCH,
+    augmentation_profile: str = "exp40_photometric",
+    quota_manifest: str | pathlib.Path | None = None,
+    require_defect_detection_quota_manifest: bool = False,
 ) -> dict[str, Any]:
     if profile not in {"full", "smoke"}:
         raise ValueError("profile must be full or smoke")
@@ -193,6 +216,19 @@ def build_profile(
     if min(epochs_per_iteration, micro_batch_per_rank, gradient_accumulation) <= 0:
         raise ValueError("epochs, micro-batch, and gradient accumulation must be positive")
     global_batch = selected_gpus * micro_batch_per_rank * gradient_accumulation
+    if augmentation_profile not in AUGMENTATION_PROFILES:
+        raise ValueError(f"unsupported augmentation profile {augmentation_profile!r}")
+    if require_defect_detection_quota_manifest and quota_manifest is None:
+        raise ValueError("Defect Detection ablation requires a verified quota manifest")
+    verified_quota_manifest: dict[str, Any] | None = None
+    if quota_manifest is not None:
+        verified_quota_manifest = verify_bound_manifest(
+            pathlib.Path(quota_manifest),
+            training_jsonl=pathlib.Path(train_jsonl),
+            expected_rows=expected_rows,
+            epochs=epochs_per_iteration,
+            global_batch=global_batch,
+        )
     resolved_learning_rate = _resolve_learning_rate(
         base_learning_rate=learning_rate,
         global_batch=global_batch,
@@ -284,7 +320,7 @@ def build_profile(
             "save_freq_in_epoch": save_freq_in_epoch,
             "dcp_async_mode_enabled": False,
         },
-        "augmentation": dict(EXP40_PHOTOMETRIC_AUGMENTATION),
+        "augmentation": dict(AUGMENTATION_PROFILES[augmentation_profile]),
     }
     if profile == "full":
         config["trainer"]["num_epochs"] = epochs_per_iteration
@@ -340,6 +376,13 @@ def build_profile(
                 if learning_rate_policy == "linear_global_batch"
                 else "fixed"
             ),
+            "augmentation_profile": augmentation_profile,
+            "quota_manifest": (
+                str(pathlib.Path(quota_manifest).expanduser().resolve())
+                if quota_manifest is not None
+                else None
+            ),
+            "quota_manifest_verified": verified_quota_manifest is not None,
         },
         "results_dir": results_dir,
         "hydra_overrides": hydra_overrides,
@@ -389,8 +432,10 @@ def validate_profile(descriptor: dict[str, Any], *, profile: str) -> None:
         raise ValueError("CFW profile must use synchronous DCP")
     if checkpoint.get("keys_to_skip_loading") != []:
         raise ValueError("CFW DCP resume must restore all keys")
-    if augmentation != EXP40_PHOTOMETRIC_AUGMENTATION:
-        raise ValueError("CFW augmentation differs from the exp40 photometric recipe")
+    augmentation_profile = data.get("augmentation_profile", "exp40_photometric")
+    expected_augmentation = AUGMENTATION_PROFILES.get(augmentation_profile)
+    if expected_augmentation is None or augmentation != expected_augmentation:
+        raise ValueError("CFW augmentation differs from the selected reviewed profile")
     if descriptor.get("freeze") != {
         "vision_encoder": True,
         "multimodal_projector": False,
@@ -465,6 +510,16 @@ def main(argv: list[str] | None = None) -> int:
         default="linear_global_batch",
     )
     parser.add_argument("--minimum-global-batch", type=int, default=BASE_GLOBAL_BATCH)
+    parser.add_argument(
+        "--augmentation-profile",
+        choices=tuple(AUGMENTATION_PROFILES),
+        default="exp40_photometric",
+    )
+    parser.add_argument("--quota-manifest", type=pathlib.Path)
+    parser.add_argument(
+        "--require-defect-detection-quota-manifest",
+        action="store_true",
+    )
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--descriptor-output", type=pathlib.Path, required=True)
     args = parser.parse_args(argv)
@@ -488,6 +543,11 @@ def main(argv: list[str] | None = None) -> int:
             learning_rate=args.learning_rate,
             learning_rate_policy=args.learning_rate_policy,
             minimum_global_batch=args.minimum_global_batch,
+            augmentation_profile=args.augmentation_profile,
+            quota_manifest=args.quota_manifest,
+            require_defect_detection_quota_manifest=(
+                args.require_defect_detection_quota_manifest
+            ),
         )
         _atomic_text(args.output.expanduser().resolve(), dump_toml(descriptor["config"]))
         _atomic_text(

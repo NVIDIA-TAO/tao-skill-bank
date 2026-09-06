@@ -475,6 +475,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     "multimodal_projector": False,
                     "language_model": False,
                 },
+                "augmentation_profile": args.augmentation_profile,
             },
             "mining": {
                 "router_mode": mining_router_mode,
@@ -493,6 +494,27 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     "enabled": True,
                     "identity": "target_id",
                     "history_file": str(results_dir / "mining_history.json"),
+                },
+                "defect_detection_ablation": {
+                    "enabled": args.defect_detection_ablation,
+                    "primary_task_type": "Defect Detection",
+                    "component_detection_counts_toward_primary_quota": False,
+                    "minimum_materialized_fraction": args.defect_detection_minimum_fraction,
+                    "positive_evidence": [
+                        "proxy_false_negative",
+                        "best_overlap_0_lt_iou_lte_0p5",
+                    ],
+                    "negative_evidence": "proxy_false_positive",
+                    "positive_margins": [
+                        "source",
+                        "defect_phenotype",
+                        "1024_box_area_quartile",
+                        "local_contrast_quartile",
+                        "gt_box_count_bin_1_2-3_4+",
+                    ],
+                    "empty_rate_policy": "match_proxy_defect_detection",
+                    "near_duplicate_hamming_distance": args.near_duplicate_hamming_distance,
+                    "quota_manifest_required_before_train": True,
                 },
             },
         },
@@ -606,6 +628,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mining-pool-fraction-cap", type=float, default=1.0)
     parser.add_argument("--min-similarity", type=float, default=0.9)
     parser.add_argument("--component-count-replay-per-iteration", type=int, default=0)
+    parser.add_argument("--defect-detection-ablation", action="store_true")
+    parser.add_argument(
+        "--defect-detection-minimum-fraction", type=float, default=0.5
+    )
+    parser.add_argument("--near-duplicate-hamming-distance", type=int, default=3)
+    parser.add_argument(
+        "--augmentation-profile",
+        choices=("exp40_photometric", "off"),
+        default="exp40_photometric",
+    )
     parser.add_argument(
         "--mining-router-mode",
         choices=MINING_ROUTER_MODES,
@@ -683,6 +715,30 @@ def main(argv: list[str] | None = None) -> int:
     if not 0.0 < args.mining_pool_fraction_cap <= 1.0:
         print(
             "init_deft_state: --mining-pool-fraction-cap must be in (0, 1]",
+            file=sys.stderr,
+        )
+        return 2
+    if not 0.5 <= args.defect_detection_minimum_fraction <= 1.0:
+        print(
+            "init_deft_state: --defect-detection-minimum-fraction must be in [0.5, 1]",
+            file=sys.stderr,
+        )
+        return 2
+    if not 0 <= args.near_duplicate_hamming_distance <= 64:
+        print(
+            "init_deft_state: --near-duplicate-hamming-distance must be in [0, 64]",
+            file=sys.stderr,
+        )
+        return 2
+    if args.defect_detection_ablation and args.mining_router_mode != "task_strict":
+        print(
+            "init_deft_state: Defect Detection ablation requires task_strict mining",
+            file=sys.stderr,
+        )
+        return 2
+    if args.defect_detection_ablation and args.component_count_replay_per_iteration:
+        print(
+            "init_deft_state: Defect Detection ablation forbids Component Count replay",
             file=sys.stderr,
         )
         return 2

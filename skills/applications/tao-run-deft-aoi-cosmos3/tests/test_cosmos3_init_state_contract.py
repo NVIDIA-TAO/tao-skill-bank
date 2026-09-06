@@ -150,6 +150,37 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
                 1000,
             )
 
+    def test_defect_detection_ablation_controls_are_launch_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(
+                self._argv(
+                    root,
+                    workspace,
+                    "--defect-detection-ablation",
+                    "--defect-detection-minimum-fraction", "0.5",
+                    "--near-duplicate-hamming-distance", "3",
+                    "--augmentation-profile", "off",
+                )
+            )
+            self.assertEqual(rc, 0)
+            state = json.loads((root / "results/deft_state.json").read_text())
+            mining = state["config"]["mining"]
+            self.assertTrue(mining["defect_detection_ablation"]["enabled"])
+            self.assertEqual(
+                mining["defect_detection_ablation"]["minimum_materialized_fraction"],
+                0.5,
+            )
+            self.assertEqual(
+                mining["defect_detection_ablation"]["positive_evidence"],
+                [
+                    "proxy_false_negative",
+                    "best_overlap_0_lt_iou_lte_0p5",
+                ],
+            )
+            self.assertEqual(state["config"]["training"]["augmentation_profile"], "off")
+
     def test_venv_python_symlink_survives_state_initialization(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

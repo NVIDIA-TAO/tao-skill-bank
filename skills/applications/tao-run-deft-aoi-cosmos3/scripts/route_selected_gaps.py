@@ -37,6 +37,7 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
                 "record_ids": [],
                 "task_types": [],
                 "datasets": [],
+                "defect_detection_evidence": [],
                 "mining_eligible": True,
             },
         )
@@ -50,11 +51,17 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
         dataset = str(row.get("dataset", "unknown"))
         if dataset not in target["datasets"]:
             target["datasets"].append(dataset)
+        evidence = row.get("defect_detection_evidence", {})
+        if isinstance(evidence, dict):
+            for evidence_type in evidence.get("evidence_types", []):
+                if evidence_type not in target["defect_detection_evidence"]:
+                    target["defect_detection_evidence"].append(evidence_type)
     output = []
     for target in targets.values():
         target["record_ids"].sort()
         target["task_types"].sort()
         target["datasets"].sort()
+        target["defect_detection_evidence"].sort()
         output.append(target)
     output.sort(key=lambda row: (row["filepath"], row["target_id"]))
     return output, {
