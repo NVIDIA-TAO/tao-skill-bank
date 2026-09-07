@@ -190,6 +190,42 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
             self.assertEqual(mining["minimum_training_rows_per_iteration"], 3000)
             self.assertEqual(state["config"]["training"]["augmentation_profile"], "off")
 
+    def test_repetition_blend_controls_are_launch_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(
+                self._argv(
+                    root,
+                    workspace,
+                    "--repetition-blend",
+                    "--repetition-policy", "explicit",
+                    "--repetition-rep-min", "0.5",
+                    "--repetition-rep-max", "3",
+                    "--repetition-never-repeat-empty-gt",
+                    "--repetition-explicit-multiplier", "Defect Detection=3",
+                    "--repetition-seed", "29",
+                    "--max-training-rows-per-iteration", "12000",
+                )
+            )
+
+            self.assertEqual(rc, 0)
+            state = json.loads((root / "results/deft_state.json").read_text())
+            repetition = state["config"]["mining"]["repetition_blend"]
+            self.assertEqual(
+                repetition,
+                {
+                    "enabled": True,
+                    "policy": "explicit",
+                    "rep_min": 0.5,
+                    "rep_max": 3.0,
+                    "never_repeat_empty_gt": True,
+                    "explicit_multipliers": {"Defect Detection": 3.0},
+                    "row_cap": 12000,
+                    "seed": 29,
+                },
+            )
+
     def test_venv_python_symlink_survives_state_initialization(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

@@ -13,6 +13,11 @@ reference tasks contain golden then target. Every image item contains `image`,
 positive integer `min_pixels`, and integer `max_pixels >= min_pixels`. One
 non-empty assistant answer is required.
 
+Source, Proxy, and Benchmark annotations require unique IDs. A materialized
+Train JSONL may contain byte-equivalent repetitions of an accepted source row;
+training validation allows the repeated ID only when the complete row content
+is identical and still rejects one ID associated with different content.
+
 The canonical Mining file also contains count/segmentation families that are
 outside this application's approved six-task scope. Mining readers skip those
 rows directly from the canonical JSONL and report their counts; they do not
@@ -28,7 +33,10 @@ accepts one current `--mined-jsonl`, an optional preceding
 `--row-multiple`; current Mining rows receive first claim on capped slots and
 the output is truncated to an exact effective-global-batch multiple for native
 epoch scheduling. It rejects evaluation leakage and requires a current real
-Mining contribution. `validate_split_contract.py`
+Mining contribution. When the launch-recorded repetition blend is enabled,
+the assembler consumes the current `gaps_summary.json`, retains every prior
+row and at least one current row, and writes `repetition_blend_manifest.json`.
+`validate_split_contract.py`
 proves the same lineage independently and verifies the frozen Benchmark hash.
 Its Mining record count is the eligible six-task count; preflight also reports
 the raw count and ignored task-family counts.

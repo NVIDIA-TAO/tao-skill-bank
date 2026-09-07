@@ -147,6 +147,51 @@ class Cosmos3AssembleTrainingContractTests(unittest.TestCase):
                 "monotonic_current_fill_task_balanced_v1",
             )
 
+    def test_repetition_blend_runs_after_dedup_and_retains_monotonic_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            previous = _write(
+                root / "previous.jsonl",
+                [_row("old-dd", "Defect Detection")],
+            )
+            mined_rows = [
+                _row("old-dd", "Defect Detection"),
+                _row("new-dd", "Defect Detection"),
+                *(_row(f"new-component-{index}", "Component Detection") for index in range(8)),
+            ]
+            mined = _write(root / "mined.jsonl", mined_rows)
+
+            rows, summary = assemble_training_json.assemble(
+                previous,
+                mined,
+                validation_paths=[],
+                max_rows=10,
+                row_multiple=1,
+                repetition_config={
+                    "enabled": True,
+                    "policy": "deficit_proportional",
+                    "rep_min": 0.5,
+                    "rep_max": 3.0,
+                    "never_repeat_empty_gt": True,
+                    "explicit_multipliers": {},
+                },
+                deficit_weights={
+                    "Defect Detection": 1.0,
+                    "Component Detection": 1.0,
+                },
+                repetition_seed=17,
+            )
+
+            self.assertEqual(len(rows), 10)
+            self.assertIn("old-dd", {row["id"] for row in rows})
+            self.assertIn("new-dd", {row["id"] for row in rows})
+            self.assertEqual(sum(row["task_type"] == "Defect Detection" for row in rows), 5)
+            self.assertEqual(summary["duplicates_skipped"], 1)
+            self.assertEqual(
+                summary["repetition_blend"]["schema_version"],
+                "repetition_blend_manifest_v1",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

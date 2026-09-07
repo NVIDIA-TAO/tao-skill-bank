@@ -158,6 +158,24 @@ smaller. For an enabled ablation,
 `--require-defect-detection-quota-manifest`; each gate re-hashes the JSONL and
 recomputes the optimizer schedule. Never launch Train unless both gates pass.
 
+### Repetition blend
+
+Training materialization can apply a launch-recorded repetition blend after
+exact-duplicate and Proxy/Benchmark leakage exclusion. Configure it in TOML or
+JSON, or map a launch prompt to `--repetition-blend`, `--repetition-policy`,
+`--repetition-rep-min`, `--repetition-rep-max`,
+`--repetition-never-repeat-empty-gt`, and repeatable
+`--repetition-explicit-multiplier TASK=MULTIPLIER` arguments; the existing
+maximum-training-row cap is its `row_cap`. The default
+`deficit_proportional` policy normalizes task deficits from the current
+`gaps_summary.json` (equal weights when unavailable), while `explicit` uses
+the supplied task multipliers. A launch prompt may request
+`deficit-proportional repetition (max rep N)` or explicit multipliers. The
+fixed-seed fractional sampler repeats only accepted rows, never reapplies a
+perceptual-hash filter, keeps empty-ground-truth calibration rows at one
+occurrence by default, and writes a bound `repetition_blend_manifest.json`
+alongside the compatible `defect_detection_quota_manifest_v1`.
+
 ## Train contract
 
 Render nested TOML with `$PYTHON scripts/render_cfw_sft.py`, passing the

@@ -22,6 +22,12 @@ import yaml
 from gap_analysis.config import load_profile, validate_config
 from metric_contract import render_target, validate_contract
 from nvpaw_annotations import TASK_SPECS
+from repetition_blend import (
+    POLICIES as REPETITION_POLICIES,
+    load_repetition_config,
+    merge_repetition_config,
+    parse_explicit_multipliers,
+)
 from render_report import render as render_html_report
 from route_selected_gaps import DEFECT_DETECTION_ANCHOR_POLICIES
 from task_mining_router import MINING_ROUTER_MODES
@@ -334,6 +340,15 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     requested_kpi_profile = getattr(args, "kpi_profile", "f1_cohort_balanced_v1")
     kpi_profile = "f1_cohort_balanced_v1"
     gap_analysis = _resolve_gap_analysis(args, annotation_profile)
+    repetition_blend = dict(args.resolved_repetition_blend)
+    repetition_blend["row_cap"] = args.max_training_rows_per_iteration
+    repetition_blend["seed"] = (
+        args.repetition_seed
+        if args.repetition_seed is not None
+        else repetition_blend["seed"]
+        if repetition_blend["seed"] is not None
+        else gap_analysis["resolved"]["seed"]
+    )
     contract = _metric_contract(
         results_dir=results_dir,
         threshold=args.kpi_threshold,
@@ -487,6 +502,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     args.minimum_training_rows_per_iteration
                 ),
                 "calibration_policy": "empty_and_few_box_from_mining",
+                "repetition_blend": repetition_blend,
                 "component_count_replay_per_iteration": args.component_count_replay_per_iteration,
                 "top_k_scope": (
                     "target" if mining_router_mode == "image_only" else "target_task"
@@ -649,6 +665,44 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mining-pool-fraction-cap", type=float, default=1.0)
     parser.add_argument("--min-similarity", type=float, default=0.9)
     parser.add_argument("--component-count-replay-per-iteration", type=int, default=0)
+    parser.add_argument(
+        "--repetition-config",
+        type=pathlib.Path,
+        help="Repetition-blend launch config in TOML or JSON format.",
+    )
+    repetition_toggle = parser.add_mutually_exclusive_group()
+    repetition_toggle.add_argument(
+        "--repetition-blend",
+        dest="repetition_blend",
+        action="store_true",
+        default=None,
+    )
+    repetition_toggle.add_argument(
+        "--no-repetition-blend",
+        dest="repetition_blend",
+        action="store_false",
+    )
+    parser.add_argument("--repetition-policy", choices=REPETITION_POLICIES)
+    parser.add_argument("--repetition-rep-min", type=float)
+    parser.add_argument("--repetition-rep-max", type=float)
+    empty_toggle = parser.add_mutually_exclusive_group()
+    empty_toggle.add_argument(
+        "--repetition-never-repeat-empty-gt",
+        dest="repetition_never_repeat_empty_gt",
+        action="store_true",
+        default=None,
+    )
+    empty_toggle.add_argument(
+        "--repetition-allow-empty-gt",
+        dest="repetition_never_repeat_empty_gt",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--repetition-explicit-multiplier",
+        action="append",
+        metavar="TASK=MULTIPLIER",
+    )
+    parser.add_argument("--repetition-seed", type=int)
     parser.add_argument("--defect-detection-ablation", action="store_true")
     parser.add_argument(
         "--defect-detection-anchor-policy",
@@ -680,6 +734,34 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    try:
+        args.resolved_repetition_blend = merge_repetition_config(
+            load_repetition_config(args.repetition_config)
+            if args.repetition_config is not None
+            else None,
+            {
+                "enabled": args.repetition_blend,
+                "policy": args.repetition_policy,
+                "rep_min": args.repetition_rep_min,
+                "rep_max": args.repetition_rep_max,
+                "never_repeat_empty_gt": args.repetition_never_repeat_empty_gt,
+                "explicit_multipliers": parse_explicit_multipliers(
+                    args.repetition_explicit_multiplier
+                ),
+                "seed": args.repetition_seed,
+            },
+        )
+        configured_row_cap = args.resolved_repetition_blend["row_cap"]
+        if (
+            configured_row_cap is not None
+            and configured_row_cap != args.max_training_rows_per_iteration
+        ):
+            raise ValueError(
+                "repetition row_cap must equal --max-training-rows-per-iteration"
+            )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"init_deft_state: {exc}", file=sys.stderr)
+        return 2
     args.gpu_model = args.gpu_model.strip()
     if not args.gpu_model:
         print("init_deft_state: --gpu-model must not be empty", file=sys.stderr)

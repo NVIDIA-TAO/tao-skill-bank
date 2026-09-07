@@ -13,6 +13,17 @@ import sys
 from collections import Counter
 from typing import Any
 
+from nvpaw_annotations import TASK_SPECS
+from repetition_blend import (
+    POLICIES as REPETITION_POLICIES,
+    apply_repetition_blend,
+    bind_repetition_manifest,
+    deficit_weights_from_gap_summary,
+    load_repetition_config,
+    merge_repetition_config,
+    parse_explicit_multipliers,
+    validate_repetition_config,
+)
 from validate_sharegpt import load_records, target_path
 
 
@@ -60,10 +71,24 @@ def assemble(
     validation_paths: list[pathlib.Path],
     max_rows: int | None = None,
     row_multiple: int | None = None,
+    repetition_config: dict[str, Any] | None = None,
+    deficit_weights: dict[str, float] | None = None,
+    repetition_seed: int | None = None,
+    deficit_weight_source: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     for name, value in (("max_rows", max_rows), ("row_multiple", row_multiple)):
         if value is not None and (type(value) is not int or value <= 0):
             raise ValueError(f"{name} must be a positive integer")
+    resolved_repetition = validate_repetition_config(repetition_config)
+    configured_row_cap = resolved_repetition["row_cap"]
+    if max_rows is None:
+        max_rows = configured_row_cap
+    elif configured_row_cap is not None and configured_row_cap != max_rows:
+        raise ValueError("repetition row_cap must equal the materialization max_rows")
+    if resolved_repetition["enabled"] and max_rows is None:
+        raise ValueError("enabled repetition blend requires a materialization row_cap")
+    if max_rows is not None:
+        resolved_repetition["row_cap"] = max_rows
     mined = load_records(mined_path)
     if not mined:
         raise ValueError("the current iteration must contribute at least one mined record")
@@ -109,7 +134,63 @@ def assemble(
     if not merged:
         raise ValueError("real-mining assembly produced no training records")
     uncapped_records = len(merged)
-    if max_rows is not None or row_multiple is not None:
+    repetition_manifest: dict[str, Any] | None = None
+    selection_policy = "monotonic_current_fill_task_balanced_v1"
+    if resolved_repetition["enabled"]:
+        assert max_rows is not None
+        materialized_rows = max_rows
+        if row_multiple is not None:
+            materialized_rows -= materialized_rows % row_multiple
+            if materialized_rows < row_multiple:
+                raise ValueError(
+                    "training materialization cannot form one complete global batch: "
+                    f"row_cap={max_rows}, row_multiple={row_multiple}"
+                )
+        current = [
+            index
+            for index, item in enumerate(provenance)
+            if item["source_kind"] == "current_mining"
+        ]
+        prior = [
+            index
+            for index, item in enumerate(provenance)
+            if item["source_kind"] == "previous_iteration"
+        ]
+        if not current:
+            raise ValueError(
+                "repetition blend requires at least one unique current Mining record"
+            )
+        if len(prior) + 1 > materialized_rows:
+            raise ValueError(
+                "training materialization cannot retain all previous iteration records "
+                "and include current Mining data under the configured cap"
+            )
+        # Keep fresh corrective examples at the front of the first repetition
+        # pass, matching the non-repetition materializer's ordering contract.
+        available_indices = current + prior
+        available_records = [merged[index] for index in available_indices]
+        available_provenance = [provenance[index] for index in available_indices]
+        first_prior = len(current)
+        merged, repetition_manifest = apply_repetition_blend(
+            available_records,
+            row_cap=materialized_rows,
+            config=resolved_repetition,
+            deficit_weights=deficit_weights,
+            seed=repetition_seed,
+            deficit_weight_source=deficit_weight_source,
+            mandatory_indices=set(range(first_prior, len(available_records))) | {0},
+            row_multiple=row_multiple or 1,
+        )
+        provenance_by_fingerprint = {
+            _fingerprint(record): item
+            for record, item in zip(available_records, available_provenance)
+        }
+        provenance = [
+            provenance_by_fingerprint[_fingerprint(record)] for record in merged
+        ]
+        tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)
+        selection_policy = "monotonic_deficit_repetition_blend_v1"
+    elif max_rows is not None or row_multiple is not None:
         materialized_rows = min(uncapped_records, max_rows or uncapped_records)
         if row_multiple is not None:
             materialized_rows -= materialized_rows % row_multiple
@@ -148,6 +229,21 @@ def assemble(
         merged = [merged[index] for index in selected]
         provenance = [provenance[index] for index in selected]
         tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)
+    if repetition_manifest is None:
+        merged, repetition_manifest = apply_repetition_blend(
+            merged,
+            row_cap=max_rows or len(merged),
+            config=resolved_repetition,
+            deficit_weights=deficit_weights,
+            seed=repetition_seed,
+            deficit_weight_source=deficit_weight_source,
+            row_multiple=row_multiple or 1,
+        )
+    records_truncated = (
+        repetition_manifest["totals"]["dropped_rows"]
+        if resolved_repetition["enabled"]
+        else uncapped_records - len(merged)
+    )
     mined_fingerprints = {_fingerprint(record) for record in mined}
     if not any(_fingerprint(record) in mined_fingerprints for record in merged):
         raise ValueError("current mined records were all lost during assembly")
@@ -165,17 +261,32 @@ def assemble(
         "uncapped_records": uncapped_records,
         "materialization_cap": max_rows,
         "row_multiple": row_multiple,
-        "selection_policy": "monotonic_current_fill_task_balanced_v1",
-        "records_truncated": uncapped_records - len(merged),
+        "selection_policy": selection_policy,
+        "records_truncated": records_truncated,
         "duplicates_skipped": duplicate_count,
-        "retained_previous_records": sum(
+        "retained_previous_records": len(
+            {
+                (item["source"], item["source_index"])
+                for item in provenance
+                if item["source_kind"] == "previous_iteration"
+            }
+        ),
+        "selected_current_records": len(
+            {
+                (item["source"], item["source_index"])
+                for item in provenance
+                if item["source_kind"] == "current_mining"
+            }
+        ),
+        "materialized_previous_records": sum(
             item["source_kind"] == "previous_iteration" for item in provenance
         ),
-        "selected_current_records": sum(
+        "materialized_current_records": sum(
             item["source_kind"] == "current_mining" for item in provenance
         ),
         "tasks": dict(sorted(tasks.items())),
         "provenance": provenance,
+        "repetition_blend": repetition_manifest,
     }
 
 
@@ -199,16 +310,104 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--validation-jsonl", action="append", default=[], type=pathlib.Path)
     parser.add_argument("--max-rows", type=int)
     parser.add_argument("--row-multiple", type=int)
+    parser.add_argument("--gap-analysis-summary", type=pathlib.Path)
+    parser.add_argument("--repetition-config", type=pathlib.Path)
+    repetition_toggle = parser.add_mutually_exclusive_group()
+    repetition_toggle.add_argument(
+        "--repetition-blend",
+        dest="repetition_blend",
+        action="store_true",
+        default=None,
+    )
+    repetition_toggle.add_argument(
+        "--no-repetition-blend",
+        dest="repetition_blend",
+        action="store_false",
+    )
+    parser.add_argument("--repetition-policy", choices=REPETITION_POLICIES)
+    parser.add_argument("--repetition-rep-min", type=float)
+    parser.add_argument("--repetition-rep-max", type=float)
+    empty_toggle = parser.add_mutually_exclusive_group()
+    empty_toggle.add_argument(
+        "--repetition-never-repeat-empty-gt",
+        dest="repetition_never_repeat_empty_gt",
+        action="store_true",
+        default=None,
+    )
+    empty_toggle.add_argument(
+        "--repetition-allow-empty-gt",
+        dest="repetition_never_repeat_empty_gt",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--repetition-explicit-multiplier",
+        action="append",
+        metavar="TASK=MULTIPLIER",
+    )
+    parser.add_argument("--repetition-seed", type=int)
+    parser.add_argument(
+        "--repetition-manifest",
+        type=pathlib.Path,
+        help="Defaults to repetition_blend_manifest.json beside --output.",
+    )
     args = parser.parse_args(argv)
     try:
+        repetition_config = merge_repetition_config(
+            load_repetition_config(args.repetition_config)
+            if args.repetition_config is not None
+            else None,
+            {
+                "enabled": args.repetition_blend,
+                "policy": args.repetition_policy,
+                "rep_min": args.repetition_rep_min,
+                "rep_max": args.repetition_rep_max,
+                "never_repeat_empty_gt": args.repetition_never_repeat_empty_gt,
+                "explicit_multipliers": parse_explicit_multipliers(
+                    args.repetition_explicit_multiplier
+                ),
+                "seed": args.repetition_seed,
+            },
+        )
+        gap_summary = (
+            json.loads(args.gap_analysis_summary.read_text(encoding="utf-8"))
+            if args.gap_analysis_summary is not None
+            else None
+        )
+        deficit_weights, deficit_weight_source = deficit_weights_from_gap_summary(
+            gap_summary, list(TASK_SPECS)
+        )
+        repetition_seed = args.repetition_seed
+        if repetition_seed is None:
+            repetition_seed = repetition_config["seed"]
+        if repetition_seed is None and isinstance(gap_summary, dict):
+            repetition_seed = gap_summary.get("seed")
+        if repetition_seed is None:
+            repetition_seed = 17
         rows, summary = assemble(
             args.previous_jsonl,
             args.mined_jsonl,
             validation_paths=args.validation_jsonl,
             max_rows=args.max_rows,
             row_multiple=args.row_multiple,
+            repetition_config=repetition_config,
+            deficit_weights=deficit_weights,
+            repetition_seed=repetition_seed,
+            deficit_weight_source=deficit_weight_source,
         )
         _write_jsonl(args.output, rows)
+        repetition_manifest = bind_repetition_manifest(
+            summary["repetition_blend"], args.output
+        )
+        summary["repetition_blend"] = repetition_manifest
+        repetition_manifest_path = (
+            args.repetition_manifest
+            or args.output.with_name("repetition_blend_manifest.json")
+        )
+        repetition_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        repetition_manifest_path.write_text(
+            json.dumps(repetition_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         summary_path = args.summary or args.output.with_name("assemble_summary.json")
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(summary, indent=2) + "\n")

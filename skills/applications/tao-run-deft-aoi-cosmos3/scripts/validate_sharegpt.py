@@ -123,10 +123,13 @@ def validate_records(
     require_id: bool = True,
     annotation_profile: str = "nvpaw_multitask_v1",
     skip_unsupported_tasks: bool = False,
+    allow_exact_repetitions: bool = False,
 ) -> dict[str, Any]:
     if annotation_profile != "nvpaw_multitask_v1":
         raise ValueError("Cosmos Framework accepts only nvpaw_multitask_v1 JSONL")
     ids: set[str] = set()
+    id_fingerprints: dict[str, str] = {}
+    exact_repetitions = 0
     tasks: Counter[str] = Counter()
     targets: set[str] = set()
     image_count = 0
@@ -153,8 +156,19 @@ def validate_records(
                 raise ValueError(
                     f"{context}: id must be non-empty, trimmed, and contain no control characters"
                 )
+            fingerprint = json.dumps(
+                record, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
             if record_id in ids:
-                raise ValueError(f"{context}: duplicate id {record_id!r}")
+                if not allow_exact_repetitions:
+                    raise ValueError(f"{context}: duplicate id {record_id!r}")
+                if id_fingerprints[record_id] != fingerprint:
+                    raise ValueError(
+                        f"{context}: duplicate id {record_id!r} has different content"
+                    )
+                exact_repetitions += 1
+            else:
+                id_fingerprints[record_id] = fingerprint
             ids.add(record_id)
         prompt_and_response(record, context=context)
         items = image_items(record, context=context)
@@ -193,6 +207,7 @@ def validate_records(
         "tasks": dict(sorted(tasks.items())),
         "labels": {},
         "unique_ids": len(ids),
+        "exact_repetitions": exact_repetitions,
         "unique_target_images": len(targets),
         "image_items": image_count,
         "max_images_per_record": max_images,
@@ -206,6 +221,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--media-root", required=True, type=pathlib.Path)
     parser.add_argument("--require-files", action="store_true")
     parser.add_argument("--require-id", action="store_true")
+    parser.add_argument(
+        "--allow-exact-repetitions",
+        action="store_true",
+        help="Allow byte-equivalent repeated training rows with the same ID.",
+    )
     parser.add_argument("--summary", type=pathlib.Path)
     args = parser.parse_args(argv)
     try:
@@ -214,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
             media_root=args.media_root.expanduser().resolve(),
             require_files=args.require_files,
             require_id=True,
+            allow_exact_repetitions=args.allow_exact_repetitions,
         )
         if args.summary:
             args.summary.parent.mkdir(parents=True, exist_ok=True)

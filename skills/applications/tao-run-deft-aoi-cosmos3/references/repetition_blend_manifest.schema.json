@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repetition_blend_manifest.schema.json",
+  "title": "DEFT AOI repetition blend manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "enabled",
+    "policy",
+    "seed",
+    "configuration",
+    "deficit_weight_source",
+    "tasks",
+    "totals",
+    "invariants",
+    "available_rows_sha256",
+    "materialized_rows_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "repetition_blend_manifest_v1"},
+    "enabled": {"type": "boolean"},
+    "policy": {"enum": ["deficit_proportional", "explicit"]},
+    "seed": {"type": "integer"},
+    "configuration": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "policy",
+        "rep_min",
+        "rep_max",
+        "never_repeat_empty_gt",
+        "explicit_multipliers",
+        "row_cap",
+        "seed"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "policy": {"enum": ["deficit_proportional", "explicit"]},
+        "rep_min": {"type": "number", "exclusiveMinimum": 0},
+        "rep_max": {"type": "number", "exclusiveMinimum": 0},
+        "never_repeat_empty_gt": {"type": "boolean"},
+        "explicit_multipliers": {
+          "type": "object",
+          "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "row_cap": {"type": "integer", "minimum": 1},
+        "seed": {"type": "integer"}
+      },
+      "additionalProperties": false
+    },
+    "deficit_weight_source": {
+      "enum": ["disabled", "explicit", "provided", "gap_summary", "equal_fallback"]
+    },
+    "tasks": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "available",
+          "deficit_weight",
+          "target_share",
+          "target_rows",
+          "rep",
+          "realized_rep",
+          "repeated_rows",
+          "unique_rows_emitted",
+          "additional_repetitions",
+          "dropped_rows",
+          "empty_rows",
+          "empty_rows_emitted",
+          "repeated_empty_rows"
+        ],
+        "properties": {
+          "available": {"type": "integer", "minimum": 1},
+          "deficit_weight": {"type": ["number", "null"], "minimum": 0},
+          "target_share": {"type": "number", "minimum": 0, "maximum": 1},
+          "target_rows": {"type": "number", "minimum": 0},
+          "rep": {"type": "number", "minimum": 0},
+          "realized_rep": {"type": "number", "minimum": 0},
+          "repeated_rows": {"type": "integer", "minimum": 0},
+          "unique_rows_emitted": {"type": "integer", "minimum": 0},
+          "additional_repetitions": {"type": "integer", "minimum": 0},
+          "dropped_rows": {"type": "integer", "minimum": 0},
+          "empty_rows": {"type": "integer", "minimum": 0},
+          "empty_rows_emitted": {"type": "integer", "minimum": 0},
+          "repeated_empty_rows": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "totals": {
+      "type": "object",
+      "required": [
+        "available",
+        "row_cap",
+        "row_multiple",
+        "repeated_rows",
+        "unique_rows_emitted",
+        "additional_repetitions",
+        "dropped_rows",
+        "empty_rows",
+        "repeated_empty_rows"
+      ],
+      "properties": {
+        "available": {"type": "integer", "minimum": 1},
+        "row_cap": {"type": "integer", "minimum": 1},
+        "row_multiple": {"type": "integer", "minimum": 1},
+        "repeated_rows": {"type": "integer", "minimum": 1},
+        "unique_rows_emitted": {"type": "integer", "minimum": 1},
+        "additional_repetitions": {"type": "integer", "minimum": 0},
+        "dropped_rows": {"type": "integer", "minimum": 0},
+        "empty_rows": {"type": "integer", "minimum": 0},
+        "repeated_empty_rows": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "invariants": {
+      "type": "object",
+      "required": [
+        "only_available_rows_emitted",
+        "empty_ground_truth_not_repeated",
+        "perceptual_hash_filter_applied"
+      ],
+      "properties": {
+        "only_available_rows_emitted": {"const": true},
+        "empty_ground_truth_not_repeated": {"type": ["boolean", "null"]},
+        "perceptual_hash_filter_applied": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "available_rows_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "materialized_rows_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "training_jsonl": {
+      "type": "object",
+      "required": ["path", "sha256", "rows"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "rows": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

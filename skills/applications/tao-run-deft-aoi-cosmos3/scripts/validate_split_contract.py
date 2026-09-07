@@ -38,6 +38,7 @@ def _records(
     media_root: pathlib.Path,
     *,
     skip_unsupported_tasks: bool = False,
+    allow_exact_repetitions: bool = False,
 ) -> tuple[list[dict[str, Any]], set[str], dict[str, int]]:
     all_rows = load_records(path)
     summary = validate_records(
@@ -45,6 +46,7 @@ def _records(
         media_root=media_root,
         require_files=False,
         skip_unsupported_tasks=skip_unsupported_tasks,
+        allow_exact_repetitions=allow_exact_repetitions,
     )
     rows = (
         [row for row in all_rows if row.get("task_type") in TASK_SPECS]
@@ -76,6 +78,7 @@ def validate(
             path,
             media_root,
             skip_unsupported_tasks=role == "mining",
+            allow_exact_repetitions=role in {"previous_train", "train"},
         )
         if ignored:
             ignored_unsupported_tasks[role] = ignored

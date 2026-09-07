@@ -16,6 +16,17 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
+from repetition_blend import (
+    POLICIES as REPETITION_POLICIES,
+    apply_repetition_blend,
+    bind_repetition_manifest,
+    deficit_weights_from_gap_summary,
+    load_repetition_config,
+    merge_repetition_config,
+    parse_explicit_multipliers,
+    plan_repetition,
+    validate_repetition_config,
+)
 from validate_sharegpt import load_records, resolve_image, target_path
 
 
@@ -465,6 +476,10 @@ def materialize(
     global_batch: int,
     near_duplicate_hamming_distance: int,
     novel_image_limit: int | None = None,
+    repetition_config: dict[str, Any] | None = None,
+    deficit_weights: dict[str, float] | None = None,
+    repetition_seed: int | None = None,
+    deficit_weight_source: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if min(max_rows, row_multiple, epochs, global_batch) <= 0:
         raise ValueError("row, epoch, and global-batch values must be positive")
@@ -478,6 +493,15 @@ def materialize(
         raise ValueError("Proxy empty-ground-truth rate must be in [0, 1]")
     if not 0 <= near_duplicate_hamming_distance <= 64:
         raise ValueError("near-duplicate Hamming distance must be in [0, 64]")
+    resolved_repetition = validate_repetition_config(repetition_config)
+    if (
+        resolved_repetition["row_cap"] is not None
+        and resolved_repetition["row_cap"] != max_rows
+    ):
+        raise ValueError(
+            "repetition row_cap must equal the materialization --max-rows value"
+        )
+    resolved_repetition["row_cap"] = max_rows
     requested_target_rows = max_rows - max_rows % row_multiple
     if requested_target_rows <= 0:
         raise ValueError("max_rows cannot form one complete effective global batch")
@@ -681,39 +705,55 @@ def materialize(
         max_novel=novel_image_limit - selected_dd_novel,
     )
     accepted_target_rows: int | None = None
-    for candidate_target in range(
-        requested_target_rows,
-        minimum_rows_aligned - 1,
-        -row_multiple,
-    ):
-        candidate_dd = math.ceil(candidate_target * defect_detection_fraction)
-        candidate_empty = math.floor(candidate_dd * proxy_empty_rate + 0.5)
-        candidate_positive = candidate_dd - candidate_empty
-        candidate_maintenance = candidate_target - candidate_dd
-        if (
-            candidate_empty <= len(selected_empty)
-            and candidate_positive <= len(selected_positive)
-            and candidate_maintenance <= len(selected_maintenance)
+    if not resolved_repetition["enabled"]:
+        for candidate_target in range(
+            requested_target_rows,
+            minimum_rows_aligned - 1,
+            -row_multiple,
         ):
-            accepted_target_rows = candidate_target
-            target_rows = candidate_target
-            dd_target = candidate_dd
-            empty_target = candidate_empty
-            positive_target = candidate_positive
-            selected_empty = selected_empty[:candidate_empty]
-            selected_positive = selected_positive[:candidate_positive]
-            selected_dd = selected_empty + selected_positive
-            selected_maintenance = selected_maintenance[:candidate_maintenance]
-            marginal_quotas = _positive_quota_report(
-                positive_unique, selected_positive, candidate_positive
-            )
-            break
-    selected_entries = selected_dd + selected_maintenance
-    selected_records = [item["record"] for item in selected_entries]
-    tasks = Counter(item["task_type"] for item in selected_entries)
-    selected_paths = {item["resolved_path"] for item in selected_entries}
-    selected_content = {item["content_sha256"] for item in selected_entries}
-    selected_phashes = [item["perceptual_hash"] for item in selected_entries]
+            candidate_dd = math.ceil(candidate_target * defect_detection_fraction)
+            candidate_empty = math.floor(candidate_dd * proxy_empty_rate + 0.5)
+            candidate_positive = candidate_dd - candidate_empty
+            candidate_maintenance = candidate_target - candidate_dd
+            if (
+                candidate_empty <= len(selected_empty)
+                and candidate_positive <= len(selected_positive)
+                and candidate_maintenance <= len(selected_maintenance)
+            ):
+                accepted_target_rows = candidate_target
+                target_rows = candidate_target
+                dd_target = candidate_dd
+                empty_target = candidate_empty
+                positive_target = candidate_positive
+                selected_empty = selected_empty[:candidate_empty]
+                selected_positive = selected_positive[:candidate_positive]
+                selected_dd = selected_empty + selected_positive
+                selected_maintenance = selected_maintenance[:candidate_maintenance]
+                marginal_quotas = _positive_quota_report(
+                    positive_unique, selected_positive, candidate_positive
+                )
+                break
+    base_selected_entries = selected_dd + selected_maintenance
+    base_selected_records = [item["record"] for item in base_selected_entries]
+    selected_records, repetition_manifest = apply_repetition_blend(
+        base_selected_records,
+        row_cap=target_rows,
+        config=resolved_repetition,
+        deficit_weights=deficit_weights,
+        seed=repetition_seed,
+        deficit_weight_source=deficit_weight_source,
+        row_multiple=row_multiple,
+    )
+    tasks = Counter(str(row.get("task_type")) for row in selected_records)
+    output_fingerprints = Counter(_record_fingerprint(row) for row in selected_records)
+    emitted_base_entries = [
+        item
+        for item in base_selected_entries
+        if output_fingerprints[_record_fingerprint(item["record"])]
+    ]
+    selected_paths = {item["resolved_path"] for item in emitted_base_entries}
+    selected_content = {item["content_sha256"] for item in emitted_base_entries}
+    selected_phashes = [item["perceptual_hash"] for item in emitted_base_entries]
     verification_index = _HammingIndex()
     near_duplicate_pairs = 0
     for phash in selected_phashes:
@@ -722,8 +762,14 @@ def materialize(
         verification_index.add(phash)
     selected_empty_count = len(selected_empty)
     selected_positive_count = len(selected_positive)
-    selected_replay_count = sum(item["is_replay"] for item in selected_entries)
-    row_count = len(selected_entries)
+    materialized_empty_count = (
+        repetition_manifest["tasks"]
+        .get(DEFECT_DETECTION_TASK, {})
+        .get("empty_rows_emitted", 0)
+    )
+    selected_replay_count = sum(item["is_replay"] for item in emitted_base_entries)
+    selected_novel_count = len(emitted_base_entries) - selected_replay_count
+    row_count = len(selected_records)
     expected_steps = row_count // global_batch * epochs if row_count % global_batch == 0 else None
     maintenance_target = target_rows - dd_target
     maintenance_requested = {
@@ -732,20 +778,41 @@ def materialize(
         for index, task in enumerate(MAINTENANCE_TASK_TYPES)
     }
     maintenance_available = Counter(item["task_type"] for item in maintenance_unique)
-    maintenance_selected = Counter(item["task_type"] for item in selected_maintenance)
+    maintenance_selected = Counter(
+        item["task_type"] for item in selected_maintenance
+    )
+    materialized_maintenance = Counter(
+        {task: tasks[task] for task in MAINTENANCE_TASK_TYPES}
+    )
     verification = {
         "target_rows_reached": row_count == target_rows,
         "minimum_rows_reached": row_count >= minimum_rows_aligned,
-        "defect_detection_quota_reached": len(selected_dd) >= dd_target,
-        "empty_rate_matched": selected_empty_count == empty_target,
-        "unique_target_images": len(selected_paths) == row_count,
-        "unique_image_content": len(selected_content) == row_count,
+        "defect_detection_quota_reached": tasks[DEFECT_DETECTION_TASK] >= dd_target,
+        "empty_rate_matched": (
+            selected_empty_count == empty_target
+            if resolved_repetition["never_repeat_empty_gt"]
+            else materialized_empty_count == empty_target
+        ),
+        "empty_rate_matched_before_repetition": selected_empty_count == empty_target,
+        "unique_target_images": len(selected_paths) == len(emitted_base_entries),
+        "unique_image_content": len(selected_content) == len(emitted_base_entries),
         "near_duplicate_free": near_duplicate_pairs == 0,
         "optimizer_boundary_aligned": expected_steps is not None,
-        "novel_image_limit_respected": row_count - selected_replay_count <= novel_image_limit,
+        "novel_image_limit_respected": (
+            selected_novel_count <= novel_image_limit
+        ),
         "task_strict_with_authorized_empty_calibration_only": True,
+        "repetition_only_accepted_rows": repetition_manifest["invariants"][
+            "only_available_rows_emitted"
+        ],
+        "repetition_empty_policy_respected": repetition_manifest["invariants"][
+            "empty_ground_truth_not_repeated"
+        ] is not False,
+        "repetition_did_not_apply_perceptual_hash_filter": repetition_manifest[
+            "invariants"
+        ]["perceptual_hash_filter_applied"] is False,
         "all_five_maintenance_tasks_present": all(
-            maintenance_selected[task] > 0 for task in MAINTENANCE_TASK_TYPES
+            materialized_maintenance[task] > 0 for task in MAINTENANCE_TASK_TYPES
         ),
     }
     manifest = {
@@ -774,13 +841,20 @@ def materialize(
             "total": row_count,
             "target": target_rows,
             "requested_target": requested_target_rows,
-            "defect_detection": len(selected_dd),
+            "defect_detection": tasks[DEFECT_DETECTION_TASK],
             "defect_detection_target": dd_target,
-            "maintenance": len(selected_maintenance),
+            "maintenance": sum(tasks[task] for task in MAINTENANCE_TASK_TYPES),
             "maintenance_target": maintenance_target,
             "by_task": dict(sorted(tasks.items())),
-            "novel_mining_pool_images": row_count - selected_replay_count,
+            "novel_mining_pool_images": selected_novel_count,
             "replayed_mining_pool_images": selected_replay_count,
+            "repetition_rows": repetition_manifest["totals"]["additional_repetitions"],
+        },
+        "pre_repetition": {
+            "total": len(base_selected_entries),
+            "defect_detection": len(selected_dd),
+            "maintenance": len(selected_maintenance),
+            "empty_ground_truth": selected_empty_count,
         },
         "shortfall": {
             "requested_rows": requested_target_rows,
@@ -800,6 +874,10 @@ def materialize(
             },
             "selected": {
                 task: maintenance_selected[task] for task in MAINTENANCE_TASK_TYPES
+            },
+            "materialized": {
+                task: materialized_maintenance[task]
+                for task in MAINTENANCE_TASK_TYPES
             },
             "shortages": {
                 task: maintenance_requested[task] - maintenance_available[task]
@@ -826,10 +904,20 @@ def materialize(
             "selected_empty": selected_empty_count,
             "selected_non_empty": selected_positive_count,
             "selected_rate": selected_empty_count / len(selected_dd) if selected_dd else None,
+            "materialized_empty": materialized_empty_count,
+            "materialized_non_empty": (
+                tasks[DEFECT_DETECTION_TASK] - materialized_empty_count
+            ),
+            "materialized_rate": (
+                materialized_empty_count / tasks[DEFECT_DETECTION_TASK]
+                if tasks[DEFECT_DETECTION_TASK]
+                else None
+            ),
         },
         "positive_marginal_quotas": marginal_quotas,
         "uniqueness": {
-            "unique_rows": len({_record_fingerprint(row) for row in selected_records}),
+            "scope": "unique_rows_emitted_before_intentional_repetition",
+            "unique_rows": len({_record_fingerprint(item["record"]) for item in emitted_base_entries}),
             "unique_images": len(selected_paths),
             "unique_image_content": len(selected_content),
             "selected_near_duplicate_pairs": near_duplicate_pairs,
@@ -841,6 +929,7 @@ def materialize(
             "steps_per_epoch": row_count // global_batch if expected_steps is not None else None,
             "expected_optimizer_steps": expected_steps,
         },
+        "repetition_blend": repetition_manifest,
     }
     return selected_records, manifest
 
@@ -938,10 +1027,92 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--global-batch", required=True, type=int)
     parser.add_argument("--near-duplicate-hamming-distance", default=3, type=int)
     parser.add_argument("--novel-image-limit", type=int)
+    parser.add_argument(
+        "--gap-analysis-summary",
+        type=pathlib.Path,
+        help="Current iteration gaps_summary.json used to derive per-task deficit weights.",
+    )
+    parser.add_argument(
+        "--repetition-config",
+        type=pathlib.Path,
+        help="Repetition-blend launch config in TOML or JSON format.",
+    )
+    repetition_toggle = parser.add_mutually_exclusive_group()
+    repetition_toggle.add_argument(
+        "--repetition-blend",
+        dest="repetition_blend",
+        action="store_true",
+        default=None,
+        help="Enable the post-exclusion repetition blend.",
+    )
+    repetition_toggle.add_argument(
+        "--no-repetition-blend",
+        dest="repetition_blend",
+        action="store_false",
+        help="Disable repetition even when a config file enables it.",
+    )
+    parser.add_argument("--repetition-policy", choices=REPETITION_POLICIES)
+    parser.add_argument("--repetition-rep-min", type=float)
+    parser.add_argument("--repetition-rep-max", type=float)
+    empty_toggle = parser.add_mutually_exclusive_group()
+    empty_toggle.add_argument(
+        "--repetition-never-repeat-empty-gt",
+        dest="repetition_never_repeat_empty_gt",
+        action="store_true",
+        default=None,
+    )
+    empty_toggle.add_argument(
+        "--repetition-allow-empty-gt",
+        dest="repetition_never_repeat_empty_gt",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--repetition-explicit-multiplier",
+        action="append",
+        metavar="TASK=MULTIPLIER",
+    )
+    parser.add_argument("--repetition-seed", type=int)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--manifest", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--repetition-manifest",
+        type=pathlib.Path,
+        help="Defaults to repetition_blend_manifest.json beside --output.",
+    )
     args = parser.parse_args(argv)
     try:
+        repetition_config = merge_repetition_config(
+            load_repetition_config(args.repetition_config)
+            if args.repetition_config is not None
+            else None,
+            {
+                "enabled": args.repetition_blend,
+                "policy": args.repetition_policy,
+                "rep_min": args.repetition_rep_min,
+                "rep_max": args.repetition_rep_max,
+                "never_repeat_empty_gt": args.repetition_never_repeat_empty_gt,
+                "explicit_multipliers": parse_explicit_multipliers(
+                    args.repetition_explicit_multiplier
+                ),
+                "seed": args.repetition_seed,
+            },
+        )
+        gap_summary = (
+            json.loads(args.gap_analysis_summary.read_text(encoding="utf-8"))
+            if args.gap_analysis_summary is not None
+            else None
+        )
+        deficit_weights, deficit_weight_source = deficit_weights_from_gap_summary(
+            gap_summary,
+            [DEFECT_DETECTION_TASK, *MAINTENANCE_TASK_TYPES],
+        )
+        repetition_seed = args.repetition_seed
+        if repetition_seed is None:
+            repetition_seed = repetition_config["seed"]
+        if repetition_seed is None and isinstance(gap_summary, dict):
+            repetition_seed = gap_summary.get("seed")
+        if repetition_seed is None:
+            repetition_seed = 17
         proxy = load_records(args.proxy_annotations)
         empty_rate, proxy_empty, proxy_rows = _proxy_empty_rate(proxy)
         validations = proxy[:]
@@ -961,13 +1132,30 @@ def main(argv: list[str] | None = None) -> int:
             global_batch=args.global_batch,
             near_duplicate_hamming_distance=args.near_duplicate_hamming_distance,
             novel_image_limit=args.novel_image_limit,
+            repetition_config=repetition_config,
+            deficit_weights=deficit_weights,
+            repetition_seed=repetition_seed,
+            deficit_weight_source=deficit_weight_source,
         )
         manifest["empty_ground_truth"]["proxy_empty_rows"] = proxy_empty
         manifest["empty_ground_truth"]["proxy_defect_detection_rows"] = proxy_rows
         _write_jsonl(args.output, rows)
+        repetition_manifest = bind_repetition_manifest(
+            manifest["repetition_blend"], args.output
+        )
+        manifest["repetition_blend"] = repetition_manifest
         manifest = bind_manifest(manifest, args.output)
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
         args.manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        repetition_manifest_path = (
+            args.repetition_manifest
+            or args.output.with_name("repetition_blend_manifest.json")
+        )
+        repetition_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        repetition_manifest_path.write_text(
+            json.dumps(repetition_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         if not manifest["verified"]:
             raise ValueError(
                 "Defect Detection materialization quota is not verified; inspect the manifest"
