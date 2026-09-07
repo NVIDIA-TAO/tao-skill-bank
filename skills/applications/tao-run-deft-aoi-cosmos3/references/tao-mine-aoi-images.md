@@ -29,6 +29,7 @@ available task types for every real source target.
   --media-root "$MEDIA_ROOT" \
   --mode "$MINING_ROUTER_MODE" \
   --top-k-per-target "$TOPN" \
+  --defect-detection-top-k-per-target "$DD_TOPN" \
   --min-similarity "$MIN_SIMILARITY" \
   --output "$MINING_DIR/mined_candidates.parquet" \
   --summary "$MINING_DIR/router_summary.json"
@@ -36,6 +37,8 @@ available task types for every real source target.
 
 `image_only` applies global cosine top-K, `task_strict` requires an exact task
 match, and `task_then_fallback` fills strict shortfalls from the global pool.
+The optional Defect Detection override is applied independently per exact task
+route; all other tasks keep `--top-k-per-target`.
 All modes use the same deterministic router and record rank, cosine, task
 types, query IDs, and route tier. A zero-row result is a hard stop.
 

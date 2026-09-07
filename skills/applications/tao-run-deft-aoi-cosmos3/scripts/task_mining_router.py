@@ -227,7 +227,7 @@ def _prepare_targets(
         )
     if not prepared:
         raise ValueError("target embeddings are empty")
-    return sorted(prepared, key=lambda row: (row["filepath"], row["target_id"]))
+    return prepared
 
 
 def _candidate(
@@ -285,6 +285,7 @@ def route_candidates(
     media_root: pathlib.Path,
     mode: str,
     top_k_per_target: int,
+    top_k_by_task: dict[str, int] | None = None,
     min_similarity: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Return routed source candidates and auditable selection evidence."""
@@ -295,6 +296,16 @@ def route_candidates(
         )
     if type(top_k_per_target) is not int or top_k_per_target <= 0:
         raise ValueError("top_k_per_target must be a positive integer")
+    top_k_by_task = dict(top_k_by_task or {})
+    invalid_top_k = {
+        task: value
+        for task, value in top_k_by_task.items()
+        if task not in TASK_SPECS
+        or type(value) is not int
+        or value <= 0
+    }
+    if invalid_top_k:
+        raise ValueError(f"invalid per-task top-K overrides: {invalid_top_k}")
     if not -1.0 <= min_similarity <= 1.0:
         raise ValueError("min_similarity must be between -1 and 1")
     media_root = media_root.expanduser().resolve()
@@ -357,6 +368,10 @@ def route_candidates(
         ]
         task_routes: dict[str, dict[str, int]] = {}
         if mode == "image_only":
+            target_top_k = max(
+                [top_k_per_target]
+                + [top_k_by_task.get(task, top_k_per_target) for task in target["task_types"]]
+            )
             chosen = [
                 (
                     similarity,
@@ -365,7 +380,7 @@ def route_candidates(
                     source["source_task_types"],
                     "image_only",
                 )
-                for similarity, source, _ in scored[:top_k_per_target]
+                for similarity, source, _ in scored[:target_top_k]
             ]
         else:
             # A multi-prompt physical target is one embedding but several task
@@ -373,16 +388,17 @@ def route_candidates(
             # cannot consume the neighborhood intended for a weaker task.
             chosen = []
             for task_type in target["task_types"]:
+                task_top_k = top_k_by_task.get(task_type, top_k_per_target)
                 strict_pool = [
                     item for item in scored if task_type in item[1]["source_task_types"]
                 ]
-                strict_chosen = strict_pool[:top_k_per_target]
+                strict_chosen = strict_pool[:task_top_k]
                 task_chosen = [
                     (similarity, source, [task_type], [task_type], "strict")
                     for similarity, source, _ in strict_chosen
                 ]
                 if mode == "task_then_fallback":
-                    remaining = top_k_per_target - len(task_chosen)
+                    remaining = task_top_k - len(task_chosen)
                     if remaining:
                         strict_paths = {
                             source["filepath"] for _, source, _ in strict_chosen
@@ -410,11 +426,12 @@ def route_candidates(
                     tier == "fallback" for _, _, _, _, tier in task_chosen
                 )
                 task_routes[task_type] = {
+                    "top_k": task_top_k,
                     "strict_eligible": len(strict_pool),
                     "strict_selected": strict_selected,
                     "fallback_selected": fallback_selected,
                     "selected": len(task_chosen),
-                    "shortfall": top_k_per_target - len(task_chosen),
+                    "shortfall": task_top_k - len(task_chosen),
                 }
 
         tier_counts: Counter[str] = Counter()
@@ -439,9 +456,12 @@ def route_candidates(
             else:
                 _merge_candidate(selected[key], candidate)
         expected = (
-            top_k_per_target
+            target_top_k
             if mode == "image_only"
-            else top_k_per_target * len(target["task_types"])
+            else sum(
+                top_k_by_task.get(task, top_k_per_target)
+                for task in target["task_types"]
+            )
         )
         strict_eligible = len(
             {source["filepath"] for _, source, intersection in scored if intersection}
@@ -469,6 +489,7 @@ def route_candidates(
         "schema_version": "task_mining_router_v1",
         "mode": mode,
         "top_k_per_target": top_k_per_target,
+        "top_k_by_task": dict(sorted(top_k_by_task.items())),
         "min_similarity": min_similarity,
         "target_queries": len(targets),
         "source_images": len(sources),
@@ -514,6 +535,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--media-root", required=True, type=pathlib.Path)
     parser.add_argument("--mode", choices=MINING_ROUTER_MODES, default="image_only")
     parser.add_argument("--top-k-per-target", type=int, default=5)
+    parser.add_argument("--defect-detection-top-k-per-target", type=int)
     parser.add_argument("--min-similarity", type=float, default=0.9)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--summary", required=True, type=pathlib.Path)
@@ -530,6 +552,11 @@ def main(argv: list[str] | None = None) -> int:
             media_root=args.media_root,
             mode=args.mode,
             top_k_per_target=args.top_k_per_target,
+            top_k_by_task=(
+                {"Defect Detection": args.defect_detection_top_k_per_target}
+                if args.defect_detection_top_k_per_target is not None
+                else None
+            ),
             min_similarity=args.min_similarity,
         )
         _write_parquet(args.output, rows)

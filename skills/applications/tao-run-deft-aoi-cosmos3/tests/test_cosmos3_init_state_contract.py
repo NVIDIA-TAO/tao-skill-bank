@@ -159,7 +159,10 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
                     root,
                     workspace,
                     "--defect-detection-ablation",
+                    "--defect-detection-anchor-policy", "all_proxy_severity",
+                    "--defect-detection-top-k-per-target", "100",
                     "--defect-detection-minimum-fraction", "0.5",
+                    "--minimum-training-rows-per-iteration", "3000",
                     "--near-duplicate-hamming-distance", "3",
                     "--augmentation-profile", "off",
                 )
@@ -179,6 +182,12 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
                     "best_overlap_0_lt_iou_lte_0p5",
                 ],
             )
+            self.assertEqual(
+                mining["defect_detection_ablation"]["anchor_policy"],
+                "all_proxy_severity",
+            )
+            self.assertEqual(mining["top_k_per_task"], {"Defect Detection": 100})
+            self.assertEqual(mining["minimum_training_rows_per_iteration"], 3000)
             self.assertEqual(state["config"]["training"]["augmentation_profile"], "off")
 
     def test_venv_python_symlink_survives_state_initialization(self) -> None:

@@ -33,7 +33,10 @@ for one physical target share a target ID so the target image is embedded only
 once. Write `RCCA_Report.md` from these artifacts using
 `RCCA_REPORT_TEMPLATE.md`, then commit all four files.
 
-Route selected rows with `route_selected_gaps.py`. `task_mining_router.py`
+Route selected rows with `route_selected_gaps.py`. The Defect Detection
+ablation may select `all_proxy_severity`, which anchors on every Proxy DD row
+and preserves deterministic FN/partial-overlap, FP, correct ordering; the
+historical `hard_only` policy remains available. `task_mining_router.py`
 then applies the immutable `config.mining.router_mode`:
 
 - `image_only`: global cosine top-K;
@@ -42,6 +45,9 @@ then applies the immutable `config.mining.router_mode`:
 
 Every routed row records its tier, task types, matched query IDs, rank, and
 cosine. Benchmark annotations or predictions are forbidden at this boundary.
+The default `top_k_per_target` may be overridden per task; the DD ablation
+records its Defect Detection override separately so maintenance tasks retain
+their launch value.
 When the launch contract enables detection calibration,
 `select_detection_calibration.py` may prepend bounded empty/few-box examples
 from the Mining annotations. These rows carry the explicit `calibration` tier,

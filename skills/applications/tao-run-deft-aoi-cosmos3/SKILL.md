@@ -112,19 +112,27 @@ After task-strict top-K routing, materialize with
 `$PYTHON scripts/defect_detection_ablation.py`. Pass the routed candidate
 parquet, canonical Mining/Proxy JSONL, both Proxy and Benchmark as validation
 inputs, the canonical media root, the launch global batch as `--row-multiple`,
-and the launch epochs/global batch. The selector:
+the launch epochs/global batch, and the launch-recorded minimum accepted rows.
+The selector:
 
 - can augment deficit-weighted selected gaps at launch time through
   `route_selected_gaps.py --defect-detection-supplement GAP_CANDIDATES
-  --supplement-summary SUMMARY`; this preserves the allocator output and adds
-  only Proxy Defect Detection rows carrying one of the approved FN,
-  partial-overlap, or FP evidence types;
+  --supplement-summary SUMMARY --defect-detection-anchor-policy POLICY`;
+  `hard_only` preserves the historical approved-evidence supplement, while
+  `all_proxy_severity` replaces the selected DD subset with every Proxy DD row
+  ordered as FN/partial-overlap, FP, then correctly handled rows. Correct rows
+  carry explicit `proxy_correct` provenance so their candidates remain
+  auditable and trainable;
+
+- applies the launch-recorded default top-K to the five maintenance tasks and
+  an independently launch-recorded Defect Detection top-K override;
 
 - reserves the configured fraction (at least 50 percent) for exactly `Defect
   Detection`; `Component Detection` is one of five maintenance tasks and never
   counts toward that reserve;
-- admits positive Defect Detection rows only from proxy-FN or partial-overlap
-  routes and empty hard negatives only from proxy-FP routes; when the launch
+- admits positive Defect Detection rows from proxy-FN, partial-overlap, or
+  correctly handled DD routes, while proxy-FP routes provide empty hard
+  negatives; when the launch
   explicitly authorizes direct Mining-pool box calibration, separately labeled
   `calibration_empty_ground_truth` candidates may fill only the residual empty
   quota and are never reported as task-strict hard negatives;
@@ -139,8 +147,12 @@ and the launch epochs/global batch. The selector:
   `official_v1` messages, coordinates, box order, and image controls unchanged.
 
 The command writes the materialized JSONL and a bound
-`defect_detection_quota_manifest_v1`. A shortfall leaves the manifest on disk
-with `verified=false` and exits nonzero. For an enabled ablation,
+`defect_detection_quota_manifest_v1`. By default a shortfall leaves the
+manifest on disk with `verified=false` and exits nonzero. When
+`--minimum-rows` is launch-recorded, the selector instead accepts the largest
+feasible global-batch-aligned corpus at or above that raw minimum, records the
+requested/accepted shortfall and every quota shortage, and rejects anything
+smaller. For an enabled ablation,
 `commit_stage.py ... --stage assemble_data` requires `--quota-manifest`, and
 `render_cfw_sft.py` must receive both `--quota-manifest` and
 `--require-defect-detection-quota-manifest`; each gate re-hashes the JSONL and

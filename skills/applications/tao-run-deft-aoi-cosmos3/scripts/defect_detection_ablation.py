@@ -33,6 +33,15 @@ POSITIVE_EVIDENCE = {
 }
 NEGATIVE_EVIDENCE = {"hard_negative_proxy_false_positive"}
 CALIBRATION_EMPTY_EVIDENCE = "calibration_empty_ground_truth"
+CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
+POSITIVE_MARGINS = (
+    ("source", "source_strata", None),
+    ("phenotype", "phenotype_strata", None),
+    ("source_x_phenotype", "source_phenotype_strata", None),
+    ("box_area_quartile_1024", "area_strata", ("Q1", "Q2", "Q3", "Q4")),
+    ("local_contrast_quartile", "contrast_strata", ("Q1", "Q2", "Q3", "Q4")),
+    ("gt_box_count_bin", "count_strata", ("1", "2-3", "4+")),
+)
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -297,30 +306,12 @@ def _balanced_positive_selection(
     entries: list[dict[str, Any]], target: int, *, max_novel: int
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not entries or target <= 0:
-        return [], {
-            name: _quota_payload([], [], target, field, fixed)
-            for name, field, fixed in (
-                ("source", "source_strata", None),
-                ("phenotype", "phenotype_strata", None),
-                ("source_x_phenotype", "source_phenotype_strata", None),
-                ("box_area_quartile_1024", "area_strata", ("Q1", "Q2", "Q3", "Q4")),
-                ("local_contrast_quartile", "contrast_strata", ("Q1", "Q2", "Q3", "Q4")),
-                ("gt_box_count_bin", "count_strata", ("1", "2-3", "4+")),
-            )
-        }
-    margins = (
-        ("source", "source_strata", None),
-        ("phenotype", "phenotype_strata", None),
-        ("source_x_phenotype", "source_phenotype_strata", None),
-        ("box_area_quartile_1024", "area_strata", ("Q1", "Q2", "Q3", "Q4")),
-        ("local_contrast_quartile", "contrast_strata", ("Q1", "Q2", "Q3", "Q4")),
-        ("gt_box_count_bin", "count_strata", ("1", "2-3", "4+")),
-    )
+        return [], _positive_quota_report([], [], target)
     quota_templates = {
         name: _quota_payload(entries, [], target, field, fixed)
-        for name, field, fixed in margins
+        for name, field, fixed in POSITIVE_MARGINS
     }
-    counts = {name: Counter() for name, _, _ in margins}
+    counts = {name: Counter() for name, _, _ in POSITIVE_MARGINS}
     remaining = list(entries)
     selected: list[dict[str, Any]] = []
     novel_count = 0
@@ -335,12 +326,17 @@ def _balanced_positive_selection(
 
         def priority(item: dict[str, Any]) -> tuple[Any, ...]:
             deficit = 0.0
-            for name, field, _ in margins:
+            for name, field, _ in POSITIVE_MARGINS:
                 requested = quota_templates[name]["requested"]
                 for stratum in item[field]:
                     quota = max(1, requested.get(stratum, 0))
                     deficit += max(0, quota - counts[name][stratum]) / quota
-            evidence_rank = 0 if "hard_positive_proxy_false_negative" in item["evidence"] else 1
+            if "hard_positive_proxy_false_negative" in item["evidence"]:
+                evidence_rank = 0
+            elif "hard_positive_best_overlap_0_lt_iou_lte_0p5" in item["evidence"]:
+                evidence_rank = 1
+            else:
+                evidence_rank = 2
             return (
                 -deficit,
                 item["is_replay"],
@@ -353,13 +349,18 @@ def _balanced_positive_selection(
         remaining.remove(chosen)
         selected.append(chosen)
         novel_count += not chosen["is_replay"]
-        for name, field, _ in margins:
+        for name, field, _ in POSITIVE_MARGINS:
             counts[name].update(chosen[field])
-    quota_report = {
+    return selected, _positive_quota_report(entries, selected, target)
+
+
+def _positive_quota_report(
+    entries: list[dict[str, Any]], selected: list[dict[str, Any]], target: int
+) -> dict[str, Any]:
+    return {
         name: _quota_payload(entries, selected, target, field, fixed)
-        for name, field, fixed in margins
+        for name, field, fixed in POSITIVE_MARGINS
     }
-    return selected, quota_report
 
 
 def _task_balanced(
@@ -456,6 +457,7 @@ def materialize(
     validation_records: list[dict[str, Any]],
     media_root: pathlib.Path,
     max_rows: int,
+    minimum_rows: int | None = None,
     row_multiple: int,
     defect_detection_fraction: float,
     proxy_empty_rate: float,
@@ -466,6 +468,8 @@ def materialize(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if min(max_rows, row_multiple, epochs, global_batch) <= 0:
         raise ValueError("row, epoch, and global-batch values must be positive")
+    if minimum_rows is not None and minimum_rows <= 0:
+        raise ValueError("minimum_rows must be positive when supplied")
     if global_batch != row_multiple:
         raise ValueError("row_multiple must equal effective global_batch")
     if not 0.5 <= defect_detection_fraction <= 1.0:
@@ -474,9 +478,20 @@ def materialize(
         raise ValueError("Proxy empty-ground-truth rate must be in [0, 1]")
     if not 0 <= near_duplicate_hamming_distance <= 64:
         raise ValueError("near-duplicate Hamming distance must be in [0, 64]")
-    target_rows = max_rows - max_rows % row_multiple
-    if target_rows <= 0:
+    requested_target_rows = max_rows - max_rows % row_multiple
+    if requested_target_rows <= 0:
         raise ValueError("max_rows cannot form one complete effective global batch")
+    minimum_rows_requested = (
+        requested_target_rows if minimum_rows is None else minimum_rows
+    )
+    minimum_rows_aligned = (
+        math.ceil(minimum_rows_requested / row_multiple) * row_multiple
+    )
+    if minimum_rows_aligned > requested_target_rows:
+        raise ValueError(
+            "minimum_rows cannot be satisfied within the batch-aligned materialization cap"
+        )
+    target_rows = requested_target_rows
     dd_target = math.ceil(target_rows * defect_detection_fraction)
     empty_target = math.floor(dd_target * proxy_empty_rate + 0.5)
     positive_target = dd_target - empty_target
@@ -564,7 +579,10 @@ def materialize(
                     if route_tier == "calibration":
                         counters["non_empty_calibration_rows_excluded"] += 1
                         continue
-                    if not POSITIVE_EVIDENCE.intersection(evidence):
+                    if not (
+                        POSITIVE_EVIDENCE.intersection(evidence)
+                        or CORRECT_ANCHOR_EVIDENCE in evidence
+                    ):
                         counters["off_evidence_positive_excluded"] += 1
                         continue
                     entry["source_strata"] = [str(record.get("dataset", "unknown"))]
@@ -584,6 +602,7 @@ def materialize(
                 elif not (
                     NEGATIVE_EVIDENCE.intersection(evidence)
                     or CALIBRATION_EMPTY_EVIDENCE in evidence
+                    or CORRECT_ANCHOR_EVIDENCE in evidence
                 ):
                     counters["off_evidence_empty_excluded"] += 1
                     continue
@@ -612,6 +631,13 @@ def materialize(
     empty.sort(
         key=lambda item: (
             item["is_replay"],
+            (
+                0
+                if NEGATIVE_EVIDENCE.intersection(item["evidence"])
+                else 1
+                if CORRECT_ANCHOR_EVIDENCE in item["evidence"]
+                else 2
+            ),
             -item["similarity"],
             item["record_id"],
         )
@@ -654,6 +680,34 @@ def materialize(
         target_rows - len(selected_dd),
         max_novel=novel_image_limit - selected_dd_novel,
     )
+    accepted_target_rows: int | None = None
+    for candidate_target in range(
+        requested_target_rows,
+        minimum_rows_aligned - 1,
+        -row_multiple,
+    ):
+        candidate_dd = math.ceil(candidate_target * defect_detection_fraction)
+        candidate_empty = math.floor(candidate_dd * proxy_empty_rate + 0.5)
+        candidate_positive = candidate_dd - candidate_empty
+        candidate_maintenance = candidate_target - candidate_dd
+        if (
+            candidate_empty <= len(selected_empty)
+            and candidate_positive <= len(selected_positive)
+            and candidate_maintenance <= len(selected_maintenance)
+        ):
+            accepted_target_rows = candidate_target
+            target_rows = candidate_target
+            dd_target = candidate_dd
+            empty_target = candidate_empty
+            positive_target = candidate_positive
+            selected_empty = selected_empty[:candidate_empty]
+            selected_positive = selected_positive[:candidate_positive]
+            selected_dd = selected_empty + selected_positive
+            selected_maintenance = selected_maintenance[:candidate_maintenance]
+            marginal_quotas = _positive_quota_report(
+                positive_unique, selected_positive, candidate_positive
+            )
+            break
     selected_entries = selected_dd + selected_maintenance
     selected_records = [item["record"] for item in selected_entries]
     tasks = Counter(item["task_type"] for item in selected_entries)
@@ -681,6 +735,7 @@ def materialize(
     maintenance_selected = Counter(item["task_type"] for item in selected_maintenance)
     verification = {
         "target_rows_reached": row_count == target_rows,
+        "minimum_rows_reached": row_count >= minimum_rows_aligned,
         "defect_detection_quota_reached": len(selected_dd) >= dd_target,
         "empty_rate_matched": selected_empty_count == empty_target,
         "unique_target_images": len(selected_paths) == row_count,
@@ -700,7 +755,10 @@ def materialize(
         "verification": verification,
         "configuration": {
             "materialization_cap": max_rows,
+            "requested_target_rows_after_global_batch_alignment": requested_target_rows,
             "target_rows_after_global_batch_alignment": target_rows,
+            "minimum_rows_requested": minimum_rows_requested,
+            "minimum_rows_batch_aligned": minimum_rows_aligned,
             "defect_detection_minimum_fraction": defect_detection_fraction,
             "near_duplicate_hamming_distance": near_duplicate_hamming_distance,
             "novel_mining_pool_image_limit": novel_image_limit,
@@ -715,6 +773,7 @@ def materialize(
         "row_counts": {
             "total": row_count,
             "target": target_rows,
+            "requested_target": requested_target_rows,
             "defect_detection": len(selected_dd),
             "defect_detection_target": dd_target,
             "maintenance": len(selected_maintenance),
@@ -722,6 +781,16 @@ def materialize(
             "by_task": dict(sorted(tasks.items())),
             "novel_mining_pool_images": row_count - selected_replay_count,
             "replayed_mining_pool_images": selected_replay_count,
+        },
+        "shortfall": {
+            "requested_rows": requested_target_rows,
+            "accepted_rows": row_count,
+            "rows_below_request": max(0, requested_target_rows - row_count),
+            "accepted": bool(
+                accepted_target_rows is not None
+                and row_count < requested_target_rows
+                and row_count >= minimum_rows_aligned
+            ),
         },
         "maintenance_task_types": list(MAINTENANCE_TASK_TYPES),
         "maintenance_marginal_quota": {
@@ -855,6 +924,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--validation-jsonl", action="append", default=[], type=pathlib.Path)
     parser.add_argument("--media-root", required=True, type=pathlib.Path)
     parser.add_argument("--max-rows", required=True, type=int)
+    parser.add_argument(
+        "--minimum-rows",
+        type=int,
+        help=(
+            "Accept the largest feasible batch-aligned shortfall at or above "
+            "this raw row minimum; omitted preserves exact-target behavior."
+        ),
+    )
     parser.add_argument("--row-multiple", required=True, type=int)
     parser.add_argument("--defect-detection-fraction", default=0.5, type=float)
     parser.add_argument("--epochs", required=True, type=int)
@@ -876,6 +953,7 @@ def main(argv: list[str] | None = None) -> int:
             validation_records=validations,
             media_root=args.media_root,
             max_rows=args.max_rows,
+            minimum_rows=args.minimum_rows,
             row_multiple=args.row_multiple,
             defect_detection_fraction=args.defect_detection_fraction,
             proxy_empty_rate=empty_rate,

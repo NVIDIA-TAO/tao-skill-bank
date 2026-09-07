@@ -20,13 +20,109 @@ DEFECT_DETECTION_MINING_EVIDENCE = {
     "hard_positive_best_overlap_0_lt_iou_lte_0p5",
     "hard_positive_proxy_false_negative",
 }
+DEFECT_DETECTION_ANCHOR_POLICIES = ("hard_only", "all_proxy_severity")
+CORRECT_DEFECT_DETECTION_EVIDENCE = "proxy_correct"
+
+
+def _defect_detection_severity(row: dict[str, Any]) -> tuple[int, int, int, int, str, str]:
+    evidence = row.get("defect_detection_evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    evidence_types = set(evidence.get("evidence_types", []))
+
+    def count(name: str) -> int:
+        value = evidence.get(name, 0)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+    false_negatives = count("false_negative_count")
+    partial_overlaps = count("best_overlap_0_lt_iou_lte_0p5_count")
+    false_positives = count("false_positive_count")
+    if false_negatives or partial_overlaps or evidence_types.intersection(
+        {
+            "hard_positive_proxy_false_negative",
+            "hard_positive_best_overlap_0_lt_iou_lte_0p5",
+        }
+    ):
+        severity = "false_negative_or_partial_overlap"
+        priority = 0
+    elif false_positives or "hard_negative_proxy_false_positive" in evidence_types:
+        severity = "false_positive"
+        priority = 1
+    else:
+        severity = "correct"
+        priority = 2
+    return (
+        priority,
+        -false_negatives,
+        -partial_overlaps,
+        -false_positives,
+        str(row.get("id", "")),
+        severity,
+    )
 
 
 def augment_defect_detection_targets(
     selected_rows: list[dict[str, Any]],
     all_gap_rows: list[dict[str, Any]],
+    *,
+    anchor_policy: str = "hard_only",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Add every proxy DD row with approved hard-mining evidence."""
+    """Add launch-selected Proxy DD anchors without weakening task isolation."""
+
+    if anchor_policy not in DEFECT_DETECTION_ANCHOR_POLICIES:
+        raise ValueError(
+            f"unsupported Defect Detection anchor policy {anchor_policy!r}; "
+            f"choose one of {DEFECT_DETECTION_ANCHOR_POLICIES}"
+        )
+
+    if anchor_policy == "all_proxy_severity":
+        anchors: list[tuple[tuple[int, int, int, int, str, str], dict[str, Any]]] = []
+        seen_ids: set[str] = set()
+        for row in all_gap_rows:
+            if row.get("evaluation_role") != "proxy" or row.get("task_type") != DEFECT_DETECTION_TASK:
+                continue
+            if not isinstance(row.get("id"), str) or not row["id"]:
+                raise ValueError("every DD anchor row requires a non-empty id")
+            if row["id"] in seen_ids:
+                raise ValueError(f"duplicate DD anchor id: {row['id']!r}")
+            seen_ids.add(row["id"])
+            sort_key = _defect_detection_severity(row)
+            anchor = dict(row)
+            evidence = anchor.get("defect_detection_evidence")
+            evidence = dict(evidence) if isinstance(evidence, dict) else {}
+            evidence_types = list(evidence.get("evidence_types", []))
+            if sort_key[-1] == "correct" and CORRECT_DEFECT_DETECTION_EVIDENCE not in evidence_types:
+                evidence_types.append(CORRECT_DEFECT_DETECTION_EVIDENCE)
+            evidence["evidence_types"] = sorted(set(evidence_types))
+            anchor["defect_detection_evidence"] = evidence
+            anchor["defect_detection_anchor_priority"] = sort_key[0]
+            anchor["defect_detection_anchor_severity"] = sort_key[-1]
+            anchors.append((sort_key, anchor))
+        anchors.sort(key=lambda item: item[0][:-1])
+        ordered_anchors = [row for _, row in anchors]
+        maintenance = [
+            row for row in selected_rows if row.get("task_type") != DEFECT_DETECTION_TASK
+        ]
+        severity_counts = Counter(
+            row["defect_detection_anchor_severity"] for row in ordered_anchors
+        )
+        output = ordered_anchors + maintenance
+        return output, {
+            "schema_version": "defect_detection_routing_supplement_v1",
+            "anchor_policy": anchor_policy,
+            "selected_input_rows": len(selected_rows),
+            "eligible_defect_detection_rows": len(ordered_anchors),
+            "supplemental_rows": max(0, len(output) - len(selected_rows)),
+            "output_rows": len(output),
+            "severity_order": [
+                "false_negative_or_partial_overlap",
+                "false_positive",
+                "correct",
+            ],
+            "severity_counts": dict(sorted(severity_counts.items())),
+            "approved_evidence_types": sorted(
+                {*DEFECT_DETECTION_MINING_EVIDENCE, CORRECT_DEFECT_DETECTION_EVIDENCE}
+            ),
+        }
 
     output = list(selected_rows)
     selected_ids = {str(row.get("id")) for row in selected_rows}
@@ -49,6 +145,7 @@ def augment_defect_detection_targets(
             selected_ids.add(row["id"])
     return output, {
         "schema_version": "defect_detection_routing_supplement_v1",
+        "anchor_policy": anchor_policy,
         "selected_input_rows": len(selected_rows),
         "eligible_defect_detection_rows": len(eligible),
         "supplemental_rows": len(output) - len(selected_rows),
@@ -82,6 +179,12 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
                 "task_types": [],
                 "datasets": [],
                 "defect_detection_evidence": [],
+                "defect_detection_anchor_priority": row.get(
+                    "defect_detection_anchor_priority"
+                ),
+                "defect_detection_anchor_severity": row.get(
+                    "defect_detection_anchor_severity"
+                ),
                 "mining_eligible": True,
             },
         )
@@ -100,6 +203,15 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
             for evidence_type in evidence.get("evidence_types", []):
                 if evidence_type not in target["defect_detection_evidence"]:
                     target["defect_detection_evidence"].append(evidence_type)
+        priority = row.get("defect_detection_anchor_priority")
+        if isinstance(priority, int) and (
+            target["defect_detection_anchor_priority"] is None
+            or priority < target["defect_detection_anchor_priority"]
+        ):
+            target["defect_detection_anchor_priority"] = priority
+            target["defect_detection_anchor_severity"] = row.get(
+                "defect_detection_anchor_severity"
+            )
     output = []
     for target in targets.values():
         target["record_ids"].sort()
@@ -107,7 +219,6 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
         target["datasets"].sort()
         target["defect_detection_evidence"].sort()
         output.append(target)
-    output.sort(key=lambda row: (row["filepath"], row["target_id"]))
     return output, {
         "schema_version": "nvpaw_routing_v1",
         "selected_records": len(rows),
@@ -123,6 +234,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--selected-gaps", required=True, type=pathlib.Path)
     parser.add_argument("--defect-detection-supplement", type=pathlib.Path)
     parser.add_argument("--supplement-summary", type=pathlib.Path)
+    parser.add_argument(
+        "--defect-detection-anchor-policy",
+        choices=DEFECT_DETECTION_ANCHOR_POLICIES,
+        default="hard_only",
+    )
     parser.add_argument("--output-json", required=True, type=pathlib.Path)
     parser.add_argument("--output-parquet", required=True, type=pathlib.Path)
     parser.add_argument("--summary", required=True, type=pathlib.Path)
@@ -145,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
             rows, supplement_summary = augment_defect_detection_targets(
                 rows,
                 pq.read_table(args.defect_detection_supplement).to_pylist(),
+                anchor_policy=args.defect_detection_anchor_policy,
             )
         targets, summary = route(rows)
         if supplement_summary is not None:

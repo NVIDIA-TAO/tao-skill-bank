@@ -23,6 +23,7 @@ from gap_analysis.config import load_profile, validate_config
 from metric_contract import render_target, validate_contract
 from nvpaw_annotations import TASK_SPECS
 from render_report import render as render_html_report
+from route_selected_gaps import DEFECT_DETECTION_ANCHOR_POLICIES
 from task_mining_router import MINING_ROUTER_MODES
 
 
@@ -482,12 +483,22 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "pool_fraction_cap": args.mining_pool_fraction_cap,
                 "pool_budget_unit": "unique_target_image",
                 "max_training_rows_per_iteration": args.max_training_rows_per_iteration,
+                "minimum_training_rows_per_iteration": (
+                    args.minimum_training_rows_per_iteration
+                ),
                 "calibration_policy": "empty_and_few_box_from_mining",
                 "component_count_replay_per_iteration": args.component_count_replay_per_iteration,
                 "top_k_scope": (
                     "target" if mining_router_mode == "image_only" else "target_task"
                 ),
                 "top_k_per_target": args.top_k_per_target,
+                "top_k_per_task": (
+                    {
+                        "Defect Detection": args.defect_detection_top_k_per_target
+                    }
+                    if args.defect_detection_top_k_per_target is not None
+                    else {}
+                ),
                 "metric": "cosine",
                 "min_similarity": args.min_similarity,
                 "history_aware": {
@@ -497,6 +508,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 },
                 "defect_detection_ablation": {
                     "enabled": args.defect_detection_ablation,
+                    "anchor_policy": args.defect_detection_anchor_policy,
                     "primary_task_type": "Defect Detection",
                     "component_detection_counts_toward_primary_quota": False,
                     "minimum_materialized_fraction": args.defect_detection_minimum_fraction,
@@ -624,11 +636,25 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--minimum-global-batch", type=int, default=512)
     parser.add_argument("--top-k-per-target", type=int, default=5)
+    parser.add_argument("--defect-detection-top-k-per-target", type=int)
     parser.add_argument("--max-training-rows-per-iteration", type=int, default=20_000)
+    parser.add_argument(
+        "--minimum-training-rows-per-iteration",
+        type=int,
+        help=(
+            "Allow a batch-aligned materialization shortfall when at least this "
+            "many raw rows pass all constraints."
+        ),
+    )
     parser.add_argument("--mining-pool-fraction-cap", type=float, default=1.0)
     parser.add_argument("--min-similarity", type=float, default=0.9)
     parser.add_argument("--component-count-replay-per-iteration", type=int, default=0)
     parser.add_argument("--defect-detection-ablation", action="store_true")
+    parser.add_argument(
+        "--defect-detection-anchor-policy",
+        choices=DEFECT_DETECTION_ANCHOR_POLICIES,
+        default="hard_only",
+    )
     parser.add_argument(
         "--defect-detection-minimum-fraction", type=float, default=0.5
     )
@@ -693,6 +719,14 @@ def main(argv: list[str] | None = None) -> int:
     }
     if args.gap_analysis_budget is not None:
         positive["gap_analysis_budget"] = args.gap_analysis_budget
+    if args.defect_detection_top_k_per_target is not None:
+        positive["defect_detection_top_k_per_target"] = (
+            args.defect_detection_top_k_per_target
+        )
+    if args.minimum_training_rows_per_iteration is not None:
+        positive["minimum_training_rows_per_iteration"] = (
+            args.minimum_training_rows_per_iteration
+        )
     invalid = {name: value for name, value in positive.items() if value <= 0}
     if invalid:
         print(f"init_deft_state: positive values required: {invalid}", file=sys.stderr)
@@ -718,6 +752,16 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if (
+        args.minimum_training_rows_per_iteration is not None
+        and args.minimum_training_rows_per_iteration
+        > args.max_training_rows_per_iteration
+    ):
+        print(
+            "init_deft_state: minimum training rows cannot exceed the per-iteration cap",
+            file=sys.stderr,
+        )
+        return 2
     if not 0.5 <= args.defect_detection_minimum_fraction <= 1.0:
         print(
             "init_deft_state: --defect-detection-minimum-fraction must be in [0.5, 1]",
@@ -733,6 +777,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.defect_detection_ablation and args.mining_router_mode != "task_strict":
         print(
             "init_deft_state: Defect Detection ablation requires task_strict mining",
+            file=sys.stderr,
+        )
+        return 2
+    if (
+        not args.defect_detection_ablation
+        and args.defect_detection_anchor_policy != "hard_only"
+    ):
+        print(
+            "init_deft_state: non-default Defect Detection anchor policy requires the ablation",
             file=sys.stderr,
         )
         return 2

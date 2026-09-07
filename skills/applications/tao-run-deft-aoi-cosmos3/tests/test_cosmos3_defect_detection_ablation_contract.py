@@ -16,6 +16,7 @@ sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 import analyze_gaps  # noqa: E402
 import defect_detection_ablation  # noqa: E402
 import route_selected_gaps  # noqa: E402
+import task_mining_router  # noqa: E402
 
 
 def _row(
@@ -109,6 +110,88 @@ class _Evaluator:
 
 
 class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
+    def test_all_proxy_dd_anchors_are_ordered_by_error_severity(self) -> None:
+        selected = [{"id": "maintenance", "task_type": "Component Detection"}]
+        all_gaps = [
+            {
+                "id": "correct",
+                "evaluation_role": "proxy",
+                "task_type": "Defect Detection",
+                "defect_detection_evidence": {
+                    "false_negative_count": 0,
+                    "best_overlap_0_lt_iou_lte_0p5_count": 0,
+                    "false_positive_count": 0,
+                    "evidence_types": [],
+                },
+            },
+            {
+                "id": "false-positive",
+                "evaluation_role": "proxy",
+                "task_type": "Defect Detection",
+                "defect_detection_evidence": {
+                    "false_negative_count": 0,
+                    "best_overlap_0_lt_iou_lte_0p5_count": 0,
+                    "false_positive_count": 2,
+                    "evidence_types": ["hard_negative_proxy_false_positive"],
+                },
+            },
+            {
+                "id": "partial-overlap",
+                "evaluation_role": "proxy",
+                "task_type": "Defect Detection",
+                "defect_detection_evidence": {
+                    "false_negative_count": 0,
+                    "best_overlap_0_lt_iou_lte_0p5_count": 1,
+                    "false_positive_count": 0,
+                    "evidence_types": [
+                        "hard_positive_best_overlap_0_lt_iou_lte_0p5"
+                    ],
+                },
+            },
+            {
+                "id": "false-negative",
+                "evaluation_role": "proxy",
+                "task_type": "Defect Detection",
+                "defect_detection_evidence": {
+                    "false_negative_count": 3,
+                    "best_overlap_0_lt_iou_lte_0p5_count": 0,
+                    "false_positive_count": 0,
+                    "evidence_types": ["hard_positive_proxy_false_negative"],
+                },
+            },
+        ]
+
+        augmented, summary = route_selected_gaps.augment_defect_detection_targets(
+            selected,
+            all_gaps,
+            anchor_policy="all_proxy_severity",
+        )
+
+        self.assertEqual(
+            [row["id"] for row in augmented],
+            [
+                "false-negative",
+                "partial-overlap",
+                "false-positive",
+                "correct",
+                "maintenance",
+            ],
+        )
+        self.assertEqual(summary["anchor_policy"], "all_proxy_severity")
+        self.assertEqual(summary["eligible_defect_detection_rows"], 4)
+        self.assertEqual(
+            augmented[3]["defect_detection_evidence"]["evidence_types"],
+            ["proxy_correct"],
+        )
+        self.assertEqual(
+            summary["severity_counts"],
+            {
+                "correct": 1,
+                "false_negative_or_partial_overlap": 2,
+                "false_positive": 1,
+            },
+        )
+
     def test_dd_supplement_preserves_selected_rows_and_adds_approved_evidence(self) -> None:
         selected = [
             {"id": "maintenance", "task_type": "Component Detection"},
@@ -174,6 +257,52 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
                 "hard_positive_proxy_false_negative",
             ],
         )
+
+    def test_task_strict_router_applies_per_task_top_k(self) -> None:
+        dd_records = [
+            _row(f"dd-{index}", "Defect Detection", boxes=[])
+            for index in range(3)
+        ]
+        maintenance_records = [
+            _row(f"cc-{index}", "Component Classification")
+            for index in range(3)
+        ]
+        source_records = dd_records + maintenance_records
+        source_rows = [
+            {
+                "filepath": record["messages"][0]["content"][0]["image"],
+                "embedding": [1.0, index / 100.0],
+            }
+            for index, record in enumerate(source_records)
+        ]
+        target_rows = [
+            {
+                "filepath": "images/proxy.png",
+                "target_id": "proxy",
+                "task_types": ["Defect Detection", "Component Classification"],
+                "defect_detection_evidence": [],
+                "embedding": [1.0, 0.0],
+            }
+        ]
+
+        selected, summary = task_mining_router.route_candidates(
+            target_rows,
+            source_rows,
+            source_records,
+            media_root=pathlib.Path("/data"),
+            mode="task_strict",
+            top_k_per_target=1,
+            top_k_by_task={"Defect Detection": 2},
+            min_similarity=-1.0,
+        )
+
+        self.assertEqual(len(selected), 3)
+        routes = summary["targets"][0]["task_routes"]
+        self.assertEqual(routes["Defect Detection"]["top_k"], 2)
+        self.assertEqual(routes["Defect Detection"]["selected"], 2)
+        self.assertEqual(routes["Component Classification"]["top_k"], 1)
+        self.assertEqual(routes["Component Classification"]["selected"], 1)
+        self.assertEqual(summary["top_k_by_task"], {"Defect Detection": 2})
 
     def test_materialization_reserves_defect_detection_and_matches_empty_rate(self) -> None:
         rows: list[dict] = []
@@ -351,6 +480,58 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
         self.assertEqual(shortages["rare"], 3)
         self.assertEqual(manifest["row_counts"]["defect_detection"], 8)
         self.assertNotIn("Defect Detection", manifest["maintenance_task_types"])
+
+    def test_batch_aligned_shortfall_is_accepted_above_configured_minimum(self) -> None:
+        rows: list[dict] = []
+        candidates: list[dict] = []
+        for index in range(10):
+            row = _row(
+                f"positive-shortfall-{index}",
+                "Defect Detection",
+                boxes=[{"bbox_2d": [10, 10, 100, 100], "label": "open"}],
+            )
+            rows.append(row)
+            candidates.append(
+                _candidate(
+                    row,
+                    evidence=["hard_positive_proxy_false_negative"],
+                    phash=f"{index + 500:016x}",
+                )
+            )
+        for index in range(10):
+            row = _row(
+                f"maintenance-shortfall-{index}",
+                defect_detection_ablation.MAINTENANCE_TASK_TYPES[index % 5],
+            )
+            rows.append(row)
+            candidates.append(_candidate(row, phash=f"{index + 600:016x}"))
+
+        selected, manifest = defect_detection_ablation.materialize(
+            candidate_rows=candidates,
+            source_records=rows,
+            validation_records=[],
+            media_root=pathlib.Path("/data"),
+            max_rows=30,
+            minimum_rows=17,
+            row_multiple=10,
+            defect_detection_fraction=0.5,
+            proxy_empty_rate=0.0,
+            epochs=2,
+            global_batch=10,
+            near_duplicate_hamming_distance=0,
+        )
+
+        self.assertTrue(manifest["verified"])
+        self.assertEqual(len(selected), 20)
+        self.assertEqual(manifest["row_counts"]["total"], 20)
+        self.assertEqual(manifest["row_counts"]["defect_detection"], 10)
+        self.assertEqual(manifest["row_counts"]["maintenance"], 10)
+        self.assertEqual(manifest["shortfall"]["requested_rows"], 30)
+        self.assertEqual(manifest["shortfall"]["accepted_rows"], 20)
+        self.assertTrue(manifest["shortfall"]["accepted"])
+        self.assertEqual(manifest["configuration"]["minimum_rows_requested"], 17)
+        self.assertEqual(manifest["configuration"]["minimum_rows_batch_aligned"], 20)
+        self.assertEqual(manifest["optimizer_schedule"]["expected_optimizer_steps"], 4)
 
     def test_verified_manifest_is_bound_to_training_jsonl_and_schedule(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
