@@ -29,6 +29,17 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 runtime fallback
 
 
 MEDIA_TYPES = {"image", "image_url", "video", "video_url"}
+IMAGE_TYPES = {"image", "image_url"}
+DEFAULT_ROW_ORDER = "task_length_sorted"
+ROW_ORDER_SORT_KEYS = {
+    "task_length_sorted": (
+        "task_type",
+        "prompt_image_count",
+        "prompt_text_length",
+        "id",
+    ),
+    "source": ("source_index",),
+}
 
 
 def _content_text(content: Any) -> str:
@@ -43,19 +54,57 @@ def _content_text(content: Any) -> str:
     return ""
 
 
-def iter_source_rows(
-    path: pathlib.Path, *, num_shards: int = 1, shard_index: int = 0
-) -> Iterator[dict[str, Any]]:
-    """Stream validated rows without materializing a JSON array."""
+def evaluation_row_sort_key(row: dict[str, Any]) -> tuple[str, int, int, str]:
+    """Return the deterministic batching key for a canonical evaluation row."""
 
-    if num_shards <= 0:
-        raise ValueError("num_shards must be positive")
-    if not 0 <= shard_index < num_shards:
-        raise ValueError("shard_index must be in [0, num_shards)")
+    task_type = row.get("task_type")
+    row_id = row.get("id")
+    messages = row.get("messages")
+    if not isinstance(task_type, str) or not task_type:
+        raise ValueError("evaluation row requires a non-empty task_type")
+    if not isinstance(row_id, str) or not row_id:
+        raise ValueError("evaluation row requires a non-empty id")
+    if not isinstance(messages, list) or not messages:
+        raise ValueError(f"evaluation row {row_id!r} requires messages")
+
+    image_count = 0
+    text_length = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            raise TypeError(f"evaluation row {row_id!r} contains a non-object message")
+        if message.get("role") == "assistant":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            text_length += len(content)
+            continue
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") in IMAGE_TYPES:
+                image_count += 1
+            text = item.get("text")
+            if isinstance(text, str):
+                text_length += len(text)
+    return task_type, image_count, text_length, row_id
+
+
+def row_order_sort_key(row_order: str) -> list[str]:
+    """Describe and validate the configured evaluation row ordering."""
+
+    try:
+        return list(ROW_ORDER_SORT_KEYS[row_order])
+    except KeyError as exc:
+        choices = ", ".join(sorted(ROW_ORDER_SORT_KEYS))
+        raise ValueError(f"row_order must be one of: {choices}") from exc
+
+
+def _iter_validated_source_rows(path: pathlib.Path) -> Iterator[dict[str, Any]]:
+    """Stream validated canonical JSONL rows."""
 
     with path.open(encoding="utf-8") as stream:
-        yielded = 0
-        source_index = 0
         for line_number, line in enumerate(stream, start=1):
             if not line.strip():
                 continue
@@ -76,16 +125,41 @@ def iter_source_rows(
                 )
             if not isinstance(messages, list) or not messages:
                 raise ValueError(f"{path}:{line_number}: messages must be a non-empty list")
-            selected = source_index % num_shards == shard_index
-            source_index += 1
-            if not selected:
-                continue
-            yielded += 1
             yield row
-        if not yielded:
-            raise ValueError(
-                f"{path}: shard {shard_index}/{num_shards} contains no JSONL rows"
-            )
+
+
+def iter_source_rows(
+    path: pathlib.Path,
+    *,
+    num_shards: int = 1,
+    shard_index: int = 0,
+    row_order: str = DEFAULT_ROW_ORDER,
+) -> Iterator[dict[str, Any]]:
+    """Yield one stride shard after applying the requested row ordering."""
+
+    if num_shards <= 0:
+        raise ValueError("num_shards must be positive")
+    if not 0 <= shard_index < num_shards:
+        raise ValueError("shard_index must be in [0, num_shards)")
+    row_order_sort_key(row_order)
+
+    rows: Iterator[dict[str, Any]]
+    source_rows = _iter_validated_source_rows(path)
+    if row_order == "task_length_sorted":
+        rows = iter(sorted(source_rows, key=evaluation_row_sort_key))
+    else:
+        rows = source_rows
+
+    yielded = 0
+    for ordered_index, row in enumerate(rows):
+        if ordered_index % num_shards != shard_index:
+            continue
+        yielded += 1
+        yield row
+    if not yielded:
+        raise ValueError(
+            f"{path}: shard {shard_index}/{num_shards} contains no JSONL rows"
+        )
 
 
 def _resolve_media_item(
@@ -456,6 +530,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--num-shards", type=int)
     parser.add_argument("--shard-index", type=int)
+    parser.add_argument("--row-order", choices=tuple(ROW_ORDER_SORT_KEYS))
     parser.add_argument("--validate-only", action="store_true")
     return parser
 
@@ -483,8 +558,15 @@ def main(argv: list[str] | None = None) -> int:
                 if args.shard_index is not None
                 else int(os.environ.get("RANK") or os.environ.get("SLURM_PROCID") or 0)
             )
+            row_order = args.row_order or str(
+                evaluation.get("row_order", DEFAULT_ROW_ORDER)
+            )
+            sort_key = row_order_sort_key(row_order)
             rows = iter_source_rows(
-                source, num_shards=num_shards, shard_index=shard_index
+                source,
+                num_shards=num_shards,
+                shard_index=shard_index,
+                row_order=row_order,
             )
             batch_size = args.batch_size or int(evaluation.get("batch_size", 1))
             max_new_tokens = args.max_new_tokens or int(generation.get("max_tokens", 1024))
@@ -504,6 +586,8 @@ def main(argv: list[str] | None = None) -> int:
             max_new_tokens = args.max_new_tokens or 1024
             dtype = args.dtype or "bfloat16"
             attention = args.attn_implementation or "cosmos"
+            row_order = "source"
+            sort_key = row_order_sort_key(row_order)
         if max_new_tokens <= 0:
             raise ValueError("max_new_tokens must be positive")
         if batch_size <= 0:
@@ -525,6 +609,8 @@ def main(argv: list[str] | None = None) -> int:
                         "batch_size": batch_size,
                         "num_shards": num_shards,
                         "shard_index": shard_index,
+                        "row_order": row_order,
+                        "row_order_sort_key": sort_key,
                     },
                     sort_keys=True,
                 )
@@ -569,6 +655,8 @@ def main(argv: list[str] | None = None) -> int:
                     "batch_size": batch_size,
                     "num_shards": num_shards,
                     "shard_index": shard_index,
+                    "row_order": row_order,
+                    "row_order_sort_key": sort_key,
                 }
             )
         )

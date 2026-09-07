@@ -16,6 +16,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib
 
+from cfw_jsonl_runtime import DEFAULT_ROW_ORDER, ROW_ORDER_SORT_KEYS
 from render_cfw_sft import _atomic_text, dump_toml
 
 
@@ -28,11 +29,14 @@ def build_config(
     results_dir: str,
     num_gpus: int,
     batch_size: int,
+    row_order: str = DEFAULT_ROW_ORDER,
 ) -> dict[str, Any]:
     if action != "evaluate":
         raise ValueError("this renderer only accepts action=evaluate")
     if num_gpus <= 0 or batch_size <= 0:
         raise ValueError("num_gpus and batch_size must be positive")
+    if row_order not in ROW_ORDER_SORT_KEYS:
+        raise ValueError("row_order must be task_length_sorted or source")
     config = {
         "num_gpus": num_gpus,
         "results_dir": results_dir,
@@ -61,6 +65,7 @@ def build_config(
             "seed": 42,
             "limit": -1,
             "shard_strategy": "stride",
+            "row_order": row_order,
             "shard_id": 0,
             "batch_size": batch_size,
             "barrier_timeout_seconds": 14400,
@@ -99,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results-dir", required=True)
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument(
+        "--row-order",
+        choices=tuple(ROW_ORDER_SORT_KEYS),
+        default=DEFAULT_ROW_ORDER,
+    )
     parser.add_argument("--output", required=True, type=pathlib.Path)
     args = parser.parse_args(argv)
     try:
@@ -110,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
             results_dir=args.results_dir,
             num_gpus=args.num_gpus,
             batch_size=args.batch_size,
+            row_order=args.row_order,
         )
         _atomic_text(args.output.expanduser().resolve(), dump_toml(config))
     except (OSError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:

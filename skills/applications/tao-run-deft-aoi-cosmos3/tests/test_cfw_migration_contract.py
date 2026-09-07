@@ -10,6 +10,11 @@ import sys
 import tempfile
 import unittest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
+
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_ROOT / "scripts"
@@ -122,6 +127,12 @@ class CosmosFrameworkSurfaceSmokeTests(unittest.TestCase):
                 "--results-dir", str(root / "results"),
                 "--output", str(config),
             )
+            with config.open("rb") as stream:
+                rendered_config = tomllib.load(stream)
+            self.assertEqual(
+                rendered_config["evaluation"]["row_order"],
+                "task_length_sorted",
+            )
             completed = self._run(
                 "cfw_jsonl_runtime.py",
                 "--action", "evaluate",
@@ -133,6 +144,24 @@ class CosmosFrameworkSurfaceSmokeTests(unittest.TestCase):
             report = json.loads(completed.stdout)
             self.assertEqual(report["backend"], "cosmos-framework")
             self.assertEqual(report["selected_rows"], 1)
+            self.assertEqual(report["row_order"], "task_length_sorted")
+            self.assertEqual(
+                report["row_order_sort_key"],
+                ["task_type", "prompt_image_count", "prompt_text_length", "id"],
+            )
+
+            source_order = self._run(
+                "cfw_jsonl_runtime.py",
+                "--action", "evaluate",
+                "--config", str(config),
+                "--model-path", str(model),
+                "--output-jsonl", str(output),
+                "--row-order", "source",
+                "--validate-only",
+            )
+            source_report = json.loads(source_order.stdout)
+            self.assertEqual(source_report["row_order"], "source")
+            self.assertEqual(source_report["row_order_sort_key"], ["source_index"])
 
     def test_inference_surface_launches_same_runtime_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

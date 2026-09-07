@@ -60,7 +60,23 @@ class Cosmos3MergeCfwShardsTests(unittest.TestCase):
             self.assertEqual([row["id"] for row in rows], ["first", "second"])
             self.assertEqual(payload["state"], "COMPLETE")
             self.assertEqual(payload["rows"], 2)
+            self.assertEqual(payload["row_order"], "task_length_sorted")
+            self.assertEqual(
+                payload["row_order_sort_key"],
+                ["task_type", "prompt_image_count", "prompt_text_length", "id"],
+            )
             self.assertEqual(json.loads(summary.read_text()), payload)
+
+            source_payload = merge_cfw_prediction_shards.merge(
+                source=source,
+                shard_dir=shards,
+                expected_shards=2,
+                output=root / "source_order_predictions.jsonl",
+                summary_output=root / "source_order_summary.json",
+                row_order="source",
+            )
+            self.assertEqual(source_payload["row_order"], "source")
+            self.assertEqual(source_payload["row_order_sort_key"], ["source_index"])
 
     def test_merge_rejects_missing_shard(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -21,6 +21,7 @@ from cfw_predictions import (
     read_jsonl,
     validate_prediction_rows,
 )
+from cfw_jsonl_runtime import DEFAULT_ROW_ORDER, ROW_ORDER_SORT_KEYS, row_order_sort_key
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -53,9 +54,11 @@ def merge(
     expected_shards: int,
     output: pathlib.Path,
     summary_output: pathlib.Path,
+    row_order: str = DEFAULT_ROW_ORDER,
 ) -> dict[str, Any]:
     if expected_shards <= 0:
         raise ValueError("expected_shards must be positive")
+    sort_key = row_order_sort_key(row_order)
     source = source.expanduser().resolve(strict=True)
     shard_dir = shard_dir.expanduser().resolve(strict=True)
     expected_names = {
@@ -103,6 +106,8 @@ def merge(
         "output_sha256": _sha256(output),
         "missing_ids": 0,
         "unknown_ids": 0,
+        "row_order": row_order,
+        "row_order_sort_key": sort_key,
     }
     _atomic_json(summary_output, payload)
     return payload
@@ -115,6 +120,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-shards", type=int, required=True)
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--summary-output", type=pathlib.Path, required=True)
+    parser.add_argument(
+        "--row-order",
+        choices=tuple(ROW_ORDER_SORT_KEYS),
+        default=DEFAULT_ROW_ORDER,
+    )
     args = parser.parse_args(argv)
     try:
         payload = merge(
@@ -123,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             expected_shards=args.expected_shards,
             output=args.output,
             summary_output=args.summary_output,
+            row_order=args.row_order,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"merge_cfw_prediction_shards: {exc}", file=sys.stderr)
