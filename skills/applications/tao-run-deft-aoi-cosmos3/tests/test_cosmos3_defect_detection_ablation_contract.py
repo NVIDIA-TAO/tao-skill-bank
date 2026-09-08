@@ -8,6 +8,9 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
+
+from PIL import Image
 
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -117,6 +120,25 @@ class _Evaluator:
 
 
 class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
+    def test_disabled_near_duplicate_filter_skips_perceptual_decode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            image_path = pathlib.Path(temporary) / "candidate.png"
+            Image.new("RGB", (8, 8), color=(12, 34, 56)).save(image_path)
+            with mock.patch.object(
+                defect_detection_ablation,
+                "_perceptual_hash",
+                side_effect=AssertionError("perceptual hash must not be decoded"),
+            ):
+                identity, content_sha, phash = (
+                    defect_detection_ablation._candidate_visual_identity(
+                        {"filepath": str(image_path)},
+                        media_root=pathlib.Path(temporary),
+                        compute_perceptual_hash=False,
+                    )
+                )
+            self.assertEqual(pathlib.Path(identity).name, image_path.name)
+            self.assertEqual(phash, content_sha[:16])
+
     def test_materialization_matches_empty_rate_in_both_detection_cohorts(self) -> None:
         rows: list[dict] = []
         candidates: list[dict] = []

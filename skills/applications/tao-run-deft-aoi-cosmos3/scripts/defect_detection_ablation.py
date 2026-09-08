@@ -261,7 +261,10 @@ class _HammingIndex:
 
 
 def _candidate_visual_identity(
-    candidate: dict[str, Any], *, media_root: pathlib.Path
+    candidate: dict[str, Any],
+    *,
+    media_root: pathlib.Path,
+    compute_perceptual_hash: bool = True,
 ) -> tuple[str, str, str]:
     filepath = str(candidate["filepath"])
     path = resolve_image(filepath, media_root)
@@ -269,8 +272,12 @@ def _candidate_visual_identity(
     phash = candidate.get("perceptual_hash")
     if content_sha is None:
         content_sha = _sha256(path) if path.is_file() else hashlib.sha256(str(path).encode()).hexdigest()
-    if phash is None:
+    if phash is None and compute_perceptual_hash:
         phash = _perceptual_hash(path) if path.is_file() else str(content_sha)[:16]
+    elif phash is None:
+        # Preserve the fixed-width internal identity without decoding an image
+        # when the reviewed launch explicitly disables perceptual filtering.
+        phash = str(content_sha)[:16]
     if not isinstance(content_sha, str) or len(content_sha) != 64:
         raise ValueError(f"candidate {filepath!r} has invalid content_sha256")
     if not isinstance(phash, str) or len(phash) != 16:
@@ -626,7 +633,9 @@ def materialize(
         if not isinstance(candidate.get("filepath"), str):
             raise ValueError("every candidate requires filepath")
         resolved_path, content_sha, phash = _candidate_visual_identity(
-            candidate, media_root=media_root
+            candidate,
+            media_root=media_root,
+            compute_perceptual_hash=near_duplicate_hamming_distance is not None,
         )
         if (
             resolved_path in validation_paths
