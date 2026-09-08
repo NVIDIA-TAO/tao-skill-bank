@@ -13,11 +13,19 @@ track it with its own job-record.
 - source pool: canonical `annotations/mining.jsonl` and its media, materialized
   by `build_mining_source_pool.py` at `atomic_sample_id` granularity (canvas
   mode additionally requires `--pair-assets-dir ...`);
-- top-K, cosine floor, and router mode: frozen DEFT state;
+- top-K, cosine floor, router mode, candidate selector, and five-round
+  hardness schedule: frozen DEFT state;
 - output root: `${RESULTS_DIR}/iterN/mining`.
 
 Benchmark records or errors must never enter query or source inputs. Proxy
 records are query targets, not trainable source samples.
+
+With `candidate_selector=coverage_stratified_hardness_v1`, Proxy records are
+quota statistics rather than similarity queries. Follow
+`references/coverage-stratified-selector.md`: reuse the source embedding
+artifact to build one hash-bound parent inventory, pass the complete Proxy
+`gap_candidates.parquet`, and require the selector manifest before commit.
+The default `nearest_neighbor` path below is unchanged.
 
 `config.mining.pair_similarity` selects `canvas` (the backward-compatible
 default) or `two_vector`. Canvas uses one 1024x512 golden/test composite and
@@ -56,6 +64,7 @@ embedding paths back to exact ordered pairs.
   --pair-assets-dir "$RESULTS_DIR/source_pair_assets" \
   --pair-similarity "$PAIR_SIMILARITY" \
   --pair-similarity-combine "$PAIR_SIMILARITY_COMBINE" \
+  --candidate-selector "$CANDIDATE_SELECTOR" \
   --mode "$MINING_ROUTER_MODE" \
   --top-k-per-target "$TOPN" \
   --defect-detection-top-k-per-target "$DD_TOPN" \
@@ -63,6 +72,13 @@ embedding paths back to exact ordered pairs.
   --output "$MINING_DIR/mined_candidates.parquet" \
   --summary "$MINING_DIR/router_summary.json"
 ```
+
+For the coverage selector, also pass `--proxy-errors
+"$RCCA_DIR/gap_candidates.parquet" --round-index "$ITERATION" --epochs
+"$EPOCHS" --iteration-budget "$MAX_TRAINING_ROWS" --inventory-cache
+"$RESULTS_DIR/coverage_inventory.parquet" --selector-manifest
+"$MINING_DIR/coverage_selector_manifest.json"`. Proxy similarity never ranks
+parents on this path.
 
 `image_only` applies global cosine top-K, `task_strict` requires an exact task
 match, and `task_then_fallback` fills strict shortfalls from the global pool.
@@ -88,10 +104,11 @@ pre-history candidate parquet:
   --max-cumulative-fraction "$MINING_POOL_FRACTION_CAP"
 ```
 
-When the candidate parquet contains `atomic_sample_id`, the history tool uses
-that field automatically and records `selected_identities`; legacy
-single-image parquets continue to use `filepath`. The filtered parquet must
-contain at least one new real atomic sample. The history ledger hard-caps
+When the candidate parquet contains `source_group_id`, the history tool uses
+that parent/derivative group automatically; otherwise it uses
+`atomic_sample_id`, then the legacy `filepath`. It records
+`selected_identities`, so a derivative cannot re-enter a later round. The
+filtered parquet must contain at least one new real atomic sample. The history ledger hard-caps
 cumulative unique atomic-sample selection against the sealed pool size and
 fraction. An all-duplicate or budget-exhausted result is a hard stop; never
 silently exceed the recorded Mining budget.
@@ -119,3 +136,9 @@ selected reference pair; it never matches or recombines individual sides.
   --duration-sec <measured-positive-seconds> \
   --summary "task-aware history-filtered Mining selected novel real records"
 ```
+
+For `coverage_stratified_hardness_v1`, the same commit must additionally pass
+`--coverage-selector-manifest
+"$MINING_DIR/coverage_selector_manifest.json"`. The commit re-runs the
+training-eligibility gate and refuses a manifest with a share gap above five
+percentage points.

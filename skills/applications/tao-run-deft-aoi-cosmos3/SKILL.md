@@ -183,6 +183,23 @@ query, and never changes pair identity, de-duplication, leakage, budget, or
 two-image materialization. A launch prompt may request `two_vector pair
 similarity (mean|min)`.
 
+### Candidate selector
+
+`[mining] candidate_selector` is `nearest_neighbor` by default, preserving the
+existing per-Proxy-query router. The opt-in
+`coverage_stratified_hardness_v1` policy uses Proxy FN/FP evidence only to set
+shrunk source/phenotype/size/contrast/count-cell quotas, then selects unique
+Mining parent groups by k-center/farthest-first over the existing normalized
+SigLIP whole-image cache. It enforces a 35% per-task source cap, a 10% floor
+for sources with enough supply, task-conditional empty/no-change calibration,
+the launch-recorded five-round coverage/hardness schedule, and a five-point
+target-versus-realized share gate. It caches one hash-bound parquet inventory
+per run and writes a required per-round selector manifest; shortage reduces
+the usable budget rather than backfilling from a dominant source. A launch
+prompt phrase `use coverage_stratified_hardness_v1` maps to this selector.
+Full artifact, calibration, schedule, and training-gate semantics are in
+`references/coverage-stratified-selector.md`.
+
 ### Repetition blend
 
 After exact-duplicate and Proxy/Benchmark leakage exclusion, the launch-recorded
@@ -316,6 +333,7 @@ Read the focused references as needed:
 - `references/preflight.md`
 - `references/pipeline-and-state.md`
 - `references/cosmos-reason.md`
+- `references/coverage-stratified-selector.md`
 - `references/aoi-annotation.md`
 - `references/metric-contract.md`
 - `references/scripts-and-agents.md`

@@ -12,6 +12,10 @@ Preflight is read-only and precedes the launch review.
    Mining report records both raw and eligible counts plus ignored
    count/segmentation task families; Proxy and Benchmark accept only the six
    supported classification/detection families.
+   Map the exact user phrase `use coverage_stratified_hardness_v1` to
+   `config.mining.candidate_selector=coverage_stratified_hardness_v1`; all
+   other launches retain `nearest_neighbor`. Record the selected policy and
+   the five-round `hardness_schedule` in the launch review.
 4. Verify `models/Cosmos3-Nano-VLM` is a complete Qwen3-VL safetensors
    snapshot. Verify the exact evaluator is the absolute workspace
    `eval/calculate_f1_metrics.py`, record its SHA-256, and prove every frozen
@@ -43,7 +47,9 @@ Preflight is read-only and precedes the launch review.
    and `--mining-container`; state initialization rejects mutable tags.
 7. Show nested configs, commands, mounts, resources, outputs, DCP format,
    exact metric paths, network policy, and credential variable names in one
-   launch review. Wait for explicit approval before any pull, download, login,
+   launch review. For the coverage selector include the run-level inventory
+   parquet and per-round selector manifest from
+   `references/coverage-stratified-selector.md`. Wait for explicit approval before any pull, download, login,
    submit, train, evaluate, or inference.
 
 Never ask for credential values and never place them on argv, in specs, logs,

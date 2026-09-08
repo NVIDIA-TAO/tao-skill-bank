@@ -26,6 +26,15 @@ ordered atomic pairs. Near-duplicate filtering is explicitly enabled with a
 Hamming threshold or disabled; a disabled filter is not represented by a
 magic distance value.
 
+When `candidate_selector=coverage_stratified_hardness_v1`, data mining uses
+the complete Proxy gap candidates only as quota statistics and reuses a
+hash-bound run-level Mining inventory. The `data_mining` commit requires a
+`coverage_selector_manifest.json` whose source/cell/tier shares pass the five
+percentage-point gap gate, whose unique-parent and exposure gates pass, and
+whose empty/no-change iteration share is at most 25%. See
+`references/coverage-stratified-selector.md`. The compatibility-default
+`nearest_neighbor` path retains its existing query-routing contract.
+
 Every `proxy_rcca` commit includes exact five-component Proxy KPI evidence and
 records whether its deterministic KPI/tie-breaker ranking is best so far.
 Proxy remains the sole gap-analysis source. Under `final_and_best`, the frozen

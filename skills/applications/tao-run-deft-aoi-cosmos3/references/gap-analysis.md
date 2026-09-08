@@ -30,6 +30,7 @@ Benchmark stopping result.
   --evaluator "$EVALUATOR" \
   --source "$PROXY_JSONL" \
   --predictions "$RESULTS_DIR/$LABEL/evaluate_proxy/predictions.jsonl" \
+  --media-root "$MEDIA_ROOT" \
   --output-dir "$RESULTS_DIR/$LABEL/proxy_rcca" \
   --gap-analysis-profile deficit_weighted_round_robin
 ```
@@ -45,7 +46,9 @@ Candidate rows retain task type, evaluator family, reference cohort, dataset,
 ordered atomic sample ID/paths, parse status, and raw prediction. Multiple task
 rows for one physical single image or exact reference pair share an atomic ID
 so that unit is embedded only once. Reference rows with a common test image but
-different golden images remain distinct. Write `RCCA_Report.md` from these artifacts using
+different golden images remain distinct. Detection rows also record phenotype,
+box-count, log-area, and image-derived local-contrast strata for coverage quota
+statistics. Write `RCCA_Report.md` from these artifacts using
 `RCCA_REPORT_TEMPLATE.md`, then commit all four files.
 
 Route selected rows with `route_selected_gaps.py`, passing `--media-root` and

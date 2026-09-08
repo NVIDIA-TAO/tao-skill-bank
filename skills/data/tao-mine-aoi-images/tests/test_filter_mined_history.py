@@ -128,6 +128,46 @@ class HistoryAwareMiningTests(unittest.TestCase):
                 ["reference_pair:a", "reference_pair:b"],
             )
 
+    def test_source_group_identity_prevents_derivative_reselection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            for iteration, columns in (
+                (
+                    1,
+                    {
+                        "filepath": ["original-a.png"],
+                        "atomic_sample_id": ["single_image:original-a"],
+                        "source_group_id": ["board-a"],
+                    },
+                ),
+                (
+                    2,
+                    {
+                        "filepath": ["crop-a.png", "original-b.png"],
+                        "atomic_sample_id": ["single_image:crop-a", "single_image:original-b"],
+                        "source_group_id": ["board-a", "board-b"],
+                    },
+                ),
+            ):
+                candidate = root / f"iter{iteration}/candidates.parquet"
+                candidate.parent.mkdir(parents=True)
+                pq.write_table(pa.table(columns), candidate)
+                summary = filter_mined_history.select_novel_samples(
+                    candidate_parquet=candidate,
+                    output_parquet=root / f"iter{iteration}/mined.parquet",
+                    history_file=root / "mining_history.json",
+                    summary_file=root / f"iter{iteration}/summary.json",
+                    iteration=iteration,
+                    topn=2,
+                )
+
+            self.assertEqual(summary["identity"], "source_group_id")
+            self.assertEqual(summary["already_mined_count"], 1)
+            self.assertEqual(
+                pq.read_table(root / "iter2/mined.parquet")["filepath"].to_pylist(),
+                ["original-b.png"],
+            )
+
     def test_empty_novel_output_is_auditable_and_recommends_wider_topn(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

@@ -11,10 +11,20 @@ import json
 import math
 import pathlib
 import re
+import statistics
 import sys
 from collections import Counter
 from typing import Any, Iterable
 
+from coverage_stratified_selector import (
+    CANDIDATE_SELECTORS,
+    file_sha256,
+    farthest_first_parent_order,
+    load_or_build_coverage_inventory,
+    require_coverage_training_eligible,
+    select_coverage_stratified_candidates,
+    validate_hardness_schedule,
+)
 from atomic_samples import (
     PAIR_SIMILARITIES,
     PAIR_SIMILARITY_COMBINES,
@@ -569,6 +579,382 @@ def _clip_similarity(value: float) -> float:
     return max(-1.0, min(1.0, float(value)))
 
 
+def _classification_phenotypes(prompt: str, response: str) -> list[str]:
+    mapping = {
+        match.group(1): match.group(2).strip().rstrip(".")
+        for line in prompt.splitlines()
+        for match in [re.match(r"^\s*([A-Z])[.)]\s*(.+?)\s*$", line)]
+        if match is not None
+    }
+    text = response.strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = text
+    values = parsed if isinstance(parsed, list) else [parsed]
+    output: list[str] = []
+    for value in values:
+        token = str(value).strip().strip("[]'\"")
+        if not token:
+            continue
+        compact = [part for part in re.split(r"[\s,]+", token) if part]
+        for part in compact:
+            output.append(mapping.get(part, part))
+    return sorted(set(output)) or ["__empty__"]
+
+
+def _detection_objects(response: str, *, context: str) -> list[dict[str, Any]]:
+    text = response.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()[1:]
+        if lines and lines[-1].strip() == "```":
+            lines.pop()
+        text = "\n".join(lines).strip()
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{context}: detection ground truth is not JSON") from exc
+    if not isinstance(payload, list):
+        raise ValueError(f"{context}: detection ground truth must be an array")
+    output: list[dict[str, Any]] = []
+    for index, value in enumerate(payload):
+        if not isinstance(value, dict):
+            raise ValueError(f"{context}: detection item {index} must be an object")
+        box = value.get("bbox_2d")
+        label = value.get("label")
+        if (
+            not isinstance(box, list)
+            or len(box) != 4
+            or any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in box)
+            or not isinstance(label, str)
+            or not label
+        ):
+            raise ValueError(f"{context}: detection item {index} is invalid")
+        output.append(value)
+    return output
+
+
+def _gt_count_bin(count: int) -> str:
+    if count == 0:
+        return "0"
+    if count == 1:
+        return "1"
+    if count <= 3:
+        return "2-3"
+    return "4+"
+
+
+def _box_area(objects: list[dict[str, Any]]) -> float | None:
+    if not objects:
+        return None
+    areas = [
+        max(0.0, float(item["bbox_2d"][2]) - float(item["bbox_2d"][0]))
+        * max(0.0, float(item["bbox_2d"][3]) - float(item["bbox_2d"][1]))
+        for item in objects
+    ]
+    return math.log(max(1e-12, statistics.median(areas)))
+
+
+def _record_local_contrast(
+    record: dict[str, Any],
+    objects: list[dict[str, Any]],
+    *,
+    media_root: pathlib.Path,
+    context: str,
+) -> float | None:
+    supplied = record.get("local_contrast")
+    if isinstance(supplied, (int, float)) and not isinstance(supplied, bool):
+        return float(supplied)
+    if not objects:
+        return None
+    try:
+        from PIL import Image, ImageStat
+    except ImportError as exc:
+        raise ValueError("Pillow is required to build local-contrast strata") from exc
+    path = resolve_image(target_path(record, context=context), media_root)
+    if not path.is_file():
+        raise ValueError(f"{context}: candidate image is missing: {path}")
+    with Image.open(path) as image:
+        gray = image.convert("L")
+        width, height = gray.size
+        values: list[float] = []
+        for item in objects:
+            x1, y1, x2, y2 = (float(value) for value in item["bbox_2d"])
+            box = (
+                max(0, min(width, round(x1 * width / 1000.0))),
+                max(0, min(height, round(y1 * height / 1000.0))),
+                max(0, min(width, round(x2 * width / 1000.0))),
+                max(0, min(height, round(y2 * height / 1000.0))),
+            )
+            if box[2] <= box[0] or box[3] <= box[1]:
+                continue
+            expand_x = max(1, round((box[2] - box[0]) * 0.25))
+            expand_y = max(1, round((box[3] - box[1]) * 0.25))
+            outer = (
+                max(0, box[0] - expand_x),
+                max(0, box[1] - expand_y),
+                min(width, box[2] + expand_x),
+                min(height, box[3] + expand_y),
+            )
+            inside = gray.crop(box)
+            outside = gray.crop(outer)
+            inside_sum = ImageStat.Stat(inside).sum[0]
+            outside_sum = ImageStat.Stat(outside).sum[0]
+            inside_pixels = inside.width * inside.height
+            ring_pixels = outside.width * outside.height - inside_pixels
+            inside_mean = inside_sum / max(1, inside_pixels)
+            ring_mean = (
+                (outside_sum - inside_sum) / ring_pixels
+                if ring_pixels > 0
+                else inside_mean
+            )
+            values.append(abs(inside_mean - ring_mean) / 255.0)
+    if not values:
+        raise ValueError(f"{context}: no measurable detection boxes")
+    return statistics.mean(values)
+
+
+def _rank_inventory_quartiles(
+    rows: list[dict[str, Any]], numeric_field: str, quartile_field: str
+) -> None:
+    by_task: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.get(numeric_field) is not None:
+            by_task.setdefault(str(row["task_type"]), []).append(row)
+    for entries in by_task.values():
+        ordered = sorted(
+            entries,
+            key=lambda row: (float(row[numeric_field]), str(row["source_group_id"])),
+        )
+        for index, row in enumerate(ordered):
+            row[quartile_field] = f"Q{min(4, index * 4 // len(ordered) + 1)}"
+
+
+def _derived_visual_cluster(embedding: list[float]) -> str:
+    normalized = _embedding(embedding, context="coverage inventory")
+    # A coarse four-hyperplane locality-sensitive bucket keeps Proxy FP and
+    # Mining pools joinable. A cryptographic vector hash would make virtually
+    # every image its own cluster and defeat FP-cluster conditioning.
+    signs = "".join(
+        "1"
+        if sum(
+            value
+            for axis, value in enumerate(normalized)
+            if axis % 4 == plane
+        )
+        > 0.0
+        else "0"
+        for plane in range(4)
+    )
+    return f"siglip_lsh4_{signs}"
+
+
+def _attach_proxy_visual_clusters(
+    proxy_rows: list[dict[str, Any]], targets: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Bind Proxy FP rows to cached query embeddings without similarity ranking."""
+
+    target_vectors = {
+        str(target["target_id"]): (
+            target.get("embedding") or target.get("test_embedding")
+        )
+        for target in targets
+    }
+    output: list[dict[str, Any]] = []
+    for index, original in enumerate(proxy_rows):
+        row = dict(original)
+        evidence = row.get("defect_detection_evidence")
+        evidence = evidence if isinstance(evidence, dict) else {}
+        fp_value = row.get(
+            "false_positive_count", evidence.get("false_positive_count", 0)
+        )
+        fp_count = (
+            float(fp_value)
+            if isinstance(fp_value, (int, float)) and not isinstance(fp_value, bool)
+            else 0.0
+        )
+        if fp_count > 0.0 and not row.get("visual_cluster"):
+            identity = row.get("atomic_sample_id") or row.get("target_id")
+            vector = target_vectors.get(str(identity))
+            if vector is None:
+                raise ValueError(
+                    f"Proxy FP row {index} has no matching cached query embedding "
+                    f"for atomic_sample_id/target_id {identity!r}"
+                )
+            row["visual_cluster"] = _derived_visual_cluster(
+                list(_embedding(vector, context=f"Proxy FP row {index}.embedding"))
+            )
+        output.append(row)
+    return output
+
+
+def build_coverage_inventory_rows(
+    sources: list[dict[str, Any]],
+    source_annotations: list[dict[str, Any]],
+    *,
+    media_root: pathlib.Path,
+    pair_similarity: str,
+) -> list[dict[str, Any]]:
+    """Join canonical Mining records to cached embeddings at parent granularity."""
+
+    by_atomic = {str(source["atomic_sample_id"]): source for source in sources}
+    rows: list[dict[str, Any]] = []
+    group_splits: dict[str, set[str]] = {}
+    for index, record in enumerate(source_annotations):
+        task = record.get("task_type")
+        if task not in TASK_SPECS:
+            continue
+        context = f"source annotation[{index}]"
+        prompt, response = prompt_and_response(record, context=context)
+        sample = sample_from_record(record, media_root=media_root, context=context)
+        source = by_atomic.get(str(sample["atomic_sample_id"]))
+        if source is None:
+            raise ValueError(
+                f"{context}: atomic sample has no cached source embedding"
+            )
+        embedding = (
+            source.get("embedding")
+            if pair_similarity == "canvas"
+            else source.get("test_embedding")
+        )
+        embedding = list(_embedding(embedding, context=f"{context}.embedding"))
+        source_group_id = next(
+            (
+                str(record[field])
+                for field in (
+                    "source_group_id",
+                    "parent_source_group_id",
+                    "original_image_id",
+                    "lineage_id",
+                )
+                if isinstance(record.get(field), str) and record[field]
+            ),
+            str(sample["atomic_sample_id"]),
+        )
+        parent_record_id = next(
+            (
+                str(record[field])
+                for field in ("parent_record_id", "parent_id", "id")
+                if isinstance(record.get(field), str) and record[field]
+            ),
+            str(sample["atomic_sample_id"]),
+        )
+        lineage_declared = any(
+            isinstance(record.get(field), str) and record[field]
+            for field in (
+                "source_group_id",
+                "parent_source_group_id",
+                "original_image_id",
+                "lineage_id",
+                "parent_record_id",
+                "parent_id",
+            )
+        )
+        record_id = str(record.get("id", ""))
+        is_parent = not lineage_declared or (
+            not bool(record.get("is_derivative", False))
+            and parent_record_id in {record_id, str(sample["atomic_sample_id"])}
+        )
+        group_splits.setdefault(source_group_id, set()).add(
+            str(record.get("split", "unknown"))
+        )
+        base = {
+            **{
+                key: value
+                for key, value in source.items()
+                if key not in {"embedding", "golden_embedding", "test_embedding"}
+            },
+            "embedding": embedding,
+            "source_group_id": source_group_id,
+            "parent_record_id": parent_record_id,
+            "_lineage_declared": lineage_declared,
+            "_is_parent": is_parent,
+            "task_type": str(task),
+            "source_dataset": str(record.get("dataset", "unknown")),
+            "visual_cluster": str(
+                record.get("visual_cluster") or _derived_visual_cluster(embedding)
+            ),
+            "max_cosine_similarity": 0.0,
+            "sim_golden": None,
+            "sim_test": None,
+            "sim_pair": None,
+        }
+        if TASK_SPECS[str(task)]["metric_family"] == "classification":
+            phenotypes = _classification_phenotypes(prompt, response)
+            for phenotype in phenotypes:
+                rows.append(
+                    {
+                        **base,
+                        "canonical_phenotype": phenotype,
+                        "log_bbox_area": None,
+                        "local_contrast": None,
+                        "log_bbox_area_quartile": "NA",
+                        "local_contrast_quartile": "NA",
+                        "gt_count_bin": "0" if phenotype == "__empty__" else "1",
+                    }
+                )
+            continue
+        objects = _detection_objects(response, context=context)
+        phenotypes = sorted({str(item["label"]) for item in objects}) or ["__empty__"]
+        area = _box_area(objects)
+        contrast = _record_local_contrast(
+            record, objects, media_root=media_root, context=context
+        )
+        for phenotype in phenotypes:
+            rows.append(
+                {
+                    **base,
+                    "canonical_phenotype": phenotype,
+                    "log_bbox_area": area,
+                    "local_contrast": contrast,
+                    "log_bbox_area_quartile": "NA",
+                    "local_contrast_quartile": "NA",
+                    "gt_count_bin": _gt_count_bin(len(objects)),
+                    "gt_count": len(objects),
+                }
+            )
+    if not rows:
+        raise ValueError("Mining annotations produced an empty coverage inventory")
+    crossing = {
+        group: sorted(splits)
+        for group, splits in group_splits.items()
+        if len(splits) > 1
+    }
+    if crossing:
+        raise ValueError(
+            "source_group_id crosses dataset splits: "
+            f"{dict(list(sorted(crossing.items()))[:10])}"
+        )
+    lineage_groups = {
+        str(row["source_group_id"])
+        for row in rows
+        if row["_lineage_declared"]
+    }
+    missing_parents = sorted(
+        group
+        for group in lineage_groups
+        if not any(
+            row["source_group_id"] == group and row["_is_parent"] for row in rows
+        )
+    )
+    if missing_parents:
+        raise ValueError(
+            "source lineage has no canonical parent row: "
+            f"{missing_parents[:10]}"
+        )
+    rows = [
+        row
+        for row in rows
+        if row["source_group_id"] not in lineage_groups or row["_is_parent"]
+    ]
+    for row in rows:
+        row.pop("_lineage_declared")
+        row.pop("_is_parent")
+    _rank_inventory_quartiles(rows, "log_bbox_area", "log_bbox_area_quartile")
+    _rank_inventory_quartiles(rows, "local_contrast", "local_contrast_quartile")
+    return rows
+
+
 def route_candidates(
     target_rows: list[dict[str, Any]],
     source_rows: list[dict[str, Any]],
@@ -582,6 +968,14 @@ def route_candidates(
     min_similarity: float,
     pair_similarity: str = "canvas",
     pair_similarity_combine: str = "mean",
+    candidate_selector: str = "nearest_neighbor",
+    proxy_rows: list[dict[str, Any]] | None = None,
+    round_index: int = 1,
+    epochs: int = 5,
+    iteration_budget: int | None = None,
+    hardness_schedule: Any = None,
+    inventory_cache: pathlib.Path | None = None,
+    inventory_hashes: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Return routed source candidates and auditable selection evidence."""
 
@@ -613,6 +1007,11 @@ def route_candidates(
             f"unsupported pair similarity combine {pair_similarity_combine!r}; "
             f"choose one of {PAIR_SIMILARITY_COMBINES}"
         )
+    if candidate_selector not in CANDIDATE_SELECTORS:
+        raise ValueError(
+            f"unsupported candidate selector {candidate_selector!r}; "
+            f"choose one of {CANDIDATE_SELECTORS}"
+        )
     media_root = media_root.expanduser().resolve()
     if pair_similarity == "canvas":
         catalog, aliases, ignored_aliases = _source_catalog(
@@ -635,6 +1034,77 @@ def route_candidates(
             media_root=media_root,
             expected_dimension=dimension,
         )
+    if candidate_selector == "coverage_stratified_hardness_v1":
+        if not proxy_rows:
+            raise ValueError(
+                "coverage_stratified_hardness_v1 requires complete Proxy quota statistics"
+            )
+        expected_hashes = dict(inventory_hashes or {})
+        builder = lambda: build_coverage_inventory_rows(
+            sources,
+            source_annotations,
+            media_root=media_root,
+            pair_similarity=pair_similarity,
+        )
+        if inventory_cache is None:
+            inventory = builder()
+            cache_hashes = expected_hashes
+            cache_status = "uncached"
+        else:
+            inventory, cache_hashes, cache_status = load_or_build_coverage_inventory(
+                inventory_cache,
+                expected_hashes=expected_hashes,
+                builder=builder,
+            )
+        if mode == "image_only":
+            selection_budget = sum(
+                max(
+                    [top_k_per_target]
+                    + [top_k_by_task.get(task, top_k_per_target) for task in target["task_types"]]
+                )
+                for target in targets
+            )
+        else:
+            selection_budget = sum(
+                sum(top_k_by_task.get(task, top_k_per_target) for task in target["task_types"])
+                for target in targets
+            )
+        quota_proxy_rows = _attach_proxy_visual_clusters(proxy_rows, targets)
+        selected, selector_manifest = select_coverage_stratified_candidates(
+            inventory,
+            quota_proxy_rows,
+            budget=selection_budget,
+            round_index=round_index,
+            epochs=epochs,
+            iteration_budget=iteration_budget,
+            hardness_schedule=hardness_schedule,
+            inventory_hashes=cache_hashes,
+        )
+        selector_manifest["inventory_cache"] = (
+            str(inventory_cache.expanduser().resolve())
+            if inventory_cache is not None
+            else None
+        )
+        selector_manifest["inventory_cache_status"] = cache_status
+        for row in selected:
+            row.pop("embedding", None)
+        return selected, {
+            "schema_version": "task_mining_router_v2",
+            "mode": mode,
+            "candidate_selector": candidate_selector,
+            "proxy_role": "quota_statistics_only",
+            "pair_similarity": pair_similarity,
+            "pair_similarity_combine": pair_similarity_combine,
+            "top_k_per_target": top_k_per_target,
+            "top_k_by_task": dict(sorted(top_k_by_task.items())),
+            "target_queries": len(targets),
+            "source_images": len(sources),
+            "unique_sources": len(selected),
+            "selection_budget": selection_budget,
+            "ignored_out_of_scope_source_images": ignored_sources,
+            "embedding_dimension": dimension,
+            "selector_manifest": selector_manifest,
+        }
     try:
         import numpy as np
     except ImportError as exc:
@@ -956,6 +1426,36 @@ def _write_parquet(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
     pq.write_table(pa.Table.from_pylist(rows), path)
 
 
+def _write_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def _load_hardness_schedule(path: pathlib.Path | None) -> list[dict[str, float]]:
+    if path is None:
+        return validate_hardness_schedule(None)
+    resolved = path.expanduser().resolve(strict=True)
+    if resolved.suffix.casefold() == ".json":
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+    elif resolved.suffix.casefold() == ".toml":
+        import tomllib
+
+        payload = tomllib.loads(resolved.read_text(encoding="utf-8"))
+    else:
+        raise ValueError("hardness schedule must use .json or .toml")
+    if isinstance(payload, dict):
+        payload = payload.get("hardness_schedule")
+    return validate_hardness_schedule(payload)
+
+
+def _default_inventory_cache(output: pathlib.Path) -> pathlib.Path:
+    resolved = output.expanduser().resolve()
+    for parent in resolved.parents:
+        if re.fullmatch(r"iter\d+", parent.name):
+            return parent.parent / "coverage_inventory.parquet"
+    return resolved.parent / "coverage_inventory.parquet"
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-embeddings", required=True, type=pathlib.Path)
@@ -973,6 +1473,22 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-k-per-target", type=int, default=5)
     parser.add_argument("--defect-detection-top-k-per-target", type=int)
     parser.add_argument("--min-similarity", type=float, default=0.9)
+    parser.add_argument(
+        "--candidate-selector",
+        choices=CANDIDATE_SELECTORS,
+        default="nearest_neighbor",
+    )
+    parser.add_argument(
+        "--proxy-errors",
+        type=pathlib.Path,
+        help="Complete Proxy gap_candidates.parquet used only for quota statistics.",
+    )
+    parser.add_argument("--round-index", type=int, default=1)
+    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--iteration-budget", type=int)
+    parser.add_argument("--hardness-schedule", type=pathlib.Path)
+    parser.add_argument("--inventory-cache", type=pathlib.Path)
+    parser.add_argument("--selector-manifest", type=pathlib.Path)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--summary", required=True, type=pathlib.Path)
     return parser
@@ -981,10 +1497,25 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if (
+            args.candidate_selector == "coverage_stratified_hardness_v1"
+            and args.proxy_errors is None
+        ):
+            raise ValueError(
+                "--proxy-errors is required for coverage_stratified_hardness_v1"
+            )
+        target_rows = _read_parquet(args.target_embeddings)
+        source_rows = _read_parquet(args.source_embeddings)
+        source_annotations = load_records(args.source_annotations)
+        inventory_cache = (
+            args.inventory_cache
+            if args.inventory_cache is not None
+            else _default_inventory_cache(args.output)
+        )
         rows, summary = route_candidates(
-            _read_parquet(args.target_embeddings),
-            _read_parquet(args.source_embeddings),
-            load_records(args.source_annotations),
+            target_rows,
+            source_rows,
+            source_annotations,
             media_root=args.media_root,
             pair_assets_dir=args.pair_assets_dir,
             mode=args.mode,
@@ -997,15 +1528,53 @@ def main(argv: list[str] | None = None) -> int:
             min_similarity=args.min_similarity,
             pair_similarity=args.pair_similarity,
             pair_similarity_combine=args.pair_similarity_combine,
+            candidate_selector=args.candidate_selector,
+            proxy_rows=(
+                _read_parquet(args.proxy_errors)
+                if args.proxy_errors is not None
+                else None
+            ),
+            round_index=args.round_index,
+            epochs=args.epochs,
+            iteration_budget=args.iteration_budget,
+            hardness_schedule=_load_hardness_schedule(args.hardness_schedule),
+            inventory_cache=(
+                inventory_cache
+                if args.candidate_selector == "coverage_stratified_hardness_v1"
+                else None
+            ),
+            inventory_hashes=(
+                {
+                    "annotations_sha256": file_sha256(args.source_annotations),
+                    "embeddings_sha256": file_sha256(args.source_embeddings),
+                }
+                if args.candidate_selector == "coverage_stratified_hardness_v1"
+                else None
+            ),
         )
+        selector_manifest = summary.get("selector_manifest")
+        if isinstance(selector_manifest, dict):
+            manifest_path = (
+                args.selector_manifest
+                or args.output.with_name("coverage_selector_manifest.json")
+            )
+            _write_json(manifest_path, selector_manifest)
+            summary_for_disk = dict(summary)
+            summary_for_disk["selector_manifest"] = str(
+                manifest_path.expanduser().resolve()
+            )
+        else:
+            summary_for_disk = summary
         _write_parquet(args.output, rows)
-        args.summary.parent.mkdir(parents=True, exist_ok=True)
-        args.summary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+        _write_json(args.summary, summary_for_disk)
+        if isinstance(selector_manifest, dict):
+            require_coverage_training_eligible(selector_manifest)
     except (ImportError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"task_mining_router: {exc}", file=sys.stderr)
         return 2
     print(
-        f"task_mining_router: mode={args.mode} pair_similarity={args.pair_similarity} "
+        f"task_mining_router: mode={args.mode} candidate_selector={args.candidate_selector} "
+        f"pair_similarity={args.pair_similarity} "
         f"targets={summary['target_queries']} "
         f"sources={summary['unique_sources']} output={args.output}"
     )

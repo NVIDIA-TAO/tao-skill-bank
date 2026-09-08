@@ -14,7 +14,10 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import pathlib
+import re
+import statistics
 import sys
 from typing import Any
 
@@ -23,7 +26,135 @@ import yaml
 from atomic_samples import identity_for_paths
 from gap_analysis.config import load_profile, validate_config
 from gap_analysis.runner import run_selection
-from validate_sharegpt import image_paths, load_records, target_path
+from validate_sharegpt import (
+    image_paths,
+    load_records,
+    prompt_and_response,
+    resolve_image,
+    target_path,
+)
+
+
+def _classification_phenotypes(source: dict[str, Any]) -> list[str]:
+    prompt, response = prompt_and_response(source, context=str(source.get("id")))
+    mapping = {
+        match.group(1): match.group(2).strip().rstrip(".")
+        for line in prompt.splitlines()
+        for match in [re.match(r"^\s*([A-Z])[.)]\s*(.+?)\s*$", line)]
+        if match is not None
+    }
+    values = [part for part in re.split(r"""[\s,\[\]'"]+""", response) if part]
+    return sorted({mapping.get(value, value) for value in values}) or ["__empty__"]
+
+
+def _detection_strata(
+    source: dict[str, Any],
+) -> tuple[list[str], list[dict[str, Any]], float | None]:
+    _, response = prompt_and_response(source, context=str(source.get("id")))
+    text = response.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()[1:]
+        if lines and lines[-1].strip() == "```":
+            lines.pop()
+        text = "\n".join(lines).strip()
+    try:
+        objects = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{source.get('id')}: detection ground truth is not JSON") from exc
+    if not isinstance(objects, list):
+        raise ValueError(f"{source.get('id')}: detection ground truth is not an array")
+    labels = sorted(
+        {
+            str(item.get("label"))
+            for item in objects
+            if isinstance(item, dict) and isinstance(item.get("label"), str)
+        }
+    ) or ["__empty__"]
+    areas = []
+    for item in objects:
+        box = item.get("bbox_2d") if isinstance(item, dict) else None
+        if not isinstance(box, list) or len(box) != 4:
+            raise ValueError(f"{source.get('id')}: invalid detection bbox")
+        areas.append(
+            max(0.0, float(box[2]) - float(box[0]))
+            * max(0.0, float(box[3]) - float(box[1]))
+        )
+    area = math.log(max(1e-12, statistics.median(areas))) if areas else None
+    return labels, objects, area
+
+
+def _proxy_local_contrast(
+    source: dict[str, Any],
+    objects: list[dict[str, Any]],
+    *,
+    media_root: pathlib.Path | None,
+) -> float | None:
+    supplied = source.get("local_contrast")
+    if isinstance(supplied, (int, float)) and not isinstance(supplied, bool):
+        return float(supplied)
+    if not objects or media_root is None:
+        return None
+    try:
+        from PIL import Image, ImageStat
+    except ImportError as exc:
+        raise ValueError("Pillow is required to build Proxy local-contrast strata") from exc
+    context = str(source.get("id"))
+    path = resolve_image(target_path(source, context=context), media_root)
+    if not path.is_file():
+        raise ValueError(f"{context}: Proxy image is missing: {path}")
+    with Image.open(path) as image:
+        gray = image.convert("L")
+        width, height = gray.size
+        contrasts: list[float] = []
+        for item in objects:
+            x1, y1, x2, y2 = (float(value) for value in item["bbox_2d"])
+            box = (
+                max(0, min(width, round(x1 * width / 1000.0))),
+                max(0, min(height, round(y1 * height / 1000.0))),
+                max(0, min(width, round(x2 * width / 1000.0))),
+                max(0, min(height, round(y2 * height / 1000.0))),
+            )
+            if box[2] <= box[0] or box[3] <= box[1]:
+                continue
+            expand_x = max(1, round((box[2] - box[0]) * 0.25))
+            expand_y = max(1, round((box[3] - box[1]) * 0.25))
+            outer = (
+                max(0, box[0] - expand_x),
+                max(0, box[1] - expand_y),
+                min(width, box[2] + expand_x),
+                min(height, box[3] + expand_y),
+            )
+            inside = gray.crop(box)
+            outside = gray.crop(outer)
+            inside_sum = ImageStat.Stat(inside).sum[0]
+            outside_sum = ImageStat.Stat(outside).sum[0]
+            inside_pixels = inside.width * inside.height
+            ring_pixels = outside.width * outside.height - inside_pixels
+            inside_mean = inside_sum / max(1, inside_pixels)
+            ring_mean = (
+                (outside_sum - inside_sum) / ring_pixels
+                if ring_pixels > 0
+                else inside_mean
+            )
+            contrasts.append(abs(inside_mean - ring_mean) / 255.0)
+    if not contrasts:
+        raise ValueError(f"{context}: no measurable Proxy detection boxes")
+    return statistics.mean(contrasts)
+
+
+def _rank_proxy_quartiles(
+    rows: list[dict[str, Any]], numeric_field: str, quartile_field: str
+) -> None:
+    by_task: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.get(numeric_field) is not None:
+            by_task.setdefault(str(row["task_type"]), []).append(row)
+    for entries in by_task.values():
+        ordered = sorted(
+            entries, key=lambda row: (float(row[numeric_field]), str(row["id"]))
+        )
+        for index, row in enumerate(ordered):
+            row[quartile_field] = f"Q{min(4, index * 4 // len(ordered) + 1)}"
 
 
 def _load_evaluator(path: pathlib.Path) -> Any:
@@ -147,6 +278,8 @@ def build_candidates(
     evaluator_path: pathlib.Path,
     source_rows: list[dict[str, Any]],
     prediction_rows: list[dict[str, Any]],
+    *,
+    media_root: pathlib.Path | None = None,
 ) -> list[dict[str, Any]]:
     evaluator = _load_evaluator(evaluator_path)
     predictions = {str(row.get("id", "")): row for row in prediction_rows}
@@ -168,6 +301,18 @@ def build_candidates(
         paths = image_paths(source, context=row_id)
         target = target_path(source, context=row_id)
         sample_kind = "reference_pair" if len(paths) == 2 else "single_image"
+        is_detection = "Detection" in str(source["task_type"])
+        if is_detection:
+            phenotypes, objects, log_bbox_area = _detection_strata(source)
+            gt_count = len(objects)
+            local_contrast = _proxy_local_contrast(
+                source, objects, media_root=media_root
+            )
+        else:
+            phenotypes = _classification_phenotypes(source)
+            gt_count = 0 if phenotypes == ["__empty__"] else 1
+            log_bbox_area = None
+            local_contrast = None
         candidate = {
                 "id": row_id,
                 "evaluation_role": "proxy",
@@ -180,6 +325,14 @@ def build_candidates(
                     "reference_based" if len(paths) == 2 else "non_reference_based"
                 ),
                 "dataset": str(source.get("dataset", "unknown")),
+                "canonical_phenotypes": phenotypes,
+                "gt_count_bin": (
+                    "0" if gt_count == 0 else "1" if gt_count == 1 else "2-3" if gt_count <= 3 else "4+"
+                ),
+                "log_bbox_area": log_bbox_area,
+                "log_bbox_area_quartile": "NA",
+                "local_contrast": local_contrast,
+                "local_contrast_quartile": "NA",
                 # Several task rows may address the same physical target.
                 # Default to the target path so routing embeds that image once.
                 "target_id": str(source.get("target_id", target)),
@@ -206,6 +359,8 @@ def build_candidates(
                 },
             }
         candidates.append(candidate)
+    _rank_proxy_quartiles(candidates, "log_bbox_area", "log_bbox_area_quartile")
+    _rank_proxy_quartiles(candidates, "local_contrast", "local_contrast_quartile")
     return candidates
 
 
@@ -224,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--evaluator", required=True, type=pathlib.Path)
     parser.add_argument("--source", required=True, type=pathlib.Path)
     parser.add_argument("--predictions", required=True, type=pathlib.Path)
+    parser.add_argument("--media-root", type=pathlib.Path)
     parser.add_argument("--output-dir", required=True, type=pathlib.Path)
     choice = parser.add_mutually_exclusive_group()
     choice.add_argument("--gap-analysis-profile", default="deficit_weighted_round_robin")
@@ -245,6 +401,11 @@ def main(argv: list[str] | None = None) -> int:
             args.evaluator,
             load_records(args.source),
             load_records(args.predictions),
+            media_root=(
+                args.media_root.expanduser().resolve()
+                if args.media_root is not None
+                else None
+            ),
         )
         selected, selection = run_selection(candidates, config)
         args.output_dir.mkdir(parents=True, exist_ok=True)

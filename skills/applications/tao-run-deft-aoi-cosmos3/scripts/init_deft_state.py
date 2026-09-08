@@ -20,6 +20,10 @@ from typing import Any
 import yaml
 
 from atomic_samples import PAIR_SIMILARITIES, PAIR_SIMILARITY_COMBINES
+from coverage_stratified_selector import (
+    CANDIDATE_SELECTORS,
+    validate_hardness_schedule,
+)
 from gap_analysis.config import load_profile, validate_config
 from metric_contract import render_target, validate_contract
 from nvpaw_annotations import TASK_SPECS
@@ -263,6 +267,23 @@ def _dict_sha256(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _load_hardness_schedule(path: pathlib.Path | None) -> list[dict[str, float]]:
+    if path is None:
+        return validate_hardness_schedule(None)
+    resolved = path.expanduser().resolve(strict=True)
+    if resolved.suffix.casefold() == ".json":
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+    elif resolved.suffix.casefold() == ".toml":
+        import tomllib
+
+        payload = tomllib.loads(resolved.read_text(encoding="utf-8"))
+    else:
+        raise ValueError("hardness schedule must use .json or .toml")
+    if isinstance(payload, dict):
+        payload = payload.get("hardness_schedule")
+    return validate_hardness_schedule(payload)
+
+
 def _resolve_gap_analysis(args: argparse.Namespace, annotation_profile: str) -> dict[str, Any]:
     config_path = getattr(args, "gap_analysis_config", None)
     profile = getattr(args, "gap_analysis_profile", None)
@@ -338,6 +359,10 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         )
     annotation_profile = "nvpaw_multitask_v1"
     mining_router_mode = getattr(args, "mining_router_mode", "task_strict")
+    candidate_selector = getattr(args, "candidate_selector", "nearest_neighbor")
+    hardness_schedule = _load_hardness_schedule(
+        getattr(args, "hardness_schedule", None)
+    )
     pair_similarity = getattr(args, "pair_similarity", "canvas")
     pair_similarity_combine = getattr(args, "pair_similarity_combine", "mean")
     prompt_variant = getattr(args, "prompt_variant", "official_v1")
@@ -504,6 +529,18 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "augmentation_profile": args.augmentation_profile,
             },
             "mining": {
+                "candidate_selector": candidate_selector,
+                "proxy_role": (
+                    "quota_statistics_only"
+                    if candidate_selector == "coverage_stratified_hardness_v1"
+                    else "nearest_neighbor_query"
+                ),
+                "hardness_schedule": hardness_schedule,
+                "source_cap": 0.35,
+                "eligible_source_floor": 0.10,
+                "cluster_cap": 0.50,
+                "share_gap_tolerance": 0.05,
+                "effective_exposure_cap": 8.0,
                 "router_mode": mining_router_mode,
                 "pair_similarity": pair_similarity,
                 "pair_similarity_combine": pair_similarity_combine,
@@ -689,6 +726,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--minimum-global-batch", type=int, default=512)
     parser.add_argument("--top-k-per-target", type=int, default=5)
     parser.add_argument("--defect-detection-top-k-per-target", type=int)
+    parser.add_argument(
+        "--candidate-selector",
+        choices=CANDIDATE_SELECTORS,
+        default="nearest_neighbor",
+        help="Mining candidate policy; nearest_neighbor remains the compatibility default.",
+    )
+    parser.add_argument(
+        "--hardness-schedule",
+        type=pathlib.Path,
+        help=(
+            "Optional JSON/TOML five-round coverage/hardness schedule. "
+            "The reviewed five-round table is used when omitted."
+        ),
+    )
     parser.add_argument("--max-training-rows-per-iteration", type=int, default=20_000)
     parser.add_argument(
         "--minimum-training-rows-per-iteration",

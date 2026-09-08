@@ -37,6 +37,41 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
             self.assertEqual(
                 state["config"]["mining"]["pair_similarity_combine"], "mean"
             )
+            self.assertEqual(
+                state["config"]["mining"]["candidate_selector"],
+                "nearest_neighbor",
+            )
+            self.assertEqual(
+                state["config"]["mining"]["hardness_schedule"][0],
+                {
+                    "coverage_positive": 0.45,
+                    "hard_positive": 0.15,
+                    "coverage_negative": 0.25,
+                    "fp_hard_negative": 0.15,
+                },
+            )
+
+    def test_coverage_candidate_selector_is_launch_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(
+                self._argv(
+                    root,
+                    workspace,
+                    "--candidate-selector",
+                    "coverage_stratified_hardness_v1",
+                )
+            )
+
+            self.assertEqual(rc, 0)
+            mining = json.loads(
+                (root / "results/deft_state.json").read_text()
+            )["config"]["mining"]
+            self.assertEqual(
+                mining["candidate_selector"],
+                "coverage_stratified_hardness_v1",
+            )
 
     def test_two_vector_pair_similarity_is_launch_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

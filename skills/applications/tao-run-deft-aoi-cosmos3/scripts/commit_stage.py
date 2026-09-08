@@ -29,6 +29,7 @@ from record_metric_result import commit as commit_metric_result
 from render_report import render as render_html_report
 from cfw_dcp import validate_checkpoint
 from cfw_predictions import read_prediction_jsonl
+from coverage_stratified_selector import require_coverage_training_eligible
 from deft_context import _next_stage
 from defect_detection_ablation import verify_bound_manifest
 from validate_sharegpt import load_records
@@ -409,6 +410,27 @@ def _apply_success(
                 f"mined parquet rows={actual_count}"
             )
         phase["mining_mined_count"] = args.mining_count
+        candidate_selector = (
+            state.get("config", {}).get("mining", {}).get(
+                "candidate_selector", "nearest_neighbor"
+            )
+        )
+        if candidate_selector == "coverage_stratified_hardness_v1":
+            selector_manifest_path = pathlib.Path(
+                _within(
+                    _required_json_file(
+                        args.coverage_selector_manifest,
+                        "--coverage-selector-manifest",
+                    ),
+                    phase_root,
+                    "--coverage-selector-manifest",
+                )
+            )
+            selector_manifest = json.loads(
+                selector_manifest_path.read_text(encoding="utf-8")
+            )
+            require_coverage_training_eligible(selector_manifest)
+            phase["coverage_selector_manifest"] = str(selector_manifest_path)
     elif stage == "assemble_data":
         phase["mined_jsonl"] = _within(
             _required_jsonl_file(args.mined_jsonl, "--mined-jsonl"),
@@ -666,6 +688,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mining-target-embeddings", type=pathlib.Path)
     parser.add_argument("--mining-source-embeddings", type=pathlib.Path)
     parser.add_argument("--mining-count", type=int)
+    parser.add_argument("--coverage-selector-manifest", type=pathlib.Path)
     parser.add_argument("--mined-jsonl", type=pathlib.Path)
     parser.add_argument("--combined-training-jsonl", type=pathlib.Path)
     parser.add_argument("--assemble-summary", type=pathlib.Path)

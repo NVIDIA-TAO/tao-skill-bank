@@ -3,11 +3,11 @@
 
 """Drop samples selected by earlier mining iterations and commit an audit ledger.
 
-The TAO nearest-neighbor task deduplicates candidates inside one invocation but
-does not know about earlier DEFT iterations.  This host-side post-processing
-step preserves the candidate order, keeps only the first occurrence of each
-normalized filepath, drops paths already committed by a previous iteration,
-and records enough metadata to verify or safely resume the selection.
+The TAO mining task deduplicates candidates inside one invocation but does not
+know about earlier DEFT iterations. This host-side post-processing step
+preserves candidate order, prefers source-group identity when provided, drops
+groups already committed by a previous iteration, and records enough metadata
+to verify or safely resume the selection.
 """
 
 from __future__ import annotations
@@ -245,10 +245,13 @@ def select_novel_samples(
             f"candidate parquet is missing {filepath_column!r}; "
             f"columns={table.column_names}"
         )
-    identity_column = (
-        "atomic_sample_id"
-        if "atomic_sample_id" in table.column_names
-        else filepath_column
+    identity_column = next(
+        (
+            column
+            for column in ("source_group_id", "atomic_sample_id", filepath_column)
+            if column in table.column_names
+        ),
+        filepath_column,
     )
 
     state = _validated_history(history_file, iteration, identity_column)
