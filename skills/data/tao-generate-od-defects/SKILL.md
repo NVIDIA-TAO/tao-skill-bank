@@ -18,6 +18,8 @@ tags: [tao, data, anomalygen-next, object-detection, synthetic-data, coco]
 This leaf uses the upstream generator and pseudo-labeler in the pinned public
 container. It does not prepare detector gaps, run AMP, train AnomalyGenNext, or
 append outputs to a detector training set.
+Read `references/execution-contract.md` when adapting input or completion
+behavior, and `references/container-runtime.md` before submission.
 
 ## Inputs
 
