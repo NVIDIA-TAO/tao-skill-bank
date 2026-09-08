@@ -73,3 +73,25 @@ def test_initialize_rejects_boxed_clean_role(tmp_path: Path) -> None:
     clean.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="clean role"):
         MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    pool, dataset, base, nn = tmp_path / "pool", tmp_path / "ft_dataset", tmp_path / "ft_base", tmp_path / "nn"
+    for path in (pool, dataset, base, nn):
+        path.mkdir()
+    defect, validation, vae = tmp_path / "defect.jsonl", tmp_path / "validation.jsonl", tmp_path / "vae.pth"
+    defect.write_text("{}\n")
+    validation.write_text("{}\n")
+    vae.write_bytes(b"vae")
+    value["synthesis"] = {"enabled": True, "pool_dataset_root": str(pool),
+                          "defect_spec": str(defect), "routes": {"route": {"finetune": {
+                              "dataset_root": str(dataset), "validation_testcase": str(validation),
+                              "base_checkpoint": str(base), "vae_path": str(vae),
+                              "nn_backbone": str(nn),
+                              "result_handoff": str(tmp_path / "future/handoff.json")}}}}
+    config.write_text(yaml.safe_dump(value))
+    state = MODULE.initialize(config, tmp_path / "results")
+    assert state["synthesis_bootstrap_required"] is True
+    assert state["next_stage"] == "synthesis_bootstrap"
