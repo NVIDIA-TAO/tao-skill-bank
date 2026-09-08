@@ -117,6 +117,83 @@ class _Evaluator:
 
 
 class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
+    def test_materialization_matches_empty_rate_in_both_detection_cohorts(self) -> None:
+        rows: list[dict] = []
+        candidates: list[dict] = []
+        one_box = [{"bbox_2d": [10, 10, 100, 100], "label": "open"}]
+        for index in range(30):
+            empty = index < 12
+            row = _row(
+                f"single-dd-{index}",
+                "Defect Detection",
+                boxes=[] if empty else one_box,
+            )
+            rows.append(row)
+            candidates.append(
+                _candidate(
+                    row,
+                    evidence=(
+                        ["hard_negative_proxy_false_positive"]
+                        if empty
+                        else ["hard_positive_proxy_false_negative"]
+                    ),
+                    phash=f"{index + 1000:016x}",
+                )
+            )
+        maintenance_tasks = defect_detection_ablation.MAINTENANCE_TASK_TYPES
+        offset = 2000
+        for task in maintenance_tasks:
+            for index in range(6):
+                is_reference_detection = task == "Ref_based Defect Detection"
+                empty = is_reference_detection and index < 3
+                row = _row(
+                    f"{task.replace(' ', '-')}-{index}",
+                    task,
+                    boxes=[] if empty else one_box,
+                )
+                rows.append(row)
+                candidates.append(
+                    _candidate(
+                        row,
+                        evidence=(
+                            [
+                                "calibration_empty_ground_truth",
+                                "calibration_reference_no_change_ground_truth",
+                            ]
+                            if empty
+                            else []
+                        ),
+                        phash=f"{offset:016x}",
+                        route_tier="calibration" if empty else "strict",
+                    )
+                )
+                offset += 1
+
+        selected, manifest = defect_detection_ablation.materialize(
+            candidate_rows=candidates,
+            source_records=rows,
+            validation_records=[],
+            media_root=pathlib.Path("/data"),
+            max_rows=60,
+            row_multiple=10,
+            defect_detection_fraction=0.5,
+            proxy_empty_rate=0.4,
+            reference_proxy_empty_rate=0.5,
+            epochs=1,
+            global_batch=10,
+            near_duplicate_hamming_distance=None,
+        )
+
+        self.assertEqual(len(selected), 60)
+        self.assertTrue(manifest["verified"])
+        cohorts = manifest["empty_ground_truth_by_cohort"]
+        self.assertEqual(cohorts["non_reference_based"]["selected_empty"], 12)
+        self.assertEqual(cohorts["non_reference_based"]["selected_total"], 30)
+        self.assertEqual(cohorts["reference_based"]["selected_empty"], 3)
+        self.assertEqual(cohorts["reference_based"]["selected_total"], 6)
+        self.assertEqual(cohorts["reference_based"]["proxy_rate"], 0.5)
+        self.assertEqual(manifest["configuration"]["near_duplicate_filter"], "disabled")
+
     def test_all_proxy_dd_anchors_are_ordered_by_error_severity(self) -> None:
         selected = [{"id": "maintenance", "task_type": "Component Detection"}]
         all_gaps = [

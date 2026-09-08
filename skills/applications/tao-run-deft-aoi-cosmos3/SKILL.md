@@ -136,22 +136,27 @@ The selector:
   counts toward that reserve;
 - admits positive Defect Detection rows from proxy-FN, partial-overlap, or
   correctly handled DD routes, while proxy-FP routes provide empty hard
-  negatives; when the launch
-  explicitly authorizes direct Mining-pool box calibration, separately labeled
-  `calibration_empty_ground_truth` candidates may fill only the residual empty
-  quota and are never reported as task-strict hard negatives;
+  negatives; when the launch explicitly authorizes direct Mining-pool box
+  calibration, separately labeled `calibration_empty_ground_truth` and
+  `calibration_few_box_ground_truth` candidates may fill the Proxy-bound
+  detection quotas and are never reported as task-strict hard negatives;
 - balances positive marginal quotas over source, defect phenotype,
   source-by-phenotype, 1024-canvas box-area quartile, local-contrast quartile,
   and GT-count bins `1`, `2-3`, `4+`, reporting capacity shortages rather than
   filling them with another task;
-- matches the Proxy single-image Defect Detection empty-GT rate after integer
-  rounding; and
+- derives and matches the Proxy empty-GT rate independently for single-image
+  and reference Defect Detection after deterministic integer rounding;
+- labels empty reference pairs as
+  `calibration_reference_no_change_ground_truth` negatives and keeps the
+  ordered golden/target pair atomic;
 - treats each ordered `(golden, target)` reference sample as one atomic unit
   across embedding, retrieval, de-duplication, history, leakage exclusion, and
   canonical two-image materialization; and
-- rejects atomic-sample, content-SHA, perceptual near-duplicate, Proxy, and
-  Benchmark collisions while leaving every selected source record and its
-  `official_v1` messages, coordinates, box order, and image controls unchanged.
+- rejects atomic-sample, content-SHA, Proxy, and Benchmark collisions while
+  leaving every selected source record and its `official_v1` messages,
+  coordinates, box order, and image controls unchanged. Perceptual
+  near-duplicate filtering is applied only when configured; use
+  `--no-near-duplicate-filter` when the launch disables it.
 
 The command writes the materialized JSONL and a bound
 `defect_detection_quota_manifest_v1`. By default a shortfall leaves the

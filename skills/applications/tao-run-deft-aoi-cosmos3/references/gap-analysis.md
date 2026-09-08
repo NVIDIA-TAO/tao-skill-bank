@@ -66,10 +66,16 @@ The default `top_k_per_target` may be overridden per task; the DD ablation
 records its Defect Detection override separately so maintenance tasks retain
 their launch value.
 When the launch contract enables detection calibration,
-`select_detection_calibration.py` may prepend bounded empty/few-box examples
-from the Mining annotations. These rows carry the explicit `calibration` tier,
-pass through the same history and cumulative-pool budget, and never weaken the
-`task_strict` policy applied to gap-routed neighbors.
+`select_detection_calibration.py` derives the single-image and reference
+empty-GT rates from the frozen Proxy, deterministically rounds each cohort's
+requested calibration total into empty and few-box quotas, and prepends the
+matching real Mining examples. Reference candidates carry one atomic pair ID,
+one deterministic two-image asset, both original paths, and explicit
+`calibration_reference_no_change_ground_truth` evidence for empty/no-change
+negatives. These rows carry the explicit `calibration` tier, pass through the
+same atomic history and cumulative-pool budget, and never weaken the
+`task_strict` policy applied to gap-routed neighbors. A cohort shortage fails
+closed instead of borrowing quota from the other cohort.
 
 When the frozen Proxy has no Component Count cohort, a launch may separately
 prepend a bounded `count_replay` tier selected directly from real Mining rows.

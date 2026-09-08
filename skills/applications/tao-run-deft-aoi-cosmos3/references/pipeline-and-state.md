@@ -20,6 +20,12 @@ validates artifacts, rejects any label/stage other than the derived next stage,
 and atomically advances state. A state with another schema version must not
 resume.
 
+The mining contract also freezes both detection-cohort calibration rates from
+the Proxy annotation checksum. Empty/no-change reference negatives remain
+ordered atomic pairs. Near-duplicate filtering is explicitly enabled with a
+Hamming threshold or disabled; a disabled filter is not represented by a
+magic distance value.
+
 Every `proxy_rcca` commit includes exact five-component Proxy KPI evidence and
 records whether its deterministic KPI/tie-breaker ranking is best so far.
 Proxy remains the sole gap-analysis source. Under `final_and_best`, the frozen

@@ -19,8 +19,8 @@
 | `build_mining_source_pool.py` | Build the source pool at atomic single-image/reference-pair granularity. |
 | `route_selected_gaps.py` | Collapse Proxy gap rows into atomic Mining queries and pair embedding assets. |
 | `task_mining_router.py` | Apply deterministic task-aware neighbor routing and history policy. |
-| `select_detection_calibration.py` | Prepend auditable empty/few-box calibration and optional Component Count replay candidates before history filtering. |
-| `defect_detection_ablation.py` | Materialize the task-strict Defect Detection corpus and bind its compatible quota manifest. |
+| `select_detection_calibration.py` | Derive Proxy-bound per-cohort empty/few-box quotas, preserve reference pairs atomically, and optionally select Component Count replay before history filtering. |
+| `defect_detection_ablation.py` | Materialize the task-strict Defect Detection corpus, enforce both detection-cohort empty rates, and bind its compatible quota manifest. |
 | `repetition_blend.py` | Apply seeded deficit-proportional or explicit repetition after exclusion and bind its per-task manifest. |
 | `emit_mined_sharegpt.py` | Emit selected atomic canonical Mining rows with both reference-pair sides intact; the legacy filename is retained for CLI compatibility. |
 | `assemble_training_json.py` | Assemble monotonic real-only training JSONL and optionally apply the recorded repetition blend. |

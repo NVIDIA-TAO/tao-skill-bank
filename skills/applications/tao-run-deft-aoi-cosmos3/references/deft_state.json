@@ -82,6 +82,32 @@
       "proxy_scored_every_iteration": true,
       "proxy_drives_gap_analysis": true
     },
+    "mining": {
+      "calibration_policy": "empty_and_few_box_from_mining",
+      "calibration_quota_contract": {
+        "policy": "proxy_empty_rate_by_reference_cohort",
+        "cohorts": {
+          "non_reference_based": {
+            "task_type": "Defect Detection",
+            "empty_rows": 209,
+            "total_rows": 500,
+            "empty_rate": 0.418
+          },
+          "reference_based": {
+            "task_type": "Ref_based Defect Detection",
+            "empty_rows": 212,
+            "total_rows": 500,
+            "empty_rate": 0.424
+          }
+        },
+        "reference_empty_semantics": "identical_or_no_change_pair_negative"
+      },
+      "defect_detection_ablation": {
+        "empty_rate_policy": "match_proxy_detection_per_reference_cohort",
+        "near_duplicate_filter_enabled": false,
+        "near_duplicate_hamming_distance": null
+      }
+    },
     "containers": {
       "cosmos_framework": {
         "reference": "resolved-framework-tag",

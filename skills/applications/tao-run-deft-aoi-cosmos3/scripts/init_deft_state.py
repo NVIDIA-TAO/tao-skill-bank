@@ -30,7 +30,9 @@ from repetition_blend import (
 )
 from render_report import render as render_html_report
 from route_selected_gaps import DEFECT_DETECTION_ANCHOR_POLICIES
+from select_detection_calibration import derive_proxy_empty_rates
 from task_mining_router import MINING_ROUTER_MODES
+from validate_sharegpt import load_records
 
 
 WORKFLOW = "tao-run-deft-aoi-cosmos3"
@@ -317,6 +319,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     missing = [f"{role}={path}" for role, path in annotations.items() if not path.is_file()]
     if missing:
         raise ValueError("annotation file(s) missing: " + ", ".join(missing))
+    calibration_cohorts = derive_proxy_empty_rates(load_records(annotations["proxy"]))
 
     # Specs are staged before state is initialized. Checking them here keeps the
     # failure recoverable: state is written exactly once and must never be
@@ -508,6 +511,16 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     args.minimum_training_rows_per_iteration
                 ),
                 "calibration_policy": "empty_and_few_box_from_mining",
+                "calibration_quota_contract": {
+                    "policy": "proxy_empty_rate_by_reference_cohort",
+                    "proxy_annotations": str(annotations["proxy"]),
+                    "proxy_annotations_sha256": _sha256(annotations["proxy"]),
+                    "max_boxes_for_few_box": 2,
+                    "cohorts": calibration_cohorts,
+                    "reference_empty_semantics": (
+                        "identical_or_no_change_pair_negative"
+                    ),
+                },
                 "repetition_blend": repetition_blend,
                 "component_count_replay_per_iteration": args.component_count_replay_per_iteration,
                 "top_k_scope": (
@@ -546,8 +559,11 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                         "local_contrast_quartile",
                         "gt_box_count_bin_1_2-3_4+",
                     ],
-                    "empty_rate_policy": "match_proxy_defect_detection",
+                    "empty_rate_policy": "match_proxy_detection_per_reference_cohort",
                     "near_duplicate_hamming_distance": args.near_duplicate_hamming_distance,
+                    "near_duplicate_filter_enabled": (
+                        args.near_duplicate_hamming_distance is not None
+                    ),
                     "quota_manifest_required_before_train": True,
                 },
             },
@@ -727,7 +743,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--defect-detection-minimum-fraction", type=float, default=0.5
     )
-    parser.add_argument("--near-duplicate-hamming-distance", type=int, default=3)
+    near_duplicate = parser.add_mutually_exclusive_group()
+    near_duplicate.add_argument(
+        "--near-duplicate-hamming-distance",
+        dest="near_duplicate_hamming_distance",
+        type=int,
+        default=3,
+    )
+    near_duplicate.add_argument(
+        "--no-near-duplicate-filter",
+        dest="near_duplicate_hamming_distance",
+        action="store_const",
+        const=None,
+    )
     parser.add_argument(
         "--augmentation-profile",
         choices=("exp40_photometric", "off"),
@@ -865,7 +893,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if not 0 <= args.near_duplicate_hamming_distance <= 64:
+    if args.near_duplicate_hamming_distance is not None and not (
+        0 <= args.near_duplicate_hamming_distance <= 64
+    ):
         print(
             "init_deft_state: --near-duplicate-hamming-distance must be in [0, 64]",
             file=sys.stderr,
