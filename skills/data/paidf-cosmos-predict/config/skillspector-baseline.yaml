@@ -1,0 +1,12 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "PE5"
+    path: "SKILL.md"
+    reason: "Reviewed FP: documented container flags / rootless UID:GID mapping - the secure pattern, not privilege escalation."
+  - id: "LP1"
+    path: "scripts/paidf_common.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - id: "TM2"
+    path: "scripts/paidf_common.py"
+    reason: "Reviewed FP: scoped, documented command in setup/eval content."

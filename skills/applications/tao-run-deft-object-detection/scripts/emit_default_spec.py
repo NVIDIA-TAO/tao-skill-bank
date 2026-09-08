@@ -71,7 +71,7 @@ def emit_from_ds(module: str, image: str, workdir: Path) -> str:
     # read before pwd is consulted, so any non-empty value settles it. HOME would
     # default to "/", which is not writable; the workdir is already mounted.
     cmd = [
-        "docker", "run", "--rm", "--gpus", "all", "--ipc=host",
+        "docker", "run", "--rm", "--gpus", "all", "--shm-size=8g",
         "--user", f"{os.getuid()}:{os.getgid()}",
         "-e", "USER=deft", "-e", f"HOME={workdir}",
         "-v", f"{workdir}:{workdir}", "-w", str(workdir),

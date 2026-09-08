@@ -392,3 +392,4 @@ the `0 entries written` halt, mid-round SDG failure resume, off-boundary
 2B-only `check.sh` default, and guardrail-blocked black images) are covered in
 `references/error-handling.md`; see also `references/finetune.md` and
 `references/inference.md` for phase-specific error handling.
+

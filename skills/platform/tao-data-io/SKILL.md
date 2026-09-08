@@ -109,3 +109,4 @@ inference (`parquet`/`jsonl`/`json`/`csv`).
 ## Helpers
 
 - `references/selective_download.py` — annotation-driven selective download (boto3 + pandas). Unit tests live in `references/tests/`; run with `python -m pytest`.
+

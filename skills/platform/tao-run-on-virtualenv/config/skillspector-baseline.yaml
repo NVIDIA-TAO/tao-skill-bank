@@ -1,0 +1,15 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "LP1"
+    path: "references/tests/test_virtualenv_runner.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - id: "E2"
+    path: "references/tests/test_virtualenv_runner.py"
+    reason: "Reviewed FP: the skill reads its own environment/config for runtime context, as documented."
+  - id: "E2"
+    path: "references/virtualenv_runner.py"
+    reason: "Reviewed FP: the skill reads its own environment/config for runtime context, as documented."
+  - id: "PE3"
+    path: "references/virtualenv_runner.py"
+    reason: "Reviewed FP: documentation reference to a standard infra/credential path (SSH, kubeconfig, .env, keyring, docker config). The skill does not read or exfiltrate credentials."

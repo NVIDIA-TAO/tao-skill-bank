@@ -70,7 +70,7 @@ python3 skills/data/tao-mine-nearest-neighbors/scripts/verify_nearest_neighbors_
 
 DS_IMAGE="$(scripts/resolve_versions_key.py images.tao_toolkit.data_services)"
 
-docker run --rm --gpus "$GPU_COUNT" --ipc=host --network=host \
+docker run --rm --gpus "$GPU_COUNT" --shm-size=8g --network=host \
   -v "$RUN_ROOT:$RUN_ROOT" \
   -w "$RUN_ROOT" \
   "$DS_IMAGE" \

@@ -1,0 +1,8 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "LP1"
+    path: "references/tests/test_artifact_schemas.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - path: "references/tests/test_artifact_schemas.py"
+    reason: "Reviewed FP: digit run inside a SHA-256 lock hash matched a payment-card pattern; not a real card number."
