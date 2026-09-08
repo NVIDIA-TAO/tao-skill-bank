@@ -189,7 +189,45 @@ class Cosmos3AssembleTrainingContractTests(unittest.TestCase):
             self.assertEqual(summary["duplicates_skipped"], 1)
             self.assertEqual(
                 summary["repetition_blend"]["schema_version"],
-                "repetition_blend_manifest_v1",
+                "repetition_blend_manifest_v2",
+            )
+
+    def test_repetition_share_gap_warning_is_copied_to_stage_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined = _write(
+                root / "mined.jsonl",
+                [
+                    *(_row(f"abundant-{index}", "Component Detection") for index in range(90)),
+                    *(_row(f"scarce-{index}", "Defect Detection") for index in range(10)),
+                ],
+            )
+
+            _, summary = assemble_training_json.assemble(
+                None,
+                mined,
+                validation_paths=[],
+                max_rows=100,
+                row_multiple=1,
+                repetition_config={
+                    "enabled": True,
+                    "policy": "deficit_proportional",
+                    "rep_min": 0.5,
+                    "rep_max": 1.5,
+                    "never_repeat_empty_gt": True,
+                    "explicit_multipliers": {},
+                },
+                deficit_weights={
+                    "Component Detection": 1.0,
+                    "Defect Detection": 1.0,
+                },
+                repetition_seed=17,
+            )
+
+            self.assertTrue(summary["warnings"])
+            self.assertEqual(
+                summary["warnings"],
+                summary["repetition_blend"]["warnings"],
             )
 
 

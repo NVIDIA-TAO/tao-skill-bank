@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import json
+import math
 import pathlib
 import sys
 import tempfile
 import unittest
+
+import jsonschema
 
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -103,10 +106,129 @@ class Cosmos3RepetitionBlendContractTests(unittest.TestCase):
         )
 
         self.assertEqual(plan["Defect Detection"]["target_share"], 0.75)
-        self.assertEqual(plan["Defect Detection"]["target_rows"], 9.0)
+        self.assertEqual(plan["Defect Detection"]["target_rows"], 7.5)
         self.assertEqual(plan["Defect Detection"]["rep"], 3.0)
         self.assertEqual(plan["Component Detection"]["target_share"], 0.25)
         self.assertEqual(plan["Component Detection"]["rep"], 0.5)
+
+    def test_deficit_policy_remixes_shares_with_deterministic_downsampling(self) -> None:
+        task_sizes = {
+            "Abundant": 60,
+            "Mid A": 20,
+            "Mid B": 15,
+            "Scarce": 5,
+        }
+        rows = [
+            _row(f"{task}-{index:02d}", task)
+            for task, size in task_sizes.items()
+            for index in range(size)
+        ]
+        config = {
+            "enabled": True,
+            "policy": "deficit_proportional",
+            "rep_min": 0.5,
+            "rep_max": 5.0,
+            "budget_multiplier": 1.0,
+            "share_gap_tolerance": 0.05,
+            "redistribute": True,
+            "never_repeat_empty_gt": True,
+            "explicit_multipliers": {},
+        }
+        weights = {task: 1.0 for task in task_sizes}
+
+        first, first_manifest = defect_detection_ablation.apply_repetition_blend(
+            rows,
+            row_cap=1_000,
+            config=config,
+            deficit_weights=weights,
+            seed=41,
+        )
+        second, second_manifest = defect_detection_ablation.apply_repetition_blend(
+            rows,
+            row_cap=1_000,
+            config=config,
+            deficit_weights=weights,
+            seed=41,
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(first_manifest, second_manifest)
+        self.assertEqual(first_manifest["schema_version"], "repetition_blend_manifest_v2")
+        self.assertEqual(first_manifest["totals"]["budget"], 100)
+        self.assertLessEqual(abs(len(first) - 100), 2)
+        for payload in first_manifest["tasks"].values():
+            self.assertLessEqual(abs(payload["share_gap"]), 0.05 + 1e-12)
+        abundant = first_manifest["tasks"]["Abundant"]
+        self.assertLess(abundant["rep"], 1.0)
+        self.assertGreater(abundant["dropped_rows"], 0)
+        schema = json.loads(
+            (SKILL_ROOT / "references/repetition_blend_manifest.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        jsonschema.validate(first_manifest, schema)
+
+    def test_v7d_like_pool_does_not_uniformly_clamp_to_rep_max(self) -> None:
+        available = {
+            "Component Classification": 201,
+            "Component Detection": 1_677,
+            "Defect Classification": 304,
+            "Defect Detection": 329,
+            "Ref_based Defect Classification": 427,
+            "Ref_based Defect Detection": 213,
+        }
+        weights = {
+            "Component Classification": 0.700,
+            "Component Detection": 0.788,
+            "Defect Classification": 0.642,
+            "Defect Detection": 0.932,
+            "Ref_based Defect Classification": 0.258,
+            "Ref_based Defect Detection": 0.778,
+        }
+
+        plan = defect_detection_ablation.plan_repetition(
+            available_rows=available,
+            deficit_weights=weights,
+            empty_rows={
+                "Component Detection": 512,
+                "Defect Detection": 54,
+                "Ref_based Defect Detection": 97,
+            },
+            row_cap=19_968,
+            rep_min=0.5,
+            rep_max=3.0,
+            budget_multiplier=1.0,
+            redistribute=True,
+        )
+
+        self.assertLess(plan["Component Detection"]["rep"], 1.0)
+        self.assertNotEqual(
+            {payload["rep"] for payload in plan.values()},
+            {3.0},
+        )
+        self.assertLessEqual(
+            abs(sum(payload["repeated_rows"] for payload in plan.values()) - 3_151),
+            math.ceil(3_151 * 0.02),
+        )
+
+    def test_budget_is_recorded_before_row_multiple_alignment(self) -> None:
+        rows = [
+            *(_row(f"a-{index}", "Task A") for index in range(5)),
+            *(_row(f"b-{index}", "Task B") for index in range(5)),
+        ]
+
+        output, manifest = defect_detection_ablation.apply_repetition_blend(
+            rows,
+            row_cap=100,
+            row_multiple=4,
+            config={"enabled": True, "policy": "deficit_proportional"},
+            deficit_weights={"Task A": 1.0, "Task B": 1.0},
+            seed=17,
+        )
+
+        self.assertEqual(manifest["totals"]["budget"], 10)
+        self.assertEqual(manifest["totals"]["rows_after"], 8)
+        self.assertEqual(len(output), 8)
 
     def test_gap_summary_deficits_are_support_weighted_with_equal_fallback(self) -> None:
         tasks = ["Defect Detection", "Component Detection"]
@@ -191,6 +313,31 @@ class Cosmos3RepetitionBlendContractTests(unittest.TestCase):
         self.assertEqual(task["empty_rows"], 1)
         self.assertEqual(task["repeated_empty_rows"], 0)
         self.assertEqual(task["repeated_rows"], 6)
+
+    def test_empty_ground_truth_rows_can_be_deterministically_downsampled(self) -> None:
+        rows = [
+            _row(f"dd-empty-{index}", "Defect Detection", empty=True)
+            for index in range(10)
+        ]
+        output, manifest = defect_detection_ablation.apply_repetition_blend(
+            rows,
+            row_cap=10,
+            config={
+                "enabled": True,
+                "policy": "explicit",
+                "rep_min": 0.5,
+                "rep_max": 3.0,
+                "never_repeat_empty_gt": True,
+                "explicit_multipliers": {"Defect Detection": 0.5},
+            },
+            seed=17,
+        )
+
+        self.assertEqual(len(output), 5)
+        self.assertEqual(manifest["tasks"]["Defect Detection"]["dropped_rows"], 5)
+        self.assertEqual(
+            manifest["tasks"]["Defect Detection"]["repeated_empty_rows"], 0
+        )
 
     def test_toml_and_json_configs_are_equivalent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -281,7 +428,7 @@ row_cap = 12000
         self.assertEqual(len(output), 10)
         self.assertEqual(sum(row["task_type"] == "Defect Detection" for row in output), 5)
         repetition = quota["repetition_blend"]
-        self.assertEqual(repetition["schema_version"], "repetition_blend_manifest_v1")
+        self.assertEqual(repetition["schema_version"], "repetition_blend_manifest_v2")
         self.assertEqual(repetition["tasks"]["Defect Detection"]["available"], 2)
         self.assertEqual(repetition["tasks"]["Defect Detection"]["target_share"], 0.5)
         self.assertEqual(repetition["tasks"]["Defect Detection"]["rep"], 2.5)

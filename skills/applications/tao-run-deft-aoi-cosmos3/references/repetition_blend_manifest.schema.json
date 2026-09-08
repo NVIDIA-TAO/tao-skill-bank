@@ -10,6 +10,7 @@
     "seed",
     "configuration",
     "deficit_weight_source",
+    "warnings",
     "tasks",
     "totals",
     "invariants",
@@ -17,7 +18,7 @@
     "materialized_rows_sha256"
   ],
   "properties": {
-    "schema_version": {"const": "repetition_blend_manifest_v1"},
+    "schema_version": {"const": "repetition_blend_manifest_v2"},
     "enabled": {"type": "boolean"},
     "policy": {"enum": ["deficit_proportional", "explicit"]},
     "seed": {"type": "integer"},
@@ -28,6 +29,9 @@
         "policy",
         "rep_min",
         "rep_max",
+        "budget_multiplier",
+        "share_gap_tolerance",
+        "redistribute",
         "never_repeat_empty_gt",
         "explicit_multipliers",
         "row_cap",
@@ -38,6 +42,9 @@
         "policy": {"enum": ["deficit_proportional", "explicit"]},
         "rep_min": {"type": "number", "exclusiveMinimum": 0},
         "rep_max": {"type": "number", "exclusiveMinimum": 0},
+        "budget_multiplier": {"type": "number", "exclusiveMinimum": 0},
+        "share_gap_tolerance": {"type": "number", "minimum": 0, "maximum": 1},
+        "redistribute": {"type": "boolean"},
         "never_repeat_empty_gt": {"type": "boolean"},
         "explicit_multipliers": {
           "type": "object",
@@ -51,6 +58,10 @@
     "deficit_weight_source": {
       "enum": ["disabled", "explicit", "provided", "gap_summary", "equal_fallback"]
     },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
     "tasks": {
       "type": "object",
       "minProperties": 1,
@@ -59,10 +70,13 @@
         "required": [
           "available",
           "deficit_weight",
+          "observed_share_before",
           "target_share",
           "target_rows",
           "rep",
           "realized_rep",
+          "realized_share_after",
+          "share_gap",
           "repeated_rows",
           "unique_rows_emitted",
           "additional_repetitions",
@@ -74,10 +88,13 @@
         "properties": {
           "available": {"type": "integer", "minimum": 1},
           "deficit_weight": {"type": ["number", "null"], "minimum": 0},
+          "observed_share_before": {"type": "number", "minimum": 0, "maximum": 1},
           "target_share": {"type": "number", "minimum": 0, "maximum": 1},
           "target_rows": {"type": "number", "minimum": 0},
           "rep": {"type": "number", "minimum": 0},
           "realized_rep": {"type": "number", "minimum": 0},
+          "realized_share_after": {"type": "number", "minimum": 0, "maximum": 1},
+          "share_gap": {"type": "number", "minimum": -1, "maximum": 1},
           "repeated_rows": {"type": "integer", "minimum": 0},
           "unique_rows_emitted": {"type": "integer", "minimum": 0},
           "additional_repetitions": {"type": "integer", "minimum": 0},
@@ -92,6 +109,12 @@
     "totals": {
       "type": "object",
       "required": [
+        "budget",
+        "budget_multiplier",
+        "rows_before",
+        "rows_after",
+        "max_abs_share_gap",
+        "total_share_gap",
         "available",
         "row_cap",
         "row_multiple",
@@ -103,6 +126,12 @@
         "repeated_empty_rows"
       ],
       "properties": {
+        "budget": {"type": "integer", "minimum": 1},
+        "budget_multiplier": {"type": "number", "exclusiveMinimum": 0},
+        "rows_before": {"type": "integer", "minimum": 1},
+        "rows_after": {"type": "integer", "minimum": 1},
+        "max_abs_share_gap": {"type": "number", "minimum": 0, "maximum": 1},
+        "total_share_gap": {"type": "number", "minimum": 0, "maximum": 1},
         "available": {"type": "integer", "minimum": 1},
         "row_cap": {"type": "integer", "minimum": 1},
         "row_multiple": {"type": "integer", "minimum": 1},

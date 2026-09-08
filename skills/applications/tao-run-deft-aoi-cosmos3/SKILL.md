@@ -160,21 +160,22 @@ recomputes the optimizer schedule. Never launch Train unless both gates pass.
 
 ### Repetition blend
 
-Training materialization can apply a launch-recorded repetition blend after
-exact-duplicate and Proxy/Benchmark leakage exclusion. Configure it in TOML or
-JSON, or map a launch prompt to `--repetition-blend`, `--repetition-policy`,
-`--repetition-rep-min`, `--repetition-rep-max`,
-`--repetition-never-repeat-empty-gt`, and repeatable
-`--repetition-explicit-multiplier TASK=MULTIPLIER` arguments; the existing
-maximum-training-row cap is its `row_cap`. The default
-`deficit_proportional` policy normalizes task deficits from the current
-`gaps_summary.json` (equal weights when unavailable), while `explicit` uses
-the supplied task multipliers. A launch prompt may request
-`deficit-proportional repetition (max rep N)` or explicit multipliers. The
-fixed-seed fractional sampler repeats only accepted rows, never reapplies a
-perceptual-hash filter, keeps empty-ground-truth calibration rows at one
-occurrence by default, and writes a bound `repetition_blend_manifest.json`
-alongside the compatible `defect_detection_quota_manifest_v1`.
+After exact-duplicate and Proxy/Benchmark leakage exclusion, the launch-recorded
+`deficit_proportional` repetition blend rebalances the task *mix*: its default
+budget is the number of available unique rows (`budget_multiplier=1.0`), with
+the existing `row_cap` only an upper bound, so abundant tasks may be seeded,
+deterministically downsampled below `rep=1` while scarce tasks may be repeated
+up to `rep_max`; unclamped tasks are redistributed by default and total
+target-minus-realized share gaps above five percentage points are warned in
+both manifests and stage summaries. Configure the budget, tolerance,
+redistribution, repetition bounds,
+empty-GT policy, seed, or explicit multipliers in TOML/JSON or their matching
+`--repetition-*` arguments; empty-GT calibration rows may be downsampled but
+are never repeated by default, and no perceptual-hash filter is reapplied. A
+launch prompt may request `deficit-proportional repetition (rebalance task
+shares, max rep N)`, and the materializer writes the schema-v2 bound
+`repetition_blend_manifest.json` alongside the compatible
+`defect_detection_quota_manifest_v1`.
 
 ## Train contract
 
