@@ -18,6 +18,8 @@ tags: [tao, data, anomalygen-next, fine-tuning, synthetic-data]
 This leaf prepares a user-owned dataset and optional recipe for task-specific
 AnomalyGenNext LoRA training. The pinned image is declared in
 `references/skill_info.yaml`; do not replace it with the older 1.0 release.
+Read `references/input-contract.md` when validating a dataset or adapting a
+recipe, and `references/container-runtime.md` before submission.
 
 ## Inputs
 
