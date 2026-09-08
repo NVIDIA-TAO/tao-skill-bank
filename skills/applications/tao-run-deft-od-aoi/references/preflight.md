@@ -8,10 +8,13 @@ Complete this gate before creating a job record or submitting any action.
 - Confirm the four normalized COCO roles and their resolved image roots.
 - Confirm the trainable RT-DETR base checkpoint and maximum iterations.
 - Confirm KPI is used for selection and test is report-only.
-- Resolve the RT-DETR, Data Services, SigLIP embedding, and mining container
-  images from their owning skills.
+- Resolve the RT-DETR, Data Services, SigLIP embedding, mining, and optional
+  AnomalyGenNext images from their owning skills.
 - Confirm GPU shape, storage mappings, runtime estimate, and durable
   `results_dir`.
+- Confirm synthesis is disabled or has exact pixel masks, a defect
+  specification, reference pool, Cosmos3-Nano assets, and existing task
+  checkpoint/recipe pairs.
 
 Do not create output directories that actions require to be absent. Existing
 DEFT results are resumed only through their committed
@@ -30,6 +33,7 @@ Before launch:
 5. Confirm no KPI or test image identity appears in training sources.
 6. Confirm each planned action's required predecessor artifact exists and its
    owning job reached `COMPLETE`.
+7. For synthesis, verify every route before iteration preparation.
 
 ## Launch
 

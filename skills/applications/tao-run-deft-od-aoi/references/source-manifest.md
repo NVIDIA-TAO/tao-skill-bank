@@ -28,6 +28,9 @@ contracts and resolves every referenced image during initialization.
 - Keep clean images as COCO image rows with zero annotations.
 - Never place one resolved image identity in more than one role.
 - Preserve provenance metadata needed for audit.
+- For synthesis, preserve exact `dataset_id`, `texture_id`, `defect_class`,
+  and pixel-mask paths on eligible KPI records.
+- Do not infer AnomalyGenNext types from filenames at this boundary.
 
 Validate the normalized handoff with `init_deft_od_aoi.py`; its output policy
 is the immutable downstream contract. If a customer layout needs parsing,

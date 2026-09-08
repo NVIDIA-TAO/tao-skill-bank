@@ -37,7 +37,16 @@ iteration's cumulative `train.json`. Gate on the new binary COCO,
 `admitted_sources.parquet`, and `admission_report.json`. Commit
 `iteration_admission`.
 
-## 5. Train and select
+## 5. Optional synthesis
+
+Run `prepare_deft_od_aoi_synthesis.py` against strict FN gaps. Pass the
+filtering YAML through `tao-prepare-anomalygennext-inputs`, complete its
+embedding and AMP actions, then invoke `tao-generate-od-defects`.
+
+Re-run admission with the generated binary COCO and image root. Commit
+`iteration_synthesis`. Never synthesize from a box without its exact mask.
+
+## 6. Train and select
 
 Run `prepare_deft_od_aoi_training.py`. Iterations 1–2 emit direct
 `train.yaml`. Later iterations may emit three probe specs. Submit probes,
@@ -48,7 +57,7 @@ Run `select_deft_od_aoi_training.py checkpoint` over all status phases. If it
 emits `extension.yaml`, submit that same-iteration resume once and reselect
 with `--extension-applied`. Commit `iteration_training`.
 
-## 6. Measure, gap, and advance
+## 7. Measure, gap, and advance
 
 Prepare measurement with the KPI-best selected checkpoint, then repeat KPI/test
 inference and dual gap analysis. Commit measurement and gaps. Start the next

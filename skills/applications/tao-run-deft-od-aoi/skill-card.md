@@ -1,5 +1,5 @@
 ## Description: <br>
-Runs a binary RT-DETR DEFT object-detection loop for industrial inspection with frozen KPI/test roles, SigLIP hard-example retrieval, cumulative COCO admission, and KPI-selected adaptive training. <br>
+Runs a binary RT-DETR DEFT object-detection loop for industrial inspection with frozen KPI/test roles, SigLIP hard-example retrieval, cumulative COCO admission, KPI-selected adaptive training, and optional AnomalyGenNext synthesis. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -18,6 +18,9 @@ Global <br>
 ## Known Risks and Mitigations: <br>
 Risk: Unverified clean images, KPI leakage, or test-driven selection can inflate apparent quality. <br>
 Mitigation: Validate disjoint normalized roles, admit only explicitly verified clean records, select on KPI only, and keep test report-only. <br>
+
+Risk: Synthetic defects may not preserve requested identity or localization. <br>
+Mitigation: Require exact FN metadata and pixel masks, verify route identity, and admit only outputs that pass the generation contract. <br>
 
 ## Skill Output: <br>
 **Output Type(s):** [Shell commands, JSON state, YAML specifications, COCO dataset, Model checkpoints, Analysis] <br>

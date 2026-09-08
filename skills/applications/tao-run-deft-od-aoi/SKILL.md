@@ -17,8 +17,8 @@ tags: [application, workflow, deft, object-detection, aoi, rtdetr]
 # TAO DEFT OD AOI
 
 This application is a disk-backed RT-DETR loop for one foreground class,
-`defect`. Its core is real-data-only. Synthetic generation is an optional later
-integration and is not part of this contract.
+`defect`. Its core is real-data-only; AnomalyGenNext synthesis is an optional
+route with separate preparation, generation, and admission gates.
 
 ## References
 
@@ -30,7 +30,8 @@ Read only the references needed for the current stage:
   `references/scripts-and-agents.md`;
 - gaps and retrieval: `references/gap-routing.md` and
   `references/tao-analyze-gaps-od-map.md`;
-- training and selection: `references/training-policy.md`.
+- training and selection: `references/training-policy.md`;
+- optional synthesis: `references/anomalygen-pool.md`.
 
 ## Start
 

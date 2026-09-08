@@ -24,11 +24,23 @@ test, real, and clean roles. The initializer verifies paths, IDs, boxes,
 category names, role-specific annotation counts, and cross-role overlap before
 freezing hashes in the policy.
 
+## Optional synthesis metadata
+
+Each eligible KPI annotation/image pair must resolve `dataset_id`,
+`texture_id`, `defect_class`, and a real pixel `fn_mask_source`. Metadata
+may appear directly on the record or under `deft_od_aoi`. A box never
+substitutes for the mask.
+
+`dataset_id` selects a route, and `texture_id+defect_class` must match a
+type declared by that route's recipe and defect specification.
+
 ## Cumulative admission
 
 `admit_deft_od_aoi_coco.py` recomputes similarity from the frozen embeddings,
 deduplicates selected crops to source images, rejects previously admitted
 sources, and publishes a new binary COCO. Pass `--previous-coco` from
 iteration 2 onward. Clean negatives are capped by
-`routing.clean_cumulative_cap_per_real`. Existing images and boxes are retained
+`routing.clean_cumulative_cap_per_real`. When synthesis is enabled, pass both
+the generated binary COCO and its image root. Synthetic admission is capped by
+`synthesis.cumulative_fraction_of_real_defects`. Existing records remain
 unchanged.
