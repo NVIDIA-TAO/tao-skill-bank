@@ -29,3 +29,21 @@ actions:
     args:
       config: --config {config}
       output_dir: --output-dir {results_dir}
+  run_amp:
+    command: scripts/run_anomalygennext_amp.py
+    mode: args
+    inputs:
+      config:
+        type: file
+      prepared_root:
+        type: folder
+    outputs:
+      amp_testcase:
+        type: file
+      knn_candidates:
+        type: file
+    upload_excludes:
+    - inputs/
+    args:
+      config: --config {config}
+      prepared_root: --prepared-root {prepared_root}
