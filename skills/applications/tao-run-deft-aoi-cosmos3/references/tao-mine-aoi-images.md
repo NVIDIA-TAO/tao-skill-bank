@@ -19,6 +19,20 @@ track it with its own job-record.
 Benchmark records or errors must never enter query or source inputs. Proxy
 records are query targets, not trainable source samples.
 
+Before enabling bbox-driven Defect Detection mining, invoke
+`$PYTHON "$SKILL_ROOT/scripts/audit_bbox_retrieval.py"` to run the proxy-only
+`audit_bbox_retrieval_v1` gate. Its `prepare` phase reproduces the authoritative
+Hungarian IoU `> 0.5` false-negative assignment, freezes the explicit NVPAW
+label-to-phenotype map, and materializes EXIF-aware 1.5x/3.0 square RGB-224
+crops with clipped visible-region mean padding; its `compute` phase compares
+those arms and their multiscale maximum against the existing whole-image
+SigLIP cache with parent-de-duplicated rankings, paired query bootstrap, all
+required slices, lineage checks, and blinded review grids. Seal the report
+gates before `prepare`, never pass Benchmark data to the tool (there is no
+Benchmark CLI argument), and consume only the emitted full-image parent rows;
+the audit crops are embedding intermediates and must never become training
+samples.
+
 `config.mining.pair_similarity` selects `canvas` (the backward-compatible
 default) or `two_vector`. Canvas uses one 1024x512 golden/test composite and
 therefore halves each board's effective input resolution; two-vector uses the
