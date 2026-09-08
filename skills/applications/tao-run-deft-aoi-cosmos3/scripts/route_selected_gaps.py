@@ -13,6 +13,7 @@ import sys
 from collections import Counter
 from typing import Any
 
+from atomic_samples import embedding_filepath, sample_from_record
 
 DEFECT_DETECTION_TASK = "Defect Detection"
 DEFECT_DETECTION_MINING_EVIDENCE = {
@@ -170,11 +171,30 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
         if not all(isinstance(value, str) and value for value in (record_id, target_id, target_path, task_type)):
             raise ValueError("every selected gap requires id, target_id, target_path, and task_type")
         task_counts[task_type] += 1
+        paths = row.get("image_paths")
+        if not isinstance(paths, list) or not all(
+            isinstance(value, str) and value for value in paths
+        ):
+            reference_path = row.get("reference_path")
+            paths = (
+                [reference_path, target_path]
+                if isinstance(reference_path, str) and reference_path
+                else [target_path]
+            )
+        atomic_sample_id = row.get("atomic_sample_id")
+        if not isinstance(atomic_sample_id, str) or not atomic_sample_id:
+            atomic_sample_id = f"legacy_target:{target_id}"
         target = targets.setdefault(
-            target_id,
+            atomic_sample_id,
             {
                 "filepath": target_path,
-                "target_id": target_id,
+                "target_id": atomic_sample_id,
+                "source_target_ids": [],
+                "atomic_sample_id": atomic_sample_id,
+                "sample_kind": "reference_pair" if len(paths) == 2 else "single_image",
+                "image_paths": list(paths),
+                "reference_filepath": paths[0] if len(paths) == 2 else None,
+                "target_filepath": target_path,
                 "record_ids": [],
                 "task_types": [],
                 "datasets": [],
@@ -188,10 +208,12 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
                 "mining_eligible": True,
             },
         )
-        if target["filepath"] != target_path:
+        if target["image_paths"] != paths:
             raise ValueError(
-                f"target_id {target_id!r} maps to conflicting target paths"
+                f"atomic_sample_id {atomic_sample_id!r} maps to conflicting image paths"
             )
+        if target_id not in target["source_target_ids"]:
+            target["source_target_ids"].append(target_id)
         target["record_ids"].append(record_id)
         if task_type not in target["task_types"]:
             target["task_types"].append(task_type)
@@ -214,6 +236,7 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
             )
     output = []
     for target in targets.values():
+        target["source_target_ids"].sort()
         target["record_ids"].sort()
         target["task_types"].sort()
         target["datasets"].sort()
@@ -229,6 +252,42 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
     }
 
 
+def materialize_embedding_inputs(
+    targets: list[dict[str, Any]],
+    *,
+    media_root: pathlib.Path,
+    pair_assets_dir: pathlib.Path,
+) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for index, target in enumerate(targets):
+        record = {
+            "task_type": target["task_types"][0],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        *(
+                            {"type": "image", "image": value}
+                            for value in target["image_paths"]
+                        ),
+                        {"type": "text", "text": "atomic embedding query"},
+                    ],
+                },
+                {"role": "assistant", "content": "embedding-only"},
+            ],
+        }
+        sample = sample_from_record(
+            record, media_root=media_root, context=f"embedding target[{index}]"
+        )
+        materialized = dict(target)
+        materialized.update(sample)
+        materialized["filepath"] = embedding_filepath(
+            sample, pair_assets_dir=pair_assets_dir
+        )
+        output.append(materialized)
+    return output
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--selected-gaps", required=True, type=pathlib.Path)
@@ -242,6 +301,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-json", required=True, type=pathlib.Path)
     parser.add_argument("--output-parquet", required=True, type=pathlib.Path)
     parser.add_argument("--summary", required=True, type=pathlib.Path)
+    parser.add_argument("--media-root", required=True, type=pathlib.Path)
+    parser.add_argument("--pair-assets-dir", required=True, type=pathlib.Path)
     return parser
 
 
@@ -264,6 +325,11 @@ def main(argv: list[str] | None = None) -> int:
                 anchor_policy=args.defect_detection_anchor_policy,
             )
         targets, summary = route(rows)
+        targets = materialize_embedding_inputs(
+            targets,
+            media_root=args.media_root.expanduser().resolve(),
+            pair_assets_dir=args.pair_assets_dir,
+        )
         if supplement_summary is not None:
             summary["defect_detection_supplement"] = supplement_summary
         for path in (args.output_json, args.output_parquet, args.summary):

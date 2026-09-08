@@ -16,6 +16,7 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
+from atomic_samples import content_identity_for_paths, sample_from_record
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
     apply_repetition_blend,
@@ -27,10 +28,12 @@ from repetition_blend import (
     plan_repetition,
     validate_repetition_config,
 )
+from select_detection_calibration import derive_proxy_empty_rates
 from validate_sharegpt import load_records, resolve_image, target_path
 
 
 DEFECT_DETECTION_TASK = "Defect Detection"
+REFERENCE_DEFECT_DETECTION_TASK = "Ref_based Defect Detection"
 MAINTENANCE_TASK_TYPES = (
     "Component Classification",
     "Component Detection",
@@ -44,6 +47,8 @@ POSITIVE_EVIDENCE = {
 }
 NEGATIVE_EVIDENCE = {"hard_negative_proxy_false_positive"}
 CALIBRATION_EMPTY_EVIDENCE = "calibration_empty_ground_truth"
+CALIBRATION_FEW_EVIDENCE = "calibration_few_box_ground_truth"
+REFERENCE_NO_CHANGE_EVIDENCE = "calibration_reference_no_change_ground_truth"
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
     ("source", "source_strata", None),
@@ -256,16 +261,37 @@ class _HammingIndex:
 
 
 def _candidate_visual_identity(
-    candidate: dict[str, Any], *, media_root: pathlib.Path
+    candidate: dict[str, Any],
+    *,
+    media_root: pathlib.Path,
+    compute_perceptual_hash: bool = True,
 ) -> tuple[str, str, str]:
     filepath = str(candidate["filepath"])
     path = resolve_image(filepath, media_root)
     content_sha = candidate.get("content_sha256")
     phash = candidate.get("perceptual_hash")
-    if content_sha is None:
+    if candidate.get("sample_kind") == "reference_pair":
+        source_paths = candidate.get("source_image_paths")
+        if not isinstance(source_paths, (list, tuple)) or len(source_paths) != 2:
+            raise ValueError(
+                f"reference-pair candidate {filepath!r} requires two source_image_paths"
+            )
+        if all(pathlib.Path(value).is_file() for value in source_paths):
+            # Prefer the ordered constituent bytes over any composite-asset hash.
+            content_sha = content_identity_for_paths("reference_pair", source_paths)
+        elif content_sha is None:
+            raise ValueError(
+                f"reference-pair candidate {filepath!r} has missing source images "
+                "and no precomputed content_sha256"
+            )
+    elif content_sha is None:
         content_sha = _sha256(path) if path.is_file() else hashlib.sha256(str(path).encode()).hexdigest()
-    if phash is None:
+    if phash is None and compute_perceptual_hash:
         phash = _perceptual_hash(path) if path.is_file() else str(content_sha)[:16]
+    elif phash is None:
+        # Preserve the fixed-width internal identity without decoding an image
+        # when the reviewed launch explicitly disables perceptual filtering.
+        phash = str(content_sha)[:16]
     if not isinstance(content_sha, str) or len(content_sha) != 64:
         raise ValueError(f"candidate {filepath!r} has invalid content_sha256")
     if not isinstance(phash, str) or len(phash) != 16:
@@ -274,7 +300,13 @@ def _candidate_visual_identity(
         int(phash, 16)
     except ValueError as exc:
         raise ValueError(f"candidate {filepath!r} has non-hex perceptual_hash") from exc
-    return str(path), content_sha, phash
+    atomic_sample_id = candidate.get("atomic_sample_id")
+    identity = (
+        atomic_sample_id
+        if isinstance(atomic_sample_id, str) and atomic_sample_id
+        else str(path)
+    )
+    return identity, content_sha, phash
 
 
 def _rank_quartiles(entries: list[dict[str, Any]], field: str, output: str) -> None:
@@ -375,7 +407,11 @@ def _positive_quota_report(
 
 
 def _task_balanced(
-    entries: list[dict[str, Any]], target: int, *, max_novel: int
+    entries: list[dict[str, Any]],
+    target: int,
+    *,
+    max_novel: int,
+    reference_empty_rate: float | None = None,
 ) -> list[dict[str, Any]]:
     groups = {
         task: sorted(
@@ -391,9 +427,52 @@ def _task_balanced(
     selected: list[dict[str, Any]] = []
     novel_count = 0
     positions = Counter()
+    reference_groups = {
+        "empty": [
+            item
+            for item in groups[REFERENCE_DEFECT_DETECTION_TASK]
+            if not item.get("objects")
+        ],
+        "positive": [
+            item
+            for item in groups[REFERENCE_DEFECT_DETECTION_TASK]
+            if item.get("objects")
+        ],
+    }
+    reference_positions = Counter()
+    reference_selected = Counter()
     while len(selected) < target:
         advanced = False
         for task in MAINTENANCE_TASK_TYPES:
+            if task == REFERENCE_DEFECT_DETECTION_TASK and reference_empty_rate is not None:
+                next_total = reference_selected["total"] + 1
+                desired_empty = math.floor(next_total * reference_empty_rate + 0.5)
+                bucket = (
+                    "empty"
+                    if desired_empty > reference_selected["empty"]
+                    else "positive"
+                )
+                group = reference_groups[bucket]
+                position = reference_positions[bucket]
+                while (
+                    position < len(group)
+                    and not group[position]["is_replay"]
+                    and novel_count >= max_novel
+                ):
+                    position += 1
+                reference_positions[bucket] = position
+                if position >= len(group):
+                    continue
+                chosen = group[position]
+                selected.append(chosen)
+                novel_count += not chosen["is_replay"]
+                reference_positions[bucket] = position + 1
+                reference_selected["total"] += 1
+                reference_selected["empty"] += bucket == "empty"
+                advanced = True
+                if len(selected) == target:
+                    break
+                continue
             position = positions[task]
             while (
                 position < len(groups[task])
@@ -420,7 +499,7 @@ def _without_visual_duplicates(
     entries: Iterable[dict[str, Any]],
     *,
     selected: list[dict[str, Any]],
-    hamming_distance: int,
+    hamming_distance: int | None,
     counters: Counter[str],
 ) -> list[dict[str, Any]]:
     content = {item["content_sha256"] for item in selected}
@@ -431,7 +510,9 @@ def _without_visual_duplicates(
         if item["resolved_path"] in paths or item["content_sha256"] in content:
             counters["exact_duplicates_excluded"] += 1
             continue
-        if hashes.has_within(item["perceptual_hash"], hamming_distance):
+        if hamming_distance is not None and hashes.has_within(
+            item["perceptual_hash"], hamming_distance
+        ):
             counters["near_duplicates_excluded"] += 1
             continue
         output.append(item)
@@ -449,12 +530,20 @@ def _validation_identities(
     phashes = _HammingIndex()
     fingerprints: set[str] = set()
     for record in records:
-        path = resolve_image(target_path(record, context="validation"), media_root)
+        sample = sample_from_record(
+            record, media_root=media_root, context="validation"
+        )
         fingerprints.add(_record_fingerprint(record))
-        path_text = str(path)
+        path_text = str(sample["atomic_sample_id"])
         if path_text in paths:
             continue
         paths.add(path_text)
+        if sample["sample_kind"] == "reference_pair":
+            content.add(
+                content_identity_for_paths("reference_pair", sample["image_paths"])
+            )
+            continue
+        path = pathlib.Path(str(sample["target_filepath"]))
         if path.is_file():
             content.add(_sha256(path))
             phashes.add(_perceptual_hash(path))
@@ -474,7 +563,8 @@ def materialize(
     proxy_empty_rate: float,
     epochs: int,
     global_batch: int,
-    near_duplicate_hamming_distance: int,
+    near_duplicate_hamming_distance: int | None,
+    reference_proxy_empty_rate: float | None = None,
     novel_image_limit: int | None = None,
     repetition_config: dict[str, Any] | None = None,
     deficit_weights: dict[str, float] | None = None,
@@ -491,7 +581,13 @@ def materialize(
         raise ValueError("Defect Detection minimum fraction must be in [0.5, 1.0]")
     if not 0.0 <= proxy_empty_rate <= 1.0:
         raise ValueError("Proxy empty-ground-truth rate must be in [0, 1]")
-    if not 0 <= near_duplicate_hamming_distance <= 64:
+    if reference_proxy_empty_rate is not None and not (
+        0.0 <= reference_proxy_empty_rate <= 1.0
+    ):
+        raise ValueError("Reference Proxy empty-ground-truth rate must be in [0, 1]")
+    if near_duplicate_hamming_distance is not None and not (
+        0 <= near_duplicate_hamming_distance <= 64
+    ):
         raise ValueError("near-duplicate Hamming distance must be in [0, 64]")
     resolved_repetition = validate_repetition_config(repetition_config)
     if (
@@ -530,8 +626,10 @@ def materialize(
         task = record.get("task_type")
         if task not in {DEFECT_DETECTION_TASK, *MAINTENANCE_TASK_TYPES}:
             continue
-        path = str(resolve_image(target_path(record, context="source"), media_root))
-        by_path.setdefault(path, []).append(record)
+        sample = sample_from_record(record, media_root=media_root, context="source")
+        by_path.setdefault(str(sample["atomic_sample_id"]), []).append(record)
+        if sample["sample_kind"] == "single_image":
+            by_path.setdefault(str(sample["target_filepath"]), []).append(record)
     validation_paths, validation_content, validation_phashes, validation_fingerprints = (
         _validation_identities(validation_records, media_root)
     )
@@ -539,20 +637,31 @@ def materialize(
     entries: list[dict[str, Any]] = []
     seen_record_fingerprints: set[str] = set()
     for candidate in candidate_rows:
-        route_tier = candidate.get("route_tier")
-        if route_tier not in {"strict", "calibration"}:
+        candidate_tiers = candidate.get("route_tiers") or [candidate.get("route_tier")]
+        if isinstance(candidate_tiers, str):
+            candidate_tiers = json.loads(candidate_tiers)
+        if (
+            not isinstance(candidate_tiers, list)
+            or not candidate_tiers
+            or not set(candidate_tiers).issubset({"strict", "calibration"})
+        ):
             counters["non_strict_routes_excluded"] += 1
             continue
         if not isinstance(candidate.get("filepath"), str):
             raise ValueError("every candidate requires filepath")
         resolved_path, content_sha, phash = _candidate_visual_identity(
-            candidate, media_root=media_root
+            candidate,
+            media_root=media_root,
+            compute_perceptual_hash=near_duplicate_hamming_distance is not None,
         )
         if (
             resolved_path in validation_paths
             or content_sha in validation_content
-            or validation_phashes.has_within(
-                phash, near_duplicate_hamming_distance
+            or (
+                near_duplicate_hamming_distance is not None
+                and validation_phashes.has_within(
+                    phash, near_duplicate_hamming_distance
+                )
             )
         ):
             counters["benchmark_or_proxy_leakage_excluded"] += 1
@@ -562,12 +671,33 @@ def materialize(
             routed = json.loads(routed)
         if not isinstance(routed, list):
             raise ValueError("every candidate requires routed_task_types")
-        if route_tier == "calibration" and routed != [DEFECT_DETECTION_TASK]:
-            counters["invalid_calibration_routes_excluded"] += 1
-            continue
+        route_tier_by_task = candidate.get("route_tier_by_task") or {}
+        if isinstance(route_tier_by_task, str):
+            route_tier_by_task = json.loads(route_tier_by_task)
+        if not isinstance(route_tier_by_task, dict):
+            raise ValueError("route_tier_by_task must be an object")
         for record in by_path.get(resolved_path, []):
             task = str(record.get("task_type"))
             if task not in routed:
+                continue
+            route_tier = route_tier_by_task.get(task)
+            if route_tier is None:
+                route_tier = (
+                    "calibration"
+                    if candidate.get("route_tier") == "calibration"
+                    and routed == [task]
+                    else "strict"
+                    if "strict" in candidate_tiers
+                    else candidate.get("route_tier")
+                )
+            if route_tier not in {"strict", "calibration"}:
+                counters["non_strict_routes_excluded"] += 1
+                continue
+            if route_tier == "calibration" and task not in {
+                DEFECT_DETECTION_TASK,
+                REFERENCE_DEFECT_DETECTION_TASK,
+            }:
+                counters["invalid_calibration_routes_excluded"] += 1
                 continue
             fingerprint = _record_fingerprint(record)
             if fingerprint in validation_fingerprints or fingerprint in seen_record_fingerprints:
@@ -582,9 +712,6 @@ def materialize(
             ):
                 raise ValueError("defect_detection_evidence must be a string list")
             evidence = sorted(set(evidence_value))
-            if route_tier == "calibration" and CALIBRATION_EMPTY_EVIDENCE not in evidence:
-                counters["invalid_calibration_routes_excluded"] += 1
-                continue
             entry = {
                 "record": record,
                 "record_id": str(record.get("id")),
@@ -600,10 +727,12 @@ def materialize(
                 objects = _ground_truth_objects(record)
                 entry["objects"] = objects
                 if objects:
-                    if route_tier == "calibration":
+                    if route_tier == "calibration" and (
+                        CALIBRATION_FEW_EVIDENCE not in evidence or len(objects) > 2
+                    ):
                         counters["non_empty_calibration_rows_excluded"] += 1
                         continue
-                    if not (
+                    if route_tier != "calibration" and not (
                         POSITIVE_EVIDENCE.intersection(evidence)
                         or CORRECT_ANCHOR_EVIDENCE in evidence
                     ):
@@ -630,6 +759,21 @@ def materialize(
                 ):
                     counters["off_evidence_empty_excluded"] += 1
                     continue
+            elif task == REFERENCE_DEFECT_DETECTION_TASK:
+                objects = _ground_truth_objects(record)
+                entry["objects"] = objects
+                if route_tier == "calibration":
+                    required = (
+                        CALIBRATION_EMPTY_EVIDENCE
+                        if not objects
+                        else CALIBRATION_FEW_EVIDENCE
+                    )
+                    if required not in evidence or len(objects) > 2:
+                        counters["invalid_calibration_routes_excluded"] += 1
+                        continue
+                    if not objects and REFERENCE_NO_CHANGE_EVIDENCE not in evidence:
+                        counters["invalid_reference_no_change_routes_excluded"] += 1
+                        continue
             entries.append(entry)
     positive = [
         item
@@ -703,6 +847,7 @@ def materialize(
         maintenance_unique,
         target_rows - len(selected_dd),
         max_novel=novel_image_limit - selected_dd_novel,
+        reference_empty_rate=reference_proxy_empty_rate,
     )
     accepted_target_rows: int | None = None
     if not resolved_repetition["enabled"]:
@@ -757,7 +902,10 @@ def materialize(
     verification_index = _HammingIndex()
     near_duplicate_pairs = 0
     for phash in selected_phashes:
-        if verification_index.has_within(phash, near_duplicate_hamming_distance):
+        if (
+            near_duplicate_hamming_distance is not None
+            and verification_index.has_within(phash, near_duplicate_hamming_distance)
+        ):
             near_duplicate_pairs += 1
         verification_index.add(phash)
     selected_empty_count = len(selected_empty)
@@ -784,6 +932,25 @@ def materialize(
     materialized_maintenance = Counter(
         {task: tasks[task] for task in MAINTENANCE_TASK_TYPES}
     )
+    selected_reference = [
+        item
+        for item in selected_maintenance
+        if item["task_type"] == REFERENCE_DEFECT_DETECTION_TASK
+    ]
+    selected_reference_empty = sum(not item.get("objects") for item in selected_reference)
+    reference_empty_target = (
+        math.floor(len(selected_reference) * reference_proxy_empty_rate + 0.5)
+        if reference_proxy_empty_rate is not None
+        else None
+    )
+    materialized_reference = [
+        row
+        for row in selected_records
+        if row.get("task_type") == REFERENCE_DEFECT_DETECTION_TASK
+    ]
+    materialized_reference_empty = sum(
+        not _ground_truth_objects(row) for row in materialized_reference
+    )
     verification = {
         "target_rows_reached": row_count == target_rows,
         "minimum_rows_reached": row_count >= minimum_rows_aligned,
@@ -794,9 +961,22 @@ def materialize(
             else materialized_empty_count == empty_target
         ),
         "empty_rate_matched_before_repetition": selected_empty_count == empty_target,
+        "reference_empty_rate_matched": (
+            True
+            if reference_proxy_empty_rate is None
+            else materialized_reference_empty == reference_empty_target
+        ),
+        "reference_empty_rate_matched_before_repetition": (
+            True
+            if reference_proxy_empty_rate is None
+            else selected_reference_empty == reference_empty_target
+        ),
         "unique_target_images": len(selected_paths) == len(emitted_base_entries),
         "unique_image_content": len(selected_content) == len(emitted_base_entries),
         "near_duplicate_free": near_duplicate_pairs == 0,
+        "near_duplicate_filter_policy_respected": (
+            near_duplicate_hamming_distance is None or near_duplicate_pairs == 0
+        ),
         "optimizer_boundary_aligned": expected_steps is not None,
         "novel_image_limit_respected": (
             selected_novel_count <= novel_image_limit
@@ -828,8 +1008,14 @@ def materialize(
             "minimum_rows_batch_aligned": minimum_rows_aligned,
             "defect_detection_minimum_fraction": defect_detection_fraction,
             "near_duplicate_hamming_distance": near_duplicate_hamming_distance,
+            "near_duplicate_filter": (
+                "disabled"
+                if near_duplicate_hamming_distance is None
+                else "perceptual_hamming"
+            ),
             "novel_mining_pool_image_limit": novel_image_limit,
             "calibration_policy": "direct_empty_ground_truth_only_when_proxy_fp_hard_negatives_do_not_fill_proxy_matched_empty_quota",
+            "calibration_cohort_policy": "proxy_empty_rate_by_reference_cohort",
             "annotation_profile": "nvpaw_multitask_v1",
             "prompt_variant": "official_v1",
             "box_serialization_policy": "corpus_native_unmodified",
@@ -913,6 +1099,38 @@ def materialize(
                 if tasks[DEFECT_DETECTION_TASK]
                 else None
             ),
+        },
+        "empty_ground_truth_by_cohort": {
+            "non_reference_based": {
+                "task_type": DEFECT_DETECTION_TASK,
+                "proxy_rate": proxy_empty_rate,
+                "target_empty": empty_target,
+                "selected_empty": selected_empty_count,
+                "selected_non_empty": selected_positive_count,
+                "selected_total": len(selected_dd),
+                "selected_rate": (
+                    selected_empty_count / len(selected_dd) if selected_dd else None
+                ),
+                "materialized_empty": materialized_empty_count,
+                "materialized_total": tasks[DEFECT_DETECTION_TASK],
+            },
+            "reference_based": {
+                "task_type": REFERENCE_DEFECT_DETECTION_TASK,
+                "proxy_rate": reference_proxy_empty_rate,
+                "target_empty": reference_empty_target,
+                "selected_empty": selected_reference_empty,
+                "selected_non_empty": (
+                    len(selected_reference) - selected_reference_empty
+                ),
+                "selected_total": len(selected_reference),
+                "selected_rate": (
+                    selected_reference_empty / len(selected_reference)
+                    if selected_reference
+                    else None
+                ),
+                "materialized_empty": materialized_reference_empty,
+                "materialized_total": len(materialized_reference),
+            },
         },
         "positive_marginal_quotas": marginal_quotas,
         "uniqueness": {
@@ -1026,7 +1244,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--defect-detection-fraction", default=0.5, type=float)
     parser.add_argument("--epochs", required=True, type=int)
     parser.add_argument("--global-batch", required=True, type=int)
-    parser.add_argument("--near-duplicate-hamming-distance", default=3, type=int)
+    near_duplicate = parser.add_mutually_exclusive_group()
+    near_duplicate.add_argument(
+        "--near-duplicate-hamming-distance",
+        dest="near_duplicate_hamming_distance",
+        default=3,
+        type=int,
+    )
+    near_duplicate.add_argument(
+        "--no-near-duplicate-filter",
+        dest="near_duplicate_hamming_distance",
+        action="store_const",
+        const=None,
+    )
     parser.add_argument("--novel-image-limit", type=int)
     parser.add_argument(
         "--gap-analysis-summary",
@@ -1132,7 +1362,12 @@ def main(argv: list[str] | None = None) -> int:
         if repetition_seed is None:
             repetition_seed = 17
         proxy = load_records(args.proxy_annotations)
-        empty_rate, proxy_empty, proxy_rows = _proxy_empty_rate(proxy)
+        cohort_rates = derive_proxy_empty_rates(proxy)
+        single_contract = cohort_rates["non_reference_based"]
+        reference_contract = cohort_rates["reference_based"]
+        empty_rate = float(single_contract["empty_rate"])
+        proxy_empty = int(single_contract["empty_rows"])
+        proxy_rows = int(single_contract["total_rows"])
         validations = proxy[:]
         for path in args.validation_jsonl:
             validations.extend(load_records(path))
@@ -1146,6 +1381,7 @@ def main(argv: list[str] | None = None) -> int:
             row_multiple=args.row_multiple,
             defect_detection_fraction=args.defect_detection_fraction,
             proxy_empty_rate=empty_rate,
+            reference_proxy_empty_rate=float(reference_contract["empty_rate"]),
             epochs=args.epochs,
             global_batch=args.global_batch,
             near_duplicate_hamming_distance=args.near_duplicate_hamming_distance,
@@ -1157,6 +1393,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         manifest["empty_ground_truth"]["proxy_empty_rows"] = proxy_empty
         manifest["empty_ground_truth"]["proxy_defect_detection_rows"] = proxy_rows
+        manifest["empty_ground_truth_by_cohort"]["non_reference_based"].update(
+            {
+                "proxy_empty_rows": proxy_empty,
+                "proxy_detection_rows": proxy_rows,
+            }
+        )
+        manifest["empty_ground_truth_by_cohort"]["reference_based"].update(
+            {
+                "proxy_empty_rows": int(reference_contract["empty_rows"]),
+                "proxy_detection_rows": int(reference_contract["total_rows"]),
+            }
+        )
         _write_jsonl(args.output, rows)
         repetition_manifest = bind_repetition_manifest(
             manifest["repetition_blend"], args.output

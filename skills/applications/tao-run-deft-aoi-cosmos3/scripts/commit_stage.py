@@ -20,6 +20,11 @@ import sys
 import tempfile
 from typing import Any
 
+from benchmark_cadence import (
+    is_proxy_best_so_far,
+    prior_proxy_results,
+    validate_proxy_metric_result,
+)
 from record_metric_result import commit as commit_metric_result
 from render_report import render as render_html_report
 from cfw_dcp import validate_checkpoint
@@ -301,6 +306,37 @@ def _apply_success(
         phase["selected_gap_count"] = _parquet_row_count(
             phase["selected_gaps_parquet"], "--selected-gaps"
         )
+        cadence = state.get("config", {}).get("evaluation", {}).get(
+            "benchmark_cadence"
+        )
+        if cadence is not None:
+            proxy_raw = pathlib.Path(
+                _within(
+                    _required_file(args.proxy_raw_f1_report, "--proxy-raw-f1-report"),
+                    phase_root,
+                    "--proxy-raw-f1-report",
+                )
+            )
+            proxy_result_path = pathlib.Path(
+                _within(
+                    _required_file(args.proxy_metric_result, "--proxy-metric-result"),
+                    phase_root,
+                    "--proxy-metric-result",
+                )
+            )
+            proxy_result = validate_proxy_metric_result(
+                state,
+                result_path=proxy_result_path,
+                raw_report=proxy_raw,
+            )
+            is_best, comparison = is_proxy_best_so_far(
+                proxy_result,
+                prior_proxy_results(state, current_label=args.iter_label),
+            )
+            phase["proxy_raw_f1_report"] = str(proxy_raw)
+            phase["proxy_metric_result"] = proxy_result
+            phase["proxy_kpi_comparison"] = comparison
+            phase["proxy_is_best_so_far"] = is_best
     elif stage == "evaluate_benchmark":
         phase["benchmark_predictions_jsonl"] = _within(
             _required_prediction_jsonl(args.benchmark_results, "--benchmark-results"),
@@ -607,6 +643,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--training-spec", type=pathlib.Path)
     parser.add_argument("--proxy-results", type=pathlib.Path)
     parser.add_argument("--proxy-gaps-summary", type=pathlib.Path)
+    parser.add_argument("--proxy-raw-f1-report", type=pathlib.Path)
+    parser.add_argument("--proxy-metric-result", type=pathlib.Path)
     parser.add_argument(
         "--rcca-report",
         type=pathlib.Path,

@@ -21,6 +21,56 @@ import init_deft_state  # noqa: E402
 
 
 class Cosmos3InitStateContractTests(unittest.TestCase):
+    def test_final_and_best_is_the_default_benchmark_cadence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(self._argv(root, workspace))
+
+            self.assertEqual(rc, 0)
+            state = json.loads((root / "results/deft_state.json").read_text())
+            self.assertEqual(
+                state["config"]["evaluation"]["benchmark_cadence"],
+                "final_and_best",
+            )
+
+    def test_calibration_quotas_are_bound_to_proxy_rates_by_cohort(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(self._argv(root, workspace))
+
+            self.assertEqual(rc, 0)
+            contract = json.loads(
+                (root / "results/deft_state.json").read_text()
+            )["config"]["mining"]["calibration_quota_contract"]
+            self.assertEqual(contract["policy"], "proxy_empty_rate_by_reference_cohort")
+            self.assertEqual(
+                contract["cohorts"]["non_reference_based"]["empty_rate"], 0.5
+            )
+            self.assertEqual(
+                contract["cohorts"]["reference_based"]["empty_rate"], 0.5
+            )
+            self.assertEqual(
+                contract["reference_empty_semantics"],
+                "identical_or_no_change_pair_negative",
+            )
+
+    def test_near_duplicate_filter_can_be_explicitly_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(
+                self._argv(root, workspace, "--no-near-duplicate-filter")
+            )
+
+            self.assertEqual(rc, 0)
+            ablation = json.loads(
+                (root / "results/deft_state.json").read_text()
+            )["config"]["mining"]["defect_detection_ablation"]
+            self.assertFalse(ablation["near_duplicate_filter_enabled"])
+            self.assertIsNone(ablation["near_duplicate_hamming_distance"])
+
     @staticmethod
     def _workspace(root: pathlib.Path) -> pathlib.Path:
         workspace = root / "workspace"
@@ -33,7 +83,56 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
             (model / name).write_text("{}\n", encoding="utf-8")
         (model / "config.json").write_text('{"model_type":"qwen3_vl"}\n', encoding="utf-8")
         (model / "model.safetensors").write_bytes(b"weights")
-        for filename in ("proxy_kpi.jsonl", "benchmark.jsonl", "mining.jsonl"):
+        def detection_row(record_id: str, task: str, boxes: list[dict]) -> dict:
+            images = []
+            if task.startswith("Ref_based"):
+                images.append(
+                    {
+                        "type": "image",
+                        "image": f"images/{record_id}-golden.png",
+                        "min_pixels": 1,
+                        "max_pixels": 1,
+                    }
+                )
+            images.append(
+                {
+                    "type": "image",
+                    "image": f"images/{record_id}.png",
+                    "min_pixels": 1,
+                    "max_pixels": 1,
+                }
+            )
+            return {
+                "id": record_id,
+                "task_type": task,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [*images, {"type": "text", "text": "detect"}],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "```json\n" + json.dumps(boxes) + "\n```",
+                            }
+                        ],
+                    },
+                ],
+            }
+
+        one_box = [{"bbox_2d": [0, 0, 1, 1], "label": "x"}]
+        proxy_rows = [
+            detection_row("single-empty", "Defect Detection", []),
+            detection_row("single-few", "Defect Detection", one_box),
+            detection_row("reference-empty", "Ref_based Defect Detection", []),
+            detection_row("reference-few", "Ref_based Defect Detection", one_box),
+        ]
+        (workspace / "annotations/proxy_kpi.jsonl").write_text(
+            "".join(json.dumps(row) + "\n" for row in proxy_rows), encoding="utf-8"
+        )
+        for filename in ("benchmark.jsonl", "mining.jsonl"):
             (workspace / "annotations" / filename).write_text("{}\n", encoding="utf-8")
         for filename in ("train_spec.toml", "evaluate_spec.toml"):
             (workspace / "specs" / filename).write_text("value = 1\n", encoding="utf-8")

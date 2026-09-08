@@ -11,6 +11,7 @@ import unittest
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from PIL import Image
 
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -37,6 +38,85 @@ def _row(row_id: str, task: str, paths: list[str]) -> dict:
 
 
 class Cosmos3BuildMiningSourcePoolTests(unittest.TestCase):
+    def test_reference_rows_are_one_atomic_pair_embedding_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            annotations = root / "mining.jsonl"
+            for name, color in (("golden.png", "white"), ("test.png", "black")):
+                path = root / "images" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                Image.new("RGB", (8, 6), color=color).save(path)
+            annotations.write_text(
+                json.dumps(
+                    _row(
+                        "pair-a",
+                        "Ref_based Defect Detection",
+                        ["images/golden.png", "images/test.png"],
+                    )
+                )
+                + "\n"
+            )
+
+            payload = build_mining_source_pool.build(
+                annotations=annotations,
+                media_root=root,
+                output=root / "source_pool.parquet",
+                summary_output=root / "summary.json",
+                pair_assets_dir=root / "pair-assets",
+            )
+
+            rows = pq.read_table(root / "source_pool.parquet").to_pylist()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["sample_kind"], "reference_pair")
+            self.assertEqual(
+                rows[0]["image_paths"],
+                [
+                    str((root / "images/golden.png").resolve()),
+                    str((root / "images/test.png").resolve()),
+                ],
+            )
+            self.assertTrue(rows[0]["atomic_sample_id"].startswith("reference_pair:"))
+            self.assertNotEqual(rows[0]["filepath"], rows[0]["image_paths"][0])
+            self.assertNotEqual(rows[0]["filepath"], rows[0]["image_paths"][1])
+            self.assertTrue(pathlib.Path(rows[0]["filepath"]).is_file())
+            self.assertEqual(payload["reference_pairs"], 1)
+            self.assertEqual(payload["single_images"], 0)
+
+    def test_pair_assets_can_be_materialized_by_bounded_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            annotations = root / "mining.jsonl"
+            rows = []
+            for index in range(2):
+                golden = root / "images" / f"golden-{index}.png"
+                target = root / "images" / f"target-{index}.png"
+                golden.parent.mkdir(parents=True, exist_ok=True)
+                Image.new("RGB", (8, 6), color="white").save(golden)
+                Image.new("RGB", (8, 6), color="black").save(target)
+                rows.append(
+                    _row(
+                        f"pair-{index}",
+                        "Ref_based Defect Detection",
+                        [str(golden), str(target)],
+                    )
+                )
+            annotations.write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n"
+            )
+
+            payload = build_mining_source_pool.build(
+                annotations=annotations,
+                media_root=root,
+                output=root / "source_pool.parquet",
+                summary_output=root / "summary.json",
+                pair_assets_dir=root / "pair-assets",
+                pair_asset_workers=2,
+            )
+
+            self.assertEqual(payload["pair_asset_workers"], 2)
+            self.assertEqual(payload["reference_pairs"], 2)
+            self.assertEqual(len(list((root / "pair-assets").rglob("*.png"))), 2)
+
     def test_builds_unique_targets_and_exact_delta_against_reuse_pool(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -55,6 +135,10 @@ class Cosmos3BuildMiningSourcePoolTests(unittest.TestCase):
                 _row("c", "Component Classification", ["images/a.png"]),
                 _row("ignored", "Unsupported Task", ["images/x.png"]),
             ]
+            for name in ("a.png", "golden.png", "b.png"):
+                path = root / "images" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                Image.new("RGB", (8, 6), color="white").save(path)
             annotations.write_text(
                 "\n".join(json.dumps(row) for row in rows) + "\n"
             )
@@ -68,6 +152,7 @@ class Cosmos3BuildMiningSourcePoolTests(unittest.TestCase):
                 summary_output=summary,
                 reuse_pool=reuse,
                 delta_output=delta,
+                pair_assets_dir=root / "pair-assets",
             )
 
             self.assertEqual(payload["raw_rows"], 4)
@@ -75,9 +160,15 @@ class Cosmos3BuildMiningSourcePoolTests(unittest.TestCase):
             self.assertEqual(payload["pool_size"], 2)
             self.assertEqual(payload["reused_targets"], 1)
             self.assertEqual(payload["delta_targets"], 1)
+            delta_rows = pq.read_table(delta).to_pylist()
+            self.assertEqual(len(delta_rows), 1)
+            self.assertEqual(delta_rows[0]["sample_kind"], "reference_pair")
             self.assertEqual(
-                pq.read_table(delta).column("filepath").to_pylist(),
-                [str((root / "images/b.png").resolve())],
+                delta_rows[0]["image_paths"],
+                [
+                    str((root / "images/golden.png").resolve()),
+                    str((root / "images/b.png").resolve()),
+                ],
             )
 
     def test_rejects_reuse_pool_that_is_not_a_subset(self) -> None:

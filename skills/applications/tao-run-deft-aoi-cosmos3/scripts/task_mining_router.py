@@ -14,6 +14,7 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
+from atomic_samples import embedding_filepath, sample_from_record
 from nvpaw_annotations import TASK_SPECS
 from validate_sharegpt import (
     image_paths,
@@ -74,7 +75,9 @@ def _path_keys(path_text: str, media_root: pathlib.Path) -> set[str]:
 
 
 def _source_catalog(
-    records: list[dict[str, Any]], media_root: pathlib.Path
+    records: list[dict[str, Any]],
+    media_root: pathlib.Path,
+    pair_assets_dir: pathlib.Path | None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]], set[str]]:
     catalog: dict[str, dict[str, Any]] = {}
     aliases: dict[str, set[str]] = {}
@@ -90,17 +93,21 @@ def _source_catalog(
         prompt_and_response(record, context=context)
         record_id = record.get("id")
         source_target_path = target_path(record, context=context)
-        target_id = record.get("target_id", source_target_path)
+        sample = sample_from_record(record, media_root=media_root, context=context)
+        target_id = sample["atomic_sample_id"]
         if not all(
             isinstance(value, str) and value
             for value in (task_type, target_id, record_id)
         ):
             raise ValueError(f"{context}: id, target_id, and task_type are required")
-        canonical = str(resolve_image(source_target_path, media_root))
+        canonical = embedding_filepath(sample, pair_assets_dir=pair_assets_dir)
         entry = catalog.setdefault(
             canonical,
             {
                 "target_id": target_id,
+                "atomic_sample_id": sample["atomic_sample_id"],
+                "sample_kind": sample["sample_kind"],
+                "image_paths": sample["image_paths"],
                 "task_types": set(),
                 "record_ids": set(),
             },
@@ -111,7 +118,7 @@ def _source_catalog(
             )
         entry["task_types"].add(task_type)
         entry["record_ids"].add(record_id)
-        for key in _path_keys(source_target_path, media_root):
+        for key in _path_keys(canonical, media_root):
             aliases.setdefault(key, set()).add(canonical)
     return catalog, aliases, ignored_aliases
 
@@ -181,6 +188,9 @@ def _prepare_sources(
                 "source_target_id": metadata["target_id"],
                 "source_task_types": sorted(metadata["task_types"]),
                 "source_record_ids": sorted(metadata["record_ids"]),
+                "atomic_sample_id": metadata["atomic_sample_id"],
+                "sample_kind": metadata["sample_kind"],
+                "source_image_paths": metadata["image_paths"],
                 "embedding": vector,
             }
         )
@@ -245,6 +255,9 @@ def _candidate(
         "source_target_id": source["source_target_id"],
         "source_task_types": source["source_task_types"],
         "source_record_ids": source["source_record_ids"],
+        "atomic_sample_id": source["atomic_sample_id"],
+        "sample_kind": source["sample_kind"],
+        "source_image_paths": source["source_image_paths"],
         "matched_target_filepath": target["filepath"],
         "matched_target_id": target["target_id"],
         "matched_target_ids": [target["target_id"]],
@@ -283,6 +296,7 @@ def route_candidates(
     source_annotations: list[dict[str, Any]],
     *,
     media_root: pathlib.Path,
+    pair_assets_dir: pathlib.Path | None = None,
     mode: str,
     top_k_per_target: int,
     top_k_by_task: dict[str, int] | None = None,
@@ -309,7 +323,9 @@ def route_candidates(
     if not -1.0 <= min_similarity <= 1.0:
         raise ValueError("min_similarity must be between -1 and 1")
     media_root = media_root.expanduser().resolve()
-    catalog, aliases, ignored_aliases = _source_catalog(source_annotations, media_root)
+    catalog, aliases, ignored_aliases = _source_catalog(
+        source_annotations, media_root, pair_assets_dir
+    )
     sources, dimension, ignored_sources = _prepare_sources(
         source_rows,
         media_root=media_root,
@@ -449,7 +465,7 @@ def route_candidates(
                 routed_task_types=routed_tasks,
                 rank=rank,
             )
-            key = str(resolve_image(candidate["filepath"], media_root))
+            key = candidate["atomic_sample_id"]
             if key not in selected:
                 selected[key] = candidate
                 order.append(key)
@@ -493,6 +509,12 @@ def route_candidates(
         "min_similarity": min_similarity,
         "target_queries": len(targets),
         "source_images": len(sources),
+        "source_single_images": sum(
+            source["sample_kind"] == "single_image" for source in sources
+        ),
+        "source_reference_pairs": sum(
+            source["sample_kind"] == "reference_pair" for source in sources
+        ),
         "ignored_out_of_scope_source_images": ignored_sources,
         "embedding_dimension": dimension,
         "similarity_batch_size": target_batch_size,
@@ -533,6 +555,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-embeddings", required=True, type=pathlib.Path)
     parser.add_argument("--source-annotations", required=True, type=pathlib.Path)
     parser.add_argument("--media-root", required=True, type=pathlib.Path)
+    parser.add_argument("--pair-assets-dir", required=True, type=pathlib.Path)
     parser.add_argument("--mode", choices=MINING_ROUTER_MODES, default="image_only")
     parser.add_argument("--top-k-per-target", type=int, default=5)
     parser.add_argument("--defect-detection-top-k-per-target", type=int)
@@ -550,6 +573,7 @@ def main(argv: list[str] | None = None) -> int:
             _read_parquet(args.source_embeddings),
             load_records(args.source_annotations),
             media_root=args.media_root,
+            pair_assets_dir=args.pair_assets_dir,
             mode=args.mode,
             top_k_per_target=args.top_k_per_target,
             top_k_by_task=(

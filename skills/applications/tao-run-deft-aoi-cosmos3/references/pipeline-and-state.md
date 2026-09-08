@@ -3,20 +3,34 @@
 Schema version 7 is a fail-closed Cosmos Framework state:
 
 ```text
-evaluate_benchmark -> benchmark_metrics
-  metric met -> loop_stop
-  metric unmet -> evaluate_proxy -> proxy_rcca -> routing -> data_mining
-                  -> assemble_data -> validate_data -> train
-                  -> next evaluate_benchmark
+baseline evaluate_benchmark -> benchmark_metrics -> evaluate_proxy -> proxy_rcca
+  -> routing -> data_mining -> assemble_data -> validate_data -> train
+  -> evaluate_proxy -> proxy_rcca
+       cadence=every or Proxy-best or final -> evaluate_benchmark -> benchmark_metrics
+       otherwise -> next routing
+  Benchmark metric met -> loop_stop
 ```
 
-State initialization freezes absolute annotation/evaluator paths and hashes,
+State initialization freezes `benchmark_cadence` (`every` or
+`final_and_best`), absolute annotation/evaluator paths and hashes,
 the five-component F1 contract, model path, Framework/data-services images,
 recipe profile, platform, mining policy, and split contract. The event list is
 append-only. `deft_context.py` derives the next stage; `commit_stage.py`
 validates artifacts, rejects any label/stage other than the derived next stage,
 and atomically advances state. A state with another schema version must not
 resume.
+
+The mining contract also freezes both detection-cohort calibration rates from
+the Proxy annotation checksum. Empty/no-change reference negatives remain
+ordered atomic pairs. Near-duplicate filtering is explicitly enabled with a
+Hamming threshold or disabled; a disabled filter is not represented by a
+magic distance value.
+
+Every `proxy_rcca` commit includes exact five-component Proxy KPI evidence and
+records whether its deterministic KPI/tie-breaker ranking is best so far.
+Proxy remains the sole gap-analysis source. Under `final_and_best`, the frozen
+Benchmark runs for the validated reusable zero-shot baseline, every Proxy-best
+checkpoint, and the final checkpoint; under `every`, it runs for all of them.
 
 Training commits require a complete `iter_#########` DCP with non-empty
 metadata and shard files plus adjacent config. Evaluate/inference first consume

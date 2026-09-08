@@ -35,12 +35,51 @@ def _row(record_id: str, image: str) -> dict:
     }
 
 
+def _ref_row(record_id: str, reference: str, target: str) -> dict:
+    row = _row(record_id, target)
+    row["task_type"] = "Ref_based Defect Classification"
+    row["messages"][0]["content"].insert(
+        0,
+        {"type": "image", "image": reference, "min_pixels": 1, "max_pixels": 1},
+    )
+    return row
+
+
 def _write(path: pathlib.Path, rows: list[dict]) -> pathlib.Path:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     return path
 
 
 class AuthorizedSplitOverlapTests(unittest.TestCase):
+    def test_reference_leakage_identity_is_the_ordered_pair_not_either_side(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            roles = {
+                "proxy": _write(
+                    root / "proxy.jsonl",
+                    [_ref_row("proxy-1", "images/proxy-golden.png", "images/shared.png")],
+                ),
+                "benchmark": _write(
+                    root / "benchmark.jsonl",
+                    [
+                        _ref_row(
+                            "benchmark-1",
+                            "images/benchmark-golden.png",
+                            "images/shared.png",
+                        )
+                    ],
+                ),
+                "mining": _write(
+                    root / "mining.jsonl",
+                    [_ref_row("mining-1", "images/mining-golden.png", "images/shared.png")],
+                ),
+            }
+
+            summary = validate_split_contract.validate(roles, media_root=root)
+
+            self.assertEqual(summary["target_overlap"]["proxy:benchmark"], 0)
+            self.assertEqual(summary["identity"], "atomic_sample_id")
+
     def test_exact_operator_authorized_proxy_benchmark_overlap_is_audited(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

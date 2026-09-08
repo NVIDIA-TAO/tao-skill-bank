@@ -3,17 +3,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
+
+from PIL import Image
 
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 import analyze_gaps  # noqa: E402
+import atomic_samples  # noqa: E402
 import defect_detection_ablation  # noqa: E402
 import route_selected_gaps  # noqa: E402
 import task_mining_router  # noqa: E402
@@ -85,8 +90,19 @@ def _candidate(
         for item in record["messages"][0]["content"]
         if item.get("type") == "image"
     ][-1]
+    sample = atomic_samples.sample_from_record(
+        record, media_root=pathlib.Path("/data"), context=str(record.get("id"))
+    )
     return {
         "filepath": image,
+        "atomic_sample_id": sample["atomic_sample_id"],
+        "sample_kind": sample["sample_kind"],
+        "source_image_paths": sample["image_paths"],
+        # Most contract tests intentionally use synthetic paths; model the
+        # trusted identity supplied by the embedding manifest for those rows.
+        "content_sha256": hashlib.sha256(
+            f"fixture:{sample['atomic_sample_id']}".encode()
+        ).hexdigest(),
         "route_tier": route_tier,
         "routed_task_types": [record["task_type"]],
         "defect_detection_evidence": evidence or [],
@@ -110,6 +126,141 @@ class _Evaluator:
 
 
 class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
+    def test_reference_leakage_uses_ordered_pair_content_not_only_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            for name, color in (
+                ("validation-golden.png", (10, 20, 30)),
+                ("candidate-golden.png", (10, 20, 30)),
+                ("validation-target.png", (40, 50, 60)),
+                ("candidate-target.png", (40, 50, 60)),
+            ):
+                Image.new("RGB", (8, 8), color=color).save(root / name)
+            validation = _row(
+                "validation-pair", "Ref_based Defect Detection", boxes=[]
+            )
+            images = [
+                item
+                for item in validation["messages"][0]["content"]
+                if item.get("type") == "image"
+            ]
+            images[0]["image"] = "validation-golden.png"
+            images[1]["image"] = "validation-target.png"
+            _, validation_content, _, _ = (
+                defect_detection_ablation._validation_identities([validation], root)
+            )
+            _, candidate_content, _ = (
+                defect_detection_ablation._candidate_visual_identity(
+                    {
+                        "filepath": "candidate-target.png",
+                        "sample_kind": "reference_pair",
+                        "source_image_paths": [
+                            str(root / "candidate-golden.png"),
+                            str(root / "candidate-target.png"),
+                        ],
+                    },
+                    media_root=root,
+                    compute_perceptual_hash=False,
+                )
+            )
+            self.assertIn(candidate_content, validation_content)
+
+    def test_disabled_near_duplicate_filter_skips_perceptual_decode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            image_path = pathlib.Path(temporary) / "candidate.png"
+            Image.new("RGB", (8, 8), color=(12, 34, 56)).save(image_path)
+            with mock.patch.object(
+                defect_detection_ablation,
+                "_perceptual_hash",
+                side_effect=AssertionError("perceptual hash must not be decoded"),
+            ):
+                identity, content_sha, phash = (
+                    defect_detection_ablation._candidate_visual_identity(
+                        {"filepath": str(image_path)},
+                        media_root=pathlib.Path(temporary),
+                        compute_perceptual_hash=False,
+                    )
+                )
+            self.assertEqual(pathlib.Path(identity).name, image_path.name)
+            self.assertEqual(phash, content_sha[:16])
+
+    def test_materialization_matches_empty_rate_in_both_detection_cohorts(self) -> None:
+        rows: list[dict] = []
+        candidates: list[dict] = []
+        one_box = [{"bbox_2d": [10, 10, 100, 100], "label": "open"}]
+        for index in range(30):
+            empty = index < 12
+            row = _row(
+                f"single-dd-{index}",
+                "Defect Detection",
+                boxes=[] if empty else one_box,
+            )
+            rows.append(row)
+            candidates.append(
+                _candidate(
+                    row,
+                    evidence=(
+                        ["hard_negative_proxy_false_positive"]
+                        if empty
+                        else ["hard_positive_proxy_false_negative"]
+                    ),
+                    phash=f"{index + 1000:016x}",
+                )
+            )
+        maintenance_tasks = defect_detection_ablation.MAINTENANCE_TASK_TYPES
+        offset = 2000
+        for task in maintenance_tasks:
+            for index in range(6):
+                is_reference_detection = task == "Ref_based Defect Detection"
+                empty = is_reference_detection and index < 3
+                row = _row(
+                    f"{task.replace(' ', '-')}-{index}",
+                    task,
+                    boxes=[] if empty else one_box,
+                )
+                rows.append(row)
+                candidates.append(
+                    _candidate(
+                        row,
+                        evidence=(
+                            [
+                                "calibration_empty_ground_truth",
+                                "calibration_reference_no_change_ground_truth",
+                            ]
+                            if empty
+                            else []
+                        ),
+                        phash=f"{offset:016x}",
+                        route_tier="calibration" if empty else "strict",
+                    )
+                )
+                offset += 1
+
+        selected, manifest = defect_detection_ablation.materialize(
+            candidate_rows=candidates,
+            source_records=rows,
+            validation_records=[],
+            media_root=pathlib.Path("/data"),
+            max_rows=60,
+            row_multiple=10,
+            defect_detection_fraction=0.5,
+            proxy_empty_rate=0.4,
+            reference_proxy_empty_rate=0.5,
+            epochs=1,
+            global_batch=10,
+            near_duplicate_hamming_distance=None,
+        )
+
+        self.assertEqual(len(selected), 60)
+        self.assertTrue(manifest["verified"])
+        cohorts = manifest["empty_ground_truth_by_cohort"]
+        self.assertEqual(cohorts["non_reference_based"]["selected_empty"], 12)
+        self.assertEqual(cohorts["non_reference_based"]["selected_total"], 30)
+        self.assertEqual(cohorts["reference_based"]["selected_empty"], 3)
+        self.assertEqual(cohorts["reference_based"]["selected_total"], 6)
+        self.assertEqual(cohorts["reference_based"]["proxy_rate"], 0.5)
+        self.assertEqual(manifest["configuration"]["near_duplicate_filter"], "disabled")
+
     def test_all_proxy_dd_anchors_are_ordered_by_error_severity(self) -> None:
         selected = [{"id": "maintenance", "task_type": "Component Detection"}]
         all_gaps = [

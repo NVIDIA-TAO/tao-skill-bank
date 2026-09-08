@@ -15,7 +15,7 @@ from typing import Any
 
 AFTER = {
     None: "evaluate_benchmark",
-    "train": "evaluate_benchmark",
+    "train": "evaluate_proxy",
     "evaluate_benchmark": "benchmark_metrics",
     "evaluate_proxy": "proxy_rcca",
     "proxy_rcca": "routing",
@@ -40,12 +40,30 @@ def _next_stage(state: dict[str, Any]) -> tuple[str, str]:
         metric = phase.get("metric_result", {})
         if metric.get("passed") is True:
             return label, "finalize"
-        if label != "baseline" and current >= int(state.get("max_iterations", 0)):
+        if label == "baseline":
+            return label, "evaluate_proxy"
+        if current >= int(state.get("max_iterations", 0)):
             return label, "finalize"
-        return label, "evaluate_proxy"
-    next_stage = AFTER.get(completed, "evaluate_benchmark")
+        return f"iter{current + 1}", "routing"
     if completed == "proxy_rcca":
-        label = f"iter{current + 1}"
+        if label == "baseline":
+            return "iter1", "routing"
+        cadence = (
+            state.get("config", {})
+            .get("evaluation", {})
+            .get("benchmark_cadence", "every")
+        )
+        if cadence not in {"every", "final_and_best"}:
+            raise ValueError(f"unsupported benchmark cadence: {cadence!r}")
+        benchmark_due = (
+            cadence == "every"
+            or phase.get("proxy_is_best_so_far") is True
+            or current >= int(state.get("max_iterations", 0))
+        )
+        if benchmark_due:
+            return label, "evaluate_benchmark"
+        return f"iter{current + 1}", "routing"
+    next_stage = AFTER.get(completed, "evaluate_benchmark")
     return label, next_stage
 
 

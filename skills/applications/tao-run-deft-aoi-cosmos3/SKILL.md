@@ -27,13 +27,15 @@ implementation is `tao-finetune-cosmos-reason` with
 
 ## Immutable workflow contract
 
-The loop is:
+The loop is parameterized by `benchmark_cadence = every | final_and_best`:
 
 ```text
-Benchmark evaluate -> exact F1 gate
-  pass: loop_stop
-  fail: Proxy evaluate -> RCCA -> routing -> data_mining -> assemble_data
-        -> validate_data -> CFW train -> next Benchmark evaluate
+reusable zero-shot Benchmark evaluate -> exact F1 gate -> Proxy KPI + RCCA
+  -> routing -> data_mining -> assemble_data -> validate_data -> CFW train
+  -> Proxy KPI + RCCA
+       final_and_best: Benchmark only for a Proxy-best or final checkpoint
+       every: Benchmark for every checkpoint
+  -> pass: loop_stop; otherwise route the next iteration
 ```
 
 Only real records selected from the six supported classification/detection
@@ -43,6 +45,8 @@ converted, copied, or admitted to Train. Proxy and Benchmark remain strict.
 Every later iteration retains the preceding training JSONL and adds at least
 one current Mining record. Proxy and Benchmark targets are excluded. The
 Benchmark file and metric contract are SHA-256 sealed at initialization.
+Zero-shot predictions may be reused only when their recorded Benchmark,
+model, image, evaluator, and prediction checksums all match.
 
 ## Required workspace
 
@@ -132,19 +136,27 @@ The selector:
   counts toward that reserve;
 - admits positive Defect Detection rows from proxy-FN, partial-overlap, or
   correctly handled DD routes, while proxy-FP routes provide empty hard
-  negatives; when the launch
-  explicitly authorizes direct Mining-pool box calibration, separately labeled
-  `calibration_empty_ground_truth` candidates may fill only the residual empty
-  quota and are never reported as task-strict hard negatives;
+  negatives; when the launch explicitly authorizes direct Mining-pool box
+  calibration, separately labeled `calibration_empty_ground_truth` and
+  `calibration_few_box_ground_truth` candidates may fill the Proxy-bound
+  detection quotas and are never reported as task-strict hard negatives;
 - balances positive marginal quotas over source, defect phenotype,
   source-by-phenotype, 1024-canvas box-area quartile, local-contrast quartile,
   and GT-count bins `1`, `2-3`, `4+`, reporting capacity shortages rather than
   filling them with another task;
-- matches the Proxy single-image Defect Detection empty-GT rate after integer
-  rounding; and
-- rejects target-path, content-SHA, perceptual near-duplicate, Proxy, and
-  Benchmark collisions while leaving every selected source record and its
-  `official_v1` messages, coordinates, box order, and image controls unchanged.
+- derives and matches the Proxy empty-GT rate independently for single-image
+  and reference Defect Detection after deterministic integer rounding;
+- labels empty reference pairs as
+  `calibration_reference_no_change_ground_truth` negatives and keeps the
+  ordered golden/target pair atomic;
+- treats each ordered `(golden, target)` reference sample as one atomic unit
+  across embedding, retrieval, de-duplication, history, leakage exclusion, and
+  canonical two-image materialization; and
+- rejects atomic-sample, content-SHA, Proxy, and Benchmark collisions while
+  leaving every selected source record and its `official_v1` messages,
+  coordinates, box order, and image controls unchanged. Perceptual
+  near-duplicate filtering is applied only when configured; use
+  `--no-near-duplicate-filter` when the launch disables it.
 
 The command writes the materialized JSONL and a bound
 `defect_detection_quota_manifest_v1`. By default a shortfall leaves the
@@ -257,8 +269,9 @@ and extracts exactly:
 - `reference_based.tasks.DET.f1`
 
 All five must meet the frozen component threshold, and missing or unknown
-prediction counts must be zero. The app never recalculates F1. Only a frozen
-Benchmark metric result may stop the loop; Proxy results drive RCCA/mining.
+prediction counts must be zero. The app never recalculates F1. Proxy is scored
+after every checkpoint and is the only gap-analysis input. Only a frozen
+Benchmark metric result may stop the loop.
 
 ## Platform execution
 

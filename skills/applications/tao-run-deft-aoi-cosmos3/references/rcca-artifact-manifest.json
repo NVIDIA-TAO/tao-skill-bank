@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "stage": "proxy_rcca",
   "artifact_classes": {
     "script_produced_required": [
@@ -18,6 +18,16 @@
         "path": "selected_gaps.parquet",
         "state_field": "selected_gaps_parquet",
         "format": "parquet"
+      },
+      {
+        "path": "raw_f1.json",
+        "state_field": "proxy_raw_f1_report",
+        "format": "json"
+      },
+      {
+        "path": "metric_result.json",
+        "state_field": "proxy_metric_result",
+        "format": "json"
       }
     ],
     "agent_produced_required": [

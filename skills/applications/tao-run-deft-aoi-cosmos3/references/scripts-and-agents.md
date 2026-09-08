@@ -13,13 +13,16 @@
 | `cfw_dcp.py` | Validate synchronous Framework DCP completeness and manifest. |
 | `cfw_predictions.py` | Strictly normalize/validate external or sharded results with exact source coverage and preserved message/image order. |
 | `exact_f1_adapter.py` | Invoke the recorded workspace evaluator and build the five-component gate without recalculation. |
+| `benchmark_cadence.py` | Validate exact Proxy KPI evidence and rank checkpoints for conditional Benchmark scoring. |
 | `analyze_gaps.py` | Reuse the recorded evaluator's parsers for Proxy record-level weakness and task-aware RCCA selection. |
-| `route_selected_gaps.py` | Collapse Proxy gap rows into real-image Mining queries. |
+| `atomic_samples.py` | Define ordered single/pair identities and deterministic two-image embedding assets. |
+| `build_mining_source_pool.py` | Build the source pool at atomic single-image/reference-pair granularity, with bounded parallel pair-asset materialization. |
+| `route_selected_gaps.py` | Collapse Proxy gap rows into atomic Mining queries and pair embedding assets. |
 | `task_mining_router.py` | Apply deterministic task-aware neighbor routing and history policy. |
-| `select_detection_calibration.py` | Prepend auditable empty/few-box calibration and optional Component Count replay candidates before history filtering. |
-| `defect_detection_ablation.py` | Materialize the task-strict Defect Detection corpus and bind its compatible quota manifest. |
+| `select_detection_calibration.py` | Derive Proxy-bound per-cohort empty/few-box quotas, preserve reference pairs atomically, and optionally select Component Count replay before history filtering. |
+| `defect_detection_ablation.py` | Materialize the task-strict Defect Detection corpus, enforce both detection-cohort empty rates, and bind its compatible quota manifest. |
 | `repetition_blend.py` | Apply seeded deficit-proportional or explicit repetition after exclusion and bind its per-task manifest. |
-| `emit_mined_sharegpt.py` | Emit selected canonical Mining rows as JSONL; the legacy filename is retained for CLI compatibility. |
+| `emit_mined_sharegpt.py` | Emit selected atomic canonical Mining rows with both reference-pair sides intact; the legacy filename is retained for CLI compatibility. |
 | `assemble_training_json.py` | Assemble monotonic real-only training JSONL and optionally apply the recorded repetition blend. |
 | `validate_sharegpt.py` | Validate canonical NVPAW JSONL; the legacy filename is retained for CLI compatibility. |
 | `validate_split_contract.py` | Prove evaluation isolation, real-mining eligibility, prior-row retention, and Benchmark hash. |

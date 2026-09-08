@@ -16,11 +16,17 @@ sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 import assemble_training_json  # noqa: E402
 
 
-def _row(record_id: str, task_type: str = "Component Classification") -> dict:
+def _row(
+    record_id: str,
+    task_type: str = "Component Classification",
+    *,
+    reference: str | None = None,
+    target: str | None = None,
+) -> dict:
     images = [
         {
             "type": "image",
-            "image": f"images/{record_id}.png",
+            "image": target or f"images/{record_id}.png",
             "min_pixels": 1,
             "max_pixels": 1,
         }
@@ -30,7 +36,7 @@ def _row(record_id: str, task_type: str = "Component Classification") -> dict:
             0,
             {
                 "type": "image",
-                "image": f"images/{record_id}-golden.png",
+                "image": reference or f"images/{record_id}-golden.png",
                 "min_pixels": 1,
                 "max_pixels": 1,
             },
@@ -57,6 +63,41 @@ def _write(path: pathlib.Path, rows: list[dict]) -> pathlib.Path:
 
 
 class Cosmos3AssembleTrainingContractTests(unittest.TestCase):
+    def test_pair_atomic_leakage_allows_same_test_with_a_different_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            benchmark = _write(
+                root / "benchmark.jsonl",
+                [
+                    _row(
+                        "benchmark-pair",
+                        "Ref_based Defect Detection",
+                        reference="images/benchmark-golden.png",
+                        target="images/shared-test.png",
+                    )
+                ],
+            )
+            mined = _write(
+                root / "mined.jsonl",
+                [
+                    _row(
+                        "mined-pair",
+                        "Ref_based Defect Detection",
+                        reference="images/mining-golden.png",
+                        target="images/shared-test.png",
+                    )
+                ],
+            )
+
+            rows, summary = assemble_training_json.assemble(
+                None,
+                mined,
+                validation_paths=[benchmark],
+            )
+
+            self.assertEqual([row["id"] for row in rows], ["mined-pair"])
+            self.assertEqual(summary["output_records"], 1)
+
     def test_cap_retains_previous_rows_and_fills_with_current_mining(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

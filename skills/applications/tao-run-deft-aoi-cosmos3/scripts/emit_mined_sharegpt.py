@@ -14,6 +14,7 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
+from atomic_samples import embedding_filepath, sample_from_record
 from nvpaw_annotations import TASK_SPECS
 from validate_sharegpt import (
     image_paths,
@@ -84,9 +85,15 @@ def _normalize_mined_rows(
         routed = row.get("routed_task_types")
         if routed is not None:
             routed = _task_list(routed, context=f"mined row[{index}]")
-        key = str(resolve_image(filepath, media_root))
+        atomic_sample_id = row.get("atomic_sample_id")
+        if atomic_sample_id is not None and (
+            not isinstance(atomic_sample_id, str) or not atomic_sample_id
+        ):
+            raise ValueError(f"mined row[{index}]: invalid atomic_sample_id")
+        key = atomic_sample_id or str(resolve_image(filepath, media_root))
         if key not in merged:
             merged[key] = {
+                **row,
                 "filepath": filepath,
                 "route_tier": tier,
                 "route_tiers": [tier],
@@ -112,24 +119,37 @@ def _normalize_mined_rows(
 def _source_index(
     records: list[dict[str, Any]],
     media_root: pathlib.Path,
+    pair_assets_dir: pathlib.Path | None,
 ) -> dict[str, list[tuple[int, dict[str, Any]]]]:
     index: dict[str, list[tuple[int, dict[str, Any]]]] = {}
     for record_index, record in enumerate(records):
         if record.get("task_type") not in TASK_SPECS:
             continue
         prompt_and_response(record, context=f"source record[{record_index}]")
-        target = target_path(record, context=f"source record[{record_index}]")
-        for key in _path_keys(target, media_root):
+        context = f"source record[{record_index}]"
+        sample = sample_from_record(record, media_root=media_root, context=context)
+        embedding_path = embedding_filepath(sample, pair_assets_dir=pair_assets_dir)
+        index.setdefault(sample["atomic_sample_id"], []).append((record_index, record))
+        for key in _path_keys(embedding_path, media_root):
             index.setdefault(key, []).append((record_index, record))
     return index
 
 
 def _match(
-    mined_path: str,
+    mined: dict[str, Any],
     *,
     media_root: pathlib.Path,
     index: dict[str, list[tuple[int, dict[str, Any]]]],
 ) -> tuple[list[tuple[int, dict[str, Any]]], str]:
+    mined_path = str(mined["filepath"])
+    atomic_sample_id = mined.get("atomic_sample_id")
+    if isinstance(atomic_sample_id, str) and atomic_sample_id:
+        atomic_hits = index.get(atomic_sample_id, [])
+        if atomic_hits:
+            return sorted(atomic_hits), "atomic"
+        raise ValueError(
+            f"missing source match for atomic sample {atomic_sample_id!r}"
+        )
     resolved_mined = str(resolve_image(mined_path, media_root))
     exact_hits = index.get(resolved_mined, [])
     if exact_hits:
@@ -181,26 +201,32 @@ def emit_records(
     media_root: pathlib.Path,
     relative: bool,
     annotation_profile: str = "nvpaw_multitask_v1",
+    pair_assets_dir: pathlib.Path | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     media_root = media_root.expanduser().resolve()
     mined_rows, duplicates_skipped = _normalize_mined_rows(mined_paths, media_root)
     if annotation_profile != "nvpaw_multitask_v1":
         raise ValueError("Cosmos Framework mining emission requires nvpaw_multitask_v1")
-    index = _source_index(source_records, media_root)
+    index = _source_index(source_records, media_root, pair_assets_dir)
     output: list[dict[str, Any]] = []
     matches: Counter[str] = Counter()
     route_tiers: Counter[str] = Counter()
     tasks: Counter[str] = Counter()
     seen_targets: set[str] = set()
+    atomic_reference_pairs = 0
     for mined in mined_rows:
         mined_path = mined["filepath"]
-        resolved_target = str(resolve_image(mined_path, media_root))
-        if resolved_target in seen_targets:
+        identity = str(
+            mined.get("atomic_sample_id")
+            or resolve_image(mined_path, media_root)
+        )
+        if identity in seen_targets:
             continue
         matched, match_mode = _match(
-            mined_path, media_root=media_root, index=index
+            mined, media_root=media_root, index=index
         )
-        seen_targets.add(resolved_target)
+        seen_targets.add(identity)
+        atomic_reference_pairs += mined.get("sample_kind") == "reference_pair"
         matches[match_mode] += 1
         route_tiers[mined["route_tier"]] += 1
         emitted_for_target = 0
@@ -233,6 +259,7 @@ def emit_records(
         "source_records": len(source_records),
         "output_records": len(output),
         "embedding_queries": len(seen_targets),
+        "atomic_reference_pairs": atomic_reference_pairs,
         "duplicates_skipped": duplicates_skipped,
         "match_modes": dict(sorted(matches.items())),
         "route_tiers": dict(sorted(route_tiers.items())),
@@ -249,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--summary", type=pathlib.Path)
     parser.add_argument("--filepath-column", default="filepath")
     parser.add_argument("--emit-relative", action="store_true")
+    parser.add_argument("--pair-assets-dir", type=pathlib.Path)
     args = parser.parse_args(argv)
     try:
         mined_paths = _load_mined_rows(args.mined_parquet, args.filepath_column)
@@ -258,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
             media_root=args.media_root.expanduser().resolve(),
             relative=args.emit_relative,
             annotation_profile="nvpaw_multitask_v1",
+            pair_assets_dir=args.pair_assets_dir,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(

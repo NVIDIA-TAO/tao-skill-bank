@@ -36,7 +36,7 @@ Schema keys can rename between data-services releases (the RCA skill saw `infere
 2. **Source pool** — a parquet of candidate images to mine against, with a `filepath` column. If the user only has a CSV, convert it to a parquet **with the same columns** before Step 2. For label-aware filtering, the pool must also carry a `label` column.
 3. **Embedding spec file** — a YAML containing `model`, `model_path`, `batch_size`, and (only when `model_path` is a TAO `.pth`/`.ckpt`) `model_config_path`. Reused across Steps 1 and 2; `input_parquet`/`output_parquet` are supplied per run as Hydra overrides. The **same** spec MUST drive both embedding steps — embeddings from different encoders are not comparable, and mismatched encoders are the most common cause of "the mined images look unrelated" reports.
 4. **Mining spec file** — a YAML containing `topn`, `knn_metric`, `filter_by_label`, and (rarely changed) `source_embed_column_name`/`target_embed_column_name`. `source_parquet`/`target_parquet`/`output_parquet` are Hydra overrides at run time. SigLIP and CLIP embeddings should use `knn_metric: cosine`. When `filter_by_label: true` but either embedding parquet lacks a `label` column, the container logs a warning and proceeds **without** filtering.
-5. **Mining history (iterative workflows only)** — one JSON ledger under the run-level results directory, plus a per-iteration history summary. `scripts/filter_mined_history.py` owns both files. It identifies a sample by normalized `filepath`, validates all earlier output hashes, and rejects an iteration gap or duplicate selection. Never hand-edit or reconstruct this ledger on resume.
+5. **Mining history (iterative workflows only)** — one JSON ledger under the run-level results directory, plus a per-iteration history summary. `scripts/filter_mined_history.py` owns both files. It identifies a sample by `atomic_sample_id` when that column is present and otherwise by normalized `filepath`, validates all earlier output hashes, and rejects an iteration gap or duplicate selection. Never hand-edit or reconstruct this ledger on resume.
 
 ---
 
@@ -129,8 +129,9 @@ python3 skills/data/tao-mine-aoi-images/scripts/filter_mined_history.py \
     --topn <topn>
 ```
 
-The output preserves candidate order and schema but contains only filepaths not
-selected by an earlier committed iteration. The ledger records selected paths,
+The output preserves candidate order and schema but contains only identities
+not selected by an earlier committed iteration. Pair-aware callers carry one
+ordered two-image `atomic_sample_id`; the ledger records selected identities,
 candidate/output hashes, counts, and `topn`; `--resume` reuses an already
 committed iteration only after verifying those artifacts. A zero-row output is
 valid evidence that the current k-NN candidate set contained no novel samples.

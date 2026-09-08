@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import pathlib
@@ -16,6 +17,7 @@ import jsonschema
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
+import atomic_samples  # noqa: E402
 import defect_detection_ablation  # noqa: E402
 import validate_split_contract  # noqa: E402
 import validate_sharegpt  # noqa: E402
@@ -83,8 +85,17 @@ def _candidate(record: dict, index: int) -> dict:
             route_tier = "calibration"
         else:
             evidence = ["hard_positive_proxy_false_negative"]
+    sample = atomic_samples.sample_from_record(
+        record, media_root=pathlib.Path("/data"), context=str(record.get("id"))
+    )
     return {
         "filepath": target,
+        "atomic_sample_id": sample["atomic_sample_id"],
+        "sample_kind": sample["sample_kind"],
+        "source_image_paths": sample["image_paths"],
+        "content_sha256": hashlib.sha256(
+            f"fixture:{sample['atomic_sample_id']}".encode()
+        ).hexdigest(),
         "route_tier": route_tier,
         "routed_task_types": [record["task_type"]],
         "defect_detection_evidence": evidence,
