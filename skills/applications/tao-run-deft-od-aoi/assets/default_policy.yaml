@@ -18,6 +18,7 @@ retrieval:
   model: SigLIP
   model_path: google/siglip-base-patch16-224
   defect_context_scale: 1.5
+  clean_grids: [1, 2]
   minimum_similarity: -1.0
   candidate_overfetch: 15
 routing:

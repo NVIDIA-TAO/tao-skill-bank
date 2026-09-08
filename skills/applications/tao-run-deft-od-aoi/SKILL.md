@@ -57,6 +57,26 @@ selected platform's `submit/status/logs/cancel` contract and a job record.
 Stop on missing artifacts, role overlap, empty enabled mining, class drift, or
 failed training. Never infer live state from the JSON record alone.
 
-The following review slices add the query router, cumulative assembler, and
-RT-DETR spec/selection helpers. This first slice freezes only the durable input
-and policy boundary.
+## Retrieval preparation
+
+Build the reusable candidate cache once, then prepare queries after each pair
+of loose/strict gap jobs:
+
+```bash
+scripts/prepare_deft_od_aoi_retrieval.py candidates \
+  --policy "$RESULTS/deft_od_aoi_policy.yaml" \
+  --output-dir "$RESULTS/candidates"
+
+scripts/prepare_deft_od_aoi_retrieval.py queries \
+  --policy "$RESULTS/deft_od_aoi_policy.yaml" \
+  --strict-gaps "$ITER/strict/box_gaps.parquet" \
+  --loose-gaps "$ITER/loose/box_gaps.parquet" \
+  --iteration 1 --candidate-root "$RESULTS/candidates" \
+  --output-dir "$ITER/retrieval"
+```
+
+Run every emitted embedding spec through `tao-generate-image-embeddings`, then
+each enabled mining spec through `tao-mine-od-images`. Defective candidates
+and gap queries use contextual crops; clean candidates use the frozen grid.
+Strict FNs and loose near-miss FPs route to real data. Background-like loose
+FPs route only to the verified-clean role. Empty roles emit no mining action.
