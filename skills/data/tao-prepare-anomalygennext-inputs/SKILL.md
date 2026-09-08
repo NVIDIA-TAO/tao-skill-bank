@@ -19,7 +19,9 @@ The first action freezes eligible false-negative identities, isolates each FN
 mask to its bounding box, selects one deterministic same-type mask, and emits
 the clean and FN embedding specs. The second action consumes those embedding
 results, preserves every FN-to-clean pair, and runs native automatic mask
-placement (AMP) from the AnomalyGenNext container.
+placement (AMP) from the AnomalyGenNext container. The final action accepts
+only pairs for which both mask branches passed AMP, then freezes the exact
+generation inputs and their hashes.
 
 ## Input contract
 
@@ -71,13 +73,23 @@ scripts/run_anomalygennext_amp.py \
 ```
 
 This writes `knn_candidates.parquet`, the native AMP request, and
-`amp/testcase.jsonl`. Platform skills own staging and cache placement.
+`amp/testcase.jsonl`. Finalize it in the same durable result root:
+
+```bash
+scripts/finalize_anomalygennext_inputs.py --prepared-root /existing/result/root
+```
+
+The finalizer writes pair status, selected pairs, copied aligned masks,
+per-dataset testcase and provenance JSONL, and a generation plan plus integrity
+manifest. A clean image is unique only within one FN; separate FNs may reuse it.
+Platform skills own staging and cache placement.
 
 ## Gates
 
 - Preserve each box-level FN as a distinct `fn_id`.
 - Produce exactly two masks per FN: isolated FN and deterministic same-type.
 - Embed a repeated source image once while preserving every FN query row.
+- Require successful, nonempty, non-full-image aligned masks for both branches.
 - Never infer an anomaly type or placement prompt.
 - Refuse output reuse and never mutate a training pool.
 - Platform skills own transient staging, caches, and copy-back.

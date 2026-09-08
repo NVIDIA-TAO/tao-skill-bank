@@ -47,3 +47,18 @@ actions:
     args:
       config: --config {config}
       prepared_root: --prepared-root {prepared_root}
+  finalize_inputs:
+    command: scripts/finalize_anomalygennext_inputs.py
+    mode: args
+    inputs:
+      prepared_root:
+        type: folder
+    outputs:
+      generation_plan:
+        type: file
+      prepared_inputs_manifest:
+        type: file
+    upload_excludes:
+    - inputs/
+    args:
+      prepared_root: --prepared-root {prepared_root}
