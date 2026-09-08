@@ -12,3 +12,6 @@ rules:
     reason: "Reviewed FP (#67): declared capability matches the skill's documented required function."
   - path: "hooks/routing-package.sh"
     reason: "Reviewed FP (#67): Report-bundle hook copies the session transcript into the skill's own output package in the user workspace; reviewed, not exfiltration."
+  - id: "TP4"
+    path: "SKILL.md"
+    reason: "Reviewed FP: the skill description accurately states its documented purpose; no deceptive or hidden tooling."

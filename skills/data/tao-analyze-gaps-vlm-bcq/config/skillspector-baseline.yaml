@@ -1,0 +1,9 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "TP4"
+    path: "SKILL.md"
+    reason: "Reviewed FP: the description accurately states the skill purpose; no deceptive tooling."
+  - id: "LP1"
+    path: "scripts/prepare_vlm_bcq_spec.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."

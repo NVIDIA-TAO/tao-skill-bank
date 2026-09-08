@@ -85,3 +85,4 @@ Always save into a timestamped folder under the experiment result directory:
 Get the real timestamp by running `date +%Y-%m-%d_%H%M%S` in Bash — never hardcode or guess it. If the user specifies a custom path, use that instead but keep the same structure.
 
 See `references/output-structure.md` for the complete section-by-section report skeleton (every table header and summary line) and the full output layout with hook-copied contents — VERBATIM.
+

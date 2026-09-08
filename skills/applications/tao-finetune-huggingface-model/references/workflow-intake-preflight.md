@@ -88,7 +88,7 @@ here.
 | Concern | Authoritative skill |
 |---|---|
 | GPU host runtime — NVIDIA driver 580, CUDA Toolkit 13.0, NVIDIA Container Toolkit 1.19.0 | [`tao-skill-bank:tao-setup-nvidia-gpu-host`](../../platform/tao-setup-nvidia-gpu-host/SKILL.md) |
-| `docker run` flags, NGC auth, `--gpus`, mounts, env passthrough, `--ipc=host`/`--shm-size`, common error modes, local/remote Docker job preflight (daemon reachable, GPU smoke) | [`tao-skill-bank:tao-run-on-docker`](../../platform/tao-run-on-docker/SKILL.md) |
+| `docker run` flags, NGC auth, `--gpus`, mounts, env passthrough, `--shm-size=8g`/`--shm-size`, common error modes, local/remote Docker job preflight (daemon reachable, GPU smoke) | [`tao-skill-bank:tao-run-on-docker`](../../platform/tao-run-on-docker/SKILL.md) |
 
 **Default platform:** `docker`. This workflow builds a one-off image
 (`run-<short>:latest`) and runs it on the local Docker daemon — following the
@@ -113,7 +113,7 @@ confirms presence of credentials that the current run *actually* needs —
 
 **Docker run conventions:** every `docker run` invocation in
 `references/docker-runs.md` follows the canonical flag set from
-`skills/platform/tao-run-on-docker/SKILL.md` (`--gpus all`, `--ipc=host` or `--shm-size=…`,
+`skills/platform/tao-run-on-docker/SKILL.md` (`--gpus all`, `--shm-size=8g` or `--shm-size=…`,
 `-e VAR` passthrough, bind mounts, `--rm` for one-shots). Treat that skill as
 the spec; this one only adds workflow-specific flags
 (`--entrypoint /bin/bash -lc`, `PYTORCH_CUDA_ALLOC_CONF`, `--name hft_train`).

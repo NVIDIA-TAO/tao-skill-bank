@@ -7,3 +7,6 @@ rules:
   - id: "LP*"
     path: "scripts/stage_backbone.py"
     reason: "Reviewed FP (#67): declared capability matches the skill's documented required function."
+  - id: "LP1"
+    path: "tests/test_validate_vcn_dataset.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."

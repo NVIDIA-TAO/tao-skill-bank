@@ -82,3 +82,4 @@ After platform selection, read the chosen platform skill's `## Credentials`
 section and `references/skill_info.yaml` (required_credentials /
 credential_groups) and ask only for credentials relevant to that platform, plus
 any selected-model credentials. Do not ask for unrelated platform credentials.
+

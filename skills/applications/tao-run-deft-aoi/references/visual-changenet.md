@@ -93,8 +93,8 @@ Do not change or nest that mount.
 
 Before every train launch, validate these coupled spec invariants:
 
-- Use `--shm-size=8g` for ChangeNet and do not combine it with `--ipc=host`.
-  `--ipc=host` makes the container inherit a CI host `/dev/shm` that may be
+- Use `--shm-size=8g` for ChangeNet and do not combine it with `--shm-size=8g`.
+  `--shm-size=8g` makes the container inherit a CI host `/dev/shm` that may be
   only 64 MiB, causing a mid-epoch bus/shared-memory failure even though the
   command also says `--shm-size=8g`.
 - `train.checkpoint_interval <= train.num_epochs`. A user override such as

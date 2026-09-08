@@ -1,0 +1,21 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "SQP-2"
+    path: "eval.config"
+    reason: "Reviewed: documented practice for a dev-only scratch/report path; accepted."
+  - id: "PE3"
+    path: "eval.config"
+    reason: "Reviewed FP: documentation reference to a standard infra/credential path (SSH, kubeconfig, .env, keyring, docker config). The skill does not read or exfiltrate credentials."
+  - id: "TM1"
+    path: "eval.config"
+    reason: "Reviewed FP: scoped, documented command in setup/eval content."
+  - id: "LP1"
+    path: "references/best_rec_adapter.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - id: "TM1"
+    path: "references/best_rec_adapter.py"
+    reason: "Reviewed FP: scoped, documented command in setup/eval content."
+  - id: "LP1"
+    path: "tests/test_resolve_automl_session.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."

@@ -271,3 +271,4 @@ Read `references/automl.md` when the user asks for AutoML/HPO setup, tunable par
 | `Interpretability PDF skipped: matplotlib not installed` | Missing optional dep | `uv add matplotlib` or use `interpretability_output="json"` |
 | `ValueError: No training windows` (finetune) | Data too short for windows | Reduce `--seq-len` / `--forecast-horizon`, or increase dataset size |
 | Stale environment errors mentioning `backbone` package | Old lock file | `uv cache clean && uv sync --group dev` |
+

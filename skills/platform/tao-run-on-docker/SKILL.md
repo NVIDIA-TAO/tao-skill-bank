@@ -92,7 +92,7 @@ below, with the raw state carried in the transition `message`. `$BANK` =
    ```bash
    set -a; source /path/to/.env; set +a   # omit if already exported
    CID=$(docker run -d --name "$JOB_ID" --label "tao-job=$JOB_ID" \
-     --gpus "$GPUS" --ipc=host \
+     --gpus "$GPUS" --shm-size=8g \
      -v "$STAGE:/workspace" \
      -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e HF_TOKEN -e NGC_KEY \
      "$IMAGE" <bundle command, reading /workspace/spec.yaml>)

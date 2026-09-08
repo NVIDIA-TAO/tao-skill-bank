@@ -339,3 +339,4 @@ kubectl get secret ngc-pull-secret -n tao-jobs >/dev/null && echo SECRET_OK
 - **Gang scheduling.** Indexed Job pods are scheduled independently — no all-or-nothing. Multi-node training will *partially* start if only some pods can be scheduled (rank-0 will hang waiting for peers). For all-or-nothing scheduling on shared clusters, use Volcano or Kueue.
 - **MPI / Horovod.** Use the MPI Operator. The Indexed Job path here is PyTorch-distributed-shaped (env-var rendezvous on `MASTER_ADDR:MASTER_PORT`).
 - **Auto-creating image-pull secrets from `$NGC_KEY`.** You pre-create the secret in the target namespace and pass the name. K8s namespace conventions vary widely, so we keep secret creation explicit.
+
