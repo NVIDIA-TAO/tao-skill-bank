@@ -9,6 +9,10 @@ Copy and complete `assets/default_policy.yaml`, then run
 `init_deft_od_aoi.py` into a new result directory. Gate on
 `deft_od_aoi_policy.yaml`, `input_contract.json`, and `deft_state.json`.
 
+When a synthesis route lacks task weights, run
+`resolve_deft_od_aoi_synthesis.py` and complete every emitted fine-tuning
+request before building the candidate cache.
+
 ## 1. Build candidate embeddings
 
 Run `prepare_deft_od_aoi_retrieval.py candidates`. Submit the emitted real
