@@ -1,0 +1,31 @@
+network_arch: tao-prepare-anomalygennext-inputs
+type: data
+container_image: nvcr.io/nvidia/paidf-anomalygen:1.1.0  # versions-key: images.metropolis_sdg.anomalygen_next
+execution_environment: container
+gpu_spec_key: null
+required_credentials: []
+optional_credentials:
+- name: NGC_KEY
+  source: env_var
+  only_when: the selected platform requires authenticated access to nvcr.io
+actions:
+  prepare_plan:
+    command: scripts/prepare_anomalygennext_inputs.py
+    mode: args
+    inputs:
+      config:
+        type: file
+    outputs:
+      results_dir:
+        type: folder
+      clean_embedding_spec:
+        type: file
+      fn_embedding_spec:
+        type: file
+      selected_fn_queries:
+        type: file
+    upload_excludes:
+    - inputs/
+    args:
+      config: --config {config}
+      output_dir: --output-dir {results_dir}

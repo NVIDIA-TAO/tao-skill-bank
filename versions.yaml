@@ -47,6 +47,7 @@ images:
 
   metropolis_sdg:
     paidf_anomalygen: nvcr.io/nvidia/paidf-anomalygen:1.0.1
+    anomalygen_next: nvcr.io/nvidia/paidf-anomalygen:1.1.0
     paidf_augmentation: nvcr.io/nvidia/paidf-augmentation:1.0.0
 wheels:
   # TAO Python wheels, published to public PyPI. Skill Preflight sections
