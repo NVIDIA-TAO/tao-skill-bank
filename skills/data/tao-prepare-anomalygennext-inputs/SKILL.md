@@ -15,9 +15,11 @@ tags: [tao, data, anomalygen-next, object-detection, input-preparation]
 
 # Prepare AnomalyGenNext Inputs
 
-This first action freezes eligible false-negative identities, isolates each FN
+The first action freezes eligible false-negative identities, isolates each FN
 mask to its bounding box, selects one deterministic same-type mask, and emits
-the clean and FN embedding specs. It neither computes embeddings nor runs AMP.
+the clean and FN embedding specs. The second action consumes those embedding
+results, preserves every FN-to-clean pair, and runs native automatic mask
+placement (AMP) from the AnomalyGenNext container.
 
 ## Input contract
 
@@ -57,6 +59,19 @@ The output root must not exist. The action emits `fn_queries.parquet`,
 `selected_fn_queries.parquet`, `mask_selection.parquet`, `clean_pool.parquet`,
 two `tao-generate-image-embeddings` specs, the copied filtering config, and
 `input_contract.json`.
+
+Run both emitted specs through `tao-generate-image-embeddings`, preserving the
+same encoder. Place their outputs under `embeddings/` as named by the specs,
+then submit the `run_amp` action:
+
+```bash
+scripts/run_anomalygennext_amp.py \
+  --config /path/to/filtering.yaml \
+  --prepared-root /existing/result/root
+```
+
+This writes `knn_candidates.parquet`, the native AMP request, and
+`amp/testcase.jsonl`. Platform skills own staging and cache placement.
 
 ## Gates
 
