@@ -118,6 +118,19 @@ def _operator_disclosures(state: dict[str, Any]) -> str:
     return '<h2>Operator contract changes</h2><div class="grid">' + "".join(disclosures) + "</div>"
 
 
+def _operator_stop(state: dict[str, Any]) -> str:
+    stop = state.get("operator_stop")
+    if not isinstance(stop, dict):
+        return ""
+    return (
+        '<h2>Operator stop</h2><div class="grid"><section class="card warning">'
+        f"<p>Stopped after {_escape(stop.get('iteration'))} {_escape(stop.get('after_stage'))}.</p>"
+        f"<p>Iteration Benchmark scored: {_escape(stop.get('benchmark_scored'))}</p>"
+        f"<p>{_escape(stop.get('reason'))}</p>"
+        "</section></div>"
+    )
+
+
 def _benchmark_trajectory(state: dict[str, Any]) -> str:
     trajectory = state.get("benchmark_trajectory")
     if not isinstance(trajectory, dict):
@@ -163,6 +176,7 @@ code{{overflow-wrap:anywhere}} .status{{color:#3b7d23;font-weight:700}} .warning
 <section class="card"><h3>Runtime</h3><p>Backend: {_escape(config.get('training', {}).get('backend') if isinstance(config, dict) else None)}</p><p>Checkpoint: Framework DCP</p><p>Training source: mined real samples</p></section>
 </div>
 {_operator_disclosures(state)}
+{_operator_stop(state)}
 {_benchmark_trajectory(state)}
 <h2>Iterations</h2><div class="grid">{_iteration_cards(state)}</div>
 <h2>Committed stages</h2><table><thead><tr><th>#</th><th>Iteration</th><th>Stage</th><th>Status</th><th>Seconds</th><th>Summary</th></tr></thead><tbody>{_rows(state)}</tbody></table>

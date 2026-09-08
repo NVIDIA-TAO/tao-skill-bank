@@ -19,8 +19,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results-dir", required=True, type=pathlib.Path)
     parser.add_argument("--iter-label", required=True)
     parser.add_argument(
-        "--stop-reason", required=True, choices=("metric_met", "max_iterations")
+        "--stop-reason",
+        required=True,
+        choices=("metric_met", "max_iterations", "operator_requested"),
     )
+    parser.add_argument("--operator-reason")
     parser.add_argument("--duration-sec", required=True, type=int)
     args = parser.parse_args(argv)
     try:
@@ -28,17 +31,18 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - normalize deterministic finalization errors
         print(f"finalize_run: {exc}", file=sys.stderr)
         return 2
-    return commit_stage.main(
-        [
-            "--results-dir", str(args.results_dir),
-            "--iter-label", args.iter_label,
-            "--stage", "loop_stop",
-            "--summary", "deterministic finalization",
-            "--duration-sec", str(args.duration_sec),
-            "--stop-reason", args.stop_reason,
-            "--final-report", str(report),
-        ]
-    )
+    commit_args = [
+        "--results-dir", str(args.results_dir),
+        "--iter-label", args.iter_label,
+        "--stage", "loop_stop",
+        "--summary", "deterministic finalization",
+        "--duration-sec", str(args.duration_sec),
+        "--stop-reason", args.stop_reason,
+        "--final-report", str(report),
+    ]
+    if args.operator_reason:
+        commit_args.extend(["--operator-reason", args.operator_reason])
+    return commit_stage.main(commit_args)
 
 
 if __name__ == "__main__":

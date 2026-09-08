@@ -499,9 +499,17 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
         expected_commit_stage = (
             "loop_stop" if expected_stage == "finalize" else expected_stage
         )
-        if (
-            args.iter_label != expected_label
-            or args.stage != expected_commit_stage
+        operator_stop = (
+            args.stage == "loop_stop" and args.stop_reason == "operator_requested"
+        )
+        current_label = f"iter{int(state.get('current_iteration', 0))}"
+        if operator_stop and args.iter_label != current_label:
+            raise ValueError(
+                "operator stop must target the current iteration: "
+                f"expected {current_label}, got {args.iter_label}"
+            )
+        if not operator_stop and (
+            args.iter_label != expected_label or args.stage != expected_commit_stage
         ):
             raise ValueError(
                 "commit does not match durable next stage: "
@@ -565,13 +573,51 @@ def commit(args: argparse.Namespace) -> dict[str, Any]:
                 )
             result = phase.get("metric_result")
             passed = isinstance(result, dict) and result.get("passed") is True
-            if not phase.get("raw_f1_report") or not isinstance(
-                result, dict
-            ):
-                raise ValueError(
-                    "loop_stop requires final benchmark_metrics evidence"
-                )
-            if args.stop_reason == "metric_met":
+            if args.stop_reason == "operator_requested":
+                if phase.get("stage_completed") != "proxy_rcca":
+                    raise ValueError(
+                        "--stop-reason operator_requested is legal only after proxy_rcca"
+                    )
+                if not phase.get("proxy_raw_f1_report") or not isinstance(
+                    phase.get("proxy_metric_result"), dict
+                ):
+                    raise ValueError(
+                        "operator stop requires completed Proxy metric evidence"
+                    )
+                if any(
+                    key in phase
+                    for key in (
+                        "benchmark_predictions_jsonl",
+                        "raw_f1_report",
+                        "metric_result",
+                    )
+                ):
+                    raise ValueError(
+                        "operator stop after Proxy conflicts with iteration Benchmark evidence"
+                    )
+                if not isinstance(
+                    args.operator_reason, str
+                ) or not args.operator_reason.strip():
+                    raise ValueError(
+                        "--operator-reason is required for an operator-requested stop"
+                    )
+                args.summary = "Stopped by operator after iteration Proxy RCCA."
+                phase["operator_stopped"] = True
+                state["stop_reason"] = "operator_requested"
+                state["operator_stop"] = {
+                    "iteration": args.iter_label,
+                    "after_stage": "proxy_rcca",
+                    "benchmark_scored": False,
+                    "reason": args.operator_reason.strip(),
+                }
+            else:
+                if not phase.get("raw_f1_report") or not isinstance(result, dict):
+                    raise ValueError(
+                        "loop_stop requires final benchmark_metrics evidence"
+                    )
+            if args.stop_reason == "operator_requested":
+                pass
+            elif args.stop_reason == "metric_met":
                 if not passed:
                     raise ValueError(
                         "--stop-reason metric_met requires final metric_result.passed=true"
@@ -672,8 +718,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--quota-manifest", type=pathlib.Path)
     parser.add_argument("--validation-report", type=pathlib.Path)
     parser.add_argument(
-        "--stop-reason", choices=("metric_met", "max_iterations")
+        "--stop-reason", choices=("metric_met", "max_iterations", "operator_requested")
     )
+    parser.add_argument("--operator-reason")
     parser.add_argument("--final-report", type=pathlib.Path)
     return parser
 
