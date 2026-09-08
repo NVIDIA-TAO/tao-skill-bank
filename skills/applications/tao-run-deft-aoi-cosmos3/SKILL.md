@@ -170,6 +170,19 @@ smaller. For an enabled ablation,
 `--require-defect-detection-quota-manifest`; each gate re-hashes the JSONL and
 recomputes the optimizer schedule. Never launch Train unless both gates pass.
 
+Reference-task mining records `[mining] pair_similarity` as `canvas` (the
+compatibility default) or `two_vector`. Canvas mode embeds one deterministic
+1024x512 golden/test composite but reduces each board's effective resolution;
+two-vector mode instead embeds the golden and test boards independently at the
+same full single-image resolution and with the same encoder used by ordinary
+mining, reuses matching cached test-board embeddings, and embeds each shared
+golden only once. It ranks only canonical atomic pairs by the `mean` (default)
+or `min` of golden/test cosine similarity, records `sim_golden`, `sim_test`,
+and `sim_pair` for every candidate plus same-board-type hit rates per reference
+query, and never changes pair identity, de-duplication, leakage, budget, or
+two-image materialization. A launch prompt may request `two_vector pair
+similarity (mean|min)`.
+
 ### Repetition blend
 
 After exact-duplicate and Proxy/Benchmark leakage exclusion, the launch-recorded

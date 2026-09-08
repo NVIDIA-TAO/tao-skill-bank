@@ -20,6 +20,8 @@ from validate_sharegpt import image_paths, resolve_image
 PAIR_ASSET_SCHEMA = "nvpaw_reference_pair_embedding_v1"
 PAIR_CANVAS_SIZE = (1024, 512)
 PAIR_DIVIDER_PIXELS = 4
+PAIR_SIMILARITIES = ("canvas", "two_vector")
+PAIR_SIMILARITY_COMBINES = ("mean", "min")
 
 
 def identity_for_paths(kind: str, paths: Iterable[str]) -> str:
@@ -188,3 +190,22 @@ def embedding_filepath(
     if pair_assets_dir is None:
         raise ValueError("pair_assets_dir is required for reference-pair embedding")
     return str(materialize_pair_asset(sample, pair_assets_dir=pair_assets_dir))
+
+
+def single_image_embedding_sample(
+    filepath: str, *, embedding_roles: Iterable[str] = ()
+) -> dict[str, Any]:
+    """Return one cache-compatible full-resolution image embedding input."""
+
+    path = str(pathlib.Path(filepath).expanduser().resolve())
+    identity = identity_for_paths("single_image", [path])
+    return {
+        "atomic_sample_id": identity,
+        "embedding_cache_key": identity,
+        "sample_kind": "single_image",
+        "image_paths": [path],
+        "reference_filepath": None,
+        "target_filepath": path,
+        "filepath": path,
+        "embedding_roles": sorted(set(embedding_roles)),
+    }

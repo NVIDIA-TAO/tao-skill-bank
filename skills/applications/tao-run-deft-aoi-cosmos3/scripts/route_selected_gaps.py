@@ -13,7 +13,12 @@ import sys
 from collections import Counter
 from typing import Any
 
-from atomic_samples import embedding_filepath, sample_from_record
+from atomic_samples import (
+    PAIR_SIMILARITIES,
+    embedding_filepath,
+    sample_from_record,
+    single_image_embedding_sample,
+)
 
 DEFECT_DETECTION_TASK = "Defect Detection"
 DEFECT_DETECTION_MINING_EVIDENCE = {
@@ -256,9 +261,16 @@ def materialize_embedding_inputs(
     targets: list[dict[str, Any]],
     *,
     media_root: pathlib.Path,
-    pair_assets_dir: pathlib.Path,
+    pair_assets_dir: pathlib.Path | None = None,
+    pair_similarity: str = "canvas",
 ) -> list[dict[str, Any]]:
+    if pair_similarity not in PAIR_SIMILARITIES:
+        raise ValueError(
+            f"unsupported pair similarity {pair_similarity!r}; "
+            f"choose one of {PAIR_SIMILARITIES}"
+        )
     output: list[dict[str, Any]] = []
+    components: dict[str, dict[str, Any]] = {}
     for index, target in enumerate(targets):
         record = {
             "task_type": target["task_types"][0],
@@ -281,11 +293,47 @@ def materialize_embedding_inputs(
         )
         materialized = dict(target)
         materialized.update(sample)
-        materialized["filepath"] = embedding_filepath(
-            sample, pair_assets_dir=pair_assets_dir
+        if pair_similarity == "canvas":
+            materialized["filepath"] = embedding_filepath(
+                sample, pair_assets_dir=pair_assets_dir
+            )
+            output.append(materialized)
+            continue
+        materialized["filepath"] = sample["target_filepath"]
+        roles_and_paths = (
+            [("test", str(sample["target_filepath"]))]
+            if sample["sample_kind"] == "single_image"
+            else [
+                ("golden", str(sample["reference_filepath"])),
+                ("test", str(sample["target_filepath"])),
+            ]
         )
-        output.append(materialized)
-    return output
+        for role, filepath in roles_and_paths:
+            component = single_image_embedding_sample(
+                filepath, embedding_roles=[role]
+            )
+            cache_key = str(component["embedding_cache_key"])
+            membership = {**materialized, "role": role}
+            if cache_key not in components:
+                component["embedding_memberships"] = [membership]
+                components[cache_key] = component
+                continue
+            components[cache_key]["embedding_roles"] = sorted(
+                set(components[cache_key]["embedding_roles"]) | {role}
+            )
+            components[cache_key]["embedding_memberships"].append(membership)
+    if pair_similarity == "canvas":
+        return output
+    for component in components.values():
+        component["embedding_memberships"] = json.dumps(
+            sorted(
+                component["embedding_memberships"],
+                key=lambda item: (item["target_id"], item["role"]),
+            ),
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    return list(components.values())
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -302,7 +350,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-parquet", required=True, type=pathlib.Path)
     parser.add_argument("--summary", required=True, type=pathlib.Path)
     parser.add_argument("--media-root", required=True, type=pathlib.Path)
-    parser.add_argument("--pair-assets-dir", required=True, type=pathlib.Path)
+    parser.add_argument("--pair-assets-dir", type=pathlib.Path)
+    parser.add_argument("--pair-similarity", choices=PAIR_SIMILARITIES, default="canvas")
     return parser
 
 
@@ -329,7 +378,10 @@ def main(argv: list[str] | None = None) -> int:
             targets,
             media_root=args.media_root.expanduser().resolve(),
             pair_assets_dir=args.pair_assets_dir,
+            pair_similarity=args.pair_similarity,
         )
+        summary["pair_similarity"] = args.pair_similarity
+        summary["embedding_inputs"] = len(targets)
         if supplement_summary is not None:
             summary["defect_detection_supplement"] = supplement_summary
         for path in (args.output_json, args.output_parquet, args.summary):

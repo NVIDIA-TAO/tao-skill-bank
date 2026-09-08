@@ -191,6 +191,111 @@ class Cosmos3BuildMiningSourcePoolTests(unittest.TestCase):
                     delta_output=root / "delta.parquet",
                 )
 
+    def test_canvas_rejects_legacy_filepath_only_pair_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            annotations = root / "mining.jsonl"
+            for name in ("golden.png", "test.png"):
+                path = root / "images" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                Image.new("RGB", (8, 6), color="white").save(path)
+            annotations.write_text(
+                json.dumps(
+                    _row(
+                        "pair",
+                        "Ref_based Defect Detection",
+                        ["images/golden.png", "images/test.png"],
+                    )
+                )
+                + "\n"
+            )
+            initial = root / "initial.parquet"
+            build_mining_source_pool.build(
+                annotations=annotations,
+                media_root=root,
+                output=initial,
+                summary_output=root / "initial-summary.json",
+                pair_assets_dir=root / "pair-assets",
+            )
+            pair_canvas = pq.read_table(initial).column("filepath").to_pylist()[0]
+            reuse = root / "legacy-reuse.parquet"
+            pq.write_table(pa.table({"filepath": [pair_canvas]}), reuse)
+
+            with self.assertRaisesRegex(ValueError, "cannot identify reference pairs"):
+                build_mining_source_pool.build(
+                    annotations=annotations,
+                    media_root=root,
+                    output=root / "pool.parquet",
+                    summary_output=root / "summary.json",
+                    reuse_pool=reuse,
+                    delta_output=root / "delta.parquet",
+                    pair_assets_dir=root / "pair-assets",
+                )
+
+    def test_two_vector_pool_reuses_cached_test_board_embedding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            annotations = root / "mining.jsonl"
+            for name in ("golden.png", "test.png"):
+                path = root / "images" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                Image.new("RGB", (8, 6), color="white").save(path)
+            annotations.write_text(
+                "\n".join(
+                    json.dumps(row)
+                    for row in (
+                        _row("single", "Component Detection", ["images/test.png"]),
+                        _row(
+                            "pair",
+                            "Ref_based Defect Detection",
+                            ["images/golden.png", "images/test.png"],
+                        ),
+                    )
+                )
+                + "\n"
+            )
+            current = root / "current.parquet"
+            build_mining_source_pool.build(
+                annotations=annotations,
+                media_root=root,
+                output=current,
+                summary_output=root / "current-summary.json",
+                pair_similarity="two_vector",
+            )
+            current_rows = pq.read_table(current).to_pylist()
+            cached_test = [
+                row for row in current_rows if row["filepath"].endswith("test.png")
+            ]
+            obsolete_canvas = {
+                **cached_test[0],
+                "filepath": str(root / "obsolete-pair-canvas.png"),
+                "atomic_sample_id": "reference_pair:" + "a" * 64,
+                "embedding_cache_key": "reference_pair:" + "a" * 64,
+            }
+            pq.write_table(
+                pa.Table.from_pylist([*cached_test, obsolete_canvas]),
+                root / "reuse.parquet",
+            )
+
+            payload = build_mining_source_pool.build(
+                annotations=annotations,
+                media_root=root,
+                output=root / "source-pool.parquet",
+                summary_output=root / "summary.json",
+                reuse_pool=root / "reuse.parquet",
+                delta_output=root / "delta.parquet",
+                pair_similarity="two_vector",
+            )
+
+            delta_rows = pq.read_table(root / "delta.parquet").to_pylist()
+            self.assertEqual(payload["pool_size"], 2)
+            self.assertEqual(payload["embedding_inputs"], 2)
+            self.assertEqual(payload["reused_targets"], 1)
+            self.assertEqual(payload["ignored_cached_targets"], 1)
+            self.assertEqual(payload["delta_targets"], 1)
+            self.assertTrue(delta_rows[0]["filepath"].endswith("golden.png"))
+            self.assertFalse((root / "pair-assets").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

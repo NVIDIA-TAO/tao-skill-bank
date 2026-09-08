@@ -33,6 +33,30 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
                 state["config"]["evaluation"]["benchmark_cadence"],
                 "final_and_best",
             )
+            self.assertEqual(state["config"]["mining"]["pair_similarity"], "canvas")
+            self.assertEqual(
+                state["config"]["mining"]["pair_similarity_combine"], "mean"
+            )
+
+    def test_two_vector_pair_similarity_is_launch_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(
+                self._argv(
+                    root,
+                    workspace,
+                    "--pair-similarity", "two_vector",
+                    "--pair-similarity-combine", "min",
+                )
+            )
+
+            self.assertEqual(rc, 0)
+            mining = json.loads(
+                (root / "results/deft_state.json").read_text()
+            )["config"]["mining"]
+            self.assertEqual(mining["pair_similarity"], "two_vector")
+            self.assertEqual(mining["pair_similarity_combine"], "min")
 
     def test_calibration_quotas_are_bound_to_proxy_rates_by_cohort(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

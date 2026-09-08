@@ -8,15 +8,36 @@ track it with its own job-record.
 ## Inputs and isolation
 
 - query targets: selected Proxy RCCA gaps only, with each reference pair
-  represented by one pair embedding asset;
+  represented by either one canvas asset or two full-resolution component
+  embeddings according to the frozen similarity mode;
 - source pool: canonical `annotations/mining.jsonl` and its media, materialized
-  by `build_mining_source_pool.py --pair-assets-dir ...` at `atomic_sample_id`
-  granularity;
+  by `build_mining_source_pool.py` at `atomic_sample_id` granularity (canvas
+  mode additionally requires `--pair-assets-dir ...`);
 - top-K, cosine floor, and router mode: frozen DEFT state;
 - output root: `${RESULTS_DIR}/iterN/mining`.
 
 Benchmark records or errors must never enter query or source inputs. Proxy
 records are query targets, not trainable source samples.
+
+`config.mining.pair_similarity` selects `canvas` (the backward-compatible
+default) or `two_vector`. Canvas uses one 1024x512 golden/test composite and
+therefore halves each board's effective input resolution; two-vector uses the
+same full-resolution single-image encoder separately for golden and test,
+deduplicates shared golden inputs, and reuses test embeddings when their
+single-image cache key matches. The router combines the two cosine scores with
+`config.mining.pair_similarity_combine = mean | min` (default `mean`), writes
+`sim_golden`, `sim_test`, and `sim_pair` on every candidate, and reports
+same-golden-path-or-board-prefix hits for each reference query. Both modes keep
+`atomic_sample_id`, history, leakage exclusion, budgets, and canonical
+golden-then-test materialization pair-atomic; two-vector never synthesizes a
+golden/test combination absent from Mining annotations. Pass the same
+`--pair-similarity` value to `build_mining_source_pool.py`,
+`route_selected_gaps.py`, and `task_mining_router.py` so the embedding inputs
+and router interpretation remain identical; pass the recorded combine value
+only to the router. When migrating an existing canvas cache, use
+`merge_source_embedding_cache.py --allow-cached-superset` so matching
+full-resolution test rows are retained while obsolete canvas rows are ignored
+and counted.
 
 ## Task-aware routing
 
@@ -33,6 +54,8 @@ embedding paths back to exact ordered pairs.
   --source-annotations "$MINING_ANNOTATIONS" \
   --media-root "$MEDIA_ROOT" \
   --pair-assets-dir "$RESULTS_DIR/source_pair_assets" \
+  --pair-similarity "$PAIR_SIMILARITY" \
+  --pair-similarity-combine "$PAIR_SIMILARITY_COMBINE" \
   --mode "$MINING_ROUTER_MODE" \
   --top-k-per-target "$TOPN" \
   --defect-detection-top-k-per-target "$DD_TOPN" \

@@ -22,10 +22,11 @@ import pyarrow.parquet as pq
 
 from nvpaw_annotations import TASK_SPECS
 from atomic_samples import (
+    PAIR_SIMILARITIES,
     embedding_filepath,
     materialize_pair_asset,
-    pair_asset_path,
     sample_from_record,
+    single_image_embedding_sample,
 )
 
 
@@ -76,9 +77,16 @@ def _json_loader() -> Callable[[bytes], dict[str, Any]]:
 
 
 def _read_unique_pool(path: pathlib.Path) -> list[dict[str, Any]]:
-    table = pq.read_table(path.expanduser().resolve(strict=True))
-    if "filepath" not in table.column_names:
+    resolved = path.expanduser().resolve(strict=True)
+    column_names = pq.ParquetFile(resolved).schema_arrow.names
+    if "filepath" not in column_names:
         raise ValueError(f"reuse pool has no filepath column: {path}")
+    key_columns = [
+        field
+        for field in ("filepath", "atomic_sample_id", "embedding_cache_key")
+        if field in column_names
+    ]
+    table = pq.read_table(resolved, columns=key_columns)
     values = table.column("filepath").to_pylist()
     if not values or any(not isinstance(value, str) or not value for value in values):
         raise ValueError(f"reuse pool has invalid filepath values: {path}")
@@ -91,7 +99,95 @@ def _read_unique_pool(path: pathlib.Path) -> list[dict[str, Any]]:
             raise ValueError(f"reuse pool has invalid atomic_sample_id values: {path}")
         if len(identities) != len(set(identities)):
             raise ValueError(f"reuse pool atomic_sample_id values are not unique: {path}")
+    if "embedding_cache_key" in table.column_names:
+        cache_keys = [row.get("embedding_cache_key") for row in rows]
+        if any(not isinstance(value, str) or not value for value in cache_keys):
+            raise ValueError(f"reuse pool has invalid embedding_cache_key values: {path}")
+        if len(cache_keys) != len(set(cache_keys)):
+            raise ValueError(f"reuse pool embedding_cache_key values are not unique: {path}")
     return rows
+
+
+def _embedding_cache_key(row: dict[str, Any]) -> str:
+    for field in ("embedding_cache_key", "atomic_sample_id", "filepath"):
+        value = row.get(field)
+        if isinstance(value, str) and value:
+            return value
+    raise ValueError("embedding input has no cache key")
+
+
+def _embedding_cache_aliases(row: dict[str, Any]) -> set[str]:
+    return {
+        value
+        for field in ("embedding_cache_key", "atomic_sample_id", "filepath")
+        for value in [row.get(field)]
+        if isinstance(value, str) and value
+    }
+
+
+def _embedding_inputs(
+    atomic_samples: list[dict[str, Any]],
+    *,
+    pair_similarity: str,
+    pair_assets_dir: pathlib.Path | None,
+    pair_asset_workers: int,
+) -> list[dict[str, Any]]:
+    if pair_similarity == "canvas":
+        reference_samples = [
+            sample
+            for sample in atomic_samples
+            if sample["sample_kind"] == "reference_pair"
+        ]
+        if reference_samples and pair_assets_dir is None:
+            raise ValueError("pair_assets_dir is required for reference-pair embedding")
+        if pair_asset_workers == 1:
+            for sample in reference_samples:
+                materialize_pair_asset(sample, pair_assets_dir=pair_assets_dir)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=pair_asset_workers
+            ) as executor:
+                for _ in executor.map(
+                    lambda sample: materialize_pair_asset(
+                        sample, pair_assets_dir=pair_assets_dir
+                    ),
+                    reference_samples,
+                ):
+                    pass
+        output: list[dict[str, Any]] = []
+        for sample in atomic_samples:
+            item = dict(sample)
+            item["filepath"] = embedding_filepath(
+                sample, pair_assets_dir=pair_assets_dir
+            )
+            output.append(item)
+        return output
+
+    by_cache_key: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for sample in atomic_samples:
+        roles_and_paths = (
+            [("test", str(sample["target_filepath"]))]
+            if sample["sample_kind"] == "single_image"
+            else [
+                ("golden", str(sample["reference_filepath"])),
+                ("test", str(sample["target_filepath"])),
+            ]
+        )
+        for role, filepath in roles_and_paths:
+            item = single_image_embedding_sample(
+                filepath, embedding_roles=[role]
+            )
+            cache_key = str(item["embedding_cache_key"])
+            if cache_key not in by_cache_key:
+                by_cache_key[cache_key] = item
+                order.append(cache_key)
+                continue
+            existing = by_cache_key[cache_key]
+            existing["embedding_roles"] = sorted(
+                set(existing["embedding_roles"]) | {role}
+            )
+    return [by_cache_key[key] for key in order]
 
 
 def build(
@@ -104,11 +200,17 @@ def build(
     delta_output: pathlib.Path | None = None,
     pair_assets_dir: pathlib.Path | None = None,
     pair_asset_workers: int = 1,
+    pair_similarity: str = "canvas",
 ) -> dict[str, Any]:
     annotations = annotations.expanduser().resolve(strict=True)
     media_root = media_root.expanduser().resolve()
     if pair_asset_workers <= 0:
         raise ValueError("pair_asset_workers must be positive")
+    if pair_similarity not in PAIR_SIMILARITIES:
+        raise ValueError(
+            f"unsupported pair similarity {pair_similarity!r}; "
+            f"choose one of {PAIR_SIMILARITIES}"
+        )
     loads = _json_loader()
     ordered_samples: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -143,46 +245,23 @@ def build(
             identity = str(sample["atomic_sample_id"])
             if identity not in seen:
                 seen.add(identity)
-                if sample["sample_kind"] == "reference_pair":
-                    if pair_assets_dir is None:
-                        raise ValueError(
-                            "pair_assets_dir is required for reference-pair embedding"
-                        )
-                    sample["filepath"] = str(
-                        pair_asset_path(pair_assets_dir, identity)
-                    )
-                else:
-                    sample["filepath"] = embedding_filepath(
-                        sample, pair_assets_dir=pair_assets_dir
-                    )
                 ordered_samples.append(sample)
             tasks[str(task)] += 1
             supported_rows += 1
     if not ordered_samples:
         raise ValueError("Mining annotations contain no supported atomic samples")
-    reference_samples = [
-        sample
-        for sample in ordered_samples
-        if sample["sample_kind"] == "reference_pair"
-    ]
-    if pair_asset_workers == 1:
-        for sample in reference_samples:
-            materialize_pair_asset(sample, pair_assets_dir=pair_assets_dir)
-    else:
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=pair_asset_workers
-        ) as executor:
-            for _ in executor.map(
-                lambda sample: materialize_pair_asset(
-                    sample, pair_assets_dir=pair_assets_dir
-                ),
-                reference_samples,
-            ):
-                pass
+    atomic_samples = ordered_samples
+    ordered_samples = _embedding_inputs(
+        atomic_samples,
+        pair_similarity=pair_similarity,
+        pair_assets_dir=pair_assets_dir,
+        pair_asset_workers=pair_asset_workers,
+    )
 
     output = output.expanduser().resolve()
     _atomic_parquet(output, ordered_samples)
     reused_targets = 0
+    ignored_cached_targets = 0
     delta_targets = len(ordered_samples)
     delta_sha256: str | None = None
     resolved_reuse: str | None = None
@@ -191,30 +270,58 @@ def build(
         if delta_output is None:
             raise ValueError("delta_output is required with reuse_pool")
         cached = _read_unique_pool(reuse_pool)
-        current_by_filepath = {row["filepath"]: row for row in ordered_samples}
-        if all("atomic_sample_id" in row for row in cached):
-            cached_set = {row["atomic_sample_id"] for row in cached}
-            current_set = {row["atomic_sample_id"] for row in ordered_samples}
-            delta = [
-                row for row in ordered_samples if row["atomic_sample_id"] not in cached_set
-            ]
-        else:
-            cached_set = {row["filepath"] for row in cached}
+        if pair_similarity == "canvas" and not all(
+            "atomic_sample_id" in row for row in cached
+        ):
+            current_by_filepath = {row["filepath"]: row for row in ordered_samples}
             if any(
-                current_by_filepath.get(path, {}).get("sample_kind") == "reference_pair"
-                for path in cached_set
+                current_by_filepath.get(row["filepath"], {}).get("sample_kind")
+                == "reference_pair"
+                for row in cached
             ):
-                raise ValueError("legacy reuse pools cannot identify reference pairs atomically")
-            current_set = set(current_by_filepath)
-            delta = [row for row in ordered_samples if row["filepath"] not in cached_set]
-        if not cached_set.issubset(current_set):
+                raise ValueError(
+                    "legacy reuse pools cannot identify reference pairs atomically"
+                )
+        current_by_alias: dict[str, str] = {}
+        for row in ordered_samples:
+            primary = _embedding_cache_key(row)
+            for alias in _embedding_cache_aliases(row):
+                existing = current_by_alias.setdefault(alias, primary)
+                if existing != primary:
+                    raise ValueError(f"embedding cache alias is ambiguous: {alias!r}")
+        cached_set: set[str] = set()
+        missing_cached: list[str] = []
+        ambiguous_cached: list[str] = []
+        for row in cached:
+            matches = {
+                current_by_alias[alias]
+                for alias in _embedding_cache_aliases(row)
+                if alias in current_by_alias
+            }
+            if not matches:
+                missing_cached.append(_embedding_cache_key(row))
+                continue
+            if len(matches) != 1:
+                ambiguous_cached.append(_embedding_cache_key(row))
+                continue
+            cached_set.update(matches)
+        current_set = {_embedding_cache_key(row) for row in ordered_samples}
+        delta = [
+            row
+            for row in ordered_samples
+            if _embedding_cache_key(row) not in cached_set
+        ]
+        if ambiguous_cached or (
+            missing_cached and pair_similarity != "two_vector"
+        ) or not cached_set.issubset(current_set):
             raise ValueError(
                 "reuse pool is not a subset of the current Mining atomic pool: "
-                f"extra_cached={sorted(cached_set - current_set)[:10]}"
+                f"extra_cached={sorted(ambiguous_cached or missing_cached or (cached_set - current_set))[:10]}"
             )
         delta_output = delta_output.expanduser().resolve()
         _atomic_parquet(delta_output, delta)
-        reused_targets = len(cached)
+        reused_targets = len(cached_set)
+        ignored_cached_targets = len(missing_cached)
         delta_targets = len(delta)
         delta_sha256 = _sha256(delta_output)
         resolved_reuse = str(reuse_pool.expanduser().resolve(strict=True))
@@ -230,13 +337,15 @@ def build(
         "unsupported_rows": raw_rows - supported_rows,
         "unsupported_tasks": dict(sorted(unsupported.items())),
         "task_rows": dict(sorted(tasks.items())),
-        "pool_size": len(ordered_samples),
+        "pool_size": len(atomic_samples),
         "pool_identity": "atomic_sample_id",
+        "pair_similarity": pair_similarity,
+        "embedding_inputs": len(ordered_samples),
         "single_images": sum(
-            row["sample_kind"] == "single_image" for row in ordered_samples
+            row["sample_kind"] == "single_image" for row in atomic_samples
         ),
         "reference_pairs": sum(
-            row["sample_kind"] == "reference_pair" for row in ordered_samples
+            row["sample_kind"] == "reference_pair" for row in atomic_samples
         ),
         "pair_embedding_asset_schema": "nvpaw_reference_pair_embedding_v1",
         "pair_asset_workers": pair_asset_workers,
@@ -244,6 +353,7 @@ def build(
         "output_sha256": _sha256(output),
         "reuse_pool": resolved_reuse,
         "reused_targets": reused_targets,
+        "ignored_cached_targets": ignored_cached_targets,
         "delta_output": resolved_delta,
         "delta_sha256": delta_sha256,
         "delta_targets": delta_targets,
@@ -262,6 +372,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--delta-output", type=pathlib.Path)
     parser.add_argument("--pair-assets-dir", type=pathlib.Path)
     parser.add_argument("--pair-asset-workers", type=int, default=1)
+    parser.add_argument("--pair-similarity", choices=PAIR_SIMILARITIES, default="canvas")
     args = parser.parse_args(argv)
     try:
         payload = build(
@@ -273,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
             delta_output=args.delta_output,
             pair_assets_dir=args.pair_assets_dir,
             pair_asset_workers=args.pair_asset_workers,
+            pair_similarity=args.pair_similarity,
         )
     except (OSError, ValueError, pa.ArrowException) as exc:
         print(f"build_mining_source_pool: {exc}", file=sys.stderr)
