@@ -126,6 +126,123 @@ class _Evaluator:
 
 
 class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
+    def test_real_shape_shortfall_preserves_strict_and_reference_calibration(
+        self,
+    ) -> None:
+        rows: list[dict] = []
+        candidates: list[dict] = []
+        one_box = [{"bbox_2d": [10, 10, 100, 100], "label": "open"}]
+
+        for bucket, boxes, evidence in (
+            ("empty", [], ["calibration_empty_ground_truth"]),
+            ("few", one_box, ["calibration_few_box_ground_truth"]),
+        ):
+            for index in range(512):
+                row = _row(
+                    f"single-cal-{bucket}-{index}",
+                    "Defect Detection",
+                    boxes=boxes,
+                )
+                rows.append(row)
+                candidates.append(
+                    _candidate(
+                        row,
+                        evidence=evidence,
+                        phash=f"{len(candidates) + 1:016x}",
+                        route_tier="calibration",
+                    )
+                )
+
+        for index in range(562):
+            empty = index % 2 == 0
+            row = _row(
+                f"strict-dd-{index}",
+                "Defect Detection",
+                boxes=[] if empty else one_box,
+            )
+            rows.append(row)
+            candidates.append(
+                _candidate(
+                    row,
+                    evidence=(
+                        ["hard_negative_proxy_false_positive"]
+                        if empty
+                        else ["hard_positive_proxy_false_negative"]
+                    ),
+                    phash=f"{len(candidates) + 1:016x}",
+                )
+            )
+
+        for index in range(500):
+            no_change = index < 212
+            row = _row(
+                f"reference-cal-{index}",
+                "Ref_based Defect Detection",
+                boxes=[] if no_change else one_box,
+            )
+            rows.append(row)
+            evidence = (
+                [
+                    "calibration_empty_ground_truth",
+                    "calibration_reference_no_change_ground_truth",
+                ]
+                if no_change
+                else ["calibration_few_box_ground_truth"]
+            )
+            candidates.append(
+                _candidate(
+                    row,
+                    evidence=evidence,
+                    phash=f"{len(candidates) + 1:016x}",
+                    route_tier="calibration",
+                )
+            )
+
+        other_maintenance_tasks = (
+            "Component Classification",
+            "Component Detection",
+            "Defect Classification",
+            "Ref_based Defect Classification",
+        )
+        for index in range(480):
+            row = _row(
+                f"maintenance-{index}",
+                other_maintenance_tasks[index % len(other_maintenance_tasks)],
+            )
+            rows.append(row)
+            candidates.append(
+                _candidate(row, phash=f"{len(candidates) + 1:016x}")
+            )
+
+        self.assertEqual(len(candidates), 2_566)
+        selected, manifest = defect_detection_ablation.materialize(
+            candidate_rows=candidates,
+            source_records=rows,
+            validation_records=[],
+            media_root=pathlib.Path("/data"),
+            max_rows=20_000,
+            minimum_rows=768,
+            row_multiple=768,
+            defect_detection_fraction=0.5,
+            proxy_empty_rate=0.5,
+            reference_proxy_empty_rate=0.424,
+            single_image_calibration_max_empty=512,
+            single_image_calibration_max_few=512,
+            reference_calibration_total=500,
+            epochs=5,
+            global_batch=768,
+            near_duplicate_hamming_distance=None,
+            novel_image_limit=2_566,
+        )
+
+        self.assertEqual(len(selected), 1_536)
+        self.assertGreater(
+            manifest["row_counts"]["task_strict_defect_detection"], 0
+        )
+        self.assertEqual(manifest["reference_calibration"]["selected_total"], 500)
+        self.assertEqual(manifest["reference_calibration"]["selected_no_change"], 212)
+        self.assertTrue(manifest["verified"])
+
     def test_hybrid_single_calibration_caps_do_not_cap_task_strict_rows(self) -> None:
         rows: list[dict] = []
         candidates: list[dict] = []

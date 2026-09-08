@@ -496,6 +496,29 @@ def _task_balanced(
     return selected
 
 
+def _interleave_groups(
+    groups: list[list[dict[str, Any]]],
+    *,
+    target: int | None = None,
+) -> list[dict[str, Any]]:
+    limit = sum(len(group) for group in groups) if target is None else target
+    selected: list[dict[str, Any]] = []
+    positions = [0] * len(groups)
+    while len(selected) < limit:
+        advanced = False
+        for index, group in enumerate(groups):
+            if positions[index] >= len(group):
+                continue
+            selected.append(group[positions[index]])
+            positions[index] += 1
+            advanced = True
+            if len(selected) == limit:
+                break
+        if not advanced:
+            break
+    return selected
+
+
 def _without_visual_duplicates(
     entries: Iterable[dict[str, Any]],
     *,
@@ -833,6 +856,38 @@ def materialize(
             item["record_id"],
         )
     )
+    reserved_reference_calibration: list[dict[str, Any]] = []
+    reserved_reference_novel = 0
+    reference_calibration_empty_target = 0
+    if hybrid_calibration:
+        assert reference_calibration_total is not None
+        assert reference_proxy_empty_rate is not None
+        reference_calibration_empty_target = math.floor(
+            reference_calibration_total * reference_proxy_empty_rate + 0.5
+        )
+        reference_calibration_candidates = _without_visual_duplicates(
+            (
+                item
+                for item in maintenance
+                if item["task_type"] == REFERENCE_DEFECT_DETECTION_TASK
+                and item["route_tier"] == "calibration"
+            ),
+            selected=[],
+            hamming_distance=near_duplicate_hamming_distance,
+            counters=counters,
+        )
+        reserved_reference_calibration = _task_balanced(
+            reference_calibration_candidates,
+            reference_calibration_total,
+            max_novel=novel_image_limit,
+            reference_empty_rate=reference_proxy_empty_rate,
+        )
+        reserved_reference_novel = sum(
+            not item["is_replay"] for item in reserved_reference_calibration
+        )
+    defect_detection_novel_limit = max(
+        0, novel_image_limit - reserved_reference_novel
+    )
     if hybrid_calibration:
         assert single_image_calibration_max_empty is not None
         assert single_image_calibration_max_few is not None
@@ -844,14 +899,17 @@ def materialize(
         strict_positive = [item for item in positive if item["route_tier"] == "strict"]
         calibration_empty_unique = _without_visual_duplicates(
             calibration_empty,
-            selected=[],
+            selected=reserved_reference_calibration,
             hamming_distance=near_duplicate_hamming_distance,
             counters=counters,
         )
         selected_calibration_empty: list[dict[str, Any]] = []
         calibration_novel_count = 0
         for item in calibration_empty_unique:
-            if not item["is_replay"] and calibration_novel_count >= novel_image_limit:
+            if (
+                not item["is_replay"]
+                and calibration_novel_count >= defect_detection_novel_limit
+            ):
                 continue
             selected_calibration_empty.append(item)
             calibration_novel_count += not item["is_replay"]
@@ -866,10 +924,12 @@ def materialize(
         selected_calibration_positive, _ = _balanced_positive_selection(
             calibration_positive_unique,
             single_image_calibration_max_few,
-            max_novel=max(0, novel_image_limit - calibration_novel_count),
+            max_novel=max(
+                0, defect_detection_novel_limit - calibration_novel_count
+            ),
         )
-        selected_calibration = (
-            selected_calibration_empty + selected_calibration_positive
+        selected_calibration = _interleave_groups(
+            [selected_calibration_empty, selected_calibration_positive]
         )
         strict_empty_unique = _without_visual_duplicates(
             strict_empty,
@@ -886,7 +946,7 @@ def materialize(
         strict_positive_ordered, _ = _balanced_positive_selection(
             strict_positive_unique,
             len(strict_positive_unique),
-            max_novel=novel_image_limit,
+            max_novel=defect_detection_novel_limit,
         )
         strict_ordered: list[dict[str, Any]] = []
         for index in range(max(len(strict_empty_unique), len(strict_positive_ordered))):
@@ -897,13 +957,16 @@ def materialize(
         selected_strict: list[dict[str, Any]] = []
         selected_novel = sum(not item["is_replay"] for item in selected_calibration)
         for item in strict_ordered:
-            if not item["is_replay"] and selected_novel >= novel_image_limit:
+            if (
+                not item["is_replay"]
+                and selected_novel >= defect_detection_novel_limit
+            ):
                 continue
             selected_strict.append(item)
             selected_novel += not item["is_replay"]
             if len(selected_calibration) + len(selected_strict) == dd_target:
                 break
-        selected_dd = selected_calibration + selected_strict
+        selected_dd = _interleave_groups([selected_strict, selected_calibration])
         selected_empty = [item for item in selected_dd if not item["objects"]]
         selected_positive = [item for item in selected_dd if item["objects"]]
         marginal_quotas = _positive_quota_report(
@@ -939,16 +1002,34 @@ def materialize(
         )
         selected_dd = selected_empty + selected_positive
     maintenance_unique = _without_visual_duplicates(
-        maintenance,
-        selected=selected_dd,
+        (
+            item
+            for item in maintenance
+            if not (
+                hybrid_calibration
+                and item["task_type"] == REFERENCE_DEFECT_DETECTION_TASK
+                and item["route_tier"] == "calibration"
+            )
+        ),
+        selected=selected_dd + reserved_reference_calibration,
         hamming_distance=near_duplicate_hamming_distance,
         counters=counters,
     )
     selected_dd_novel = sum(not item["is_replay"] for item in selected_dd)
-    selected_maintenance = _task_balanced(
+    selected_maintenance = reserved_reference_calibration + _task_balanced(
         maintenance_unique,
-        target_rows - len(selected_dd),
-        max_novel=novel_image_limit - selected_dd_novel,
+        max(
+            0,
+            target_rows
+            - len(selected_dd)
+            - len(reserved_reference_calibration),
+        ),
+        max_novel=max(
+            0,
+            novel_image_limit
+            - selected_dd_novel
+            - reserved_reference_novel,
+        ),
         reference_empty_rate=reference_proxy_empty_rate,
     )
     accepted_target_rows: int | None = None
@@ -961,9 +1042,20 @@ def materialize(
             candidate_dd = math.ceil(candidate_target * defect_detection_fraction)
             candidate_maintenance = candidate_target - candidate_dd
             if hybrid_calibration:
+                reference_calibration_complete = (
+                    len(reserved_reference_calibration)
+                    == reference_calibration_total
+                    and sum(
+                        not item.get("objects")
+                        for item in reserved_reference_calibration
+                    )
+                    == reference_calibration_empty_target
+                )
                 feasible = (
                     candidate_dd <= len(selected_dd)
                     and candidate_maintenance <= len(selected_maintenance)
+                    and candidate_maintenance >= reference_calibration_total
+                    and reference_calibration_complete
                 )
             else:
                 candidate_empty = math.floor(candidate_dd * proxy_empty_rate + 0.5)
@@ -978,7 +1070,19 @@ def materialize(
                 target_rows = candidate_target
                 dd_target = candidate_dd
                 if hybrid_calibration:
-                    selected_dd = selected_dd[:candidate_dd]
+                    if candidate_target < requested_target_rows:
+                        strict_target = min(len(selected_strict), candidate_dd)
+                        calibration_target = min(
+                            len(selected_calibration), candidate_dd - strict_target
+                        )
+                        selected_dd = _interleave_groups(
+                            [
+                                selected_strict[:strict_target],
+                                selected_calibration[:calibration_target],
+                            ]
+                        )
+                    else:
+                        selected_dd = selected_dd[:candidate_dd]
                     selected_empty = [item for item in selected_dd if not item["objects"]]
                     selected_positive = [item for item in selected_dd if item["objects"]]
                     marginal_quotas = _positive_quota_report(
@@ -1042,7 +1146,10 @@ def materialize(
         + (index < maintenance_target % len(MAINTENANCE_TASK_TYPES))
         for index, task in enumerate(MAINTENANCE_TASK_TYPES)
     }
-    maintenance_available = Counter(item["task_type"] for item in maintenance_unique)
+    maintenance_available = Counter(
+        item["task_type"]
+        for item in maintenance_unique + reserved_reference_calibration
+    )
     maintenance_selected = Counter(
         item["task_type"] for item in selected_maintenance
     )
