@@ -550,7 +550,7 @@ def run(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path, int]:
         container_name,
         "--cidfile",
         str(cidfile_path),
-        "--shm-size=8g",
+        "--ipc=host",
         "--user",
         f"{os.getuid()}:{os.getgid()}",
         "--env",

@@ -277,7 +277,7 @@ RECORD = {
     "image": "nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt",  # unpinned: test fixture
     "network_arch": "dino",
     "action": "train",
-    "results_dir": "/lustre/fsw/portfolios/users/me/results/dino-train-a1b2c3",
+    "results_dir": "/lustre/fsw/portfolios/users/example/results/dino-train-a1b2c3",
     "storage_tier": "A",
     "upload_excludes": ["inputs/"],
     "submitted_at": "2026-07-09T18:00:00+00:00",
