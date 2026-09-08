@@ -109,6 +109,18 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("background and near-miss IoU thresholds are inconsistent")
     if policy["class_name"] != "defect":
         raise ValueError("DEFT OD AOI has one foreground class named defect")
+    synthesis = policy.get("synthesis", {})
+    if synthesis.get("enabled"):
+        if not Path(str(synthesis.get("pool_dataset_root") or "")).is_dir():
+            raise ValueError("enabled synthesis needs pool_dataset_root")
+        if not Path(str(synthesis.get("defect_spec") or "")).is_file():
+            raise ValueError("enabled synthesis needs defect_spec")
+        if not synthesis.get("routes"):
+            raise ValueError("enabled synthesis needs at least one dataset route")
+        for name, route in synthesis["routes"].items():
+            if not Path(str(route.get("checkpoint") or "")).is_file() or not Path(
+                    str(route.get("recipe") or "")).is_file():
+                raise ValueError(f"synthesis route {name} needs checkpoint and recipe")
     output.mkdir(parents=True)
     policy["base_checkpoint"] = str(checkpoint)
     policy["sources"] = {name: {"images": role_reports[name]["images"],
@@ -117,7 +129,10 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     frozen.write_text(yaml.safe_dump(policy, sort_keys=False))
     classmap = output / "inference_classmap.txt"
     classmap.write_text("background\ndefect\n")
-    state = {"schema_version": 1, "status": "READY", "mode": "rtdetr_real_only",
+    synthesis_enabled = bool(policy.get("synthesis", {}).get("enabled"))
+    state = {"schema_version": 1, "status": "READY",
+             "mode": "rtdetr_with_synthesis" if synthesis_enabled else "rtdetr_real_only",
+             "synthesis_enabled": synthesis_enabled,
              "current_iteration": 0, "next_stage": "candidate_cache",
              "max_iterations": policy["max_iterations"], "platform": policy["platform"],
              "base_checkpoint": str(checkpoint), "policy": str(frozen.resolve()),

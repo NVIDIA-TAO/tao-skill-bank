@@ -51,3 +51,12 @@ training:
   jitter_backbone_lr_factor: [0.8, 1.2]
   late_best_window: 3
   extension_epochs: 12
+synthesis:
+  enabled: false
+  pool_dataset_root: null
+  defect_spec: null
+  routes: {}
+  max_neighbors_per_fn: 5
+  min_similarity: 0.9
+  cumulative_fraction_of_real_defects: 0.25
+  amp_model_id: nvidia/Cosmos3-Nano

@@ -90,7 +90,8 @@ def _place(source: Path, images: Path, mode: str) -> Path:
 
 
 def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output: Path,
-          previous_path: Path | None, mode: str) -> dict[str, Any]:
+          previous_path: Path | None, mode: str, synthetic_coco: Path | None = None,
+          synthetic_images: Path | None = None) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
@@ -104,7 +105,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     existing_sources = {str(row.get("source_path") or Path(str(row["file_name"])).resolve())
                         for row in previous.get("images", [])}
     by_kind = {kind: sum(row.get("deft_kind") == kind for row in previous.get("images", []))
-               for kind in ("real_defect", "clean_negative")}
+               for kind in ("real_defect", "clean_negative", "synthetic_defect")}
     for role in additions:
         additions[role] = [row for row in additions[role]
                            if str(Path(row["source_filepath"]).resolve()) not in existing_sources]
@@ -154,6 +155,29 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             append(source, row["image"], row["annotations"], kind, float(selected["similarity"]))
             admitted_rows.append({"source_filepath": str(source), "kind": kind,
                                   "similarity": float(selected["similarity"])})
+    synthetic_admitted = 0
+    if bool(synthetic_coco) != bool(synthetic_images):
+        raise ValueError("pass both synthetic COCO and synthetic images, or neither")
+    if synthetic_coco and synthetic_images:
+        document = json.loads(synthetic_coco.read_text())
+        synthetic_annotations: dict[int, list[dict[str, Any]]] = {}
+        for row in document.get("annotations", []):
+            synthetic_annotations.setdefault(int(row["image_id"]), []).append(row)
+        limit = int(real_total * float(policy["synthesis"]["cumulative_fraction_of_real_defects"]))
+        room = max(0, limit - by_kind["synthetic_defect"])
+        for image in document.get("images", []):
+            source = Path(str(image["file_name"]))
+            if not source.is_file():
+                source = synthetic_images / source.name
+            rows = synthetic_annotations.get(int(image["id"]), [])
+            if (synthetic_admitted >= room or not rows or not source.is_file()
+                    or str(source.resolve()) in existing_sources):
+                continue
+            append(source.resolve(), image, rows, "synthetic_defect", None)
+            existing_sources.add(str(source.resolve()))
+            synthetic_admitted += 1
+            admitted_rows.append({"source_filepath": str(source.resolve()),
+                                  "kind": "synthetic_defect", "similarity": None})
     coco = {"images": images, "annotations": annotations,
             "categories": [{"id": 1, "name": "defect"}]}
     _json(output / "train.json", coco)
@@ -162,10 +186,12 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     )
     report = {"status": "COMPLETE", "iteration": int(manifest["iteration"]),
               "retained_previous_images": len(previous.get("images", [])),
-              "admitted": {role: len(additions.get(role, [])) for role in ("real", "clean")},
+              "admitted": {"real": len(additions.get("real", [])),
+                           "clean": len(additions.get("clean", [])),
+                           "synthetic": synthetic_admitted},
               "total_images": len(images), "total_annotations": len(annotations),
               "by_kind": {kind: sum(row["deft_kind"] == kind for row in images)
-                          for kind in ("real_defect", "clean_negative")},
+                          for kind in ("real_defect", "clean_negative", "synthetic_defect")},
               "training_pool_mutated": False}
     _json(output / "admission_report.json", report)
     return report
@@ -178,11 +204,15 @@ def main() -> int:
     parser.add_argument("--retrieval-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--previous-coco", type=Path)
+    parser.add_argument("--synthetic-coco", type=Path)
+    parser.add_argument("--synthetic-images", type=Path)
     parser.add_argument("--link-mode", choices=("copy", "hardlink"), default="copy")
     args = parser.parse_args()
     result = admit(args.policy.resolve(), args.candidate_root.resolve(),
                    args.retrieval_root.resolve(), args.output_dir.resolve(),
-                   args.previous_coco.resolve() if args.previous_coco else None, args.link_mode)
+                   args.previous_coco.resolve() if args.previous_coco else None, args.link_mode,
+                   args.synthetic_coco.resolve() if args.synthetic_coco else None,
+                   args.synthetic_images.resolve() if args.synthetic_images else None)
     print(json.dumps(result, sort_keys=True))
     return 0
 

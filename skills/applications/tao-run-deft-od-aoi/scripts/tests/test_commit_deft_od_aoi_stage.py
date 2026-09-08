@@ -42,3 +42,13 @@ def test_commit_rejects_out_of_order_stage(tmp_path: Path) -> None:
     state, artifact = _state(tmp_path)
     with pytest.raises(ValueError, match="expected stage candidate_cache"):
         MODULE.commit(state, "baseline_measurement", 0, [f"done={artifact}"])
+
+
+def test_synthesis_stage_is_required_when_enabled(tmp_path: Path) -> None:
+    state, artifact = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", synthesis_enabled=True, next_stage="iteration_admission",
+                 current_iteration=1, last_stage="iteration_retrieval")
+    state.write_text(json.dumps(value))
+    value = MODULE.commit(state, "iteration_admission", 1, [f"done={artifact}"])
+    assert value["next_stage"] == "iteration_synthesis"

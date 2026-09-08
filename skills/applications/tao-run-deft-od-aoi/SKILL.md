@@ -179,3 +179,24 @@ and hashes every named file, atomically updates `deft_state.json`, and appends
 `loop_log.jsonl`. The final iteration becomes `COMPLETE` only after its gap
 artifacts are committed. Poll native backends for live state; this record is
 durable workflow history, not a scheduler substitute.
+
+## Optional synthesis with existing task weights
+
+Enable `synthesis` only when KPI annotations carry `dataset_id`, `texture_id`,
+`defect_class`, and a pixel `fn_mask_source`. Each configured dataset route
+must provide an existing AnomalyGenNext checkpoint and matching recipe. After
+strict gap analysis, normalize exact FN/annotation matches:
+
+```bash
+scripts/prepare_deft_od_aoi_synthesis.py \
+  --policy "$RESULTS/deft_od_aoi_policy.yaml" \
+  --strict-gaps "$MEASURE/gap_strict/box_gaps.parquet" \
+  --output-dir "$ITER/synthesis_request"
+```
+
+Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
+then its finalized generation plan through `tao-generate-od-defects`. Commit
+`iteration_synthesis` before training. Re-run admission with the generated
+native COCO and image root; synthetic categories are folded to `defect`, and
+the frozen cumulative fraction cap is applied against admitted real defects.
+Boxes alone never substitute for the required pixel mask.
