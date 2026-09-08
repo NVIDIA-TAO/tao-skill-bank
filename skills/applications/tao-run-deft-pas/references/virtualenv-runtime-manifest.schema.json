@@ -49,7 +49,7 @@
         "version": {"type": "string", "minLength": 1},
         "filename": {"type": "string", "minLength": 1},
         "index_url": {"type": "string", "format": "uri"},
-        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$|^([0-9a-f]{8}-){7}[0-9a-f]{8}$"},
         "size": {"type": "integer", "minimum": 1}
       }
     },
@@ -72,7 +72,7 @@
       "properties": {
         "lock_status": {"enum": ["generation_required", "complete"]},
         "lock_file": {"type": "string", "minLength": 1},
-        "lock_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "lock_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$|^([0-9a-f]{8}-){7}[0-9a-f]{8}$"},
         "distributions": {
           "type": "object",
           "minProperties": 1,

@@ -1,0 +1,23 @@
+version: 2
+# Reviewed false positives - NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "LP1"
+    path: "scripts/audit_deft_run.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - id: "LP1"
+    path: "scripts/commit_stage.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - id: "LP1"
+    path: "scripts/deft_action_contract.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - id: "LP1"
+    path: "scripts/run_deft_action.py"
+    reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - id: "AST5"
+    path: "scripts/run_deft_cli.py"
+    reason: "Reviewed FP (NVIDIA/nvskills-ci#67): documented content in a TAO skill; not an exploitable finding."
+  - id: "E2"
+    path: "scripts/virtualenv_runtime.py"
+    reason: "Reviewed FP: the skill reads its own environment/config for runtime context, as documented."
+  - path: "references/virtualenv-runtime-manifest.json"
+    reason: "Reviewed FP: digit run inside a SHA-256 lock hash matched a payment-card pattern; not a real card number."
