@@ -1,0 +1,44 @@
+network_arch: tao-generate-od-defects
+type: data
+container_image: nvcr.io/nvidia/paidf-anomalygen:1.1.0  # versions-key: images.metropolis_sdg.anomalygen_next
+execution_environment: container
+gpu_spec_key: num_gpus
+required_credentials: []
+optional_credentials:
+- name: HF_TOKEN
+  source: env_var
+  only_when: a required Hugging Face asset is not already cached
+- name: NGC_KEY
+  source: env_var
+  only_when: the selected platform requires authenticated access to nvcr.io
+actions:
+  generate:
+    command: scripts/generate_od_defects.py
+    mode: args
+    inputs:
+      prepared_inputs_root: {type: folder, optional: true}
+      input_data_path: {type: file, optional: true}
+      checkpoint: {type: file, optional: true}
+      recipe: {type: file, optional: true}
+      base_checkpoint: {type: folder}
+      hf_cache: {type: folder, optional: true}
+    outputs:
+      results_dir: {type: folder}
+      validation_summary: {type: file}
+      native_coco: {type: file}
+      binary_coco: {type: file}
+      status: {type: file}
+    upload_excludes:
+    - inputs/
+    args:
+      inputs_dir: --inputs-dir {prepared_inputs_root}
+      input_data_path: --input-data-path {input_data_path}
+      checkpoint: --checkpoint {checkpoint}
+      recipe: --recipe {recipe}
+      base_checkpoint: --base-checkpoint {base_checkpoint}
+      output_dir: --output-dir {results_dir}
+      datasets: --datasets {datasets}
+      num_gpus: --num-gpus {num_gpus}
+      hf_cache: --hf-cache {hf_cache}
+    defaults:
+      num_gpus: 1
