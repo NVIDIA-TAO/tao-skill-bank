@@ -20,6 +20,18 @@ This application is a disk-backed RT-DETR loop for one foreground class,
 `defect`. Its core is real-data-only. Synthetic generation is an optional later
 integration and is not part of this contract.
 
+## References
+
+Read only the references needed for the current stage:
+
+- intake and launch: `references/defaults.md`, `references/data-contract.md`,
+  `references/source-manifest.md`, and `references/preflight.md`;
+- orchestration: `references/pipeline.md` and
+  `references/scripts-and-agents.md`;
+- gaps and retrieval: `references/gap-routing.md` and
+  `references/tao-analyze-gaps-od-map.md`;
+- training and selection: `references/training-policy.md`.
+
 ## Start
 
 Select an installed platform, read its skill, then invoke
