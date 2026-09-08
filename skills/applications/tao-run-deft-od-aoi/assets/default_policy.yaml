@@ -1,0 +1,42 @@
+class_name: defect
+max_iterations: null
+platform: null
+base_checkpoint: null
+sources:
+  kpi: {images: null, coco: null}
+  test: {images: null, coco: null}
+  real: {images: null, coco: null}
+  clean: {images: null, coco: null}
+gap:
+  inference_confidence: 0.001
+  loose_confidence: 0.3
+  strict_confidence: 0.8
+  match_iou: 0.5
+  background_iou_upper: 0.05
+  near_miss_iou_upper: 0.5
+retrieval:
+  model: SigLIP
+  model_path: google/siglip-base-patch16-224
+  defect_context_scale: 1.5
+  minimum_similarity: -1.0
+  candidate_overfetch: 15
+routing:
+  real_mine_factor_min: 1
+  real_mine_factor_max: 6
+  near_miss_real_factor: 2
+  near_miss_real_cap: 20
+  clean_factor: 2
+  clean_cumulative_cap_per_real: 1.0
+training:
+  num_gpus: 4
+  batch_size: 8
+  base_lr: 0.0001
+  backbone_lr: 0.00001
+  early_iterations_epochs: 36
+  adaptive_reference_images: 10000
+  adaptive_min_epochs: 24
+  adaptive_max_epochs: 48
+  probes_enabled: true
+  probe_epochs: 10
+  late_best_window: 3
+  extension_epochs: 12
