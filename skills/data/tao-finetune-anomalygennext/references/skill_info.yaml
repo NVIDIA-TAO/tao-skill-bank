@@ -36,3 +36,40 @@ actions:
       recipe_template: --recipe-template {recipe_template}
       dataset_name: --dataset-name {dataset_name}
       output: --output {recipe}
+  train:
+    command: scripts/finetune_anomalygennext.sh
+    mode: args
+    inputs:
+      recipe: {type: file}
+      dataset_root: {type: folder}
+      validation_testcase: {type: file}
+      base_checkpoint: {type: folder}
+      vae_path: {type: file}
+      nn_backbone:
+        type: folder
+        container_path: /workspace/paidf-anomalygen/checkpoints/facebook/dinov2-large
+      hf_cache: {type: folder, optional: true}
+    outputs:
+      results_dir: {type: folder}
+      nn_improvement_summary: {type: file}
+      status: {type: file}
+      best_model_checkpoint: {type: file}
+      training_handoff: {type: file}
+    upload_excludes:
+    - runtime/anomalygen/*/*/checkpoints/optim/
+    - runtime/anomalygen/*/*/checkpoints/scheduler/
+    - runtime/anomalygen/*/*/checkpoints/trainer/
+    args:
+      recipe: --recipe {recipe}
+      results_dir: --results-dir {results_dir}
+      hf_cache: --hf-cache {hf_cache}
+      num_gpus: --num-gpus {num_gpus}
+      min_nn_improvement: --min-nn-improvement {min_nn_improvement}
+      parallelism: --parallelism {parallelism}
+      compile: --compile {compile}
+      job_id: --job-id {job_id}
+    defaults:
+      num_gpus: 1
+      min_nn_improvement: 0.0
+      parallelism: ddp
+      compile: true

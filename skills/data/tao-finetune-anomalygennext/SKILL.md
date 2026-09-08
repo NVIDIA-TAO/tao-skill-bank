@@ -63,6 +63,28 @@ masks, checks type agreement with `defect_spec.jsonl`, refuses output reuse,
 and emits a recipe plus metadata. `validation_iter` must be a multiple of
 `save_iter`; `max_iter` must reach a post-baseline validation.
 
-The training action and strict `Average.nn_score` completion gate are added by
-the next review slice. Preparation alone is not evidence of successful model
-training.
+## Train and accept
+
+Invoke `tao-launch-workflow`, review the platform, image, mounts, GPU shape,
+runtime, and exact recipe, then submit the `train` action. Bind the selected
+DINOv2 directory read-only at the fixed container path declared in
+`skill_info.yaml`; the public image does not bundle it. An optional Hugging Face
+cache supplies the Qwen tokenizer for offline execution.
+
+```bash
+scripts/finetune_anomalygennext.sh \
+  --recipe /results/canonical_recipe.yaml \
+  --results-dir /new/training_results \
+  --num-gpus 1
+```
+
+The wrapper uses the upstream trainer already inside the pinned container. It
+refuses existing publication outputs and, unless `--resume` is explicit, an
+existing runtime directory. Accept success only when `training_handoff.json`
+is `COMPLETE`: iteration zero and a later scored checkpoint must exist,
+`best_checkpoint.txt` must select the maximum `Average.nn_score`, and the score
+must improve strictly. The handoff hashes the copied adapter and recipe.
+
+Read `references/nn-score-contract.md` before changing metric or acceptance
+settings. A 1000-step run is the smallest quality smoke; shorter runs prove
+wiring only.
