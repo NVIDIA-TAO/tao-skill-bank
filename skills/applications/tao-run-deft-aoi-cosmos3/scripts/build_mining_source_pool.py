@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -20,7 +21,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from nvpaw_annotations import TASK_SPECS
-from atomic_samples import embedding_filepath, sample_from_record
+from atomic_samples import (
+    embedding_filepath,
+    materialize_pair_asset,
+    pair_asset_path,
+    sample_from_record,
+)
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -97,9 +103,12 @@ def build(
     reuse_pool: pathlib.Path | None = None,
     delta_output: pathlib.Path | None = None,
     pair_assets_dir: pathlib.Path | None = None,
+    pair_asset_workers: int = 1,
 ) -> dict[str, Any]:
     annotations = annotations.expanduser().resolve(strict=True)
     media_root = media_root.expanduser().resolve()
+    if pair_asset_workers <= 0:
+        raise ValueError("pair_asset_workers must be positive")
     loads = _json_loader()
     ordered_samples: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -107,6 +116,7 @@ def build(
     unsupported: collections.Counter[str] = collections.Counter()
     raw_rows = 0
     supported_rows = 0
+    resolved_path_cache: dict[str, str] = {}
     annotation_digest = hashlib.sha256()
     with annotations.open("rb") as stream:
         for line_number, line in enumerate(stream, start=1):
@@ -125,19 +135,50 @@ def build(
                 unsupported[str(task)] += 1
                 continue
             sample = sample_from_record(
-                row, media_root=media_root, context=f"{annotations}:{line_number}"
+                row,
+                media_root=media_root,
+                context=f"{annotations}:{line_number}",
+                resolved_path_cache=resolved_path_cache,
             )
             identity = str(sample["atomic_sample_id"])
             if identity not in seen:
                 seen.add(identity)
-                sample["filepath"] = embedding_filepath(
-                    sample, pair_assets_dir=pair_assets_dir
-                )
+                if sample["sample_kind"] == "reference_pair":
+                    if pair_assets_dir is None:
+                        raise ValueError(
+                            "pair_assets_dir is required for reference-pair embedding"
+                        )
+                    sample["filepath"] = str(
+                        pair_asset_path(pair_assets_dir, identity)
+                    )
+                else:
+                    sample["filepath"] = embedding_filepath(
+                        sample, pair_assets_dir=pair_assets_dir
+                    )
                 ordered_samples.append(sample)
             tasks[str(task)] += 1
             supported_rows += 1
     if not ordered_samples:
         raise ValueError("Mining annotations contain no supported atomic samples")
+    reference_samples = [
+        sample
+        for sample in ordered_samples
+        if sample["sample_kind"] == "reference_pair"
+    ]
+    if pair_asset_workers == 1:
+        for sample in reference_samples:
+            materialize_pair_asset(sample, pair_assets_dir=pair_assets_dir)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=pair_asset_workers
+        ) as executor:
+            for _ in executor.map(
+                lambda sample: materialize_pair_asset(
+                    sample, pair_assets_dir=pair_assets_dir
+                ),
+                reference_samples,
+            ):
+                pass
 
     output = output.expanduser().resolve()
     _atomic_parquet(output, ordered_samples)
@@ -198,6 +239,7 @@ def build(
             row["sample_kind"] == "reference_pair" for row in ordered_samples
         ),
         "pair_embedding_asset_schema": "nvpaw_reference_pair_embedding_v1",
+        "pair_asset_workers": pair_asset_workers,
         "output": str(output),
         "output_sha256": _sha256(output),
         "reuse_pool": resolved_reuse,
@@ -219,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reuse-pool", type=pathlib.Path)
     parser.add_argument("--delta-output", type=pathlib.Path)
     parser.add_argument("--pair-assets-dir", type=pathlib.Path)
+    parser.add_argument("--pair-asset-workers", type=int, default=1)
     args = parser.parse_args(argv)
     try:
         payload = build(
@@ -229,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
             reuse_pool=args.reuse_pool,
             delta_output=args.delta_output,
             pair_assets_dir=args.pair_assets_dir,
+            pair_asset_workers=args.pair_asset_workers,
         )
     except (OSError, ValueError, pa.ArrowException) as exc:
         print(f"build_mining_source_pool: {exc}", file=sys.stderr)

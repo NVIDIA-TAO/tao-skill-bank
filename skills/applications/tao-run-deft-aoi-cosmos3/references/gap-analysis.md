@@ -65,6 +65,11 @@ cosine. Benchmark annotations or predictions are forbidden at this boundary.
 The default `top_k_per_target` may be overridden per task; the DD ablation
 records its Defect Detection override separately so maintenance tasks retain
 their launch value.
+
+For a large pair-atomic source pool, `build_mining_source_pool.py
+--pair-asset-workers N` bounds parallel pair rendering while preserving the
+same deterministic asset paths and pixels. Path resolution is cached by raw
+annotation path; this changes neither atomic identities nor pool ordering.
 When the launch contract enables detection calibration,
 `select_detection_calibration.py` derives the single-image and reference
 empty-GT rates from the frozen Proxy, deterministically rounds each cohort's

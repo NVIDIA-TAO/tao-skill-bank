@@ -33,7 +33,11 @@ def identity_for_paths(kind: str, paths: Iterable[str]) -> str:
 
 
 def sample_from_record(
-    record: dict[str, Any], *, media_root: pathlib.Path, context: str
+    record: dict[str, Any],
+    *,
+    media_root: pathlib.Path,
+    context: str,
+    resolved_path_cache: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     task_type = record.get("task_type")
     if task_type not in TASK_SPECS:
@@ -42,7 +46,18 @@ def sample_from_record(
     roles = list(TASK_SPECS[str(task_type)]["image_roles"])
     if len(raw_paths) != len(roles):
         raise ValueError(f"{context}: {task_type} requires image roles {roles}")
-    resolved = [str(resolve_image(value, media_root)) for value in raw_paths]
+    resolved: list[str] = []
+    for value in raw_paths:
+        cached = (
+            resolved_path_cache.get(value)
+            if resolved_path_cache is not None
+            else None
+        )
+        if cached is None:
+            cached = str(resolve_image(value, media_root))
+            if resolved_path_cache is not None:
+                resolved_path_cache[value] = cached
+        resolved.append(cached)
     if roles == ["target"]:
         kind = "single_image"
         reference = None

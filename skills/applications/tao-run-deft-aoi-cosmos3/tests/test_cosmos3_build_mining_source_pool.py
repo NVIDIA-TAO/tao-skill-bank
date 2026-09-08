@@ -82,6 +82,41 @@ class Cosmos3BuildMiningSourcePoolTests(unittest.TestCase):
             self.assertEqual(payload["reference_pairs"], 1)
             self.assertEqual(payload["single_images"], 0)
 
+    def test_pair_assets_can_be_materialized_by_bounded_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            annotations = root / "mining.jsonl"
+            rows = []
+            for index in range(2):
+                golden = root / "images" / f"golden-{index}.png"
+                target = root / "images" / f"target-{index}.png"
+                golden.parent.mkdir(parents=True, exist_ok=True)
+                Image.new("RGB", (8, 6), color="white").save(golden)
+                Image.new("RGB", (8, 6), color="black").save(target)
+                rows.append(
+                    _row(
+                        f"pair-{index}",
+                        "Ref_based Defect Detection",
+                        [str(golden), str(target)],
+                    )
+                )
+            annotations.write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n"
+            )
+
+            payload = build_mining_source_pool.build(
+                annotations=annotations,
+                media_root=root,
+                output=root / "source_pool.parquet",
+                summary_output=root / "summary.json",
+                pair_assets_dir=root / "pair-assets",
+                pair_asset_workers=2,
+            )
+
+            self.assertEqual(payload["pair_asset_workers"], 2)
+            self.assertEqual(payload["reference_pairs"], 2)
+            self.assertEqual(len(list((root / "pair-assets").rglob("*.png"))), 2)
+
     def test_builds_unique_targets_and_exact_delta_against_reuse_pool(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

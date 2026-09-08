@@ -16,7 +16,7 @@
 | `benchmark_cadence.py` | Validate exact Proxy KPI evidence and rank checkpoints for conditional Benchmark scoring. |
 | `analyze_gaps.py` | Reuse the recorded evaluator's parsers for Proxy record-level weakness and task-aware RCCA selection. |
 | `atomic_samples.py` | Define ordered single/pair identities and deterministic two-image embedding assets. |
-| `build_mining_source_pool.py` | Build the source pool at atomic single-image/reference-pair granularity. |
+| `build_mining_source_pool.py` | Build the source pool at atomic single-image/reference-pair granularity, with bounded parallel pair-asset materialization. |
 | `route_selected_gaps.py` | Collapse Proxy gap rows into atomic Mining queries and pair embedding assets. |
 | `task_mining_router.py` | Apply deterministic task-aware neighbor routing and history policy. |
 | `select_detection_calibration.py` | Derive Proxy-bound per-cohort empty/few-box quotas, preserve reference pairs atomically, and optionally select Component Count replay before history filtering. |
