@@ -435,6 +435,10 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             },
             "gap_analysis": gap_analysis,
             "evaluation": {
+                "benchmark_cadence": args.benchmark_cadence,
+                "baseline_prediction_reuse": "validated_checksums_only",
+                "proxy_scored_every_iteration": True,
+                "proxy_drives_gap_analysis": True,
                 "proxy": {
                     "annotations": str(annotations["proxy"]),
                     "drives_rcca": True,
@@ -594,6 +598,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--platform", required=True)
     parser.add_argument("--max-iterations", required=True, type=int)
     parser.add_argument("--kpi-threshold", type=float, default=0.8)
+    parser.add_argument(
+        "--benchmark-cadence",
+        choices=("every", "final_and_best"),
+        default="final_and_best",
+        help=(
+            "Frozen Benchmark scoring cadence after training; baseline is always "
+            "scored and Proxy is always scored every iteration."
+        ),
+    )
     parser.add_argument(
         "--kpi-profile",
         choices=("f1_cohort_balanced_v1", "task_balanced_v1"),

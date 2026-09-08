@@ -76,6 +76,12 @@
       "evaluator": "/home/seanlin/projects/deft/workspace/eval/calculate_f1_metrics.py",
       "evaluator_sha256": "recorded-at-initialization"
     },
+    "evaluation": {
+      "benchmark_cadence": "final_and_best",
+      "baseline_prediction_reuse": "validated_checksums_only",
+      "proxy_scored_every_iteration": true,
+      "proxy_drives_gap_analysis": true
+    },
     "containers": {
       "cosmos_framework": {
         "reference": "resolved-framework-tag",

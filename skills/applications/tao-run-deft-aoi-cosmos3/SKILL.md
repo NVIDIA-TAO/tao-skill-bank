@@ -27,13 +27,15 @@ implementation is `tao-finetune-cosmos-reason` with
 
 ## Immutable workflow contract
 
-The loop is:
+The loop is parameterized by `benchmark_cadence = every | final_and_best`:
 
 ```text
-Benchmark evaluate -> exact F1 gate
-  pass: loop_stop
-  fail: Proxy evaluate -> RCCA -> routing -> data_mining -> assemble_data
-        -> validate_data -> CFW train -> next Benchmark evaluate
+reusable zero-shot Benchmark evaluate -> exact F1 gate -> Proxy KPI + RCCA
+  -> routing -> data_mining -> assemble_data -> validate_data -> CFW train
+  -> Proxy KPI + RCCA
+       final_and_best: Benchmark only for a Proxy-best or final checkpoint
+       every: Benchmark for every checkpoint
+  -> pass: loop_stop; otherwise route the next iteration
 ```
 
 Only real records selected from the six supported classification/detection
@@ -43,6 +45,8 @@ converted, copied, or admitted to Train. Proxy and Benchmark remain strict.
 Every later iteration retains the preceding training JSONL and adds at least
 one current Mining record. Proxy and Benchmark targets are excluded. The
 Benchmark file and metric contract are SHA-256 sealed at initialization.
+Zero-shot predictions may be reused only when their recorded Benchmark,
+model, image, evaluator, and prediction checksums all match.
 
 ## Required workspace
 
@@ -259,8 +263,9 @@ and extracts exactly:
 - `reference_based.tasks.DET.f1`
 
 All five must meet the frozen component threshold, and missing or unknown
-prediction counts must be zero. The app never recalculates F1. Only a frozen
-Benchmark metric result may stop the loop; Proxy results drive RCCA/mining.
+prediction counts must be zero. The app never recalculates F1. Proxy is scored
+after every checkpoint and is the only gap-analysis input. Only a frozen
+Benchmark metric result may stop the loop.
 
 ## Platform execution
 

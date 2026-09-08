@@ -12,6 +12,20 @@ Proxy is the sole error source for routing and Mining. Build candidates using
 the evaluator path and SHA-256 frozen in `deft_state.json`:
 
 ```bash
+"$PYTHON" "$SKILL_ROOT/scripts/exact_f1_adapter.py" \
+  --evaluator "$EVALUATOR" \
+  --source "$PROXY_JSONL" \
+  --predictions "$RESULTS_DIR/$LABEL/evaluate_proxy/predictions.jsonl" \
+  --raw-output "$RESULTS_DIR/$LABEL/proxy_rcca/raw_f1.json" \
+  --metric-output "$RESULTS_DIR/$LABEL/proxy_rcca/metric_result.json" \
+  --component-threshold "$KPI_THRESHOLD"
+```
+
+This exact Proxy KPI is committed with the RCCA artifacts, compared with prior
+Proxy results using the frozen KPI and tie breakers, and never used as the
+Benchmark stopping result.
+
+```bash
 "$PYTHON" "$SKILL_ROOT/scripts/analyze_gaps.py" \
   --evaluator "$EVALUATOR" \
   --source "$PROXY_JSONL" \
@@ -83,6 +97,12 @@ vector, coverage, threshold, minimum attainment, and tie breakers are committed
 together. All five components must meet the frozen threshold and both missing
 and unknown prediction counts must be zero. Benchmark output can stop the loop
 but can never seed RCCA, routing, or Mining.
+
+`benchmark_cadence=final_and_best` scores the frozen Benchmark for the
+checksum-validated reusable zero-shot baseline, a checkpoint whose exact Proxy
+KPI ranking is best so far, and the final checkpoint. `every` scores every
+checkpoint. Proxy evaluation and RCCA still run every iteration under both
+policies.
 
 ## Selection replay
 

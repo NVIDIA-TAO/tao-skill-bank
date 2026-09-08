@@ -13,6 +13,7 @@
 | `cfw_dcp.py` | Validate synchronous Framework DCP completeness and manifest. |
 | `cfw_predictions.py` | Strictly normalize/validate external or sharded results with exact source coverage and preserved message/image order. |
 | `exact_f1_adapter.py` | Invoke the recorded workspace evaluator and build the five-component gate without recalculation. |
+| `benchmark_cadence.py` | Validate exact Proxy KPI evidence and rank checkpoints for conditional Benchmark scoring. |
 | `analyze_gaps.py` | Reuse the recorded evaluator's parsers for Proxy record-level weakness and task-aware RCCA selection. |
 | `atomic_samples.py` | Define ordered single/pair identities and deterministic two-image embedding assets. |
 | `build_mining_source_pool.py` | Build the source pool at atomic single-image/reference-pair granularity. |

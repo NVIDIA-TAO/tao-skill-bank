@@ -21,6 +21,19 @@ import init_deft_state  # noqa: E402
 
 
 class Cosmos3InitStateContractTests(unittest.TestCase):
+    def test_final_and_best_is_the_default_benchmark_cadence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(self._argv(root, workspace))
+
+            self.assertEqual(rc, 0)
+            state = json.loads((root / "results/deft_state.json").read_text())
+            self.assertEqual(
+                state["config"]["evaluation"]["benchmark_cadence"],
+                "final_and_best",
+            )
+
     @staticmethod
     def _workspace(root: pathlib.Path) -> pathlib.Path:
         workspace = root / "workspace"
