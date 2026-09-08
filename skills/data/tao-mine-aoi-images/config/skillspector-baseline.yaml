@@ -24,3 +24,6 @@ rules:
   - id: "LP1"
     path: "scripts/filter_mined_history.py"
     reason: "Reviewed FP: the declared capability matches the skill's documented, required function (container run, file IO, env passthrough)."
+  - id: "TP4"
+    path: "SKILL.md"
+    reason: "Reviewed FP: the skill description accurately states its documented purpose; no deceptive or hidden tooling."
