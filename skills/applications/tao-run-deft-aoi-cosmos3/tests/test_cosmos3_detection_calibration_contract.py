@@ -70,6 +70,77 @@ def _count_row(record_id: str, answer: int) -> dict:
 
 
 class Cosmos3DetectionCalibrationContractTests(unittest.TestCase):
+    def test_hybrid_quotas_fix_single_image_caps_and_rate_bind_only_reference(self) -> None:
+        one_box = [{"bbox_2d": [0, 0, 1, 1], "label": "x"}]
+        proxy = [
+            _row("proxy-single-empty", []),
+            _row("proxy-single-few", one_box),
+            _row("proxy-ref-empty", [], task="Ref_based Defect Detection"),
+            *[
+                _row(
+                    f"proxy-ref-few{index}",
+                    one_box,
+                    task="Ref_based Defect Detection",
+                )
+                for index in range(3)
+            ],
+        ]
+        source = [
+            *[_row(f"single-empty{index}", []) for index in range(3)],
+            *[_row(f"single-few{index}", one_box) for index in range(4)],
+            *[
+                _row(
+                    f"ref-empty{index}",
+                    [],
+                    task="Ref_based Defect Detection",
+                )
+                for index in range(2)
+            ],
+            *[
+                _row(
+                    f"ref-few{index}",
+                    one_box,
+                    task="Ref_based Defect Detection",
+                )
+                for index in range(4)
+            ],
+        ]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            media_root = pathlib.Path(temporary)
+            images = media_root / "images"
+            images.mkdir()
+            from PIL import Image
+
+            for record in source:
+                for item in record["messages"][0]["content"]:
+                    if item.get("type") == "image":
+                        path = media_root / item["image"]
+                        Image.new("RGB", (2, 2), color=(len(path.name), 0, 0)).save(path)
+            rates = select_detection_calibration.derive_proxy_empty_rates(proxy)
+            selected, summary = select_detection_calibration.select_calibration(
+                source,
+                media_root=media_root,
+                cohort_bucket_quotas={
+                    "non_reference_based": {"empty": 2, "few": 3},
+                    "reference_based": {"empty": 1, "few": 3},
+                },
+                cohort_rates=rates,
+                pair_assets_dir=media_root / "pair-assets",
+                max_boxes=2,
+            )
+
+        self.assertEqual(len(selected), 9)
+        self.assertEqual(summary["policy"], "fixed_single_image_proxy_rate_reference")
+        single = summary["cohorts"]["non_reference_based"]
+        reference = summary["cohorts"]["reference_based"]
+        self.assertFalse(single["proxy_empty_rate_binding"])
+        self.assertEqual(single["selected_empty"], 2)
+        self.assertEqual(single["selected_few_box"], 3)
+        self.assertTrue(reference["proxy_empty_rate_binding"])
+        self.assertEqual(reference["selected_empty"], 1)
+        self.assertEqual(reference["selected_few_box"], 3)
+
     def test_proxy_bound_cohort_quotas_keep_reference_pairs_atomic(self) -> None:
         one_box = [{"bbox_2d": [0, 0, 1, 1], "label": "x"}]
         proxy = [

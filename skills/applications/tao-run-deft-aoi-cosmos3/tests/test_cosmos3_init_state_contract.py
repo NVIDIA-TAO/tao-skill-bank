@@ -34,23 +34,39 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
                 "final_and_best",
             )
 
-    def test_calibration_quotas_are_bound_to_proxy_rates_by_cohort(self) -> None:
+    def test_hybrid_calibration_contract_is_launch_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             workspace = self._workspace(root)
-            rc = init_deft_state.main(self._argv(root, workspace))
+            rc = init_deft_state.main(
+                self._argv(
+                    root,
+                    workspace,
+                    "--single-image-calibration-max-empty", "512",
+                    "--single-image-calibration-max-few", "512",
+                    "--reference-calibration-total", "500",
+                )
+            )
 
             self.assertEqual(rc, 0)
             contract = json.loads(
                 (root / "results/deft_state.json").read_text()
             )["config"]["mining"]["calibration_quota_contract"]
-            self.assertEqual(contract["policy"], "proxy_empty_rate_by_reference_cohort")
             self.assertEqual(
-                contract["cohorts"]["non_reference_based"]["empty_rate"], 0.5
+                contract["policy"], "fixed_single_image_proxy_rate_reference"
+            )
+            self.assertEqual(contract["single_image_max_empty"], 512)
+            self.assertEqual(contract["single_image_max_few_box"], 512)
+            self.assertFalse(
+                contract["cohorts"]["non_reference_based"][
+                    "proxy_empty_rate_binding"
+                ]
             )
             self.assertEqual(
                 contract["cohorts"]["reference_based"]["empty_rate"], 0.5
             )
+            self.assertEqual(contract["reference_total"], 500)
+            self.assertEqual(contract["reference_empty"], 250)
             self.assertEqual(
                 contract["reference_empty_semantics"],
                 "identical_or_no_change_pair_negative",

@@ -192,36 +192,67 @@ def select_calibration(
     max_boxes: int = 2,
     excluded_identities: set[str] | None = None,
     cohort_quotas: dict[str, int] | None = None,
+    cohort_bucket_quotas: dict[str, dict[str, int]] | None = None,
     cohort_rates: dict[str, dict[str, Any]] | None = None,
     pair_assets_dir: pathlib.Path | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if max_boxes < 1:
         raise ValueError("max_boxes must be positive")
-    cohort_mode = cohort_quotas is not None or cohort_rates is not None
+    cohort_mode = (
+        cohort_quotas is not None
+        or cohort_bucket_quotas is not None
+        or cohort_rates is not None
+    )
     if cohort_mode:
-        if cohort_quotas is None or cohort_rates is None:
-            raise ValueError("cohort_quotas and cohort_rates must be supplied together")
+        if cohort_rates is None or (cohort_quotas is None) == (cohort_bucket_quotas is None):
+            raise ValueError(
+                "cohort_rates and exactly one cohort quota contract must be supplied"
+            )
         if max_empty is not None or max_few is not None:
             raise ValueError("legacy and per-cohort calibration quotas cannot be combined")
-        if set(cohort_quotas) != set(DETECTION_COHORTS):
-            raise ValueError("cohort_quotas must define both detection cohorts exactly")
         if set(cohort_rates) != set(DETECTION_COHORTS):
             raise ValueError("cohort_rates must define both detection cohorts exactly")
         targets: dict[str, dict[str, int | float]] = {}
-        for cohort in DETECTION_COHORTS:
-            total = cohort_quotas[cohort]
-            if type(total) is not int or total < 0:
-                raise ValueError("every per-cohort calibration quota must be non-negative")
-            rate = cohort_rates[cohort].get("empty_rate")
-            if not isinstance(rate, (int, float)):
-                raise ValueError(f"{cohort} requires a numeric empty_rate")
-            empty_target = _rounded_rate_quota(total, float(rate))
-            targets[cohort] = {
-                "total": total,
-                "empty": empty_target,
-                "few": total - empty_target,
-                "rate": float(rate),
-            }
+        if cohort_bucket_quotas is not None:
+            if set(cohort_bucket_quotas) != set(DETECTION_COHORTS):
+                raise ValueError(
+                    "cohort_bucket_quotas must define both detection cohorts exactly"
+                )
+            for cohort in DETECTION_COHORTS:
+                quota = cohort_bucket_quotas[cohort]
+                if set(quota) != {"empty", "few"} or any(
+                    type(value) is not int or value < 0 for value in quota.values()
+                ):
+                    raise ValueError(
+                        "every cohort bucket quota requires non-negative integer empty/few values"
+                    )
+                rate = cohort_rates[cohort].get("empty_rate")
+                if not isinstance(rate, (int, float)):
+                    raise ValueError(f"{cohort} requires a numeric empty_rate")
+                targets[cohort] = {
+                    "total": quota["empty"] + quota["few"],
+                    "empty": quota["empty"],
+                    "few": quota["few"],
+                    "rate": float(rate),
+                }
+        else:
+            assert cohort_quotas is not None
+            if set(cohort_quotas) != set(DETECTION_COHORTS):
+                raise ValueError("cohort_quotas must define both detection cohorts exactly")
+            for cohort in DETECTION_COHORTS:
+                total = cohort_quotas[cohort]
+                if type(total) is not int or total < 0:
+                    raise ValueError("every per-cohort calibration quota must be non-negative")
+                rate = cohort_rates[cohort].get("empty_rate")
+                if not isinstance(rate, (int, float)):
+                    raise ValueError(f"{cohort} requires a numeric empty_rate")
+                empty_target = _rounded_rate_quota(total, float(rate))
+                targets[cohort] = {
+                    "total": total,
+                    "empty": empty_target,
+                    "few": total - empty_target,
+                    "rate": float(rate),
+                }
         if sum(item["total"] for item in targets.values()) <= 0:
             raise ValueError("at least one per-cohort calibration quota must be positive")
     else:
@@ -319,9 +350,14 @@ def select_calibration(
         shortages = {key: value for key, value in shortages.items() if value}
         if shortages:
             raise ValueError(f"per-cohort calibration quotas cannot be filled: {shortages}")
+        hybrid_mode = cohort_bucket_quotas is not None
         summary = {
-            "schema_version": "detection_calibration_v2",
-            "policy": "proxy_empty_rate_by_reference_cohort",
+            "schema_version": "detection_calibration_v3" if hybrid_mode else "detection_calibration_v2",
+            "policy": (
+                "fixed_single_image_proxy_rate_reference"
+                if hybrid_mode
+                else "proxy_empty_rate_by_reference_cohort"
+            ),
             "max_boxes": max_boxes,
             "selected_total": len(selected),
             "examined_detection_records": examined_detection,
@@ -331,6 +367,9 @@ def select_calibration(
                 cohort: {
                     "task_type": DETECTION_COHORTS[cohort],
                     "proxy_empty_rate": targets[cohort]["rate"],
+                    "proxy_empty_rate_binding": (
+                        not hybrid_mode or cohort == "reference_based"
+                    ),
                     "requested_total": targets[cohort]["total"],
                     "requested_empty": targets[cohort]["empty"],
                     "requested_few_box": targets[cohort]["few"],
@@ -461,6 +500,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pair-assets-dir", type=pathlib.Path)
     parser.add_argument("--single-image-total", type=int)
     parser.add_argument("--reference-total", type=int)
+    parser.add_argument("--single-image-max-empty", type=int)
+    parser.add_argument("--single-image-max-few", type=int)
     parser.add_argument("--max-empty", type=int)
     parser.add_argument("--max-few", type=int)
     parser.add_argument("--max-boxes", type=int, default=2)
@@ -474,20 +515,29 @@ def main(argv: list[str] | None = None) -> int:
                 args.proxy_annotations,
                 args.single_image_total,
                 args.reference_total,
+                args.single_image_max_empty,
+                args.single_image_max_few,
             )
         )
-        if cohort_mode and any(
-            value is None
-            for value in (
-                args.proxy_annotations,
-                args.single_image_total,
-                args.reference_total,
-                args.pair_assets_dir,
+        hybrid_mode = any(
+            value is not None
+            for value in (args.single_image_max_empty, args.single_image_max_few)
+        )
+        if hybrid_mode and args.single_image_total is not None:
+            raise ValueError(
+                "--single-image-total cannot be combined with fixed single-image caps"
             )
-        ):
+        required = [args.proxy_annotations, args.reference_total, args.pair_assets_dir]
+        required.extend(
+            [args.single_image_max_empty, args.single_image_max_few]
+            if hybrid_mode
+            else [args.single_image_total]
+        )
+        if cohort_mode and any(value is None for value in required):
             raise ValueError(
                 "per-cohort calibration requires --proxy-annotations, "
-                "--single-image-total, --reference-total, and --pair-assets-dir"
+                "--reference-total, --pair-assets-dir, and either "
+                "--single-image-total or both fixed single-image caps"
             )
         rates = (
             derive_proxy_empty_rates(_stream_records(args.proxy_annotations))
@@ -505,7 +555,28 @@ def main(argv: list[str] | None = None) -> int:
                     "non_reference_based": args.single_image_total,
                     "reference_based": args.reference_total,
                 }
-                if cohort_mode
+                if cohort_mode and not hybrid_mode
+                else None
+            ),
+            cohort_bucket_quotas=(
+                {
+                    "non_reference_based": {
+                        "empty": args.single_image_max_empty,
+                        "few": args.single_image_max_few,
+                    },
+                    "reference_based": {
+                        "empty": _rounded_rate_quota(
+                            args.reference_total,
+                            float(rates["reference_based"]["empty_rate"]),
+                        ),
+                        "few": args.reference_total
+                        - _rounded_rate_quota(
+                            args.reference_total,
+                            float(rates["reference_based"]["empty_rate"]),
+                        ),
+                    },
+                }
+                if cohort_mode and hybrid_mode
                 else None
             ),
             cohort_rates=rates,

@@ -126,6 +126,82 @@ class _Evaluator:
 
 
 class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
+    def test_hybrid_single_calibration_caps_do_not_cap_task_strict_rows(self) -> None:
+        rows: list[dict] = []
+        candidates: list[dict] = []
+        one_box = [{"bbox_2d": [10, 10, 100, 100], "label": "open"}]
+        for bucket, boxes, evidence in (
+            ("empty", [], ["calibration_empty_ground_truth"]),
+            ("few", one_box, ["calibration_few_box_ground_truth"]),
+        ):
+            for index in range(4):
+                row = _row(f"cal-{bucket}-{index}", "Defect Detection", boxes=boxes)
+                rows.append(row)
+                candidates.append(
+                    _candidate(
+                        row,
+                        evidence=evidence,
+                        phash=f"{100 + len(candidates):016x}",
+                        route_tier="calibration",
+                    )
+                )
+        for bucket, boxes, evidence in (
+            ("empty", [], ["hard_negative_proxy_false_positive"]),
+            ("positive", one_box, ["hard_positive_proxy_false_negative"]),
+        ):
+            for index in range(20):
+                row = _row(f"strict-{bucket}-{index}", "Defect Detection", boxes=boxes)
+                rows.append(row)
+                candidates.append(
+                    _candidate(
+                        row,
+                        evidence=evidence,
+                        phash=f"{100 + len(candidates):016x}",
+                    )
+                )
+        for index in range(30):
+            task = defect_detection_ablation.MAINTENANCE_TASK_TYPES[index % 5]
+            boxes = (
+                []
+                if task == "Ref_based Defect Detection" and (index // 5) < 3
+                else one_box
+            )
+            row = _row(f"maintenance-{index}", task, boxes=boxes)
+            rows.append(row)
+            candidates.append(
+                _candidate(row, phash=f"{100 + len(candidates):016x}")
+            )
+
+        selected, manifest = defect_detection_ablation.materialize(
+            candidate_rows=candidates,
+            source_records=rows,
+            validation_records=[],
+            media_root=pathlib.Path("/data"),
+            max_rows=60,
+            row_multiple=10,
+            defect_detection_fraction=0.5,
+            proxy_empty_rate=0.9,
+            reference_proxy_empty_rate=0.5,
+            single_image_calibration_max_empty=2,
+            single_image_calibration_max_few=2,
+            reference_calibration_total=0,
+            epochs=1,
+            global_batch=10,
+            near_duplicate_hamming_distance=None,
+        )
+
+        self.assertEqual(len(selected), 60)
+        self.assertTrue(manifest["verified"])
+        calibration = manifest["single_image_calibration"]
+        self.assertEqual(calibration["selected_empty"], 2)
+        self.assertEqual(calibration["selected_few_box"], 2)
+        self.assertEqual(manifest["row_counts"]["task_strict_defect_detection"], 26)
+        self.assertFalse(
+            manifest["empty_ground_truth_by_cohort"]["non_reference_based"][
+                "proxy_empty_rate_binding"
+            ]
+        )
+
     def test_reference_leakage_uses_ordered_pair_content_not_only_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

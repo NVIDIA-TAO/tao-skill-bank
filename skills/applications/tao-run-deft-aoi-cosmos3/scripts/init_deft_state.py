@@ -320,6 +320,50 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     if missing:
         raise ValueError("annotation file(s) missing: " + ", ".join(missing))
     calibration_cohorts = derive_proxy_empty_rates(load_records(annotations["proxy"]))
+    calibration_values = (
+        args.single_image_calibration_max_empty,
+        args.single_image_calibration_max_few,
+        args.reference_calibration_total,
+    )
+    hybrid_calibration = any(value is not None for value in calibration_values)
+    if hybrid_calibration and any(value is None for value in calibration_values):
+        raise ValueError(
+            "hybrid calibration requires both single-image caps and the reference total"
+        )
+    if hybrid_calibration and any(value < 0 for value in calibration_values):
+        raise ValueError("calibration caps and totals must be non-negative")
+    if hybrid_calibration:
+        calibration_cohorts["non_reference_based"][
+            "proxy_empty_rate_binding"
+        ] = False
+        calibration_cohorts["reference_based"]["proxy_empty_rate_binding"] = True
+        reference_empty = int(
+            args.reference_calibration_total
+            * calibration_cohorts["reference_based"]["empty_rate"]
+            + 0.5
+        )
+        calibration_quota_contract = {
+            "policy": "fixed_single_image_proxy_rate_reference",
+            "proxy_annotations": str(annotations["proxy"]),
+            "proxy_annotations_sha256": _sha256(annotations["proxy"]),
+            "max_boxes_for_few_box": 2,
+            "single_image_max_empty": args.single_image_calibration_max_empty,
+            "single_image_max_few_box": args.single_image_calibration_max_few,
+            "reference_total": args.reference_calibration_total,
+            "reference_empty": reference_empty,
+            "reference_few_box": args.reference_calibration_total - reference_empty,
+            "cohorts": calibration_cohorts,
+            "reference_empty_semantics": "identical_or_no_change_pair_negative",
+        }
+    else:
+        calibration_quota_contract = {
+            "policy": "proxy_empty_rate_by_reference_cohort",
+            "proxy_annotations": str(annotations["proxy"]),
+            "proxy_annotations_sha256": _sha256(annotations["proxy"]),
+            "max_boxes_for_few_box": 2,
+            "cohorts": calibration_cohorts,
+            "reference_empty_semantics": "identical_or_no_change_pair_negative",
+        }
 
     # Specs are staged before state is initialized. Checking them here keeps the
     # failure recoverable: state is written exactly once and must never be
@@ -511,16 +555,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     args.minimum_training_rows_per_iteration
                 ),
                 "calibration_policy": "empty_and_few_box_from_mining",
-                "calibration_quota_contract": {
-                    "policy": "proxy_empty_rate_by_reference_cohort",
-                    "proxy_annotations": str(annotations["proxy"]),
-                    "proxy_annotations_sha256": _sha256(annotations["proxy"]),
-                    "max_boxes_for_few_box": 2,
-                    "cohorts": calibration_cohorts,
-                    "reference_empty_semantics": (
-                        "identical_or_no_change_pair_negative"
-                    ),
-                },
+                "calibration_quota_contract": calibration_quota_contract,
                 "repetition_blend": repetition_blend,
                 "component_count_replay_per_iteration": args.component_count_replay_per_iteration,
                 "top_k_scope": (
@@ -559,7 +594,11 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                         "local_contrast_quartile",
                         "gt_box_count_bin_1_2-3_4+",
                     ],
-                    "empty_rate_policy": "match_proxy_detection_per_reference_cohort",
+                    "empty_rate_policy": (
+                        "fixed_single_image_calibration_proxy_rate_reference_calibration"
+                        if hybrid_calibration
+                        else "match_proxy_detection_per_reference_cohort"
+                    ),
                     "near_duplicate_hamming_distance": args.near_duplicate_hamming_distance,
                     "near_duplicate_filter_enabled": (
                         args.near_duplicate_hamming_distance is not None
@@ -695,6 +734,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mining-pool-fraction-cap", type=float, default=1.0)
     parser.add_argument("--min-similarity", type=float, default=0.9)
+    parser.add_argument("--single-image-calibration-max-empty", type=int)
+    parser.add_argument("--single-image-calibration-max-few", type=int)
+    parser.add_argument("--reference-calibration-total", type=int)
     parser.add_argument("--component-count-replay-per-iteration", type=int, default=0)
     parser.add_argument(
         "--repetition-config",

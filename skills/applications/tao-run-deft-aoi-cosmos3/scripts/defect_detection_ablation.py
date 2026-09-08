@@ -417,6 +417,7 @@ def _task_balanced(
         task: sorted(
             (item for item in entries if item["task_type"] == task),
             key=lambda item: (
+                item.get("route_tier") != "calibration",
                 item["is_replay"],
                 -item["similarity"],
                 item["record_id"],
@@ -565,6 +566,9 @@ def materialize(
     global_batch: int,
     near_duplicate_hamming_distance: int | None,
     reference_proxy_empty_rate: float | None = None,
+    single_image_calibration_max_empty: int | None = None,
+    single_image_calibration_max_few: int | None = None,
+    reference_calibration_total: int | None = None,
     novel_image_limit: int | None = None,
     repetition_config: dict[str, Any] | None = None,
     deficit_weights: dict[str, float] | None = None,
@@ -585,6 +589,20 @@ def materialize(
         0.0 <= reference_proxy_empty_rate <= 1.0
     ):
         raise ValueError("Reference Proxy empty-ground-truth rate must be in [0, 1]")
+    calibration_values = (
+        single_image_calibration_max_empty,
+        single_image_calibration_max_few,
+        reference_calibration_total,
+    )
+    hybrid_calibration = any(value is not None for value in calibration_values)
+    if hybrid_calibration and any(value is None for value in calibration_values):
+        raise ValueError(
+            "hybrid calibration requires both single-image caps and the reference total"
+        )
+    if hybrid_calibration and any(value < 0 for value in calibration_values):
+        raise ValueError("calibration caps and totals must be non-negative")
+    if hybrid_calibration and reference_proxy_empty_rate is None:
+        raise ValueError("hybrid calibration requires the reference Proxy empty rate")
     if near_duplicate_hamming_distance is not None and not (
         0 <= near_duplicate_hamming_distance <= 64
     ):
@@ -613,8 +631,12 @@ def materialize(
         )
     target_rows = requested_target_rows
     dd_target = math.ceil(target_rows * defect_detection_fraction)
-    empty_target = math.floor(dd_target * proxy_empty_rate + 0.5)
-    positive_target = dd_target - empty_target
+    empty_target = (
+        None
+        if hybrid_calibration
+        else math.floor(dd_target * proxy_empty_rate + 0.5)
+    )
+    positive_target = None if empty_target is None else dd_target - empty_target
     if novel_image_limit is None:
         novel_image_limit = target_rows
     if not 0 <= novel_image_limit <= target_rows:
@@ -722,6 +744,7 @@ def materialize(
                 "similarity": float(candidate.get("max_cosine_similarity", 0.0)),
                 "evidence": evidence,
                 "is_replay": bool(candidate.get("is_replay", False)),
+                "route_tier": route_tier,
             }
             if task == DEFECT_DETECTION_TASK:
                 objects = _ground_truth_objects(record)
@@ -810,32 +833,111 @@ def materialize(
             item["record_id"],
         )
     )
-    eligible_empty = _without_visual_duplicates(
-        empty, selected=[], hamming_distance=near_duplicate_hamming_distance, counters=counters
-    )
-    selected_empty: list[dict[str, Any]] = []
-    empty_novel_limit = min(empty_target, novel_image_limit)
-    empty_novel_count = 0
-    for item in eligible_empty:
-        if not item["is_replay"] and empty_novel_count >= empty_novel_limit:
-            continue
-        selected_empty.append(item)
-        empty_novel_count += not item["is_replay"]
-        if len(selected_empty) == empty_target:
-            break
-    positive_unique = _without_visual_duplicates(
-        positive,
-        selected=selected_empty,
-        hamming_distance=near_duplicate_hamming_distance,
-        counters=counters,
-    )
-    selected_empty_novel = empty_novel_count
-    selected_positive, marginal_quotas = _balanced_positive_selection(
-        positive_unique,
-        positive_target,
-        max_novel=min(positive_target, novel_image_limit - selected_empty_novel),
-    )
-    selected_dd = selected_empty + selected_positive
+    if hybrid_calibration:
+        assert single_image_calibration_max_empty is not None
+        assert single_image_calibration_max_few is not None
+        calibration_empty = [item for item in empty if item["route_tier"] == "calibration"]
+        strict_empty = [item for item in empty if item["route_tier"] == "strict"]
+        calibration_positive = [
+            item for item in positive if item["route_tier"] == "calibration"
+        ]
+        strict_positive = [item for item in positive if item["route_tier"] == "strict"]
+        calibration_empty_unique = _without_visual_duplicates(
+            calibration_empty,
+            selected=[],
+            hamming_distance=near_duplicate_hamming_distance,
+            counters=counters,
+        )
+        selected_calibration_empty: list[dict[str, Any]] = []
+        calibration_novel_count = 0
+        for item in calibration_empty_unique:
+            if not item["is_replay"] and calibration_novel_count >= novel_image_limit:
+                continue
+            selected_calibration_empty.append(item)
+            calibration_novel_count += not item["is_replay"]
+            if len(selected_calibration_empty) == single_image_calibration_max_empty:
+                break
+        calibration_positive_unique = _without_visual_duplicates(
+            calibration_positive,
+            selected=selected_calibration_empty,
+            hamming_distance=near_duplicate_hamming_distance,
+            counters=counters,
+        )
+        selected_calibration_positive, _ = _balanced_positive_selection(
+            calibration_positive_unique,
+            single_image_calibration_max_few,
+            max_novel=max(0, novel_image_limit - calibration_novel_count),
+        )
+        selected_calibration = (
+            selected_calibration_empty + selected_calibration_positive
+        )
+        strict_empty_unique = _without_visual_duplicates(
+            strict_empty,
+            selected=selected_calibration,
+            hamming_distance=near_duplicate_hamming_distance,
+            counters=counters,
+        )
+        strict_positive_unique = _without_visual_duplicates(
+            strict_positive,
+            selected=selected_calibration + strict_empty_unique,
+            hamming_distance=near_duplicate_hamming_distance,
+            counters=counters,
+        )
+        strict_positive_ordered, _ = _balanced_positive_selection(
+            strict_positive_unique,
+            len(strict_positive_unique),
+            max_novel=novel_image_limit,
+        )
+        strict_ordered: list[dict[str, Any]] = []
+        for index in range(max(len(strict_empty_unique), len(strict_positive_ordered))):
+            if index < len(strict_empty_unique):
+                strict_ordered.append(strict_empty_unique[index])
+            if index < len(strict_positive_ordered):
+                strict_ordered.append(strict_positive_ordered[index])
+        selected_strict: list[dict[str, Any]] = []
+        selected_novel = sum(not item["is_replay"] for item in selected_calibration)
+        for item in strict_ordered:
+            if not item["is_replay"] and selected_novel >= novel_image_limit:
+                continue
+            selected_strict.append(item)
+            selected_novel += not item["is_replay"]
+            if len(selected_calibration) + len(selected_strict) == dd_target:
+                break
+        selected_dd = selected_calibration + selected_strict
+        selected_empty = [item for item in selected_dd if not item["objects"]]
+        selected_positive = [item for item in selected_dd if item["objects"]]
+        marginal_quotas = _positive_quota_report(
+            positive, selected_positive, len(selected_positive)
+        )
+    else:
+        assert empty_target is not None
+        assert positive_target is not None
+        eligible_empty = _without_visual_duplicates(
+            empty, selected=[], hamming_distance=near_duplicate_hamming_distance, counters=counters
+        )
+        selected_empty = []
+        empty_novel_limit = min(empty_target, novel_image_limit)
+        empty_novel_count = 0
+        for item in eligible_empty:
+            if not item["is_replay"] and empty_novel_count >= empty_novel_limit:
+                continue
+            selected_empty.append(item)
+            empty_novel_count += not item["is_replay"]
+            if len(selected_empty) == empty_target:
+                break
+        positive_unique = _without_visual_duplicates(
+            positive,
+            selected=selected_empty,
+            hamming_distance=near_duplicate_hamming_distance,
+            counters=counters,
+        )
+        selected_empty_novel = empty_novel_count
+        selected_positive, marginal_quotas = _balanced_positive_selection(
+            positive_unique,
+            positive_target,
+            max_novel=min(positive_target, novel_image_limit - selected_empty_novel),
+        )
+        selected_dd = selected_empty + selected_positive
     maintenance_unique = _without_visual_duplicates(
         maintenance,
         selected=selected_dd,
@@ -857,26 +959,41 @@ def materialize(
             -row_multiple,
         ):
             candidate_dd = math.ceil(candidate_target * defect_detection_fraction)
-            candidate_empty = math.floor(candidate_dd * proxy_empty_rate + 0.5)
-            candidate_positive = candidate_dd - candidate_empty
             candidate_maintenance = candidate_target - candidate_dd
-            if (
-                candidate_empty <= len(selected_empty)
-                and candidate_positive <= len(selected_positive)
-                and candidate_maintenance <= len(selected_maintenance)
-            ):
+            if hybrid_calibration:
+                feasible = (
+                    candidate_dd <= len(selected_dd)
+                    and candidate_maintenance <= len(selected_maintenance)
+                )
+            else:
+                candidate_empty = math.floor(candidate_dd * proxy_empty_rate + 0.5)
+                candidate_positive = candidate_dd - candidate_empty
+                feasible = (
+                    candidate_empty <= len(selected_empty)
+                    and candidate_positive <= len(selected_positive)
+                    and candidate_maintenance <= len(selected_maintenance)
+                )
+            if feasible:
                 accepted_target_rows = candidate_target
                 target_rows = candidate_target
                 dd_target = candidate_dd
-                empty_target = candidate_empty
-                positive_target = candidate_positive
-                selected_empty = selected_empty[:candidate_empty]
-                selected_positive = selected_positive[:candidate_positive]
-                selected_dd = selected_empty + selected_positive
+                if hybrid_calibration:
+                    selected_dd = selected_dd[:candidate_dd]
+                    selected_empty = [item for item in selected_dd if not item["objects"]]
+                    selected_positive = [item for item in selected_dd if item["objects"]]
+                    marginal_quotas = _positive_quota_report(
+                        positive, selected_positive, len(selected_positive)
+                    )
+                else:
+                    empty_target = candidate_empty
+                    positive_target = candidate_positive
+                    selected_empty = selected_empty[:candidate_empty]
+                    selected_positive = selected_positive[:candidate_positive]
+                    selected_dd = selected_empty + selected_positive
+                    marginal_quotas = _positive_quota_report(
+                        positive_unique, selected_positive, candidate_positive
+                    )
                 selected_maintenance = selected_maintenance[:candidate_maintenance]
-                marginal_quotas = _positive_quota_report(
-                    positive_unique, selected_positive, candidate_positive
-                )
                 break
     base_selected_entries = selected_dd + selected_maintenance
     base_selected_records = [item["record"] for item in base_selected_entries]
@@ -951,16 +1068,65 @@ def materialize(
     materialized_reference_empty = sum(
         not _ground_truth_objects(row) for row in materialized_reference
     )
+    selected_single_calibration = [
+        item for item in selected_dd if item["route_tier"] == "calibration"
+    ]
+    selected_single_calibration_empty = sum(
+        not item["objects"] for item in selected_single_calibration
+    )
+    selected_single_calibration_few = (
+        len(selected_single_calibration) - selected_single_calibration_empty
+    )
+    selected_strict_dd_count = sum(
+        item["route_tier"] == "strict" for item in selected_dd
+    )
+    selected_reference_calibration = [
+        item for item in selected_reference if item["route_tier"] == "calibration"
+    ]
+    selected_reference_calibration_empty = sum(
+        not item.get("objects") for item in selected_reference_calibration
+    )
+    reference_calibration_empty_target = (
+        math.floor(reference_calibration_total * reference_proxy_empty_rate + 0.5)
+        if hybrid_calibration
+        else None
+    )
     verification = {
         "target_rows_reached": row_count == target_rows,
         "minimum_rows_reached": row_count >= minimum_rows_aligned,
         "defect_detection_quota_reached": tasks[DEFECT_DETECTION_TASK] >= dd_target,
         "empty_rate_matched": (
-            selected_empty_count == empty_target
+            True
+            if hybrid_calibration
+            else selected_empty_count == empty_target
             if resolved_repetition["never_repeat_empty_gt"]
             else materialized_empty_count == empty_target
         ),
-        "empty_rate_matched_before_repetition": selected_empty_count == empty_target,
+        "empty_rate_matched_before_repetition": (
+            True if hybrid_calibration else selected_empty_count == empty_target
+        ),
+        "single_image_calibration_caps_respected": (
+            True
+            if not hybrid_calibration
+            else selected_single_calibration_empty
+            <= single_image_calibration_max_empty
+            and selected_single_calibration_few <= single_image_calibration_max_few
+        ),
+        "single_image_proxy_rate_policy_respected": (
+            not hybrid_calibration or empty_target is None
+        ),
+        "task_strict_defect_detection_rows_remain_trainable": (
+            not hybrid_calibration
+            or selected_strict_dd_count > 0
+            or not any(item["route_tier"] == "strict" for item in positive + empty)
+        ),
+        "reference_calibration_contract_reached": (
+            True
+            if not hybrid_calibration
+            else len(selected_reference_calibration) == reference_calibration_total
+            and selected_reference_calibration_empty
+            == reference_calibration_empty_target
+        ),
         "reference_empty_rate_matched": (
             True
             if reference_proxy_empty_rate is None
@@ -997,7 +1163,11 @@ def materialize(
     }
     manifest = {
         "schema_version": "defect_detection_quota_manifest_v1",
-        "selection_policy": "defect_detection_primary_task_strict_v1",
+        "selection_policy": (
+            "defect_detection_hybrid_calibration_task_strict_v2"
+            if hybrid_calibration
+            else "defect_detection_primary_task_strict_v1"
+        ),
         "verified": all(verification.values()),
         "verification": verification,
         "configuration": {
@@ -1014,8 +1184,16 @@ def materialize(
                 else "perceptual_hamming"
             ),
             "novel_mining_pool_image_limit": novel_image_limit,
-            "calibration_policy": "direct_empty_ground_truth_only_when_proxy_fp_hard_negatives_do_not_fill_proxy_matched_empty_quota",
-            "calibration_cohort_policy": "proxy_empty_rate_by_reference_cohort",
+            "calibration_policy": (
+                "fixed_single_image_caps_plus_task_strict_mining"
+                if hybrid_calibration
+                else "direct_empty_ground_truth_only_when_proxy_fp_hard_negatives_do_not_fill_proxy_matched_empty_quota"
+            ),
+            "calibration_cohort_policy": (
+                "fixed_single_image_proxy_rate_reference"
+                if hybrid_calibration
+                else "proxy_empty_rate_by_reference_cohort"
+            ),
             "annotation_profile": "nvpaw_multitask_v1",
             "prompt_variant": "official_v1",
             "box_serialization_policy": "corpus_native_unmodified",
@@ -1029,6 +1207,7 @@ def materialize(
             "requested_target": requested_target_rows,
             "defect_detection": tasks[DEFECT_DETECTION_TASK],
             "defect_detection_target": dd_target,
+            "task_strict_defect_detection": selected_strict_dd_count,
             "maintenance": sum(tasks[task] for task in MAINTENANCE_TASK_TYPES),
             "maintenance_target": maintenance_target,
             "by_task": dict(sorted(tasks.items())),
@@ -1084,6 +1263,25 @@ def materialize(
                 )
             ),
         },
+        "single_image_calibration": {
+            "max_empty": single_image_calibration_max_empty,
+            "max_few_box": single_image_calibration_max_few,
+            "selected_empty": selected_single_calibration_empty,
+            "selected_few_box": selected_single_calibration_few,
+            "selected_total": len(selected_single_calibration),
+            "proxy_empty_rate_binding": not hybrid_calibration,
+        },
+        "reference_calibration": {
+            "requested_total": reference_calibration_total,
+            "target_no_change": reference_calibration_empty_target,
+            "selected_no_change": selected_reference_calibration_empty,
+            "selected_changed": (
+                len(selected_reference_calibration)
+                - selected_reference_calibration_empty
+            ),
+            "selected_total": len(selected_reference_calibration),
+            "proxy_empty_rate_binding": hybrid_calibration,
+        },
         "empty_ground_truth": {
             "proxy_rate": proxy_empty_rate,
             "target_empty": empty_target,
@@ -1104,6 +1302,7 @@ def materialize(
             "non_reference_based": {
                 "task_type": DEFECT_DETECTION_TASK,
                 "proxy_rate": proxy_empty_rate,
+                "proxy_empty_rate_binding": not hybrid_calibration,
                 "target_empty": empty_target,
                 "selected_empty": selected_empty_count,
                 "selected_non_empty": selected_positive_count,
@@ -1117,6 +1316,7 @@ def materialize(
             "reference_based": {
                 "task_type": REFERENCE_DEFECT_DETECTION_TASK,
                 "proxy_rate": reference_proxy_empty_rate,
+                "proxy_empty_rate_binding": True,
                 "target_empty": reference_empty_target,
                 "selected_empty": selected_reference_empty,
                 "selected_non_empty": (
@@ -1241,6 +1441,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--row-multiple", required=True, type=int)
     parser.add_argument("--defect-detection-fraction", default=0.5, type=float)
+    parser.add_argument("--single-image-calibration-max-empty", type=int)
+    parser.add_argument("--single-image-calibration-max-few", type=int)
+    parser.add_argument("--reference-calibration-total", type=int)
     parser.add_argument("--epochs", required=True, type=int)
     parser.add_argument("--global-batch", required=True, type=int)
     near_duplicate = parser.add_mutually_exclusive_group()
@@ -1364,6 +1567,11 @@ def main(argv: list[str] | None = None) -> int:
             defect_detection_fraction=args.defect_detection_fraction,
             proxy_empty_rate=empty_rate,
             reference_proxy_empty_rate=float(reference_contract["empty_rate"]),
+            single_image_calibration_max_empty=(
+                args.single_image_calibration_max_empty
+            ),
+            single_image_calibration_max_few=args.single_image_calibration_max_few,
+            reference_calibration_total=args.reference_calibration_total,
             epochs=args.epochs,
             global_batch=args.global_batch,
             near_duplicate_hamming_distance=args.near_duplicate_hamming_distance,
