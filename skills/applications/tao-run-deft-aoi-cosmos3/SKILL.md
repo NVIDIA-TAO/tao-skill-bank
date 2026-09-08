@@ -142,7 +142,10 @@ The selector:
   filling them with another task;
 - matches the Proxy single-image Defect Detection empty-GT rate after integer
   rounding; and
-- rejects target-path, content-SHA, perceptual near-duplicate, Proxy, and
+- treats each ordered `(golden, target)` reference sample as one atomic unit
+  across embedding, retrieval, de-duplication, history, leakage exclusion, and
+  canonical two-image materialization; and
+- rejects atomic-sample, content-SHA, perceptual near-duplicate, Proxy, and
   Benchmark collisions while leaving every selected source record and its
   `official_v1` messages, coordinates, box order, and image controls unchanged.
 

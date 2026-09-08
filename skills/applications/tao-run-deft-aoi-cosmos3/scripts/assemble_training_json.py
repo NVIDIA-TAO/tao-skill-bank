@@ -13,6 +13,7 @@ import sys
 from collections import Counter
 from typing import Any
 
+from atomic_samples import logical_record_identity, sample_from_record
 from nvpaw_annotations import TASK_SPECS
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
@@ -75,6 +76,7 @@ def assemble(
     deficit_weights: dict[str, float] | None = None,
     repetition_seed: int | None = None,
     deficit_weight_source: str | None = None,
+    media_root: pathlib.Path | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     for name, value in (("max_rows", max_rows), ("row_multiple", row_multiple)):
         if value is not None and (type(value) is not int or value <= 0):
@@ -93,10 +95,21 @@ def assemble(
     if not mined:
         raise ValueError("the current iteration must contribute at least one mined record")
     previous = load_records(previous_path) if previous_path is not None else []
+    resolved_media_root = media_root.expanduser().resolve() if media_root else None
+
+    def identity(record: dict[str, Any], context: str) -> str:
+        if resolved_media_root is not None:
+            return str(
+                sample_from_record(
+                    record, media_root=resolved_media_root, context=context
+                )["atomic_sample_id"]
+            )
+        return logical_record_identity(record, context=context)
+
     evaluation_targets: dict[str, str] = {}
     for path in validation_paths:
         for index, record in enumerate(load_records(path)):
-            evaluation_targets[target_path(record, context=f"{path}:{index}")] = str(path)
+            evaluation_targets[identity(record, f"{path}:{index}")] = str(path)
 
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -111,10 +124,11 @@ def assemble(
             continue
         for index, record in enumerate(records):
             target = target_path(record, context=f"{source_path}:{index}")
-            if target in evaluation_targets:
+            sample_identity = identity(record, f"{source_path}:{index}")
+            if sample_identity in evaluation_targets:
                 raise ValueError(
-                    f"train/evaluation leakage: target {target!r} also occurs in "
-                    f"{evaluation_targets[target]}"
+                    f"train/evaluation leakage: atomic sample containing target "
+                    f"{target!r} also occurs in {evaluation_targets[sample_identity]}"
                 )
             key = _fingerprint(record)
             if key in seen:
@@ -308,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--summary", type=pathlib.Path)
     parser.add_argument("--validation-jsonl", action="append", default=[], type=pathlib.Path)
+    parser.add_argument("--media-root", required=True, type=pathlib.Path)
     parser.add_argument("--max-rows", type=int)
     parser.add_argument("--row-multiple", type=int)
     parser.add_argument("--gap-analysis-summary", type=pathlib.Path)
@@ -393,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
             deficit_weights=deficit_weights,
             repetition_seed=repetition_seed,
             deficit_weight_source=deficit_weight_source,
+            media_root=args.media_root,
         )
         _write_jsonl(args.output, rows)
         repetition_manifest = bind_repetition_manifest(

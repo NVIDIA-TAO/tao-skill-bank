@@ -95,6 +95,39 @@ class HistoryAwareMiningTests(unittest.TestCase):
             self.assertEqual(summary["already_mined_count"], 1)
             self.assertEqual(pq.read_table(output)["filepath"].to_pylist(), ["new.png"])
 
+    def test_atomic_sample_id_prevents_pair_sides_from_becoming_history_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            candidate = root / "iter1/candidates.parquet"
+            candidate.parent.mkdir(parents=True)
+            pq.write_table(
+                pa.table(
+                    {
+                        "filepath": ["pair-a.png", "pair-b.png"],
+                        "atomic_sample_id": ["reference_pair:a", "reference_pair:b"],
+                        "target_filepath": ["shared-test.png", "shared-test.png"],
+                    }
+                ),
+                candidate,
+            )
+
+            payload = filter_mined_history.select_novel_samples(
+                candidate_parquet=candidate,
+                output_parquet=root / "iter1/mined.parquet",
+                history_file=root / "mining_history.json",
+                summary_file=root / "iter1/summary.json",
+                iteration=1,
+                topn=2,
+            )
+
+            history = json.loads((root / "mining_history.json").read_text())
+            self.assertEqual(payload["identity"], "atomic_sample_id")
+            self.assertEqual(payload["selected_count"], 2)
+            self.assertEqual(
+                history["iterations"][0]["selected_identities"],
+                ["reference_pair:a", "reference_pair:b"],
+            )
+
     def test_empty_novel_output_is_auditable_and_recommends_wider_topn(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

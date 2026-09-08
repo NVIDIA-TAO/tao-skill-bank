@@ -14,6 +14,7 @@ SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 import analyze_gaps  # noqa: E402
+import atomic_samples  # noqa: E402
 import defect_detection_ablation  # noqa: E402
 import route_selected_gaps  # noqa: E402
 import task_mining_router  # noqa: E402
@@ -85,8 +86,14 @@ def _candidate(
         for item in record["messages"][0]["content"]
         if item.get("type") == "image"
     ][-1]
+    sample = atomic_samples.sample_from_record(
+        record, media_root=pathlib.Path("/data"), context=str(record.get("id"))
+    )
     return {
         "filepath": image,
+        "atomic_sample_id": sample["atomic_sample_id"],
+        "sample_kind": sample["sample_kind"],
+        "source_image_paths": sample["image_paths"],
         "route_tier": route_tier,
         "routed_task_types": [record["task_type"]],
         "defect_detection_evidence": evidence or [],

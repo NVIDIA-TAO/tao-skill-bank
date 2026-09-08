@@ -16,6 +16,7 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
+from atomic_samples import sample_from_record
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
     apply_repetition_blend,
@@ -274,7 +275,13 @@ def _candidate_visual_identity(
         int(phash, 16)
     except ValueError as exc:
         raise ValueError(f"candidate {filepath!r} has non-hex perceptual_hash") from exc
-    return str(path), content_sha, phash
+    atomic_sample_id = candidate.get("atomic_sample_id")
+    identity = (
+        atomic_sample_id
+        if isinstance(atomic_sample_id, str) and atomic_sample_id
+        else str(path)
+    )
+    return identity, content_sha, phash
 
 
 def _rank_quartiles(entries: list[dict[str, Any]], field: str, output: str) -> None:
@@ -449,12 +456,17 @@ def _validation_identities(
     phashes = _HammingIndex()
     fingerprints: set[str] = set()
     for record in records:
-        path = resolve_image(target_path(record, context="validation"), media_root)
+        sample = sample_from_record(
+            record, media_root=media_root, context="validation"
+        )
         fingerprints.add(_record_fingerprint(record))
-        path_text = str(path)
+        path_text = str(sample["atomic_sample_id"])
         if path_text in paths:
             continue
         paths.add(path_text)
+        if sample["sample_kind"] == "reference_pair":
+            continue
+        path = pathlib.Path(str(sample["target_filepath"]))
         if path.is_file():
             content.add(_sha256(path))
             phashes.add(_perceptual_hash(path))
@@ -530,8 +542,10 @@ def materialize(
         task = record.get("task_type")
         if task not in {DEFECT_DETECTION_TASK, *MAINTENANCE_TASK_TYPES}:
             continue
-        path = str(resolve_image(target_path(record, context="source"), media_root))
-        by_path.setdefault(path, []).append(record)
+        sample = sample_from_record(record, media_root=media_root, context="source")
+        by_path.setdefault(str(sample["atomic_sample_id"]), []).append(record)
+        if sample["sample_kind"] == "single_image":
+            by_path.setdefault(str(sample["target_filepath"]), []).append(record)
     validation_paths, validation_content, validation_phashes, validation_fingerprints = (
         _validation_identities(validation_records, media_root)
     )

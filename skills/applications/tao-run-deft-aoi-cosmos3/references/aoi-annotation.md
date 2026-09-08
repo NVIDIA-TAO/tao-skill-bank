@@ -13,6 +13,14 @@ reference tasks contain golden then target. Every image item contains `image`,
 positive integer `min_pixels`, and integer `max_pixels >= min_pixels`. One
 non-empty assistant answer is required.
 
+For embedding, retrieval, de-duplication, history, leakage exclusion, and
+materialization, a non-reference row is one `single_image` atomic sample and a
+reference row is one ordered `(golden, target)` `reference_pair`. Reference
+pairs are represented to the image encoder by a deterministic side-by-side
+`nvpaw_reference_pair_embedding_v1` asset and one `atomic_sample_id`; neither
+side is ever inserted into a retrieval pool on its own. Canonical training
+JSONL always retains the original two ordered image items.
+
 Source, Proxy, and Benchmark annotations require unique IDs. A materialized
 Train JSONL may contain byte-equivalent repetitions of an accepted source row;
 training validation allows the repeated ID only when the complete row content
@@ -29,11 +37,12 @@ Run `$PYTHON scripts/check_annotations.py --workspace WORKSPACE --require-files`
 Training assembly writes JSONL directly. `scripts/assemble_training_json.py`
 accepts one current `--mined-jsonl`, an optional preceding
 `--previous-jsonl`, and both evaluation inputs as repeated
-`--validation-jsonl`. A reviewed materialization cap uses `--max-rows` and
+`--validation-jsonl`; `--media-root` canonicalizes every atomic identity. A
+reviewed materialization cap uses `--max-rows` and
 `--row-multiple`; current Mining rows receive first claim on capped slots and
 the output is truncated to an exact effective-global-batch multiple for native
-epoch scheduling. It rejects evaluation leakage and requires a current real
-Mining contribution. When the launch-recorded repetition blend is enabled,
+epoch scheduling. It rejects atomic-sample evaluation leakage and requires a
+current real Mining contribution. When the launch-recorded repetition blend is enabled,
 the assembler consumes the current `gaps_summary.json`, retains every prior
 row and at least one current row, and writes `repetition_blend_manifest.json`.
 `validate_split_contract.py`

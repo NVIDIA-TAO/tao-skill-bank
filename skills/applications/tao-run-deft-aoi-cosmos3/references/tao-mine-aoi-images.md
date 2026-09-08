@@ -1,14 +1,17 @@
 # Cosmos3 AOI real-pair Mining
 
 Read `skills/data/tao-mine-aoi-images/SKILL.md` before launch. Embed unique
-Proxy target images and the recorded Mining source pool with the same encoder.
+Proxy atomic samples and the recorded Mining atomic source pool with the same encoder.
 Dispatch each GPU invocation through the selected platform's four verbs and
 track it with its own job-record.
 
 ## Inputs and isolation
 
-- query targets: selected Proxy RCCA gaps only;
-- source pool: canonical `annotations/mining.jsonl` and its media;
+- query targets: selected Proxy RCCA gaps only, with each reference pair
+  represented by one pair embedding asset;
+- source pool: canonical `annotations/mining.jsonl` and its media, materialized
+  by `build_mining_source_pool.py --pair-assets-dir ...` at `atomic_sample_id`
+  granularity;
 - top-K, cosine floor, and router mode: frozen DEFT state;
 - output root: `${RESULTS_DIR}/iterN/mining`.
 
@@ -17,9 +20,11 @@ records are query targets, not trainable source samples.
 
 ## Task-aware routing
 
-The target embedding parquet carries the physical target IDs and selected task
-types emitted by `route_selected_gaps.py`. The Mining annotation provides the
-available task types for every real source target.
+The target embedding parquet carries atomic sample IDs, ordered original image
+paths, and selected task types emitted by `route_selected_gaps.py`. The Mining
+annotation provides the available task types for every real source atomic
+sample. Pass the same source pair-asset root to the router so it resolves
+embedding paths back to exact ordered pairs.
 
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/task_mining_router.py" \
@@ -27,6 +32,7 @@ available task types for every real source target.
   --source-embeddings "$MINING_DIR/source_embeddings.parquet" \
   --source-annotations "$MINING_ANNOTATIONS" \
   --media-root "$MEDIA_ROOT" \
+  --pair-assets-dir "$RESULTS_DIR/source_pair_assets" \
   --mode "$MINING_ROUTER_MODE" \
   --top-k-per-target "$TOPN" \
   --defect-detection-top-k-per-target "$DD_TOPN" \
@@ -44,7 +50,7 @@ types, query IDs, and route tier. A zero-row result is a hard stop.
 
 ## History-aware selection
 
-Remove filepaths selected by previous iterations while preserving the
+Remove atomic sample IDs selected by previous iterations while preserving the
 pre-history candidate parquet:
 
 ```bash
@@ -59,17 +65,21 @@ pre-history candidate parquet:
   --max-cumulative-fraction "$MINING_POOL_FRACTION_CAP"
 ```
 
-The filtered parquet must contain at least one new real target. The history
-ledger hard-caps cumulative unique target-image selection against the sealed
-pool size and fraction. An all-duplicate or budget-exhausted result is a hard
-stop; never silently exceed the recorded Mining budget.
+When the candidate parquet contains `atomic_sample_id`, the history tool uses
+that field automatically and records `selected_identities`; legacy
+single-image parquets continue to use `filepath`. The filtered parquet must
+contain at least one new real atomic sample. The history ledger hard-caps
+cumulative unique atomic-sample selection against the sealed pool size and
+fraction. An all-duplicate or budget-exhausted result is a hard stop; never
+silently exceed the recorded Mining budget.
 
 ## Handoff
 
 Commit the final filtered parquet, the pre-history candidate parquet, router
 summary, history ledger and summary, both embedding parquets, and the exact
-positive row count. `emit_mined_sharegpt.py` then recovers the canonical JSONL
-messages and ordered media for the selected real records.
+positive row count. `emit_mined_sharegpt.py --pair-assets-dir ...` then
+recovers canonical JSONL messages and both ordered original images for each
+selected reference pair; it never matches or recombines individual sides.
 
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/commit_stage.py" \

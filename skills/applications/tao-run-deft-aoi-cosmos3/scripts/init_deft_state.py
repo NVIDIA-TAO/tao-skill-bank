@@ -496,7 +496,9 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             "mining": {
                 "router_mode": mining_router_mode,
                 "pool_fraction_cap": args.mining_pool_fraction_cap,
-                "pool_budget_unit": "unique_target_image",
+                "pool_budget_unit": "atomic_sample_id",
+                "reference_sample_unit": "ordered_golden_target_pair",
+                "reference_embedding_asset_schema": "nvpaw_reference_pair_embedding_v1",
                 "max_training_rows_per_iteration": args.max_training_rows_per_iteration,
                 "minimum_training_rows_per_iteration": (
                     args.minimum_training_rows_per_iteration
@@ -519,7 +521,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "min_similarity": args.min_similarity,
                 "history_aware": {
                     "enabled": True,
-                    "identity": "target_id",
+                    "identity": "atomic_sample_id",
                     "history_file": str(results_dir / "mining_history.json"),
                 },
                 "defect_detection_ablation": {

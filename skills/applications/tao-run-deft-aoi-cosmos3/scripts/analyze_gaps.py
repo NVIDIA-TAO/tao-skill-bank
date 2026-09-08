@@ -20,6 +20,7 @@ from typing import Any
 
 import yaml
 
+from atomic_samples import identity_for_paths
 from gap_analysis.config import load_profile, validate_config
 from gap_analysis.runner import run_selection
 from validate_sharegpt import image_paths, load_records, target_path
@@ -166,6 +167,7 @@ def build_candidates(
         )
         paths = image_paths(source, context=row_id)
         target = target_path(source, context=row_id)
+        sample_kind = "reference_pair" if len(paths) == 2 else "single_image"
         candidate = {
                 "id": row_id,
                 "evaluation_role": "proxy",
@@ -182,6 +184,10 @@ def build_candidates(
                 # Default to the target path so routing embeds that image once.
                 "target_id": str(source.get("target_id", target)),
                 "target_path": target,
+                "reference_path": paths[0] if len(paths) == 2 else None,
+                "image_paths": paths,
+                "sample_kind": sample_kind,
+                "atomic_sample_id": identity_for_paths(sample_kind, paths),
                 "sample_score": score,
                 "parse_ok": parse_ok,
                 "gap_type": gap_type,

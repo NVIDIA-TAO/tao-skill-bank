@@ -38,6 +38,15 @@ def _normalize_filepath(value: Any) -> str:
     return normalized
 
 
+def _normalize_identity(value: Any, identity_column: str) -> str:
+    if identity_column == "filepath":
+        return _normalize_filepath(value)
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"every mined row requires a non-empty {identity_column}")
+    return text
+
+
 def _sha256(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -90,7 +99,9 @@ def _atomic_parquet(table: Any, path: pathlib.Path) -> None:
         raise
 
 
-def _validated_history(path: pathlib.Path, iteration: int) -> dict[str, Any]:
+def _validated_history(
+    path: pathlib.Path, iteration: int, identity_column: str
+) -> dict[str, Any]:
     if not path.is_file():
         if iteration != 1:
             raise FileNotFoundError(
@@ -98,15 +109,17 @@ def _validated_history(path: pathlib.Path, iteration: int) -> dict[str, Any]:
             )
         return {
             "version": HISTORY_VERSION,
-            "identity": HISTORY_IDENTITY,
+            "identity": identity_column,
             "iterations": [],
         }
 
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict) or payload.get("version") != HISTORY_VERSION:
         raise ValueError(f"unsupported or malformed mining history: {path}")
-    if payload.get("identity") != HISTORY_IDENTITY:
-        raise ValueError("mining history identity must be filepath")
+    if payload.get("identity") != identity_column:
+        raise ValueError(
+            f"mining history identity must remain {identity_column}"
+        )
     entries = payload.get("iterations")
     if not isinstance(entries, list):
         raise ValueError("mining history iterations must be a list")
@@ -119,26 +132,30 @@ def _validated_history(path: pathlib.Path, iteration: int) -> dict[str, Any]:
             raise ValueError("every mining history iteration must be an object")
         number = int(entry.get("iteration", 0))
         actual_numbers.append(number)
-        selected = entry.get("selected_filepaths")
+        selected = entry.get("selected_identities")
+        if selected is None and identity_column == "filepath":
+            selected = entry.get("selected_filepaths")
         if not isinstance(selected, list):
             raise ValueError(
-                f"mining history iteration {number} has no selected_filepaths list"
+                f"mining history iteration {number} has no selected_identities list"
             )
-        normalized = [_normalize_filepath(value) for value in selected]
+        normalized = [
+            _normalize_identity(value, identity_column) for value in selected
+        ]
         if len(normalized) != len(set(normalized)):
             raise ValueError(
-                f"mining history iteration {number} contains duplicate filepaths"
+                f"mining history iteration {number} contains duplicate identities"
             )
         overlap = all_selected.intersection(normalized)
         if overlap:
             raise ValueError(
-                f"mining history iteration {number} reselects prior filepaths: "
+                f"mining history iteration {number} reselects prior identities: "
                 f"{sorted(overlap)[:3]}"
             )
         if int(entry.get("selected_count", -1)) != len(normalized):
             raise ValueError(
                 f"mining history iteration {number} selected_count disagrees with "
-                "selected_filepaths"
+                "selected identities"
             )
         for path_field, hash_field in (
             ("candidate_parquet", "candidate_sha256"),
@@ -156,7 +173,9 @@ def _validated_history(path: pathlib.Path, iteration: int) -> dict[str, Any]:
                 raise ValueError(
                     f"mining history iteration {number} {path_field} hash mismatch"
                 )
-        entry["selected_filepaths"] = normalized
+        entry["selected_identities"] = normalized
+        if identity_column == "filepath":
+            entry["selected_filepaths"] = normalized
         all_selected.update(normalized)
 
     if actual_numbers != expected_numbers:
@@ -167,7 +186,7 @@ def _validated_history(path: pathlib.Path, iteration: int) -> dict[str, Any]:
     if payload.get("cumulative_unique_count") != len(all_selected):
         raise ValueError(
             "mining history cumulative_unique_count disagrees with "
-            "selected_filepaths"
+            "selected identities"
         )
     return payload
 
@@ -220,7 +239,19 @@ def select_novel_samples(
     if len({output_parquet, history_file, summary_file}) != 3:
         raise ValueError("output parquet, history, and summary paths must differ")
 
-    state = _validated_history(history_file, iteration)
+    table = pq.read_table(candidate_parquet)
+    if filepath_column not in table.column_names:
+        raise ValueError(
+            f"candidate parquet is missing {filepath_column!r}; "
+            f"columns={table.column_names}"
+        )
+    identity_column = (
+        "atomic_sample_id"
+        if "atomic_sample_id" in table.column_names
+        else filepath_column
+    )
+
+    state = _validated_history(history_file, iteration, identity_column)
     entries: list[dict[str, Any]] = state["iterations"]
     recorded_cap = state.get("cumulative_budget_cap")
     if entries and recorded_cap is not None and cumulative_budget_cap is None:
@@ -263,25 +294,18 @@ def select_novel_samples(
             f"iteration {len(entries)}"
         )
 
-    table = pq.read_table(candidate_parquet)
-    if filepath_column not in table.column_names:
-        raise ValueError(
-            f"candidate parquet is missing {filepath_column!r}; "
-            f"columns={table.column_names}"
-        )
-
     historical = {
         value
         for entry in entries
-        for value in entry["selected_filepaths"]
+        for value in entry["selected_identities"]
     }
     candidate_seen: set[str] = set()
     selected_names: list[str] = []
     selected_indices: list[int] = []
     candidate_duplicate_count = 0
     already_mined_count = 0
-    for index, value in enumerate(table[filepath_column].to_pylist()):
-        identity = _normalize_filepath(value)
+    for index, value in enumerate(table[identity_column].to_pylist()):
+        identity = _normalize_identity(value, identity_column)
         if identity in candidate_seen:
             candidate_duplicate_count += 1
             continue
@@ -321,7 +345,7 @@ def select_novel_samples(
     summary: dict[str, Any] = {
         "version": HISTORY_VERSION,
         "iteration": iteration,
-        "identity": HISTORY_IDENTITY,
+        "identity": identity_column,
         "topn": topn,
         "candidate_parquet": str(candidate_parquet),
         "candidate_sha256": _sha256(candidate_parquet),
@@ -351,12 +375,14 @@ def select_novel_samples(
         "candidate_unique_count": len(candidate_seen),
         "already_mined_count": already_mined_count,
         "selected_count": len(selected_names),
-        "selected_filepaths": selected_names,
+        "selected_identities": selected_names,
         "output_parquet": str(output_parquet),
         "output_sha256": summary["output_sha256"],
         "summary_file": str(summary_file),
         "summary_sha256": _sha256(summary_file),
     }
+    if identity_column == "filepath":
+        entry["selected_filepaths"] = selected_names
     entries.append(entry)
     state["iterations"] = entries
     state["cumulative_unique_count"] = len(historical) + len(selected_names)

@@ -14,8 +14,9 @@ import sys
 from itertools import combinations
 from typing import Any
 
+from atomic_samples import sample_from_record
 from nvpaw_annotations import TASK_SPECS
-from validate_sharegpt import load_records, resolve_image, target_path, validate_records
+from validate_sharegpt import load_records, validate_records
 
 
 ROLE_PATHS = {
@@ -54,7 +55,9 @@ def _records(
         else all_rows
     )
     targets = {
-        str(resolve_image(target_path(row, context=f"{path}:{index}"), media_root))
+        sample_from_record(
+            row, media_root=media_root, context=f"{path}:{index}"
+        )["atomic_sample_id"]
         for index, row in enumerate(rows)
     }
     return rows, targets, summary["unsupported_tasks"]
@@ -158,6 +161,7 @@ def validate(
         "schema_version": 1,
         "format": "jsonl",
         "training_source": "mined_real_samples_only",
+        "identity": "atomic_sample_id",
         "roles": {role: str(path) for role, path in role_paths.items()},
         "records": {role: len(value) for role, value in rows.items()},
         "unique_targets": {role: len(value) for role, value in targets.items()},

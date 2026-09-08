@@ -28,12 +28,15 @@ matching helpers. It does not calculate the Benchmark KPI. It writes:
 - `selected_gaps.parquet`.
 
 Candidate rows retain task type, evaluator family, reference cohort, dataset,
-physical target ID/path, parse status, and raw prediction. Multiple task rows
-for one physical target share a target ID so the target image is embedded only
-once. Write `RCCA_Report.md` from these artifacts using
+ordered atomic sample ID/paths, parse status, and raw prediction. Multiple task
+rows for one physical single image or exact reference pair share an atomic ID
+so that unit is embedded only once. Reference rows with a common test image but
+different golden images remain distinct. Write `RCCA_Report.md` from these artifacts using
 `RCCA_REPORT_TEMPLATE.md`, then commit all four files.
 
-Route selected rows with `route_selected_gaps.py`. The Defect Detection
+Route selected rows with `route_selected_gaps.py`, passing `--media-root` and
+`--pair-assets-dir`; reference queries become one deterministic pair asset for
+the encoder while retaining both original paths in the query parquet. The Defect Detection
 ablation may select `all_proxy_severity`, which anchors on every Proxy DD row
 and preserves deterministic FN/partial-overlap, FP, correct ordering; the
 historical `hard_only` policy remains available. `task_mining_router.py`
