@@ -143,3 +143,27 @@ the helper emits independent incumbent, data-growth-scaled, and deterministic
 jitter specs, all initialized from the same frozen base checkpoint. Run all
 three before selecting and materializing `train.yaml`; never initialize the
 next iteration from a previous iteration checkpoint.
+
+Select all three probes before main training:
+
+```bash
+scripts/select_deft_od_aoi_training.py probes \
+  --manifest "$SPECS/training_manifest.json" \
+  --main-template "$SPECS/main_template.yaml" \
+  --status "$P0/status.json" --status "$P1/status.json" --status "$P2/status.json" \
+  --output-dir "$SPECS/selected"
+```
+
+After main training, select the KPI-best checkpoint from structured status
+rows. Repeat `--status` for resumed phases. If the best epoch is within the
+frozen late window, the first call emits one same-iteration `extension.yaml`
+from the terminal checkpoint; submit it, then reselect with
+`--extension-applied`. The checkpoint carried to measurement is always the
+maximum KPI `val_mAP50`, never the latest checkpoint or test result.
+
+After each stage succeeds, commit at least one completion artifact with
+`commit_deft_od_aoi_stage.py`. It accepts only the next frozen stage, verifies
+and hashes every named file, atomically updates `deft_state.json`, and appends
+`loop_log.jsonl`. The final iteration becomes `COMPLETE` only after its gap
+artifacts are committed. Poll native backends for live state; this record is
+durable workflow history, not a scheduler substitute.
