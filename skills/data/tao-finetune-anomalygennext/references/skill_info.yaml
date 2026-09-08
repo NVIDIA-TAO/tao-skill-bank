@@ -1,0 +1,38 @@
+network_arch: tao-finetune-anomalygennext
+type: data
+container_image: nvcr.io/nvidia/paidf-anomalygen:1.1.0  # versions-key: images.metropolis_sdg.anomalygen_next
+execution_environment: container
+gpu_spec_key: num_gpus
+required_credentials: []
+optional_credentials:
+- name: NGC_KEY
+  source: env_var
+  only_when: the selected platform requires authenticated access to nvcr.io
+actions:
+  prepare_recipe:
+    command: scripts/prepare_finetune_recipe.py
+    mode: args
+    inputs:
+      dataset_root: {type: folder}
+      validation_testcase: {type: file}
+      base_checkpoint: {type: folder}
+      vae_path: {type: file}
+      nn_backbone: {type: folder}
+      defect_spec: {type: file, optional: true}
+      recipe_template: {type: file, optional: true}
+    outputs:
+      recipe: {type: file}
+      normalized_validation: {type: file}
+      metadata: {type: file}
+    upload_excludes:
+    - inputs/
+    args:
+      dataset_root: --dataset-root {dataset_root}
+      validation_testcase: --validation-testcase {validation_testcase}
+      base_checkpoint: --base-checkpoint {base_checkpoint}
+      vae_path: --vae-path {vae_path}
+      nn_backbone: --nn-backbone {nn_backbone}
+      defect_spec: --defect-spec {defect_spec}
+      recipe_template: --recipe-template {recipe_template}
+      dataset_name: --dataset-name {dataset_name}
+      output: --output {recipe}
