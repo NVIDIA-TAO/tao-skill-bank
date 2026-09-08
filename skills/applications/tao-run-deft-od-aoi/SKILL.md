@@ -123,3 +123,23 @@ submit `gap_loose.yaml` and `gap_strict.yaml` through
 keeps the two-line inference class map durable, and emits only nested specs.
 Test inference is report-only and its output cannot influence routing or
 checkpoint selection.
+
+## RT-DETR training specs
+
+Build nested specs from the current cumulative COCO:
+
+```bash
+scripts/prepare_deft_od_aoi_training.py \
+  --policy "$RESULTS/deft_od_aoi_policy.yaml" --iteration 1 \
+  --train-coco "$ITER/training_data/train.json" \
+  --train-images "$ITER/training_data/images" \
+  --results-root "$ITER/training" --output-dir "$ITER/train_specs"
+```
+
+Invoke the RT-DETR leaf as direct training with `automl_policy: off`; the AOI
+application already owns its frozen probe policy. Iterations 1–2 use 36 epochs.
+Later iterations use the clipped size-adaptive budget. When probes are enabled,
+the helper emits independent incumbent, data-growth-scaled, and deterministic
+jitter specs, all initialized from the same frozen base checkpoint. Run all
+three before selecting and materializing `train.yaml`; never initialize the
+next iteration from a previous iteration checkpoint.
