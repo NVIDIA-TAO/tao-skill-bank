@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import sys
@@ -89,6 +90,9 @@ def _candidate(record: dict, index: int) -> dict:
         "atomic_sample_id": sample["atomic_sample_id"],
         "sample_kind": sample["sample_kind"],
         "source_image_paths": sample["image_paths"],
+        "content_sha256": hashlib.sha256(
+            f"fixture:{sample['atomic_sample_id']}".encode()
+        ).hexdigest(),
         "route_tier": route_tier,
         "routed_task_types": [record["task_type"]],
         "defect_detection_evidence": evidence,

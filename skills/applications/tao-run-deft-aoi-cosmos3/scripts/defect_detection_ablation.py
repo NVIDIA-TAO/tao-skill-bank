@@ -16,7 +16,7 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
-from atomic_samples import sample_from_record
+from atomic_samples import content_identity_for_paths, sample_from_record
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
     apply_repetition_blend,
@@ -270,7 +270,21 @@ def _candidate_visual_identity(
     path = resolve_image(filepath, media_root)
     content_sha = candidate.get("content_sha256")
     phash = candidate.get("perceptual_hash")
-    if content_sha is None:
+    if candidate.get("sample_kind") == "reference_pair":
+        source_paths = candidate.get("source_image_paths")
+        if not isinstance(source_paths, (list, tuple)) or len(source_paths) != 2:
+            raise ValueError(
+                f"reference-pair candidate {filepath!r} requires two source_image_paths"
+            )
+        if all(pathlib.Path(value).is_file() for value in source_paths):
+            # Prefer the ordered constituent bytes over any composite-asset hash.
+            content_sha = content_identity_for_paths("reference_pair", source_paths)
+        elif content_sha is None:
+            raise ValueError(
+                f"reference-pair candidate {filepath!r} has missing source images "
+                "and no precomputed content_sha256"
+            )
+    elif content_sha is None:
         content_sha = _sha256(path) if path.is_file() else hashlib.sha256(str(path).encode()).hexdigest()
     if phash is None and compute_perceptual_hash:
         phash = _perceptual_hash(path) if path.is_file() else str(content_sha)[:16]
@@ -525,6 +539,9 @@ def _validation_identities(
             continue
         paths.add(path_text)
         if sample["sample_kind"] == "reference_pair":
+            content.add(
+                content_identity_for_paths("reference_pair", sample["image_paths"])
+            )
             continue
         path = pathlib.Path(str(sample["target_filepath"]))
         if path.is_file():

@@ -32,6 +32,31 @@ def identity_for_paths(kind: str, paths: Iterable[str]) -> str:
     return f"{kind}:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
 
+def content_identity_for_paths(kind: str, paths: Iterable[str]) -> str:
+    """Hash the ordered bytes of every image in one atomic visual sample."""
+
+    source_paths = [pathlib.Path(value) for value in paths]
+    if kind == "single_image" and len(source_paths) != 1:
+        raise ValueError("single-image content identity requires exactly one path")
+    if kind == "reference_pair" and len(source_paths) != 2:
+        raise ValueError("reference-pair content identity requires exactly two paths")
+    if kind not in {"single_image", "reference_pair"}:
+        raise ValueError(f"unsupported atomic content kind: {kind!r}")
+    missing = [str(path) for path in source_paths if not path.is_file()]
+    if missing:
+        raise ValueError(f"atomic content image files are missing: {missing}")
+    digest = hashlib.sha256()
+    digest.update(f"{PAIR_ASSET_SCHEMA}\0{kind}\0".encode("utf-8"))
+    for index, path in enumerate(source_paths):
+        item_digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                item_digest.update(chunk)
+        digest.update(index.to_bytes(4, "big"))
+        digest.update(item_digest.digest())
+    return digest.hexdigest()
+
+
 def sample_from_record(
     record: dict[str, Any],
     *,

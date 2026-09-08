@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import sys
@@ -97,6 +98,11 @@ def _candidate(
         "atomic_sample_id": sample["atomic_sample_id"],
         "sample_kind": sample["sample_kind"],
         "source_image_paths": sample["image_paths"],
+        # Most contract tests intentionally use synthetic paths; model the
+        # trusted identity supplied by the embedding manifest for those rows.
+        "content_sha256": hashlib.sha256(
+            f"fixture:{sample['atomic_sample_id']}".encode()
+        ).hexdigest(),
         "route_tier": route_tier,
         "routed_task_types": [record["task_type"]],
         "defect_detection_evidence": evidence or [],
@@ -120,6 +126,45 @@ class _Evaluator:
 
 
 class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
+    def test_reference_leakage_uses_ordered_pair_content_not_only_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            for name, color in (
+                ("validation-golden.png", (10, 20, 30)),
+                ("candidate-golden.png", (10, 20, 30)),
+                ("validation-target.png", (40, 50, 60)),
+                ("candidate-target.png", (40, 50, 60)),
+            ):
+                Image.new("RGB", (8, 8), color=color).save(root / name)
+            validation = _row(
+                "validation-pair", "Ref_based Defect Detection", boxes=[]
+            )
+            images = [
+                item
+                for item in validation["messages"][0]["content"]
+                if item.get("type") == "image"
+            ]
+            images[0]["image"] = "validation-golden.png"
+            images[1]["image"] = "validation-target.png"
+            _, validation_content, _, _ = (
+                defect_detection_ablation._validation_identities([validation], root)
+            )
+            _, candidate_content, _ = (
+                defect_detection_ablation._candidate_visual_identity(
+                    {
+                        "filepath": "candidate-target.png",
+                        "sample_kind": "reference_pair",
+                        "source_image_paths": [
+                            str(root / "candidate-golden.png"),
+                            str(root / "candidate-target.png"),
+                        ],
+                    },
+                    media_root=root,
+                    compute_perceptual_hash=False,
+                )
+            )
+            self.assertIn(candidate_content, validation_content)
+
     def test_disabled_near_duplicate_filter_skips_perceptual_decode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             image_path = pathlib.Path(temporary) / "candidate.png"
