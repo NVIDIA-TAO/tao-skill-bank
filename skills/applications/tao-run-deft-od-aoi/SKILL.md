@@ -102,3 +102,24 @@ sources, and caps cumulative clean negatives against cumulative real defects.
 It retains every prior image and box and emits one binary COCO with explicit
 zero-annotation clean images. Use `--link-mode hardlink` only when source and
 output share a filesystem; portable staging should keep the copy default.
+
+## Measurement specs
+
+For baseline use the frozen base checkpoint; after training use the selected
+iteration checkpoint. Prepare both inference specs and the two gap-analysis
+specs together:
+
+```bash
+scripts/prepare_deft_od_aoi_measurement.py \
+  --policy "$RESULTS/deft_od_aoi_policy.yaml" \
+  --checkpoint "$CHECKPOINT" \
+  --kpi-predictions "$MEASURE/kpi/inference/labels" \
+  --results-root "$MEASURE" --output-dir "$MEASURE/specs"
+```
+
+Submit KPI/test inference through `tao-train-rtdetr`. Once KPI labels exist,
+submit `gap_loose.yaml` and `gap_strict.yaml` through
+`tao-analyze-gaps-od-map`. The helper projects the frozen KPI COCO to KITTI,
+keeps the two-line inference class map durable, and emits only nested specs.
+Test inference is report-only and its output cannot influence routing or
+checkpoint selection.
