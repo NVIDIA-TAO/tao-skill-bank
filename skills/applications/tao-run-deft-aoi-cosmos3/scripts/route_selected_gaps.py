@@ -188,7 +188,8 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
             atomic_sample_id,
             {
                 "filepath": target_path,
-                "target_id": target_id,
+                "target_id": atomic_sample_id,
+                "source_target_ids": [],
                 "atomic_sample_id": atomic_sample_id,
                 "sample_kind": "reference_pair" if len(paths) == 2 else "single_image",
                 "image_paths": list(paths),
@@ -211,6 +212,8 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
             raise ValueError(
                 f"atomic_sample_id {atomic_sample_id!r} maps to conflicting image paths"
             )
+        if target_id not in target["source_target_ids"]:
+            target["source_target_ids"].append(target_id)
         target["record_ids"].append(record_id)
         if task_type not in target["task_types"]:
             target["task_types"].append(task_type)
@@ -233,6 +236,7 @@ def route(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, A
             )
     output = []
     for target in targets.values():
+        target["source_target_ids"].sort()
         target["record_ids"].sort()
         target["task_types"].sort()
         target["datasets"].sort()

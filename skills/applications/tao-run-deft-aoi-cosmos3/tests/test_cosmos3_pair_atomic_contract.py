@@ -74,6 +74,14 @@ class Cosmos3PairAtomicContractTests(unittest.TestCase):
         self.assertEqual(len(targets), 2)
         self.assertEqual(summary["embedding_queries"], 2)
         self.assertEqual(
+            [target["target_id"] for target in targets],
+            ["reference_pair:a", "reference_pair:b"],
+        )
+        self.assertEqual(
+            [target["source_target_ids"] for target in targets],
+            [["shared-test"], ["shared-test"]],
+        )
+        self.assertEqual(
             [target["image_paths"] for target in targets],
             [
                 ["images/golden-a.png", "images/test.png"],
