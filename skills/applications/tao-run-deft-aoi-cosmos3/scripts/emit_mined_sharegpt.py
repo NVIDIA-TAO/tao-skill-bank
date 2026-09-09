@@ -14,7 +14,7 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
-from atomic_samples import embedding_filepath, sample_from_record
+from atomic_samples import lookup_embedding_filepath, sample_from_record
 from nvpaw_annotations import TASK_SPECS
 from validate_sharegpt import (
     image_paths,
@@ -131,7 +131,7 @@ def _source_index(
         index.setdefault(sample["atomic_sample_id"], []).append((record_index, record))
         if sample["sample_kind"] == "reference_pair" and pair_assets_dir is None:
             continue
-        embedding_path = embedding_filepath(sample, pair_assets_dir=pair_assets_dir)
+        embedding_path = lookup_embedding_filepath(sample, pair_assets_dir=pair_assets_dir)
         for key in _path_keys(embedding_path, media_root):
             index.setdefault(key, []).append((record_index, record))
     return index

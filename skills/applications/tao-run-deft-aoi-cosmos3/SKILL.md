@@ -187,6 +187,16 @@ recomputes the optimizer schedule. After iteration 1, both `data_mining` and
 the assembly summary binds its path/hash/count and proves every preceding row
 and fingerprint remains present. Never launch Train unless both gates pass.
 
+Cached source routing and ShareGPT emission are path/atomic-ID lookups, never
+pair-canvas rendering stages. Keep the recorded source pair-asset cache root
+separate from the run's query output root; only embedding-input preparation
+in `route_selected_gaps.py` and `build_mining_source_pool.py` should create
+missing canvases for embedding. `render_iteration_mining_runner.py` can carry
+both roots and render a runner with flushed start/end timings for each mining,
+selector, and assembler stage; see
+[the mining reference](references/tao-mine-aoi-images.md#task-aware-routing)
+for the request fields. Generating that runner does not authorize its execution.
+
 Reference-task mining records `[mining] pair_similarity` as `canvas` (the
 compatibility default) or `two_vector`. Canvas mode embeds one deterministic
 1024x512 golden/test composite but reduces each board's effective resolution;

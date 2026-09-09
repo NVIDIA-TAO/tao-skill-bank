@@ -182,9 +182,23 @@ def materialize_pair_asset(
     return output
 
 
+def lookup_embedding_filepath(
+    sample: dict[str, Any], *, pair_assets_dir: pathlib.Path | None
+) -> str:
+    """Return a cached embedding's path key without reading or rendering images."""
+
+    if sample.get("sample_kind") == "single_image":
+        return str(sample["target_filepath"])
+    if pair_assets_dir is None:
+        raise ValueError("pair_assets_dir is required for reference-pair embedding")
+    return str(pair_asset_path(pair_assets_dir, str(sample.get("atomic_sample_id"))))
+
+
 def embedding_filepath(
     sample: dict[str, Any], *, pair_assets_dir: pathlib.Path | None
 ) -> str:
+    """Prepare an image for embedding, rendering a missing pair canvas if needed."""
+
     if sample.get("sample_kind") == "single_image":
         return str(sample["target_filepath"])
     if pair_assets_dir is None:

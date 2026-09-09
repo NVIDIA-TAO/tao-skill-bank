@@ -18,7 +18,7 @@ from typing import Any, Iterable
 from atomic_samples import (
     PAIR_SIMILARITIES,
     PAIR_SIMILARITY_COMBINES,
-    embedding_filepath,
+    lookup_embedding_filepath,
     sample_from_record,
 )
 from nvpaw_annotations import TASK_SPECS
@@ -106,7 +106,7 @@ def _source_catalog(
             for value in (task_type, target_id, record_id)
         ):
             raise ValueError(f"{context}: id, target_id, and task_type are required")
-        canonical = embedding_filepath(sample, pair_assets_dir=pair_assets_dir)
+        canonical = lookup_embedding_filepath(sample, pair_assets_dir=pair_assets_dir)
         entry = catalog.setdefault(
             canonical,
             {

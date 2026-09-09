@@ -61,6 +61,30 @@ annotation provides the available task types for every real source atomic
 sample. Pass the same source pair-asset root to the router so it resolves
 embedding paths back to exact ordered pairs.
 
+Routing (`_source_catalog`) and emission (`_source_index`) use
+`lookup_embedding_filepath`: single-image paths or deterministic pair-asset
+keys, without opening images, checking their contents, or creating canvases.
+Ordered atomic IDs and unambiguous hash-name aliases still match cached vectors
+from another root. Rendering remains in `route_selected_gaps.materialize_embedding_inputs`
+and `build_mining_source_pool._embedding_inputs`. For
+`render_iteration_mining_runner.py --request request.json --output plan.json
+--runner-output iteration_mining_runner.py`, set independent request paths
+`source_pair_assets_dir` (the source pool's recorded cache) and
+`query_pair_assets_dir` (the run's query output cache). Optional
+`mining_commands` maps stage names to argv lists, run in this order:
+`source_inputs`, `source_embeddings`, `query_inputs`, `query_embeddings`,
+`routing`, `history`, `emission`, then the existing selector/assembler handoff;
+omit stages already complete or unused. Use `build_mining_source_pool.py` for
+`source_inputs`, `route_selected_gaps.py` for `query_inputs`,
+`task_mining_router.py` for `routing`, and `emit_mined_sharegpt.py` for `emission`.
+The renderer owns `--pair-assets-dir`: source inputs/routing/emission get the
+source root, query inputs get the query root, and a missing root or caller
+override is rejected. Other stage arguments remain explicit; emission must
+write an intermediate, never cumulative Train. Each generated stage prints
+flushed JSON `stage_start`/`stage_end` events with timestamps, elapsed seconds
+on completion, and the exit code; failures stop later stages. Generation only
+writes the plan/runner: execute it solely through an approved platform job.
+
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/task_mining_router.py" \
   --target-embeddings "$MINING_DIR/target_embeddings.parquet" \
