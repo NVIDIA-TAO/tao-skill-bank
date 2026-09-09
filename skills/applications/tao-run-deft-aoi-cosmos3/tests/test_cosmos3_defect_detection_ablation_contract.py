@@ -417,6 +417,11 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
 
         self.assertEqual(verified["training_jsonl"]["rows"], 30)
         self.assertEqual(verified["current_selection"]["row_counts"]["total"], 24)
+        self.assertEqual(
+            verified["current_selection"]["repetition_blend"],
+            current_manifest["repetition_blend"],
+        )
+        self.assertEqual(verified["repetition_blend"], assembly["repetition_blend"])
         self.assertEqual(verified["optimizer_schedule"]["expected_optimizer_steps"], 5)
         self.assertEqual(
             sum(row["id"].startswith("prior-empty") for row in cumulative)

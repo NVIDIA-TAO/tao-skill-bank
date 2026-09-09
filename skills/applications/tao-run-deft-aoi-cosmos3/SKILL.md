@@ -187,23 +187,42 @@ recomputes the optimizer schedule. After iteration 1, both `data_mining` and
 the assembly summary binds its path/hash/count and proves every preceding row
 and fingerprint remains present. Never launch Train unless both gates pass.
 
+Reference-task mining records `[mining] pair_similarity` as `canvas` (the
+compatibility default) or `two_vector`. Canvas mode embeds one deterministic
+1024x512 golden/test composite but reduces each board's effective resolution;
+two-vector mode instead embeds the golden and test boards independently at the
+same full single-image resolution and with the same encoder used by ordinary
+mining, reuses matching cached test-board embeddings, and embeds each shared
+golden only once. It ranks only canonical atomic pairs by the `mean` (default)
+or `min` of golden/test cosine similarity, records `sim_golden`, `sim_test`,
+and `sim_pair` for every candidate plus same-board-type hit rates per reference
+query, and never changes pair identity, de-duplication, leakage, budget, or
+two-image materialization. A launch prompt may request `two_vector pair
+similarity (mean|min)`.
+
 ### Repetition blend
 
-Training materialization can apply a launch-recorded repetition blend after
-exact-duplicate and Proxy/Benchmark leakage exclusion. Configure it in TOML or
-JSON, or map a launch prompt to `--repetition-blend`, `--repetition-policy`,
-`--repetition-rep-min`, `--repetition-rep-max`,
-`--repetition-never-repeat-empty-gt`, and repeatable
-`--repetition-explicit-multiplier TASK=MULTIPLIER` arguments; the existing
-maximum-training-row cap is its `row_cap`. The default
-`deficit_proportional` policy normalizes task deficits from the current
-`gaps_summary.json` (equal weights when unavailable), while `explicit` uses
-the supplied task multipliers. A launch prompt may request
-`deficit-proportional repetition (max rep N)` or explicit multipliers. The
-fixed-seed fractional sampler repeats only accepted rows, never reapplies a
-perceptual-hash filter, keeps empty-ground-truth calibration rows at one
-occurrence by default, and writes a bound `repetition_blend_manifest.json`
-alongside the compatible `defect_detection_quota_manifest_v1`.
+After exact-duplicate and Proxy/Benchmark leakage exclusion, the launch-recorded
+`deficit_proportional` repetition blend rebalances the task *mix*: its default
+budget is the number of available unique rows (`budget_multiplier=1.0`), with
+the existing `row_cap` only an upper bound, so abundant tasks may be seeded,
+deterministically downsampled below `rep=1` while scarce tasks may be repeated
+up to `rep_max`; unclamped tasks are redistributed by default and total
+target-minus-realized share gaps above five percentage points are warned in
+both manifests and stage summaries. Configure the budget, tolerance,
+redistribution, repetition bounds,
+empty-GT policy, seed, or explicit multipliers in TOML/JSON or their matching
+`--repetition-*` arguments; empty-GT calibration rows may be downsampled but
+are never repeated by default, and no perceptual-hash filter is reapplied. A
+launch prompt may request `deficit-proportional repetition (rebalance task
+shares, max rep N)`. In a cumulative iteration, retained copies from the
+previous Train are mandatory lineage but do not inflate the unique-row budget.
+`render_iteration_mining_runner.py` moves every repetition and gap-weight
+control off the current-row selector and onto the sole cumulative assembler,
+so the blend runs exactly once over previous plus new rows. The assembler
+writes the schema-v2 bound `repetition_blend_manifest.json`, and the final
+`defect_detection_quota_manifest_v2` carries that cumulative blend while
+preserving the selector's disabled current-only blend under `current_selection`.
 
 ## Train contract
 

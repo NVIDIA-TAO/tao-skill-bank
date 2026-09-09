@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml
 
+from atomic_samples import PAIR_SIMILARITIES, PAIR_SIMILARITY_COMBINES
 from gap_analysis.config import load_profile, validate_config
 from metric_contract import render_target, validate_contract
 from nvpaw_annotations import TASK_SPECS
@@ -381,6 +382,8 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         )
     annotation_profile = "nvpaw_multitask_v1"
     mining_router_mode = getattr(args, "mining_router_mode", "task_strict")
+    pair_similarity = getattr(args, "pair_similarity", "canvas")
+    pair_similarity_combine = getattr(args, "pair_similarity_combine", "mean")
     prompt_variant = getattr(args, "prompt_variant", "official_v1")
     if prompt_variant != "official_v1":
         raise ValueError(f"unsupported prompt variant {prompt_variant!r}")
@@ -546,6 +549,8 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             },
             "mining": {
                 "router_mode": mining_router_mode,
+                "pair_similarity": pair_similarity,
+                "pair_similarity_combine": pair_similarity_combine,
                 "pool_fraction_cap": args.mining_pool_fraction_cap,
                 "pool_budget_unit": "atomic_sample_id",
                 "reference_sample_unit": "ordered_golden_target_pair",
@@ -758,6 +763,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repetition-policy", choices=REPETITION_POLICIES)
     parser.add_argument("--repetition-rep-min", type=float)
     parser.add_argument("--repetition-rep-max", type=float)
+    parser.add_argument("--repetition-budget-multiplier", type=float)
+    parser.add_argument("--repetition-share-gap-tolerance", type=float)
+    redistribution_toggle = parser.add_mutually_exclusive_group()
+    redistribution_toggle.add_argument(
+        "--repetition-redistribute",
+        dest="repetition_redistribute",
+        action="store_true",
+        default=None,
+    )
+    redistribution_toggle.add_argument(
+        "--no-repetition-redistribute",
+        dest="repetition_redistribute",
+        action="store_false",
+    )
     empty_toggle = parser.add_mutually_exclusive_group()
     empty_toggle.add_argument(
         "--repetition-never-repeat-empty-gt",
@@ -812,6 +831,18 @@ def _parser() -> argparse.ArgumentParser:
             "Task-aware modes require --annotation-profile nvpaw_multitask_v1."
         ),
     )
+    parser.add_argument(
+        "--pair-similarity",
+        choices=PAIR_SIMILARITIES,
+        default="canvas",
+        help="Reference-pair similarity representation; canvas remains the default.",
+    )
+    parser.add_argument(
+        "--pair-similarity-combine",
+        choices=PAIR_SIMILARITY_COMBINES,
+        default="mean",
+        help="Combine golden/test cosine similarities in two_vector mode.",
+    )
     parser.add_argument("--framework-container", required=True)
     parser.add_argument("--mining-container", required=True)
     return parser
@@ -829,6 +860,9 @@ def main(argv: list[str] | None = None) -> int:
                 "policy": args.repetition_policy,
                 "rep_min": args.repetition_rep_min,
                 "rep_max": args.repetition_rep_max,
+                "budget_multiplier": args.repetition_budget_multiplier,
+                "share_gap_tolerance": args.repetition_share_gap_tolerance,
+                "redistribute": args.repetition_redistribute,
                 "never_repeat_empty_gt": args.repetition_never_repeat_empty_gt,
                 "explicit_multipliers": parse_explicit_multipliers(
                     args.repetition_explicit_multiplier

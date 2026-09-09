@@ -15,6 +15,63 @@ from typing import Any
 from assemble_training_json import sha256_file
 
 
+_ASSEMBLER_ONLY_TOGGLES = {
+    "--repetition-blend",
+    "--no-repetition-blend",
+    "--repetition-redistribute",
+    "--no-repetition-redistribute",
+    "--repetition-never-repeat-empty-gt",
+    "--repetition-allow-empty-gt",
+}
+_ASSEMBLER_ONLY_VALUES = {
+    "--gap-analysis-summary",
+    "--repetition-config",
+    "--repetition-policy",
+    "--repetition-rep-min",
+    "--repetition-rep-max",
+    "--repetition-budget-multiplier",
+    "--repetition-share-gap-tolerance",
+    "--repetition-explicit-multiplier",
+    "--repetition-seed",
+}
+
+
+def _partition_materialization_arguments(
+    command: list[str],
+) -> tuple[list[str], list[str]]:
+    """Move final-corpus repetition controls off the current-row selector."""
+
+    selector: list[str] = []
+    assembler: list[str] = []
+    index = 0
+    while index < len(command):
+        value = command[index]
+        if value in _ASSEMBLER_ONLY_TOGGLES:
+            assembler.append(value)
+            index += 1
+            continue
+        option = value.partition("=")[0]
+        if option in _ASSEMBLER_ONLY_VALUES:
+            assembler.append(value)
+            if "=" not in value:
+                if index + 1 == len(command):
+                    raise ValueError(f"{value} requires a value")
+                assembler.append(command[index + 1])
+                index += 2
+            else:
+                index += 1
+            continue
+        if value.startswith(("--repetition-", "--no-repetition-")):
+            raise ValueError(
+                f"unsupported repetition materialization option {value!r}"
+            )
+        selector.append(value)
+        index += 1
+    if assembler:
+        selector.append("--no-repetition-blend")
+    return selector, assembler
+
+
 def build_plan(
     *,
     selector_command: list[str],
@@ -40,6 +97,8 @@ def build_plan(
         or value.startswith("--output=")
         or value == "--manifest"
         or value.startswith("--manifest=")
+        or value == "--repetition-manifest"
+        or value.startswith("--repetition-manifest=")
         for value in selector_command
     ):
         raise ValueError("selector_command output paths are owned by this renderer")
@@ -68,7 +127,9 @@ def build_plan(
         if previous in {mined, current_quota, train, summary, final_quota}:
             raise ValueError("previous training JSONL must not be an iteration output")
 
-    selector_argv = [*selector_command]
+    selector_argv, assembler_materialization_argv = (
+        _partition_materialization_arguments(selector_command)
+    )
     if previous is not None:
         selector_argv.extend(["--previous-jsonl", str(previous)])
     selector_argv.extend(
@@ -102,6 +163,7 @@ def build_plan(
         assembler_argv.extend(
             ["--previous-jsonl", str(previous), "--previous-sha256", previous_sha256]
         )
+    assembler_argv.extend(assembler_materialization_argv)
     return {
         "schema_version": "deft_iteration_materialization_plan_v1",
         "previous_jsonl": str(previous) if previous is not None else None,
@@ -125,6 +187,11 @@ def build_plan(
             "previous_hash_verified": previous is None
             or sha256_file(previous) == previous_sha256,
             "single_assembly_boundary": True,
+            "repetition_controls_owned_by_assembler": not any(
+                value.startswith("--repetition-")
+                and value != "--no-repetition-blend"
+                for value in selector_argv
+            ),
         },
     }
 

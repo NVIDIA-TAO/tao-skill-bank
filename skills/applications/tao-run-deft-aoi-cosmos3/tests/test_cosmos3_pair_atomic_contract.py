@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import tempfile
@@ -209,8 +210,192 @@ class Cosmos3PairAtomicContractTests(unittest.TestCase):
 
             self.assertEqual(summary["source_reference_pairs"], 2)
             self.assertEqual(selected[0]["source_image_paths"], samples[1]["image_paths"])
+            self.assertIsNone(selected[0]["sim_golden"])
+            self.assertIsNone(selected[0]["sim_test"])
+            self.assertEqual(selected[0]["sim_pair"], 1.0)
+            self.assertEqual(summary["pair_similarity"], "canvas")
             self.assertEqual([row["id"] for row in emitted], ["pair-b"])
             self.assertEqual(emit_summary["atomic_reference_pairs"], 1)
+
+    def test_two_vector_similarity_prefers_same_board_type_and_audits_combine(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            image_dir = root / "images"
+            image_dir.mkdir()
+            for name in (
+                "query__C1036@2_UniformLight.png",
+                "board-A__query.png",
+                "board-A__candidate.png",
+                "candidate__C1036@2_UniformLight.png",
+                "candidate__C2048@1_UniformLight.png",
+                "board-B__candidate.png",
+            ):
+                Image.new("RGB", (8, 8), color="white").save(image_dir / name)
+            records = [
+                _row(
+                    "pair-a",
+                    "images/candidate__C1036@2_UniformLight.png",
+                    "images/board-A__candidate.png",
+                ),
+                _row(
+                    "pair-b",
+                    "images/candidate__C2048@1_UniformLight.png",
+                    "images/board-B__candidate.png",
+                ),
+            ]
+            target = {
+                "filepath": "images/board-A__query.png",
+                "target_id": "reference_pair:query-a",
+                "atomic_sample_id": "reference_pair:query-a",
+                "sample_kind": "reference_pair",
+                "image_paths": [
+                    "images/query__C1036@2_UniformLight.png",
+                    "images/board-A__query.png",
+                ],
+                "reference_filepath": "images/query__C1036@2_UniformLight.png",
+                "target_filepath": "images/board-A__query.png",
+                "task_types": ["Ref_based Defect Detection"],
+                "defect_detection_evidence": [],
+            }
+            target_inputs = route_selected_gaps.materialize_embedding_inputs(
+                [target],
+                media_root=root,
+                pair_assets_dir=root / "pair-assets",
+                pair_similarity="two_vector",
+            )
+            embeddings = {
+                "query__C1036@2_UniformLight.png": [1.0, 0.0],
+                "board-A__query.png": [1.0, 0.0],
+                "board-A__candidate.png": [0.6, 0.8],
+                "candidate__C1036@2_UniformLight.png": [1.0, 0.0],
+                "candidate__C2048@1_UniformLight.png": [0.0, 1.0],
+                "board-B__candidate.png": [1.0, 0.0],
+            }
+            target_rows = [
+                {**row, "embedding": embeddings[pathlib.Path(row["filepath"]).name]}
+                for row in target_inputs
+            ]
+            source_rows = [
+                {
+                    "filepath": str(image_dir / name),
+                    "embedding": vector,
+                }
+                for name, vector in embeddings.items()
+                if name not in {"query__C1036@2_UniformLight.png", "board-A__query.png"}
+            ]
+
+            mean_selected, mean_summary = task_mining_router.route_candidates(
+                target_rows,
+                source_rows,
+                records,
+                media_root=root,
+                mode="task_strict",
+                top_k_per_target=2,
+                min_similarity=-1.0,
+                pair_similarity="two_vector",
+                pair_similarity_combine="mean",
+            )
+            min_selected, min_summary = task_mining_router.route_candidates(
+                target_rows,
+                source_rows,
+                records,
+                media_root=root,
+                mode="task_strict",
+                top_k_per_target=2,
+                min_similarity=-1.0,
+                pair_similarity="two_vector",
+                pair_similarity_combine="min",
+            )
+
+            self.assertEqual(
+                [row["source_record_ids"] for row in mean_selected],
+                [["pair-a"], ["pair-b"]],
+            )
+            self.assertGreater(
+                mean_selected[1]["sim_test"], mean_selected[0]["sim_test"]
+            )
+            self.assertAlmostEqual(mean_selected[0]["sim_golden"], 1.0)
+            self.assertAlmostEqual(mean_selected[0]["sim_test"], 0.6)
+            self.assertAlmostEqual(mean_selected[0]["sim_pair"], 0.8)
+            self.assertAlmostEqual(min_selected[0]["sim_pair"], 0.6)
+            self.assertAlmostEqual(min_selected[1]["sim_pair"], 0.0)
+            self.assertEqual(
+                mean_selected[0]["source_image_paths"],
+                [
+                    str(
+                        (image_dir / "candidate__C1036@2_UniformLight.png").resolve()
+                    ),
+                    str((image_dir / "board-A__candidate.png").resolve()),
+                ],
+            )
+            emitted, _ = emit_mined_sharegpt.emit_records(
+                mean_selected[:1],
+                records,
+                media_root=root,
+                relative=True,
+                pair_assets_dir=None,
+            )
+            self.assertEqual([row["id"] for row in emitted], ["pair-a"])
+            self.assertEqual(
+                [
+                    item["image"]
+                    for item in emitted[0]["messages"][0]["content"]
+                    if item["type"] == "image"
+                ],
+                [
+                    "images/candidate__C1036@2_UniformLight.png",
+                    "images/board-A__candidate.png",
+                ],
+            )
+            for summary, combine in ((mean_summary, "mean"), (min_summary, "min")):
+                self.assertEqual(summary["pair_similarity"], "two_vector")
+                self.assertEqual(summary["pair_similarity_combine"], combine)
+                evidence = summary["targets"][0]
+                self.assertEqual(evidence["selected_reference_pairs"], 2)
+                self.assertEqual(evidence["same_board_type_hits"], 1)
+                self.assertEqual(evidence["same_golden_path_hits"], 0)
+                self.assertEqual(evidence["same_board_id_prefix_hits"], 1)
+                self.assertEqual(evidence["same_board_type_hit_rate"], 0.5)
+
+    def test_two_vector_query_inputs_embed_a_shared_golden_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            image_dir = root / "images"
+            image_dir.mkdir()
+            for name in ("golden.png", "test-a.png", "test-b.png"):
+                Image.new("RGB", (8, 8), color="white").save(image_dir / name)
+            targets = [
+                {
+                    "filepath": f"images/test-{suffix}.png",
+                    "target_id": f"reference_pair:{suffix}",
+                    "sample_kind": "reference_pair",
+                    "image_paths": [
+                        "images/golden.png",
+                        f"images/test-{suffix}.png",
+                    ],
+                    "task_types": ["Ref_based Defect Detection"],
+                    "defect_detection_evidence": [],
+                }
+                for suffix in ("a", "b")
+            ]
+
+            rows = route_selected_gaps.materialize_embedding_inputs(
+                targets,
+                media_root=root,
+                pair_assets_dir=root / "pair-assets",
+                pair_similarity="two_vector",
+            )
+
+            self.assertEqual(len(rows), 3)
+            golden_rows = [row for row in rows if row["filepath"].endswith("golden.png")]
+            self.assertEqual(len(golden_rows), 1)
+            memberships = json.loads(golden_rows[0]["embedding_memberships"])
+            self.assertEqual(
+                [item["target_id"] for item in memberships],
+                ["reference_pair:a", "reference_pair:b"],
+            )
+            self.assertTrue(all(item["role"] == "golden" for item in memberships))
+            self.assertFalse((root / "pair-assets").exists())
 
 
 if __name__ == "__main__":

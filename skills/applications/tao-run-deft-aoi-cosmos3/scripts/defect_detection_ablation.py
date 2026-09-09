@@ -1493,6 +1493,7 @@ def materialize(
             "steps_per_epoch": row_count // global_batch if expected_steps is not None else None,
             "expected_optimizer_steps": expected_steps,
         },
+        "warnings": list(repetition_manifest["warnings"]),
         "repetition_blend": repetition_manifest,
     }
     return selected_records, manifest
@@ -1567,7 +1568,9 @@ def bind_cumulative_manifest(
         "optimizer_schedule": bound["optimizer_schedule"],
         "single_image_calibration": bound.get("single_image_calibration"),
         "reference_calibration": bound.get("reference_calibration"),
+        "repetition_blend": bound.get("repetition_blend"),
     }
+    bound["repetition_blend"] = assembly_summary["repetition_blend"]
     tasks = Counter(str(row.get("task_type")) for row in final_rows)
     final_count = len(final_rows)
     bound["row_counts"] = {
@@ -1753,6 +1756,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repetition-policy", choices=REPETITION_POLICIES)
     parser.add_argument("--repetition-rep-min", type=float)
     parser.add_argument("--repetition-rep-max", type=float)
+    parser.add_argument("--repetition-budget-multiplier", type=float)
+    parser.add_argument("--repetition-share-gap-tolerance", type=float)
+    redistribution_toggle = parser.add_mutually_exclusive_group()
+    redistribution_toggle.add_argument(
+        "--repetition-redistribute",
+        dest="repetition_redistribute",
+        action="store_true",
+        default=None,
+    )
+    redistribution_toggle.add_argument(
+        "--no-repetition-redistribute",
+        dest="repetition_redistribute",
+        action="store_false",
+    )
     empty_toggle = parser.add_mutually_exclusive_group()
     empty_toggle.add_argument(
         "--repetition-never-repeat-empty-gt",
@@ -1789,6 +1806,9 @@ def main(argv: list[str] | None = None) -> int:
                 "policy": args.repetition_policy,
                 "rep_min": args.repetition_rep_min,
                 "rep_max": args.repetition_rep_max,
+                "budget_multiplier": args.repetition_budget_multiplier,
+                "share_gap_tolerance": args.repetition_share_gap_tolerance,
+                "redistribute": args.repetition_redistribute,
                 "never_repeat_empty_gt": args.repetition_never_repeat_empty_gt,
                 "explicit_multipliers": parse_explicit_multipliers(
                     args.repetition_explicit_multiplier

@@ -83,6 +83,8 @@
       "proxy_drives_gap_analysis": true
     },
     "mining": {
+      "pair_similarity": "canvas",
+      "pair_similarity_combine": "mean",
       "calibration_policy": "empty_and_few_box_from_mining",
       "calibration_quota_contract": {
         "policy": "proxy_empty_rate_by_reference_cohort",

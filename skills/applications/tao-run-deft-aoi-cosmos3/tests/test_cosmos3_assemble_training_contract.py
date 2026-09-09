@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
-import json
 import importlib
+import json
 import pathlib
 import sys
 import tempfile
 import unittest
+from collections import Counter
 
 
 SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -127,6 +128,117 @@ class Cosmos3AssembleTrainingContractTests(unittest.TestCase):
             self.assertNotEqual(plan["selector"]["output"], plan["assembler"]["output"])
             self.assertEqual(plan["selector"]["output"], plan["assembler"]["mined_input"])
             self.assertEqual(plan["assembler"]["previous_sha256"], plan["previous_sha256"])
+
+    def test_five_round_repetition_uses_unique_supply_and_cumulative_lineage(self) -> None:
+        supply_counts = (2_566, 4_094, 5_637, 7_165, 8_728)
+        expected_counts = (2_304, 3_840, 5_376, 6_912, 8_448)
+        task_types = ("Component Detection", "Defect Detection")
+        repetition_config = {
+            "enabled": True,
+            "policy": "deficit_proportional",
+            "rep_min": 0.5,
+            "rep_max": 3.0,
+            "budget_multiplier": 1.0,
+            "never_repeat_empty_gt": True,
+            "explicit_multipliers": {},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            universe = [
+                _row(
+                    f"row-{index}",
+                    task_types[1] if index % 10 in {7, 8, 9} else task_types[0],
+                )
+                for index in range(supply_counts[-1])
+            ]
+            previous_path = None
+            previous_occurrences: Counter[str] = Counter()
+            realized_sizes: list[int] = []
+            for iteration, (supply, expected) in enumerate(
+                zip(supply_counts, expected_counts, strict=True),
+                start=1,
+            ):
+                iteration_dir = root / f"iter{iteration}"
+                iteration_dir.mkdir()
+                mined_rows = universe[:supply]
+                mined = _write(iteration_dir / "mined.jsonl", mined_rows)
+                rows, summary = assemble_training_json.assemble(
+                    previous_path,
+                    mined,
+                    validation_paths=[],
+                    max_rows=20_000,
+                    row_multiple=768,
+                    repetition_config=repetition_config,
+                    deficit_weights={task: 1.0 for task in task_types},
+                    repetition_seed=17,
+                )
+                output = _write(iteration_dir / "train.jsonl", rows)
+                summary = assemble_training_json.bind_summary(summary, output)
+                occurrences = Counter(
+                    json.dumps(row, sort_keys=True, separators=(",", ":"))
+                    for row in rows
+                )
+                manifest = summary["repetition_blend"]
+                unique_supply_by_task = Counter(
+                    row["task_type"] for row in mined_rows
+                )
+
+                self.assertEqual(len(rows), expected)
+                self.assertEqual(manifest["totals"]["budget"], supply)
+                self.assertEqual(manifest["totals"]["available"], supply)
+                self.assertEqual(manifest["totals"]["rows_after"], expected)
+                self.assertTrue(previous_occurrences <= occurrences)
+                self.assertTrue(summary["previous_fingerprints_subset"])
+                self.assertEqual(
+                    summary["retained_previous_records"],
+                    summary["previous_records"],
+                )
+                self.assertEqual(set(manifest["tasks"]), set(task_types))
+                for task in task_types:
+                    task_manifest = manifest["tasks"][task]
+                    self.assertEqual(
+                        task_manifest["available"], unique_supply_by_task[task]
+                    )
+                    self.assertEqual(
+                        task_manifest["repeated_rows"],
+                        sum(row["task_type"] == task for row in rows),
+                    )
+                    self.assertAlmostEqual(
+                        task_manifest["rep"],
+                        task_manifest["repeated_rows"] / task_manifest["available"],
+                    )
+
+                realized_sizes.append(len(rows))
+                previous_path = output
+                previous_occurrences = occurrences
+
+            self.assertEqual(realized_sizes, sorted(set(realized_sizes)))
+
+            runner = importlib.import_module("render_iteration_mining_runner")
+            plan = runner.build_plan(
+                selector_command=[
+                    "python",
+                    "defect_detection_ablation.py",
+                    "--repetition-blend",
+                    "--repetition-budget-multiplier",
+                    "1.0",
+                ],
+                previous_jsonl=previous_path,
+                previous_sha256=assemble_training_json.sha256_file(previous_path),
+                mined_jsonl=root / "iter6" / "data" / "mined.jsonl",
+                current_quota_manifest=root / "iter6" / "data" / "quota.json",
+                train_jsonl=root / "iter6" / "assemble_data" / "train.jsonl",
+                assemble_summary=root / "iter6" / "assemble_data" / "summary.json",
+                final_quota_manifest=root / "iter6" / "assemble_data" / "quota.json",
+                media_root=root,
+                max_rows=20_000,
+                row_multiple=768,
+                epochs=5,
+                global_batch=768,
+            )
+            self.assertIn("--no-repetition-blend", plan["selector"]["command"])
+            self.assertNotIn("--repetition-blend", plan["selector"]["command"])
+            self.assertIn("--repetition-blend", plan["assembler"]["command"])
 
     def test_commit_gate_rejects_missing_previous_hash_drop_and_lineage_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -340,7 +452,45 @@ class Cosmos3AssembleTrainingContractTests(unittest.TestCase):
             self.assertEqual(summary["duplicates_skipped"], 1)
             self.assertEqual(
                 summary["repetition_blend"]["schema_version"],
-                "repetition_blend_manifest_v1",
+                "repetition_blend_manifest_v2",
+            )
+
+    def test_repetition_share_gap_warning_is_copied_to_stage_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined = _write(
+                root / "mined.jsonl",
+                [
+                    *(_row(f"abundant-{index}", "Component Detection") for index in range(90)),
+                    *(_row(f"scarce-{index}", "Defect Detection") for index in range(10)),
+                ],
+            )
+
+            _, summary = assemble_training_json.assemble(
+                None,
+                mined,
+                validation_paths=[],
+                max_rows=100,
+                row_multiple=1,
+                repetition_config={
+                    "enabled": True,
+                    "policy": "deficit_proportional",
+                    "rep_min": 0.5,
+                    "rep_max": 1.5,
+                    "never_repeat_empty_gt": True,
+                    "explicit_multipliers": {},
+                },
+                deficit_weights={
+                    "Component Detection": 1.0,
+                    "Defect Detection": 1.0,
+                },
+                repetition_seed=17,
+            )
+
+            self.assertTrue(summary["warnings"])
+            self.assertEqual(
+                summary["warnings"],
+                summary["repetition_blend"]["warnings"],
             )
 
 

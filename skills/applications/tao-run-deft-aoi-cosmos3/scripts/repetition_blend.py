@@ -19,13 +19,16 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 runtime fallback
     import tomli as tomllib
 
 
-SCHEMA_VERSION = "repetition_blend_manifest_v1"
+SCHEMA_VERSION = "repetition_blend_manifest_v2"
 POLICIES = ("deficit_proportional", "explicit")
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
     "policy": "deficit_proportional",
     "rep_min": 0.5,
     "rep_max": 3.0,
+    "budget_multiplier": 1.0,
+    "share_gap_tolerance": 0.05,
+    "redistribute": True,
     "never_repeat_empty_gt": True,
     "explicit_multipliers": {},
     "row_cap": None,
@@ -62,17 +65,36 @@ def validate_repetition_config(value: dict[str, Any] | None) -> dict[str, Any]:
         raise ValueError("repetition blend enabled must be boolean")
     if config["policy"] not in POLICIES:
         raise ValueError(f"unsupported repetition policy {config['policy']!r}")
-    for name in ("rep_min", "rep_max"):
+    for name in (
+        "rep_min",
+        "rep_max",
+        "budget_multiplier",
+        "share_gap_tolerance",
+    ):
         number = config[name]
         if not isinstance(number, (int, float)) or isinstance(number, bool):
             raise ValueError(f"repetition {name} must be numeric")
         config[name] = float(number)
-    if not all(math.isfinite(config[name]) for name in ("rep_min", "rep_max")):
-        raise ValueError("repetition multipliers must be finite")
+    if not all(
+        math.isfinite(config[name])
+        for name in (
+            "rep_min",
+            "rep_max",
+            "budget_multiplier",
+            "share_gap_tolerance",
+        )
+    ):
+        raise ValueError("repetition numeric controls must be finite")
     if config["rep_min"] <= 0 or config["rep_max"] <= 0:
         raise ValueError("repetition multipliers must be positive")
     if config["rep_min"] > config["rep_max"]:
         raise ValueError("repetition rep_min cannot exceed rep_max")
+    if config["budget_multiplier"] <= 0:
+        raise ValueError("repetition budget_multiplier must be positive")
+    if not 0 <= config["share_gap_tolerance"] <= 1:
+        raise ValueError("repetition share_gap_tolerance must be in [0, 1]")
+    if type(config["redistribute"]) is not bool:
+        raise ValueError("repetition redistribute must be boolean")
     if type(config["never_repeat_empty_gt"]) is not bool:
         raise ValueError("never_repeat_empty_gt must be boolean")
     if config["row_cap"] is not None and (
@@ -225,6 +247,107 @@ def _allocate_cap(
     return allocated
 
 
+def _round_half_up(value: float) -> int:
+    return int(math.floor(value + 0.5))
+
+
+def _align_down(value: int, multiple: int) -> int:
+    return value - value % multiple
+
+
+def _align_up(value: int, multiple: int) -> int:
+    return ((value + multiple - 1) // multiple) * multiple
+
+
+def _deficit_budget(
+    *,
+    available_total: int,
+    budget_multiplier: float,
+    row_cap: int,
+) -> int:
+    requested = _round_half_up(available_total * budget_multiplier)
+    budget = min(row_cap, requested)
+    if budget <= 0:
+        raise ValueError("repetition share budget must be positive")
+    return budget
+
+
+def _count_bounds(
+    *,
+    available: dict[str, int],
+    empty_rows: dict[str, int],
+    mandatory: dict[str, int],
+    rep_min: float,
+    rep_max: float,
+    never_repeat_empty_gt: bool,
+) -> tuple[dict[str, int], dict[str, int]]:
+    lower: dict[str, int] = {}
+    upper: dict[str, int] = {}
+    for task, count in available.items():
+        task_upper = int(math.floor(count * rep_max + 1e-12))
+        if never_repeat_empty_gt and empty_rows[task] == count:
+            task_upper = min(task_upper, count)
+        if mandatory[task] > task_upper:
+            raise ValueError(
+                f"repetition rep_max cannot retain mandatory rows for {task!r}"
+            )
+        task_lower = max(mandatory[task], int(math.ceil(count * rep_min - 1e-12)))
+        lower[task] = min(task_lower, task_upper)
+        upper[task] = task_upper
+    return lower, upper
+
+
+def _allocate_weighted_total(
+    *,
+    shares: dict[str, float],
+    lower: dict[str, int],
+    upper: dict[str, int],
+    total: int,
+) -> dict[str, int]:
+    if sum(lower.values()) > total or sum(upper.values()) < total:
+        raise ValueError("repetition total is outside the feasible multiplier bounds")
+    allocated = dict(lower)
+    remaining = total - sum(allocated.values())
+    while remaining:
+        eligible = [task for task in sorted(allocated) if allocated[task] < upper[task]]
+        if not eligible:
+            raise ValueError("repetition bounds cannot satisfy the requested budget")
+        task = min(
+            eligible,
+            key=lambda name: (
+                (allocated[name] + 1) / shares[name]
+                if shares[name] > 0
+                else math.inf,
+                name,
+            ),
+        )
+        allocated[task] += 1
+        remaining -= 1
+    return allocated
+
+
+def _feasible_aligned_total(
+    *,
+    requested: int,
+    lower_total: int,
+    upper_total: int,
+    row_cap: int,
+    row_multiple: int,
+) -> int:
+    upper_total = min(upper_total, row_cap)
+    if lower_total > upper_total:
+        raise ValueError("repetition bounds exceed row_cap")
+    bounded = min(upper_total, max(lower_total, requested))
+    total = _align_down(bounded, row_multiple)
+    if total < lower_total:
+        total = _align_up(lower_total, row_multiple)
+    if not lower_total <= total <= upper_total or total <= 0:
+        raise ValueError(
+            "repetition bounds cannot form one complete row_multiple group"
+        )
+    return total
+
+
 def plan_repetition(
     *,
     available_rows: dict[str, int],
@@ -233,6 +356,8 @@ def plan_repetition(
     policy: str = "deficit_proportional",
     rep_min: float = 0.5,
     rep_max: float = 3.0,
+    budget_multiplier: float = 1.0,
+    redistribute: bool = True,
     explicit_multipliers: dict[str, float] | None = None,
     empty_rows: dict[str, int] | None = None,
     never_repeat_empty_gt: bool = True,
@@ -249,6 +374,8 @@ def plan_repetition(
             "policy": policy,
             "rep_min": rep_min,
             "rep_max": rep_max,
+            "budget_multiplier": budget_multiplier,
+            "redistribute": redistribute,
             "never_repeat_empty_gt": never_repeat_empty_gt,
             "explicit_multipliers": explicit_multipliers or {},
         }
@@ -263,7 +390,7 @@ def plan_repetition(
             available[task] = count
     if not available:
         raise ValueError("repetition blend requires at least one available row")
-    protected_empty = {task: 0 for task in available}
+    empty_counts = {task: 0 for task in available}
     for task, count in (empty_rows or {}).items():
         if task not in available:
             if count:
@@ -271,16 +398,25 @@ def plan_repetition(
             continue
         if type(count) is not int or not 0 <= count <= available[task]:
             raise ValueError(f"invalid empty row count for {task!r}")
-        protected_empty[task] = count if never_repeat_empty_gt else 0
-    mandatory = dict(protected_empty)
+        empty_counts[task] = count
+    mandatory = {task: 0 for task in available}
     for task, count in (minimum_rows or {}).items():
         if task not in available:
             if count:
                 raise ValueError(f"minimum rows supplied for unavailable task {task!r}")
             continue
-        if type(count) is not int or not 0 <= count <= available[task]:
+        if type(count) is not int or count < 0:
             raise ValueError(f"invalid minimum row count for {task!r}")
         mandatory[task] = max(mandatory[task], count)
+
+    lower, upper = _count_bounds(
+        available=available,
+        empty_rows=empty_counts,
+        mandatory=mandatory,
+        rep_min=config["rep_min"],
+        rep_max=config["rep_max"],
+        never_repeat_empty_gt=never_repeat_empty_gt,
+    )
 
     if policy == "deficit_proportional":
         raw_weights: dict[str, float] = {}
@@ -297,14 +433,47 @@ def plan_repetition(
             raw_weights = {task: 1.0 for task in available}
         total_weight = sum(raw_weights.values())
         shares = {task: raw_weights[task] / total_weight for task in available}
-        target_rows = {task: row_cap * shares[task] for task in available}
-        requested_rep = {
-            task: min(
-                config["rep_max"],
-                max(config["rep_min"], target_rows[task] / available[task]),
+        budget = _deficit_budget(
+            available_total=sum(available.values()),
+            budget_multiplier=config["budget_multiplier"],
+            row_cap=row_cap,
+        )
+        target_rows = {task: budget * shares[task] for task in available}
+        if config["redistribute"]:
+            emitted_total = _feasible_aligned_total(
+                requested=budget,
+                lower_total=sum(lower.values()),
+                upper_total=sum(upper.values()),
+                row_cap=row_cap,
+                row_multiple=row_multiple,
             )
-            for task in available
-        }
+            emitted_counts = _allocate_weighted_total(
+                shares=shares,
+                lower=lower,
+                upper=upper,
+                total=emitted_total,
+            )
+        else:
+            requested_counts = {
+                task: min(
+                    upper[task],
+                    max(lower[task], _round_half_up(target_rows[task])),
+                )
+                for task in available
+            }
+            emitted_total = _align_down(
+                min(row_cap, sum(requested_counts.values())), row_multiple
+            )
+            if emitted_total < sum(lower.values()) or emitted_total <= 0:
+                raise ValueError(
+                    "repetition bounds cannot form one complete row_multiple group"
+                )
+            emitted_counts = _allocate_cap(
+                requested_counts,
+                shares=shares,
+                mandatory=lower,
+                row_cap=emitted_total,
+            )
         weights = raw_weights
     else:
         requested_rep = {
@@ -327,33 +496,33 @@ def plan_repetition(
             task: config["explicit_multipliers"].get(task, 1.0)
             for task in available
         }
-
-    requested_counts = {
-        task: (
-            available[task]
-            if protected_empty[task] == available[task]
-            else max(
-                mandatory[task],
-                int(math.floor(available[task] * requested_rep[task] + 0.5)),
+        requested_counts = {
+            task: min(
+                upper[task],
+                max(
+                    lower[task],
+                    _round_half_up(available[task] * requested_rep[task]),
+                ),
             )
+            for task in available
+        }
+        if not any(requested_counts.values()):
+            requested_counts[max(available, key=lambda task: (shares[task], task))] = 1
+        emitted_total = _align_down(
+            min(row_cap, sum(requested_counts.values())), row_multiple
         )
-        for task in available
-    }
-    if not any(requested_counts.values()):
-        requested_counts[max(available, key=lambda task: (shares[task], task))] = 1
-    emitted_total = min(row_cap, sum(requested_counts.values()))
-    emitted_total -= emitted_total % row_multiple
-    if emitted_total <= 0:
-        raise ValueError(
-            "repetition blend cannot form one complete row_multiple group"
+        if emitted_total <= 0 or emitted_total < sum(lower.values()):
+            raise ValueError(
+                "repetition blend cannot form one complete row_multiple group"
+            )
+        emitted_counts = _allocate_cap(
+            requested_counts,
+            shares=shares,
+            mandatory=lower,
+            row_cap=emitted_total,
         )
-    emitted_counts = _allocate_cap(
-        requested_counts,
-        shares=shares,
-        mandatory=mandatory,
-        row_cap=emitted_total,
-    )
     plan: dict[str, dict[str, Any]] = {}
+    available_total = sum(available.values())
     for task in sorted(available):
         emitted = emitted_counts[task]
         empty = (empty_rows or {}).get(task, 0)
@@ -361,9 +530,10 @@ def plan_repetition(
         plan[task] = {
             "available": available[task],
             "deficit_weight": weights[task],
+            "observed_share_before": available[task] / available_total,
             "target_share": shares[task],
             "target_rows": target_rows[task],
-            "rep": requested_rep[task],
+            "rep": emitted / available[task],
             "realized_rep": emitted / available[task],
             "repeated_rows": emitted,
             "additional_repetitions": max(0, emitted - unique_emitted),
@@ -408,6 +578,27 @@ def is_empty_ground_truth(record: dict[str, Any]) -> bool:
     return "Detection" in str(record.get("task_type", "")) and _assistant_payload(record) == []
 
 
+def _seeded_order(
+    indices: list[int],
+    *,
+    rows: list[dict[str, Any]],
+    seed: int,
+    task: str,
+    phase: str,
+) -> list[int]:
+    return sorted(
+        indices,
+        key=lambda index: (
+            hashlib.sha256(
+                f"{seed}\0{task}\0{phase}\0{index}\0{_fingerprint(rows[index])}".encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+            index,
+        ),
+    )
+
+
 def apply_repetition_blend(
     rows: list[dict[str, Any]],
     *,
@@ -436,6 +627,7 @@ def apply_repetition_blend(
     resolved["row_cap"] = row_cap
     resolved["seed"] = seed
     tasks = [str(row.get("task_type") or "unknown") for row in rows]
+    row_fingerprints = [_fingerprint(row) for row in rows]
     required_indices = set(mandatory_indices or ())
     if any(type(index) is not int or not 0 <= index < len(rows) for index in required_indices):
         raise ValueError("mandatory repetition indices must refer to available rows")
@@ -451,14 +643,18 @@ def apply_repetition_blend(
             "seed": seed,
             "configuration": {**resolved, "row_cap": row_cap},
             "deficit_weight_source": "disabled",
+            "warnings": [],
             "tasks": {
                 task: {
                     "available": available[task],
                     "deficit_weight": None,
+                    "observed_share_before": available[task] / total,
                     "target_share": available[task] / total,
                     "target_rows": float(available[task]),
                     "rep": 1.0,
                     "realized_rep": 1.0,
+                    "realized_share_after": available[task] / total,
+                    "share_gap": 0.0,
                     "repeated_rows": available[task],
                     "unique_rows_emitted": available[task],
                     "additional_repetitions": 0,
@@ -470,6 +666,12 @@ def apply_repetition_blend(
                 for task in sorted(available)
             },
             "totals": {
+                "budget": total,
+                "budget_multiplier": resolved["budget_multiplier"],
+                "rows_before": total,
+                "rows_after": total,
+                "max_abs_share_gap": 0.0,
+                "total_share_gap": 0.0,
                 "available": total,
                 "row_cap": row_cap,
                 "row_multiple": row_multiple,
@@ -490,64 +692,96 @@ def apply_repetition_blend(
         }
         return list(rows), manifest
 
+    unique_indices: dict[str, list[int]] = {task: [] for task in available}
+    seen_fingerprints: set[str] = set()
+    for index, (task, fingerprint) in enumerate(zip(tasks, row_fingerprints)):
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
+        unique_indices[task].append(index)
+    unique_available = {
+        task: len(indices) for task, indices in unique_indices.items() if indices
+    }
+    unique_empty = {
+        task: sum(empty_flags[index] for index in indices)
+        for task, indices in unique_indices.items()
+        if indices
+    }
     plan = plan_repetition(
-        available_rows=dict(available),
+        available_rows=unique_available,
         deficit_weights=deficit_weights,
         row_cap=row_cap,
         policy=resolved["policy"],
         rep_min=resolved["rep_min"],
         rep_max=resolved["rep_max"],
+        budget_multiplier=resolved["budget_multiplier"],
+        redistribute=resolved["redistribute"],
         explicit_multipliers=resolved["explicit_multipliers"],
-        empty_rows=dict(empty),
+        empty_rows=unique_empty,
         never_repeat_empty_gt=resolved["never_repeat_empty_gt"],
         minimum_rows=dict(
             Counter(
                 tasks[index]
                 for index in required_indices
-                | {
-                    index
-                    for index, is_empty in enumerate(empty_flags)
-                    if is_empty and resolved["never_repeat_empty_gt"]
-                }
             )
         ),
         row_multiple=row_multiple,
     )
+    budget = (
+        _deficit_budget(
+            available_total=sum(unique_available.values()),
+            budget_multiplier=resolved["budget_multiplier"],
+            row_cap=row_cap,
+        )
+        if resolved["policy"] == "deficit_proportional"
+        else sum(payload["repeated_rows"] for payload in plan.values())
+    )
     occurrence_counts = [0] * len(rows)
-    for task in sorted(available):
+    for task in sorted(unique_available):
         indices = [index for index, value in enumerate(tasks) if value == task]
-        fixed = [
-            index
-            for index in indices
-            if empty_flags[index] and resolved["never_repeat_empty_gt"]
-        ]
-        mandatory = sorted(required_indices.intersection(indices) - set(fixed))
-        repeatable = [index for index in indices if index not in fixed]
-        for index in fixed:
-            occurrence_counts[index] = 1
+        mandatory = sorted(required_indices.intersection(indices))
         for index in mandatory:
             occurrence_counts[index] = 1
-        required = plan[task]["repeated_rows"] - len(fixed) - len(mandatory)
-        if required < 0:
+        remaining = plan[task]["repeated_rows"] - len(mandatory)
+        if remaining < 0:
             raise ValueError(f"repetition allocation dropped a mandatory row for {task!r}")
-        if required and not repeatable:
-            required = 0
-        if repeatable:
-            whole, remainder = divmod(required, len(repeatable))
+        covered_fingerprints = {row_fingerprints[index] for index in mandatory}
+        unique_candidates = _seeded_order(
+            [
+                index
+                for index in unique_indices[task]
+                if row_fingerprints[index] not in covered_fingerprints
+            ],
+            rows=rows,
+            seed=seed,
+            task=task,
+            phase="unique",
+        )
+        for index in unique_candidates[:remaining]:
+            occurrence_counts[index] = 1
+        remaining -= min(remaining, len(unique_candidates))
+        if remaining:
+            repeatable_by_fingerprint: dict[str, int] = {}
+            for index in indices:
+                if occurrence_counts[index] and not (
+                    empty_flags[index] and resolved["never_repeat_empty_gt"]
+                ):
+                    repeatable_by_fingerprint.setdefault(row_fingerprints[index], index)
+            repeatable = _seeded_order(
+                list(repeatable_by_fingerprint.values()),
+                rows=rows,
+                seed=seed,
+                task=task,
+                phase="repeat",
+            )
+            if not repeatable:
+                raise ValueError(
+                    f"repetition allocation cannot repeat rows for {task!r}"
+                )
+            whole, remainder = divmod(remaining, len(repeatable))
             for index in repeatable:
                 occurrence_counts[index] += whole
-            ranked = sorted(
-                repeatable,
-                key=lambda index: (
-                    hashlib.sha256(
-                        f"{seed}\0{task}\0{index}\0{_fingerprint(rows[index])}".encode(
-                            "utf-8"
-                        )
-                    ).hexdigest(),
-                    index,
-                ),
-            )
-            for index in ranked[:remainder]:
+            for index in repeatable[:remainder]:
                 occurrence_counts[index] += 1
 
     output = [
@@ -557,7 +791,7 @@ def apply_repetition_blend(
         if occurrence_counts[index] > cycle
     ]
     output_fingerprints = Counter(_fingerprint(row) for row in output)
-    available_fingerprints = {_fingerprint(row) for row in rows}
+    available_fingerprints = set(row_fingerprints)
     if not set(output_fingerprints).issubset(available_fingerprints):
         raise AssertionError("repetition blend emitted a row outside the accepted pool")
     repeated_empty_rows = sum(
@@ -565,10 +799,14 @@ def apply_repetition_blend(
         for index, is_empty in enumerate(empty_flags)
         if is_empty
     )
-    unique_emitted = sum(count > 0 for count in occurrence_counts)
     for task, payload in plan.items():
         task_indices = [index for index, value in enumerate(tasks) if value == task]
         emitted_rows = sum(occurrence_counts[index] for index in task_indices)
+        emitted_fingerprints = {
+            row_fingerprints[index]
+            for index in task_indices
+            if occurrence_counts[index]
+        }
         payload["repeated_rows"] = emitted_rows
         payload["realized_rep"] = emitted_rows / payload["available"]
         payload["repeated_empty_rows"] = sum(
@@ -581,14 +819,25 @@ def apply_repetition_blend(
             for index in task_indices
             if empty_flags[index]
         )
-        payload["unique_rows_emitted"] = sum(
-            occurrence_counts[index] > 0 for index in task_indices
+        payload["unique_rows_emitted"] = len(emitted_fingerprints)
+        payload["additional_repetitions"] = emitted_rows - len(emitted_fingerprints)
+        payload["dropped_rows"] = payload["available"] - len(emitted_fingerprints)
+        payload["realized_share_after"] = emitted_rows / len(output)
+        payload["share_gap"] = (
+            payload["target_share"] - payload["realized_share_after"]
         )
-        payload["additional_repetitions"] = sum(
-            max(0, occurrence_counts[index] - 1) for index in task_indices
-        )
-        payload["dropped_rows"] = sum(
-            occurrence_counts[index] == 0 for index in task_indices
+    max_abs_share_gap = max(
+        abs(payload["share_gap"]) for payload in plan.values()
+    )
+    total_share_gap = sum(
+        max(0.0, payload["share_gap"]) for payload in plan.values()
+    )
+    warnings: list[str] = []
+    if total_share_gap > resolved["share_gap_tolerance"] + 1e-12:
+        warnings.append(
+            "repetition task-share shortfall "
+            f"{total_share_gap * 100:.2f} percentage points exceeds configured "
+            f"tolerance {resolved['share_gap_tolerance'] * 100:.2f} percentage points"
         )
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -602,18 +851,23 @@ def apply_repetition_blend(
             else deficit_weight_source
             or ("provided" if deficit_weights else "equal_fallback")
         ),
+        "warnings": warnings,
         "tasks": plan,
         "totals": {
-            "available": len(rows),
+            "budget": budget,
+            "budget_multiplier": resolved["budget_multiplier"],
+            "rows_before": len(rows),
+            "rows_after": len(output),
+            "max_abs_share_gap": max_abs_share_gap,
+            "total_share_gap": total_share_gap,
+            "available": sum(unique_available.values()),
             "row_cap": row_cap,
             "row_multiple": row_multiple,
             "repeated_rows": len(output),
-            "unique_rows_emitted": unique_emitted,
-            "additional_repetitions": sum(
-                max(0, count - 1) for count in occurrence_counts
-            ),
-            "dropped_rows": sum(count == 0 for count in occurrence_counts),
-            "empty_rows": sum(empty.values()),
+            "unique_rows_emitted": len(output_fingerprints),
+            "additional_repetitions": len(output) - len(output_fingerprints),
+            "dropped_rows": sum(unique_available.values()) - len(output_fingerprints),
+            "empty_rows": sum(unique_empty.values()),
             "repeated_empty_rows": repeated_empty_rows,
         },
         "invariants": {
@@ -625,7 +879,13 @@ def apply_repetition_blend(
             ),
             "perceptual_hash_filter_applied": False,
         },
-        "available_rows_sha256": _fingerprint(rows),
+        "available_rows_sha256": _fingerprint(
+            [
+                rows[index]
+                for task in sorted(unique_indices)
+                for index in unique_indices[task]
+            ]
+        ),
         "materialized_rows_sha256": _fingerprint(output),
     }
     return output, manifest

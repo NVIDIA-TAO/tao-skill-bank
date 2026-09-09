@@ -107,6 +107,7 @@ def merge(
     output: pathlib.Path,
     summary_output: pathlib.Path,
     embedding_dimension: int = 768,
+    allow_cached_superset: bool = False,
 ) -> dict[str, Any]:
     if embedding_dimension <= 0:
         raise ValueError("embedding_dimension must be positive")
@@ -119,13 +120,24 @@ def merge(
     current_paths = _read_pool(current_pool)
     cached_table, cached_paths = _read_embeddings(cached_embeddings, embedding_dimension)
     delta_table, delta_paths = _read_embeddings(delta_embeddings, embedding_dimension)
+    expected = set(current_paths)
+    extra_cached = set(cached_paths) - expected
+    if extra_cached and not allow_cached_superset:
+        raise ValueError(
+            "cached embedding set contains rows outside the current pool: "
+            f"extra={sorted(extra_cached)[:10]}"
+        )
+    cached_indices = [
+        index for index, path in enumerate(cached_paths) if path in expected
+    ]
+    cached_table = cached_table.take(pa.array(cached_indices, type=pa.int64()))
+    cached_paths = [cached_paths[index] for index in cached_indices]
     cached_set = set(cached_paths)
     delta_set = set(delta_paths)
     overlap = cached_set & delta_set
     if overlap:
         raise ValueError(f"cached and delta filepath sets overlap: {sorted(overlap)[:10]}")
     observed = cached_set | delta_set
-    expected = set(current_paths)
     if observed != expected:
         raise ValueError(
             "cached plus delta filepath set does not exactly match current pool: "
@@ -161,7 +173,9 @@ def merge(
         "output": str(output),
         "output_sha256": _sha256(output),
         "rows": ordered.num_rows,
+        "cached_input_rows": len(cached_indices) + len(extra_cached),
         "cached_rows": cached_table.num_rows,
+        "ignored_cached_rows": len(extra_cached),
         "delta_rows": delta_table.num_rows,
         "embedding_dimension": embedding_dimension,
         "filepath_order": "current_pool",
@@ -179,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--summary-output", required=True, type=pathlib.Path)
     parser.add_argument("--embedding-dimension", type=int, default=768)
+    parser.add_argument("--allow-cached-superset", action="store_true")
     args = parser.parse_args(argv)
     try:
         payload = merge(
@@ -188,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
             output=args.output,
             summary_output=args.summary_output,
             embedding_dimension=args.embedding_dimension,
+            allow_cached_superset=args.allow_cached_superset,
         )
     except (OSError, ValueError, pa.ArrowException) as exc:
         print(f"merge_source_embedding_cache: {exc}", file=sys.stderr)

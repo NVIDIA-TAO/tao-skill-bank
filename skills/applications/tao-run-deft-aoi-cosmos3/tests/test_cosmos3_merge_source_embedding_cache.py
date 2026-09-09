@@ -106,6 +106,35 @@ class Cosmos3MergeSourceEmbeddingCacheTests(unittest.TestCase):
                     embedding_dimension=3,
                 )
 
+    def test_reuses_matching_rows_from_a_superset_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            pool = root / "pool.parquet"
+            cached = root / "cached.parquet"
+            delta = root / "delta.parquet"
+            output = root / "output.parquet"
+            _write_pool(pool, ["test", "golden"])
+            _write_embeddings(cached, ["test", "obsolete-canvas"])
+            _write_embeddings(delta, ["golden"])
+
+            payload = merge_source_embedding_cache.merge(
+                current_pool=pool,
+                cached_embeddings=cached,
+                delta_embeddings=delta,
+                output=output,
+                summary_output=root / "summary.json",
+                embedding_dimension=3,
+                allow_cached_superset=True,
+            )
+
+            self.assertEqual(payload["cached_input_rows"], 2)
+            self.assertEqual(payload["cached_rows"], 1)
+            self.assertEqual(payload["ignored_cached_rows"], 1)
+            self.assertEqual(
+                pq.read_table(output).column("filepath").to_pylist(),
+                ["test", "golden"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

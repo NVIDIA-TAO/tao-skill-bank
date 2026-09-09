@@ -33,6 +33,30 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
                 state["config"]["evaluation"]["benchmark_cadence"],
                 "final_and_best",
             )
+            self.assertEqual(state["config"]["mining"]["pair_similarity"], "canvas")
+            self.assertEqual(
+                state["config"]["mining"]["pair_similarity_combine"], "mean"
+            )
+
+    def test_two_vector_pair_similarity_is_launch_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = self._workspace(root)
+            rc = init_deft_state.main(
+                self._argv(
+                    root,
+                    workspace,
+                    "--pair-similarity", "two_vector",
+                    "--pair-similarity-combine", "min",
+                )
+            )
+
+            self.assertEqual(rc, 0)
+            mining = json.loads(
+                (root / "results/deft_state.json").read_text()
+            )["config"]["mining"]
+            self.assertEqual(mining["pair_similarity"], "two_vector")
+            self.assertEqual(mining["pair_similarity_combine"], "min")
 
     def test_hybrid_calibration_contract_is_launch_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -317,6 +341,9 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
                     "--repetition-policy", "explicit",
                     "--repetition-rep-min", "0.5",
                     "--repetition-rep-max", "3",
+                    "--repetition-budget-multiplier", "1.25",
+                    "--repetition-share-gap-tolerance", "0.02",
+                    "--no-repetition-redistribute",
                     "--repetition-never-repeat-empty-gt",
                     "--repetition-explicit-multiplier", "Defect Detection=3",
                     "--repetition-seed", "29",
@@ -334,6 +361,9 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
                     "policy": "explicit",
                     "rep_min": 0.5,
                     "rep_max": 3.0,
+                    "budget_multiplier": 1.25,
+                    "share_gap_tolerance": 0.02,
+                    "redistribute": False,
                     "never_repeat_empty_gt": True,
                     "explicit_multipliers": {"Defect Detection": 3.0},
                     "row_cap": 12000,
