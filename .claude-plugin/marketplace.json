@@ -23,6 +23,7 @@
         "./skills/data/tao-generate-anomalies",
         "./skills/data/tao-prepare-anomalygennext-inputs",
         "./skills/data/tao-finetune-anomalygennext",
+        "./skills/data/tao-generate-od-defects",
         "./skills/applications/tao-run-automl-deft-pipeline",
         "./skills/applications/tao-train-single-step",
         "./skills/applications/tao-analyze-changenet-rca",
