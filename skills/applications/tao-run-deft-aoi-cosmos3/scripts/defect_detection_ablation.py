@@ -16,7 +16,7 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
-from atomic_samples import content_identity_for_paths, sample_from_record
+from atomic_samples import PAIR_CONTENT_IDENTITY, content_identity_for_paths, sample_from_record
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
     apply_repetition_blend,
@@ -1222,8 +1222,14 @@ def materialize(
         item["route_tier"] == "strict" for item in selected_dd
     )
     selected_reference_calibration = [
-        item for item in selected_reference if item["route_tier"] == "calibration"
+        item for item in emitted_base_entries
+        if item["task_type"] == REFERENCE_DEFECT_DETECTION_TASK
+        and item["route_tier"] == "calibration"
     ]
+    reference_content_by_record = {
+        item["record_id"]: item["content_sha256"]
+        for item in selected_reference_calibration
+    }
     selected_reference_calibration_empty = sum(
         not item.get("objects") for item in selected_reference_calibration
     )
@@ -1267,6 +1273,11 @@ def materialize(
             else len(selected_reference_calibration) == reference_calibration_total
             and selected_reference_calibration_empty
             == reference_calibration_empty_target
+        ),
+        "reference_calibration_content_unique": (
+            len(reference_content_by_record)
+            == len(set(reference_content_by_record.values()))
+            == len(selected_reference_calibration)
         ),
         "reference_empty_rate_matched": (
             True
@@ -1314,6 +1325,7 @@ def materialize(
         "verified": all(verification.values()),
         "verification": verification,
         "configuration": {
+            "media_root": str(media_root),
             "materialization_cap": max_rows,
             "requested_target_rows_after_global_batch_alignment": requested_target_rows,
             "target_rows_after_global_batch_alignment": target_rows,
@@ -1418,6 +1430,8 @@ def materialize(
             "proxy_empty_rate_binding": not hybrid_calibration,
         },
         "reference_calibration": {
+            "content_identity": PAIR_CONTENT_IDENTITY,
+            "content_sha256_by_record_id": reference_content_by_record,
             "requested_total": reference_calibration_total,
             "target_no_change": reference_calibration_empty_target,
             "selected_no_change": selected_reference_calibration_empty,
@@ -1499,6 +1513,70 @@ def materialize(
     return selected_records, manifest
 
 
+def _verify_reference_calibration_content(
+    manifest: dict[str, Any], records: list[dict[str, Any]]
+) -> None:
+    """Verify current-only quotas against the materializer's ordered-byte identities."""
+
+    reference = manifest.get("reference_calibration") or {}
+    required = reference.get("requested_total")
+    if required is None or required == 0:
+        return
+    identities = reference.get("content_sha256_by_record_id")
+    media_root = manifest.get("configuration", {}).get("media_root")
+    if (
+        reference.get("content_identity") != PAIR_CONTENT_IDENTITY
+        or not isinstance(identities, dict)
+        or not isinstance(media_root, str)
+        or not media_root
+    ):
+        raise ValueError("reference calibration content identity evidence is missing or incompatible")
+    if not all(isinstance(value, str) and len(value) == 64 for value in identities.values()):
+        raise ValueError("reference calibration content SHA-256 evidence is invalid")
+    unique_contents = len(set(identities.values()))
+    if (
+        unique_contents != len(identities)
+        or unique_contents != required
+        or unique_contents != reference.get("selected_total")
+    ):
+        raise ValueError(
+            "reference calibration content-unique shortfall or count mismatch: "
+            f"required={required} available={unique_contents} "
+            f"shortfall={max(0, required - unique_contents)}"
+        )
+    by_id = {str(row.get("id")): row for row in records}
+    no_change = 0
+    for record_id, expected_content in identities.items():
+        record = by_id.get(record_id)
+        if record is None or record.get("task_type") != REFERENCE_DEFECT_DETECTION_TASK:
+            raise ValueError(f"reference calibration content record is missing: {record_id}")
+        sample = sample_from_record(
+            record, media_root=pathlib.Path(media_root), context="reference calibration gate"
+        )
+        # This is exactly the materializer's identity policy: rehash ordered
+        # original bytes when present, otherwise use its precomputed identity
+        # for metadata-only/cache-backed verification. Never hash a canvas.
+        _, actual_content, _ = _candidate_visual_identity(
+            {
+                **sample,
+                "filepath": sample["target_filepath"],
+                "source_image_paths": sample["image_paths"],
+                "content_sha256": expected_content,
+            },
+            media_root=pathlib.Path(media_root),
+            compute_perceptual_hash=False,
+        )
+        if actual_content != expected_content:
+            raise ValueError(f"reference calibration ordered-pair content changed: {record_id}")
+        no_change += not _ground_truth_objects(record)
+    if (
+        no_change != reference.get("selected_no_change")
+        or no_change != reference.get("target_no_change")
+        or unique_contents - no_change != reference.get("selected_changed")
+    ):
+        raise ValueError("reference calibration content-unique no-change/changed counts disagree")
+
+
 def bind_manifest(manifest: dict[str, Any], training_jsonl: pathlib.Path) -> dict[str, Any]:
     path = training_jsonl.expanduser().resolve(strict=True)
     bound = json.loads(json.dumps(manifest))
@@ -1540,6 +1618,7 @@ def bind_cumulative_manifest(
         != len(current_rows)
     ):
         raise ValueError("current quota manifest does not bind the selector output")
+    _verify_reference_calibration_content(current_manifest, current_rows)
     final_path = training_jsonl.expanduser().resolve(strict=True)
     if current_path == final_path:
         raise ValueError("selector output cannot also be the cumulative training JSONL")
@@ -1649,6 +1728,11 @@ def verify_bound_manifest(
             != current.get("row_counts", {}).get("total")
         ):
             raise ValueError("current-selection quota binding is invalid")
+        if current.get("reference_calibration") != payload.get("reference_calibration"):
+            raise ValueError("reference calibration current-selection content evidence disagrees")
+        _verify_reference_calibration_content(payload, load_records(current_path))
+    else:
+        _verify_reference_calibration_content(payload, load_records(path))
     schedule = payload.get("optimizer_schedule", {})
     expected_steps = expected_rows // global_batch * epochs if expected_rows % global_batch == 0 else None
     if (

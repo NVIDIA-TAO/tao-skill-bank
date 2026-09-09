@@ -18,6 +18,7 @@ from validate_sharegpt import image_paths, resolve_image
 
 
 PAIR_ASSET_SCHEMA = "nvpaw_reference_pair_embedding_v1"
+PAIR_CONTENT_IDENTITY = f"{PAIR_ASSET_SCHEMA}:ordered_constituent_bytes_sha256"
 PAIR_CANVAS_SIZE = (1024, 512)
 PAIR_DIVIDER_PIXELS = 4
 PAIR_SIMILARITIES = ("canvas", "two_vector")

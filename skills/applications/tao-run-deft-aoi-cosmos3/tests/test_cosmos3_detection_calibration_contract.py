@@ -112,11 +112,13 @@ class Cosmos3DetectionCalibrationContractTests(unittest.TestCase):
             images.mkdir()
             from PIL import Image
 
-            for record in source:
-                for item in record["messages"][0]["content"]:
+            for record_index, record in enumerate(source):
+                for image_index, item in enumerate(record["messages"][0]["content"]):
                     if item.get("type") == "image":
                         path = media_root / item["image"]
-                        Image.new("RGB", (2, 2), color=(len(path.name), 0, 0)).save(path)
+                        # Distinct fixture samples require distinct contents,
+                        # not just distinct filenames of the same length.
+                        Image.new("RGB", (2, 2), color=(record_index, image_index, 0)).save(path)
             rates = select_detection_calibration.derive_proxy_empty_rates(proxy)
             selected, summary = select_detection_calibration.select_calibration(
                 source,
@@ -181,7 +183,7 @@ class Cosmos3DetectionCalibrationContractTests(unittest.TestCase):
             images.mkdir()
             from PIL import Image
 
-            for name in {
+            for image_index, name in enumerate(sorted({
                 "single-empty0.png",
                 "single-empty1.png",
                 "single-few0.png",
@@ -191,8 +193,8 @@ class Cosmos3DetectionCalibrationContractTests(unittest.TestCase):
                 "golden-0.png",
                 "golden-1.png",
                 "golden-2.png",
-            }:
-                Image.new("RGB", (2, 2), color=(len(name), 0, 0)).save(images / name)
+            })):
+                Image.new("RGB", (2, 2), color=(image_index, 0, 0)).save(images / name)
             rates = select_detection_calibration.derive_proxy_empty_rates(proxy)
             selected, summary = select_detection_calibration.select_calibration(
                 source,

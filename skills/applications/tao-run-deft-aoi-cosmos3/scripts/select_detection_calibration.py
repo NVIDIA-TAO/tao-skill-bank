@@ -14,7 +14,12 @@ import sys
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from atomic_samples import embedding_filepath, sample_from_record
+from atomic_samples import (
+    PAIR_CONTENT_IDENTITY,
+    content_identity_for_paths,
+    embedding_filepath,
+    sample_from_record,
+)
 from validate_sharegpt import prompt_and_response, resolve_image, target_path
 
 
@@ -271,6 +276,8 @@ def select_calibration(
     }
     seen: set[str] = set()
     examined_detection = 0
+    seen_reference_content: set[str] = set()
+    excluded_duplicate_reference_content = 0
     excluded_many = 0
     excluded_previously_mined = 0
     for index, record in enumerate(records):
@@ -307,17 +314,28 @@ def select_calibration(
             quota = max_empty if not boxes else max_few
         if len(destination) >= quota:
             continue
+        content_sha = None
+        if sample["sample_kind"] == "reference_pair":
+            # Count the same ordered constituent bytes as downstream exact
+            # deduplication, not path IDs or the rendered canvas. Keep scanning
+            # until the requested number of distinct contents fills each bucket.
+            content_sha = content_identity_for_paths("reference_pair", sample["image_paths"])
+            if content_sha in seen_reference_content:
+                excluded_duplicate_reference_content += 1
+                continue
         filepath = embedding_filepath(sample, pair_assets_dir=pair_assets_dir)
         seen.add(identity)
-        destination.append(
-            _calibration_row(
-                record,
-                sample=sample,
-                filepath=filepath,
-                task_type=str(task_type),
-                box_count=len(boxes),
-            )
+        row = _calibration_row(
+            record,
+            sample=sample,
+            filepath=filepath,
+            task_type=str(task_type),
+            box_count=len(boxes),
         )
+        if content_sha is not None:
+            seen_reference_content.add(content_sha)
+            row["content_sha256"] = content_sha
+        destination.append(row)
         if cohort_mode and all(
             len(cohort_selected[cohort][bucket]) >= int(targets[cohort][bucket])
             for cohort in DETECTION_COHORTS
@@ -348,6 +366,16 @@ def select_calibration(
             for cohort in DETECTION_COHORTS
         }
         shortages = {key: value for key, value in shortages.items() if value}
+        if "reference_based" in shortages:
+            details = []
+            for bucket, label in (("empty", "no-change"), ("few", "changed")):
+                required = int(targets["reference_based"][bucket])
+                available = len(cohort_selected["reference_based"][bucket])
+                details.append(
+                    f"{label} required={required} available={available} "
+                    f"shortfall={required - available}"
+                )
+            raise ValueError("reference calibration content-unique shortfall: " + "; ".join(details))
         if shortages:
             raise ValueError(f"per-cohort calibration quotas cannot be filled: {shortages}")
         hybrid_mode = cohort_bucket_quotas is not None
@@ -363,6 +391,8 @@ def select_calibration(
             "examined_detection_records": examined_detection,
             "excluded_many_box": excluded_many,
             "excluded_previously_mined": excluded_previously_mined,
+            "reference_content_identity": PAIR_CONTENT_IDENTITY,
+            "excluded_duplicate_reference_content": excluded_duplicate_reference_content,
             "cohorts": {
                 cohort: {
                     "task_type": DETECTION_COHORTS[cohort],
@@ -397,6 +427,8 @@ def select_calibration(
         "examined_detection_records": examined_detection,
         "excluded_many_box": excluded_many,
         "excluded_previously_mined": excluded_previously_mined,
+        "reference_content_identity": PAIR_CONTENT_IDENTITY,
+        "excluded_duplicate_reference_content": excluded_duplicate_reference_content,
     }
 
 
