@@ -15,6 +15,8 @@ import yaml
 
 
 DEFAULTS = Path(__file__).resolve().parents[1] / "assets" / "default_policy.yaml"
+# Normalized handoff roles: KPI/test are held out, ``real`` is the
+# defective-real mining pool, and ``clean`` is the verified-clean mining pool.
 ROLES = ("kpi", "test", "real", "clean")
 
 
@@ -74,7 +76,7 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
     if name == "clean" and any(counts.values()):
         raise ValueError("clean role must have zero annotations")
     if name == "real" and any(count == 0 for count in counts.values()):
-        raise ValueError("real role contains boxless images")
+        raise ValueError("defective-real role contains a boxless image")
     return {"images": str(images), "coco": str(coco_path), "coco_sha256": _sha(coco_path),
             "image_count": len(paths), "annotation_count": sum(counts.values()),
             "identities": {str(path) for path in paths}}

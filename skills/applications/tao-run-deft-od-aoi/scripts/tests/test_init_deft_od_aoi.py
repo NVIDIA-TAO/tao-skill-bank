@@ -103,7 +103,7 @@ def test_initialize_rejects_boxless_defective_real_role(tmp_path: Path) -> None:
     value = yaml.safe_load(config.read_text())
     _append_boxless_image(value["sources"]["real"], "real")
 
-    with pytest.raises(ValueError, match="real role contains boxless images"):
+    with pytest.raises(ValueError, match="defective-real role contains a boxless image"):
         MODULE.initialize(config, tmp_path / "results")
 
 
