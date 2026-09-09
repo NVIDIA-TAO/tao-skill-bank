@@ -3,6 +3,7 @@
 
 """Regression tests for PAS DEFT GPU-shape materialization."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -35,8 +36,12 @@ def _base_args(tmp_path: Path, selected: str):
         str(dataset),
         "--images-archive",
         str(images),
+        "--images-archive-sha256",
+        hashlib.sha256(images.read_bytes()).hexdigest(),
         "--metadata-archive",
         str(metadata),
+        "--metadata-archive-sha256",
+        hashlib.sha256(metadata.read_bytes()).hexdigest(),
         "--platform",
         "docker",
         "--max-iterations",
@@ -83,8 +88,12 @@ def test_selected_host_gpu_shape_is_materialized_as_dense_container_ordinals(tmp
             str(dataset),
             "--images-archive",
             str(images),
+            "--images-archive-sha256",
+            hashlib.sha256(images.read_bytes()).hexdigest(),
             "--metadata-archive",
             str(metadata),
+            "--metadata-archive-sha256",
+            hashlib.sha256(metadata.read_bytes()).hexdigest(),
             "--max-iterations",
             "1",
             "--platform",

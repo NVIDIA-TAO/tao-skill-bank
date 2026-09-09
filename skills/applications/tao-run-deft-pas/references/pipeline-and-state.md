@@ -45,10 +45,16 @@ rejects duplicate, skipped-ahead, post-KPI, and out-of-range transitions.
 
 `deft_state.json` is a schema-v3 resume snapshot. It records:
 
-- immutable workspace, archives, intended dataset root, bundled-runtime hash,
+- immutable workspace, archive paths and SHA-256 content identities, intended
+  dataset root, bundled-runtime hash,
   selected TAO platform, pinned images/runtime, config paths and hashes;
 - immutable loop/config values and metric contract;
 - current iteration, gate flag, per-label stage proofs, and stop reason.
+
+New runs also use approval schema v3, which requires both archive SHA-256
+identities. Approval schema v2 is recognized only for already-committed legacy
+dataset setup; an uncommitted v2 run must restart so it cannot consume unbound
+archive bytes.
 
 `loop_log.jsonl` is the ordered event history. It contains one gap-free
 sequence entry per committed stage with label, stage, `ok|skip|error`, summary,

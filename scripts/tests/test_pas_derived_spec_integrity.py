@@ -3,6 +3,7 @@
 
 """Regression coverage for content-bound PAS derived TAO specs."""
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -44,8 +45,12 @@ def _initialized_run(tmp_path: Path) -> Path:
         str(dataset),
         "--images-archive",
         str(images_archive),
+        "--images-archive-sha256",
+        hashlib.sha256(images_archive.read_bytes()).hexdigest(),
         "--metadata-archive",
         str(metadata_archive),
+        "--metadata-archive-sha256",
+        hashlib.sha256(metadata_archive.read_bytes()).hexdigest(),
         "--max-iterations",
         "1",
     ]

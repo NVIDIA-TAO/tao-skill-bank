@@ -43,6 +43,7 @@ from command_contract import (  # noqa: E402
 PLATFORMS = ("docker", "slurm", "kubernetes", "brev", "virtualenv")
 PYT_IMAGE = action_contract.PINNED_IMAGES["pyt"]
 DS_IMAGE = action_contract.PINNED_IMAGES["ds"]
+DUMMY_SHA256 = "0" * 64
 SPEC_NAMES = (
     "deft_config.yaml",
     "tao_spec.yaml",
@@ -69,6 +70,15 @@ DATASET_ACTIONS = {
     "viz_mined_embed",
     "viz_previous_embed",
 }
+
+
+def _archive_digest_args(images: Path, metadata: Path) -> list[str]:
+    return [
+        "--images-archive-sha256",
+        hashlib.sha256(images.read_bytes()).hexdigest(),
+        "--metadata-archive-sha256",
+        hashlib.sha256(metadata.read_bytes()).hexdigest(),
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -112,8 +122,12 @@ def test_state_initializer_accepts_every_tao_platform(platform):
         "/workspace/data/pas",
         "--images-archive",
         "/inputs/images_raw.tar",
+        "--images-archive-sha256",
+        DUMMY_SHA256,
         "--metadata-archive",
         "/inputs/meta.tar.gz",
+        "--metadata-archive-sha256",
+        DUMMY_SHA256,
         "--max-iterations",
         "1",
         "--platform",
@@ -147,7 +161,9 @@ def test_platform_cli_options_default_to_local_docker_for_compatibility():
             "--results-dir", "/workspace/results/run",
             "--dataset-root", "/workspace/data/pas",
             "--images-archive", "/inputs/images_raw.tar",
+            "--images-archive-sha256", DUMMY_SHA256,
             "--metadata-archive", "/inputs/meta.tar.gz",
+            "--metadata-archive-sha256", DUMMY_SHA256,
             "--max-iterations", "1",
         ]
     )
@@ -157,7 +173,9 @@ def test_platform_cli_options_default_to_local_docker_for_compatibility():
             "--workspace", "/workspace",
             "--dataset-root", "/workspace/data/pas",
             "--images-archive", "/inputs/images_raw.tar",
+            "--images-archive-sha256", DUMMY_SHA256,
             "--metadata-archive", "/inputs/meta.tar.gz",
+            "--metadata-archive-sha256", DUMMY_SHA256,
             "--max-iterations", "1",
             "--pyt-image", PYT_IMAGE,
             "--ds-image", DS_IMAGE,
@@ -1187,6 +1205,7 @@ def test_config_materialization_rejects_existing_config_symlink(tmp_path):
             str(images),
             "--metadata-archive",
             str(metadata),
+            *_archive_digest_args(images, metadata),
             "--platform",
             "docker",
             "--max-iterations",
@@ -1694,6 +1713,7 @@ def test_config_approval_immutably_binds_selected_platform(tmp_path, platform):
             str(images),
             "--metadata-archive",
             str(metadata),
+            *_archive_digest_args(images, metadata),
             "--platform",
             platform,
             "--max-iterations",
@@ -1743,6 +1763,7 @@ def test_config_approval_immutably_binds_remote_docker_mode(tmp_path):
             str(images),
             "--metadata-archive",
             str(metadata),
+            *_archive_digest_args(images, metadata),
             "--platform",
             "docker",
             "--docker-remote",
@@ -1773,6 +1794,10 @@ def test_virtualenv_selection_requires_a_real_virtualenv(tmp_path):
             str(tmp_path / "images_raw.tar"),
             "--metadata-archive",
             str(tmp_path / "meta.tar.gz"),
+            "--images-archive-sha256",
+            DUMMY_SHA256,
+            "--metadata-archive-sha256",
+            DUMMY_SHA256,
             "--platform",
             "virtualenv",
             "--max-iterations",
@@ -1797,6 +1822,10 @@ def test_virtualenv_execution_profiles_cannot_reuse_workspace_control_env(tmp_pa
             str(tmp_path / "images_raw.tar"),
             "--metadata-archive",
             str(tmp_path / "meta.tar.gz"),
+            "--images-archive-sha256",
+            DUMMY_SHA256,
+            "--metadata-archive-sha256",
+            DUMMY_SHA256,
             "--platform",
             "virtualenv",
             "--pyt-virtualenv",
