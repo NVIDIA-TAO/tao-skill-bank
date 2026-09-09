@@ -73,8 +73,8 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"{name} references missing images; first={missing[0]}")
     if name == "clean" and any(counts.values()):
         raise ValueError("clean role must have zero annotations")
-    if name != "clean" and any(count == 0 for count in counts.values()):
-        raise ValueError(f"{name} role contains boxless images")
+    if name == "real" and any(count == 0 for count in counts.values()):
+        raise ValueError("real role contains boxless images")
     return {"images": str(images), "coco": str(coco_path), "coco_sha256": _sha(coco_path),
             "image_count": len(paths), "annotation_count": sum(counts.values()),
             "identities": {str(path) for path in paths}}
