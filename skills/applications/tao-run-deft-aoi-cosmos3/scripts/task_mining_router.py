@@ -10,11 +10,17 @@ import argparse
 import json
 import math
 import pathlib
+import re
 import sys
 from collections import Counter
 from typing import Any, Iterable
 
-from atomic_samples import embedding_filepath, sample_from_record
+from atomic_samples import (
+    PAIR_SIMILARITIES,
+    PAIR_SIMILARITY_COMBINES,
+    embedding_filepath,
+    sample_from_record,
+)
 from nvpaw_annotations import TASK_SPECS
 from validate_sharegpt import (
     image_paths,
@@ -108,6 +114,8 @@ def _source_catalog(
                 "atomic_sample_id": sample["atomic_sample_id"],
                 "sample_kind": sample["sample_kind"],
                 "image_paths": sample["image_paths"],
+                "reference_filepath": sample["reference_filepath"],
+                "target_filepath": sample["target_filepath"],
                 "task_types": set(),
                 "record_ids": set(),
             },
@@ -191,6 +199,8 @@ def _prepare_sources(
                 "atomic_sample_id": metadata["atomic_sample_id"],
                 "sample_kind": metadata["sample_kind"],
                 "source_image_paths": metadata["image_paths"],
+                "source_reference_filepath": metadata["reference_filepath"],
+                "source_target_filepath": metadata["target_filepath"],
                 "embedding": vector,
             }
         )
@@ -232,6 +242,10 @@ def _prepare_targets(
                     context=f"target embedding[{index}].defect_detection_evidence",
                     allow_empty=True,
                 ),
+                "sample_kind": row.get("sample_kind", "single_image"),
+                "image_paths": row.get("image_paths", [filepath]),
+                "reference_filepath": row.get("reference_filepath"),
+                "target_filepath": row.get("target_filepath", filepath),
                 "embedding": vector,
             }
         )
@@ -240,11 +254,231 @@ def _prepare_targets(
     return prepared
 
 
+def _atomic_source_catalog(
+    records: list[dict[str, Any]], media_root: pathlib.Path
+) -> tuple[list[dict[str, Any]], set[str]]:
+    catalog: dict[str, dict[str, Any]] = {}
+    ignored_paths: set[str] = set()
+    resolved_path_cache: dict[str, str] = {}
+    for index, record in enumerate(records):
+        context = f"source annotation[{index}]"
+        task_type = record.get("task_type")
+        if task_type not in TASK_SPECS:
+            paths = image_paths(record, context=context)
+            ignored_paths.update(str(resolve_image(path, media_root)) for path in paths)
+            continue
+        prompt_and_response(record, context=context)
+        record_id = record.get("id")
+        if not isinstance(record_id, str) or not record_id:
+            raise ValueError(f"{context}: id is required")
+        sample = sample_from_record(
+            record,
+            media_root=media_root,
+            context=context,
+            resolved_path_cache=resolved_path_cache,
+        )
+        identity = str(sample["atomic_sample_id"])
+        entry = catalog.setdefault(
+            identity,
+            {
+                "filepath": str(sample["target_filepath"]),
+                "source_target_id": identity,
+                "source_task_types": set(),
+                "source_record_ids": set(),
+                "atomic_sample_id": identity,
+                "sample_kind": sample["sample_kind"],
+                "source_image_paths": sample["image_paths"],
+                "source_reference_filepath": sample["reference_filepath"],
+                "source_target_filepath": sample["target_filepath"],
+            },
+        )
+        if entry["source_image_paths"] != sample["image_paths"]:
+            raise ValueError(f"{context}: atomic sample maps to conflicting image paths")
+        entry["source_task_types"].add(str(task_type))
+        entry["source_record_ids"].add(record_id)
+    output = []
+    for entry in catalog.values():
+        entry["source_task_types"] = sorted(entry["source_task_types"])
+        entry["source_record_ids"] = sorted(entry["source_record_ids"])
+        output.append(entry)
+    return output, ignored_paths
+
+
+def _component_embedding_index(
+    rows: list[dict[str, Any]],
+    *,
+    media_root: pathlib.Path,
+    context: str,
+) -> tuple[dict[str, list[float]], int]:
+    embeddings: dict[str, list[float]] = {}
+    dimensions: set[int] = set()
+    for index, row in enumerate(rows):
+        filepath = row.get("filepath")
+        if not isinstance(filepath, str) or not filepath:
+            raise ValueError(f"{context}[{index}]: filepath is required")
+        resolved = str(resolve_image(filepath, media_root))
+        if resolved in embeddings:
+            raise ValueError(f"duplicate {context} filepath: {filepath!r}")
+        vector = _embedding(row.get("embedding"), context=f"{context}[{index}]")
+        embeddings[resolved] = vector
+        dimensions.add(len(vector))
+    if not embeddings:
+        raise ValueError(f"{context}s are empty")
+    if len(dimensions) != 1:
+        raise ValueError(f"{context} dimensions are inconsistent")
+    return embeddings, next(iter(dimensions))
+
+
+def _prepare_two_vector_sources(
+    rows: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+    *,
+    media_root: pathlib.Path,
+) -> tuple[list[dict[str, Any]], int, int]:
+    embeddings, dimension = _component_embedding_index(
+        rows, media_root=media_root, context="source embedding"
+    )
+    catalog, ignored_paths = _atomic_source_catalog(records, media_root)
+    prepared: list[dict[str, Any]] = []
+    used_paths: set[str] = set()
+    for source in catalog:
+        test_path = str(source["source_target_filepath"])
+        test_embedding = embeddings.get(test_path)
+        if test_embedding is None:
+            raise ValueError(
+                f"source atomic sample {source['atomic_sample_id']!r} has no cached "
+                f"test embedding for {test_path!r}"
+            )
+        used_paths.add(test_path)
+        item = {**source, "test_embedding": test_embedding}
+        if source["sample_kind"] == "reference_pair":
+            golden_path = str(source["source_reference_filepath"])
+            golden_embedding = embeddings.get(golden_path)
+            if golden_embedding is None:
+                raise ValueError(
+                    f"source atomic sample {source['atomic_sample_id']!r} has no "
+                    f"golden embedding for {golden_path!r}"
+                )
+            used_paths.add(golden_path)
+            item["golden_embedding"] = golden_embedding
+        else:
+            item["golden_embedding"] = None
+        prepared.append(item)
+    unknown = set(embeddings) - used_paths - ignored_paths
+    if unknown:
+        raise ValueError(
+            "source component embedding has no Mining atomic sample: "
+            f"{sorted(unknown)[:10]}"
+        )
+    return prepared, dimension, len(set(embeddings) & ignored_paths)
+
+
+def _embedding_memberships(value: Any, *, context: str) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{context}: invalid embedding_memberships JSON") from exc
+    if not isinstance(value, (list, tuple)) or not value or not all(
+        isinstance(item, dict) for item in value
+    ):
+        raise ValueError(f"{context}: embedding_memberships must be an object list")
+    return [dict(item) for item in value]
+
+
+def _prepare_two_vector_targets(
+    rows: list[dict[str, Any]],
+    *,
+    media_root: pathlib.Path,
+    expected_dimension: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    seen_component_paths: set[str] = set()
+    for index, row in enumerate(rows):
+        filepath = row.get("filepath")
+        if not isinstance(filepath, str) or not filepath:
+            raise ValueError(f"target embedding[{index}]: filepath is required")
+        resolved = str(resolve_image(filepath, media_root))
+        if resolved in seen_component_paths:
+            raise ValueError(f"duplicate target embedding filepath: {filepath!r}")
+        seen_component_paths.add(resolved)
+        vector = _embedding(row.get("embedding"), context=f"target embedding[{index}]")
+        if len(vector) != expected_dimension:
+            raise ValueError(
+                f"target embedding[{index}]: dimension {len(vector)} does not match "
+                f"source dimension {expected_dimension}"
+            )
+        memberships = _embedding_memberships(
+            row.get("embedding_memberships"), context=f"target embedding[{index}]"
+        )
+        for membership_index, membership in enumerate(memberships):
+            context = f"target embedding[{index}].membership[{membership_index}]"
+            target_id = membership.get("target_id")
+            role = membership.get("role")
+            sample_kind = membership.get("sample_kind")
+            if not isinstance(target_id, str) or not target_id:
+                raise ValueError(f"{context}: target_id is required")
+            if role not in {"golden", "test"}:
+                raise ValueError(f"{context}: role must be golden or test")
+            if sample_kind not in {"single_image", "reference_pair"}:
+                raise ValueError(f"{context}: invalid sample_kind")
+            image_paths_value = membership.get("image_paths")
+            if not isinstance(image_paths_value, (list, tuple)) or len(
+                image_paths_value
+            ) != (2 if sample_kind == "reference_pair" else 1):
+                raise ValueError(f"{context}: image_paths do not match sample_kind")
+            image_paths_value = [str(value) for value in image_paths_value]
+            metadata = {
+                "filepath": str(membership.get("target_filepath") or image_paths_value[-1]),
+                "target_id": target_id,
+                "task_types": _string_list(
+                    membership.get("task_types"), context=f"{context}.task_types"
+                ),
+                "defect_detection_evidence": _string_list(
+                    membership.get("defect_detection_evidence", []),
+                    context=f"{context}.defect_detection_evidence",
+                    allow_empty=True,
+                ),
+                "sample_kind": sample_kind,
+                "image_paths": image_paths_value,
+                "reference_filepath": membership.get("reference_filepath"),
+                "target_filepath": membership.get("target_filepath")
+                or image_paths_value[-1],
+            }
+            if target_id not in grouped:
+                grouped[target_id] = {**metadata, "golden_embedding": None, "test_embedding": None}
+                order.append(target_id)
+            target = grouped[target_id]
+            for field, expected in metadata.items():
+                if target[field] != expected:
+                    raise ValueError(
+                        f"{context}: target {target_id!r} has conflicting {field}"
+                    )
+            field = f"{role}_embedding"
+            if target[field] is not None:
+                raise ValueError(f"{context}: duplicate {role} embedding for {target_id!r}")
+            target[field] = vector
+    for target_id in order:
+        target = grouped[target_id]
+        if target["test_embedding"] is None:
+            raise ValueError(f"target {target_id!r} has no test embedding")
+        if target["sample_kind"] == "reference_pair" and target["golden_embedding"] is None:
+            raise ValueError(f"target {target_id!r} has no golden embedding")
+        if target["sample_kind"] == "single_image" and target["golden_embedding"] is not None:
+            raise ValueError(f"single-image target {target_id!r} has a golden embedding")
+    if not order:
+        raise ValueError("target embeddings are empty")
+    return [grouped[target_id] for target_id in order]
+
+
 def _candidate(
     *,
     source: dict[str, Any],
     target: dict[str, Any],
-    similarity: float,
+    sim_golden: float | None,
+    sim_test: float | None,
+    sim_pair: float,
     route_tier: str,
     query_task_types: Iterable[str],
     routed_task_types: Iterable[str],
@@ -266,7 +500,10 @@ def _candidate(
         "route_tier": route_tier,
         "route_tiers": [route_tier],
         "defect_detection_evidence": target["defect_detection_evidence"],
-        "max_cosine_similarity": similarity,
+        "sim_golden": sim_golden,
+        "sim_test": sim_test,
+        "sim_pair": sim_pair,
+        "max_cosine_similarity": sim_pair,
         "best_rank": rank,
     }
 
@@ -281,13 +518,55 @@ def _merge_candidate(existing: dict[str, Any], candidate: dict[str, Any]) -> Non
     ):
         existing[field] = sorted(set(existing[field]) | set(candidate[field]))
     existing["best_rank"] = min(existing["best_rank"], candidate["best_rank"])
-    if candidate["max_cosine_similarity"] > existing["max_cosine_similarity"]:
-        existing["max_cosine_similarity"] = candidate["max_cosine_similarity"]
+    if candidate["sim_pair"] > existing["sim_pair"]:
+        for field in ("sim_golden", "sim_test", "sim_pair", "max_cosine_similarity"):
+            existing[field] = candidate[field]
         existing["matched_target_filepath"] = candidate["matched_target_filepath"]
         existing["matched_target_id"] = candidate["matched_target_id"]
     existing["route_tier"] = min(
         existing["route_tiers"], key=lambda tier: _ROUTE_TIER_PRIORITY[tier]
     )
+
+
+def _board_id_prefix(path_text: str | None) -> str | None:
+    if not isinstance(path_text, str) or not path_text:
+        return None
+    path = pathlib.PurePath(path_text.replace("\\", "/"))
+    stem = path.stem
+    matches = re.findall(r"[A-Za-z]+\d+(?:[@_-]\d+)?", stem)
+    if matches:
+        return matches[-1].casefold()
+    if "__" in stem:
+        prefix = stem.split("__", 1)[0].casefold()
+        if prefix:
+            return prefix
+    ignored = {"golden", "images", "normal", "reference", "ref", "top10"}
+    parent = path.parent.name.casefold()
+    if parent and parent not in ignored:
+        return parent
+    tail = stem.split("__")[-1].casefold()
+    tail = re.sub(r"(?:[_-](?:uniformlight|golden|normal|reference|ref).*)$", "", tail)
+    return tail or None
+
+
+def _same_board_type(
+    target: dict[str, Any], source: dict[str, Any]
+) -> tuple[bool, str | None]:
+    query_path = target.get("reference_filepath")
+    source_path = source.get("source_reference_filepath")
+    if not all(isinstance(value, str) and value for value in (query_path, source_path)):
+        return False, None
+    if pathlib.PurePath(str(query_path)) == pathlib.PurePath(str(source_path)):
+        return True, "golden_path"
+    query_prefix = _board_id_prefix(str(query_path))
+    source_prefix = _board_id_prefix(str(source_path))
+    if query_prefix is not None and query_prefix == source_prefix:
+        return True, "board_id_prefix"
+    return False, None
+
+
+def _clip_similarity(value: float) -> float:
+    return max(-1.0, min(1.0, float(value)))
 
 
 def route_candidates(
@@ -301,6 +580,8 @@ def route_candidates(
     top_k_per_target: int,
     top_k_by_task: dict[str, int] | None = None,
     min_similarity: float,
+    pair_similarity: str = "canvas",
+    pair_similarity_combine: str = "mean",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Return routed source candidates and auditable selection evidence."""
 
@@ -322,65 +603,152 @@ def route_candidates(
         raise ValueError(f"invalid per-task top-K overrides: {invalid_top_k}")
     if not -1.0 <= min_similarity <= 1.0:
         raise ValueError("min_similarity must be between -1 and 1")
+    if pair_similarity not in PAIR_SIMILARITIES:
+        raise ValueError(
+            f"unsupported pair similarity {pair_similarity!r}; "
+            f"choose one of {PAIR_SIMILARITIES}"
+        )
+    if pair_similarity_combine not in PAIR_SIMILARITY_COMBINES:
+        raise ValueError(
+            f"unsupported pair similarity combine {pair_similarity_combine!r}; "
+            f"choose one of {PAIR_SIMILARITY_COMBINES}"
+        )
     media_root = media_root.expanduser().resolve()
-    catalog, aliases, ignored_aliases = _source_catalog(
-        source_annotations, media_root, pair_assets_dir
-    )
-    sources, dimension, ignored_sources = _prepare_sources(
-        source_rows,
-        media_root=media_root,
-        catalog=catalog,
-        aliases=aliases,
-        ignored_aliases=ignored_aliases,
-    )
-    targets = _prepare_targets(target_rows, expected_dimension=dimension)
+    if pair_similarity == "canvas":
+        catalog, aliases, ignored_aliases = _source_catalog(
+            source_annotations, media_root, pair_assets_dir
+        )
+        sources, dimension, ignored_sources = _prepare_sources(
+            source_rows,
+            media_root=media_root,
+            catalog=catalog,
+            aliases=aliases,
+            ignored_aliases=ignored_aliases,
+        )
+        targets = _prepare_targets(target_rows, expected_dimension=dimension)
+    else:
+        sources, dimension, ignored_sources = _prepare_two_vector_sources(
+            source_rows, source_annotations, media_root=media_root
+        )
+        targets = _prepare_two_vector_targets(
+            target_rows,
+            media_root=media_root,
+            expected_dimension=dimension,
+        )
     try:
         import numpy as np
     except ImportError as exc:
         raise ValueError("numpy is required for batched mining similarity") from exc
+    matrix_dtype = np.float64 if pair_similarity == "canvas" else np.float32
     source_matrix = np.asarray(
-        [source["embedding"] for source in sources], dtype=np.float64
+        [
+            source["embedding"]
+            if pair_similarity == "canvas"
+            else source["test_embedding"]
+            for source in sources
+        ],
+        dtype=matrix_dtype,
     )
+    source_pair_mask = np.asarray(
+        [source["sample_kind"] == "reference_pair" for source in sources],
+        dtype=bool,
+    )
+    source_golden_matrix = None
+    if pair_similarity == "two_vector":
+        source_golden_matrix = np.zeros_like(source_matrix)
+        for index, source in enumerate(sources):
+            if source["golden_embedding"] is not None:
+                source_golden_matrix[index] = source["golden_embedding"]
+            source.pop("golden_embedding")
+            source.pop("test_embedding")
     # Bound each similarity block to roughly 64 MiB. This keeps large source
     # pools from materializing a target_count x source_count matrix while still
     # using vectorized BLAS instead of Python loops over embedding dimensions.
-    score_bytes_per_target = max(1, len(sources) * 8)
+    score_array_count = 1 if pair_similarity == "canvas" else 3
+    score_bytes_per_target = max(
+        1, len(sources) * np.dtype(matrix_dtype).itemsize * score_array_count
+    )
     target_batch_size = max(1, min(256, (64 * 1024 * 1024) // score_bytes_per_target))
 
     selected: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     target_evidence: list[dict[str, Any]] = []
     raw_tiers: Counter[str] = Counter()
-    target_scores: Iterable[tuple[dict[str, Any], Any]] = (
-        (target, scores)
-        for start in range(0, len(targets), target_batch_size)
-        for target, scores in zip(
-            targets[start : start + target_batch_size],
-            np.asarray(
+    def score_targets() -> Iterable[
+        tuple[dict[str, Any], Any, Any | None, Any | None]
+    ]:
+        for start in range(0, len(targets), target_batch_size):
+            batch = targets[start : start + target_batch_size]
+            target_matrix = np.asarray(
                 [
                     target["embedding"]
-                    for target in targets[start : start + target_batch_size]
+                    if pair_similarity == "canvas"
+                    else target["test_embedding"]
+                    for target in batch
                 ],
-                dtype=np.float64,
+                dtype=matrix_dtype,
             )
-            @ source_matrix.T,
-            strict=True,
-        )
-    )
-    for target, similarities in target_scores:
+            test_scores = target_matrix @ source_matrix.T
+            for target, target_test_scores in zip(batch, test_scores, strict=True):
+                if pair_similarity == "canvas":
+                    yield target, target_test_scores, None, None
+                    continue
+                target_golden_scores = None
+                pair_scores = target_test_scores.copy()
+                if target["sample_kind"] == "reference_pair":
+                    assert source_golden_matrix is not None
+                    target_golden_scores = (
+                        np.asarray(target["golden_embedding"], dtype=matrix_dtype)
+                        @ source_golden_matrix.T
+                    )
+                    combined = (
+                        (target_golden_scores + target_test_scores) / 2.0
+                        if pair_similarity_combine == "mean"
+                        else np.minimum(target_golden_scores, target_test_scores)
+                    )
+                    pair_scores = np.where(source_pair_mask, combined, target_test_scores)
+                yield target, pair_scores, target_golden_scores, target_test_scores
+
+    for target, similarities, golden_similarities, test_similarities in score_targets():
         target_tasks = set(target["task_types"])
-        scored = [
-            (
-                max(-1.0, min(1.0, float(similarity))),
-                source,
-                sorted(target_tasks & set(source["source_task_types"])),
+        scored = []
+        for source_index, (source, similarity) in enumerate(
+            zip(sources, similarities, strict=True)
+        ):
+            sim_pair = _clip_similarity(float(similarity))
+            if sim_pair < min_similarity:
+                continue
+            sim_golden = (
+                _clip_similarity(float(golden_similarities[source_index]))
+                if golden_similarities is not None
+                and source["sample_kind"] == "reference_pair"
+                else None
             )
-            for source, similarity in zip(sources, similarities, strict=True)
-            if float(similarity) >= min_similarity
-        ]
-        scored.sort(key=lambda item: (-item[0], item[1]["filepath"]))
+            sim_test = (
+                _clip_similarity(float(test_similarities[source_index]))
+                if test_similarities is not None
+                else None
+            )
+            scored.append(
+                (
+                    {
+                        "sim_golden": sim_golden,
+                        "sim_test": sim_test,
+                        "sim_pair": sim_pair,
+                    },
+                    source,
+                    sorted(target_tasks & set(source["source_task_types"])),
+                )
+            )
+        scored.sort(
+            key=lambda item: (
+                -item[0]["sim_pair"],
+                item[1]["filepath"],
+                item[1]["atomic_sample_id"],
+            )
+        )
         chosen: list[
-            tuple[float, dict[str, Any], list[str], list[str], str]
+            tuple[dict[str, float | None], dict[str, Any], list[str], list[str], str]
         ]
         task_routes: dict[str, dict[str, int]] = {}
         if mode == "image_only":
@@ -417,12 +785,12 @@ def route_candidates(
                     remaining = task_top_k - len(task_chosen)
                     if remaining:
                         strict_paths = {
-                            source["filepath"] for _, source, _ in strict_chosen
+                            source["atomic_sample_id"] for _, source, _ in strict_chosen
                         }
                         fallback_pool = [
                             item
                             for item in scored
-                            if item[1]["filepath"] not in strict_paths
+                            if item[1]["atomic_sample_id"] not in strict_paths
                         ]
                         task_chosen.extend(
                             (
@@ -459,7 +827,9 @@ def route_candidates(
             candidate = _candidate(
                 source=source,
                 target=target,
-                similarity=similarity,
+                sim_golden=similarity["sim_golden"],
+                sim_test=similarity["sim_test"],
+                sim_pair=float(similarity["sim_pair"]),
                 route_tier=tier,
                 query_task_types=query_tasks,
                 routed_task_types=routed_tasks,
@@ -480,21 +850,54 @@ def route_candidates(
             )
         )
         strict_eligible = len(
-            {source["filepath"] for _, source, intersection in scored if intersection}
-        )
-        target_evidence.append(
             {
-                "target_id": target["target_id"],
-                "filepath": target["filepath"],
-                "task_types": target["task_types"],
-                "similarity_qualified": len(scored),
-                "strict_eligible": strict_eligible,
-                "selected": len(chosen),
-                "shortfall": expected - len(chosen),
-                "route_tier_counts": dict(sorted(tier_counts.items())),
-                "task_routes": task_routes,
+                source["atomic_sample_id"]
+                for _, source, intersection in scored
+                if intersection
             }
         )
+        evidence = {
+            "target_id": target["target_id"],
+            "filepath": target["filepath"],
+            "task_types": target["task_types"],
+            "similarity_qualified": len(scored),
+            "strict_eligible": strict_eligible,
+            "selected": len(chosen),
+            "shortfall": expected - len(chosen),
+            "route_tier_counts": dict(sorted(tier_counts.items())),
+            "task_routes": task_routes,
+        }
+        if target.get("sample_kind") == "reference_pair":
+            selected_pairs = {
+                source["atomic_sample_id"]: source
+                for _, source, _, _, _ in chosen
+                if source["sample_kind"] == "reference_pair"
+            }
+            match_modes = Counter(
+                match_mode
+                for source in selected_pairs.values()
+                for matched, match_mode in [_same_board_type(target, source)]
+                if matched and match_mode is not None
+            )
+            same_board_hits = sum(match_modes.values())
+            evidence.update(
+                {
+                    "query_golden_filepath": target.get("reference_filepath"),
+                    "query_board_id_prefix": _board_id_prefix(
+                        target.get("reference_filepath")
+                    ),
+                    "selected_reference_pairs": len(selected_pairs),
+                    "same_golden_path_hits": match_modes["golden_path"],
+                    "same_board_id_prefix_hits": match_modes["board_id_prefix"],
+                    "same_board_type_hits": same_board_hits,
+                    "same_board_type_hit_rate": (
+                        same_board_hits / len(selected_pairs)
+                        if selected_pairs
+                        else None
+                    ),
+                }
+            )
+        target_evidence.append(evidence)
 
     output = [selected[key] for key in order]
     final_tiers = Counter(row["route_tier"] for row in output)
@@ -504,6 +907,8 @@ def route_candidates(
     summary = {
         "schema_version": "task_mining_router_v1",
         "mode": mode,
+        "pair_similarity": pair_similarity,
+        "pair_similarity_combine": pair_similarity_combine,
         "top_k_per_target": top_k_per_target,
         "top_k_by_task": dict(sorted(top_k_by_task.items())),
         "min_similarity": min_similarity,
@@ -515,6 +920,8 @@ def route_candidates(
         "source_reference_pairs": sum(
             source["sample_kind"] == "reference_pair" for source in sources
         ),
+        "source_embedding_inputs": len(source_rows),
+        "target_embedding_inputs": len(target_rows),
         "ignored_out_of_scope_source_images": ignored_sources,
         "embedding_dimension": dimension,
         "similarity_batch_size": target_batch_size,
@@ -555,7 +962,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-embeddings", required=True, type=pathlib.Path)
     parser.add_argument("--source-annotations", required=True, type=pathlib.Path)
     parser.add_argument("--media-root", required=True, type=pathlib.Path)
-    parser.add_argument("--pair-assets-dir", required=True, type=pathlib.Path)
+    parser.add_argument("--pair-assets-dir", type=pathlib.Path)
+    parser.add_argument("--pair-similarity", choices=PAIR_SIMILARITIES, default="canvas")
+    parser.add_argument(
+        "--pair-similarity-combine",
+        choices=PAIR_SIMILARITY_COMBINES,
+        default="mean",
+    )
     parser.add_argument("--mode", choices=MINING_ROUTER_MODES, default="image_only")
     parser.add_argument("--top-k-per-target", type=int, default=5)
     parser.add_argument("--defect-detection-top-k-per-target", type=int)
@@ -582,6 +995,8 @@ def main(argv: list[str] | None = None) -> int:
                 else None
             ),
             min_similarity=args.min_similarity,
+            pair_similarity=args.pair_similarity,
+            pair_similarity_combine=args.pair_similarity_combine,
         )
         _write_parquet(args.output, rows)
         args.summary.parent.mkdir(parents=True, exist_ok=True)
@@ -590,7 +1005,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"task_mining_router: {exc}", file=sys.stderr)
         return 2
     print(
-        f"task_mining_router: mode={args.mode} targets={summary['target_queries']} "
+        f"task_mining_router: mode={args.mode} pair_similarity={args.pair_similarity} "
+        f"targets={summary['target_queries']} "
         f"sources={summary['unique_sources']} output={args.output}"
     )
     return 0

@@ -128,8 +128,10 @@ def _source_index(
         prompt_and_response(record, context=f"source record[{record_index}]")
         context = f"source record[{record_index}]"
         sample = sample_from_record(record, media_root=media_root, context=context)
-        embedding_path = embedding_filepath(sample, pair_assets_dir=pair_assets_dir)
         index.setdefault(sample["atomic_sample_id"], []).append((record_index, record))
+        if sample["sample_kind"] == "reference_pair" and pair_assets_dir is None:
+            continue
+        embedding_path = embedding_filepath(sample, pair_assets_dir=pair_assets_dir)
         for key in _path_keys(embedding_path, media_root):
             index.setdefault(key, []).append((record_index, record))
     return index
