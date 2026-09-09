@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import pathlib
 import re
 import sys
 import tempfile
+from collections import Counter
 from typing import Any
 
 from benchmark_cadence import (
@@ -31,6 +33,7 @@ from cfw_dcp import validate_checkpoint
 from cfw_predictions import read_prediction_jsonl
 from deft_context import _next_stage
 from defect_detection_ablation import verify_bound_manifest
+from assemble_training_json import sha256_file
 from validate_sharegpt import load_records
 
 
@@ -176,6 +179,150 @@ def _required_jsonl_file(value: pathlib.Path | None, flag: str) -> str:
         raise ValueError(f"{flag} must be canonical JSONL: {path}")
     load_records(path)
     return str(path)
+
+
+def _record_fingerprint(record: dict[str, Any]) -> str:
+    return json.dumps(
+        record, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+
+
+def validate_assembly_lineage(
+    summary_path: pathlib.Path,
+    *,
+    previous_training_jsonl: pathlib.Path | None,
+    mined_jsonl: pathlib.Path,
+    combined_training_jsonl: pathlib.Path,
+    require_previous: bool,
+) -> dict[str, Any]:
+    """Validate the cumulative training lineage independently of its producer."""
+
+    try:
+        summary = json.loads(summary_path.expanduser().resolve(strict=True).read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"assembly summary must be JSON: {summary_path}") from exc
+    if not isinstance(summary, dict) or summary.get("schema_version") != 2:
+        raise ValueError("assembly summary must use lineage schema version 2")
+    required_fields = (
+        "previous_iteration",
+        "previous_sha256",
+        "previous_records",
+        "retained_previous_records",
+        "previous_fingerprint_count",
+        "previous_fingerprints_sha256",
+        "previous_fingerprints_subset",
+        "mined_input",
+        "output_records",
+        "output_fingerprint_count",
+        "output_fingerprints_sha256",
+        "training_jsonl",
+    )
+    missing = [field for field in required_fields if field not in summary]
+    if missing:
+        raise ValueError(f"assembly summary missing required lineage fields: {missing}")
+
+    mined = mined_jsonl.expanduser().resolve(strict=True)
+    combined = combined_training_jsonl.expanduser().resolve(strict=True)
+    if mined == combined:
+        raise ValueError(
+            "selector mined JSONL and cumulative training JSONL must be different files"
+        )
+    if pathlib.Path(str(summary.get("mined_input"))).expanduser().resolve() != mined:
+        raise ValueError("assembly summary mined_input differs from --mined-jsonl")
+    output_rows = load_records(combined)
+    output_fingerprints = Counter(_record_fingerprint(row) for row in output_rows)
+    output_fingerprint_set = set(output_fingerprints)
+    binding = summary.get("training_jsonl")
+    if not isinstance(binding, dict):
+        raise ValueError("assembly summary training_jsonl binding must be an object")
+    if (
+        binding.get("path") != str(combined)
+        or binding.get("sha256") != sha256_file(combined)
+        or binding.get("rows") != len(output_rows)
+        or summary.get("output_records") != len(output_rows)
+    ):
+        raise ValueError("assembly summary does not bind the cumulative training JSONL")
+    digest = hashlib.sha256()
+    for fingerprint in sorted(output_fingerprint_set):
+        digest.update(hashlib.sha256(fingerprint.encode("utf-8")).digest())
+    if (
+        summary.get("output_fingerprint_count") != len(output_fingerprint_set)
+        or summary.get("output_fingerprints_sha256") != digest.hexdigest()
+    ):
+        raise ValueError("assembly summary output fingerprint proof is invalid")
+
+    if require_previous and previous_training_jsonl is None:
+        raise ValueError("previous training JSONL is required after iteration 1")
+    if previous_training_jsonl is None:
+        if (
+            summary.get("previous_iteration") is not None
+            or summary.get("previous_sha256") is not None
+            or summary.get("previous_records") != 0
+            or summary.get("retained_previous_records") != 0
+        ):
+            raise ValueError("iteration 1 assembly must not claim previous lineage")
+        return summary
+
+    previous = previous_training_jsonl.expanduser().resolve(strict=True)
+    if pathlib.Path(str(summary["previous_iteration"])).expanduser().resolve() != previous:
+        raise ValueError("assembly summary previous_iteration path differs from state")
+    if summary.get("previous_sha256") != sha256_file(previous):
+        raise ValueError("assembly summary previous SHA-256 differs from the prior train")
+    previous_rows = load_records(previous)
+    previous_fingerprints = Counter(_record_fingerprint(row) for row in previous_rows)
+    previous_fingerprint_set = set(previous_fingerprints)
+    if summary.get("previous_records") != len(previous_rows):
+        raise ValueError("assembly summary previous record count differs from prior train")
+    if summary.get("retained_previous_records") != len(previous_rows):
+        raise ValueError("assembly must retain every previous record")
+    if summary.get("previous_fingerprints_subset") is not True:
+        raise ValueError("assembly summary previous_fingerprints_subset must be true")
+    if not all(
+        output_fingerprints[fingerprint] >= count
+        for fingerprint, count in previous_fingerprints.items()
+    ):
+        raise ValueError("cumulative training dropped previous record fingerprints")
+    previous_digest = hashlib.sha256()
+    for fingerprint in sorted(previous_fingerprint_set):
+        previous_digest.update(hashlib.sha256(fingerprint.encode("utf-8")).digest())
+    if (
+        summary.get("previous_fingerprint_count") != len(previous_fingerprint_set)
+        or summary.get("previous_fingerprints_sha256")
+        != previous_digest.hexdigest()
+    ):
+        raise ValueError("assembly summary previous fingerprint proof is invalid")
+    return summary
+
+
+def _previous_training_for_iteration(
+    iter_label: str, iterations: dict[str, Any]
+) -> pathlib.Path | None:
+    match = re.fullmatch(r"iter([1-9][0-9]*)", iter_label)
+    if not match or int(match.group(1)) == 1:
+        return None
+    previous_label = f"iter{int(match.group(1)) - 1}"
+    previous_phase = iterations.get(previous_label)
+    if not isinstance(previous_phase, dict):
+        raise ValueError(f"missing previous iteration state: {previous_label}")
+    value = previous_phase.get("combined_training_jsonl")
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            f"previous training JSONL is required before {iter_label} data mining"
+        )
+    path = pathlib.Path(value).expanduser().resolve(strict=True)
+    prior_summary = previous_phase.get("assemble_summary")
+    prior_mined = previous_phase.get("mined_jsonl")
+    if not all(isinstance(item, str) and item for item in (prior_summary, prior_mined)):
+        raise ValueError(f"{previous_label} is missing committed assembly lineage")
+    prior_previous = _previous_training_for_iteration(previous_label, iterations)
+    validate_assembly_lineage(
+        pathlib.Path(prior_summary),
+        previous_training_jsonl=prior_previous,
+        mined_jsonl=pathlib.Path(prior_mined),
+        combined_training_jsonl=path,
+        require_previous=prior_previous is not None,
+    )
+    return path
 
 
 def _required_prediction_jsonl(value: pathlib.Path | None, flag: str) -> str:
@@ -366,6 +513,7 @@ def _apply_success(
             "--routing-summary",
         )
     elif stage == "data_mining":
+        _previous_training_for_iteration(args.iter_label, iterations)
         artifacts = {
             "mining_mined_parquet": (
                 args.mining_parquet,
@@ -410,6 +558,9 @@ def _apply_success(
             )
         phase["mining_mined_count"] = args.mining_count
     elif stage == "assemble_data":
+        previous_training_jsonl = _previous_training_for_iteration(
+            args.iter_label, iterations
+        )
         phase["mined_jsonl"] = _within(
             _required_jsonl_file(args.mined_jsonl, "--mined-jsonl"),
             phase_root,
@@ -424,6 +575,15 @@ def _apply_success(
             _required_file(args.assemble_summary, "--assemble-summary"),
             phase_root,
             "--assemble-summary",
+        )
+        validate_assembly_lineage(
+            pathlib.Path(phase["assemble_summary"]),
+            previous_training_jsonl=previous_training_jsonl,
+            mined_jsonl=pathlib.Path(phase["mined_jsonl"]),
+            combined_training_jsonl=pathlib.Path(
+                phase["combined_training_jsonl"]
+            ),
+            require_previous=previous_training_jsonl is not None,
         )
         ablation = (
             state.get("config", {})

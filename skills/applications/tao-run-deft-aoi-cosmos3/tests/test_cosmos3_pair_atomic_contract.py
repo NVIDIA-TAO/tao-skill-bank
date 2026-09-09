@@ -39,6 +39,65 @@ def _row(record_id: str, reference: str, target: str) -> dict:
 
 
 class Cosmos3PairAtomicContractTests(unittest.TestCase):
+    def test_router_deduplicates_one_atomic_source_but_keeps_ordered_pairs_distinct(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            for name, color in (
+                ("golden-a.png", "white"),
+                ("golden-b.png", "gray"),
+                ("test.png", "black"),
+            ):
+                path = root / "images" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                Image.new("RGB", (8, 8), color=color).save(path)
+            records = [
+                _row("pair-a", "images/golden-a.png", "images/test.png"),
+                _row("pair-b", "images/golden-b.png", "images/test.png"),
+            ]
+            samples = [
+                atomic_samples.sample_from_record(record, media_root=root, context=record["id"])
+                for record in records
+            ]
+            paths = [
+                atomic_samples.embedding_filepath(
+                    sample, pair_assets_dir=root / "pair-assets"
+                )
+                for sample in samples
+            ]
+            source_rows = [
+                {"filepath": paths[0], "embedding": [1.0, 0.0]},
+                {"filepath": paths[0], "embedding": [1.0, 0.0]},
+                {"filepath": paths[1], "embedding": [0.0, 1.0]},
+            ]
+            target_rows = [
+                {
+                    "filepath": "query.png",
+                    "target_id": "query",
+                    "task_types": ["Ref_based Defect Detection"],
+                    "defect_detection_evidence": [],
+                    "embedding": [1.0, 1.0],
+                }
+            ]
+
+            selected, summary = task_mining_router.route_candidates(
+                target_rows,
+                source_rows,
+                records,
+                media_root=root,
+                pair_assets_dir=root / "pair-assets",
+                mode="task_strict",
+                top_k_per_target=2,
+                min_similarity=-1.0,
+            )
+
+            self.assertEqual(summary["source_images"], 2)
+            self.assertEqual(summary["duplicate_source_embeddings_collapsed"], 1)
+            self.assertEqual(len(selected), 2)
+            self.assertEqual(
+                {row["atomic_sample_id"] for row in selected},
+                {sample["atomic_sample_id"] for sample in samples},
+            )
+
     def test_gap_routing_keeps_same_test_image_with_different_references_distinct(self) -> None:
         rows = [
             {

@@ -133,7 +133,10 @@ The selector:
 
 - reserves the configured fraction (at least 50 percent) for exactly `Defect
   Detection`; `Component Detection` is one of five maintenance tasks and never
-  counts toward that reserve;
+  counts toward that reserve. The fraction is a lower bound, not an exact
+  split: for a candidate total `T`, take at least `ceil(T * fraction)` DD rows
+  and increase DD as needed when the available maintenance rows cannot fill
+  the remainder;
 - admits positive Defect Detection rows from proxy-FN, partial-overlap, or
   correctly handled DD routes, while proxy-FP routes provide empty hard
   negatives; when the launch explicitly authorizes direct Mining-pool box
@@ -149,6 +152,10 @@ The selector:
 - labels empty reference pairs as
   `calibration_reference_no_change_ground_truth` negatives and keeps the
   ordered golden/target pair atomic;
+- applies the 512 empty, 512 few-box, and 500 reference calibration limits to
+  current additions only. Pass the previous cumulative Train as
+  `--previous-jsonl`; exact prior rows are excluded from the selector because
+  the assembler retains them independently;
 - treats each ordered `(golden, target)` reference sample as one atomic unit
   across embedding, retrieval, de-duplication, history, leakage exclusion, and
   canonical two-image materialization; and
@@ -158,17 +165,27 @@ The selector:
   near-duplicate filtering is applied only when configured; use
   `--no-near-duplicate-filter` when the launch disables it.
 
-The command writes the materialized JSONL and a bound
-`defect_detection_quota_manifest_v1`. By default a shortfall leaves the
-manifest on disk with `verified=false` and exits nonzero. When
+The selector writes only the current `data/mined.jsonl` and its bound
+`defect_detection_quota_manifest_v1`; it never writes
+`assemble_data/train.jsonl`. Generate the two-command handoff with
+`render_iteration_mining_runner.py`: the second command is the sole assembly
+boundary, passes the previous Train path and SHA-256 to
+`assemble_training_json.py`, and emits the cumulative Train plus a final
+`defect_detection_quota_manifest_v2`. By default a shortfall leaves the
+current manifest on disk with `verified=false` and exits nonzero. When
 `--minimum-rows` is launch-recorded, the selector instead accepts the largest
 feasible global-batch-aligned corpus at or above that raw minimum, records the
 requested/accepted shortfall and every quota shortage, and rejects anything
-smaller. For an enabled ablation,
+smaller. Feasibility uses `dd_take = max(ceil(T * fraction), T -
+available_maintenance)` and therefore permits more than the minimum DD share;
+an exact share would require a separate explicit policy. For an enabled ablation,
 `commit_stage.py ... --stage assemble_data` requires `--quota-manifest`, and
 `render_cfw_sft.py` must receive both `--quota-manifest` and
 `--require-defect-detection-quota-manifest`; each gate re-hashes the JSONL and
-recomputes the optimizer schedule. Never launch Train unless both gates pass.
+recomputes the optimizer schedule. After iteration 1, both `data_mining` and
+`assemble_data` commits also require the preceding cumulative Train lineage;
+the assembly summary binds its path/hash/count and proves every preceding row
+and fingerprint remains present. Never launch Train unless both gates pass.
 
 ### Repetition blend
 

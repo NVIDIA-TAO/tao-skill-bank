@@ -135,6 +135,9 @@ ordered two-image `atomic_sample_id`; the ledger records selected identities,
 candidate/output hashes, counts, and `topn`; `--resume` reuses an already
 committed iteration only after verifying those artifacts. A zero-row output is
 valid evidence that the current k-NN candidate set contained no novel samples.
+This ledger is only the atomic-source Mining budget. It does not prove that a
+later cumulative Train retained any prior training row; the consuming
+application must bind and validate that lineage at its assembly stage.
 The caller decides whether another producer (for example AnomalyGen) can carry
 the iteration or whether to hard-stop. When the summary reports a high
 `historical_candidate_rate`, increase `topn` or expand the source pool; history

@@ -26,6 +26,13 @@ ordered atomic pairs. Near-duplicate filtering is explicitly enabled with a
 Hamming threshold or disabled; a disabled filter is not represented by a
 magic distance value.
 
+For iteration 2 and later, `data_mining` first verifies that the preceding
+iteration has a valid cumulative assembly summary. `assemble_data` then
+requires the exact previous Train path/hash/count, full row retention, and an
+independently recomputed fingerprint-multiset subset proof. The Mining history
+ledger controls the cumulative retrieval budget only; it is never accepted as
+training-lineage evidence.
+
 Every `proxy_rcca` commit includes exact five-component Proxy KPI evidence and
 records whether its deterministic KPI/tie-breaker ranking is best so far.
 Proxy remains the sole gap-analysis source. Under `final_and_best`, the frozen

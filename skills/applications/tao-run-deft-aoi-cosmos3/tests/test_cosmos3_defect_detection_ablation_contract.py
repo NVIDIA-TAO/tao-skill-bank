@@ -18,6 +18,7 @@ SKILL_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
 import analyze_gaps  # noqa: E402
+import assemble_training_json  # noqa: E402
 import atomic_samples  # noqa: E402
 import defect_detection_ablation  # noqa: E402
 import route_selected_gaps  # noqa: E402
@@ -153,7 +154,7 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
                     )
                 )
 
-        for index in range(562):
+        for index in range(545):
             empty = index % 2 == 0
             row = _row(
                 f"strict-dd-{index}",
@@ -204,7 +205,7 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
             "Defect Classification",
             "Ref_based Defect Classification",
         )
-        for index in range(480):
+        for index in range(497):
             row = _row(
                 f"maintenance-{index}",
                 other_maintenance_tasks[index % len(other_maintenance_tasks)],
@@ -235,13 +236,193 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
             novel_image_limit=2_566,
         )
 
-        self.assertEqual(len(selected), 1_536)
-        self.assertGreater(
-            manifest["row_counts"]["task_strict_defect_detection"], 0
+        self.assertEqual(len(selected), 2_304)
+        self.assertGreaterEqual(
+            manifest["row_counts"]["defect_detection"], 1_152
         )
         self.assertEqual(manifest["reference_calibration"]["selected_total"], 500)
         self.assertEqual(manifest["reference_calibration"]["selected_no_change"], 212)
+        self.assertEqual(
+            len(
+                {
+                    json.dumps(row, sort_keys=True, separators=(",", ":"))
+                    for row in selected
+                }
+            ),
+            2_304,
+        )
         self.assertTrue(manifest["verified"])
+
+    def test_calibration_caps_apply_to_new_rows_not_retained_previous_rows(self) -> None:
+        previous: list[dict] = []
+        rows: list[dict] = []
+        candidates: list[dict] = []
+        one_box = [{"bbox_2d": [10, 10, 100, 100], "label": "open"}]
+
+        def add(
+            record_id: str,
+            task: str,
+            boxes: list[dict],
+            evidence: list[str],
+            *,
+            calibration: bool,
+            prior: bool = False,
+        ) -> None:
+            row = _row(record_id, task, boxes=boxes)
+            rows.append(row)
+            if prior:
+                previous.append(row)
+            candidates.append(
+                _candidate(
+                    row,
+                    evidence=evidence,
+                    phash=f"{len(candidates) + 10_000:016x}",
+                    is_replay=prior,
+                    route_tier="calibration" if calibration else "strict",
+                )
+            )
+
+        for prefix, prior in (("prior", True), ("new", False)):
+            for index in range(2 if prior else 4):
+                add(
+                    f"{prefix}-empty-{index}",
+                    "Defect Detection",
+                    [],
+                    ["calibration_empty_ground_truth"],
+                    calibration=True,
+                    prior=prior,
+                )
+                add(
+                    f"{prefix}-few-{index}",
+                    "Defect Detection",
+                    one_box,
+                    ["calibration_few_box_ground_truth"],
+                    calibration=True,
+                    prior=prior,
+                )
+            for index in range(2):
+                no_change = index == 0
+                add(
+                    f"{prefix}-reference-{index}",
+                    "Ref_based Defect Detection",
+                    [] if no_change else one_box,
+                    (
+                        [
+                            "calibration_empty_ground_truth",
+                            "calibration_reference_no_change_ground_truth",
+                        ]
+                        if no_change
+                        else ["calibration_few_box_ground_truth"]
+                    ),
+                    calibration=True,
+                    prior=prior,
+                )
+        for index in range(10):
+            add(
+                f"new-strict-{index}",
+                "Defect Detection",
+                one_box,
+                ["hard_positive_proxy_false_negative"],
+                calibration=False,
+            )
+        other_tasks = (
+            "Component Classification",
+            "Component Detection",
+            "Defect Classification",
+            "Ref_based Defect Classification",
+        )
+        for index in range(20):
+            add(
+                f"new-maintenance-{index}",
+                other_tasks[index % len(other_tasks)],
+                [],
+                [],
+                calibration=False,
+            )
+
+        selected, manifest = defect_detection_ablation.materialize(
+            candidate_rows=candidates,
+            source_records=rows,
+            previous_records=previous,
+            validation_records=[],
+            media_root=pathlib.Path("/data"),
+            max_rows=24,
+            minimum_rows=24,
+            row_multiple=6,
+            defect_detection_fraction=0.5,
+            proxy_empty_rate=0.5,
+            reference_proxy_empty_rate=0.5,
+            single_image_calibration_max_empty=2,
+            single_image_calibration_max_few=2,
+            reference_calibration_total=2,
+            epochs=1,
+            global_batch=6,
+            near_duplicate_hamming_distance=None,
+        )
+
+        self.assertEqual(len(selected), 24)
+        self.assertEqual(manifest["calibration_scope"], "current_new_rows_only")
+        self.assertEqual(manifest["previous_records_excluded"], len(previous))
+        self.assertEqual(manifest["single_image_calibration"]["selected_empty"], 2)
+        self.assertEqual(manifest["single_image_calibration"]["selected_few_box"], 2)
+        self.assertEqual(manifest["reference_calibration"]["selected_total"], 2)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            previous_path = root / "previous.jsonl"
+            mined_path = root / "mined.jsonl"
+            train_path = root / "train.jsonl"
+            previous_path.write_text(
+                "".join(json.dumps(row) + "\n" for row in previous),
+                encoding="utf-8",
+            )
+            mined_path.write_text(
+                "".join(json.dumps(row) + "\n" for row in selected),
+                encoding="utf-8",
+            )
+            cumulative, assembly = assemble_training_json.assemble(
+                previous_path,
+                mined_path,
+                previous_sha256=assemble_training_json.sha256_file(previous_path),
+                validation_paths=[],
+                max_rows=20_000,
+                row_multiple=6,
+            )
+            train_path.write_text(
+                "".join(json.dumps(row) + "\n" for row in cumulative),
+                encoding="utf-8",
+            )
+            assembly = assemble_training_json.bind_summary(assembly, train_path)
+            current_manifest = defect_detection_ablation.bind_manifest(
+                manifest, mined_path
+            )
+            cumulative_manifest = (
+                defect_detection_ablation.bind_cumulative_manifest(
+                    current_manifest,
+                    current_jsonl=mined_path,
+                    training_jsonl=train_path,
+                    assembly_summary=assembly,
+                    epochs=1,
+                    global_batch=6,
+                )
+            )
+            quota_path = root / "quota.json"
+            quota_path.write_text(json.dumps(cumulative_manifest), encoding="utf-8")
+            verified = defect_detection_ablation.verify_bound_manifest(
+                quota_path,
+                training_jsonl=train_path,
+                expected_rows=30,
+                epochs=1,
+                global_batch=6,
+            )
+
+        self.assertEqual(verified["training_jsonl"]["rows"], 30)
+        self.assertEqual(verified["current_selection"]["row_counts"]["total"], 24)
+        self.assertEqual(verified["optimizer_schedule"]["expected_optimizer_steps"], 5)
+        self.assertEqual(
+            sum(row["id"].startswith("prior-empty") for row in cumulative)
+            + sum(row["id"].startswith("new-empty") for row in cumulative),
+            4,
+        )
 
     def test_hybrid_single_calibration_caps_do_not_cap_task_strict_rows(self) -> None:
         rows: list[dict] = []

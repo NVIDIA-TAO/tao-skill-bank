@@ -35,14 +35,19 @@ canonical Mining file by path and SHA-256.
 
 Run `$PYTHON scripts/check_annotations.py --workspace WORKSPACE --require-files`.
 Training assembly writes JSONL directly. `scripts/assemble_training_json.py`
-accepts one current `--mined-jsonl`, an optional preceding
-`--previous-jsonl`, and both evaluation inputs as repeated
+accepts one current `--mined-jsonl`, and after iteration 1 requires the
+preceding `--previous-jsonl` plus `--previous-sha256`. It accepts both
+evaluation inputs as repeated
 `--validation-jsonl`; `--media-root` canonicalizes every atomic identity. A
 reviewed materialization cap uses `--max-rows` and
 `--row-multiple`; current Mining rows receive first claim on capped slots and
 the output is truncated to an exact effective-global-batch multiple for native
-epoch scheduling. It rejects atomic-sample evaluation leakage and requires a
-current real Mining contribution. When the launch-recorded repetition blend is enabled,
+epoch scheduling. The selector owns only `data/mined.jsonl`; this assembler is
+the sole producer of cumulative `assemble_data/train.jsonl`. Its version-2
+summary binds the previous and output hashes/counts, asserts the previous
+fingerprint multiset is retained, and is independently checked by the stage
+gate. It rejects atomic-sample evaluation leakage and requires a current real
+Mining contribution. When the launch-recorded repetition blend is enabled,
 the assembler consumes the current `gaps_summary.json`, retains every prior
 row and at least one current row, and writes `repetition_blend_manifest.json`.
 `validate_split_contract.py`

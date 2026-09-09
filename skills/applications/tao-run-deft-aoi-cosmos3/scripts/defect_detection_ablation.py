@@ -578,6 +578,7 @@ def materialize(
     *,
     candidate_rows: list[dict[str, Any]],
     source_records: list[dict[str, Any]],
+    previous_records: list[dict[str, Any]] | None = None,
     validation_records: list[dict[str, Any]],
     media_root: pathlib.Path,
     max_rows: int,
@@ -654,6 +655,9 @@ def materialize(
         )
     target_rows = requested_target_rows
     dd_target = math.ceil(target_rows * defect_detection_fraction)
+    dd_selection_limit = (
+        dd_target if resolved_repetition["enabled"] else target_rows
+    )
     empty_target = (
         None
         if hybrid_calibration
@@ -678,6 +682,9 @@ def materialize(
     validation_paths, validation_content, validation_phashes, validation_fingerprints = (
         _validation_identities(validation_records, media_root)
     )
+    previous_fingerprints = {
+        _record_fingerprint(record) for record in (previous_records or [])
+    }
     counters: Counter[str] = Counter()
     entries: list[dict[str, Any]] = []
     seen_record_fingerprints: set[str] = set()
@@ -745,6 +752,10 @@ def materialize(
                 counters["invalid_calibration_routes_excluded"] += 1
                 continue
             fingerprint = _record_fingerprint(record)
+            if fingerprint in previous_fingerprints:
+                counters["previous_records_excluded"] += 1
+                seen_record_fingerprints.add(fingerprint)
+                continue
             if fingerprint in validation_fingerprints or fingerprint in seen_record_fingerprints:
                 counters["exact_record_duplicates_excluded"] += 1
                 continue
@@ -964,7 +975,7 @@ def materialize(
                 continue
             selected_strict.append(item)
             selected_novel += not item["is_replay"]
-            if len(selected_calibration) + len(selected_strict) == dd_target:
+            if len(selected_calibration) + len(selected_strict) == dd_selection_limit:
                 break
         selected_dd = _interleave_groups([selected_strict, selected_calibration])
         selected_empty = [item for item in selected_dd if not item["objects"]]
@@ -975,18 +986,22 @@ def materialize(
     else:
         assert empty_target is not None
         assert positive_target is not None
+        empty_selection_limit = math.floor(
+            dd_selection_limit * proxy_empty_rate + 0.5
+        )
+        positive_selection_limit = dd_selection_limit - empty_selection_limit
         eligible_empty = _without_visual_duplicates(
             empty, selected=[], hamming_distance=near_duplicate_hamming_distance, counters=counters
         )
         selected_empty = []
-        empty_novel_limit = min(empty_target, novel_image_limit)
+        empty_novel_limit = min(empty_selection_limit, novel_image_limit)
         empty_novel_count = 0
         for item in eligible_empty:
             if not item["is_replay"] and empty_novel_count >= empty_novel_limit:
                 continue
             selected_empty.append(item)
             empty_novel_count += not item["is_replay"]
-            if len(selected_empty) == empty_target:
+            if len(selected_empty) == empty_selection_limit:
                 break
         positive_unique = _without_visual_duplicates(
             positive,
@@ -997,8 +1012,11 @@ def materialize(
         selected_empty_novel = empty_novel_count
         selected_positive, marginal_quotas = _balanced_positive_selection(
             positive_unique,
-            positive_target,
-            max_novel=min(positive_target, novel_image_limit - selected_empty_novel),
+            positive_selection_limit,
+            max_novel=min(
+                positive_selection_limit,
+                novel_image_limit - selected_empty_novel,
+            ),
         )
         selected_dd = selected_empty + selected_positive
     maintenance_unique = _without_visual_duplicates(
@@ -1020,14 +1038,22 @@ def materialize(
         maintenance_unique,
         max(
             0,
-            target_rows
-            - len(selected_dd)
+            (
+                target_rows - len(selected_dd)
+                if resolved_repetition["enabled"]
+                else target_rows
+            )
             - len(reserved_reference_calibration),
         ),
         max_novel=max(
             0,
             novel_image_limit
-            - selected_dd_novel
+            - (
+                0
+                if not resolved_repetition["enabled"]
+                and novel_image_limit >= target_rows
+                else selected_dd_novel
+            )
             - reserved_reference_novel,
         ),
         reference_empty_rate=reference_proxy_empty_rate,
@@ -1039,7 +1065,15 @@ def materialize(
             minimum_rows_aligned - 1,
             -row_multiple,
         ):
-            candidate_dd = math.ceil(candidate_target * defect_detection_fraction)
+            # The configured fraction is a lower bound. Use additional DD
+            # capacity when maintenance cannot fill the candidate batch.
+            candidate_dd_min = math.ceil(
+                candidate_target * defect_detection_fraction
+            )
+            candidate_dd = max(
+                candidate_dd_min,
+                candidate_target - len(selected_maintenance),
+            )
             candidate_maintenance = candidate_target - candidate_dd
             if hybrid_calibration:
                 reference_calibration_complete = (
@@ -1270,6 +1304,8 @@ def materialize(
     }
     manifest = {
         "schema_version": "defect_detection_quota_manifest_v1",
+        "calibration_scope": "current_new_rows_only",
+        "previous_records_excluded": counters["previous_records_excluded"],
         "selection_policy": (
             "defect_detection_hybrid_calibration_task_strict_v2"
             if hybrid_calibration
@@ -1314,6 +1350,9 @@ def materialize(
             "requested_target": requested_target_rows,
             "defect_detection": tasks[DEFECT_DETECTION_TASK],
             "defect_detection_target": dd_target,
+            "defect_detection_minimum_target": math.ceil(
+                target_rows * defect_detection_fraction
+            ),
             "task_strict_defect_detection": selected_strict_dd_count,
             "maintenance": sum(tasks[task] for task in MAINTENANCE_TASK_TYPES),
             "maintenance_target": maintenance_target,
@@ -1474,6 +1513,96 @@ def bind_manifest(manifest: dict[str, Any], training_jsonl: pathlib.Path) -> dic
     return bound
 
 
+def bind_cumulative_manifest(
+    current_manifest: dict[str, Any],
+    *,
+    current_jsonl: pathlib.Path,
+    training_jsonl: pathlib.Path,
+    assembly_summary: dict[str, Any],
+    epochs: int,
+    global_batch: int,
+) -> dict[str, Any]:
+    """Bind current-selection quotas to the final cumulative train JSONL."""
+
+    if current_manifest.get("schema_version") != "defect_detection_quota_manifest_v1":
+        raise ValueError("current quota manifest must use schema version 1")
+    if current_manifest.get("verified") is not True:
+        raise ValueError("current Defect Detection quota manifest is not verified")
+    current_path = current_jsonl.expanduser().resolve(strict=True)
+    current_rows = load_records(current_path)
+    current_binding = current_manifest.get("training_jsonl", {})
+    if (
+        current_binding.get("path") != str(current_path)
+        or current_binding.get("sha256") != _sha256(current_path)
+        or current_binding.get("rows") != len(current_rows)
+        or current_manifest.get("row_counts", {}).get("total")
+        != len(current_rows)
+    ):
+        raise ValueError("current quota manifest does not bind the selector output")
+    final_path = training_jsonl.expanduser().resolve(strict=True)
+    if current_path == final_path:
+        raise ValueError("selector output cannot also be the cumulative training JSONL")
+    final_rows = load_records(final_path)
+    assembly_binding = assembly_summary.get("training_jsonl", {})
+    if (
+        assembly_summary.get("mined_input") != str(current_path)
+        or assembly_binding.get("path") != str(final_path)
+        or assembly_binding.get("sha256") != _sha256(final_path)
+        or assembly_binding.get("rows") != len(final_rows)
+    ):
+        raise ValueError("assembly summary does not bind the cumulative training JSONL")
+    if assembly_summary.get("retained_previous_records") != assembly_summary.get(
+        "previous_records"
+    ) or assembly_summary.get("previous_fingerprints_subset") is not True:
+        raise ValueError("assembly summary does not prove cumulative lineage")
+    if len(final_rows) % global_batch:
+        raise ValueError("cumulative training rows must align to the global batch")
+
+    bound = json.loads(json.dumps(current_manifest))
+    bound["schema_version"] = "defect_detection_quota_manifest_v2"
+    bound["current_selection"] = {
+        "scope": "current_new_rows_only",
+        "training_jsonl": bound.pop("training_jsonl"),
+        "row_counts": bound["row_counts"],
+        "optimizer_schedule": bound["optimizer_schedule"],
+        "single_image_calibration": bound.get("single_image_calibration"),
+        "reference_calibration": bound.get("reference_calibration"),
+    }
+    tasks = Counter(str(row.get("task_type")) for row in final_rows)
+    final_count = len(final_rows)
+    bound["row_counts"] = {
+        "total": final_count,
+        "defect_detection": tasks[DEFECT_DETECTION_TASK],
+        "maintenance": sum(tasks[task] for task in MAINTENANCE_TASK_TYPES),
+        "by_task": dict(sorted(tasks.items())),
+    }
+    bound["training_jsonl"] = {
+        "path": str(final_path),
+        "sha256": _sha256(final_path),
+        "rows": final_count,
+    }
+    bound["optimizer_schedule"] = {
+        "epochs": epochs,
+        "global_batch": global_batch,
+        "steps_per_epoch": final_count // global_batch,
+        "expected_optimizer_steps": final_count // global_batch * epochs,
+    }
+    bound["lineage"] = {
+        key: assembly_summary[key]
+        for key in (
+            "previous_iteration",
+            "previous_sha256",
+            "previous_records",
+            "retained_previous_records",
+            "previous_fingerprints_subset",
+            "output_fingerprints_sha256",
+        )
+    }
+    bound["verification"]["cumulative_lineage_verified"] = True
+    bound["verified"] = all(bound["verification"].values())
+    return bound
+
+
 def verify_bound_manifest(
     manifest_path: pathlib.Path,
     *,
@@ -1483,7 +1612,10 @@ def verify_bound_manifest(
     global_batch: int,
 ) -> dict[str, Any]:
     payload = json.loads(manifest_path.expanduser().resolve(strict=True).read_text())
-    if payload.get("schema_version") != "defect_detection_quota_manifest_v1":
+    if payload.get("schema_version") not in {
+        "defect_detection_quota_manifest_v1",
+        "defect_detection_quota_manifest_v2",
+    }:
         raise ValueError("unsupported Defect Detection quota manifest schema")
     if payload.get("verified") is not True:
         raise ValueError("Defect Detection quota manifest is not verified")
@@ -1495,6 +1627,25 @@ def verify_bound_manifest(
         raise ValueError("training JSONL path differs from the quota manifest")
     if binding.get("rows") != expected_rows or payload["row_counts"].get("total") != expected_rows:
         raise ValueError("training JSONL row count differs from the launch schedule")
+    if payload.get("schema_version") == "defect_detection_quota_manifest_v2":
+        lineage = payload.get("lineage", {})
+        if (
+            lineage.get("retained_previous_records")
+            != lineage.get("previous_records")
+            or lineage.get("previous_fingerprints_subset") is not True
+        ):
+            raise ValueError("Defect Detection quota manifest lineage is not monotonic")
+        current = payload.get("current_selection", {})
+        current_binding = current.get("training_jsonl", {})
+        current_path = pathlib.Path(str(current_binding.get("path", "")))
+        if (
+            not current_path.is_file()
+            or current_path.resolve() == path
+            or current_binding.get("sha256") != _sha256(current_path)
+            or current_binding.get("rows")
+            != current.get("row_counts", {}).get("total")
+        ):
+            raise ValueError("current-selection quota binding is invalid")
     schedule = payload.get("optimizer_schedule", {})
     expected_steps = expected_rows // global_batch * epochs if expected_rows % global_batch == 0 else None
     if (
@@ -1534,6 +1685,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate-parquet", required=True, type=pathlib.Path)
     parser.add_argument("--source-annotations", required=True, type=pathlib.Path)
+    parser.add_argument(
+        "--previous-jsonl",
+        type=pathlib.Path,
+        help=(
+            "Prior cumulative train JSONL; exact prior records are excluded so "
+            "calibration caps apply only to current additions."
+        ),
+    )
     parser.add_argument("--proxy-annotations", required=True, type=pathlib.Path)
     parser.add_argument("--validation-jsonl", action="append", default=[], type=pathlib.Path)
     parser.add_argument("--media-root", required=True, type=pathlib.Path)
@@ -1666,6 +1825,11 @@ def main(argv: list[str] | None = None) -> int:
         rows, manifest = materialize(
             candidate_rows=_read_parquet(args.candidate_parquet),
             source_records=load_records(args.source_annotations),
+            previous_records=(
+                load_records(args.previous_jsonl)
+                if args.previous_jsonl is not None
+                else None
+            ),
             validation_records=validations,
             media_root=args.media_root,
             max_rows=args.max_rows,

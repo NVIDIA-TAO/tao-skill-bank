@@ -23,7 +23,8 @@
 | `defect_detection_ablation.py` | Materialize the task-strict Defect Detection corpus, enforce both detection-cohort empty rates, and bind its compatible quota manifest. |
 | `repetition_blend.py` | Apply seeded deficit-proportional or explicit repetition after exclusion and bind its per-task manifest. |
 | `emit_mined_sharegpt.py` | Emit selected atomic canonical Mining rows with both reference-pair sides intact; the legacy filename is retained for CLI compatibility. |
-| `assemble_training_json.py` | Assemble monotonic real-only training JSONL and optionally apply the recorded repetition blend. |
+| `render_iteration_mining_runner.py` | Generate the immutable selector-to-assembler plan; selector output is always `data/mined.jsonl`, never cumulative Train. |
+| `assemble_training_json.py` | Solely assemble monotonic cumulative training JSONL, bind previous path/hash/fingerprint lineage, bind the final quota manifest, and optionally apply the recorded repetition blend. |
 | `validate_sharegpt.py` | Validate canonical NVPAW JSONL; the legacy filename is retained for CLI compatibility. |
 | `validate_split_contract.py` | Prove evaluation isolation, real-mining eligibility, prior-row retention, and Benchmark hash. |
 | `render_report.py` | Render the durable state-backed HTML report. |

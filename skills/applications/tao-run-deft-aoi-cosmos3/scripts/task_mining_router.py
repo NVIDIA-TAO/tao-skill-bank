@@ -153,19 +153,18 @@ def _prepare_sources(
     catalog: dict[str, dict[str, Any]],
     aliases: dict[str, set[str]],
     ignored_aliases: set[str],
-) -> tuple[list[dict[str, Any]], int, int]:
+) -> tuple[list[dict[str, Any]], int, int, int]:
     prepared: list[dict[str, Any]] = []
     dimensions: set[int] = set()
-    seen: set[str] = set()
+    seen_paths: dict[str, str] = {}
+    seen_atomic: dict[str, list[float]] = {}
     ignored = 0
+    duplicates_collapsed = 0
     for index, row in enumerate(rows):
         filepath = row.get("filepath")
         if not isinstance(filepath, str) or not filepath:
             raise ValueError(f"source embedding[{index}]: filepath is required")
         path_key = str(resolve_image(filepath, media_root))
-        if path_key in seen:
-            raise ValueError(f"duplicate source embedding filepath: {filepath!r}")
-        seen.add(path_key)
         vector = _embedding(row.get("embedding"), context=f"source embedding[{index}]")
         try:
             metadata = _source_metadata(
@@ -181,6 +180,21 @@ def _prepare_sources(
                 ignored += 1
                 continue
             raise
+        atomic_sample_id = str(metadata["atomic_sample_id"])
+        if atomic_sample_id in seen_atomic:
+            if seen_atomic[atomic_sample_id] != vector:
+                raise ValueError(
+                    "duplicate atomic source has conflicting embeddings: "
+                    f"{atomic_sample_id!r}"
+                )
+            duplicates_collapsed += 1
+            continue
+        if path_key in seen_paths and seen_paths[path_key] != atomic_sample_id:
+            raise ValueError(
+                f"source embedding filepath maps to multiple atomic samples: {filepath!r}"
+            )
+        seen_paths[path_key] = atomic_sample_id
+        seen_atomic[atomic_sample_id] = vector
         dimensions.add(len(vector))
         prepared.append(
             {
@@ -198,7 +212,7 @@ def _prepare_sources(
         raise ValueError("source embeddings are empty")
     if len(dimensions) != 1:
         raise ValueError("source embedding dimensions are inconsistent")
-    return prepared, next(iter(dimensions)), ignored
+    return prepared, next(iter(dimensions)), ignored, duplicates_collapsed
 
 
 def _prepare_targets(
@@ -326,7 +340,7 @@ def route_candidates(
     catalog, aliases, ignored_aliases = _source_catalog(
         source_annotations, media_root, pair_assets_dir
     )
-    sources, dimension, ignored_sources = _prepare_sources(
+    sources, dimension, ignored_sources, duplicate_sources = _prepare_sources(
         source_rows,
         media_root=media_root,
         catalog=catalog,
@@ -516,6 +530,7 @@ def route_candidates(
             source["sample_kind"] == "reference_pair" for source in sources
         ),
         "ignored_out_of_scope_source_images": ignored_sources,
+        "duplicate_source_embeddings_collapsed": duplicate_sources,
         "embedding_dimension": dimension,
         "similarity_batch_size": target_batch_size,
         "raw_selections": sum(raw_tiers.values()),

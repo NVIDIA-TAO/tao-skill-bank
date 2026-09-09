@@ -128,6 +128,16 @@ class HistoryAwareMiningTests(unittest.TestCase):
                 ["reference_pair:a", "reference_pair:b"],
             )
 
+    def test_ledger_declares_mining_budget_scope_not_training_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            summary, _ = self.select(root, 1, ["a.png"])
+            history = json.loads((root / "mining_history.json").read_text())
+
+            self.assertEqual(summary["purpose"], "mining_budget_only")
+            self.assertEqual(history["purpose"], "mining_budget_only")
+            self.assertNotIn("retained_previous_records", history)
+
     def test_empty_novel_output_is_auditable_and_recommends_wider_topn(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

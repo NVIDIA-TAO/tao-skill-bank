@@ -26,6 +26,7 @@ from typing import Any
 
 HISTORY_VERSION = 1
 HISTORY_IDENTITY = "filepath"
+HISTORY_PURPOSE = "mining_budget_only"
 
 
 def _normalize_filepath(value: Any) -> str:
@@ -109,6 +110,7 @@ def _validated_history(
             )
         return {
             "version": HISTORY_VERSION,
+            "purpose": HISTORY_PURPOSE,
             "identity": identity_column,
             "iterations": [],
         }
@@ -116,6 +118,9 @@ def _validated_history(
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict) or payload.get("version") != HISTORY_VERSION:
         raise ValueError(f"unsupported or malformed mining history: {path}")
+    if payload.get("purpose") not in {None, HISTORY_PURPOSE}:
+        raise ValueError("mining history purpose must remain mining_budget_only")
+    payload["purpose"] = HISTORY_PURPOSE
     if payload.get("identity") != identity_column:
         raise ValueError(
             f"mining history identity must remain {identity_column}"
@@ -344,6 +349,7 @@ def select_novel_samples(
         )
     summary: dict[str, Any] = {
         "version": HISTORY_VERSION,
+        "purpose": HISTORY_PURPOSE,
         "iteration": iteration,
         "identity": identity_column,
         "topn": topn,

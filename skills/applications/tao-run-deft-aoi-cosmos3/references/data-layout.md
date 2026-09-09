@@ -23,8 +23,11 @@ workspace/
         ├── evaluate_proxy/
         ├── proxy_rcca/
         ├── routing/
-        ├── mining/
-        ├── assemble/
+        ├── data/mined.jsonl
+        ├── assemble_data/
+        │   ├── train.jsonl
+        │   ├── assemble_summary.json
+        │   └── defect_detection_quota_manifest.json
         ├── validate/
         └── train/checkpoints/iter_#########/
 ```
@@ -35,3 +38,5 @@ Mining plus the previous committed Train, and must remain disjoint from both
 evaluation splits. Only the six classification/detection task families are
 eligible; Mining-only count/segmentation rows in the canonical source are
 ignored and counted, while unsupported rows in every other role fail closed.
+The run-level Mining history ledger limits which atomic sources consume Mining
+budget; cumulative Train lineage is proved separately by each assembly summary.
