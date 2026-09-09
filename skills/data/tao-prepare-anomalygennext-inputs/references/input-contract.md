@@ -22,3 +22,9 @@ Selection supports:
 
 The same frozen encoder identity is written to both embedding specs. The next
 action must use those specs unchanged so clean and FN vectors remain comparable.
+
+`run_amp` joins the unique source-image embedding back to every box-level FN,
+ranks clean images within the normalized texture pool, and creates two AMP
+requests for every eligible pair. It rejects missing, non-finite, zero-norm, or
+width-mismatched embeddings. AMP itself remains owned by the container-native
+`anomalygen.scripts.auto_mask_placement.roi_place` entry point.

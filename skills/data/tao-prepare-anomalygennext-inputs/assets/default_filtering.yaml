@@ -32,3 +32,7 @@ retrieval:
   max_neighbors_per_fn: 5
   min_similarity: 0.9
   prior_clean_exclusion_manifest: ""
+
+amp:
+  model_id: nvidia/Cosmos3-Nano
+  seed: 43
