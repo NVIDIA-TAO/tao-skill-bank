@@ -111,16 +111,34 @@ def select_panel(candidates, benchmark, proxy, *, per_task=500, seed=17, media_r
         for key, capacity in capacities.items():
             family_supply[key[1]] += capacity
             family_weight[key[1]] += target[key]
-        # Apply 35% against the *realized* task denominator, not 500. Fewer
-        # than three available families cannot satisfy this cap at any size.
+        # Keep shares relative to the full benchmark task, without renormalizing
+        # away unavailable families. Only families with usable target-stratum
+        # supply may relax the base cap.
+        task_weight = sum(family_weight.values())
+        eligible_shares = [family_weight[family] / task_weight
+                           for family, count in family_supply.items() if count > 0]
+        family_cap = max([0.35, *eligible_shares])
+        cap_relaxed = family_cap > 0.35
+        cap_reason = ("relaxed_to_largest_eligible_benchmark_share" if cap_relaxed else
+                      "eligible_benchmark_shares_within_base_cap" if eligible_shares else
+                      "no_eligible_benchmark_families")
+
+        def row_cap(total):
+            # A relaxed share must accommodate ordinary integer quota rounding
+            # (e.g. 43.7% of 500 -> 219). Preserve the old floor path exactly for
+            # unrelaxed tasks so their seed/id-hash selections are unchanged.
+            if cap_relaxed:
+                return math.ceil(total * family_cap - 1e-12)
+            return math.floor(total * family_cap + 1e-12)
+
         accepted = 0
         for total in range(sum(capacities.values()), 0, -1):
-            cap = math.floor(total * 0.35 + 1e-12)
+            cap = row_cap(total)
             if sum(min(count, cap) for count in family_supply.values()) >= total:
                 accepted = total
                 break
         if accepted:
-            cap = math.floor(accepted * 0.35 + 1e-12)
+            cap = row_cap(accepted)
             families = _bounded_allocate(
                 {key: min(count, cap) for key, count in family_supply.items()},
                 family_weight, accepted,
@@ -133,6 +151,8 @@ def select_panel(candidates, benchmark, proxy, *, per_task=500, seed=17, media_r
                     selected.extend(item[2] for item in sorted(reservoirs[key], key=lambda item: (-item[0], item[1]))[:amount])
         task_reports[task] = {"requested_rows": per_task, "selected_rows": accepted,
             "shortage_rows": per_task - accepted,
+            "family_cap_effective": family_cap, "family_cap_relaxed": cap_relaxed,
+            "family_cap_reason": cap_reason, "family_cap_rounding": "ceil" if cap_relaxed else "floor",
             "reason": "no_benchmark_support" if not capacities else
                       "insufficient_stratum_supply_or_family_cap" if accepted < per_task else None}
     strata = []
@@ -181,8 +201,10 @@ def main(argv=None):
         payload = build_profile(selected)
         payload["panel_manifest"] = manifest
         lines = ["# Validation panel (analysis only)", "", f"Panel SHA-256: `{manifest['panel_sha256']}`", "",
-                 "| Task | Requested | Selected | Shortage |", "|---|---:|---:|---:|"]
-        lines.extend(f"| {task} | {item['requested_rows']} | {item['selected_rows']} | {item['shortage_rows']} |"
+                 "| Task | Requested | Selected | Shortage | family_cap_effective | family_cap_relaxed | family_cap_reason |",
+                 "|---|---:|---:|---:|---:|---|---|"]
+        lines.extend(f"| {task} | {item['requested_rows']} | {item['selected_rows']} | {item['shortage_rows']} | "
+                     f"{item['family_cap_effective']:.6f} | {str(item['family_cap_relaxed']).lower()} | {item['family_cap_reason']} |"
                      for task, item in manifest["tasks"].items())
         lines.extend(["", "Families exhausted by exclusions are not silently backfilled. Full per-stratum shortages, input seals and exclusions:",
                       "", "```json", json.dumps(manifest, indent=2), "```", ""])

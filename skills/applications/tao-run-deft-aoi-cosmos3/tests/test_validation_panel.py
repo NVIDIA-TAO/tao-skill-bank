@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 from collections import Counter
+import hashlib
 import json
 import pathlib
 import tempfile
@@ -18,6 +19,48 @@ def fixture(prefix, copies):
 
 
 class ValidationPanelTests(unittest.TestCase):
+    def test_two_family_benchmark_relaxes_cap_and_fills_500(self):
+        task = "Component Detection"
+        benchmark = [row(f"benchmark-{family}-{i}", task=task, boxes=[box(33)],
+                         paths=[f"/data/datasets/{family}/benchmark-{i}.png"])
+                     for family, count in (("FPIC_Component", 217), ("FICS-PCB", 33)) for i in range(count)]
+        candidates = [row(f"pool-{family}-{i}", task=task, boxes=[box(33)],
+                          paths=[f"/data/datasets/{family}/pool-{i}.png"])
+                      for family in ("FPIC_Component", "FICS-PCB") for i in range(600)]
+        selected, manifest = panel.select_panel(candidates, benchmark, [], per_task=500, seed=17)
+        self.assertEqual(len(selected), 500)
+        self.assertEqual(Counter(profile.dataset_family(item) for item in selected),
+                         {"FPIC_Component": 434, "FICS-PCB": 66})
+        report = manifest["tasks"][task]
+        self.assertAlmostEqual(report["family_cap_effective"], 0.868)
+        self.assertIs(report["family_cap_relaxed"], True)
+        self.assertIn("benchmark", report["family_cap_reason"])
+        self.assertEqual(report["shortage_rows"], 0)
+
+    def test_relaxed_cap_keeps_rounded_benchmark_quota(self):
+        task = "Component Classification"
+        benchmark = [row(f"benchmark-{family}-{i}", task=task, answer="B",
+                         paths=[f"/data/datasets/{family}/benchmark-{i}.png"])
+                     for family, count in (("a", 437), ("b", 300), ("c", 263)) for i in range(count)]
+        candidates = [row(f"pool-{family}-{i}", task=task, answer="B",
+                          paths=[f"/data/datasets/{family}/pool-{i}.png"])
+                      for family in ("a", "b", "c") for i in range(600)]
+        selected, manifest = panel.select_panel(candidates, benchmark, [], per_task=500, seed=17)
+        self.assertEqual(len(selected), 500)
+        self.assertEqual(Counter(profile.dataset_family(item) for item in selected), {"a": 219, "b": 150, "c": 131})
+        self.assertAlmostEqual(manifest["tasks"][task]["family_cap_effective"], 0.437)
+
+    def test_feasible_cap_preserves_seeded_selection_bytes(self):
+        selected, manifest = panel.select_panel(fixture("pool", 5), fixture("benchmark", 2),
+                                                fixture("proxy", 1), per_task=24, seed=17)
+        text = "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in selected)
+        # Characterized on pre-fix 9c1140b, using the production JSONL serializer.
+        self.assertEqual(hashlib.sha256(text.encode()).hexdigest(),
+                         "57210e36249ef89c0f92964461e5df1a948b1a6060622440a9a89731fcc6d995")
+        report = manifest["tasks"]["Defect Detection"]
+        self.assertEqual(report.get("family_cap_effective"), 0.35)
+        self.assertIs(report.get("family_cap_relaxed"), False)
+
     def test_stratified_panel_is_deterministic_disjoint_and_message_exact(self):
         benchmark, proxy = fixture("benchmark", 2), fixture("proxy", 1)
         candidates = fixture("pool", 5) + [
@@ -75,7 +118,16 @@ class ValidationPanelTests(unittest.TestCase):
             self.assertEqual(set(p.name for p in output.iterdir()), {
                 "validation_panel.jsonl", "validation_panel_profile.json", "PANEL_MANIFEST.md"})
             self.assertEqual(json.loads((output / "validation_panel_profile.json").read_text())["rows"], 24)
-            self.assertIn(profile.sha256_file(benchmark), (output / "PANEL_MANIFEST.md").read_text())
+            payload = json.loads((output / "validation_panel_profile.json").read_text())
+            for report in payload["panel_manifest"]["tasks"].values():
+                self.assertTrue({"family_cap_effective", "family_cap_relaxed", "family_cap_reason"} <= report.keys())
+                self.assertIsInstance(report["family_cap_relaxed"], bool)
+                self.assertTrue(report["family_cap_reason"])
+            markdown = (output / "PANEL_MANIFEST.md").read_text()
+            self.assertIn(profile.sha256_file(benchmark), markdown)
+            header = next(line for line in markdown.splitlines() if line.startswith("| Task |"))
+            for field in ("family_cap_effective", "family_cap_relaxed", "family_cap_reason"):
+                self.assertIn(field, header)
             self.assertEqual(benchmark.read_bytes(), before)
             self.assertEqual(panel.main(args), 2)
 

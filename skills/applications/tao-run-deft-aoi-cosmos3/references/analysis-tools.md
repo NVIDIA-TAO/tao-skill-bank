@@ -67,12 +67,19 @@ of input ordering; duplicated candidate IDs fail closed.
 
 The target is 500 rows per task, allocated by benchmark shares over
 dataset family × empty status × count × largest-box size. Missing or exhausted
-families/strata are not replaced by unrelated cells. The 35% family cap takes
-precedence if exact target shares are infeasible: shrink to the largest
-available total satisfying the cap against the **realized** task size, then
-allocate closest to target shares within each bounded family. With fewer than
-three eligible families, a non-empty task cannot satisfy the cap and is
-reported empty with a shortage. Shortages always compare to the original
+families/strata are not replaced by unrelated cells. Per task, the effective
+family cap is `max(0.35, largest benchmark target share among eligible families)`;
+eligibility requires usable supply in the requested strata after exclusions.
+Shares keep the full benchmark-task denominator, not just surviving families.
+Thus a benchmark dominated by one of two eligible families is not emptied by
+the base 35% cap. `family_cap_effective`, `family_cap_relaxed`, and
+`family_cap_reason` appear in each task's JSON and the Markdown table. Relaxed
+caps round their integer limits up (43.7% of 500 permits 219 rows); unrelaxed
+caps keep the original floor calculation and byte-identical seeded selections.
+`family_cap_rounding` records that distinction in JSON. When supply is short,
+shrink to the largest available total satisfying the effective cap against the
+**realized** task size, then allocate closest to target shares within each
+bounded family. Shortages always compare to the original
 500-per-task request, not the shrunken budget. Output records retain their
 native messages and image controls; this tool does not freeze or install the
 panel into the loop. The operator reviews and freezes its hash separately.
