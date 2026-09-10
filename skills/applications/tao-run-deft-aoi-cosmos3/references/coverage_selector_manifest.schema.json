@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "coverage_selector_manifest.schema.json",
+  "title": "DEFT AOI coverage-stratified selector manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "candidate_selector",
+    "round",
+    "available_unique",
+    "target_share",
+    "realized_share",
+    "source_share",
+    "cell_share",
+    "unique_parent_ratio",
+    "rep",
+    "effective_exposure",
+    "shortage_reason",
+    "max_target_realized_gap",
+    "training_allowed"
+  ],
+  "properties": {
+    "schema_version": {"const": "coverage_stratified_hardness_manifest_v1"},
+    "candidate_selector": {"const": "coverage_stratified_hardness_v1"},
+    "round": {"type": "integer", "minimum": 1},
+    "available_unique": {"type": "integer", "minimum": 1},
+    "target_share": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}},
+    "realized_share": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}},
+    "source_share": {"type": "object"},
+    "cell_share": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}},
+    "unique_parent_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+    "rep": {"type": "number", "minimum": 0},
+    "effective_exposure": {"type": "number", "minimum": 0, "maximum": 8},
+    "shortage_reason": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "max_target_realized_gap": {"type": "number", "minimum": 0},
+    "training_allowed": {"type": "boolean"}
+  }
+}

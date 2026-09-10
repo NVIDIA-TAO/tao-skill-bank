@@ -83,6 +83,20 @@
       "proxy_drives_gap_analysis": true
     },
     "mining": {
+      "candidate_selector": "nearest_neighbor",
+      "proxy_role": "nearest_neighbor_query",
+      "hardness_schedule": [
+        {"coverage_positive": 0.45, "hard_positive": 0.15, "coverage_negative": 0.25, "fp_hard_negative": 0.15},
+        {"coverage_positive": 0.40, "hard_positive": 0.20, "coverage_negative": 0.20, "fp_hard_negative": 0.20},
+        {"coverage_positive": 0.35, "hard_positive": 0.25, "coverage_negative": 0.15, "fp_hard_negative": 0.25},
+        {"coverage_positive": 0.30, "hard_positive": 0.30, "coverage_negative": 0.15, "fp_hard_negative": 0.25},
+        {"coverage_positive": 0.30, "hard_positive": 0.30, "coverage_negative": 0.15, "fp_hard_negative": 0.25}
+      ],
+      "source_cap": 0.35,
+      "eligible_source_floor": 0.10,
+      "cluster_cap": 0.50,
+      "share_gap_tolerance": 0.05,
+      "effective_exposure_cap": 8.0,
       "pair_similarity": "canvas",
       "pair_similarity_combine": "mean",
       "calibration_policy": "empty_and_few_box_from_mining",

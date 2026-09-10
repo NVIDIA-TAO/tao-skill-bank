@@ -210,6 +210,17 @@ query, and never changes pair identity, de-duplication, leakage, budget, or
 two-image materialization. A launch prompt may request `two_vector pair
 similarity (mean|min)`.
 
+### Candidate selector
+
+`[mining] candidate_selector` is `nearest_neighbor` by default, preserving the
+per-Proxy-query router. `use coverage_stratified_hardness_v1` opts into unique
+Mining-parent selection using cached SigLIP coverage and Proxy quota statistics,
+not query similarity. Follow
+[the coverage reference](references/coverage-stratified-selector.md) for source
+caps, calibration strata, the five-round hardness schedule, and the mandatory
+selector-manifest gate. This policy still uses the single selector-to-assembler
+boundary and previous-Train lineage gates described above.
+
 ### Repetition blend
 
 After exact-duplicate and Proxy/Benchmark leakage exclusion, the launch-recorded
@@ -348,6 +359,7 @@ Read the focused references as needed:
 - `references/preflight.md`
 - `references/pipeline-and-state.md`
 - `references/cosmos-reason.md`
+- `references/coverage-stratified-selector.md`
 - `references/aoi-annotation.md`
 - `references/metric-contract.md`
 - `references/scripts-and-agents.md`

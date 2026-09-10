@@ -42,6 +42,7 @@ MAINTENANCE_TASK_TYPES = (
     "Ref_based Defect Detection",
 )
 POSITIVE_EVIDENCE = {
+    "coverage_stratified_positive",
     "hard_positive_proxy_false_negative",
     "hard_positive_best_overlap_0_lt_iou_lte_0p5",
 }

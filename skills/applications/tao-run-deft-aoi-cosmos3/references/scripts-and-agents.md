@@ -18,7 +18,8 @@
 | `atomic_samples.py` | Define ordered single/pair identities and deterministic two-image embedding assets. |
 | `build_mining_source_pool.py` | Build the source pool at atomic single-image/reference-pair granularity, with bounded parallel pair-asset materialization. |
 | `route_selected_gaps.py` | Collapse Proxy gap rows into atomic Mining queries and pair embedding assets. |
-| `task_mining_router.py` | Apply deterministic task-aware neighbor routing and history policy. |
+| `coverage_stratified_selector.py` | Build/reuse the hash-bound parent inventory, solve shrunk Proxy-error quotas with source caps/floors, k-center cells, write the round manifest, and enforce the share gate. |
+| `task_mining_router.py` | Apply the launch-recorded nearest-neighbor or coverage-stratified candidate policy before history filtering. |
 | `select_detection_calibration.py` | Derive Proxy-bound per-cohort empty/few-box quotas, preserve reference pairs atomically, and optionally select Component Count replay before history filtering. |
 | `defect_detection_ablation.py` | Materialize the task-strict Defect Detection corpus, enforce both detection-cohort empty rates, and bind its compatible quota manifest. |
 | `repetition_blend.py` | Apply seeded deficit-proportional or explicit repetition after exclusion and bind its per-task manifest. |
