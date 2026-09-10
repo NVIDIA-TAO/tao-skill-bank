@@ -47,7 +47,8 @@ def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
     policy = root / "policy.yaml"
     policy.write_text(yaml.safe_dump({"sources": sources,
                                       "retrieval": {"minimum_similarity": 0.5},
-                                      "routing": {"clean_cumulative_cap_per_real": 1.0}}))
+                                      "routing": {"clean_cumulative_cap_per_real": 1.0},
+                                      "synthesis": {"cumulative_fraction_of_real_defects": 1.0}}))
     (retrieval_root / "query_manifest.json").write_text(
         json.dumps({"iteration": 1, "enabled_roles": ["real", "clean"]})
     )
@@ -57,8 +58,9 @@ def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
 def test_admission_deduplicates_sources_and_preserves_explicit_clean(tmp_path: Path) -> None:
     policy, candidates, retrieval = _fixture(tmp_path)
     report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
-    assert report["admitted"] == {"real": 1, "clean": 1}
-    assert report["by_kind"] == {"real_defect": 1, "clean_negative": 1}
+    assert report["admitted"] == {"real": 1, "clean": 1, "synthetic": 0}
+    assert report["by_kind"] == {"real_defect": 1, "clean_negative": 1,
+                                 "synthetic_defect": 0}
     coco = json.loads((tmp_path / "out/train.json").read_text())
     assert len(coco["images"]) == 2 and len(coco["annotations"]) == 1
     clean_id = next(row["id"] for row in coco["images"] if row["deft_kind"] == "clean_negative")
@@ -69,3 +71,21 @@ def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: 
     policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
     with pytest.raises(ValueError, match="admitted no source images"):
         MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+
+
+def test_admission_folds_capped_synthetic_categories_to_defect(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    image = generated / "synthetic.png"
+    image.write_bytes(b"synthetic")
+    coco = tmp_path / "synthetic.json"
+    coco.write_text(json.dumps({"images": [{"id": 2, "file_name": image.name}],
+                                "annotations": [{"id": 8, "image_id": 2, "category_id": 4,
+                                                 "bbox": [1, 1, 3, 3]}],
+                                "categories": [{"id": 4, "name": "texture+defect"}]}))
+    report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy",
+                          coco, generated)
+    assert report["admitted"]["synthetic"] == 1
+    output = json.loads((tmp_path / "out/train.json").read_text())
+    assert {row["category_id"] for row in output["annotations"]} == {1}

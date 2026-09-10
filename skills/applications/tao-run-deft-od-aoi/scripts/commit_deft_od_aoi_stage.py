@@ -16,7 +16,8 @@ from typing import Any
 
 NEXT = {"candidate_cache": "baseline_measurement", "baseline_measurement": "baseline_gaps",
         "baseline_gaps": "iteration_retrieval", "iteration_retrieval": "iteration_admission",
-        "iteration_admission": "iteration_training", "iteration_training": "iteration_measurement",
+        "iteration_admission": "iteration_training", "iteration_synthesis": "iteration_training",
+        "iteration_training": "iteration_measurement",
         "iteration_measurement": "iteration_gaps"}
 
 
@@ -47,6 +48,8 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
     if not artifacts:
         raise ValueError("at least one completion artifact is required")
     next_stage, status = NEXT.get(stage), "RUNNING"
+    if stage == "iteration_admission" and state.get("synthesis_enabled"):
+        next_stage = "iteration_synthesis"
     if stage == "iteration_gaps":
         if iteration >= int(state["max_iterations"]):
             next_stage, status = None, "COMPLETE"

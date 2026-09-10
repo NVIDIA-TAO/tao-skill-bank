@@ -12,6 +12,11 @@ policy once.
 - One trainable RT-DETR base checkpoint. Every iteration starts from this same
   checkpoint; a prior iteration checkpoint is never the next initializer.
 - Separate KPI and test roles.
+- An explicit synthesis decision.
+
+When synthesis is enabled, require a normalized reference pool,
+`defect_spec.jsonl`, Cosmos3-Nano assets, and one existing checkpoint/recipe
+pair for every KPI `dataset_id`. Read `anomalygen-pool.md`.
 
 ## Packaged algorithm values
 
@@ -34,6 +39,8 @@ defaults are:
 - three ten-epoch probes from iteration 3 onward;
 - adaptive main budget of 24–48 epochs;
 - one 12-epoch late-best extension;
+- synthesis disabled;
+- synthetic cumulative cap `0.25` relative to admitted real defects.
 
 A value frozen in the policy is no longer a default. Changing it starts a new
 contract rather than silently mutating an existing run.
