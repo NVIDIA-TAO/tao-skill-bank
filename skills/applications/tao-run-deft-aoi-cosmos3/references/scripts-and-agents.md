@@ -3,6 +3,7 @@
 | Script | Contract |
 | --- | --- |
 | `build_target_profile.py` | Analysis-only annotation geometry/dataset profile and target-versus-supply cell comparison; see [offline analysis tools](analysis-tools.md). |
+| `build_validation_panel.py` | Analysis-only, prediction-free panel matching benchmark strata, excluding Benchmark/Proxy ids and either image, with a realized-family cap and explicit shortages. |
 | `init_deft_state.py` | Freeze version-7 paths, hashes, backend, recipe, metric, and mining configuration once. |
 | `deft_context.py` | Read state and identify the only valid next stage. |
 | `commit_stage.py` | Validate evidence and atomically append a stage event. |

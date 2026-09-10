@@ -39,3 +39,38 @@ path's `/NVPAW_pair/<sub>/` as `pair:<sub>` over `/datasets/<name>/` and finally
 the row's `dataset` field. Comparison aggregates away dataset and uses
 largest-remainder integer budgets over the requested five-dimensional cells;
 shortage cells are not backfilled from unrelated cells.
+
+## E: disjoint validation panel
+
+```bash
+python3 "$SKILL_ROOT/scripts/build_validation_panel.py" \
+  --input "$DEFT_ROOT/nvpaw/outputs/test_full.jsonl" \
+  --benchmark "$WORKSPACE/annotations/benchmark.jsonl" \
+  --proxy "$WORKSPACE/annotations/proxy_kpi.jsonl" \
+  --media-root "$WORKSPACE" --per-task 500 --seed 17 \
+  --output-dir "$DEFT_ROOT/nvpaw/outputs"
+```
+
+Writes only `validation_panel.jsonl`, `validation_panel_profile.json` (using A,
+with an embedded `panel_manifest`), and `PANEL_MANIFEST.md`. Input hashes, panel
+hash, exclusions, excluded families, target/realized shares, and shortages for
+every benchmark stratum are recorded. The tool never reads predictions.
+
+Exclusions use id **or any image path**, including either side of a pair,
+against all Benchmark and Proxy records. Paths normalize separators and dot
+segments; `--media-root` joins relative paths to match canonical absolute paths
+without opening media. A stable seed/id hash reservoir limits retained
+candidates to the requested per-stratum quota and makes selection independent
+of input ordering; duplicated candidate IDs fail closed.
+
+The target is 500 rows per task, allocated by benchmark shares over
+dataset family × empty status × count × largest-box size. Missing or exhausted
+families/strata are not replaced by unrelated cells. The 35% family cap takes
+precedence if exact target shares are infeasible: shrink to the largest
+available total satisfying the cap against the **realized** task size, then
+allocate closest to target shares within each bounded family. With fewer than
+three eligible families, a non-empty task cannot satisfy the cap and is
+reported empty with a shortage. Shortages always compare to the original
+500-per-task request, not the shrunken budget. Output records retain their
+native messages and image controls; this tool does not freeze or install the
+panel into the loop. The operator reviews and freezes its hash separately.
