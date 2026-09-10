@@ -15,6 +15,7 @@ validate contracts; model and data skills own their container actions.
 | `select_deft_od_aoi_training.py` | Select the best probe or KPI-best checkpoint and optional extension. |
 | `commit_deft_od_aoi_stage.py` | Verify artifacts and atomically advance application state. |
 | `prepare_deft_od_aoi_synthesis.py` | Normalize exact strict FNs into AnomalyGenNext preparation input. |
+| `resolve_deft_od_aoi_synthesis.py` | Resolve task weights or emit one-time fine-tuning requests. |
 
 ## Delegated stages
 
@@ -25,6 +26,7 @@ validate contracts; model and data skills own their container actions.
 | Candidate and query embedding | `tao-generate-image-embeddings` |
 | Unique-image mining | `tao-mine-od-images` |
 | AnomalyGenNext preparation and AMP | `tao-prepare-anomalygennext-inputs` |
+| Missing task-weight training | `tao-finetune-anomalygennext` |
 | Synthetic OD generation | `tao-generate-od-defects` |
 | Authorization, records, and dispatch | `tao-launch-workflow` plus selected platform |
 

@@ -15,8 +15,9 @@ policy once.
 - An explicit synthesis decision.
 
 When synthesis is enabled, require a normalized reference pool,
-`defect_spec.jsonl`, Cosmos3-Nano assets, and one existing checkpoint/recipe
-pair for every KPI `dataset_id`. Read `anomalygen-pool.md`.
+`defect_spec.jsonl`, Cosmos3-Nano assets, and either an existing
+checkpoint/recipe pair or a complete one-time fine-tuning block for every KPI
+`dataset_id`. Read `anomalygen-pool.md`.
 
 ## Packaged algorithm values
 

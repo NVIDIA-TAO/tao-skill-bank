@@ -53,7 +53,7 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
         raise ValueError("synthesis pool, defect spec, and routes are required")
     for name, route in routes.items():
         if not Path(str(route.get("checkpoint") or "")).is_file() or not Path(str(route.get("recipe") or "")).is_file():
-            raise ValueError(f"route {name} needs an existing checkpoint and recipe")
+            raise ValueError(f"route {name} needs resolved checkpoint and recipe; run synthesis bootstrap")
     kpi = policy["sources"]["kpi"]
     images_root = Path(kpi["images"])
     coco = json.loads(Path(kpi["coco"]).read_text())

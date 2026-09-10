@@ -201,3 +201,18 @@ then its finalized generation plan through `tao-generate-od-defects`. Commit
 native COCO and image root; synthetic categories are folded to `defect`, and
 the frozen cumulative fraction cap is applied against admitted real defects.
 Boxes alone never substitute for the required pixel mask.
+
+## Missing AnomalyGenNext task weights
+
+A synthesis route may replace `checkpoint` and `recipe` with a `finetune` block
+containing `dataset_root`, frozen `validation_testcase`, Cosmos3-Nano
+`base_checkpoint`, `vae_path`, `nn_backbone`, future `result_handoff`, and
+optional user `recipe_template`/`defect_spec`. These are AnomalyGenNext inputs;
+the application policy is not an upstream training recipe.
+
+Run `resolve_deft_od_aoi_synthesis.py` before the candidate cache. If a handoff
+is absent, it emits `finetune_requests.json`; execute each request through
+`tao-finetune-anomalygennext` once. Resolve again into a new directory, verify
+the hash-bound handoff, commit `synthesis_bootstrap`, and use the emitted
+`resolved_synthesis_policy.yaml` for all later synthesis preparation. Never
+start or resume AnomalyGenNext training inside a DEFT iteration.

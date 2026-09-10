@@ -34,6 +34,33 @@ routes:
 Both files must exist before iteration preparation. The recipe must declare the
 types requested from that route.
 
+## Missing task weights
+
+A route may instead carry a one-time fine-tuning plan:
+
+```yaml
+routes:
+  line_a:
+    finetune:
+      dataset_root: /data/line_a/anomalygen
+      validation_testcase: /data/line_a/validation.jsonl
+      base_checkpoint: /models/Cosmos3-Nano
+      vae_path: /models/Wan2.2_VAE.pth
+      nn_backbone: /models/dinov2-large
+      result_handoff: /results/line_a/training_handoff.json
+      recipe_template: /data/line_a/recipe.yaml   # optional
+      defect_spec: /data/line_a/defect_spec.jsonl # optional override
+```
+
+Run `resolve_deft_od_aoi_synthesis.py` before the candidate cache. A missing
+handoff produces `finetune_requests.json`. Execute each request through
+`tao-finetune-anomalygennext` once, then resolve again into a new directory.
+
+Accept a completed handoff only when dataset identity matches, anomaly types
+are nonempty, and recipe/checkpoint hashes verify. Freeze the emitted
+`resolved_synthesis_policy.yaml` for the run. Never start or resume
+AnomalyGenNext training inside an iteration.
+
 ## Iteration handoff
 
 `prepare_deft_od_aoi_synthesis.py` converts exact strict FN/annotation matches

@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 
-NEXT = {"candidate_cache": "baseline_measurement", "baseline_measurement": "baseline_gaps",
+NEXT = {"synthesis_bootstrap": "candidate_cache", "candidate_cache": "baseline_measurement",
+        "baseline_measurement": "baseline_gaps",
         "baseline_gaps": "iteration_retrieval", "iteration_retrieval": "iteration_admission",
         "iteration_admission": "iteration_training", "iteration_synthesis": "iteration_training",
         "iteration_training": "iteration_measurement",

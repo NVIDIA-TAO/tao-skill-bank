@@ -13,8 +13,8 @@ Complete this gate before creating a job record or submitting any action.
 - Confirm GPU shape, storage mappings, runtime estimate, and durable
   `results_dir`.
 - Confirm synthesis is disabled or has exact pixel masks, a defect
-  specification, reference pool, Cosmos3-Nano assets, and existing task
-  checkpoint/recipe pairs.
+  specification, reference pool, Cosmos3-Nano assets, and either existing task
+  weights or complete one-time fine-tuning routes.
 
 Do not create output directories that actions require to be absent. Existing
 DEFT results are resumed only through their committed
@@ -33,7 +33,8 @@ Before launch:
 5. Confirm no KPI or test image identity appears in training sources.
 6. Confirm each planned action's required predecessor artifact exists and its
    owning job reached `COMPLETE`.
-7. For synthesis, verify every route before iteration preparation.
+7. For synthesis, resolve every route before iteration 0 and verify handoff
+   hashes for newly trained adapters.
 
 ## Launch
 

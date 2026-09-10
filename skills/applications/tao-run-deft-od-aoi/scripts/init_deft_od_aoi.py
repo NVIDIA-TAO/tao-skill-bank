@@ -118,9 +118,13 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         if not synthesis.get("routes"):
             raise ValueError("enabled synthesis needs at least one dataset route")
         for name, route in synthesis["routes"].items():
-            if not Path(str(route.get("checkpoint") or "")).is_file() or not Path(
-                    str(route.get("recipe") or "")).is_file():
-                raise ValueError(f"synthesis route {name} needs checkpoint and recipe")
+            ready = Path(str(route.get("checkpoint") or "")).is_file() and Path(
+                str(route.get("recipe") or "")).is_file()
+            finetune = route.get("finetune") or {}
+            if not ready and any(not str(finetune.get(key) or "").strip() for key in
+                                 ("dataset_root", "validation_testcase", "base_checkpoint",
+                                  "vae_path", "nn_backbone", "result_handoff")):
+                raise ValueError(f"synthesis route {name} needs checkpoint/recipe or finetune inputs")
     output.mkdir(parents=True)
     policy["base_checkpoint"] = str(checkpoint)
     policy["sources"] = {name: {"images": role_reports[name]["images"],
@@ -130,10 +134,17 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     classmap = output / "inference_classmap.txt"
     classmap.write_text("background\ndefect\n")
     synthesis_enabled = bool(policy.get("synthesis", {}).get("enabled"))
+    bootstrap_required = synthesis_enabled and any(
+        not (Path(str(route.get("checkpoint") or "")).is_file()
+             and Path(str(route.get("recipe") or "")).is_file())
+        for route in policy.get("synthesis", {}).get("routes", {}).values()
+    )
     state = {"schema_version": 1, "status": "READY",
              "mode": "rtdetr_with_synthesis" if synthesis_enabled else "rtdetr_real_only",
              "synthesis_enabled": synthesis_enabled,
-             "current_iteration": 0, "next_stage": "candidate_cache",
+             "synthesis_bootstrap_required": bootstrap_required,
+             "current_iteration": 0,
+             "next_stage": "synthesis_bootstrap" if bootstrap_required else "candidate_cache",
              "max_iterations": policy["max_iterations"], "platform": policy["platform"],
              "base_checkpoint": str(checkpoint), "policy": str(frozen.resolve()),
              "policy_sha256": _sha(frozen), "classmap": str(classmap.resolve()),
