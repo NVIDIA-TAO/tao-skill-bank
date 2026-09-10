@@ -13,11 +13,20 @@ message on the first GPU job.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import sys
 
 from validate_sharegpt import load_records, validate_records
+
+
+def _sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 ROLE_CONTRACT = {
@@ -54,6 +63,12 @@ def _print_contract(annotation_profile: str = "nvpaw_multitask_v1") -> None:
     print()
     for role, spec in ROLE_CONTRACT.items():
         print(f"  {role:<10} consumed by {spec['consumer']}")
+    print(
+        "\n  The file column is the workspace default; --proxy/--benchmark/--mining "
+        "PATH check another file for that role. The KPI/RCCA set (proxy) passed "
+        "here must be the same file the run is initialized with "
+        "(init_deft_state.py --proxy-annotations)."
+    )
 
 
 def _media_root_hint(message: str, media_root: pathlib.Path) -> str | None:
@@ -106,6 +121,7 @@ def check(
         summary.update(
             {
                 "path": str(path),
+                "sha256": _sha256(path),
                 "ok": True,
                 "id_required": needs_id,
                 "id_coverage": (
@@ -179,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             f"  {role:<10} OK    records={entry['records']:<5} "
             f"labels={entry['labels']} id={entry['id_coverage']}"
             + scope
+            + f" sha256={entry['sha256'][:12]} path={entry['path']}"
         )
     if args.summary is not None:
         args.summary.parent.mkdir(parents=True, exist_ok=True)

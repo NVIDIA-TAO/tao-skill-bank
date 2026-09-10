@@ -425,3 +425,120 @@ class Cosmos3InitStateContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SplitContractBindingTests(unittest.TestCase):
+    """--split-contract-summary must name and hash the sealed annotation files."""
+
+    @staticmethod
+    def _sha256(path: pathlib.Path) -> str:
+        import hashlib
+
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def _summary(self, workspace: pathlib.Path, proxy: pathlib.Path, path: pathlib.Path) -> pathlib.Path:
+        roles = {
+            "proxy": proxy,
+            "benchmark": workspace / "annotations/benchmark.jsonl",
+            "mining": workspace / "annotations/mining.jsonl",
+        }
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "roles": {role: str(p.resolve()) for role, p in roles.items()},
+                    "role_sha256": {role: self._sha256(p) for role, p in roles.items()},
+                    "target_overlap": {"proxy:benchmark": 0, "proxy:mining": 0, "benchmark:mining": 0},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_alternate_kpi_set_is_sealed_when_the_summary_names_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = Cosmos3InitStateContractTests._workspace(root)
+            panel = workspace / "annotations/validation_panel.jsonl"
+            panel.write_text(
+                (workspace / "annotations/proxy_kpi.jsonl").read_text(encoding="utf-8")
+                + "\n",
+                encoding="utf-8",
+            )
+            summary = self._summary(workspace, panel, root / "split_contract.json")
+
+            rc = init_deft_state.main(
+                Cosmos3InitStateContractTests._argv(
+                    root,
+                    workspace,
+                    "--proxy-annotations", str(panel),
+                    "--split-contract-summary", str(summary),
+                )
+            )
+
+            self.assertEqual(rc, 0)
+            config = json.loads((root / "results/deft_state.json").read_text())["config"]
+            self.assertEqual(config["annotations"]["proxy"], str(panel.resolve()))
+            self.assertEqual(config["evaluation"]["proxy"]["annotations"], str(panel.resolve()))
+            self.assertTrue(config["split_contract"]["bound"])
+            self.assertEqual(
+                config["split_contract"]["verified_roles"]["proxy"], self._sha256(panel)
+            )
+            self.assertEqual(config["split_contract"]["summary"], str(summary.resolve()))
+
+    def test_summary_for_the_default_proxy_fails_closed_when_the_run_uses_another(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = Cosmos3InitStateContractTests._workspace(root)
+            panel = workspace / "annotations/validation_panel.jsonl"
+            panel.write_text(
+                (workspace / "annotations/proxy_kpi.jsonl").read_text(encoding="utf-8")
+                + "\n",
+                encoding="utf-8",
+            )
+            summary = self._summary(
+                workspace, workspace / "annotations/proxy_kpi.jsonl", root / "split_contract.json"
+            )
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = init_deft_state.main(
+                    Cosmos3InitStateContractTests._argv(
+                        root,
+                        workspace,
+                        "--proxy-annotations", str(panel),
+                        "--split-contract-summary", str(summary),
+                    )
+                )
+
+            self.assertNotEqual(rc, 0)
+            self.assertIn("split-contract summary validated proxy=", stderr.getvalue())
+            self.assertFalse((root / "results/deft_state.json").exists())
+
+    def test_stale_summary_hash_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = Cosmos3InitStateContractTests._workspace(root)
+            proxy = workspace / "annotations/proxy_kpi.jsonl"
+            summary = self._summary(workspace, proxy, root / "split_contract.json")
+            proxy.write_text(proxy.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = init_deft_state.main(
+                    Cosmos3InitStateContractTests._argv(
+                        root, workspace, "--split-contract-summary", str(summary)
+                    )
+                )
+
+            self.assertNotEqual(rc, 0)
+            self.assertIn("does not match the sealed file", stderr.getvalue())
+
+    def test_without_summary_the_state_records_it_as_unbound(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = Cosmos3InitStateContractTests._workspace(root)
+            rc = init_deft_state.main(Cosmos3InitStateContractTests._argv(root, workspace))
+            self.assertEqual(rc, 0)
+            config = json.loads((root / "results/deft_state.json").read_text())["config"]
+            self.assertFalse(config["split_contract"]["bound"])

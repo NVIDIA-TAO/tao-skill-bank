@@ -318,6 +318,59 @@ def _resolve_gap_analysis(args: argparse.Namespace, annotation_profile: str) -> 
     }
 
 
+def _bind_split_contract(
+    summary_path: pathlib.Path | None, annotations: dict[str, pathlib.Path]
+) -> dict[str, Any]:
+    """Bind the preflight split-contract summary to the sealed annotation files.
+
+    ``validate_split_contract.py --summary`` proves evaluation isolation for
+    whatever files it was pointed at. When the run uses a non-default KPI/RCCA
+    set (``--proxy-annotations``), the summary must have validated that same
+    file; otherwise the isolation proof refers to the wrong file and
+    initialization fails closed.
+    """
+    if summary_path is None:
+        return {"bound": False, "reason": "no --split-contract-summary supplied"}
+    summary_path = summary_path.expanduser().resolve()
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    roles = summary.get("roles") or {}
+    role_sha256 = summary.get("role_sha256") or {}
+    verified: dict[str, str] = {}
+    for role, path in annotations.items():
+        recorded = roles.get(role)
+        if recorded is None:
+            raise ValueError(
+                f"split-contract summary {summary_path} has no '{role}' role"
+            )
+        if pathlib.Path(recorded).expanduser().resolve() != path:
+            raise ValueError(
+                f"split-contract summary validated {role}={recorded} but the run "
+                f"seals {role}={path}; re-run validate_split_contract.py --{role} {path}"
+            )
+        actual = _sha256(path)
+        recorded_sha = role_sha256.get(role) or (
+            summary.get("benchmark_sha256") if role == "benchmark" else None
+        )
+        if recorded_sha is None:
+            raise ValueError(
+                f"split-contract summary {summary_path} records no sha256 for "
+                f"'{role}' (schema_version>=2 required)"
+            )
+        if recorded_sha != actual:
+            raise ValueError(
+                f"split-contract summary sha256 for {role} ({recorded_sha}) does not "
+                f"match the sealed file ({actual}); the file changed after preflight"
+            )
+        verified[role] = actual
+    return {
+        "bound": True,
+        "summary": str(summary_path),
+        "summary_sha256": _sha256(summary_path),
+        "verified_roles": verified,
+        "target_overlap": summary.get("target_overlap", {}),
+    }
+
+
 def build_state(args: argparse.Namespace) -> dict[str, Any]:
     workspace = args.workspace.expanduser().resolve()
     results_dir = args.results_dir.expanduser().resolve()
@@ -341,6 +394,9 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     missing = [f"{role}={path}" for role, path in annotations.items() if not path.is_file()]
     if missing:
         raise ValueError("annotation file(s) missing: " + ", ".join(missing))
+    split_contract = _bind_split_contract(
+        getattr(args, "split_contract_summary", None), annotations
+    )
     calibration_cohorts = derive_proxy_empty_rates(load_records(annotations["proxy"]))
     calibration_values = (
         args.single_image_calibration_max_empty,
@@ -501,6 +557,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             "annotation_sha256": {
                 role: _sha256(path) for role, path in annotations.items()
             },
+            "split_contract": split_contract,
             "kpi": {
                 "profile": kpi_profile,
                 "requested_profile": requested_kpi_profile,
@@ -739,9 +796,26 @@ def _parser() -> argparse.ArgumentParser:
         "specs/evaluate_spec_benchmark.toml, falling back to "
         "specs/evaluate_spec.toml.",
     )
-    parser.add_argument("--proxy-annotations", type=pathlib.Path)
+    parser.add_argument(
+        "--proxy-annotations",
+        type=pathlib.Path,
+        help=(
+            "KPI/RCCA evaluation set. Defaults to annotations/proxy_kpi.jsonl; "
+            "an alternate benchmark-disjoint set (e.g. a frozen validation "
+            "panel) must also be the --proxy of the preflight split contract."
+        ),
+    )
     parser.add_argument("--benchmark-annotations", type=pathlib.Path)
     parser.add_argument("--mining-annotations", type=pathlib.Path)
+    parser.add_argument(
+        "--split-contract-summary",
+        type=pathlib.Path,
+        help=(
+            "Summary JSON written by validate_split_contract.py --summary. When "
+            "given, its roles and sha256 must match the sealed proxy/benchmark/"
+            "mining files or initialization fails closed."
+        ),
+    )
     parser.add_argument("--num-gpus", type=int, default=8)
     parser.add_argument("--num-nodes", type=int, default=1)
     parser.add_argument(

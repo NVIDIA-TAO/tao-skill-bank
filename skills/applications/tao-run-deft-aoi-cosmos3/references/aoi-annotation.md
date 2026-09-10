@@ -52,6 +52,12 @@ the assembler consumes the current `gaps_summary.json`, retains every prior
 row and at least one current row, and writes `repetition_blend_manifest.json`.
 `validate_split_contract.py`
 proves the same lineage independently and verifies the frozen Benchmark hash.
+Its summary (`--summary`) records every role's resolved path and SHA-256
+(`role_sha256`, schema_version 2) and accepts `--proxy PATH` /
+`--proxy-sha256` when the run's KPI/RCCA set is not the default
+`proxy_kpi.jsonl`; `init_deft_state.py --split-contract-summary` binds that
+summary to the sealed annotation files and fails closed on a path or hash
+mismatch.
 Its Mining record count is the eligible six-task count; preflight also reports
 the raw count and ignored task-family counts.
 

@@ -12,6 +12,16 @@ Preflight is read-only and precedes the launch review.
    Mining report records both raw and eligible counts plus ignored
    count/segmentation task families; Proxy and Benchmark accept only the six
    supported classification/detection families.
+   The KPI/RCCA set defaults to `annotations/proxy_kpi.jsonl`. When the
+   operator selects another benchmark-disjoint set (for example a frozen
+   validation panel installed read-only next to it), pass the same file to
+   every step: `check_annotations.py --proxy PATH`,
+   `validate_split_contract.py --proxy PATH --summary SUMMARY.json`, and
+   `init_deft_state.py --proxy-annotations PATH --split-contract-summary
+   SUMMARY.json`. Initialization compares the summary's roles and SHA-256
+   with the sealed files and fails closed on any difference, so the isolation
+   proof cannot silently refer to the default file. Never edit
+   `proxy_kpi.jsonl` or `benchmark.jsonl` to switch sets.
    Map the exact user phrase `use coverage_stratified_hardness_v1` to
    `config.mining.candidate_selector=coverage_stratified_hardness_v1`; all
    other launches retain `nearest_neighbor`. Record the selected policy and

@@ -221,3 +221,105 @@ class OperatorBenchmarkReplacementTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import check_annotations  # noqa: E402
+
+
+class KpiSetOverrideTests(unittest.TestCase):
+    """The KPI/RCCA set may be any benchmark-disjoint file; the proof must name it."""
+
+    @staticmethod
+    def _sha256(path: pathlib.Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def _roles(self, root: pathlib.Path) -> dict[str, pathlib.Path]:
+        return {
+            "proxy": _write(root / "proxy.jsonl", [_row("proxy-1", "images/proxy.png")]),
+            "benchmark": _write(
+                root / "benchmark.jsonl", [_row("benchmark-1", "images/benchmark.png")]
+            ),
+            "mining": _write(root / "mining.jsonl", [_row("mining-1", "images/mining.png")]),
+        }
+
+    def test_summary_records_every_role_sha256_and_verifies_the_proxy_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            roles = self._roles(root)
+            proxy_sha = self._sha256(roles["proxy"])
+
+            summary = validate_split_contract.validate(
+                roles, media_root=root, expected_proxy_sha256=proxy_sha
+            )
+
+            self.assertEqual(summary["schema_version"], 2)
+            self.assertEqual(summary["role_sha256"]["proxy"], proxy_sha)
+            self.assertEqual(
+                summary["role_sha256"]["benchmark"], summary["benchmark_sha256"]
+            )
+            self.assertEqual(summary["role_sha256"]["mining"], self._sha256(roles["mining"]))
+            self.assertEqual(summary["proxy_sha256"], proxy_sha)
+            self.assertTrue(summary["proxy_hash_verified"])
+
+            with self.assertRaisesRegex(ValueError, "KPI/Proxy hash mismatch"):
+                validate_split_contract.validate(
+                    roles, media_root=root, expected_proxy_sha256="0" * 64
+                )
+
+    def test_cli_proxy_override_validates_the_named_kpi_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = pathlib.Path(temporary) / "workspace"
+            (workspace / "annotations").mkdir(parents=True)
+            _write(workspace / "annotations/proxy_kpi.jsonl", [_row("proxy-1", "images/proxy.png")])
+            _write(
+                workspace / "annotations/benchmark.jsonl",
+                [_row("benchmark-1", "images/benchmark.png")],
+            )
+            _write(workspace / "annotations/mining.jsonl", [_row("mining-1", "images/mining.png")])
+            panel = _write(
+                workspace / "annotations/validation_panel.jsonl",
+                [_row("panel-1", "images/panel.png"), _row("panel-2", "images/panel-2.png")],
+            )
+            summary_path = pathlib.Path(temporary) / "split_contract.json"
+
+            rc = validate_split_contract.main(
+                [
+                    "--workspace", str(workspace),
+                    "--proxy", str(panel),
+                    "--proxy-sha256", self._sha256(panel),
+                    "--summary", str(summary_path),
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            summary = json.loads(summary_path.read_text())
+            self.assertEqual(summary["roles"]["proxy"], str(panel.resolve()))
+            self.assertEqual(summary["records"]["proxy"], 2)
+            self.assertEqual(summary["role_sha256"]["proxy"], self._sha256(panel))
+            self.assertEqual(
+                summary["roles"]["benchmark"],
+                str((workspace / "annotations/benchmark.jsonl").resolve()),
+            )
+
+            wrong = validate_split_contract.main(
+                [
+                    "--workspace", str(workspace),
+                    "--proxy", str(panel),
+                    "--proxy-sha256", self._sha256(workspace / "annotations/proxy_kpi.jsonl"),
+                ]
+            )
+            self.assertEqual(wrong, 2)
+
+    def test_check_annotations_reports_the_sha256_of_the_checked_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            roles = self._roles(root)
+
+            report, failures = check_annotations.check(
+                roles, media_root=root, require_files=False
+            )
+
+            self.assertEqual(failures, [])
+            for role, path in roles.items():
+                self.assertEqual(report[role]["path"], str(path))
+                self.assertEqual(report[role]["sha256"], self._sha256(path))

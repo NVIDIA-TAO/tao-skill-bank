@@ -56,7 +56,7 @@ another workspace with the same contract:
 ```text
 annotations/mining.jsonl
 annotations/benchmark.jsonl
-annotations/proxy_kpi.jsonl
+annotations/proxy_kpi.jsonl   # default KPI/RCCA set; override: preflight.md step 3
 eval/calculate_f1_metrics.py
 models/Cosmos3-Nano-VLM/
 specs/train_spec.toml

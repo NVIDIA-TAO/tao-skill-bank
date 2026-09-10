@@ -68,6 +68,7 @@ def validate(
     *,
     media_root: pathlib.Path,
     expected_benchmark_sha256: str | None = None,
+    expected_proxy_sha256: str | None = None,
     allowed_target_overlaps: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     missing = set(ROLE_PATHS) - set(role_paths)
@@ -152,17 +153,25 @@ def validate(
                     f"generated Train must retain previous iteration records ({len(missing_rows)} missing)"
                 )
 
-    benchmark_hash = _sha256(role_paths["benchmark"])
+    role_sha256 = {role: _sha256(path) for role, path in role_paths.items()}
+    benchmark_hash = role_sha256["benchmark"]
     if expected_benchmark_sha256 and benchmark_hash != expected_benchmark_sha256:
         raise ValueError(
             f"frozen Benchmark hash mismatch: expected {expected_benchmark_sha256}, got {benchmark_hash}"
         )
+    proxy_hash = role_sha256["proxy"]
+    if expected_proxy_sha256 and proxy_hash != expected_proxy_sha256:
+        raise ValueError(
+            "KPI/Proxy hash mismatch: the file validated here is not the KPI "
+            f"set the run seals: expected {expected_proxy_sha256}, got {proxy_hash}"
+        )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "format": "jsonl",
         "training_source": "mined_real_samples_only",
         "identity": "atomic_sample_id",
         "roles": {role: str(path) for role, path in role_paths.items()},
+        "role_sha256": role_sha256,
         "records": {role: len(value) for role, value in rows.items()},
         "unique_targets": {role: len(value) for role, value in targets.items()},
         "ignored_unsupported_tasks": ignored_unsupported_tasks,
@@ -170,6 +179,8 @@ def validate(
         "authorized_target_overlap_exceptions": authorized_exceptions,
         "benchmark_sha256": benchmark_hash,
         "benchmark_hash_verified": bool(expected_benchmark_sha256),
+        "proxy_sha256": proxy_hash,
+        "proxy_hash_verified": bool(expected_proxy_sha256),
     }
 
 
@@ -179,8 +190,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--train", type=pathlib.Path)
     parser.add_argument("--previous-train", type=pathlib.Path)
     for role in ROLE_PATHS:
-        parser.add_argument(f"--{role}", type=pathlib.Path)
+        parser.add_argument(
+            f"--{role}",
+            type=pathlib.Path,
+            help=(
+                f"Override the default {'/'.join(ROLE_PATHS[role])}. For the "
+                "KPI/RCCA set (--proxy) pass the same file the run is "
+                "initialized with (init_deft_state.py --proxy-annotations)."
+            ),
+        )
     parser.add_argument("--benchmark-sha256")
+    parser.add_argument(
+        "--proxy-sha256",
+        help="Expected SHA-256 of the KPI/Proxy file; any other file fails closed.",
+    )
     parser.add_argument(
         "--allow-target-overlap",
         action="append",
@@ -218,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
             role_paths,
             media_root=workspace,
             expected_benchmark_sha256=args.benchmark_sha256,
+            expected_proxy_sha256=args.proxy_sha256,
             allowed_target_overlaps=allowed_target_overlaps,
         )
         if args.summary:
@@ -229,6 +253,10 @@ def main(argv: list[str] | None = None) -> int:
     print("validate_split_contract: OK " + " ".join(
         f"{role}={count}" for role, count in summary["records"].items()
     ))
+    print(
+        "validate_split_contract: kpi/proxy="
+        f"{summary['roles']['proxy']} sha256={summary['proxy_sha256']}"
+    )
     return 0
 
 
