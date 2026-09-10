@@ -41,6 +41,16 @@ def _config(root: Path) -> Path:
     return path
 
 
+def _append_boxless_image(role: dict, name: str) -> None:
+    images = Path(role["images"])
+    image = images / f"{name}_boxless.png"
+    image.write_bytes(b"boxless-image")
+    coco = Path(role["coco"])
+    data = json.loads(coco.read_text())
+    data["images"].append({"id": 2, "file_name": image.name})
+    coco.write_text(json.dumps(data))
+
+
 def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     state = MODULE.initialize(_config(tmp_path), tmp_path / "results")
     assert state["mode"] == "rtdetr_real_only"
@@ -72,6 +82,28 @@ def test_initialize_rejects_boxed_clean_role(tmp_path: Path) -> None:
                             "bbox": [0, 0, 2, 2]}]
     clean.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="clean role"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_accepts_mixed_boxed_and_boxless_heldout_roles(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    for name in ("kpi", "test"):
+        _append_boxless_image(value["sources"][name], name)
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    for name in ("kpi", "test"):
+        assert state["roles"][name]["image_count"] == 2
+        assert state["roles"][name]["annotation_count"] == 1
+
+
+def test_initialize_rejects_boxless_defective_real_role(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    _append_boxless_image(value["sources"]["real"], "real")
+
+    with pytest.raises(ValueError, match="defective-real role contains a boxless image"):
         MODULE.initialize(config, tmp_path / "results")
 
 

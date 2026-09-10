@@ -49,8 +49,9 @@ scripts/init_deft_od_aoi.py \
 
 Never reinitialize an existing result. The validator requires disjoint KPI,
 test, defective-real, and verified-clean roles; every COCO must declare only
-`defect`. KPI/test pixels never enter training, and clean images remain explicit
-zero-annotation COCO entries.
+`defect`. KPI and test may mix boxed and boxless images because they never enter
+training. Every defective-real image needs at least one box, while clean images
+remain explicit zero-annotation COCO entries.
 
 ## Loop boundary
 
