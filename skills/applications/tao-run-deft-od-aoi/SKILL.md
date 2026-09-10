@@ -80,3 +80,25 @@ each enabled mining spec through `tao-mine-od-images`. Defective candidates
 and gap queries use contextual crops; clean candidates use the frozen grid.
 Strict FNs and loose near-miss FPs route to real data. Background-like loose
 FPs route only to the verified-clean role. Empty roles emit no mining action.
+
+## Admission and cumulative COCO
+
+After both enabled miners complete, admit their selected candidate crops back
+to unique source images and publish the next cumulative dataset:
+
+```bash
+scripts/admit_deft_od_aoi_coco.py \
+  --policy "$RESULTS/deft_od_aoi_policy.yaml" \
+  --candidate-root "$RESULTS/candidates" \
+  --retrieval-root "$ITER/retrieval" \
+  --previous-coco "$PREVIOUS/train.json" \
+  --output-dir "$ITER/training_data"
+```
+
+Omit `--previous-coco` only for iteration 1. The helper recomputes maximum
+cosine similarity from the frozen candidate/query embeddings, applies the
+minimum similarity, deduplicates crop hits to source images, excludes prior
+sources, and caps cumulative clean negatives against cumulative real defects.
+It retains every prior image and box and emits one binary COCO with explicit
+zero-annotation clean images. Use `--link-mode hardlink` only when source and
+output share a filesystem; portable staging should keep the copy default.
