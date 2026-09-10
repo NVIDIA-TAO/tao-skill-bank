@@ -4,6 +4,7 @@
 | --- | --- |
 | `build_target_profile.py` | Analysis-only annotation geometry/dataset profile and target-versus-supply cell comparison; see [offline analysis tools](analysis-tools.md). |
 | `build_validation_panel.py` | Analysis-only, prediction-free panel matching benchmark strata, excluding Benchmark/Proxy ids and either image, with a realized-family cap and explicit shortages. |
+| `score_pool_residual.py` / `pool_residual_full.py` | Opt-in analysis sample/full-pool evaluation plans and CPU residual scoring using the authoritative evaluator; full mode renders a resumable, bounded array for operator submission, never submits or changes loop state. |
 | `init_deft_state.py` | Freeze version-7 paths, hashes, backend, recipe, metric, and mining configuration once. |
 | `deft_context.py` | Read state and identify the only valid next stage. |
 | `commit_stage.py` | Validate evidence and atomically append a stage event. |
