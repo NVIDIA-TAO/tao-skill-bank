@@ -39,5 +39,15 @@ training:
   adaptive_max_epochs: 48
   probes_enabled: true
   probe_epochs: 10
+  workers: 4
+  checkpoint_interval: 1
+  validation_interval: 1
+  growth_high: 1.25
+  growth_low: 0.9
+  high_growth_lr_factor: 1.15
+  low_growth_lr_factor: 0.85
+  jitter_seed_base: 4000
+  jitter_lr_factor: [0.8, 1.2]
+  jitter_backbone_lr_factor: [0.8, 1.2]
   late_best_window: 3
   extension_epochs: 12
