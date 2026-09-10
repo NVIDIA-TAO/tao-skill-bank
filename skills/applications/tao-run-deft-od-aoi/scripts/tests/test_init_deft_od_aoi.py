@@ -44,7 +44,7 @@ def _config(root: Path) -> Path:
 def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     state = MODULE.initialize(_config(tmp_path), tmp_path / "results")
     assert state["mode"] == "rtdetr_real_only"
-    assert state["next_stage"] == "baseline_inference"
+    assert state["next_stage"] == "candidate_cache"
     assert Path(state["policy"]).is_file()
     assert Path(state["classmap"]).read_text() == "background\ndefect\n"
     assert state["roles"]["clean"]["annotation_count"] == 0

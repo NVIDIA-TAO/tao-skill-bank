@@ -118,7 +118,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     classmap = output / "inference_classmap.txt"
     classmap.write_text("background\ndefect\n")
     state = {"schema_version": 1, "status": "READY", "mode": "rtdetr_real_only",
-             "current_iteration": 0, "next_stage": "baseline_inference",
+             "current_iteration": 0, "next_stage": "candidate_cache",
              "max_iterations": policy["max_iterations"], "platform": policy["platform"],
              "base_checkpoint": str(checkpoint), "policy": str(frozen.resolve()),
              "policy_sha256": _sha(frozen), "classmap": str(classmap.resolve()),
