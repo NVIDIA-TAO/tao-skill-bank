@@ -197,6 +197,34 @@ class AssemblerAnchorTests(unittest.TestCase):
             self.assertAlmostEqual(summary2["anchor"]["realized_share_rows"], 0.10, places=6)
             self.assertEqual(sum(r.get("deft_anchor") is True for r in rows2), 16)
 
+    def test_remined_anchor_row_is_deduplicated_so_ids_stay_unique(self) -> None:
+        # Regression (v12-anchor r2, iteration 2): three retained anchors were mined again as
+        # unmarked rows; the marker made their fingerprints differ, both copies survived and
+        # validate_sharegpt rejected the duplicate ids.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, source, kpi = self._corpus(root)
+            cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None)
+            rows, _ = assemble_training_json.assemble(None, mined, validation_paths=[], media_root=root, anchor_config=cfg)
+            anchors = [r for r in rows if r.get("deft_anchor") is True]
+            previous = _write(root / "train1.jsonl", rows)
+            remined = [{k: v for k, v in anchors[0].items() if k != "deft_anchor"}]
+            remined.append({**{k: v for k, v in anchors[1].items() if k != "deft_anchor"}, "dataset": "renamed"})  # same id, edited content
+            mined2 = _write(root / "mined2.jsonl", remined + [_row(f"n-{i}", "Defect Detection", "mine") for i in range(88)])
+            rows2, summary2 = assemble_training_json.assemble(
+                previous, mined2, previous_sha256=assemble_training_json.sha256_file(previous),
+                validation_paths=[], media_root=root, anchor_config=cfg,
+            )
+            ids = [r["id"] for r in rows2]
+            self.assertEqual(len(ids), len(set(ids)))
+            self.assertEqual(summary2["duplicates_skipped"], 2)
+            self.assertEqual(summary2["mined_records"], 90)
+            self.assertEqual(summary2["selected_current_records"], 88)
+            kept = [r for r in rows2 if r["id"] == anchors[0]["id"]]
+            self.assertEqual(len(kept), 1)
+            self.assertTrue(kept[0].get("deft_anchor"))
+            self.assertEqual(summary2["anchor"]["prior_anchor_rows"], 10)
+
     def test_anchor_that_is_an_evaluation_target_is_skipped_not_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

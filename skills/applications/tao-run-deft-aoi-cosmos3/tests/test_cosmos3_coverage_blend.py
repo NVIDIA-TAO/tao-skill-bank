@@ -235,6 +235,27 @@ class AssemblerCoverageTests(unittest.TestCase):
             self.assertEqual(summary2["exposure_rows"]["previous_coverage"], 10)
             self.assertEqual(summary2["exposure_rows"]["previous_mined"], 90)
 
+    def test_remined_coverage_row_is_deduplicated_so_ids_stay_unique(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, coverage, _, _ = self._corpus(root)
+            cfg = coverage_rows.validate_coverage_config(0.10, "plain", coverage, 0)
+            rows, _ = assemble_training_json.assemble(None, mined, validation_paths=[], media_root=root, coverage_config=cfg)
+            cov = [r for r in rows if r.get("deft_coverage") is True]
+            previous = _write(root / "train1.jsonl", rows)
+            remined = [{k: v for k, v in cov[0].items() if k != "deft_coverage"}]
+            mined2 = _write(root / "mined2.jsonl", remined + [_row(f"n-{i}", "Defect Detection", "mine") for i in range(89)])
+            rows2, summary2 = assemble_training_json.assemble(
+                previous, mined2, previous_sha256=assemble_training_json.sha256_file(previous),
+                validation_paths=[], media_root=root, coverage_config=cfg,
+            )
+            ids = [r["id"] for r in rows2]
+            self.assertEqual(len(ids), len(set(ids)))
+            self.assertEqual(summary2["duplicates_skipped"], 1)
+            self.assertEqual(summary2["selected_current_records"], 89)
+            self.assertEqual(sum(1 for r in rows2 if r["id"] == cov[0]["id"] and r.get("deft_coverage")), 1)
+            self.assertEqual(summary2["coverage_blend"]["prior_coverage_rows"], 10)
+
     def test_floor_fails_closed_against_the_eventual_budget_not_the_first_slice(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

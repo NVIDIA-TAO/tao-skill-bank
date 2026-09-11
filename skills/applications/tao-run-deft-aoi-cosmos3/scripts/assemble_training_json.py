@@ -53,6 +53,17 @@ def _fingerprint(record: dict[str, Any]) -> str:
     return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+# Inert top-level slice markers. They must not make a re-mined copy of a
+# retained anchor/coverage row look like new content: a previous anchor row
+# (marker present) and the same pool row mined again (marker absent) are one
+# training record, and the canonical validator requires unique ids.
+_SLICE_MARKS = (ANCHOR_MARK, COVERAGE_MARK)
+
+
+def _dedup_key(record: dict[str, Any]) -> str:
+    return _fingerprint({key: value for key, value in record.items() if key not in _SLICE_MARKS})
+
+
 def sha256_file(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
     with path.expanduser().resolve(strict=True).open("rb") as stream:
@@ -206,6 +217,7 @@ def assemble(
 
     merged: list[dict[str, Any]] = []
     seen: set[str] = set()
+    corpus_ids: set[str] = set()
     duplicate_count = 0
     tasks: Counter[str] = Counter()
     provenance: list[dict[str, Any]] = []
@@ -223,11 +235,15 @@ def assemble(
                     f"train/evaluation leakage: atomic sample containing target "
                     f"{target!r} also occurs in {evaluation_targets[sample_identity]}"
                 )
-            key = _fingerprint(record)
-            if source_kind == "current_mining" and key in seen:
+            key = _dedup_key(record)
+            record_id = str(record.get("id"))
+            # A current row is a duplicate when its marker-free content or its id is
+            # already in the corpus (previous rows are retained as they are).
+            if source_kind == "current_mining" and (key in seen or record_id in corpus_ids):
                 duplicate_count += 1
                 continue
             seen.add(key)
+            corpus_ids.add(record_id)
             merged.append(record)
             tasks[str(record.get("task_type", "unknown"))] += 1
             provenance.append(
@@ -258,10 +274,8 @@ def assemble(
          "coverage": coverage["share"] if coverage["enabled"] else 0.0},
         {"anchor": prior_anchor_rows, "coverage": prior_coverage_rows},
     )
-    corpus_ids = {str(record.get("id")) for record in merged}
-
     def excluded(record: dict[str, Any], source: pathlib.Path) -> str | None:
-        if str(record.get("id")) in corpus_ids or _fingerprint(record) in seen:
+        if str(record.get("id")) in corpus_ids or _dedup_key(record) in seen:
             return "already_in_corpus"
         sample_identity = identity(record, f"{source}:{record.get('id')}")
         if sample_identity in evaluation_targets:
@@ -284,7 +298,7 @@ def assemble(
         )
         for index, picked in enumerate(anchors):
             record = {**picked, ANCHOR_MARK: True}
-            seen.add(_fingerprint(record))
+            seen.add(_dedup_key(record))
             corpus_ids.add(str(record.get("id")))
             merged.append(record)
             tasks[str(record.get("task_type", "unknown"))] += 1
@@ -339,7 +353,7 @@ def assemble(
         for index, (candidate, is_fallback) in enumerate(picked):
             record = {key: value for key, value in candidate.items() if key != POOL_STATUS_KEY}
             record[COVERAGE_MARK] = True
-            seen.add(_fingerprint(record))
+            seen.add(_dedup_key(record))
             corpus_ids.add(str(record.get("id")))
             merged.append(record)
             tasks[str(record.get("task_type", "unknown"))] += 1
