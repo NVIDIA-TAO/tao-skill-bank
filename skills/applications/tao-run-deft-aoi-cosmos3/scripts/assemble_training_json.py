@@ -198,6 +198,7 @@ def assemble(
     if not merged:
         raise ValueError("real-mining assembly produced no training records")
     anchor_report: dict[str, Any] = {"enabled": False}
+    prior_anchor_rows = 0
     if anchor["enabled"]:
         anchor_source = pathlib.Path(anchor["source"]).expanduser().resolve(strict=True)
         anchor_candidates = load_records(anchor_source)
@@ -351,16 +352,42 @@ def assemble(
             for index, item in enumerate(provenance)
             if item["source_kind"] == ANCHOR_SOURCE_KIND
         ]
-        current_limit = min(len(current), materialized_rows - len(prior))
-        if current and current_limit == 0:
+        # Anchors are a share of the *materialized* corpus. Reserve their slots
+        # before filling current Mining so the max_rows / row_multiple trim is
+        # absorbed by the mined slice instead of silently deleting the anchors
+        # (2,304 mined rows + 256 anchors rounded to 2,304 used to keep zero).
+        anchor_slots = 0
+        if anchor["enabled"]:
+            wanted_total = int(round(materialized_rows * anchor["share"]))
+            anchor_slots = max(0, min(len(anchors_idx), wanted_total - prior_anchor_rows))
+        current_capacity = max(0, materialized_rows - len(prior))
+        current_limit = min(len(current), current_capacity - anchor_slots)
+        if current and current_limit <= 0:
             raise ValueError(
                 "training materialization cannot retain all previous iteration records "
                 "and include current Mining data under the configured cap"
             )
+        current_limit = max(0, current_limit)
+        leftover = materialized_rows - len(prior) - anchor_slots - current_limit
+        if leftover > 0:
+            extra_anchors = min(leftover, len(anchors_idx) - anchor_slots)
+            anchor_slots += extra_anchors
+            leftover -= extra_anchors
+            current_limit += min(leftover, len(current) - current_limit)
         selected = _task_balanced_indices(current, merged, current_limit)
-        anchor_limit = max(0, min(len(anchors_idx), materialized_rows - len(prior) - len(selected)))
-        selected.extend(anchors_idx[:anchor_limit])
+        selected.extend(anchors_idx[:anchor_slots])
         selected.extend(prior)
+        if anchor["enabled"]:
+            anchor_report["cap_reservation"] = {
+                "policy": "anchor_share_of_materialized_rows_v1",
+                "materialized_rows": materialized_rows,
+                "wanted_anchor_rows_total": int(round(materialized_rows * anchor["share"])),
+                "new_anchor_slots": anchor_slots,
+                "new_anchors_available": len(anchors_idx),
+                "current_rows_displaced_by_anchors": max(
+                    0, min(len(current), current_capacity) - current_limit
+                ),
+            }
         merged = [merged[index] for index in selected]
         provenance = [provenance[index] for index in selected]
         tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)

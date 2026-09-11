@@ -142,7 +142,7 @@ class AssemblerAnchorTests(unittest.TestCase):
             self.assertEqual(summary2["retained_previous_records"], 100)
             self.assertTrue(summary2["previous_fingerprints_subset"])
 
-    def test_cap_trims_anchors_before_current_rows_and_keeps_batch_multiple(self) -> None:
+    def test_cap_reserves_the_anchor_share_and_current_rows_absorb_the_trim(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             mined, source, kpi = self._corpus(root)
@@ -151,8 +151,51 @@ class AssemblerAnchorTests(unittest.TestCase):
                 None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=96, row_multiple=32
             )
             self.assertEqual(len(rows), 96)
-            self.assertEqual(summary["materialized_current_records"], 90)
-            self.assertEqual(summary["materialized_anchor_records"], 6)
+            # 90 mined + 10 anchors = 100 uncapped -> 96 rows: anchors keep round(96*0.1)=10 slots
+            self.assertEqual(summary["materialized_anchor_records"], 10)
+            self.assertEqual(summary["materialized_current_records"], 86)
+            self.assertEqual(summary["anchor"]["cap_reservation"]["current_rows_displaced_by_anchors"], 4)
+            self.assertAlmostEqual(summary["anchor"]["realized_share_rows"], 10 / 96, places=6)
+            kinds = [p["source_kind"] for p in summary["provenance"]]
+            self.assertEqual(kinds[:86], ["current_mining"] * 86)
+            self.assertEqual(kinds[86:], ["anchor_correct"] * 10)
+
+    def test_batch_multiple_rounding_does_not_delete_the_anchors(self) -> None:
+        # Regression: the mined slice alone was already a multiple of the global
+        # batch (2,304 rows), the anchors pushed the corpus to 2,560, rounding
+        # back to 2,304 dropped every anchor -> materialized_anchor_records 0.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, source, kpi = self._corpus(root)  # 90 mined rows, multiple of 30
+            cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None)
+            rows, summary = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, anchor_config=cfg, row_multiple=30
+            )
+            self.assertEqual(len(rows), 90)
+            self.assertEqual(summary["materialized_anchor_records"], 9)
+            self.assertEqual(summary["materialized_current_records"], 81)
+            self.assertAlmostEqual(summary["anchor"]["realized_share_rows"], 0.10, places=6)
+
+    def test_second_iteration_under_cap_keeps_prior_anchors_and_tops_up_to_the_share(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, source, kpi = self._corpus(root)
+            cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None)
+            rows, _ = assemble_training_json.assemble(None, mined, validation_paths=[], media_root=root, anchor_config=cfg)
+            previous = _write(root / "train1.jsonl", rows)  # 100 rows, 10 anchors
+            mined2 = _write(root / "mined2.jsonl", [_row(f"n-{i}", "Defect Detection", "mine") for i in range(90)])
+            rows2, summary2 = assemble_training_json.assemble(
+                previous, mined2, previous_sha256=assemble_training_json.sha256_file(previous),
+                validation_paths=[], media_root=root, anchor_config=cfg, max_rows=160, row_multiple=32,
+            )
+            self.assertEqual(len(rows2), 160)
+            self.assertEqual(summary2["retained_previous_records"], 100)
+            self.assertEqual(summary2["anchor"]["prior_anchor_rows"], 10)
+            self.assertEqual(summary2["materialized_anchor_records"], 6)  # round(160*0.1)=16 total
+            self.assertEqual(summary2["anchor"]["materialized_anchor_records_total"], 16)
+            self.assertEqual(summary2["materialized_current_records"], 54)
+            self.assertAlmostEqual(summary2["anchor"]["realized_share_rows"], 0.10, places=6)
+            self.assertEqual(sum(r.get("deft_anchor") is True for r in rows2), 16)
 
     def test_anchor_that_is_an_evaluation_target_is_skipped_not_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

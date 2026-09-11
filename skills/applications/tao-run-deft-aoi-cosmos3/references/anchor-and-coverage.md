@@ -51,8 +51,13 @@ option to the assembler, which is the only writer of the cumulative Train.
 - Skipped, never fatal: candidates whose id or fingerprint is already in the
   corpus (`already_in_corpus`) or whose atomic identity is an evaluation target
   (`evaluation_target`). Counts are in the manifest.
-- Materialization order under the row cap: current mined rows first, then
-  anchors, then all previous rows; anchors are trimmed before current rows.
+- Under `--max-rows` / `--row-multiple` the share is taken on the
+  *materialized* row count: `round(M · share)` anchor slots are reserved first
+  (minus anchors already retained from previous iterations), all previous rows
+  are kept, and current mined rows fill the rest in task-balanced order, so the
+  cap or global-batch rounding displaces mined rows, never the anchors
+  (`anchor.cap_reservation` reports the displaced count). Output order stays
+  current mined → anchors → previous rows.
 - Not combinable with the repetition blend (fail closed).
 
 Outputs: `assemble_summary.json` gains `materialized_anchor_records` and an
