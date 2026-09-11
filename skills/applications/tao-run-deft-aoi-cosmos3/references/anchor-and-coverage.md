@@ -51,6 +51,11 @@ option to the assembler, which is the only writer of the cumulative Train.
 - Skipped, never fatal: candidates whose id or fingerprint is already in the
   corpus (`already_in_corpus`) or whose atomic identity is an evaluation target
   (`evaluation_target`). Counts are in the manifest.
+- Anchors are not in the mining history, so a later iteration's miner may
+  select a retained anchor again as a plain row. The assembler de-duplicates
+  current mined rows by id and by marker-free content against the retained
+  corpus (`duplicates_skipped`); the retained marked copy stays, and ids in
+  `train.jsonl` remain unique for the canonical validator.
 - Under `--max-rows` / `--row-multiple` the share is taken on the
   *materialized* row count: `round(M · share)` anchor slots are reserved first
   (minus anchors already retained from previous iterations), all previous rows
