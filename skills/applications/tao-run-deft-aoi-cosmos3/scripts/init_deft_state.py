@@ -397,6 +397,33 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     split_contract = _bind_split_contract(
         getattr(args, "split_contract_summary", None), annotations
     )
+    anchor_share = float(getattr(args, "anchor_share", 0.0) or 0.0)
+    anchor_source = getattr(args, "anchor_source", None)
+    anchor_task_shares = getattr(args, "anchor_task_shares", None) or annotations["proxy"]
+    anchor_cap = float(getattr(args, "anchor_source_cap", 0.35) or 0.35)
+    if not 0.0 <= anchor_share < 1.0:
+        raise ValueError("--anchor-share must be in [0, 1)")
+    if anchor_share > 0.0:
+        if anchor_source is None:
+            raise ValueError("--anchor-share > 0 requires --anchor-source")
+        anchor_source = anchor_source.expanduser().resolve()
+        if not anchor_source.is_file():
+            raise ValueError(f"anchor source missing: {anchor_source}")
+        anchor_task_shares = pathlib.Path(anchor_task_shares).expanduser().resolve()
+        if not anchor_task_shares.is_file():
+            raise ValueError(f"anchor task-share source missing: {anchor_task_shares}")
+    anchor_config = {
+        "enabled": anchor_share > 0.0,
+        "share": anchor_share,
+        "unit": "rows",
+        "source": str(anchor_source) if anchor_share > 0.0 else None,
+        "source_sha256": _sha256(anchor_source) if anchor_share > 0.0 else None,
+        "task_shares_source": str(anchor_task_shares) if anchor_share > 0.0 else None,
+        "source_cap": anchor_cap,
+        "seed": getattr(args, "anchor_seed", None),
+        "owner": "assemble_training_json.py (assembler-only options: --anchor-share --anchor-source --anchor-task-shares --anchor-source-cap --anchor-seed)",
+        "combinable_with_repetition_blend": False,
+    }
     calibration_cohorts = derive_proxy_empty_rates(load_records(annotations["proxy"]))
     calibration_values = (
         args.single_image_calibration_max_empty,
@@ -656,6 +683,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "calibration_policy": "empty_and_few_box_from_mining",
                 "calibration_quota_contract": calibration_quota_contract,
                 "repetition_blend": repetition_blend,
+                "anchor": anchor_config,
                 "component_count_replay_per_iteration": args.component_count_replay_per_iteration,
                 "top_k_scope": (
                     "target" if mining_router_mode == "image_only" else "target_task"
@@ -807,6 +835,20 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--benchmark-annotations", type=pathlib.Path)
     parser.add_argument("--mining-annotations", type=pathlib.Path)
+    parser.add_argument(
+        "--anchor-share",
+        type=float,
+        default=0.0,
+        help=(
+            "Correct-row anchor share of the cumulative training corpus (rows). "
+            "0 (default) = off. Requires --anchor-source; task quotas follow the "
+            "KPI set's task row shares unless --anchor-task-shares is given."
+        ),
+    )
+    parser.add_argument("--anchor-source", type=pathlib.Path, help="anchor_candidates.jsonl from build_anchor_candidates.py")
+    parser.add_argument("--anchor-task-shares", type=pathlib.Path, help="Evaluation JSONL for anchor task quotas (default: the KPI set)")
+    parser.add_argument("--anchor-source-cap", type=float, default=0.35)
+    parser.add_argument("--anchor-seed", type=int)
     parser.add_argument(
         "--split-contract-summary",
         type=pathlib.Path,

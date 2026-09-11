@@ -47,9 +47,15 @@ def _bounded_allocate(capacities, weights, budget):
     return allocated
 
 
-def select_panel(candidates, benchmark, proxy, *, per_task=500, seed=17, media_root=None):
+def select_panel(candidates, benchmark, proxy, *, per_task=500, seed=17, media_root=None, per_task_override=None):
     if type(per_task) is not int or per_task <= 0 or type(seed) is not int:
         raise ValueError("per_task must be positive and seed must be an integer")
+    per_task_override = dict(per_task_override or {})
+    for task, value in per_task_override.items():
+        if task not in TASKS or type(value) is not int or value <= 0:
+            raise ValueError(f"per_task_override must map a supported task to a positive integer: {task!r}={value!r}")
+    def task_budget(task):
+        return per_task_override.get(task, per_task)
     target = Counter()
     blocked = {}
     for name, records in (("benchmark", benchmark), ("proxy", proxy)):
@@ -65,7 +71,7 @@ def select_panel(candidates, benchmark, proxy, *, per_task=500, seed=17, media_r
     for task in TASKS:
         counts = {key: count for key, count in target.items() if key[0] == task}
         if counts:
-            requested.update(integer_targets(counts, per_task))
+            requested.update(integer_targets(counts, task_budget(task)))
     reservoirs, available = defaultdict(list), Counter()
     exclusions, excluded_families = Counter(), Counter()
     seen = set()
@@ -149,12 +155,12 @@ def select_panel(candidates, benchmark, proxy, *, per_task=500, seed=17, media_r
                 for key, amount in allocation.items():
                     actual[key] = amount
                     selected.extend(item[2] for item in sorted(reservoirs[key], key=lambda item: (-item[0], item[1]))[:amount])
-        task_reports[task] = {"requested_rows": per_task, "selected_rows": accepted,
-            "shortage_rows": per_task - accepted,
+        task_reports[task] = {"requested_rows": task_budget(task), "selected_rows": accepted,
+            "shortage_rows": task_budget(task) - accepted,
             "family_cap_effective": family_cap, "family_cap_relaxed": cap_relaxed,
             "family_cap_reason": cap_reason, "family_cap_rounding": "ceil" if cap_relaxed else "floor",
             "reason": "no_benchmark_support" if not capacities else
-                      "insufficient_stratum_supply_or_family_cap" if accepted < per_task else None}
+                      "insufficient_stratum_supply_or_family_cap" if accepted < task_budget(task) else None}
     strata = []
     for key in sorted(target):
         task_total = sum(count for cell, count in target.items() if cell[0] == key[0])
@@ -172,7 +178,7 @@ def select_panel(candidates, benchmark, proxy, *, per_task=500, seed=17, media_r
             if record["id"] in ids or _image_keys(record, media_root) & paths:
                 raise ValueError("panel output is not benchmark/proxy disjoint")
     return selected, {"schema_version": "nvpaw_validation_panel_v1", "analysis_only": True,
-        "seed": seed, "per_task": per_task, "family_cap": 0.35,
+        "seed": seed, "per_task": per_task, "per_task_override": dict(sorted(per_task_override.items())), "family_cap": 0.35,
         "rows": len(selected), "exclusions": dict(sorted(exclusions.items())),
         "excluded_by_family": dict(sorted(excluded_families.items())),
         "tasks": task_reports, "strata": strata,
@@ -189,10 +195,18 @@ def main(argv=None):
     parser.add_argument("--media-root", type=pathlib.Path)
     parser.add_argument("--per-task", type=int, default=500)
     parser.add_argument("--seed", type=int, default=17)
+    parser.add_argument("--per-task-override", action="append", default=[], metavar="TASK=ROWS",
+                        help="Raise or lower the row target of one task, e.g. 'Ref_based Defect Detection=1500'. Repeatable.")
     args = parser.parse_args(argv)
     try:
+        overrides = {}
+        for item in args.per_task_override:
+            task, sep, value = item.rpartition("=")
+            if not sep or not task or not value.isdigit():
+                raise ValueError(f"--per-task-override expects TASK=ROWS, got {item!r}")
+            overrides[task] = int(value)
         selected, manifest = select_panel(read_rows(args.input), read_rows(args.benchmark), read_rows(args.proxy),
-            per_task=args.per_task, seed=args.seed,
+            per_task=args.per_task, seed=args.seed, per_task_override=overrides,
             media_root=args.media_root.expanduser().resolve() if args.media_root else None)
         manifest["inputs"] = {name: {"path": str(path.resolve()), "sha256": sha256_file(path)}
                               for name, path in (("manifest", args.input), ("benchmark", args.benchmark), ("proxy", args.proxy))}

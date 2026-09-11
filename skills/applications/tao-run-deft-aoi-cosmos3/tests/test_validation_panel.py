@@ -134,3 +134,29 @@ class ValidationPanelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PerTaskOverrideTests(unittest.TestCase):
+    def test_override_raises_one_task_and_records_it(self):
+        import build_validation_panel as panel
+        base = panel.select_panel
+        # reuse the module's own fixture helpers if present; otherwise build a tiny two-task benchmark
+        try:
+            from tests.test_validation_panel import fixture  # type: ignore
+        except Exception:
+            fixture = None
+        if fixture is None:
+            def _row(i, task, ds):
+                return {"id": f"{ds}-{task}-{i}", "task_type": task, "dataset": ds,
+                        "messages": [{"role": "user", "content": [{"type": "image", "image": f"images/{ds}/{i}.png", "min_pixels": 1, "max_pixels": 1}, {"type": "text", "text": "q"}]},
+                                     {"role": "assistant", "content": [{"type": "text", "text": "A"}]}]}
+            bench = [_row(i, "Component Classification", f"fam{i%3}") for i in range(30)]
+            cands = [_row(100 + i, "Component Classification", f"fam{i%3}") for i in range(300)]
+            sel_a, man_a = base(cands, bench, [], per_task=30, seed=17)
+            sel_b, man_b = base(cands, bench, [], per_task=30, seed=17, per_task_override={"Component Classification": 90})
+            self.assertEqual(len(sel_a), 30)
+            self.assertEqual(len(sel_b), 90)
+            self.assertEqual(man_b["tasks"]["Component Classification"]["requested_rows"], 90)
+            self.assertEqual(man_b["per_task_override"], {"Component Classification": 90})
+            with self.assertRaises(ValueError):
+                base(cands, bench, [], per_task=30, seed=17, per_task_override={"Nope": 5})

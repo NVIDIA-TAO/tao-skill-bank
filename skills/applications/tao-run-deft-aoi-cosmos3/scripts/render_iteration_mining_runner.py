@@ -33,6 +33,11 @@ _ASSEMBLER_ONLY_VALUES = {
     "--repetition-share-gap-tolerance",
     "--repetition-explicit-multiplier",
     "--repetition-seed",
+    "--anchor-share",
+    "--anchor-source",
+    "--anchor-task-shares",
+    "--anchor-source-cap",
+    "--anchor-seed",
 }
 
 # Optional upstream commands execute in dependency order. Only embedding-input
@@ -101,9 +106,9 @@ def _partition_materialization_arguments(
             else:
                 index += 1
             continue
-        if value.startswith(("--repetition-", "--no-repetition-")):
+        if value.startswith(("--repetition-", "--no-repetition-", "--anchor-")):
             raise ValueError(
-                f"unsupported repetition materialization option {value!r}"
+                f"unsupported materialization option {value!r}"
             )
         selector.append(value)
         index += 1
@@ -242,6 +247,9 @@ def build_plan(
                 value.startswith("--repetition-")
                 and value != "--no-repetition-blend"
                 for value in selector_argv
+            ),
+            "anchor_controls_owned_by_assembler": not any(
+                value.startswith("--anchor-") for value in selector_argv
             ),
         },
     }

@@ -56,7 +56,7 @@ another workspace with the same contract:
 ```text
 annotations/mining.jsonl
 annotations/benchmark.jsonl
-annotations/proxy_kpi.jsonl   # default KPI/RCCA set; override: preflight.md step 3
+annotations/proxy_kpi.jsonl   # default KPI set
 eval/calculate_f1_metrics.py
 models/Cosmos3-Nano-VLM/
 specs/train_spec.toml
@@ -244,6 +244,7 @@ so the blend runs exactly once over previous plus new rows. The assembler
 writes the schema-v2 bound `repetition_blend_manifest.json`, and the final
 `defect_detection_quota_manifest_v2` carries that cumulative blend while
 preserving the selector's disabled current-only blend under `current_selection`.
+Anchors: `references/anchor-and-coverage.md`.
 
 ## Train contract
 

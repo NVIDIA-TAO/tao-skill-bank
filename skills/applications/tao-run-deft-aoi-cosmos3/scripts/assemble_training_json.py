@@ -14,6 +14,15 @@ import sys
 from collections import Counter
 from typing import Any
 
+from anchor_rows import (
+    ANCHOR_MARK,
+    ANCHOR_SOURCE_KIND,
+    anchor_target_rows,
+    select_anchors,
+    task_shares_from_jsonl,
+    validate_anchor_config,
+    write_manifest as write_anchor_manifest,
+)
 from atomic_samples import logical_record_identity, sample_from_record
 from defect_detection_ablation import bind_cumulative_manifest
 from nvpaw_annotations import TASK_SPECS
@@ -95,7 +104,12 @@ def assemble(
     repetition_seed: int | None = None,
     deficit_weight_source: str | None = None,
     media_root: pathlib.Path | None = None,
+    anchor_config: dict[str, Any] | None = None,
+    anchor_seed: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    anchor = anchor_config or validate_anchor_config(None, None, None, None)
+    if anchor["enabled"] and (repetition_config or {}).get("enabled"):
+        raise ValueError("correct-row anchors and the repetition blend cannot be combined")
     for name, value in (("max_rows", max_rows), ("row_multiple", row_multiple)):
         if value is not None and (type(value) is not int or value <= 0):
             raise ValueError(f"{name} must be a positive integer")
@@ -183,6 +197,63 @@ def assemble(
             )
     if not merged:
         raise ValueError("real-mining assembly produced no training records")
+    anchor_report: dict[str, Any] = {"enabled": False}
+    if anchor["enabled"]:
+        anchor_source = pathlib.Path(anchor["source"]).expanduser().resolve(strict=True)
+        anchor_candidates = load_records(anchor_source)
+        corpus_ids = {str(record.get("id")) for record in merged}
+        prior_anchor_rows = sum(
+            1 for record, item in zip(merged, provenance)
+            if item["source_kind"] == "previous_iteration" and record.get(ANCHOR_MARK) is True
+        )
+        non_anchor_rows = len(merged) - prior_anchor_rows
+        anchor_total, anchor_new = anchor_target_rows(anchor["share"], non_anchor_rows, prior_anchor_rows)
+        shares = task_shares_from_jsonl(pathlib.Path(anchor["task_shares"]))
+
+        def excluded(record: dict[str, Any]) -> str | None:
+            if str(record.get("id")) in corpus_ids or _fingerprint(record) in seen:
+                return "already_in_corpus"
+            sample_identity = identity(record, f"{anchor_source}:{record.get('id')}")
+            if sample_identity in evaluation_targets:
+                return "evaluation_target"
+            return None
+
+        anchors, selection = select_anchors(
+            anchor_candidates,
+            new_rows=anchor_new,
+            task_shares=shares,
+            source_cap=anchor["source_cap"],
+            seed=17 if anchor_seed is None else anchor_seed,
+            is_excluded=excluded,
+        )
+        for index, picked in enumerate(anchors):
+            record = {**picked, ANCHOR_MARK: True}
+            seen.add(_fingerprint(record))
+            corpus_ids.add(str(record.get("id")))
+            merged.append(record)
+            tasks[str(record.get("task_type", "unknown"))] += 1
+            provenance.append(
+                {
+                    "source_kind": ANCHOR_SOURCE_KIND,
+                    "source": str(anchor_source),
+                    "source_index": index,
+                    "id": record.get("id"),
+                    "purpose_tags": ["anchor"],
+                }
+            )
+        anchor_report = {
+            "enabled": True,
+            "unit": anchor["unit"],
+            "requested_share": anchor["share"],
+            "source": str(anchor_source),
+            "source_sha256": sha256_file(anchor_source),
+            "task_shares_source": anchor["task_shares"],
+            "task_shares": shares,
+            "prior_anchor_rows": prior_anchor_rows,
+            "non_anchor_rows": non_anchor_rows,
+            "target_anchor_rows_total": anchor_total,
+            "selection": selection,
+        }
     uncapped_records = len(merged)
     repetition_manifest: dict[str, Any] | None = None
     selection_policy = "monotonic_current_fill_task_balanced_v1"
@@ -275,6 +346,11 @@ def assemble(
                 "training materialization cannot retain all previous iteration records: "
                 f"previous={len(prior)}, materialized={materialized_rows}"
             )
+        anchors_idx = [
+            index
+            for index, item in enumerate(provenance)
+            if item["source_kind"] == ANCHOR_SOURCE_KIND
+        ]
         current_limit = min(len(current), materialized_rows - len(prior))
         if current and current_limit == 0:
             raise ValueError(
@@ -282,6 +358,8 @@ def assemble(
                 "and include current Mining data under the configured cap"
             )
         selected = _task_balanced_indices(current, merged, current_limit)
+        anchor_limit = max(0, min(len(anchors_idx), materialized_rows - len(prior) - len(selected)))
+        selected.extend(anchors_idx[:anchor_limit])
         selected.extend(prior)
         merged = [merged[index] for index in selected]
         provenance = [provenance[index] for index in selected]
@@ -364,6 +442,20 @@ def assemble(
         "materialized_current_records": sum(
             item["source_kind"] == "current_mining" for item in provenance
         ),
+        "materialized_anchor_records": sum(
+            item["source_kind"] == ANCHOR_SOURCE_KIND for item in provenance
+        ),
+        "anchor": {
+            **anchor_report,
+            "materialized_anchor_records_total": sum(
+                item["source_kind"] == ANCHOR_SOURCE_KIND for item in provenance
+            ) + (anchor_report.get("prior_anchor_rows", 0) if anchor_report.get("enabled") else 0),
+            "realized_share_rows": (
+                (sum(item["source_kind"] == ANCHOR_SOURCE_KIND for item in provenance)
+                 + anchor_report.get("prior_anchor_rows", 0)) / len(merged)
+                if anchor_report.get("enabled") and merged else 0.0
+            ),
+        },
         "tasks": dict(sorted(tasks.items())),
         "warnings": list(repetition_manifest["warnings"]),
         "provenance": provenance,
@@ -467,6 +559,12 @@ def main(argv: list[str] | None = None) -> int:
         metavar="TASK=MULTIPLIER",
     )
     parser.add_argument("--repetition-seed", type=int)
+    parser.add_argument("--anchor-share", type=float, help="Correct-row anchor share of the cumulative corpus (rows); 0/absent = off.")
+    parser.add_argument("--anchor-source", type=pathlib.Path, help="anchor_candidates.jsonl from build_anchor_candidates.py")
+    parser.add_argument("--anchor-task-shares", type=pathlib.Path, help="Evaluation JSONL whose task row shares set the anchor task quotas (the KPI set).")
+    parser.add_argument("--anchor-source-cap", type=float, help="Max share of one dataset inside a task's anchors (default 0.35).")
+    parser.add_argument("--anchor-seed", type=int)
+    parser.add_argument("--anchor-manifest", type=pathlib.Path, help="Defaults to anchor_manifest.json beside --output.")
     parser.add_argument(
         "--repetition-manifest",
         type=pathlib.Path,
@@ -510,6 +608,9 @@ def main(argv: list[str] | None = None) -> int:
             repetition_seed = gap_summary.get("seed")
         if repetition_seed is None:
             repetition_seed = 17
+        anchor_config = validate_anchor_config(
+            args.anchor_share, args.anchor_source, args.anchor_task_shares, args.anchor_source_cap
+        )
         rows, summary = assemble(
             args.previous_jsonl,
             args.mined_jsonl,
@@ -522,9 +623,16 @@ def main(argv: list[str] | None = None) -> int:
             repetition_seed=repetition_seed,
             deficit_weight_source=deficit_weight_source,
             media_root=args.media_root,
+            anchor_config=anchor_config,
+            anchor_seed=args.anchor_seed,
         )
         _write_jsonl(args.output, rows)
         summary = bind_summary(summary, args.output)
+        if anchor_config["enabled"]:
+            write_anchor_manifest(
+                args.anchor_manifest or args.output.with_name("anchor_manifest.json"),
+                {**summary["anchor"], "training_jsonl": summary["training_jsonl"]},
+            )
         repetition_manifest = bind_repetition_manifest(
             summary["repetition_blend"], args.output
         )
