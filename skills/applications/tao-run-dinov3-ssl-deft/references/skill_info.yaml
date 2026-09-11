@@ -1,0 +1,22 @@
+# The DS image owns the controller and already includes TAO PyTorch/Core.
+container_image: tao_toolkit.data_services
+component_images:
+  pytorch: tao_toolkit.pyt
+  data_services: tao_toolkit.data_services
+actions:
+  run:
+    command: >-
+      python -m nvidia_tao_ds.mining.dinov3.workflow
+      run {config_path}
+    mode: config
+    config_format: yaml
+    inputs:
+      config: {type: file, required: true}
+    outputs:
+      state: {path: state.json, type: file}
+      events: {path: events.jsonl, type: file}
+      final_model: {path: final_model.json, type: file}
+      report: {path: report.html, type: file}
+    upload_excludes:
+      - jobs/*.log
+data_format: versioned parquet manifests
