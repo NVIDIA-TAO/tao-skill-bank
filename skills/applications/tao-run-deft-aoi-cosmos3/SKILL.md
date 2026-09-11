@@ -244,7 +244,7 @@ so the blend runs exactly once over previous plus new rows. The assembler
 writes the schema-v2 bound `repetition_blend_manifest.json`, and the final
 `defect_detection_quota_manifest_v2` carries that cumulative blend while
 preserving the selector's disabled current-only blend under `current_selection`.
-Anchors: `references/anchor-and-coverage.md`.
+Anchors/coverage blend: `references/anchor-and-coverage.md`.
 
 ## Train contract
 

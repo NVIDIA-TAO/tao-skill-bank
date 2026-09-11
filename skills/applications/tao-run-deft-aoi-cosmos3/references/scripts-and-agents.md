@@ -30,6 +30,7 @@
 | `render_iteration_mining_runner.py` | Generate the immutable selector-to-assembler plan; selector output is always `data/mined.jsonl`, never cumulative Train. |
 | `assemble_training_json.py` | Solely assemble monotonic cumulative training JSONL, bind previous path/hash/fingerprint lineage, bind the final quota manifest, and optionally apply the recorded repetition blend or add launch-recorded correct-row anchors (`--anchor-*`, see `anchor-and-coverage.md`). |
 | `anchor_rows.py` / `build_anchor_candidates.py` | Correct-row anchor selection (task quotas from the KPI set, per-dataset cap, seed/id hash, corpus/evaluation exclusion) and the offline candidate builder that streams the canonical Mining JSONL against a scored-pool id list. Off unless `--anchor-share` is launch-recorded. |
+| `coverage_rows.py` / `build_coverage_candidates.py` | Cross-dataset coverage blend (`plain` uniform pool rows or `residual` scored-wrong rows with tagged correct-row fallback): floor-first even round-robin over (task, dataset) cells, joint share solving with anchors, fail-closed floor check against the eventual budget, and the offline per-mode candidate builder. Off unless `--coverage-blend-share` is launch-recorded. |
 | `validate_sharegpt.py` | Validate canonical NVPAW JSONL; the legacy filename is retained for CLI compatibility. |
 | `validate_split_contract.py` | Prove evaluation isolation, real-mining eligibility, prior-row retention, and Benchmark hash. |
 | `render_report.py` | Render the durable state-backed HTML report. |

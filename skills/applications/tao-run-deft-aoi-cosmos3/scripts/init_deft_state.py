@@ -424,6 +424,38 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         "owner": "assemble_training_json.py (assembler-only options: --anchor-share --anchor-source --anchor-task-shares --anchor-source-cap --anchor-seed)",
         "combinable_with_repetition_blend": False,
     }
+    coverage_share = float(getattr(args, "coverage_blend_share", 0.0) or 0.0)
+    coverage_mode = getattr(args, "coverage_blend_mode", None)
+    coverage_source = getattr(args, "coverage_blend_source", None)
+    coverage_floor = getattr(args, "coverage_blend_min_rows_per_dataset", None)
+    coverage_floor = 8 if coverage_floor is None else int(coverage_floor)
+    if not 0.0 <= coverage_share < 1.0:
+        raise ValueError("--coverage-blend-share must be in [0, 1)")
+    if coverage_floor < 0:
+        raise ValueError("--coverage-blend-min-rows-per-dataset must be >= 0")
+    if coverage_share > 0.0:
+        if coverage_mode not in ("plain", "residual"):
+            raise ValueError("--coverage-blend-share > 0 requires --coverage-blend-mode plain|residual")
+        if coverage_source is None:
+            raise ValueError("--coverage-blend-share > 0 requires --coverage-blend-source")
+        coverage_source = coverage_source.expanduser().resolve()
+        if not coverage_source.is_file():
+            raise ValueError(f"coverage blend source missing: {coverage_source}")
+        if anchor_share + coverage_share >= 1.0:
+            raise ValueError("--anchor-share plus --coverage-blend-share must be below 1")
+    coverage_config = {
+        "enabled": coverage_share > 0.0,
+        "share": coverage_share,
+        "unit": "rows",
+        "mode": coverage_mode if coverage_share > 0.0 else None,
+        "source": str(coverage_source) if coverage_share > 0.0 else None,
+        "source_sha256": _sha256(coverage_source) if coverage_share > 0.0 else None,
+        "min_rows_per_dataset": coverage_floor,
+        "seed": getattr(args, "coverage_blend_seed", None),
+        "owner": "assemble_training_json.py (assembler-only options: --coverage-blend-share --coverage-blend-mode --coverage-blend-source --coverage-blend-min-rows-per-dataset --coverage-blend-seed)",
+        "combinable_with_repetition_blend": False,
+        "combinable_with_anchors": True,
+    }
     calibration_cohorts = derive_proxy_empty_rates(load_records(annotations["proxy"]))
     calibration_values = (
         args.single_image_calibration_max_empty,
@@ -684,6 +716,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "calibration_quota_contract": calibration_quota_contract,
                 "repetition_blend": repetition_blend,
                 "anchor": anchor_config,
+                "coverage_blend": coverage_config,
                 "component_count_replay_per_iteration": args.component_count_replay_per_iteration,
                 "top_k_scope": (
                     "target" if mining_router_mode == "image_only" else "target_task"
@@ -849,6 +882,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--anchor-task-shares", type=pathlib.Path, help="Evaluation JSONL for anchor task quotas (default: the KPI set)")
     parser.add_argument("--anchor-source-cap", type=float, default=0.35)
     parser.add_argument("--anchor-seed", type=int)
+    parser.add_argument(
+        "--coverage-blend-share",
+        type=float,
+        default=0.0,
+        help=(
+            "Cross-dataset coverage share of the cumulative training corpus (rows). "
+            "0 (default) = off. Requires --coverage-blend-mode and --coverage-blend-source."
+        ),
+    )
+    parser.add_argument("--coverage-blend-mode", choices=("plain", "residual"))
+    parser.add_argument("--coverage-blend-source", type=pathlib.Path, help="coverage_candidates_<mode>.jsonl from build_coverage_candidates.py")
+    parser.add_argument("--coverage-blend-min-rows-per-dataset", type=int, default=8)
+    parser.add_argument("--coverage-blend-seed", type=int)
     parser.add_argument(
         "--split-contract-summary",
         type=pathlib.Path,

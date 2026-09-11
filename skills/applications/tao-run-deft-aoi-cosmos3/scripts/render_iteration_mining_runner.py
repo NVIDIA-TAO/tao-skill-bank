@@ -38,6 +38,11 @@ _ASSEMBLER_ONLY_VALUES = {
     "--anchor-task-shares",
     "--anchor-source-cap",
     "--anchor-seed",
+    "--coverage-blend-share",
+    "--coverage-blend-mode",
+    "--coverage-blend-source",
+    "--coverage-blend-min-rows-per-dataset",
+    "--coverage-blend-seed",
 }
 
 # Optional upstream commands execute in dependency order. Only embedding-input
@@ -106,7 +111,7 @@ def _partition_materialization_arguments(
             else:
                 index += 1
             continue
-        if value.startswith(("--repetition-", "--no-repetition-", "--anchor-")):
+        if value.startswith(("--repetition-", "--no-repetition-", "--anchor-", "--coverage-blend-")):
             raise ValueError(
                 f"unsupported materialization option {value!r}"
             )
@@ -250,6 +255,9 @@ def build_plan(
             ),
             "anchor_controls_owned_by_assembler": not any(
                 value.startswith("--anchor-") for value in selector_argv
+            ),
+            "coverage_controls_owned_by_assembler": not any(
+                value.startswith("--coverage-blend-") for value in selector_argv
             ),
         },
     }

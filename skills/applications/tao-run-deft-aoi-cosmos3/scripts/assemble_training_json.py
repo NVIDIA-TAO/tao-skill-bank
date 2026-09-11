@@ -17,13 +17,23 @@ from typing import Any
 from anchor_rows import (
     ANCHOR_MARK,
     ANCHOR_SOURCE_KIND,
-    anchor_target_rows,
     select_anchors,
     task_shares_from_jsonl,
     validate_anchor_config,
     write_manifest as write_anchor_manifest,
 )
 from atomic_samples import logical_record_identity, sample_from_record
+from coverage_rows import (
+    COVERAGE_MARK,
+    COVERAGE_SOURCE_KIND,
+    POOL_STATUS_KEY,
+    cell_of,
+    check_floor_budget,
+    joint_targets,
+    select_coverage,
+    validate_coverage_config,
+    write_manifest as write_coverage_manifest,
+)
 from defect_detection_ablation import bind_cumulative_manifest
 from nvpaw_annotations import TASK_SPECS
 from repetition_blend import (
@@ -91,6 +101,32 @@ def _task_balanced_indices(
     return selected
 
 
+def _exposure_rows(
+    records: list[dict[str, Any]], provenance: list[dict[str, Any]], *, prior_anchor_rows: int, prior_coverage_rows: int
+) -> dict[str, Any]:
+    """Per-purpose row ledger of the materialized corpus (rows; tokens are not measured here)."""
+    kinds = Counter(item["source_kind"] for item in provenance)
+    previous_total = kinds.get("previous_iteration", 0)
+    anchor_total = kinds.get(ANCHOR_SOURCE_KIND, 0) + prior_anchor_rows
+    coverage_total = kinds.get(COVERAGE_SOURCE_KIND, 0) + prior_coverage_rows
+    total = len(records)
+    return {
+        "unit": "rows",
+        "current_mining": kinds.get("current_mining", 0),
+        "previous_mined": max(0, previous_total - prior_anchor_rows - prior_coverage_rows),
+        "previous_anchor": prior_anchor_rows,
+        "previous_coverage": prior_coverage_rows,
+        "anchor_new": kinds.get(ANCHOR_SOURCE_KIND, 0),
+        "coverage_new": kinds.get(COVERAGE_SOURCE_KIND, 0),
+        "repetition_copies": kinds.get("repetition", 0),
+        "total": total,
+        "shares": {
+            "anchor": anchor_total / total if total else 0.0,
+            "coverage": coverage_total / total if total else 0.0,
+        },
+    }
+
+
 def assemble(
     previous_path: pathlib.Path | None,
     mined_path: pathlib.Path,
@@ -106,10 +142,17 @@ def assemble(
     media_root: pathlib.Path | None = None,
     anchor_config: dict[str, Any] | None = None,
     anchor_seed: int | None = None,
+    coverage_config: dict[str, Any] | None = None,
+    coverage_seed: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     anchor = anchor_config or validate_anchor_config(None, None, None, None)
+    coverage = coverage_config or validate_coverage_config(None, None, None, None)
     if anchor["enabled"] and (repetition_config or {}).get("enabled"):
         raise ValueError("correct-row anchors and the repetition blend cannot be combined")
+    if coverage["enabled"] and (repetition_config or {}).get("enabled"):
+        raise ValueError("the coverage blend and the repetition blend cannot be combined")
+    if anchor["share"] + coverage["share"] >= 1.0:
+        raise ValueError("anchor share plus coverage blend share must be below 1")
     for name, value in (("max_rows", max_rows), ("row_multiple", row_multiple)):
         if value is not None and (type(value) is not int or value <= 0):
             raise ValueError(f"{name} must be a positive integer")
@@ -198,34 +241,46 @@ def assemble(
     if not merged:
         raise ValueError("real-mining assembly produced no training records")
     anchor_report: dict[str, Any] = {"enabled": False}
-    prior_anchor_rows = 0
+    coverage_report: dict[str, Any] = {"enabled": False}
+    # Slices carried over from previous iterations (inert top-level markers).
+    prior_anchor_rows = sum(
+        1 for record, item in zip(merged, provenance)
+        if item["source_kind"] == "previous_iteration" and record.get(ANCHOR_MARK) is True
+    )
+    prior_coverage_rows = sum(
+        1 for record, item in zip(merged, provenance)
+        if item["source_kind"] == "previous_iteration" and record.get(COVERAGE_MARK) is True
+    )
+    base_rows = len(merged) - prior_anchor_rows - prior_coverage_rows
+    slice_targets = joint_targets(
+        base_rows,
+        {"anchor": anchor["share"] if anchor["enabled"] else 0.0,
+         "coverage": coverage["share"] if coverage["enabled"] else 0.0},
+        {"anchor": prior_anchor_rows, "coverage": prior_coverage_rows},
+    )
+    corpus_ids = {str(record.get("id")) for record in merged}
+
+    def excluded(record: dict[str, Any], source: pathlib.Path) -> str | None:
+        if str(record.get("id")) in corpus_ids or _fingerprint(record) in seen:
+            return "already_in_corpus"
+        sample_identity = identity(record, f"{source}:{record.get('id')}")
+        if sample_identity in evaluation_targets:
+            return "evaluation_target"
+        return None
+
     if anchor["enabled"]:
         anchor_source = pathlib.Path(anchor["source"]).expanduser().resolve(strict=True)
         anchor_candidates = load_records(anchor_source)
-        corpus_ids = {str(record.get("id")) for record in merged}
-        prior_anchor_rows = sum(
-            1 for record, item in zip(merged, provenance)
-            if item["source_kind"] == "previous_iteration" and record.get(ANCHOR_MARK) is True
-        )
         non_anchor_rows = len(merged) - prior_anchor_rows
-        anchor_total, anchor_new = anchor_target_rows(anchor["share"], non_anchor_rows, prior_anchor_rows)
+        anchor_total, anchor_new = slice_targets["anchor"]
         shares = task_shares_from_jsonl(pathlib.Path(anchor["task_shares"]))
-
-        def excluded(record: dict[str, Any]) -> str | None:
-            if str(record.get("id")) in corpus_ids or _fingerprint(record) in seen:
-                return "already_in_corpus"
-            sample_identity = identity(record, f"{anchor_source}:{record.get('id')}")
-            if sample_identity in evaluation_targets:
-                return "evaluation_target"
-            return None
-
         anchors, selection = select_anchors(
             anchor_candidates,
             new_rows=anchor_new,
             task_shares=shares,
             source_cap=anchor["source_cap"],
             seed=17 if anchor_seed is None else anchor_seed,
-            is_excluded=excluded,
+            is_excluded=lambda record: excluded(record, anchor_source),
         )
         for index, picked in enumerate(anchors):
             record = {**picked, ANCHOR_MARK: True}
@@ -252,8 +307,65 @@ def assemble(
             "task_shares": shares,
             "prior_anchor_rows": prior_anchor_rows,
             "non_anchor_rows": non_anchor_rows,
+            "base_rows": base_rows,
             "target_anchor_rows_total": anchor_total,
             "selection": selection,
+        }
+    if coverage["enabled"]:
+        coverage_source = pathlib.Path(coverage["source"]).expanduser().resolve(strict=True)
+        coverage_candidates = load_records(coverage_source)
+        coverage_total, coverage_new = slice_targets["coverage"]
+        prior_cells: Counter[tuple[str, str]] = Counter(
+            cell_of(record) for record, item in zip(merged, provenance)
+            if item["source_kind"] == "previous_iteration" and record.get(COVERAGE_MARK) is True
+        )
+        eventual_budget = None
+        if max_rows is not None:
+            cap_rows = max_rows - (max_rows % row_multiple if row_multiple else 0)
+            eventual_budget = int(round(cap_rows * coverage["share"]))
+        picked, coverage_selection = select_coverage(
+            coverage_candidates,
+            new_rows=coverage_new,
+            mode=coverage["mode"],
+            min_rows_per_cell=coverage["min_rows_per_cell"],
+            seed=17 if coverage_seed is None else coverage_seed,
+            is_excluded=lambda record: excluded(record, coverage_source),
+            prior_cell_counts=dict(prior_cells),
+        )
+        # Eligible cells (after corpus/evaluation exclusion) must fit the eventual budget under the cap.
+        floor_report = check_floor_budget(
+            int(coverage_selection["cells"]), coverage["min_rows_per_cell"], eventual_budget
+        )
+        for index, (candidate, is_fallback) in enumerate(picked):
+            record = {key: value for key, value in candidate.items() if key != POOL_STATUS_KEY}
+            record[COVERAGE_MARK] = True
+            seen.add(_fingerprint(record))
+            corpus_ids.add(str(record.get("id")))
+            merged.append(record)
+            tasks[str(record.get("task_type", "unknown"))] += 1
+            provenance.append(
+                {
+                    "source_kind": COVERAGE_SOURCE_KIND,
+                    "source": str(coverage_source),
+                    "source_index": index,
+                    "id": record.get("id"),
+                    "purpose_tags": ["coverage", "anchor"] if is_fallback else ["coverage"],
+                    "pool_status": str(candidate.get(POOL_STATUS_KEY) or "unscored"),
+                }
+            )
+        coverage_report = {
+            "enabled": True,
+            "unit": coverage["unit"],
+            "mode": coverage["mode"],
+            "requested_share": coverage["share"],
+            "source": str(coverage_source),
+            "source_sha256": sha256_file(coverage_source),
+            "min_rows_per_cell": coverage["min_rows_per_cell"],
+            "prior_coverage_rows": prior_coverage_rows,
+            "base_rows": base_rows,
+            "target_coverage_rows_total": coverage_total,
+            "floor_check": floor_report,
+            "selection": coverage_selection,
         }
     uncapped_records = len(merged)
     repetition_manifest: dict[str, Any] | None = None
@@ -356,27 +468,42 @@ def assemble(
         # before filling current Mining so the max_rows / row_multiple trim is
         # absorbed by the mined slice instead of silently deleting the anchors
         # (2,304 mined rows + 256 anchors rounded to 2,304 used to keep zero).
+        coverage_idx = [
+            index
+            for index, item in enumerate(provenance)
+            if item["source_kind"] == COVERAGE_SOURCE_KIND
+        ]
         anchor_slots = 0
+        coverage_slots = 0
         if anchor["enabled"]:
             wanted_total = int(round(materialized_rows * anchor["share"]))
             anchor_slots = max(0, min(len(anchors_idx), wanted_total - prior_anchor_rows))
+        if coverage["enabled"]:
+            wanted_coverage = int(round(materialized_rows * coverage["share"]))
+            coverage_slots = max(0, min(len(coverage_idx), wanted_coverage - prior_coverage_rows))
         current_capacity = max(0, materialized_rows - len(prior))
-        current_limit = min(len(current), current_capacity - anchor_slots)
+        current_limit = min(len(current), current_capacity - anchor_slots - coverage_slots)
         if current and current_limit <= 0:
             raise ValueError(
                 "training materialization cannot retain all previous iteration records "
                 "and include current Mining data under the configured cap"
             )
         current_limit = max(0, current_limit)
-        leftover = materialized_rows - len(prior) - anchor_slots - current_limit
+        leftover = materialized_rows - len(prior) - anchor_slots - coverage_slots - current_limit
         if leftover > 0:
             extra_anchors = min(leftover, len(anchors_idx) - anchor_slots)
             anchor_slots += extra_anchors
             leftover -= extra_anchors
+            extra_coverage = min(leftover, len(coverage_idx) - coverage_slots)
+            coverage_slots += extra_coverage
+            leftover -= extra_coverage
             current_limit += min(leftover, len(current) - current_limit)
         selected = _task_balanced_indices(current, merged, current_limit)
+        selected.extend(coverage_idx[:coverage_slots])
         selected.extend(anchors_idx[:anchor_slots])
         selected.extend(prior)
+        displaced_total = max(0, min(len(current), current_capacity) - current_limit)
+        anchor_displaced = min(anchor_slots, displaced_total) if coverage["enabled"] else displaced_total
         if anchor["enabled"]:
             anchor_report["cap_reservation"] = {
                 "policy": "anchor_share_of_materialized_rows_v1",
@@ -384,9 +511,16 @@ def assemble(
                 "wanted_anchor_rows_total": int(round(materialized_rows * anchor["share"])),
                 "new_anchor_slots": anchor_slots,
                 "new_anchors_available": len(anchors_idx),
-                "current_rows_displaced_by_anchors": max(
-                    0, min(len(current), current_capacity) - current_limit
-                ),
+                "current_rows_displaced_by_anchors": anchor_displaced,
+            }
+        if coverage["enabled"]:
+            coverage_report["cap_reservation"] = {
+                "policy": "coverage_share_of_materialized_rows_v1",
+                "materialized_rows": materialized_rows,
+                "wanted_coverage_rows_total": int(round(materialized_rows * coverage["share"])),
+                "new_coverage_slots": coverage_slots,
+                "new_coverage_available": len(coverage_idx),
+                "current_rows_displaced_by_coverage": max(0, displaced_total - anchor_displaced),
             }
         merged = [merged[index] for index in selected]
         provenance = [provenance[index] for index in selected]
@@ -483,6 +617,36 @@ def assemble(
                 if anchor_report.get("enabled") and merged else 0.0
             ),
         },
+        "materialized_coverage_records": sum(
+            item["source_kind"] == COVERAGE_SOURCE_KIND for item in provenance
+        ),
+        "coverage_blend": {
+            **coverage_report,
+            "materialized_coverage_records_total": sum(
+                item["source_kind"] == COVERAGE_SOURCE_KIND for item in provenance
+            ) + (coverage_report.get("prior_coverage_rows", 0) if coverage_report.get("enabled") else 0),
+            "materialized_fallback_correct_records": sum(
+                item["source_kind"] == COVERAGE_SOURCE_KIND and "anchor" in item.get("purpose_tags", [])
+                for item in provenance
+            ),
+            "realized_share_rows": (
+                (sum(item["source_kind"] == COVERAGE_SOURCE_KIND for item in provenance)
+                 + coverage_report.get("prior_coverage_rows", 0)) / len(merged)
+                if coverage_report.get("enabled") and merged else 0.0
+            ),
+            "materialized_per_cell_cumulative": (
+                {
+                    f"{cell[0]}|{cell[1]}": count
+                    for cell, count in sorted(
+                        Counter(cell_of(record) for record in merged if record.get(COVERAGE_MARK) is True).items()
+                    )
+                }
+                if coverage_report.get("enabled") else {}
+            ),
+        },
+        "exposure_rows": _exposure_rows(
+            merged, provenance, prior_anchor_rows=prior_anchor_rows, prior_coverage_rows=prior_coverage_rows
+        ),
         "tasks": dict(sorted(tasks.items())),
         "warnings": list(repetition_manifest["warnings"]),
         "provenance": provenance,
@@ -592,6 +756,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--anchor-source-cap", type=float, help="Max share of one dataset inside a task's anchors (default 0.35).")
     parser.add_argument("--anchor-seed", type=int)
     parser.add_argument("--anchor-manifest", type=pathlib.Path, help="Defaults to anchor_manifest.json beside --output.")
+    parser.add_argument("--coverage-blend-share", type=float, help="Cross-dataset coverage share of the cumulative corpus (rows); 0/absent = off.")
+    parser.add_argument("--coverage-blend-mode", choices=("plain", "residual"), help="plain = uniform pool rows; residual = scored-wrong rows with correct-row fallback.")
+    parser.add_argument("--coverage-blend-source", type=pathlib.Path, help="coverage_candidates_<mode>.jsonl from build_coverage_candidates.py")
+    parser.add_argument("--coverage-blend-min-rows-per-dataset", type=int, help="Per (task, dataset) floor K checked against the eventual budget under the row cap (default 8).")
+    parser.add_argument("--coverage-blend-seed", type=int)
+    parser.add_argument("--coverage-blend-manifest", type=pathlib.Path, help="Defaults to coverage_blend_manifest.json beside --output.")
     parser.add_argument(
         "--repetition-manifest",
         type=pathlib.Path,
@@ -638,6 +808,12 @@ def main(argv: list[str] | None = None) -> int:
         anchor_config = validate_anchor_config(
             args.anchor_share, args.anchor_source, args.anchor_task_shares, args.anchor_source_cap
         )
+        coverage_config = validate_coverage_config(
+            args.coverage_blend_share,
+            args.coverage_blend_mode,
+            args.coverage_blend_source,
+            args.coverage_blend_min_rows_per_dataset,
+        )
         rows, summary = assemble(
             args.previous_jsonl,
             args.mined_jsonl,
@@ -652,6 +828,8 @@ def main(argv: list[str] | None = None) -> int:
             media_root=args.media_root,
             anchor_config=anchor_config,
             anchor_seed=args.anchor_seed,
+            coverage_config=coverage_config,
+            coverage_seed=args.coverage_blend_seed,
         )
         _write_jsonl(args.output, rows)
         summary = bind_summary(summary, args.output)
@@ -659,6 +837,12 @@ def main(argv: list[str] | None = None) -> int:
             write_anchor_manifest(
                 args.anchor_manifest or args.output.with_name("anchor_manifest.json"),
                 {**summary["anchor"], "training_jsonl": summary["training_jsonl"]},
+            )
+        if coverage_config["enabled"]:
+            write_coverage_manifest(
+                args.coverage_blend_manifest or args.output.with_name("coverage_blend_manifest.json"),
+                {**summary["coverage_blend"], "exposure_rows": summary["exposure_rows"],
+                 "training_jsonl": summary["training_jsonl"]},
             )
         repetition_manifest = bind_repetition_manifest(
             summary["repetition_blend"], args.output
