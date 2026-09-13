@@ -391,12 +391,26 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         .expanduser()
         .resolve(),
     }
+    calibration_explicit = getattr(args, "calibration_annotations", None) is not None
+    calibration_path = (
+        args.calibration_annotations.expanduser().resolve()
+        if calibration_explicit
+        else annotations["mining"]
+    )
     missing = [f"{role}={path}" for role, path in annotations.items() if not path.is_file()]
+    if calibration_explicit and not calibration_path.is_file():
+        missing.append(f"calibration={calibration_path}")
     if missing:
         raise ValueError("annotation file(s) missing: " + ", ".join(missing))
+    bind_roles = dict(annotations)
+    if calibration_explicit and calibration_path != annotations["mining"]:
+        # A calibration pool that differs from Mining must be part of the same
+        # isolation proof (validate_split_contract.py --calibration PATH).
+        bind_roles["calibration"] = calibration_path
     split_contract = _bind_split_contract(
-        getattr(args, "split_contract_summary", None), annotations
+        getattr(args, "split_contract_summary", None), bind_roles
     )
+    annotations["calibration"] = calibration_path
     anchor_share = float(getattr(args, "anchor_share", 0.0) or 0.0)
     anchor_source = getattr(args, "anchor_source", None)
     anchor_task_shares = getattr(args, "anchor_task_shares", None) or annotations["proxy"]
@@ -868,6 +882,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--benchmark-annotations", type=pathlib.Path)
     parser.add_argument("--mining-annotations", type=pathlib.Path)
+    parser.add_argument(
+        "--calibration-annotations",
+        type=pathlib.Path,
+        help=(
+            "Calibration pool when it differs from the Mining pool (default: the Mining "
+            "file). Use with a restricted Mining pool (e.g. residual-only rows) so "
+            "no-change / empty calibration rows can still be drawn; validate it with "
+            "validate_split_contract.py --calibration PATH in the same summary."
+        ),
+    )
     parser.add_argument(
         "--anchor-share",
         type=float,

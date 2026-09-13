@@ -22,6 +22,17 @@ Preflight is read-only and precedes the launch review.
    with the sealed files and fails closed on any difference, so the isolation
    proof cannot silently refer to the default file. Never edit
    `proxy_kpi.jsonl` or `benchmark.jsonl` to switch sets.
+   A restricted Mining pool (for example a residual-only subset passed with
+   `--mining PATH` / `init_deft_state.py --mining-annotations PATH`) cannot
+   supply the calibration negatives (no-change reference pairs, empty
+   single-image rows are exactly the rows a model already answers correctly).
+   Keep calibration on the canonical file: pass `validate_split_contract.py
+   --calibration annotations/mining.jsonl` (and `--anchor-source
+   <anchor_candidates.jsonl>` when anchors are on) in the same summary, and
+   `init_deft_state.py --calibration-annotations annotations/mining.jsonl`;
+   the calibration selector then reads `config.annotations.calibration` while
+   routing reads the Mining file. Generated Train rows may come from Mining,
+   the calibration pool, the anchor source, or the previous iteration.
    Map the exact user phrase `use coverage_stratified_hardness_v1` to
    `config.mining.candidate_selector=coverage_stratified_hardness_v1`; all
    other launches retain `nearest_neighbor`. Record the selected policy and

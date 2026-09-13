@@ -226,6 +226,66 @@ if __name__ == "__main__":
 import check_annotations  # noqa: E402
 
 
+class TrainOriginRolesTests(unittest.TestCase):
+    """A restricted Mining pool needs launch-recorded calibration / anchor origins for Train rows."""
+
+    def _roles(self, root: pathlib.Path) -> dict[str, pathlib.Path]:
+        return {
+            "proxy": _write(root / "proxy.jsonl", [_row("proxy-1", "images/proxy.png")]),
+            "benchmark": _write(root / "benchmark.jsonl", [_row("benchmark-1", "images/benchmark.png")]),
+            "mining": _write(root / "mining_residual.jsonl", [_row("mining-1", "images/mining.png")]),
+        }
+
+    def test_train_rows_from_the_calibration_pool_and_anchor_source_are_eligible_only_when_declared(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            roles = self._roles(root)
+            calibration = _write(root / "mining_full.jsonl", [_row("mining-1", "images/mining.png"), _row("cal-1", "images/cal.png")])
+            anchors = _write(root / "anchor_candidates.jsonl", [_row("anchor-1", "images/anchor.png")])
+            train = _write(root / "train.jsonl", [_row("mining-1", "images/mining.png"), _row("cal-1", "images/cal.png"), _row("anchor-1", "images/anchor.png")])
+            with self.assertRaisesRegex(ValueError, "must come from Mining or the previous"):
+                validate_split_contract.validate({**roles, "train": train}, media_root=root)
+            summary = validate_split_contract.validate(
+                {**roles, "calibration": calibration, "anchor_source": anchors, "train": train}, media_root=root
+            )
+            self.assertEqual(summary["records"]["calibration"], 2)
+            self.assertEqual(summary["records"]["anchor_source"], 1)
+            self.assertEqual(summary["target_overlap"]["calibration:proxy"], 0)
+            self.assertEqual(summary["target_overlap"]["anchor_source:benchmark"], 0)
+            self.assertIn("calibration", summary["role_sha256"])
+            with self.assertRaisesRegex(ValueError, "must come from Mining, calibration or the previous"):
+                validate_split_contract.validate({**roles, "calibration": calibration, "train": train}, media_root=root)
+
+    def test_calibration_pool_leaking_into_the_kpi_set_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            roles = self._roles(root)
+            leaky = _write(root / "cal_leak.jsonl", [_row("proxy-1", "images/proxy.png")])
+            with self.assertRaisesRegex(ValueError, "target leakage between calibration and proxy"):
+                validate_split_contract.validate({**roles, "calibration": leaky}, media_root=root)
+
+    def test_cli_records_the_calibration_and_anchor_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = pathlib.Path(temporary) / "workspace"
+            (workspace / "annotations").mkdir(parents=True)
+            _write(workspace / "annotations/proxy_kpi.jsonl", [_row("proxy-1", "images/proxy.png")])
+            _write(workspace / "annotations/benchmark.jsonl", [_row("benchmark-1", "images/benchmark.png")])
+            full = _write(workspace / "annotations/mining.jsonl", [_row("mining-1", "images/mining.png"), _row("cal-1", "images/cal.png")])
+            residual = _write(workspace / "annotations/mining_residual.jsonl", [_row("mining-1", "images/mining.png")])
+            anchors = _write(workspace / "annotations/anchor_candidates.jsonl", [_row("cal-1", "images/cal.png")])
+            summary_path = pathlib.Path(temporary) / "split_contract.json"
+            rc = validate_split_contract.main([
+                "--workspace", str(workspace), "--mining", str(residual), "--calibration", str(full),
+                "--anchor-source", str(anchors), "--summary", str(summary_path),
+            ])
+            self.assertEqual(rc, 0)
+            summary = json.loads(summary_path.read_text())
+            self.assertEqual(summary["roles"]["mining"], str(residual.resolve()))
+            self.assertEqual(summary["roles"]["calibration"], str(full.resolve()))
+            self.assertEqual(summary["roles"]["anchor_source"], str(anchors.resolve()))
+            self.assertEqual(summary["records"]["calibration"], 2)
+
+
 class KpiSetOverrideTests(unittest.TestCase):
     """The KPI/RCCA set may be any benchmark-disjoint file; the proof must name it."""
 

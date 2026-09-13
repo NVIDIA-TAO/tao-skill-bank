@@ -32,7 +32,7 @@
 | `anchor_rows.py` / `build_anchor_candidates.py` | Correct-row anchor selection (task quotas from the KPI set, per-dataset cap, seed/id hash, corpus/evaluation exclusion) and the offline candidate builder that streams the canonical Mining JSONL against a scored-pool id list. Off unless `--anchor-share` is launch-recorded. |
 | `coverage_rows.py` / `build_coverage_candidates.py` | Cross-dataset coverage blend (`plain` uniform pool rows or `residual` scored-wrong rows with tagged correct-row fallback): floor-first even round-robin over (task, dataset) cells, joint share solving with anchors, fail-closed floor check against the eventual budget, and the offline per-mode candidate builder. Off unless `--coverage-blend-share` is launch-recorded. |
 | `validate_sharegpt.py` | Validate canonical NVPAW JSONL; the legacy filename is retained for CLI compatibility. |
-| `validate_split_contract.py` | Prove evaluation isolation, real-mining eligibility, prior-row retention, and Benchmark hash. |
+| `validate_split_contract.py` | Prove evaluation isolation, real-mining eligibility, prior-row retention, and Benchmark hash. Optional `--calibration PATH` / `--anchor-source PATH` are leakage-checked and accepted as Train origins (restricted Mining pools cannot supply calibration negatives). |
 | `render_report.py` | Render the durable state-backed HTML report. |
 
 Application scripts do not pull images or submit jobs. The selected platform

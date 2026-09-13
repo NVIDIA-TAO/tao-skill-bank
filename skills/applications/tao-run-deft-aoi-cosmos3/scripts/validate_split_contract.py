@@ -24,6 +24,12 @@ ROLE_PATHS = {
     "benchmark": ("annotations", "benchmark.jsonl"),
     "mining": ("annotations", "mining.jsonl"),
 }
+# Optional launch-recorded training-row origins besides Mining: the calibration
+# pool (may be wider than a restricted Mining pool, e.g. a residual-only pool
+# cannot supply no-change reference pairs) and the anchor candidate file. Both
+# are checked for leakage against the evaluation sets and count as eligible
+# origins for generated Train rows.
+OPTIONAL_ORIGIN_ROLES = ("calibration", "anchor_source")
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -81,7 +87,7 @@ def validate(
         rows[role], targets[role], ignored = _records(
             path,
             media_root,
-            skip_unsupported_tasks=role == "mining",
+            skip_unsupported_tasks=role in {"mining", *OPTIONAL_ORIGIN_ROLES},
             allow_exact_repetitions=role in {"previous_train", "train"},
         )
         if ignored:
@@ -117,7 +123,7 @@ def validate(
         elif shared:
             raise ValueError(f"target leakage between {left} and {right}: {sorted(shared)[:5]}")
 
-    for role in ("previous_train", "train"):
+    for role in (*OPTIONAL_ORIGIN_ROLES, "previous_train", "train"):
         if role not in targets:
             continue
         for evaluation_role in ("proxy", "benchmark"):
@@ -129,10 +135,13 @@ def validate(
                 )
     if "train" in targets:
         eligible = targets["mining"] | targets.get("previous_train", set())
+        for role in OPTIONAL_ORIGIN_ROLES:
+            eligible |= targets.get(role, set())
         outside = targets["train"] - eligible
         if outside:
+            origins = ", ".join(["Mining", *[r for r in OPTIONAL_ORIGIN_ROLES if r in targets]])
             raise ValueError(
-                "generated Train targets must come from Mining or the previous "
+                f"generated Train targets must come from {origins} or the previous "
                 f"iteration: {sorted(outside)[:5]}"
             )
         overlaps["train:mining"] = len(targets["train"] & targets["mining"])
@@ -199,6 +208,20 @@ def main(argv: list[str] | None = None) -> int:
                 "initialized with (init_deft_state.py --proxy-annotations)."
             ),
         )
+    parser.add_argument(
+        "--calibration",
+        type=pathlib.Path,
+        help=(
+            "Launch-recorded calibration pool when it differs from --mining (e.g. the "
+            "canonical Mining file while --mining is a residual-only subset); checked "
+            "for evaluation leakage and accepted as a Train origin."
+        ),
+    )
+    parser.add_argument(
+        "--anchor-source",
+        type=pathlib.Path,
+        help="anchor_candidates.jsonl of the run; checked for leakage and accepted as a Train origin.",
+    )
     parser.add_argument("--benchmark-sha256")
     parser.add_argument(
         "--proxy-sha256",
@@ -221,6 +244,10 @@ def main(argv: list[str] | None = None) -> int:
         role: (getattr(args, role) or workspace.joinpath(*parts)).expanduser().resolve()
         for role, parts in ROLE_PATHS.items()
     }
+    if args.calibration:
+        role_paths["calibration"] = args.calibration.expanduser().resolve()
+    if args.anchor_source:
+        role_paths["anchor_source"] = args.anchor_source.expanduser().resolve()
     if args.previous_train:
         role_paths["previous_train"] = args.previous_train.expanduser().resolve()
     if args.train:

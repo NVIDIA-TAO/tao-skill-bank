@@ -486,6 +486,41 @@ class SplitContractBindingTests(unittest.TestCase):
             )
             self.assertEqual(config["split_contract"]["summary"], str(summary.resolve()))
 
+    def test_calibration_pool_defaults_to_mining_and_is_bound_when_it_differs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = Cosmos3InitStateContractTests._workspace(root)
+            mining = workspace / "annotations/mining.jsonl"
+            # default: no --calibration-annotations -> calibration == mining, plain summary binds
+            summary = self._summary(workspace, workspace / "annotations/proxy_kpi.jsonl", root / "s0.json")
+            rc = init_deft_state.main(Cosmos3InitStateContractTests._argv(root / "a", workspace, "--split-contract-summary", str(summary)))
+            self.assertEqual(rc, 0)
+            config = json.loads((root / "a/results/deft_state.json").read_text())["config"]
+            self.assertEqual(config["annotations"]["calibration"], str(mining.resolve()))
+            # restricted mining pool + canonical calibration pool: summary must carry the calibration role
+            residual = workspace / "annotations/mining_residual.jsonl"
+            residual.write_text(mining.read_text(encoding="utf-8"), encoding="utf-8")
+            plain = self._summary(workspace, workspace / "annotations/proxy_kpi.jsonl", root / "s1.json")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = init_deft_state.main(Cosmos3InitStateContractTests._argv(
+                    root / "b", workspace, "--mining-annotations", str(residual),
+                    "--calibration-annotations", str(mining), "--split-contract-summary", str(plain)))
+            self.assertNotEqual(rc, 0)
+            self.assertIn("split-contract summary validated mining=", stderr.getvalue())
+            data = json.loads(plain.read_text())
+            data["roles"]["mining"] = str(residual.resolve()); data["role_sha256"]["mining"] = self._sha256(residual)
+            data["roles"]["calibration"] = str(mining.resolve()); data["role_sha256"]["calibration"] = self._sha256(mining)
+            bound = root / "s2.json"; bound.write_text(json.dumps(data), encoding="utf-8")
+            rc = init_deft_state.main(Cosmos3InitStateContractTests._argv(
+                root / "c", workspace, "--mining-annotations", str(residual),
+                "--calibration-annotations", str(mining), "--split-contract-summary", str(bound)))
+            self.assertEqual(rc, 0)
+            config = json.loads((root / "c/results/deft_state.json").read_text())["config"]
+            self.assertEqual(config["annotations"]["mining"], str(residual.resolve()))
+            self.assertEqual(config["annotations"]["calibration"], str(mining.resolve()))
+            self.assertEqual(config["split_contract"]["verified_roles"]["calibration"], self._sha256(mining))
+
     def test_summary_for_the_default_proxy_fails_closed_when_the_run_uses_another(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
