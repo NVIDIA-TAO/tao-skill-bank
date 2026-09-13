@@ -37,6 +37,93 @@ CALIBRATION_EMPTY_EVIDENCE = "calibration_empty_ground_truth"
 CALIBRATION_FEW_EVIDENCE = "calibration_few_box_ground_truth"
 REFERENCE_NO_CHANGE_EVIDENCE = "calibration_reference_no_change_ground_truth"
 
+# Profile-matched calibration (policy ``kpi_profile_count_bins``): per detection
+# task the calibration quota is split across ground-truth box-count bins in the
+# KPI set's proportions, so calibration rows carry the box-count distribution
+# the evaluation asks for (many-box rows and pairs included) instead of the
+# fixed empty / <=2-box buckets. Non-empty rows keep the few-box evidence label
+# for downstream compatibility and additionally record ``calibration_count_bin``.
+COUNT_BINS: tuple[tuple[str, int, int | None], ...] = (
+    ("0", 0, 0),
+    ("1", 1, 1),
+    ("2-3", 2, 3),
+    ("4-9", 4, 9),
+    ("10+", 10, None),
+)
+PROFILE_POLICY = "kpi_profile_count_bins"
+DEFAULT_MIN_FILL_FRACTION = 0.9
+
+
+def count_bin(box_count: int) -> str:
+    for name, low, high in COUNT_BINS:
+        if box_count >= low and (high is None or box_count <= high):
+            return name
+    raise ValueError(f"box count out of range: {box_count}")
+
+
+def derive_task_count_profiles(
+    records: Iterable[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Per detection task: KPI-set rows per ground-truth box-count bin and their shares."""
+
+    profiles = {
+        task: {"rows": 0, "bins": {name: 0 for name, _, _ in COUNT_BINS}}
+        for task in sorted(DETECTION_TASKS)
+    }
+    for index, record in enumerate(records):
+        task = str(record.get("task_type"))
+        if task not in profiles:
+            continue
+        _, answer = prompt_and_response(record, context=f"profile record[{index}]")
+        boxes = _json_answer(answer, context=f"profile record[{index}]")
+        if not isinstance(boxes, list):
+            raise ValueError(f"profile record[{index}]: detection answer must be a list")
+        profiles[task]["rows"] += 1
+        profiles[task]["bins"][count_bin(len(boxes))] += 1
+    for task, payload in profiles.items():
+        total = payload["rows"]
+        payload["shares"] = {
+            name: (payload["bins"][name] / total if total else 0.0) for name, _, _ in COUNT_BINS
+        }
+        payload["empty_rate"] = payload["shares"]["0"]
+    return profiles
+
+
+def profile_bin_quotas(
+    task_totals: dict[str, int], profiles: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, int]]:
+    """Largest-remainder split of each task's calibration total across the KPI count bins."""
+
+    quotas: dict[str, dict[str, int]] = {}
+    for task, total in task_totals.items():
+        if task not in DETECTION_TASKS:
+            raise ValueError(f"calibration task total for a non-detection task: {task}")
+        if type(total) is not int or total < 0:
+            raise ValueError(f"calibration total must be a non-negative integer: {task}={total!r}")
+        profile = profiles.get(task)
+        if not profile or profile["rows"] == 0:
+            raise ValueError(f"KPI set has no {task} rows to derive a calibration profile from")
+        raw = {name: total * profile["shares"][name] for name, _, _ in COUNT_BINS}
+        alloc = {name: int(math.floor(value)) for name, value in raw.items()}
+        remaining = total - sum(alloc.values())
+        for name in sorted(raw, key=lambda key: (-(raw[key] - alloc[key]), key))[:remaining]:
+            alloc[name] += 1
+        quotas[task] = alloc
+    return quotas
+
+
+def parse_task_totals(values: list[str] | None) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for value in values or []:
+        task, separator, count = value.partition("=")
+        if not separator or task in totals:
+            raise ValueError(f"invalid task total {value!r}; expected TASK=ROWS")
+        try:
+            totals[task] = int(count)
+        except ValueError as exc:
+            raise ValueError(f"invalid task total {value!r}; expected TASK=ROWS") from exc
+    return totals
+
 
 def select_component_count_replay(
     records: Iterable[dict[str, Any]],
@@ -200,6 +287,8 @@ def select_calibration(
     cohort_bucket_quotas: dict[str, dict[str, int]] | None = None,
     cohort_rates: dict[str, dict[str, Any]] | None = None,
     pair_assets_dir: pathlib.Path | None = None,
+    task_bin_quotas: dict[str, dict[str, int]] | None = None,
+    min_fill_fraction: float = DEFAULT_MIN_FILL_FRACTION,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if max_boxes < 1:
         raise ValueError("max_boxes must be positive")
@@ -208,6 +297,22 @@ def select_calibration(
         or cohort_bucket_quotas is not None
         or cohort_rates is not None
     )
+    profile_mode = task_bin_quotas is not None
+    if profile_mode:
+        if cohort_mode or max_empty is not None or max_few is not None:
+            raise ValueError("profile calibration cannot be combined with cohort or legacy quotas")
+        if not 0.0 < float(min_fill_fraction) <= 1.0:
+            raise ValueError("min_fill_fraction must be in (0, 1]")
+        bin_names = [name for name, _, _ in COUNT_BINS]
+        for task, bins in task_bin_quotas.items():
+            if task not in DETECTION_TASKS:
+                raise ValueError(f"profile calibration task is not a detection task: {task}")
+            if set(bins) != set(bin_names) or any(
+                type(value) is not int or value < 0 for value in bins.values()
+            ):
+                raise ValueError(f"{task}: profile bin quotas require non-negative integers for {bin_names}")
+        if sum(sum(bins.values()) for bins in task_bin_quotas.values()) <= 0:
+            raise ValueError("at least one profile calibration quota must be positive")
     if cohort_mode:
         if cohort_rates is None or (cohort_quotas is None) == (cohort_bucket_quotas is None):
             raise ValueError(
@@ -260,7 +365,7 @@ def select_calibration(
                 }
         if sum(item["total"] for item in targets.values()) <= 0:
             raise ValueError("at least one per-cohort calibration quota must be positive")
-    else:
+    elif not profile_mode:
         if max_empty is None or max_few is None:
             raise ValueError("max_empty and max_few are required for legacy calibration")
         if min(max_empty, max_few) < 0:
@@ -273,6 +378,9 @@ def select_calibration(
     few: list[dict[str, Any]] = []
     cohort_selected = {
         cohort: {"empty": [], "few": []} for cohort in DETECTION_COHORTS
+    }
+    profile_selected: dict[str, dict[str, list[dict[str, Any]]]] = {
+        task: {name: [] for name, _, _ in COUNT_BINS} for task in (task_bin_quotas or {})
     }
     seen: set[str] = set()
     examined_detection = 0
@@ -289,7 +397,10 @@ def select_calibration(
         boxes = _json_answer(answer, context=f"calibration record[{index}]")
         if not isinstance(boxes, list):
             raise ValueError(f"calibration record[{index}]: detection answer must be a list")
-        if len(boxes) > max_boxes:
+        if profile_mode:
+            if str(task_type) not in profile_selected:
+                continue
+        elif len(boxes) > max_boxes:
             excluded_many += 1
             continue
         sample = sample_from_record(
@@ -302,7 +413,12 @@ def select_calibration(
             continue
         if identity in seen:
             continue
-        if cohort_mode:
+        bin_name: str | None = None
+        if profile_mode:
+            bin_name = count_bin(len(boxes))
+            destination = profile_selected[str(task_type)][bin_name]
+            quota = int(task_bin_quotas[str(task_type)][bin_name])
+        elif cohort_mode:
             cohort = TASK_TO_COHORT.get(str(task_type))
             if cohort is None:
                 continue
@@ -335,7 +451,16 @@ def select_calibration(
         if content_sha is not None:
             seen_reference_content.add(content_sha)
             row["content_sha256"] = content_sha
+        if bin_name is not None:
+            row["calibration_count_bin"] = bin_name
+            row["calibration_policy"] = PROFILE_POLICY
         destination.append(row)
+        if profile_mode and all(
+            len(profile_selected[task][name]) >= int(task_bin_quotas[task][name])
+            for task in profile_selected
+            for name in profile_selected[task]
+        ):
+            break
         if cohort_mode and all(
             len(cohort_selected[cohort][bucket]) >= int(targets[cohort][bucket])
             for cohort in DETECTION_COHORTS
@@ -344,10 +469,57 @@ def select_calibration(
             break
         if (
             not cohort_mode
+            and not profile_mode
             and len(empty) >= max_empty
             and len(few) >= max_few
         ):
             break
+    if profile_mode:
+        selected = [
+            row
+            for task in sorted(profile_selected)
+            for name, _, _ in COUNT_BINS
+            for row in profile_selected[task][name]
+        ]
+        tasks_summary: dict[str, Any] = {}
+        failures: list[str] = []
+        for task in sorted(profile_selected):
+            requested_total = sum(task_bin_quotas[task].values())
+            selected_total = sum(len(rows) for rows in profile_selected[task].values())
+            fill = selected_total / requested_total if requested_total else 1.0
+            bins = {
+                name: {
+                    "requested": int(task_bin_quotas[task][name]),
+                    "selected": len(profile_selected[task][name]),
+                }
+                for name, _, _ in COUNT_BINS
+            }
+            shortage = {name: v["requested"] - v["selected"] for name, v in bins.items() if v["selected"] < v["requested"]}
+            tasks_summary[task] = {
+                "requested_total": requested_total,
+                "selected_total": selected_total,
+                "fill_fraction": round(fill, 4),
+                "bins": bins,
+                "shortage": shortage,
+            }
+            if requested_total and fill < float(min_fill_fraction):
+                failures.append(f"{task}: selected {selected_total}/{requested_total} ({fill:.1%} < {float(min_fill_fraction):.0%}); short bins {shortage}")
+        if failures:
+            raise ValueError("profile calibration quotas cannot be filled: " + "; ".join(failures))
+        summary = {
+            "schema_version": "detection_calibration_v4",
+            "policy": PROFILE_POLICY,
+            "count_bins": [name for name, _, _ in COUNT_BINS],
+            "min_fill_fraction": float(min_fill_fraction),
+            "selected_total": len(selected),
+            "examined_detection_records": examined_detection,
+            "excluded_many_box": 0,
+            "excluded_previously_mined": excluded_previously_mined,
+            "reference_content_identity": PAIR_CONTENT_IDENTITY,
+            "excluded_duplicate_reference_content": excluded_duplicate_reference_content,
+            "tasks": tasks_summary,
+        }
+        return selected, summary
     if cohort_mode:
         selected = [
             row
@@ -537,10 +709,70 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-empty", type=int)
     parser.add_argument("--max-few", type=int)
     parser.add_argument("--max-boxes", type=int, default=2)
+    parser.add_argument(
+        "--profile-task-total",
+        action="append",
+        metavar="TASK=ROWS",
+        help=(
+            "Profile-matched calibration: rows for this detection task, split across "
+            "ground-truth box-count bins in the KPI set's proportions (repeatable; requires "
+            "--proxy-annotations and --pair-assets-dir; excludes the cohort/legacy quotas)."
+        ),
+    )
+    parser.add_argument("--profile-min-fill", type=float, default=DEFAULT_MIN_FILL_FRACTION)
     parser.add_argument("--output", required=True, type=pathlib.Path)
     parser.add_argument("--summary", required=True, type=pathlib.Path)
     args = parser.parse_args(argv)
     try:
+        profile_totals = parse_task_totals(args.profile_task_total)
+        if profile_totals:
+            if any(
+                value is not None
+                for value in (
+                    args.single_image_total, args.reference_total, args.single_image_max_empty,
+                    args.single_image_max_few, args.max_empty, args.max_few,
+                )
+            ):
+                raise ValueError("--profile-task-total cannot be combined with cohort or legacy quotas")
+            if args.proxy_annotations is None or args.pair_assets_dir is None:
+                raise ValueError("profile calibration requires --proxy-annotations and --pair-assets-dir")
+            profiles = derive_task_count_profiles(_stream_records(args.proxy_annotations))
+            quotas = profile_bin_quotas(profile_totals, profiles)
+            calibration, summary = select_calibration(
+                _stream_records(args.source_annotations),
+                media_root=args.media_root,
+                pair_assets_dir=args.pair_assets_dir,
+                task_bin_quotas=quotas,
+                min_fill_fraction=args.profile_min_fill,
+            )
+            summary["task_profiles"] = {task: profiles[task] for task in quotas}
+            summary["task_totals"] = profile_totals
+            merged, duplicates = merge_candidates(
+                calibration, _routed_rows(args.routed_candidates), media_root=args.media_root
+            )
+            try:
+                import pyarrow as pa
+                import pyarrow.parquet as pq
+            except ImportError as exc:
+                raise ValueError("pyarrow is required to write calibration candidates") from exc
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(pa.Table.from_pylist(merged), args.output)
+            summary.update(
+                {
+                    "routed_input": str(args.routed_candidates) if args.routed_candidates else None,
+                    "routed_records": len(merged) - len(calibration) + duplicates,
+                    "combined_unique_candidates": len(merged),
+                    "duplicates_merged": duplicates,
+                    "output": str(args.output),
+                }
+            )
+            args.summary.parent.mkdir(parents=True, exist_ok=True)
+            args.summary.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+            print(
+                "select_detection_calibration: "
+                f"calibration={summary['selected_total']} combined={summary['combined_unique_candidates']}"
+            )
+            return 0
         cohort_mode = any(
             value is not None
             for value in (

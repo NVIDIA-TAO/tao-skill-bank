@@ -73,11 +73,10 @@ files to a JSON array at the runtime boundary.
 ## Preflight and approval
 
 1. Resolve the model with `$PYTHON scripts/resolve_tao_model.py --model
-   nvidia/Cosmos3-Nano --action <action> --workload deft-aoi`. Show the chosen
+   nvidia/Cosmos3-Nano --action <action> --workload deft-aoi`. Show the
    backend and rationale.
-2. This application supports multiple platforms. Ask once among supported,
-   installed peers; never choose one by default. Read the selected platform's
-   `SKILL.md` and run its Preflight.
+2. Ask once among supported, installed platforms; never choose one by
+   default. Read the selected platform's `SKILL.md` and run its Preflight.
 3. Read `references/preflight.md`. Validate annotations, model snapshot,
    evaluator path/hash, spec paths, Python dependencies, writable results, and
    image keys. Resolve `images.tao_toolkit.cosmos_framework` and
@@ -139,10 +138,10 @@ The selector:
   the remainder;
 - admits positive Defect Detection rows from proxy-FN, partial-overlap, or
   correctly handled DD routes, while proxy-FP routes provide empty hard
-  negatives; when the launch explicitly authorizes direct Mining-pool box
-  calibration, separately labeled `calibration_empty_ground_truth` and
-  `calibration_few_box_ground_truth` candidates may fill the Proxy-bound
-  detection quotas and are never reported as task-strict hard negatives;
+  negatives; when the launch authorizes Mining-pool box calibration,
+  `calibration_empty_ground_truth` / `calibration_few_box_ground_truth`
+  candidates fill the Proxy-bound detection quotas and are never task-strict
+  hard negatives;
 - balances positive marginal quotas over source, defect phenotype,
   source-by-phenotype, 1024-canvas box-area quartile, local-contrast quartile,
   and GT-count bins `1`, `2-3`, `4+`, reporting capacity shortages rather than
@@ -152,8 +151,9 @@ The selector:
 - labels empty reference pairs as
   `calibration_reference_no_change_ground_truth` negatives and keeps the
   ordered golden/target pair atomic;
-- applies the 512 empty, 512 few-box, and 500 reference calibration limits to
-  current additions only. Pass the previous cumulative Train as
+- applies the 512 empty, 512 few-box, and 500 reference calibration limits
+  (or launch-recorded KPI box-count-bin quotas, `references/calibration-profile.md`)
+  to current additions only. Pass the previous cumulative Train as
   `--previous-jsonl`; exact prior rows are excluded from the selector because
   the assembler retains them independently;
 - treats each ordered `(golden, target)` reference sample as one atomic unit

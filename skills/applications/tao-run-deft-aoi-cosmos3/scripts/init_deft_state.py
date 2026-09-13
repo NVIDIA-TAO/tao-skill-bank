@@ -35,7 +35,14 @@ from repetition_blend import (
 )
 from render_report import render as render_html_report
 from route_selected_gaps import DEFECT_DETECTION_ANCHOR_POLICIES
-from select_detection_calibration import derive_proxy_empty_rates
+from select_detection_calibration import (
+    COUNT_BINS,
+    PROFILE_POLICY,
+    derive_proxy_empty_rates,
+    derive_task_count_profiles,
+    parse_task_totals,
+    profile_bin_quotas,
+)
 from task_mining_router import MINING_ROUTER_MODES
 from validate_sharegpt import load_records
 
@@ -483,7 +490,32 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         )
     if hybrid_calibration and any(value < 0 for value in calibration_values):
         raise ValueError("calibration caps and totals must be non-negative")
-    if hybrid_calibration:
+    profile_totals = parse_task_totals(getattr(args, "calibration_task_total", None))
+    if profile_totals and hybrid_calibration:
+        raise ValueError("--calibration-task-total cannot be combined with the fixed single-image caps")
+    if profile_totals:
+        min_fill = float(getattr(args, "calibration_min_fill", 0.9) or 0.9)
+        if not 0.0 < min_fill <= 1.0:
+            raise ValueError("--calibration-min-fill must be in (0, 1]")
+        task_profiles = derive_task_count_profiles(load_records(annotations["proxy"]))
+        task_bin_quotas = profile_bin_quotas(profile_totals, task_profiles)
+        calibration_quota_contract = {
+            "policy": PROFILE_POLICY,
+            "proxy_annotations": str(annotations["proxy"]),
+            "proxy_annotations_sha256": _sha256(annotations["proxy"]),
+            "count_bins": [name for name, _, _ in COUNT_BINS],
+            "task_totals": profile_totals,
+            "task_bin_quotas": task_bin_quotas,
+            "task_profiles": {task: task_profiles[task] for task in task_bin_quotas},
+            "min_fill_fraction": min_fill,
+            "cohorts": calibration_cohorts,
+            "reference_empty_semantics": "identical_or_no_change_pair_negative",
+            "owner": (
+                "select_detection_calibration.select_calibration(task_bin_quotas=..., "
+                "min_fill_fraction=...) or CLI --profile-task-total; no cohort/legacy quotas"
+            ),
+        }
+    elif hybrid_calibration:
         calibration_cohorts["non_reference_based"][
             "proxy_empty_rate_binding"
         ] = False
@@ -979,6 +1011,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--single-image-calibration-max-empty", type=int)
     parser.add_argument("--single-image-calibration-max-few", type=int)
     parser.add_argument("--reference-calibration-total", type=int)
+    parser.add_argument(
+        "--calibration-task-total",
+        action="append",
+        metavar="TASK=ROWS",
+        help=(
+            "Profile-matched calibration (policy kpi_profile_count_bins): calibration rows "
+            "per detection task, split across ground-truth box-count bins in the KPI set's "
+            "proportions (repeatable). Excludes the fixed single-image caps."
+        ),
+    )
+    parser.add_argument("--calibration-min-fill", type=float, default=0.9)
     parser.add_argument("--component-count-replay-per-iteration", type=int, default=0)
     parser.add_argument(
         "--repetition-config",

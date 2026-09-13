@@ -23,7 +23,7 @@
 | `route_selected_gaps.py` | Collapse Proxy gap rows into atomic Mining queries and pair embedding assets. |
 | `coverage_stratified_selector.py` | Build/reuse the hash-bound parent inventory, solve shrunk Proxy-error quotas with source caps/floors, k-center cells, write the round manifest, and enforce the share gate. |
 | `task_mining_router.py` | Apply the launch-recorded nearest-neighbor or coverage-stratified candidate policy before history filtering. |
-| `select_detection_calibration.py` | Derive Proxy-bound per-cohort empty/few-box quotas, preserve reference pairs atomically, and optionally select Component Count replay before history filtering. |
+| `select_detection_calibration.py` | Derive Proxy-bound per-cohort empty/few-box quotas, preserve reference pairs atomically, and optionally select Component Count replay before history filtering. Launch-recorded alternative `kpi_profile_count_bins` (`--profile-task-total TASK=ROWS`, `init_deft_state.py --calibration-task-total`): per-task quotas split across the KPI set's ground-truth box-count bins `0/1/2-3/4-9/10+`, many-box rows and pairs included, fail-closed below `min_fill_fraction`; see `calibration-profile.md`. |
 | `defect_detection_ablation.py` | Materialize the task-strict Defect Detection corpus, enforce both detection-cohort empty rates, and bind its compatible quota manifest. |
 | `repetition_blend.py` | Apply seeded deficit-proportional or explicit repetition after exclusion and bind its per-task manifest. |
 | `emit_mined_sharegpt.py` | Emit selected atomic canonical Mining rows with both reference-pair sides intact; the legacy filename is retained for CLI compatibility. |
