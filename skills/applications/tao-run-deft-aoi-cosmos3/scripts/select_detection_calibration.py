@@ -103,12 +103,22 @@ def profile_bin_quotas(
         profile = profiles.get(task)
         if not profile or profile["rows"] == 0:
             raise ValueError(f"KPI set has no {task} rows to derive a calibration profile from")
-        raw = {name: total * profile["shares"][name] for name, _, _ in COUNT_BINS}
+        # The empty bin uses the same deterministic rounding as the materializer's
+        # empty / no-change targets (floor(total * rate + 0.5)); the remaining rows
+        # are split across the non-empty bins by largest remainder.
+        empty_quota = min(total, _rounded_rate_quota(total, float(profile["shares"]["0"])))
+        rest = total - empty_quota
+        nonempty = [name for name, _, _ in COUNT_BINS if name != "0"]
+        nonempty_share = sum(profile["shares"][name] for name in nonempty)
+        raw = {
+            name: (rest * profile["shares"][name] / nonempty_share if nonempty_share else 0.0)
+            for name in nonempty
+        }
         alloc = {name: int(math.floor(value)) for name, value in raw.items()}
-        remaining = total - sum(alloc.values())
+        remaining = rest - sum(alloc.values())
         for name in sorted(raw, key=lambda key: (-(raw[key] - alloc[key]), key))[:remaining]:
             alloc[name] += 1
-        quotas[task] = alloc
+        quotas[task] = {"0": empty_quota, **alloc}
     return quotas
 
 
@@ -502,8 +512,11 @@ def select_calibration(
                 "bins": bins,
                 "shortage": shortage,
             }
-            if requested_total and fill < float(min_fill_fraction):
-                failures.append(f"{task}: selected {selected_total}/{requested_total} ({fill:.1%} < {float(min_fill_fraction):.0%}); short bins {shortage}")
+            # Reference pairs keep the historical fail-closed contract: the
+            # materializer verifies the exact pair total and no-change count.
+            threshold = 1.0 if task == DETECTION_COHORTS["reference_based"] else float(min_fill_fraction)
+            if requested_total and fill < threshold:
+                failures.append(f"{task}: selected {selected_total}/{requested_total} ({fill:.1%} < {threshold:.0%}); short bins {shortage}")
         if failures:
             raise ValueError("profile calibration quotas cannot be filled: " + "; ".join(failures))
         summary = {

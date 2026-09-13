@@ -49,6 +49,9 @@ POSITIVE_EVIDENCE = {
 NEGATIVE_EVIDENCE = {"hard_negative_proxy_false_positive"}
 CALIBRATION_EMPTY_EVIDENCE = "calibration_empty_ground_truth"
 CALIBRATION_FEW_EVIDENCE = "calibration_few_box_ground_truth"
+# Rows selected by select_detection_calibration's profile policy may carry any
+# ground-truth box count; they are recognised by this candidate column.
+PROFILE_CALIBRATION_POLICY = "kpi_profile_count_bins"
 REFERENCE_NO_CHANGE_EVIDENCE = "calibration_reference_no_change_ground_truth"
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
@@ -781,12 +784,22 @@ def materialize(
                 "is_replay": bool(candidate.get("is_replay", False)),
                 "route_tier": route_tier,
             }
+            # Profile-matched calibration rows (policy kpi_profile_count_bins) carry
+            # the KPI set's box-count distribution, so the <= 2-box rule of the
+            # legacy few-box bucket does not apply to them; the bin is recorded.
+            profile_calibration = (
+                route_tier == "calibration"
+                and str(candidate.get("calibration_policy") or "") == PROFILE_CALIBRATION_POLICY
+            )
+            if profile_calibration:
+                entry["calibration_count_bin"] = str(candidate.get("calibration_count_bin") or "")
             if task == DEFECT_DETECTION_TASK:
                 objects = _ground_truth_objects(record)
                 entry["objects"] = objects
                 if objects:
                     if route_tier == "calibration" and (
-                        CALIBRATION_FEW_EVIDENCE not in evidence or len(objects) > 2
+                        CALIBRATION_FEW_EVIDENCE not in evidence
+                        or (len(objects) > 2 and not profile_calibration)
                     ):
                         counters["non_empty_calibration_rows_excluded"] += 1
                         continue
@@ -826,7 +839,7 @@ def materialize(
                         if not objects
                         else CALIBRATION_FEW_EVIDENCE
                     )
-                    if required not in evidence or len(objects) > 2:
+                    if required not in evidence or (len(objects) > 2 and not profile_calibration):
                         counters["invalid_calibration_routes_excluded"] += 1
                         continue
                     if not objects and REFERENCE_NO_CHANGE_EVIDENCE not in evidence:
@@ -1429,6 +1442,15 @@ def materialize(
             "selected_few_box": selected_single_calibration_few,
             "selected_total": len(selected_single_calibration),
             "proxy_empty_rate_binding": not hybrid_calibration,
+            "profile_count_bins": dict(
+                sorted(
+                    Counter(
+                        item["calibration_count_bin"]
+                        for item in selected_single_calibration
+                        if item.get("calibration_count_bin")
+                    ).items()
+                )
+            ),
         },
         "reference_calibration": {
             "content_identity": PAIR_CONTENT_IDENTITY,
@@ -1442,6 +1464,15 @@ def materialize(
             ),
             "selected_total": len(selected_reference_calibration),
             "proxy_empty_rate_binding": hybrid_calibration,
+            "profile_count_bins": dict(
+                sorted(
+                    Counter(
+                        item["calibration_count_bin"]
+                        for item in selected_reference_calibration
+                        if item.get("calibration_count_bin")
+                    ).items()
+                )
+            ),
         },
         "empty_ground_truth": {
             "proxy_rate": proxy_empty_rate,

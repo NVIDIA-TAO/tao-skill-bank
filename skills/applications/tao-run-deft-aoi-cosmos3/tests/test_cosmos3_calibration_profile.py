@@ -117,6 +117,24 @@ class ProfileSelectionTests(unittest.TestCase):
                 sdc.select_calibration(source, media_root=root, pair_assets_dir=root / "pair-assets",
                                        task_bin_quotas=quotas, min_fill_fraction=0.95)
 
+    def test_reference_shortfall_fails_closed_even_above_min_fill(self) -> None:
+        source = self._source()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary); _materialize_images(root, source)
+            quotas = {"Ref_based Defect Detection": {"0": 4, "1": 0, "2-3": 0, "4-9": 4, "10+": 1}}  # no 10+ pairs exist
+            with self.assertRaisesRegex(ValueError, "Ref_based Defect Detection: selected 8/9"):
+                sdc.select_calibration(source, media_root=root, pair_assets_dir=root / "pair-assets",
+                                       task_bin_quotas=quotas, min_fill_fraction=0.5)
+
+    def test_empty_bin_uses_the_materializer_rounding(self) -> None:
+        # 7 rows: 4 empty -> share 0.5714; total 11 -> floor(6.286 + 0.5) = 6 empty, rest 5 across non-empty bins
+        kpi = [_row(f"d{i}", _boxes(n)) for i, n in enumerate([0, 0, 0, 0, 1, 1, 5])]
+        quotas = sdc.profile_bin_quotas({"Defect Detection": 11}, sdc.derive_task_count_profiles(kpi))
+        self.assertEqual(quotas["Defect Detection"]["0"], 6)
+        self.assertEqual(sum(quotas["Defect Detection"].values()), 11)
+        self.assertEqual(quotas["Defect Detection"]["1"], 3)  # 2/3 of the remaining 5 -> 3.33 -> 3 (largest remainder)
+        self.assertEqual(quotas["Defect Detection"]["4-9"], 2)
+
     def test_profile_mode_excludes_cohort_and_legacy_quotas(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot be combined"):
             sdc.select_calibration([], media_root=pathlib.Path("."), task_bin_quotas={"Defect Detection": {"0": 1, "1": 0, "2-3": 0, "4-9": 0, "10+": 0}}, max_empty=1, max_few=1)
