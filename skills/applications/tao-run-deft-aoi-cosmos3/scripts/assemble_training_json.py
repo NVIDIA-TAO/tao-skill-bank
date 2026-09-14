@@ -34,7 +34,12 @@ from coverage_rows import (
     validate_coverage_config,
     write_manifest as write_coverage_manifest,
 )
-from defect_detection_ablation import CALIBRATION_MARK, bind_cumulative_manifest
+from defect_detection_ablation import (
+    CALIBRATION_KIND_MARK,
+    CALIBRATION_MARK,
+    CLASSIFICATION_CALIBRATION_KIND,
+    bind_cumulative_manifest,
+)
 from nvpaw_annotations import TASK_SPECS
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
@@ -57,11 +62,48 @@ def _fingerprint(record: dict[str, Any]) -> str:
 # retained anchor/coverage row look like new content: a previous anchor row
 # (marker present) and the same pool row mined again (marker absent) are one
 # training record, and the canonical validator requires unique ids.
-_SLICE_MARKS = (ANCHOR_MARK, COVERAGE_MARK, CALIBRATION_MARK)
+SLICE_MARKS = (ANCHOR_MARK, COVERAGE_MARK, CALIBRATION_MARK, CALIBRATION_KIND_MARK)
+_SLICE_MARKS = SLICE_MARKS
+
+# Classification calibration rows (select_classification_calibration.py) enter
+# as a second current-row source; they are protected from the cap trim like
+# every ``deft_calibration`` row and counted separately in the summary.
+CLASSIFICATION_CALIBRATION_SOURCE_KIND = "classification_calibration"
+_CURRENT_KINDS = frozenset({"current_mining", CLASSIFICATION_CALIBRATION_SOURCE_KIND})
 
 
-def _dedup_key(record: dict[str, Any]) -> str:
-    return _fingerprint({key: value for key, value in record.items() if key not in _SLICE_MARKS})
+def marker_free_key(record: dict[str, Any]) -> str:
+    """Content fingerprint with the inert slice markers removed (the dedup identity)."""
+    return _fingerprint({key: value for key, value in record.items() if key not in SLICE_MARKS})
+
+
+_dedup_key = marker_free_key
+
+
+def record_identity(
+    record: dict[str, Any], *, media_root: pathlib.Path | None, context: str = "record"
+) -> str:
+    """The atomic sample identity the assembler dedups and leak-checks by.
+
+    With a media root, relative image paths are resolved first (``atomic_sample_id``);
+    without one the logical path identity is used. Selectors that build exclusion
+    sets for the assembler must call this with the same media root.
+    """
+    if media_root is not None:
+        return str(
+            sample_from_record(
+                record, media_root=media_root.expanduser().resolve(), context=context
+            )["atomic_sample_id"]
+        )
+    return logical_record_identity(record, context=context)
+
+
+def _load_optional_records(path: pathlib.Path) -> list[dict[str, Any]]:
+    """Like ``load_records`` but an empty file is an empty list (a zero-row selector output)."""
+    with path.open(encoding="utf-8") as stream:
+        if not any(line.strip() for line in stream):
+            return []
+    return load_records(path)
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -113,7 +155,8 @@ def _task_balanced_indices(
 
 
 def _exposure_rows(
-    records: list[dict[str, Any]], provenance: list[dict[str, Any]], *, prior_anchor_rows: int, prior_coverage_rows: int
+    records: list[dict[str, Any]], provenance: list[dict[str, Any]], *, prior_anchor_rows: int, prior_coverage_rows: int,
+    prior_classification_rows: int = 0,
 ) -> dict[str, Any]:
     """Per-purpose row ledger of the materialized corpus (rows; tokens are not measured here)."""
     kinds = Counter(item["source_kind"] for item in provenance)
@@ -124,11 +167,13 @@ def _exposure_rows(
     return {
         "unit": "rows",
         "current_mining": kinds.get("current_mining", 0),
-        "previous_mined": max(0, previous_total - prior_anchor_rows - prior_coverage_rows),
+        "previous_mined": max(0, previous_total - prior_anchor_rows - prior_coverage_rows - prior_classification_rows),
         "previous_anchor": prior_anchor_rows,
         "previous_coverage": prior_coverage_rows,
+        "previous_classification_calibration": prior_classification_rows,
         "anchor_new": kinds.get(ANCHOR_SOURCE_KIND, 0),
         "coverage_new": kinds.get(COVERAGE_SOURCE_KIND, 0),
+        "classification_calibration_new": kinds.get(CLASSIFICATION_CALIBRATION_SOURCE_KIND, 0),
         "repetition_copies": kinds.get("repetition", 0),
         "total": total,
         "shares": {
@@ -155,6 +200,7 @@ def assemble(
     anchor_seed: int | None = None,
     coverage_config: dict[str, Any] | None = None,
     coverage_seed: int | None = None,
+    classification_calibration_path: pathlib.Path | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     anchor = anchor_config or validate_anchor_config(None, None, None, None)
     coverage = coverage_config or validate_coverage_config(None, None, None, None)
@@ -199,16 +245,25 @@ def assemble(
         if resolved_previous_path is not None
         else []
     )
+    resolved_classification_path: pathlib.Path | None = None
+    classification_rows: list[dict[str, Any]] = []
+    if classification_calibration_path is not None:
+        resolved_classification_path = classification_calibration_path.expanduser().resolve(strict=True)
+        classification_rows = _load_optional_records(resolved_classification_path)
+        for index, record in enumerate(classification_rows):
+            if (
+                record.get(CALIBRATION_MARK) is not True
+                or record.get(CALIBRATION_KIND_MARK) != CLASSIFICATION_CALIBRATION_KIND
+            ):
+                raise ValueError(
+                    f"classification calibration rows must carry {CALIBRATION_MARK}=true and "
+                    f"{CALIBRATION_KIND_MARK}={CLASSIFICATION_CALIBRATION_KIND!r} "
+                    f"(select_classification_calibration.py output): {resolved_classification_path}:{index}"
+                )
     resolved_media_root = media_root.expanduser().resolve() if media_root else None
 
     def identity(record: dict[str, Any], context: str) -> str:
-        if resolved_media_root is not None:
-            return str(
-                sample_from_record(
-                    record, media_root=resolved_media_root, context=context
-                )["atomic_sample_id"]
-            )
-        return logical_record_identity(record, context=context)
+        return record_identity(record, media_root=resolved_media_root, context=context)
 
     evaluation_targets: dict[str, str] = {}
     for path in validation_paths:
@@ -219,11 +274,13 @@ def assemble(
     seen: set[str] = set()
     corpus_ids: set[str] = set()
     duplicate_count = 0
+    classification_duplicates = 0
     tasks: Counter[str] = Counter()
     provenance: list[dict[str, Any]] = []
     for source_kind, source_path, records in (
         ("previous_iteration", resolved_previous_path, previous),
         ("current_mining", resolved_mined_path, mined),
+        (CLASSIFICATION_CALIBRATION_SOURCE_KIND, resolved_classification_path, classification_rows),
     ):
         if source_path is None:
             continue
@@ -239,8 +296,11 @@ def assemble(
             record_id = str(record.get("id"))
             # A current row is a duplicate when its marker-free content or its id is
             # already in the corpus (previous rows are retained as they are).
-            if source_kind == "current_mining" and (key in seen or record_id in corpus_ids):
-                duplicate_count += 1
+            if source_kind in _CURRENT_KINDS and (key in seen or record_id in corpus_ids):
+                if source_kind == CLASSIFICATION_CALIBRATION_SOURCE_KIND:
+                    classification_duplicates += 1
+                else:
+                    duplicate_count += 1
                 continue
             seen.add(key)
             corpus_ids.add(record_id)
@@ -266,6 +326,11 @@ def assemble(
     prior_coverage_rows = sum(
         1 for record, item in zip(merged, provenance)
         if item["source_kind"] == "previous_iteration" and record.get(COVERAGE_MARK) is True
+    )
+    prior_classification_rows = sum(
+        1 for record, item in zip(merged, provenance)
+        if item["source_kind"] == "previous_iteration"
+        and record.get(CALIBRATION_KIND_MARK) == CLASSIFICATION_CALIBRATION_KIND
     )
     # rows a launch-recorded acquisition slice adds on top of the parent corpus do
     # not count toward the anchor share base (anchor volume stays parent-like)
@@ -401,7 +466,7 @@ def assemble(
         current = [
             index
             for index, item in enumerate(provenance)
-            if item["source_kind"] == "current_mining"
+            if item["source_kind"] in _CURRENT_KINDS
         ]
         prior = [
             index
@@ -465,7 +530,7 @@ def assemble(
         current = [
             index
             for index, item in enumerate(provenance)
-            if item["source_kind"] == "current_mining"
+            if item["source_kind"] in _CURRENT_KINDS
         ]
         prior = [
             index
@@ -720,6 +785,27 @@ def assemble(
         "materialized_calibration_records": sum(
             record.get(CALIBRATION_MARK) is True for record in merged
         ),
+        "materialized_classification_calibration_records": sum(
+            record.get(CALIBRATION_KIND_MARK) == CLASSIFICATION_CALIBRATION_KIND for record in merged
+        ),
+        "classification_calibration": {
+            "enabled": resolved_classification_path is not None,
+            "source": str(resolved_classification_path) if resolved_classification_path is not None else None,
+            "source_sha256": (
+                sha256_file(resolved_classification_path) if resolved_classification_path is not None else None
+            ),
+            "input_records": len(classification_rows),
+            "duplicates_skipped": classification_duplicates,
+            "prior_rows": prior_classification_rows,
+            "materialized_new": sum(
+                item["source_kind"] == CLASSIFICATION_CALIBRATION_SOURCE_KIND for item in provenance
+            ),
+            "materialized_total": sum(
+                record.get(CALIBRATION_KIND_MARK) == CLASSIFICATION_CALIBRATION_KIND for record in merged
+            ),
+            "markers": {CALIBRATION_MARK: True, CALIBRATION_KIND_MARK: CLASSIFICATION_CALIBRATION_KIND},
+            "protected_from_cap_trim": True,
+        },
         "materialized_coverage_records": sum(
             item["source_kind"] == COVERAGE_SOURCE_KIND for item in provenance
         ),
@@ -748,7 +834,8 @@ def assemble(
             ),
         },
         "exposure_rows": _exposure_rows(
-            merged, provenance, prior_anchor_rows=prior_anchor_rows, prior_coverage_rows=prior_coverage_rows
+            merged, provenance, prior_anchor_rows=prior_anchor_rows, prior_coverage_rows=prior_coverage_rows,
+            prior_classification_rows=prior_classification_rows,
         ),
         "tasks": dict(sorted(tasks.items())),
         "warnings": list(repetition_manifest["warnings"]),
@@ -867,6 +954,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--coverage-blend-seed", type=int)
     parser.add_argument("--coverage-blend-manifest", type=pathlib.Path, help="Defaults to coverage_blend_manifest.json beside --output.")
     parser.add_argument(
+        "--classification-calibration-jsonl",
+        type=pathlib.Path,
+        help=(
+            "select_classification_calibration.py output (rows marked deft_calibration + "
+            "deft_calibration_kind=classification) added as current rows and protected from the cap trim."
+        ),
+    )
+    parser.add_argument(
         "--repetition-manifest",
         type=pathlib.Path,
         help="Defaults to repetition_blend_manifest.json beside --output.",
@@ -935,6 +1030,7 @@ def main(argv: list[str] | None = None) -> int:
             anchor_seed=args.anchor_seed,
             coverage_config=coverage_config,
             coverage_seed=args.coverage_blend_seed,
+            classification_calibration_path=args.classification_calibration_jsonl,
         )
         _write_jsonl(args.output, rows)
         summary = bind_summary(summary, args.output)

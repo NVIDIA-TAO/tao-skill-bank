@@ -24,6 +24,11 @@ from coverage_stratified_selector import (
     CANDIDATE_SELECTORS,
     validate_hardness_schedule,
 )
+from defect_detection_ablation import (
+    CALIBRATION_KIND_MARK,
+    CALIBRATION_MARK,
+    CLASSIFICATION_CALIBRATION_KIND,
+)
 from gap_analysis.config import load_profile, validate_config
 from metric_contract import render_target, validate_contract
 from nvpaw_annotations import TASK_SPECS
@@ -35,6 +40,10 @@ from repetition_blend import (
 )
 from render_report import render as render_html_report
 from route_selected_gaps import DEFECT_DETECTION_ANCHOR_POLICIES
+from select_classification_calibration import (
+    CLASSIFICATION_CALIBRATION_TASKS,
+    DEFAULT_SEED as CLASSIFICATION_CALIBRATION_DEFAULT_SEED,
+)
 from select_detection_calibration import (
     COUNT_BINS,
     PROFILE_POLICY,
@@ -493,16 +502,50 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         )
     if hybrid_calibration and any(value < 0 for value in calibration_values):
         raise ValueError("calibration caps and totals must be non-negative")
-    profile_totals = parse_task_totals(getattr(args, "calibration_task_total", None))
+    requested_totals = parse_task_totals(getattr(args, "calibration_task_total", None))
+    # One flag, two owners: detection tasks feed the box-count profile policy below,
+    # single-image classification tasks feed select_classification_calibration.py
+    # (Phase 4 step 4c-A: MCQ rows with a class answer, KPI class shares).
+    classification_totals = {
+        task: rows for task, rows in requested_totals.items() if task in CLASSIFICATION_CALIBRATION_TASKS
+    }
+    profile_totals = {task: rows for task, rows in requested_totals.items() if task not in classification_totals}
+    min_fill = float(getattr(args, "calibration_min_fill", 0.9) or 0.9)
+    if not 0.0 < min_fill <= 1.0:
+        raise ValueError("--calibration-min-fill must be in (0, 1]")
+    classification_seed = getattr(args, "classification_calibration_seed", None)
+    if classification_seed is None:
+        classification_seed = CLASSIFICATION_CALIBRATION_DEFAULT_SEED
+    if any(type(rows) is not int or rows < 0 for rows in classification_totals.values()):
+        raise ValueError("--calibration-task-total classification rows must be non-negative integers")
+    classification_calibration_contract = {
+        "enabled": bool(classification_totals),
+        "task_totals": classification_totals,
+        "eligible_tasks": list(CLASSIFICATION_CALIBRATION_TASKS),
+        "eligibility": "single_image_mcq_non_empty_ground_truth",
+        "class_shares_policy": "kpi_label_shares_largest_remainder_over_pool_classes_uniform_fallback",
+        "class_shares_source": str(annotations["proxy"]) if classification_totals else None,
+        "class_shares_source_sha256": _sha256(annotations["proxy"]) if classification_totals else None,
+        "pool": str(annotations["calibration"]) if classification_totals else None,
+        "min_fill_fraction": min_fill,
+        "seed": int(classification_seed),
+        "markers": {CALIBRATION_MARK: True, CALIBRATION_KIND_MARK: CLASSIFICATION_CALIBRATION_KIND},
+        "exclusions": (
+            "identities of the cumulative train.jsonl, the anchor source and the current mined.jsonl "
+            "(render_iteration_mining_runner.py owns --exclude-identities-file)"
+        ),
+        "owner": (
+            "select_classification_calibration.py --pool --kpi --task-total TASK=ROWS --seed "
+            "--min-fill-fraction [--allow-shortfall]; assemble_training_json.py "
+            "--classification-calibration-jsonl (rows protected from the cap trim like detection calibration)"
+        ),
+    }
     if profile_totals and hybrid_calibration:
         raise ValueError("--calibration-task-total cannot be combined with the fixed single-image caps")
     acquisition_totals = parse_task_totals(getattr(args, "acquisition_task", None))
     if acquisition_totals and not profile_totals:
         raise ValueError("--acquisition-task requires the profile calibration policy (--calibration-task-total)")
     if profile_totals:
-        min_fill = float(getattr(args, "calibration_min_fill", 0.9) or 0.9)
-        if not 0.0 < min_fill <= 1.0:
-            raise ValueError("--calibration-min-fill must be in (0, 1]")
         # Acquisition tasks replace their base total with the acquisition volume.
         effective_totals = dict(profile_totals)
         for task, rows in acquisition_totals.items():
@@ -782,6 +825,8 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 ),
                 "calibration_policy": "empty_and_few_box_from_mining",
                 "calibration_quota_contract": calibration_quota_contract,
+                "classification_calibration": classification_totals,
+                "classification_calibration_contract": classification_calibration_contract,
                 "repetition_blend": repetition_blend,
                 "anchor": anchor_config,
                 "coverage_blend": coverage_config,
@@ -1045,10 +1090,17 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "Profile-matched calibration (policy kpi_profile_count_bins): calibration rows "
             "per detection task, split across ground-truth box-count bins in the KPI set's "
-            "proportions (repeatable). Excludes the fixed single-image caps."
+            "proportions (repeatable). Excludes the fixed single-image caps. A single-image "
+            "classification task (Defect Classification, Component Classification) instead "
+            "records config.mining.classification_calibration for select_classification_calibration.py."
         ),
     )
     parser.add_argument("--calibration-min-fill", type=float, default=0.9)
+    parser.add_argument(
+        "--classification-calibration-seed",
+        type=int,
+        help="Seed of the classification calibration selector (default 17); recorded in the launch contract.",
+    )
     parser.add_argument(
         "--acquisition-task",
         action="append",

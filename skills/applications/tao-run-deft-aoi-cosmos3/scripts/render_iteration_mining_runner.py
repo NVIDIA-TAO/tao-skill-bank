@@ -141,21 +141,30 @@ def build_plan(
     source_pair_assets_dir: pathlib.Path | None = None,
     query_pair_assets_dir: pathlib.Path | None = None,
     mining_commands: dict[str, list[str]] | None = None,
+    classification_calibration_command: list[str] | None = None,
 ) -> dict[str, Any]:
     if not selector_command or not all(
         isinstance(value, str) and value for value in selector_command
     ):
         raise ValueError("selector_command must be a non-empty string list")
     if any(
-        value == "--output"
-        or value.startswith("--output=")
-        or value == "--manifest"
-        or value.startswith("--manifest=")
-        or value == "--repetition-manifest"
-        or value.startswith("--repetition-manifest=")
+        value.partition("=")[0]
+        in ("--output", "--manifest", "--repetition-manifest", "--classification-calibration-jsonl")
         for value in selector_command
     ):
         raise ValueError("selector_command output paths are owned by this renderer")
+    if classification_calibration_command is not None:
+        if not classification_calibration_command or not all(
+            isinstance(value, str) and value for value in classification_calibration_command
+        ):
+            raise ValueError("classification_calibration_command must be a non-empty string list")
+        if any(
+            value.partition("=")[0] in ("--output", "--manifest", "--exclude-identities-file")
+            for value in classification_calibration_command
+        ):
+            raise ValueError(
+                "classification_calibration_command exclusion and output paths are owned by this renderer"
+            )
     if min(max_rows, row_multiple, epochs, global_batch) <= 0:
         raise ValueError("row, epoch, and global-batch values must be positive")
     if row_multiple != global_batch:
@@ -218,6 +227,39 @@ def build_plan(
             ["--previous-jsonl", str(previous), "--previous-sha256", previous_sha256]
         )
     assembler_argv.extend(assembler_materialization_argv)
+    # Classification calibration (Phase 4 step 4c-A): one extra current-row source
+    # for the assembler. The exclusion set is the cumulative corpus (previous
+    # Train), the anchor source when anchors are configured, and the rows the
+    # selector just mined, so the quota adds distinct class-answer rows.
+    classification: dict[str, Any] | None = None
+    if classification_calibration_command is not None:
+        classification_output = mined.with_name("classification_calibration.jsonl")
+        classification_manifest = mined.with_name("classification_calibration_manifest.json")
+        reserved = {mined, current_quota, train, summary, final_quota}
+        if previous is not None:
+            reserved.add(previous)
+        if {classification_output, classification_manifest} & reserved:
+            raise ValueError("classification calibration outputs must be distinct from the other iteration outputs")
+        exclusions: list[str] = []
+        if previous is not None:
+            exclusions.append(str(previous))
+        anchor_source = _option_value(assembler_materialization_argv, "--anchor-source")
+        if anchor_source is not None:
+            exclusions.append(anchor_source)
+        exclusions.append(str(mined))
+        classification_argv = list(classification_calibration_command)
+        for path in exclusions:
+            classification_argv.extend(["--exclude-identities-file", path])
+        classification_argv.extend(
+            ["--output", str(classification_output), "--manifest", str(classification_manifest)]
+        )
+        assembler_argv.extend(["--classification-calibration-jsonl", str(classification_output)])
+        classification = {
+            "command": classification_argv,
+            "output": str(classification_output),
+            "manifest": str(classification_manifest),
+            "exclusions": exclusions,
+        }
     roots = {
         "source_pair_assets_dir": str(source_pair_assets_dir.expanduser().resolve())
         if source_pair_assets_dir is not None else None,
@@ -235,6 +277,7 @@ def build_plan(
             "output": str(mined),
             "quota_manifest": str(current_quota),
         },
+        "classification_calibration": classification,
         "assembler": {
             "command": assembler_argv,
             "previous_jsonl": str(previous) if previous is not None else None,
@@ -260,19 +303,35 @@ def build_plan(
             "coverage_controls_owned_by_assembler": not any(
                 value.startswith("--coverage-blend-") for value in selector_argv
             ),
+            "classification_calibration_output_is_not_training_jsonl": (
+                classification is None or classification["output"] != str(train)
+            ),
         },
     }
+
+
+def _option_value(argv: list[str], option: str) -> str | None:
+    for index, value in enumerate(argv):
+        if value == option and index + 1 < len(argv):
+            return argv[index + 1]
+        if value.startswith(option + "="):
+            return value.partition("=")[2]
+    return None
 
 
 def render_runner(plan: dict[str, Any]) -> str:
     """Generate, but never execute, a standalone runner for the approved plan."""
 
+    names = ["selector"]
+    if plan.get("classification_calibration"):
+        names.append("classification_calibration")
+    names.append("assembler")
     stages = [
         {"name": stage["name"], "command": stage["command"]}
         for stage in plan.get("mining_stages", [])
     ] + [
         {"name": name, "command": plan[name]["command"]}
-        for name in ("selector", "assembler")
+        for name in names
     ]
     return '''#!/usr/bin/env python3
 # Generated by render_iteration_mining_runner.py; no stages run at generation time.

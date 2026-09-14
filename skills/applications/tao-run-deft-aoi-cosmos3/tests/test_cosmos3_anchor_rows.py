@@ -386,6 +386,44 @@ class CalibrationProtectedTrimTests(unittest.TestCase):
             self.assertEqual(len(fills), 28)
             self.assertEqual(len({r["id"] for r in rows}), 128)
 
+    def test_classification_calibration_rows_are_protected_and_deduped_marker_free(self) -> None:
+        # Phase 4: rows from select_classification_calibration.py carry a second inert marker
+        # (deft_calibration_kind = classification); they must survive the cap trim like detection
+        # calibration rows, and a marker-free re-mined copy must still be one record.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, source, kpi = self._corpus(root, calibration_rows=0)
+            classification = _write(root / "classification.jsonl", [
+                {**_row(f"cc-{i}", "Defect Classification", "cls"),
+                 assemble_training_json.CALIBRATION_MARK: True,
+                 assemble_training_json.CALIBRATION_KIND_MARK: assemble_training_json.CLASSIFICATION_CALIBRATION_KIND}
+                for i in range(30)
+            ])
+            cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None)
+            rows, summary = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=96, row_multiple=32,
+                classification_calibration_path=classification,
+            )
+            self.assertEqual(len(rows), 96)
+            kept = [r for r in rows if r.get(assemble_training_json.CALIBRATION_KIND_MARK) == "classification"]
+            self.assertEqual(len(kept), 30)
+            self.assertEqual(summary["materialized_classification_calibration_records"], 30)
+            self.assertEqual(summary["anchor"]["cap_reservation"]["calibration_rows_protected"], 30)
+            self.assertEqual(summary["materialized_anchor_records"], 10)
+            self.assertEqual(summary["materialized_current_records"], 56)  # 90 mined rows absorb the trim
+            marker_free = {k: v for k, v in kept[0].items()
+                           if k not in (assemble_training_json.CALIBRATION_MARK, assemble_training_json.CALIBRATION_KIND_MARK)}
+            self.assertEqual(assemble_training_json.marker_free_key(kept[0]), assemble_training_json.marker_free_key(marker_free))
+            previous = _write(root / "train1.jsonl", rows)
+            mined2 = _write(root / "mined2.jsonl", [marker_free] + [_row(f"n-{i}", "Defect Detection", "mine") for i in range(20)])
+            rows2, summary2 = assemble_training_json.assemble(
+                previous, mined2, previous_sha256=assemble_training_json.sha256_file(previous),
+                validation_paths=[], media_root=root, anchor_config=cfg,
+            )
+            self.assertEqual(summary2["duplicates_skipped"], 1)
+            self.assertEqual(len({r["id"] for r in rows2}), len(rows2))
+            self.assertEqual(summary2["materialized_classification_calibration_records"], 30)
+
     def test_calibration_rows_alone_over_capacity_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

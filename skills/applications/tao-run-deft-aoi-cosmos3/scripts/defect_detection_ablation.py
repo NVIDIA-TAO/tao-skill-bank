@@ -58,6 +58,11 @@ REFERENCE_NO_CHANGE_EVIDENCE = "calibration_reference_no_change_ground_truth"
 # the row cap, otherwise the verified calibration contract silently breaks
 # (2026-09-14: 382 of 3,000 reference pairs dropped by the task-balanced trim).
 CALIBRATION_MARK = "deft_calibration"
+# Optional second marker naming the calibration kind. Detection calibration rows
+# emitted here carry no kind (the assembler treats an absent kind as detection);
+# ``select_classification_calibration.py`` writes ``classification``.
+CALIBRATION_KIND_MARK = "deft_calibration_kind"
+CLASSIFICATION_CALIBRATION_KIND = "classification"
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
     ("source", "source_strata", None),

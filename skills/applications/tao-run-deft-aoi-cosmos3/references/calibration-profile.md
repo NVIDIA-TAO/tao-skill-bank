@@ -105,3 +105,87 @@ Pool box-count bins (full pool, 2026-09-10): Defect Detection `4-9` 1,358 rows,
 `10+` 190; Ref_based Defect Detection `4-9` 13,558, `10+` 639. With the panel
 shares above a 1,024-row DD quota asks for about 184 `4-9` and 23 `10+` rows
 per iteration, so five iterations fit; report the shortage table anyway.
+
+## Classification calibration (Phase 4 step 4c-A) — default off
+
+### Why
+
+The anchors run's final corpus is 43% empty-ground-truth rows (full training
+pool: 22%) and holds 10 single-image defect MCQ rows. On the new benchmark the
+model answers `[]` on 58% of the single-image MCQ (Full-train 10K: 5%). A probe
+that deleted the "return []" clause from the questions removed the empty
+answers but accuracy stayed near guessing (defect MCQ 12% → 23%): the missing
+capability is defect-type classification, and the empty-answer share is only
+the symptom (capped separately by `empty-answer-guard.md`). This quota adds
+real pool rows that *choose a class*.
+
+### Selection rule
+
+```bash
+python3 "$SKILL_ROOT/scripts/select_classification_calibration.py" \
+  --pool "$WORKSPACE/annotations/mining.jsonl" --kpi "$WORKSPACE/annotations/proxy_kpi.jsonl" \
+  --task-total "Defect Classification=256" [--task-total "Component Classification=128"] \
+  [--exclude-identities-file train.jsonl] [--exclude-identities-file anchor_candidates.jsonl] \
+  [--media-root "$WORKSPACE"] [--seed 17] [--min-fill-fraction 0.9] [--allow-shortfall] \
+  --output classification_calibration.jsonl --manifest classification_calibration_manifest.json
+```
+
+Eligible rows per task: a single-image classification task (`Defect
+Classification`, `Component Classification`; the two-image reference task is
+rejected), exactly one image in the user message, the lettered MCQ form (the
+`current possible classes` options block; the yes/no "Answer with the complete
+option text" form is not eligible), and a non-empty parsed option set (`F`,
+`[B,D]`, `["B","D"]`; `[]` is rejected, unknown letters and unparsable answers
+are counted under `rejected`). Excluded: atomic identities / ids found in the
+exclusion files (`.jsonl` = rows such as the cumulative `train.jsonl` or the
+anchor candidates, any other file = one identity per line; the identity is the
+assembler's `record_identity`, so pass the same `--media-root`), marker-free
+content duplicates and same-image duplicates within the pool.
+
+### Class shares
+
+The target distribution per task comes from the KPI set's ground-truth option
+labels (the semantic option text before the colon, never the letter, because
+letters differ between prompts; a multi-label row counts once per label).
+Quotas are a largest-remainder split over the classes the pool can supply:
+KPI classes with no eligible pool row are dropped and their share redistributed
+(`classes_missing_in_pool`); a task without usable KPI labels falls back to a
+uniform split over the pool's classes (`class_share_source =
+uniform_pool_fallback`). Inside a class the rows are ordered by seed/id hash
+and filled round-robin across datasets. A shortage inside a present class is
+not backfilled from another class; a task below `--min-fill-fraction` makes the
+CLI exit 2 unless `--allow-shortfall`, and the manifest records
+`shortfall_tasks`, `fill_ok` and `accepted` either way.
+
+### Markers, assembly, launch record
+
+Output rows are the pool rows unchanged plus the inert markers
+`deft_calibration: true` and `deft_calibration_kind: "classification"`.
+`assemble_training_json.py --classification-calibration-jsonl <output>` adds
+them as current rows (provenance `source_kind = classification_calibration`),
+de-duplicates them by id / marker-free content against the corpus, never trims
+them under the row cap or the anchor reservation (like detection calibration
+rows), and reports `materialized_classification_calibration_records` plus a
+`classification_calibration` block (input rows, duplicates, prior rows,
+new / total). `render_iteration_mining_runner.py` renders the selector as the
+stage between the mined-row selector and the assembler when the request carries
+`classification_calibration_command`; the renderer owns
+`--exclude-identities-file` (previous Train, the `--anchor-source` when anchors
+are configured, the current `mined.jsonl`), `--output` and `--manifest`, and
+passes the output to the assembler.
+
+`init_deft_state.py --calibration-task-total "Defect Classification=256"`
+records `config.mining.classification_calibration = {task: rows}` and a
+`classification_calibration_contract` (eligible tasks, class-share source =
+the KPI set, pool = the calibration annotations, `min_fill_fraction` from
+`--calibration-min-fill`, `--classification-calibration-seed`, markers). Detection
+tasks named in the same flag still feed the box-count profile above.
+
+### Manifest (`classification_calibration_v1`)
+
+Per task: `requested`, `eligible`, `selected`, `fill_fraction`, `shortfall`,
+`class_share_source`, `classes_missing_in_pool`, `datasets`, and `per_class`
+`{kpi_rows, target_share, target, eligible, selected}`; overall
+`excluded_by_identity`, `deduplicated_content`, `deduplicated_identity`,
+`rejected` by reason, `seed`, `min_fill_fraction`, `inputs` (pool / KPI /
+exclusion files with SHA-256) and `output` (rows, SHA-256).
