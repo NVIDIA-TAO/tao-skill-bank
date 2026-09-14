@@ -12,7 +12,7 @@ import json
 import pathlib
 import sys
 from collections import Counter
-from typing import Any
+from typing import Any, Callable, Iterable
 
 from anchor_rows import (
     ANCHOR_MARK,
@@ -22,6 +22,7 @@ from anchor_rows import (
     validate_anchor_config,
     write_manifest as write_anchor_manifest,
 )
+from answer_profile import EMPTY_DEFINITION, is_empty_ground_truth, profile_rows, row_profile
 from atomic_samples import logical_record_identity, sample_from_record
 from coverage_rows import (
     COVERAGE_MARK,
@@ -104,6 +105,314 @@ def _load_optional_records(path: pathlib.Path) -> list[dict[str, Any]]:
         if not any(line.strip() for line in stream):
             return []
     return load_records(path)
+
+
+# Empty-answer guard (Phase 4 step 4c-B). The cumulative corpus of the anchors
+# run was 43% empty-ground-truth rows (full pool: 22%) and the model answered
+# "[]" on 58% of the single-image MCQ; the guard reports the answer profile
+# every iteration and, when caps are launch-recorded, trims empty rows added
+# this iteration in a fixed order so the share cannot grow again.
+GUARD_MODES = ("enforce", "report")
+GUARD_TRIM_ORDER = ("detection_calibration_negative", "mined_empty")
+GUARD_NEVER_TRIMMED = (
+    "previous_iteration",
+    ANCHOR_SOURCE_KIND,
+    COVERAGE_SOURCE_KIND,
+    CLASSIFICATION_CALIBRATION_SOURCE_KIND,
+)
+_CLASSIFICATION_FORMATS = ("BCQ", "MCQ")
+
+
+def parse_task_shares(values: list[str] | None) -> dict[str, float]:
+    shares: dict[str, float] = {}
+    for value in values or []:
+        task, separator, share = value.partition("=")
+        if not separator or not task or task in shares:
+            raise ValueError(f"invalid task share {value!r}; expected TASK=SHARE")
+        try:
+            shares[task] = float(share)
+        except ValueError as exc:
+            raise ValueError(f"invalid task share {value!r}; expected TASK=SHARE") from exc
+    return shares
+
+
+def validate_empty_answer_guard_config(
+    max_share: float | None,
+    per_task: dict[str, float] | None,
+    classification_share: float | None,
+    mode: str | None,
+) -> dict[str, Any]:
+    """Resolve the guard caps; no cap = report only (``enabled`` false, ``mode`` None)."""
+
+    def share(name: str, value: Any) -> float | None:
+        if value is None:
+            return None
+        number = float(value)
+        if not 0.0 < number <= 1.0:
+            raise ValueError(f"{name} must be in (0, 1]")
+        return number
+
+    overall = share("--max-empty-answer-share", max_share)
+    tasks: dict[str, float] = {}
+    for task, value in (per_task or {}).items():
+        if task not in TASK_SPECS:
+            raise ValueError(f"--max-empty-answer-share-task names an unsupported task: {task!r}")
+        cap = share(f"--max-empty-answer-share-task {task}", value)
+        assert cap is not None
+        tasks[task] = cap
+    classification = share("--max-classification-empty-share", classification_share)
+    enabled = overall is not None or bool(tasks) or classification is not None
+    if mode is not None and mode not in GUARD_MODES:
+        raise ValueError("--empty-answer-guard-mode must be enforce or report")
+    if mode is not None and not enabled:
+        raise ValueError("--empty-answer-guard-mode requires at least one cap")
+    return {
+        "enabled": enabled,
+        "mode": (mode or "enforce") if enabled else None,
+        "max_empty_answer_share": overall,
+        "max_empty_answer_share_task": tasks,
+        "max_classification_empty_share": classification,
+    }
+
+
+def _share(empty: int, rows: int) -> float:
+    return empty / rows if rows else 0.0
+
+
+def _over_cap(empty: int, rows: int, cap: float) -> bool:
+    # a share equal to its cap is within the cap
+    return rows > 0 and empty > cap * rows + 1e-9
+
+
+class _GuardLedger:
+    """Running row / empty-row counters (overall, per task, classification) for the guard."""
+
+    def __init__(self, profiles: Iterable[dict[str, Any]]) -> None:
+        self.rows = 0
+        self.empty = 0
+        self.task_rows: Counter[str] = Counter()
+        self.task_empty: Counter[str] = Counter()
+        self.cls_rows = 0
+        self.cls_empty = 0
+        self.cls_task_rows: Counter[str] = Counter()
+        self.cls_task_empty: Counter[str] = Counter()
+        for profile in profiles:
+            self.add(profile)
+
+    def add(self, profile: dict[str, Any], sign: int = 1) -> None:
+        empty = int(bool(profile["empty"])) * sign
+        task = profile["task_type"]
+        self.rows += sign
+        self.empty += empty
+        self.task_rows[task] += sign
+        self.task_empty[task] += empty
+        if profile["format"] in _CLASSIFICATION_FORMATS:
+            self.cls_rows += sign
+            self.cls_empty += empty
+            self.cls_task_rows[task] += sign
+            self.cls_task_empty[task] += empty
+
+    def remove(self, profile: dict[str, Any]) -> None:
+        self.add(profile, -1)
+
+    def shares(self) -> dict[str, Any]:
+        return {
+            "rows": self.rows,
+            "empty_rows": self.empty,
+            "overall_share": _share(self.empty, self.rows),
+            "per_task": {
+                task: _share(self.task_empty[task], rows) for task, rows in sorted(self.task_rows.items()) if rows
+            },
+            "classification_share": _share(self.cls_empty, self.cls_rows),
+            "classification_per_task": {
+                task: _share(self.cls_task_empty[task], rows)
+                for task, rows in sorted(self.cls_task_rows.items())
+                if rows
+            },
+        }
+
+    def exceeded(self, config: dict[str, Any]) -> list[str]:
+        if not config["enabled"]:
+            return []
+        names: list[str] = []
+        cap = config["max_empty_answer_share"]
+        if cap is not None and _over_cap(self.empty, self.rows, cap):
+            names.append("overall")
+        for task, task_cap in sorted(config["max_empty_answer_share_task"].items()):
+            if _over_cap(self.task_empty[task], self.task_rows[task], task_cap):
+                names.append(f"task:{task}")
+        cap = config["max_classification_empty_share"]
+        if cap is not None:
+            if _over_cap(self.cls_empty, self.cls_rows, cap):
+                names.append("classification")
+            for task in sorted(self.cls_task_rows):
+                if _over_cap(self.cls_task_empty[task], self.cls_task_rows[task], cap):
+                    names.append(f"classification_task:{task}")
+        return names
+
+
+def _guard_row_helps(profile: dict[str, Any], exceeded: list[str]) -> bool:
+    task = profile["task_type"]
+    if "overall" in exceeded or f"task:{task}" in exceeded:
+        return True
+    return profile["format"] in _CLASSIFICATION_FORMATS and (
+        "classification" in exceeded or f"classification_task:{task}" in exceeded
+    )
+
+
+def _apply_empty_answer_guard(
+    merged: list[dict[str, Any]],
+    provenance: list[dict[str, Any]],
+    *,
+    config: dict[str, Any],
+    row_multiple: int | None,
+    anchor_fill: Callable[[int], tuple[list[dict[str, Any]], pathlib.Path]] | None,
+    register: Callable[[dict[str, Any]], None],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Report the empty-answer shares and, in enforce mode, trim this iteration's empty rows.
+
+    Trim order: detection calibration negatives, then mined empty rows; a row
+    goes only when it lowers a cap that is still exceeded. Previous rows,
+    anchors, coverage rows and classification calibration rows are never
+    trimmed. Alignment is restored by rounding up with non-empty anchors or,
+    without anchors, by rounding down with more empty rows; otherwise fail closed.
+    """
+
+    profiles = [row_profile(record, context=f"empty-answer guard row[{index}]") for index, record in enumerate(merged)]
+    ledger = _GuardLedger(profiles)
+    before = ledger.shares()
+    exceeded_before = ledger.exceeded(config)
+
+    def trim_source(index: int) -> str | None:
+        if provenance[index]["source_kind"] != "current_mining" or not profiles[index]["empty"]:
+            return None
+        record = merged[index]
+        if record.get(CALIBRATION_MARK) is True:
+            if record.get(CALIBRATION_KIND_MARK) == CLASSIFICATION_CALIBRATION_KIND:
+                return None
+            return GUARD_TRIM_ORDER[0]
+        return GUARD_TRIM_ORDER[1]
+
+    # Trim from the tail of the current slice so the freshest corrective rows stay in front.
+    candidates: dict[str, list[int]] = {source: [] for source in GUARD_TRIM_ORDER}
+    for index in range(len(merged) - 1, -1, -1):
+        source = trim_source(index)
+        if source is not None:
+            candidates[source].append(index)
+    removed: set[int] = set()
+    trimmed_by_source: Counter[str] = Counter()
+    trimmed_by_task: Counter[str] = Counter()
+
+    def trim(index: int, source: str) -> None:
+        removed.add(index)
+        ledger.remove(profiles[index])
+        trimmed_by_source[source] += 1
+        trimmed_by_task[profiles[index]["task_type"]] += 1
+
+    if config["enabled"] and config["mode"] == "enforce":
+        for source in GUARD_TRIM_ORDER:
+            exceeded = ledger.exceeded(config)
+            if not exceeded:
+                break
+            for index in candidates[source]:
+                if not _guard_row_helps(profiles[index], exceeded):
+                    continue
+                trim(index, source)
+                exceeded = ledger.exceeded(config)
+                if not exceeded:
+                    break
+    alignment: dict[str, Any] = {
+        "row_multiple": row_multiple,
+        "policy": None,
+        "fill_anchors": 0,
+        "rows_trimmed_for_rounding": 0,
+    }
+    kept = [index for index in range(len(merged)) if index not in removed]
+    fill_records: list[dict[str, Any]] = []
+    fill_provenance: list[dict[str, Any]] = []
+    if removed and row_multiple and len(kept) % row_multiple:
+        gap = -(-len(kept) // row_multiple) * row_multiple - len(kept)
+        if anchor_fill is not None:
+            extra, anchor_source = anchor_fill(gap)
+            if len(extra) == gap:
+                for offset, picked in enumerate(extra):
+                    record = {**picked, ANCHOR_MARK: True}
+                    register(record)
+                    fill_records.append(record)
+                    fill_provenance.append(
+                        {
+                            "source_kind": ANCHOR_SOURCE_KIND,
+                            "source": str(anchor_source),
+                            "source_index": offset,
+                            "id": record.get("id"),
+                            "purpose_tags": ["anchor", "empty_answer_guard_fill"],
+                        }
+                    )
+                    ledger.add(row_profile(record, context=f"empty-answer guard fill[{offset}]"))
+                alignment.update(policy="round_up_fill_with_anchors", fill_anchors=gap)
+        if not fill_records:
+            need = len(kept) % row_multiple
+            for source in GUARD_TRIM_ORDER:
+                for index in candidates[source]:
+                    if need == 0:
+                        break
+                    if index in removed:
+                        continue
+                    trim(index, source)
+                    alignment["rows_trimmed_for_rounding"] += 1
+                    need -= 1
+                if need == 0:
+                    break
+            if need:
+                raise ValueError(
+                    "training materialization cannot align the corpus after the empty-answer guard trim: "
+                    f"{len(kept)} rows, row_multiple={row_multiple}, {need} more trimmable empty rows needed "
+                    "and no anchors to fill the gap"
+                )
+            alignment["policy"] = "round_down_trim_empty_rows"
+            kept = [index for index in range(len(merged)) if index not in removed]
+    new_merged = [merged[index] for index in kept]
+    new_provenance = [provenance[index] for index in kept]
+    if fill_records:
+        insert_at = next(
+            (position for position, item in enumerate(new_provenance) if item["source_kind"] == "previous_iteration"),
+            len(new_merged),
+        )
+        new_merged[insert_at:insert_at] = fill_records
+        new_provenance[insert_at:insert_at] = fill_provenance
+    exceeded_after = ledger.exceeded(config)
+    if not config["enabled"]:
+        status = "within_caps"
+    elif exceeded_after:
+        status = "exceeded"
+    elif removed:
+        status = "trimmed_to_caps"
+    else:
+        status = "within_caps"
+    report = {
+        "enabled": config["enabled"],
+        "mode": config["mode"],
+        "caps": {
+            "overall": config["max_empty_answer_share"],
+            "per_task": dict(config["max_empty_answer_share_task"]),
+            "classification": config["max_classification_empty_share"],
+        },
+        "empty_definition": EMPTY_DEFINITION,
+        "trim_order": list(GUARD_TRIM_ORDER),
+        "never_trimmed": list(GUARD_NEVER_TRIMMED),
+        "before": before,
+        "after": ledger.shares(),
+        "exceeded_before": exceeded_before,
+        "exceeded_after": exceeded_after,
+        "trimmed": {
+            "total": len(removed),
+            "by_source": {source: trimmed_by_source[source] for source in GUARD_TRIM_ORDER if trimmed_by_source[source]},
+            "by_task": dict(sorted(trimmed_by_task.items())),
+        },
+        "alignment": alignment,
+        "status": status,
+    }
+    return new_merged, new_provenance, report
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -201,13 +510,17 @@ def assemble(
     coverage_config: dict[str, Any] | None = None,
     coverage_seed: int | None = None,
     classification_calibration_path: pathlib.Path | None = None,
+    empty_answer_guard: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     anchor = anchor_config or validate_anchor_config(None, None, None, None)
     coverage = coverage_config or validate_coverage_config(None, None, None, None)
+    guard = empty_answer_guard or validate_empty_answer_guard_config(None, None, None, None)
     if anchor["enabled"] and (repetition_config or {}).get("enabled"):
         raise ValueError("correct-row anchors and the repetition blend cannot be combined")
     if coverage["enabled"] and (repetition_config or {}).get("enabled"):
         raise ValueError("the coverage blend and the repetition blend cannot be combined")
+    if guard["enabled"] and guard["mode"] == "enforce" and (repetition_config or {}).get("enabled"):
+        raise ValueError("empty-answer guard enforcement cannot be combined with the repetition blend")
     if anchor["share"] + coverage["share"] >= 1.0:
         raise ValueError("anchor share plus coverage blend share must be below 1")
     for name, value in (("max_rows", max_rows), ("row_multiple", row_multiple)):
@@ -350,12 +663,27 @@ def assemble(
             return "evaluation_target"
         return None
 
+    guard_anchor_fill: Callable[[int], tuple[list[dict[str, Any]], pathlib.Path]] | None = None
     if anchor["enabled"]:
         anchor_source = pathlib.Path(anchor["source"]).expanduser().resolve(strict=True)
         anchor_candidates = load_records(anchor_source)
         non_anchor_rows = len(merged) - prior_anchor_rows
         anchor_total, anchor_new = slice_targets["anchor"]
         shares = task_shares_from_jsonl(pathlib.Path(anchor["task_shares"]))
+
+        def guard_anchor_fill(gap: int) -> tuple[list[dict[str, Any]], pathlib.Path]:
+            # alignment fill after the empty-answer guard trim: correct rows with a
+            # non-empty answer only, so the fill cannot push a share back over its cap
+            extra, _ = select_anchors(
+                anchor_candidates,
+                new_rows=gap,
+                task_shares=shares,
+                source_cap=anchor["source_cap"],
+                seed=(17 if anchor_seed is None else anchor_seed) + 2,
+                is_excluded=lambda record: excluded(record, anchor_source)
+                or ("empty_ground_truth" if is_empty_ground_truth(record, context="guard anchor fill") else None),
+            )
+            return extra, anchor_source
         anchors, selection = select_anchors(
             anchor_candidates,
             new_rows=anchor_new,
@@ -681,6 +1009,20 @@ def assemble(
         merged = [merged[index] for index in selected]
         provenance = [provenance[index] for index in selected]
         tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)
+
+    def register(record: dict[str, Any]) -> None:
+        seen.add(_dedup_key(record))
+        corpus_ids.add(str(record.get("id")))
+
+    merged, provenance, guard_report = _apply_empty_answer_guard(
+        merged,
+        provenance,
+        config=guard,
+        row_multiple=row_multiple,
+        anchor_fill=guard_anchor_fill,
+        register=register,
+    )
+    tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)
     if repetition_manifest is None:
         merged, repetition_manifest = apply_repetition_blend(
             merged,
@@ -716,6 +1058,7 @@ def assemble(
         )
     if not previous_fingerprints_subset:
         raise ValueError("previous training fingerprints are not a subset of output")
+    row_profiles = [row_profile(record, context=f"answer profile row[{index}]") for index, record in enumerate(merged)]
     return merged, {
         "schema_version": 2,
         "format": "jsonl",
@@ -837,6 +1180,13 @@ def assemble(
             merged, provenance, prior_anchor_rows=prior_anchor_rows, prior_coverage_rows=prior_coverage_rows,
             prior_classification_rows=prior_classification_rows,
         ),
+        "answer_profile": profile_rows(row_profiles),
+        "answer_profile_new_rows": profile_rows(
+            profile
+            for profile, item in zip(row_profiles, provenance)
+            if item["source_kind"] != "previous_iteration"
+        ),
+        "empty_answer_guard": guard_report,
         "tasks": dict(sorted(tasks.items())),
         "warnings": list(repetition_manifest["warnings"]),
         "provenance": provenance,
@@ -961,6 +1311,10 @@ def main(argv: list[str] | None = None) -> int:
             "deft_calibration_kind=classification) added as current rows and protected from the cap trim."
         ),
     )
+    parser.add_argument("--max-empty-answer-share", type=float, help="Empty-answer guard: cap on the empty-ground-truth share of the whole cumulative corpus, e.g. 0.30.")
+    parser.add_argument("--max-empty-answer-share-task", action="append", metavar="TASK=SHARE", help='Per-task cap, e.g. "Defect Detection=0.45" (repeatable).')
+    parser.add_argument("--max-classification-empty-share", type=float, help="Cap on empty BCQ+MCQ rows together and per classification task, e.g. 0.10.")
+    parser.add_argument("--empty-answer-guard-mode", choices=GUARD_MODES, help="enforce (default when any cap is given: trim this iteration's empty rows, fail closed if still exceeded) or report.")
     parser.add_argument(
         "--repetition-manifest",
         type=pathlib.Path,
@@ -1014,6 +1368,12 @@ def main(argv: list[str] | None = None) -> int:
             args.coverage_blend_source,
             args.coverage_blend_min_rows_per_dataset,
         )
+        guard_config = validate_empty_answer_guard_config(
+            args.max_empty_answer_share,
+            parse_task_shares(args.max_empty_answer_share_task),
+            args.max_classification_empty_share,
+            args.empty_answer_guard_mode,
+        )
         rows, summary = assemble(
             args.previous_jsonl,
             args.mined_jsonl,
@@ -1031,7 +1391,21 @@ def main(argv: list[str] | None = None) -> int:
             coverage_config=coverage_config,
             coverage_seed=args.coverage_blend_seed,
             classification_calibration_path=args.classification_calibration_jsonl,
+            empty_answer_guard=guard_config,
         )
+        guard_report = summary["empty_answer_guard"]
+        if guard_report["enabled"] and guard_report["mode"] == "enforce" and guard_report["status"] == "exceeded":
+            # fail closed: leave the numbers on disk for diagnosis, never the corpus
+            summary_path = args.summary or args.output.with_name("assemble_summary.json")
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(
+                json.dumps({**summary, "training_jsonl": None, "error": "empty_answer_guard_exceeded"}, indent=2) + "\n"
+            )
+            raise ValueError(
+                "empty-answer guard: caps still exceeded after trimming this iteration's empty rows "
+                f"({', '.join(guard_report['exceeded_after'])}); summary written to {summary_path}, "
+                f"{args.output} not written"
+            )
         _write_jsonl(args.output, rows)
         summary = bind_summary(summary, args.output)
         if anchor_config["enabled"]:

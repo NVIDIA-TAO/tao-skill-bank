@@ -44,7 +44,20 @@ _ASSEMBLER_ONLY_VALUES = {
     "--coverage-blend-source",
     "--coverage-blend-min-rows-per-dataset",
     "--coverage-blend-seed",
+    "--max-empty-answer-share",
+    "--max-empty-answer-share-task",
+    "--max-classification-empty-share",
+    "--empty-answer-guard-mode",
 }
+_ASSEMBLER_ONLY_PREFIXES = (
+    "--repetition-",
+    "--no-repetition-",
+    "--anchor-",
+    "--coverage-blend-",
+    "--max-empty-answer-",
+    "--max-classification-empty-",
+    "--empty-answer-guard-",
+)
 
 # Optional upstream commands execute in dependency order. Only embedding-input
 # preparation may render images; routing/emission use the source cache as keys.
@@ -112,7 +125,7 @@ def _partition_materialization_arguments(
             else:
                 index += 1
             continue
-        if value.startswith(("--repetition-", "--no-repetition-", "--anchor-", "--coverage-blend-")):
+        if value.startswith(_ASSEMBLER_ONLY_PREFIXES):
             raise ValueError(
                 f"unsupported materialization option {value!r}"
             )
@@ -302,6 +315,10 @@ def build_plan(
             ),
             "coverage_controls_owned_by_assembler": not any(
                 value.startswith("--coverage-blend-") for value in selector_argv
+            ),
+            "empty_answer_guard_owned_by_assembler": not any(
+                value.startswith(("--max-empty-answer-", "--max-classification-empty-", "--empty-answer-guard-"))
+                for value in selector_argv
             ),
             "classification_calibration_output_is_not_training_jsonl": (
                 classification is None or classification["output"] != str(train)

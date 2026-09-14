@@ -19,6 +19,13 @@ from typing import Any
 
 import yaml
 
+from answer_profile import EMPTY_DEFINITION
+from assemble_training_json import (
+    GUARD_NEVER_TRIMMED,
+    GUARD_TRIM_ORDER,
+    parse_task_shares,
+    validate_empty_answer_guard_config,
+)
 from atomic_samples import PAIR_SIMILARITIES, PAIR_SIMILARITY_COMBINES
 from coverage_stratified_selector import (
     CANDIDATE_SELECTORS,
@@ -540,6 +547,32 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             "--classification-calibration-jsonl (rows protected from the cap trim like detection calibration)"
         ),
     }
+    # Empty-answer guard (Phase 4 step 4c-B): assembler-only caps, launch-recorded here.
+    guard = validate_empty_answer_guard_config(
+        getattr(args, "max_empty_answer_share", None),
+        parse_task_shares(getattr(args, "max_empty_answer_share_task", None)),
+        getattr(args, "max_classification_empty_share", None),
+        getattr(args, "empty_answer_guard_mode", None),
+    )
+    empty_answer_guard = {
+        **guard,
+        "empty_definition": EMPTY_DEFINITION,
+        "scope": "rows added this iteration; previous rows are never trimmed",
+        "trim_order": list(GUARD_TRIM_ORDER),
+        "never_trimmed": list(GUARD_NEVER_TRIMMED),
+        "alignment": "round up with non-empty anchors, else round down with more empty rows, else fail closed",
+        "fail_closed": "enforce mode exits non-zero when a cap is still exceeded after trimming",
+        "recommended_defaults": {
+            "max_empty_answer_share": 0.30,
+            "max_empty_answer_share_task": {"Defect Detection": 0.45, "Ref_based Defect Detection": 0.50},
+            "max_classification_empty_share": 0.10,
+            "anchor": "full training pool 22.2% empty overall (2026-09-14); see references/empty-answer-guard.md",
+        },
+        "owner": (
+            "assemble_training_json.py (assembler-only options: --max-empty-answer-share "
+            "--max-empty-answer-share-task --max-classification-empty-share --empty-answer-guard-mode)"
+        ),
+    }
     if profile_totals and hybrid_calibration:
         raise ValueError("--calibration-task-total cannot be combined with the fixed single-image caps")
     acquisition_totals = parse_task_totals(getattr(args, "acquisition_task", None))
@@ -827,6 +860,7 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "calibration_quota_contract": calibration_quota_contract,
                 "classification_calibration": classification_totals,
                 "classification_calibration_contract": classification_calibration_contract,
+                "empty_answer_guard": empty_answer_guard,
                 "repetition_blend": repetition_blend,
                 "anchor": anchor_config,
                 "coverage_blend": coverage_config,
@@ -1100,6 +1134,27 @@ def _parser() -> argparse.ArgumentParser:
         "--classification-calibration-seed",
         type=int,
         help="Seed of the classification calibration selector (default 17); recorded in the launch contract.",
+    )
+    parser.add_argument(
+        "--max-empty-answer-share",
+        type=float,
+        help="Empty-answer guard: cap on the empty-ground-truth share of the cumulative corpus (assembler-only; e.g. 0.30).",
+    )
+    parser.add_argument(
+        "--max-empty-answer-share-task",
+        action="append",
+        metavar="TASK=SHARE",
+        help='Empty-answer guard per-task cap, e.g. "Defect Detection=0.45" (repeatable).',
+    )
+    parser.add_argument(
+        "--max-classification-empty-share",
+        type=float,
+        help="Empty-answer guard cap on empty BCQ+MCQ rows together and per classification task (e.g. 0.10).",
+    )
+    parser.add_argument(
+        "--empty-answer-guard-mode",
+        choices=("enforce", "report"),
+        help="Guard mode when a cap is given (default enforce).",
     )
     parser.add_argument(
         "--acquisition-task",

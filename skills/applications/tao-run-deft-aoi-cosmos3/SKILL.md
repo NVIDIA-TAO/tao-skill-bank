@@ -310,9 +310,9 @@ id before applying stride sharding; use `row_order = "source"` or the runtime
 `--row-order=source` override only when source-order replay is required. The
 per-rank and merged evaluation summaries record both the selected order and its
 sort key, while merge-by-id restores canonical source order and exact coverage.
-On the recorded 20,657-row v3b iteration-5 benchmark this default reduced wall
-time from 58:20 to 38:56 (-33%), with every cohort F1 delta at most 0.30 and
-therefore within evaluator noise.
+On the recorded 20,657-row v3b iteration-5 benchmark this default cut wall
+time from 58:20 to 38:56 (-33%) with every cohort F1 delta at most 0.30,
+within evaluator noise.
 
 `$PYTHON scripts/exact_f1_adapter.py` invokes the recorded absolute
 `eval/calculate_f1_metrics.py`, preserves its raw JSON report, binds the
@@ -361,6 +361,7 @@ Read the focused references as needed:
 - `references/pipeline-and-state.md`
 - `references/cosmos-reason.md`
 - `references/coverage-stratified-selector.md`
+- `references/empty-answer-guard.md`
 - `references/aoi-annotation.md`
 - `references/metric-contract.md`
 - `references/scripts-and-agents.md`

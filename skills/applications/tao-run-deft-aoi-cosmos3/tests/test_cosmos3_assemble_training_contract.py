@@ -455,6 +455,29 @@ class Cosmos3AssembleTrainingContractTests(unittest.TestCase):
                 "repetition_blend_manifest_v2",
             )
 
+    def test_summary_always_carries_the_phase4_keys_with_inert_defaults(self) -> None:
+        # Phase 4: answer_profile / answer_profile_new_rows / empty_answer_guard and the
+        # classification calibration counters are present even when nothing is configured.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined = _write(root / "mined.jsonl", [_row(f"row-{index}") for index in range(4)])
+            rows, summary = assemble_training_json.assemble(None, mined, validation_paths=[], max_rows=4, row_multiple=2)
+            self.assertEqual(len(rows), 4)
+            profile = summary["answer_profile"]
+            self.assertEqual((profile["rows"], profile["empty_rows"], profile["empty_share"]), (4, 0, 0.0))
+            self.assertEqual(list(profile["by_task_format_images"]), ["Component Classification|MCQ|1"])
+            self.assertEqual(summary["answer_profile_new_rows"]["rows"], 4)
+            guard = summary["empty_answer_guard"]
+            self.assertFalse(guard["enabled"])
+            self.assertIsNone(guard["mode"])
+            self.assertEqual(guard["status"], "within_caps")
+            self.assertEqual(guard["trimmed"], {"total": 0, "by_source": {}, "by_task": {}})
+            self.assertEqual(guard["alignment"]["row_multiple"], 2)
+            self.assertEqual(summary["materialized_classification_calibration_records"], 0)
+            self.assertFalse(summary["classification_calibration"]["enabled"])
+            bound = assemble_training_json.bind_summary(summary, _write(root / "train.jsonl", rows))
+            self.assertEqual(bound["empty_answer_guard"]["status"], "within_caps")
+
     def test_repetition_share_gap_warning_is_copied_to_stage_summary(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)

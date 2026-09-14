@@ -16,6 +16,7 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
+from answer_profile import is_empty_ground_truth
 from atomic_samples import PAIR_CONTENT_IDENTITY, content_identity_for_paths, sample_from_record
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
@@ -1370,9 +1371,18 @@ def materialize(
             materialized_maintenance[task] > 0 for task in MAINTENANCE_TASK_TYPES
         ),
     }
+    # Empty-answer guard evidence: how many of the rows this selection adds carry an
+    # empty ground truth ([] / {} / blank), all tasks; the selection itself is unchanged.
+    new_rows_empty_by_task: Counter[str] = Counter(
+        str(row.get("task_type"))
+        for index, row in enumerate(selected_records)
+        if is_empty_ground_truth(row, context=f"selected row[{index}]")
+    )
     manifest = {
         "schema_version": "defect_detection_quota_manifest_v1",
         "calibration_scope": "current_new_rows_only",
+        "new_rows_empty": sum(new_rows_empty_by_task.values()),
+        "new_rows_empty_by_task": dict(sorted(new_rows_empty_by_task.items())),
         "previous_records_excluded": counters["previous_records_excluded"],
         "selection_policy": (
             "defect_detection_hybrid_calibration_task_strict_v2"
@@ -1724,6 +1734,8 @@ def bind_cumulative_manifest(
         "single_image_calibration": bound.get("single_image_calibration"),
         "reference_calibration": bound.get("reference_calibration"),
         "repetition_blend": bound.get("repetition_blend"),
+        "new_rows_empty": bound.get("new_rows_empty"),
+        "new_rows_empty_by_task": bound.get("new_rows_empty_by_task"),
     }
     bound["repetition_blend"] = assembly_summary["repetition_blend"]
     tasks = Counter(str(row.get("task_type")) for row in final_rows)
