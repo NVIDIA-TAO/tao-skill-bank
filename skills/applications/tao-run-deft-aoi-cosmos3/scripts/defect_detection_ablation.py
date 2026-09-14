@@ -416,7 +416,13 @@ def _task_balanced(
     *,
     max_novel: int,
     reference_empty_rate: float | None = None,
+    reference_seed: tuple[int, int] | None = None,
 ) -> list[dict[str, Any]]:
+    """Round-robin over the maintenance tasks. With ``reference_empty_rate`` the
+    reference rows track ``floor(total * rate + 0.5)`` empties. ``reference_seed``
+    = (rows, empties) already selected outside this call (the reserved reference
+    calibration): seeding makes the running total track the *combined* target the
+    quota manifest verifies, so two separately rounded slices cannot miss it by one."""
     groups = {
         task: sorted(
             (item for item in entries if item["task_type"] == task),
@@ -446,6 +452,8 @@ def _task_balanced(
     }
     reference_positions = Counter()
     reference_selected = Counter()
+    if reference_seed is not None:
+        reference_selected["total"], reference_selected["empty"] = reference_seed
     while len(selected) < target:
         advanced = False
         for task in MAINTENANCE_TASK_TYPES:
@@ -1079,6 +1087,17 @@ def materialize(
             - reserved_reference_novel,
         ),
         reference_empty_rate=reference_proxy_empty_rate,
+        # the manifest checks the empty rate over calibration + mined reference rows
+        # together; seed the running total so the mined slice completes that target
+        # instead of rounding its own slice (3,000 + 80 rows missed it by one, 2026-09-14)
+        reference_seed=(
+            (
+                len(reserved_reference_calibration),
+                sum(not item.get("objects") for item in reserved_reference_calibration),
+            )
+            if hybrid_calibration and reserved_reference_calibration
+            else None
+        ),
     )
     accepted_target_rows: int | None = None
     if not resolved_repetition["enabled"]:

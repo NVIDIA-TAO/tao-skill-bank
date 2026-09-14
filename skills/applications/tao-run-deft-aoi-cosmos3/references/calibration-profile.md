@@ -82,6 +82,12 @@ excluded from the Defect Detection floor base; otherwise a large acquisition
 slice forces an unsatisfiable DD quota. Re-run the gate every iteration; when
 the task crosses the trivial baseline drop the override (refinement mode).
 
+The quota manifest checks the reference empty rate over calibration **and**
+mined reference rows together; the materializer therefore seeds the mined
+slice's running total with the reserved calibration counts so both slices
+complete one combined `floor(total × rate + 0.5)` target (separately rounded
+slices missed it by one row at 3,000 + 80 rows, 2026-09-14).
+
 ## Supply check before launching
 
 Pool box-count bins (full pool, 2026-09-10): Defect Detection `4-9` 1,358 rows,
