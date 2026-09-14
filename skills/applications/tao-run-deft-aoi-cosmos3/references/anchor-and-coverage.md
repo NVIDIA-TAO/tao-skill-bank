@@ -64,9 +64,16 @@ option to the assembler, which is the only writer of the cumulative Train.
   (`anchor.cap_reservation` reports the displaced count). Output order stays
   current mined → anchors → previous rows. Calibration rows the materializer
   marked `deft_calibration` are never displaced either
-  (`cap_reservation.calibration_rows_protected`; fail closed if they alone
-  exceed the current-row capacity), so the verified calibration contract
-  survives assembly (2026-09-14: 382 of 3,000 reference pairs were trimmed).
+  (`cap_reservation.calibration_rows_protected`), so the verified calibration
+  contract survives assembly (2026-09-14: 382 of 3,000 reference pairs were
+  trimmed). When the calibration rows alone exceed the aligned-down capacity
+  (a calibration-dominated iteration with almost no trimmable mined rows), the
+  corpus is rounded **up** to the next `--row-multiple` and the gap is filled
+  with extra anchors (`alignment_fill_anchors`, provenance tag
+  `alignment_fill`, `alignment_policy = round_up_fill_with_anchors`); the
+  realized anchor share then exceeds the requested share for that iteration
+  and the next iteration's top-up accounts for it. Fail closed only when the
+  rounded-up size exceeds `--max-rows` or the anchor supply runs out.
 - `--anchor-share-exclude-rows <cumulative rows>` (default 0) takes a
   launch-recorded acquisition slice out of the share base, both for the
   uncapped target and for the cap reservation; `realized_share_rows` is then

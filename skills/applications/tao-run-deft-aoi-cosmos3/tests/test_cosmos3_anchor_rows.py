@@ -362,11 +362,36 @@ class CalibrationProtectedTrimTests(unittest.TestCase):
             self.assertEqual(kinds[:86], ["current_mining"] * 86)
             self.assertEqual(kinds[86:], ["anchor_correct"] * 10)
 
+    def test_calibration_dominated_iteration_rounds_up_and_fills_with_anchors(self) -> None:
+        # 2026-09-14 acq r4 iter2: 3,475 calibration rows + 5 mined rows; the 768 rounding had nothing
+        # trimmable left. Round UP to the next multiple and fill the gap with extra anchors instead.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, source, kpi = self._corpus(root, calibration_rows=90)  # 90 current rows, all protected
+            cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None)
+            rows, summary = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=200, row_multiple=32
+            )
+            # uncapped 90 + 10 anchors = 100 -> aligned-down 96 would need to drop 4 calibration rows ->
+            # instead 128 rows = 90 calibration + 38 anchors (10 share + 28 alignment fill)
+            self.assertEqual(len(rows), 128)
+            self.assertEqual(summary["materialized_calibration_records"], 90)
+            self.assertEqual(summary["materialized_anchor_records"], 38)
+            cap = summary["anchor"]["cap_reservation"]
+            self.assertEqual(cap["alignment_fill_anchors"], 28)
+            self.assertEqual(cap["alignment_policy"], "round_up_fill_with_anchors")
+            self.assertEqual(cap["calibration_rows_protected"], 90)
+            self.assertEqual(cap["current_rows_displaced_by_anchors"], 0)
+            fills = [p for p in summary["provenance"] if "alignment_fill" in p.get("purpose_tags", [])]
+            self.assertEqual(len(fills), 28)
+            self.assertEqual(len({r["id"] for r in rows}), 128)
+
     def test_calibration_rows_alone_over_capacity_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             mined, source, kpi = self._corpus(root, calibration_rows=90)
             cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None)
+            # rounding up to 128 would exceed the cap of 96 -> still fail closed
             with self.assertRaisesRegex(ValueError, "cannot retain the calibration rows"):
                 assemble_training_json.assemble(
                     None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=96, row_multiple=32

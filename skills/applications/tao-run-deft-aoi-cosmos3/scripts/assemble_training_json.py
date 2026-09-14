@@ -522,11 +522,63 @@ def assemble(
         # current rows. Mined rows first, then the protected calibration rows.
         protected = [index for index in current if merged[index].get(CALIBRATION_MARK) is True]
         trimmable = [index for index in current if merged[index].get(CALIBRATION_MARK) is not True]
+        alignment_fill_anchors = 0
         if len(protected) > current_limit:
-            raise ValueError(
-                "training materialization cannot retain the calibration rows under the "
-                f"configured cap: calibration={len(protected)}, current_limit={current_limit}"
+            # The global-batch rounding cannot be absorbed by trimmable rows (a
+            # calibration-dominated iteration: 3,475 calibration rows + 5 mined rows,
+            # 2026-09-14). Round the corpus UP to the next multiple instead and fill
+            # the gap with extra correct-row anchors, which are plentiful and inert,
+            # rather than deleting verified calibration rows. Fail closed only when
+            # the cap or the anchor supply makes that impossible.
+            keep_rows = len(prior) + len(current) + coverage_slots
+            fillable = anchor["enabled"] and row_multiple is not None
+            rounded = (
+                -(-(keep_rows + anchor_slots) // row_multiple) * row_multiple if fillable else keep_rows + anchor_slots
             )
+            if not fillable or (max_rows is not None and rounded > max_rows):
+                raise ValueError(
+                    "training materialization cannot retain the calibration rows under the "
+                    f"configured cap: calibration={len(protected)}, current_limit={current_limit}"
+                )
+            gap = rounded - keep_rows - anchor_slots
+            if gap > 0:
+                extra_pool = anchors_idx[anchor_slots:]
+                take = min(gap, len(extra_pool))
+                anchor_slots += take
+                gap -= take
+            if gap > 0:
+                extra, extra_selection = select_anchors(
+                    anchor_candidates,
+                    new_rows=gap,
+                    task_shares=shares,
+                    source_cap=anchor["source_cap"],
+                    seed=(17 if anchor_seed is None else anchor_seed) + 1,
+                    is_excluded=lambda record: excluded(record, anchor_source),
+                )
+                if len(extra) < gap:
+                    raise ValueError(
+                        "training materialization cannot align the corpus without deleting calibration rows: "
+                        f"needs {gap} more anchors, only {len(extra)} available"
+                    )
+                for offset, picked in enumerate(extra):
+                    record = {**picked, ANCHOR_MARK: True}
+                    seen.add(_dedup_key(record))
+                    corpus_ids.add(str(record.get("id")))
+                    merged.append(record)
+                    provenance.append(
+                        {
+                            "source_kind": ANCHOR_SOURCE_KIND,
+                            "source": str(anchor_source),
+                            "source_index": len(anchors_idx) + offset,
+                            "id": record.get("id"),
+                            "purpose_tags": ["anchor", "alignment_fill"],
+                        }
+                    )
+                    anchors_idx.append(len(merged) - 1)
+                anchor_slots += gap
+                alignment_fill_anchors = gap
+            materialized_rows = rounded
+            current_limit = len(current)
         selected = _task_balanced_indices(trimmable, merged, current_limit - len(protected))
         selected.extend(protected)
         selected.extend(coverage_idx[:coverage_slots])
@@ -545,6 +597,12 @@ def assemble(
                 "new_anchors_available": len(anchors_idx),
                 "current_rows_displaced_by_anchors": anchor_displaced,
                 "calibration_rows_protected": len(protected),
+                # rows added to round the corpus up to the global batch when the
+                # calibration rows alone exceeded the aligned-down capacity
+                "alignment_fill_anchors": alignment_fill_anchors,
+                "alignment_policy": (
+                    "round_up_fill_with_anchors" if alignment_fill_anchors else "round_down_trim_mined_rows"
+                ),
             }
         if coverage["enabled"]:
             coverage_report["cap_reservation"] = {
