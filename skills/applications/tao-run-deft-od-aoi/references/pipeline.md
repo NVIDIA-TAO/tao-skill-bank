@@ -3,7 +3,15 @@
 Read this for stage order and completion gates. Read only the stage-specific
 reference and leaf skill needed for the current step.
 
-## 0. Freeze the contract
+## 0. Prepare sources and freeze the contract
+
+If the customer supplied source COCO files instead of an existing four-role
+handoff, author `dataset_sources.json`, run `prepare_deft_od_aoi_sources.py
+--check-only`, then materialize it in the pinned Data Services image. The
+preparer writes canonical per-source COCO shards, delegates each role merge to
+`annotations merge`, and validates the merged outputs before publishing the
+new normalized directory. Use the emitted `sources.json` as the policy's
+`sources` mapping.
 
 Copy and complete `assets/default_policy.yaml`, then run
 `init_deft_od_aoi.py` into a new result directory. Gate on

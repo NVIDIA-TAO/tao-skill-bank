@@ -7,6 +7,7 @@ validate contracts; model and data skills own their container actions.
 
 | Script | Purpose |
 |---|---|
+| `prepare_deft_od_aoi_sources.py` | Canonicalize customer shards, delegate role merging to Data Services `annotations merge`, validate KPI/test/real/clean roles, and emit `sources.json`. |
 | `init_deft_od_aoi.py` | Validate normalized roles, freeze the policy, and initialize durable state. |
 | `prepare_deft_od_aoi_retrieval.py` | Build candidate crops/specs or per-iteration gap-query/mining specs. |
 | `admit_deft_od_aoi_coco.py` | Admit unique real/clean/synthetic sources into cumulative binary COCO. |
