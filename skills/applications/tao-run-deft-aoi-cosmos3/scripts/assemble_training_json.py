@@ -113,6 +113,7 @@ def _load_optional_records(path: pathlib.Path) -> list[dict[str, Any]]:
 # every iteration and, when caps are launch-recorded, trims empty rows added
 # this iteration in a fixed order so the share cannot grow again.
 GUARD_MODES = ("enforce", "report")
+GUARD_MAX_PASSES = 25
 GUARD_TRIM_ORDER = ("detection_calibration_negative", "mined_empty")
 GUARD_NEVER_TRIMMED = (
     "previous_iteration",
@@ -260,132 +261,117 @@ def _guard_row_helps(profile: dict[str, Any], exceeded: list[str]) -> bool:
     )
 
 
-def _apply_empty_answer_guard(
+def _guard_trim_source(record: dict[str, Any], item: dict[str, Any], profile: dict[str, Any]) -> str | None:
+    """Which trim group an aligned-corpus row belongs to, or None when it is never trimmed."""
+    if item["source_kind"] != "current_mining" or not profile["empty"]:
+        return None
+    if record.get(CALIBRATION_MARK) is True:
+        if record.get(CALIBRATION_KIND_MARK) == CLASSIFICATION_CALIBRATION_KIND:
+            return None
+        return GUARD_TRIM_ORDER[0]
+    return GUARD_TRIM_ORDER[1]
+
+
+def _guard_trim_plan(
     merged: list[dict[str, Any]],
     provenance: list[dict[str, Any]],
-    *,
+    profiles: list[dict[str, Any]],
+    ledger: "_GuardLedger",
     config: dict[str, Any],
-    row_multiple: int | None,
-    anchor_fill: Callable[[int], tuple[list[dict[str, Any]], pathlib.Path]] | None,
-    register: Callable[[dict[str, Any]], None],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    """Report the empty-answer shares and, in enforce mode, trim this iteration's empty rows.
+) -> list[tuple[dict[str, Any], str]]:
+    """Greedy plan over one aligned corpus: detection calibration negatives first, then mined
+    empties, tail first, a row only when it lowers a cap that is still exceeded. Mutates ``ledger``."""
 
-    Trim order: detection calibration negatives, then mined empty rows; a row
-    goes only when it lowers a cap that is still exceeded. Previous rows,
-    anchors, coverage rows and classification calibration rows are never
-    trimmed. Alignment is restored by rounding up with non-empty anchors or,
-    without anchors, by rounding down with more empty rows; otherwise fail closed.
-    """
-
-    profiles = [row_profile(record, context=f"empty-answer guard row[{index}]") for index, record in enumerate(merged)]
-    ledger = _GuardLedger(profiles)
-    before = ledger.shares()
-    exceeded_before = ledger.exceeded(config)
-
-    def trim_source(index: int) -> str | None:
-        if provenance[index]["source_kind"] != "current_mining" or not profiles[index]["empty"]:
-            return None
-        record = merged[index]
-        if record.get(CALIBRATION_MARK) is True:
-            if record.get(CALIBRATION_KIND_MARK) == CLASSIFICATION_CALIBRATION_KIND:
-                return None
-            return GUARD_TRIM_ORDER[0]
-        return GUARD_TRIM_ORDER[1]
-
-    # Trim from the tail of the current slice so the freshest corrective rows stay in front.
     candidates: dict[str, list[int]] = {source: [] for source in GUARD_TRIM_ORDER}
     for index in range(len(merged) - 1, -1, -1):
-        source = trim_source(index)
+        source = _guard_trim_source(merged[index], provenance[index], profiles[index])
         if source is not None:
             candidates[source].append(index)
-    removed: set[int] = set()
-    trimmed_by_source: Counter[str] = Counter()
-    trimmed_by_task: Counter[str] = Counter()
-
-    def trim(index: int, source: str) -> None:
-        removed.add(index)
-        ledger.remove(profiles[index])
-        trimmed_by_source[source] += 1
-        trimmed_by_task[profiles[index]["task_type"]] += 1
-
-    if config["enabled"] and config["mode"] == "enforce":
-        for source in GUARD_TRIM_ORDER:
+    plan: list[tuple[dict[str, Any], str]] = []
+    for source in GUARD_TRIM_ORDER:
+        exceeded = ledger.exceeded(config)
+        if not exceeded:
+            break
+        for index in candidates[source]:
+            if not _guard_row_helps(profiles[index], exceeded):
+                continue
+            ledger.remove(profiles[index])
+            plan.append((merged[index], source))
             exceeded = ledger.exceeded(config)
             if not exceeded:
                 break
-            for index in candidates[source]:
-                if not _guard_row_helps(profiles[index], exceeded):
-                    continue
-                trim(index, source)
-                exceeded = ledger.exceeded(config)
-                if not exceeded:
-                    break
-    alignment: dict[str, Any] = {
-        "row_multiple": row_multiple,
-        "policy": None,
-        "fill_anchors": 0,
-        "rows_trimmed_for_rounding": 0,
-    }
-    kept = [index for index in range(len(merged)) if index not in removed]
-    fill_records: list[dict[str, Any]] = []
-    fill_provenance: list[dict[str, Any]] = []
-    if removed and row_multiple and len(kept) % row_multiple:
-        gap = -(-len(kept) // row_multiple) * row_multiple - len(kept)
-        if anchor_fill is not None:
-            extra, anchor_source = anchor_fill(gap)
-            if len(extra) == gap:
-                for offset, picked in enumerate(extra):
-                    record = {**picked, ANCHOR_MARK: True}
-                    register(record)
-                    fill_records.append(record)
-                    fill_provenance.append(
-                        {
-                            "source_kind": ANCHOR_SOURCE_KIND,
-                            "source": str(anchor_source),
-                            "source_index": offset,
-                            "id": record.get("id"),
-                            "purpose_tags": ["anchor", "empty_answer_guard_fill"],
-                        }
-                    )
-                    ledger.add(row_profile(record, context=f"empty-answer guard fill[{offset}]"))
-                alignment.update(policy="round_up_fill_with_anchors", fill_anchors=gap)
-        if not fill_records:
-            need = len(kept) % row_multiple
-            for source in GUARD_TRIM_ORDER:
-                for index in candidates[source]:
-                    if need == 0:
-                        break
-                    if index in removed:
-                        continue
-                    trim(index, source)
-                    alignment["rows_trimmed_for_rounding"] += 1
-                    need -= 1
-                if need == 0:
-                    break
-            if need:
-                raise ValueError(
-                    "training materialization cannot align the corpus after the empty-answer guard trim: "
-                    f"{len(kept)} rows, row_multiple={row_multiple}, {need} more trimmable empty rows needed "
-                    "and no anchors to fill the gap"
-                )
-            alignment["policy"] = "round_down_trim_empty_rows"
-            kept = [index for index in range(len(merged)) if index not in removed]
-    new_merged = [merged[index] for index in kept]
-    new_provenance = [provenance[index] for index in kept]
-    if fill_records:
-        insert_at = next(
-            (position for position, item in enumerate(new_provenance) if item["source_kind"] == "previous_iteration"),
-            len(new_merged),
-        )
-        new_merged[insert_at:insert_at] = fill_records
-        new_provenance[insert_at:insert_at] = fill_provenance
-    exceeded_after = ledger.exceeded(config)
+    return plan
+
+
+def _run_empty_answer_guard(
+    candidate_merged: list[dict[str, Any]],
+    candidate_provenance: list[dict[str, Any]],
+    *,
+    config: dict[str, Any],
+    materialize: Callable[
+        [list[dict[str, Any]], list[dict[str, Any]]], tuple[list[dict[str, Any]], list[dict[str, Any]]]
+    ] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Report the empty-answer shares of the aligned corpus and, in enforce mode, trim
+    empty candidates *before* alignment until the aligned corpus is within the caps.
+
+    ``materialize`` is the cap / global-batch step as a function of the candidate
+    set. Each pass materializes, measures the aligned corpus, plans which of its
+    trimmable empty rows to drop, removes those rows from the candidate set and
+    re-materializes, so the standard selection back-fills from the remaining
+    (non-empty) candidates and the aligned size stays unchanged whenever enough
+    candidates remain; it shrinks only when candidates run out (reported).
+    """
+
+    if materialize is None:
+        def materialize(merged: list[dict[str, Any]], provenance: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+            return list(merged), list(provenance)
+
+    cand_merged = list(candidate_merged)
+    cand_provenance = list(candidate_provenance)
+    enforce = config["enabled"] and config["mode"] == "enforce"
+    trimmed_by_source: Counter[str] = Counter()
+    trimmed_by_task: Counter[str] = Counter()
+    first_ids: list[str] | None = None
+    before: dict[str, Any] = {}
+    exceeded_before: list[str] = []
+    passes = 0
+    while True:
+        passes += 1
+        merged, provenance = materialize(cand_merged, cand_provenance)
+        profiles = [
+            row_profile(record, context=f"empty-answer guard row[{index}]") for index, record in enumerate(merged)
+        ]
+        ledger = _GuardLedger(profiles)
+        if first_ids is None:
+            first_ids = [str(record.get("id")) for record in merged]
+            before = ledger.shares()
+            exceeded_before = ledger.exceeded(config)
+        exceeded_after = ledger.exceeded(config)
+        if not enforce or not exceeded_after or passes >= GUARD_MAX_PASSES:
+            break
+        plan = _guard_trim_plan(merged, provenance, profiles, ledger, config)
+        if not plan:
+            break
+        drop = {str(record.get("id")) for record, _ in plan}
+        for record, source in plan:
+            trimmed_by_source[source] += 1
+            trimmed_by_task[str(record.get("task_type"))] += 1
+        kept = [
+            (record, item)
+            for record, item in zip(cand_merged, cand_provenance)
+            if str(record.get("id")) not in drop
+        ]
+        cand_merged = [record for record, _ in kept]
+        cand_provenance = [item for _, item in kept]
+    final_ids = [str(record.get("id")) for record in merged]
+    assert first_ids is not None
+    trimmed_total = sum(trimmed_by_source.values())
     if not config["enabled"]:
         status = "within_caps"
     elif exceeded_after:
         status = "exceeded"
-    elif removed:
+    elif trimmed_total:
         status = "trimmed_to_caps"
     else:
         status = "within_caps"
@@ -398,21 +384,28 @@ def _apply_empty_answer_guard(
             "classification": config["max_classification_empty_share"],
         },
         "empty_definition": EMPTY_DEFINITION,
+        "policy": "trim_empty_candidates_before_alignment_backfill_from_remaining_candidates",
         "trim_order": list(GUARD_TRIM_ORDER),
         "never_trimmed": list(GUARD_NEVER_TRIMMED),
         "before": before,
         "after": ledger.shares(),
         "exceeded_before": exceeded_before,
         "exceeded_after": exceeded_after,
-        "trimmed": {
-            "total": len(removed),
-            "by_source": {source: trimmed_by_source[source] for source in GUARD_TRIM_ORDER if trimmed_by_source[source]},
-            "by_task": dict(sorted(trimmed_by_task.items())),
+        "rows_trimmed_total": trimmed_total,
+        "rows_trimmed_by_source": {
+            source: trimmed_by_source[source] for source in GUARD_TRIM_ORDER if trimmed_by_source[source]
         },
-        "alignment": alignment,
+        "rows_trimmed_by_task": dict(sorted(trimmed_by_task.items())),
+        "aligned_rows_before": len(first_ids),
+        "aligned_rows_after": len(final_ids),
+        "aligned_rows_shrunk": max(0, len(first_ids) - len(final_ids)),
+        # rows (remaining mined candidates or anchors) that entered the aligned corpus
+        # because the trimmed rows freed their slots
+        "backfilled_rows": len(set(final_ids) - set(first_ids)),
+        "passes": passes,
         "status": status,
     }
-    return new_merged, new_provenance, report
+    return merged, provenance, report
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -663,27 +656,12 @@ def assemble(
             return "evaluation_target"
         return None
 
-    guard_anchor_fill: Callable[[int], tuple[list[dict[str, Any]], pathlib.Path]] | None = None
     if anchor["enabled"]:
         anchor_source = pathlib.Path(anchor["source"]).expanduser().resolve(strict=True)
         anchor_candidates = load_records(anchor_source)
         non_anchor_rows = len(merged) - prior_anchor_rows
         anchor_total, anchor_new = slice_targets["anchor"]
         shares = task_shares_from_jsonl(pathlib.Path(anchor["task_shares"]))
-
-        def guard_anchor_fill(gap: int) -> tuple[list[dict[str, Any]], pathlib.Path]:
-            # alignment fill after the empty-answer guard trim: correct rows with a
-            # non-empty answer only, so the fill cannot push a share back over its cap
-            extra, _ = select_anchors(
-                anchor_candidates,
-                new_rows=gap,
-                task_shares=shares,
-                source_cap=anchor["source_cap"],
-                seed=(17 if anchor_seed is None else anchor_seed) + 2,
-                is_excluded=lambda record: excluded(record, anchor_source)
-                or ("empty_ground_truth" if is_empty_ground_truth(record, context="guard anchor fill") else None),
-            )
-            return extra, anchor_source
         anchors, selection = select_anchors(
             anchor_candidates,
             new_rows=anchor_new,
@@ -842,14 +820,26 @@ def assemble(
         provenance = materialized_provenance
         tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)
         selection_policy = "monotonic_deficit_repetition_blend_v1"
-    elif max_rows is not None or row_multiple is not None:
-        materialized_rows = min(uncapped_records, max_rows or uncapped_records)
+    # The cap / global-batch step is a function of the candidate set so the
+    # empty-answer guard can trim empty candidates *before* alignment and re-run
+    # it: the standard selection then back-fills from the remaining (non-empty)
+    # mined candidates and the aligned size stays unchanged whenever enough
+    # candidates remain (it shrinks only when they run out).
+    def materialize_capped(
+        cand_merged: list[dict[str, Any]], cand_provenance: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        merged = list(cand_merged)
+        provenance = list(cand_provenance)
+        if max_rows is None and row_multiple is None:
+            return merged, provenance
+        candidate_records = len(merged)
+        materialized_rows = min(candidate_records, max_rows or candidate_records)
         if row_multiple is not None:
             materialized_rows -= materialized_rows % row_multiple
             if materialized_rows < row_multiple:
                 raise ValueError(
                     "training materialization cannot form one complete global batch: "
-                    f"available={uncapped_records}, row_multiple={row_multiple}"
+                    f"available={candidate_records}, row_multiple={row_multiple}"
                 )
         # Retain the full prior iteration to make the training set monotonic.
         # Current Mining owns the remaining slots under the cap, selected in
@@ -1006,23 +996,16 @@ def assemble(
                 "new_coverage_available": len(coverage_idx),
                 "current_rows_displaced_by_coverage": max(0, displaced_total - anchor_displaced),
             }
-        merged = [merged[index] for index in selected]
-        provenance = [provenance[index] for index in selected]
+        return [merged[index] for index in selected], [provenance[index] for index in selected]
+
+    if resolved_repetition["enabled"]:
+        # report only: enforcement together with the repetition blend is rejected above
+        guard_report = _run_empty_answer_guard(merged, provenance, config=guard, materialize=None)[2]
+    else:
+        merged, provenance, guard_report = _run_empty_answer_guard(
+            merged, provenance, config=guard, materialize=materialize_capped
+        )
         tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)
-
-    def register(record: dict[str, Any]) -> None:
-        seen.add(_dedup_key(record))
-        corpus_ids.add(str(record.get("id")))
-
-    merged, provenance, guard_report = _apply_empty_answer_guard(
-        merged,
-        provenance,
-        config=guard,
-        row_multiple=row_multiple,
-        anchor_fill=guard_anchor_fill,
-        register=register,
-    )
-    tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)
     if repetition_manifest is None:
         merged, repetition_manifest = apply_repetition_blend(
             merged,

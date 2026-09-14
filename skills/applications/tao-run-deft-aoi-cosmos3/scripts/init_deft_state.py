@@ -560,7 +560,10 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         "scope": "rows added this iteration; previous rows are never trimmed",
         "trim_order": list(GUARD_TRIM_ORDER),
         "never_trimmed": list(GUARD_NEVER_TRIMMED),
-        "alignment": "round up with non-empty anchors, else round down with more empty rows, else fail closed",
+        "alignment": (
+            "empty candidates are trimmed before the row_multiple alignment and the standard cap "
+            "back-fills from the remaining candidates; the aligned size shrinks only when candidates run out"
+        ),
         "fail_closed": "enforce mode exits non-zero when a cap is still exceeded after trimming",
         "recommended_defaults": {
             "max_empty_answer_share": 0.30,

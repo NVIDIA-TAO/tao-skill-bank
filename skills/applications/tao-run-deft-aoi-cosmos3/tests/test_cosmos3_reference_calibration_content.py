@@ -153,10 +153,15 @@ class Cosmos3ReferenceCalibrationContentTests(unittest.TestCase):
             by_id = {row["id"]: row for row in source}
             for row in rows:
                 if row["task_type"] == "Ref_based Defect Detection":
-                    # both pair sides intact; the only addition is the inert calibration marker
-                    # the assembler uses to keep these rows out of the anchor / cap trim
+                    # both pair sides intact; the only additions are the inert calibration markers
+                    # the assembler uses to keep these rows out of the anchor / cap trim and to
+                    # tell the empty-answer guard these are detection calibration rows
                     self.assertIs(row.get("deft_calibration"), True)
-                    self.assertEqual({k: v for k, v in row.items() if k != "deft_calibration"}, by_id[row["id"]])
+                    self.assertEqual(row.get("deft_calibration_kind"), "detection")
+                    self.assertEqual(
+                        {k: v for k, v in row.items() if k not in ("deft_calibration", "deft_calibration_kind")},
+                        by_id[row["id"]],
+                    )
 
     def test_gate_rejects_duplicate_content_evidence_even_if_manifest_claims_verified(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

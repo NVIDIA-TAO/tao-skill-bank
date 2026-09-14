@@ -28,8 +28,10 @@ empty-answer share is the symptom this guard caps so it cannot grow again.
   every other classification prompt is MCQ) — nothing is rewritten.
 - `answer_profile_new_rows`: the same profile over the rows added this
   iteration (mined, calibration, new anchors / coverage rows).
-- `empty_answer_guard`: caps, `before` / `after` shares, `exceeded_before` /
-  `exceeded_after`, `trimmed` (`total`, `by_source`, `by_task`), `alignment`
+- `empty_answer_guard`: caps, `before` / `after` shares of the aligned corpus,
+  `exceeded_before` / `exceeded_after`, `rows_trimmed_total` /
+  `rows_trimmed_by_source` / `rows_trimmed_by_task`, `aligned_rows_before` /
+  `aligned_rows_after` / `aligned_rows_shrunk`, `backfilled_rows`, `passes`
   and `status`.
 
 The materializer's quota manifest (`defect_detection_ablation.py`) records
@@ -68,29 +70,36 @@ the caps trim the detection calibration negatives first.
 
 ## Order of trimming (enforce mode)
 
-When a cap is exceeded the guard removes empty-ground-truth rows that were
-added **this iteration**, one group at a time, removing a row only when it
+The guard runs **before** the `--max-rows` / `--row-multiple` alignment, on
+the candidate set (previous rows + this iteration's mined, calibration, anchor
+and coverage rows). Each pass materializes the aligned corpus with the
+standard cap step, measures its shares, plans which of its trimmable empty
+rows to drop, removes those rows from the candidate set and re-materializes.
+The standard selection then back-fills the freed slots from the remaining
+(non-empty) mined candidates, so the aligned corpus size stays unchanged
+whenever enough candidates remain (`aligned_rows_before == aligned_rows_after`;
+`backfilled_rows` = rows that entered the corpus because trimmed rows freed
+their slots); it shrinks to the next lower multiple only when candidates run
+out (`aligned_rows_shrunk`, reported). Passes are bounded (`passes`, at most
+25) and every pass removes at least one row.
+
+Within one pass rows are removed one group at a time, a row only when it
 lowers a cap that is still exceeded (the overall cap: any empty row; a task
 cap: that task's rows; the classification cap: BCQ/MCQ rows of the union or of
 the exceeded task):
 
 1. detection calibration negatives — `deft_calibration` rows with empty
-   ground truth whose `deft_calibration_kind` is absent (detection) or unknown;
+   ground truth whose `deft_calibration_kind` is `detection` (written by the
+   materializer), absent or unknown;
 2. mined empty rows — current mined rows without a calibration marker.
 
 Never trimmed: previous-iteration rows, anchors (`anchor_correct`), coverage
 rows (`coverage_blend`), classification calibration rows
-(`deft_calibration_kind = classification`). Shares only fall while trimming,
-so one ordered pass per group is exact; rows are removed from the tail of the
-current slice so the freshest corrective rows stay in front.
-
-Alignment (`--row-multiple`): after trimming the corpus is rounded **up** to
-the next multiple with extra correct-row anchors that have a non-empty answer
-(`alignment.policy = round_up_fill_with_anchors`, provenance tag
-`empty_answer_guard_fill`, seed = anchor seed + 2) when anchors are
-configured; otherwise it is rounded **down** by trimming more empty rows from
-the same two groups (`round_down_trim_empty_rows`). Fail closed when neither is
-possible ("cannot align the corpus after the empty-answer guard").
+(`deft_calibration_kind = classification`). Rows are removed from the tail of
+the current slice so the freshest corrective rows stay in front. The anchor
+reservation is re-solved on the trimmed candidate set, so the realized anchor
+share follows the (possibly smaller) corpus and spare anchors may back-fill a
+leftover slot exactly as in the standard step.
 
 `status`: `within_caps` (nothing to trim), `trimmed_to_caps`, or `exceeded`.
 In enforce mode `exceeded` after trimming makes `assemble_training_json.py`
@@ -111,10 +120,12 @@ Enforcement cannot be combined with the repetition blend (report mode can).
              "classification_per_task": {"Component Classification": 0.137}},
   "after": {"...": "same keys"},
   "exceeded_before": ["overall", "task:Ref_based Defect Detection"], "exceeded_after": [],
-  "trimmed": {"total": 1200, "by_source": {"detection_calibration_negative": 900, "mined_empty": 300},
-              "by_task": {"Defect Detection": 700, "Ref_based Defect Detection": 500}},
-  "alignment": {"row_multiple": 768, "policy": "round_up_fill_with_anchors", "fill_anchors": 240,
-                "rows_trimmed_for_rounding": 0},
+  "policy": "trim_empty_candidates_before_alignment_backfill_from_remaining_candidates",
+  "rows_trimmed_total": 1200,
+  "rows_trimmed_by_source": {"detection_calibration_negative": 900, "mined_empty": 300},
+  "rows_trimmed_by_task": {"Defect Detection": 700, "Ref_based Defect Detection": 500},
+  "aligned_rows_before": 2304, "aligned_rows_after": 2304, "aligned_rows_shrunk": 0,
+  "backfilled_rows": 1200, "passes": 2,
   "status": "trimmed_to_caps"
 }
 ```

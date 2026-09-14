@@ -59,10 +59,12 @@ REFERENCE_NO_CHANGE_EVIDENCE = "calibration_reference_no_change_ground_truth"
 # the row cap, otherwise the verified calibration contract silently breaks
 # (2026-09-14: 382 of 3,000 reference pairs dropped by the task-balanced trim).
 CALIBRATION_MARK = "deft_calibration"
-# Optional second marker naming the calibration kind. Detection calibration rows
-# emitted here carry no kind (the assembler treats an absent kind as detection);
-# ``select_classification_calibration.py`` writes ``classification``.
+# Second inert marker naming the calibration kind: detection calibration rows
+# emitted here carry ``detection`` (the assembler's empty-answer guard treats an
+# absent or unknown kind as detection as well); ``select_classification_calibration.py``
+# writes ``classification``, which the guard never trims.
 CALIBRATION_KIND_MARK = "deft_calibration_kind"
+DETECTION_CALIBRATION_KIND = "detection"
 CLASSIFICATION_CALIBRATION_KIND = "classification"
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
@@ -800,10 +802,10 @@ def materialize(
                 raise ValueError("defect_detection_evidence must be a string list")
             evidence = sorted(set(evidence_value))
             entry = {
-                # calibration rows carry the marker from here on so every
+                # calibration rows carry the markers from here on so every
                 # fingerprint (candidate, emitted, manifest) agrees
                 "record": (
-                    {**record, CALIBRATION_MARK: True}
+                    {**record, CALIBRATION_MARK: True, CALIBRATION_KIND_MARK: DETECTION_CALIBRATION_KIND}
                     if route_tier == "calibration"
                     else record
                 ),

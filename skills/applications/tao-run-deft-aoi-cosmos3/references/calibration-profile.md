@@ -160,7 +160,9 @@ CLI exit 2 unless `--allow-shortfall`, and the manifest records
 ### Markers, assembly, launch record
 
 Output rows are the pool rows unchanged plus the inert markers
-`deft_calibration: true` and `deft_calibration_kind: "classification"`.
+`deft_calibration: true` and `deft_calibration_kind: "classification"` (the
+materializer's detection calibration rows carry `deft_calibration_kind:
+"detection"`; the empty-answer guard trims only the detection kind).
 `assemble_training_json.py --classification-calibration-jsonl <output>` adds
 them as current rows (provenance `source_kind = classification_calibration`),
 de-duplicates them by id / marker-free content against the corpus, never trims

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Empty-answer guard (Phase 4 step 4c-B): answer profile, caps, trim order, alignment."""
+"""Empty-answer guard (Phase 4 step 4c-B): answer profile, caps, trim order, pre-alignment trimming."""
 
 from __future__ import annotations
 
@@ -48,6 +48,11 @@ def _bcq_row(record_id: str, answer: str = "B. No, this image does not contain a
     return _mcq_row(record_id, "Defect Classification", prompt=BCQ_PROMPT, answer=answer)
 
 
+def _cal_empty(record_id: str) -> dict:
+    """A detection calibration negative as the materializer emits it (both markers)."""
+    return {**_det_row(record_id, dataset="cal"), CAL: True, KIND: "detection"}
+
+
 BOX = [{"bbox_2d": [0, 0, 10, 10], "label": "x"}]
 
 
@@ -85,7 +90,8 @@ class AnswerProfileSummaryTests(unittest.TestCase):
             guard = summary["empty_answer_guard"]
             self.assertFalse(guard["enabled"])
             self.assertEqual(guard["status"], "within_caps")
-            self.assertEqual(guard["trimmed"]["total"], 0)
+            self.assertEqual(guard["rows_trimmed_total"], 0)
+            self.assertEqual(guard["passes"], 1)
             previous = _write(root / "train1.jsonl", rows)
             mined2 = _write(root / "mined2.jsonl", [_det_row(f"n-{i}", BOX) for i in range(3)] + [_det_row("n-empty")])
             _, summary2 = assemble_training_json.assemble(
@@ -112,7 +118,7 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
             root = pathlib.Path(temporary)
             mined_rows = [_det_row(f"pos-{i}", BOX) for i in range(20)]
             mined_rows += [_det_row(f"mined-empty-{i}") for i in range(10)]
-            mined_rows += [{**_det_row(f"cal-empty-{i}", dataset="cal"), CAL: True} for i in range(10)]
+            mined_rows += [_cal_empty(f"cal-empty-{i}") for i in range(10)]
             mined = _write(root / "mined.jsonl", mined_rows)
             cfg = self._anchor_assets(root, empty_anchors=True)
             for mode in ("enforce", None):
@@ -129,13 +135,15 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
                 self.assertEqual((guard["before"]["rows"], guard["before"]["empty_rows"]), (44, 24))
                 self.assertAlmostEqual(guard["before"]["overall_share"], 24 / 44)
                 self.assertEqual(guard["exceeded_before"], ["overall"])
-                self.assertEqual(guard["trimmed"]["by_source"], {"detection_calibration_negative": 10, "mined_empty": 6})
-                self.assertEqual(guard["trimmed"]["by_task"], {"Defect Detection": 16})
-                self.assertEqual(guard["trimmed"]["total"], 16)
+                self.assertEqual(guard["rows_trimmed_by_source"], {"detection_calibration_negative": 10, "mined_empty": 6})
+                self.assertEqual(guard["rows_trimmed_by_task"], {"Defect Detection": 16})
+                self.assertEqual(guard["rows_trimmed_total"], 16)
                 self.assertEqual((guard["after"]["rows"], guard["after"]["empty_rows"]), (28, 8))
                 self.assertAlmostEqual(guard["after"]["overall_share"], 8 / 28)
                 self.assertEqual(guard["exceeded_after"], [])
                 self.assertEqual(guard["status"], "trimmed_to_caps")
+                self.assertEqual((guard["aligned_rows_before"], guard["aligned_rows_after"], guard["backfilled_rows"]), (44, 28, 0))
+                self.assertEqual(guard["passes"], 2)
                 self.assertEqual(len(rows), 28)
                 self.assertEqual(summary["materialized_anchor_records"], 4)
                 self.assertEqual(sum(r.get("deft_anchor") is True for r in rows), 4)
@@ -160,8 +168,8 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
             self.assertEqual(guard["caps"]["per_task"], {"Defect Detection": 0.45})
             self.assertIsNone(guard["caps"]["overall"])
             self.assertEqual(guard["exceeded_before"], ["task:Defect Detection"])
-            self.assertEqual(guard["trimmed"]["by_task"], {"Defect Detection": 3})
-            self.assertEqual(guard["trimmed"]["by_source"], {"mined_empty": 3})
+            self.assertEqual(guard["rows_trimmed_by_task"], {"Defect Detection": 3})
+            self.assertEqual(guard["rows_trimmed_by_source"], {"mined_empty": 3})
             self.assertAlmostEqual(guard["after"]["per_task"]["Defect Detection"], 3 / 7)
             self.assertAlmostEqual(guard["after"]["per_task"]["Ref_based Defect Detection"], 0.5)
             self.assertAlmostEqual(guard["before"]["per_task"]["Defect Detection"], 0.6)
@@ -185,8 +193,8 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
             self.assertAlmostEqual(guard["before"]["classification_share"], 3 / 20)
             self.assertEqual(guard["exceeded_before"], ["classification", "classification_task:Component Classification"])
             # 2 removals satisfy the union (1/18) but Component Classification is still 1/8 -> the third goes too
-            self.assertEqual(guard["trimmed"]["total"], 3)
-            self.assertEqual(guard["trimmed"]["by_task"], {"Component Classification": 3})
+            self.assertEqual(guard["rows_trimmed_total"], 3)
+            self.assertEqual(guard["rows_trimmed_by_task"], {"Component Classification": 3})
             self.assertEqual(guard["after"]["classification_share"], 0.0)
             self.assertEqual(guard["after"]["classification_per_task"]["Component Classification"], 0.0)
             self.assertEqual(sum(r["id"].startswith("dd-e") for r in rows), 5)  # detection empties are not a classification matter
@@ -204,7 +212,7 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
             guard = summary["empty_answer_guard"]
             self.assertEqual(guard["mode"], "report")
             self.assertEqual(guard["status"], "exceeded")
-            self.assertEqual(guard["trimmed"]["total"], 0)
+            self.assertEqual(guard["rows_trimmed_total"], 0)
             self.assertEqual(guard["exceeded_after"], ["overall"])
             self.assertEqual(len(rows), 10)
             out = root / "train.jsonl"
@@ -228,7 +236,7 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
             )
             guard = summary["empty_answer_guard"]
             self.assertEqual(guard["status"], "exceeded")
-            self.assertEqual(guard["trimmed"]["total"], 0)  # previous rows are never trimmed
+            self.assertEqual(guard["rows_trimmed_total"], 0)  # previous rows are never trimmed
             self.assertEqual(len(rows), 40)
             out = root / "train.jsonl"
             stderr = io.StringIO()
@@ -245,52 +253,77 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
             self.assertEqual(written["empty_answer_guard"]["status"], "exceeded")
             self.assertEqual(written["empty_answer_guard"]["mode"], "enforce")
 
-    def test_alignment_is_preserved_by_filling_with_anchors_or_rounding_down(self) -> None:
+    def test_trimming_happens_before_alignment_and_backfills_from_spare_candidates(self) -> None:
+        # 52 candidates (40 non-empty mined + 12 detection calibration negatives), aligned to 48:
+        # the cap step drops 4 non-empty mined rows. Trimming 3 calibration negatives before the
+        # alignment lets the standard step back-fill those 3 slots from the spare mined rows, so
+        # the aligned corpus stays 48 rows and its empty share drops from 12/48 to 9/48.
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            mined_rows = [_det_row(f"pos-{i}", BOX) for i in range(20)]
-            mined_rows += [{**_det_row(f"cal-empty-{i}", dataset="cal"), CAL: True} for i in range(12)]
+            mined_rows = [_det_row(f"pos-{i}", BOX) for i in range(40)] + [_cal_empty(f"cal-empty-{i}") for i in range(12)]
             mined = _write(root / "mined.jsonl", mined_rows)
+            rows, summary = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, max_rows=64, row_multiple=8,
+                empty_answer_guard=_guard(overall=0.20),
+            )
+            guard = summary["empty_answer_guard"]
+            self.assertEqual(len(rows), 48)
+            self.assertEqual((guard["aligned_rows_before"], guard["aligned_rows_after"]), (48, 48))
+            self.assertEqual(guard["aligned_rows_shrunk"], 0)
+            self.assertEqual(guard["backfilled_rows"], 3)
+            self.assertEqual(guard["rows_trimmed_total"], 3)
+            self.assertEqual(guard["rows_trimmed_by_source"], {"detection_calibration_negative": 3})
+            self.assertEqual(guard["rows_trimmed_by_task"], {"Defect Detection": 3})
+            self.assertAlmostEqual(guard["before"]["overall_share"], 12 / 48)
+            self.assertAlmostEqual(guard["after"]["overall_share"], 9 / 48)
+            self.assertEqual(guard["status"], "trimmed_to_caps")
+            self.assertEqual(guard["passes"], 2)
+            self.assertEqual(summary["materialized_calibration_records"], 9)
+            self.assertEqual(sum(r["id"].startswith("pos-") for r in rows), 39)
+            self.assertEqual(len({r["id"] for r in rows}), 48)
+            self.assertEqual(summary["records_truncated"], 4)  # 52 candidates -> 48 rows
+
+    def test_anchor_reservation_is_resolved_on_the_trimmed_candidates(self) -> None:
+        # 20 non-empty mined + 12 calibration negatives + 4 anchors -> 32 aligned (17 mined, 12 cal, 3 anchors).
+        # Trimming 4 negatives frees slots that the remaining mined rows and a spare anchor back-fill.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined = _write(root / "mined.jsonl", [_det_row(f"pos-{i}", BOX) for i in range(20)] + [_cal_empty(f"cal-empty-{i}") for i in range(12)])
             cfg = self._anchor_assets(root, empty_anchors=False)
-            # (a) anchors available: 32 aligned rows, 12/32 empty -> trim 4 -> 28 -> round UP to 32 with 4 non-empty anchors
             rows, summary = assemble_training_json.assemble(
                 None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=64, row_multiple=8,
                 empty_answer_guard=_guard(overall=0.30),
             )
             guard = summary["empty_answer_guard"]
             self.assertEqual(len(rows), 32)
-            self.assertEqual(guard["trimmed"]["by_source"], {"detection_calibration_negative": 4})
-            self.assertEqual(guard["alignment"]["policy"], "round_up_fill_with_anchors")
-            self.assertEqual(guard["alignment"]["fill_anchors"], 4)
-            self.assertEqual(guard["alignment"]["rows_trimmed_for_rounding"], 0)
+            self.assertEqual((guard["aligned_rows_before"], guard["aligned_rows_after"]), (32, 32))
+            self.assertEqual(guard["rows_trimmed_by_source"], {"detection_calibration_negative": 4})
+            self.assertEqual(guard["backfilled_rows"], 4)  # 3 mined rows + 1 spare anchor
             self.assertAlmostEqual(guard["after"]["overall_share"], 8 / 32)
             self.assertEqual(guard["status"], "trimmed_to_caps")
-            self.assertEqual(summary["materialized_anchor_records"], 7)
+            self.assertEqual(summary["materialized_anchor_records"], 4)
             self.assertEqual(summary["materialized_calibration_records"], 8)
+            self.assertEqual(sum(r["id"].startswith("pos-") for r in rows), 20)
             self.assertEqual(len({r["id"] for r in rows}), 32)
-            fills = [p for p in summary["provenance"] if "empty_answer_guard_fill" in p.get("purpose_tags", [])]
-            self.assertEqual(len(fills), 4)
-            self.assertTrue(all(not assemble_training_json.is_empty_ground_truth(r) for r in rows if r.get("deft_anchor")))
-            # (b) no anchors: round DOWN by trimming more empty rows
-            mined_b = _write(root / "mined_b.jsonl", [_det_row(f"pos-{i}", BOX) for i in range(20)] + [_det_row(f"empty-{i}") for i in range(12)])
-            rows_b, summary_b = assemble_training_json.assemble(
-                None, mined_b, validation_paths=[], media_root=root, max_rows=64, row_multiple=8,
+
+    def test_aligned_size_shrinks_only_when_candidates_run_out(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined = _write(root / "mined.jsonl", [_det_row(f"pos-{i}", BOX) for i in range(20)] + [_det_row(f"empty-{i}") for i in range(12)])
+            rows, summary = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, max_rows=64, row_multiple=8,
                 empty_answer_guard=_guard(overall=0.30),
             )
-            guard_b = summary_b["empty_answer_guard"]
-            self.assertEqual(len(rows_b), 24)
-            self.assertEqual(guard_b["alignment"]["policy"], "round_down_trim_empty_rows")
-            self.assertEqual(guard_b["alignment"]["rows_trimmed_for_rounding"], 4)
-            self.assertEqual(guard_b["trimmed"]["total"], 8)
-            self.assertAlmostEqual(guard_b["after"]["overall_share"], 4 / 24)
-            self.assertEqual(guard_b["status"], "trimmed_to_caps")
-            # (c) no anchors and too few trimmable empties to reach the lower multiple -> fail closed
-            mined_c = _write(root / "mined_c.jsonl", [_det_row(f"pos-{i}", BOX) for i in range(21)] + [_det_row(f"empty-{i}") for i in range(3)])
-            with self.assertRaisesRegex(ValueError, "cannot align the corpus after the empty-answer guard"):
-                assemble_training_json.assemble(
-                    None, mined_c, validation_paths=[], media_root=root, max_rows=24, row_multiple=8,
-                    empty_answer_guard=_guard(overall=0.05),
-                )
+            guard = summary["empty_answer_guard"]
+            self.assertEqual(len(rows), 24)
+            self.assertEqual((guard["aligned_rows_before"], guard["aligned_rows_after"], guard["aligned_rows_shrunk"]), (32, 24, 8))
+            self.assertEqual(guard["backfilled_rows"], 0)
+            self.assertEqual(guard["rows_trimmed_total"], 4)
+            self.assertEqual(guard["rows_trimmed_by_source"], {"mined_empty": 4})
+            self.assertLessEqual(guard["after"]["overall_share"], 0.30)
+            self.assertEqual(guard["exceeded_after"], [])
+            self.assertEqual(guard["status"], "trimmed_to_caps")
+            self.assertEqual(len(rows) % 8, 0)
 
     def test_classification_calibration_rows_and_coverage_rows_are_never_trimmed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -304,7 +337,7 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
             )
             self.assertIn("cc-empty", {r["id"] for r in rows})
             guard = summary["empty_answer_guard"]
-            self.assertEqual(guard["trimmed"]["by_source"], {"mined_empty": 4})
+            self.assertEqual(guard["rows_trimmed_by_source"], {"mined_empty": 4})
             self.assertEqual(guard["status"], "trimmed_to_caps")  # 1 / 5 == 0.20 is within the cap
             self.assertEqual(guard["never_trimmed"], ["previous_iteration", "anchor_correct", "coverage_blend", "classification_calibration"])
 
@@ -413,7 +446,7 @@ class GuardWiringTests(unittest.TestCase):
             self.assertNotEqual(rc, 0)
             self.assertIn("empty-answer", stderr.getvalue())
 
-    def test_ablation_quota_manifest_records_the_empty_count_of_the_rows_it_adds(self) -> None:
+    def test_ablation_quota_manifest_records_the_empty_count_and_tags_detection_calibration(self) -> None:
         import defect_detection_ablation
         from test_cosmos3_defect_detection_ablation_contract import _candidate, _row as _ablation_row
         rows: list[dict] = []
@@ -446,6 +479,10 @@ class GuardWiringTests(unittest.TestCase):
         self.assertEqual(manifest["new_rows_empty"], 16)
         self.assertEqual(manifest["new_rows_empty_by_task"]["Defect Detection"], 4)
         self.assertEqual(manifest["row_counts"]["total"], 24)  # no behavioural change
+        calibration = [r for r in selected if r.get(CAL) is True]
+        self.assertEqual([r["id"] for r in calibration], ["dd-empty-3"])
+        self.assertEqual(calibration[0][KIND], "detection")
+        self.assertTrue(all(KIND not in r for r in selected if r.get(CAL) is not True))
 
 
 if __name__ == "__main__":
