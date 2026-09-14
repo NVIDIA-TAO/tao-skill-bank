@@ -66,6 +66,17 @@ CALIBRATION_MARK = "deft_calibration"
 CALIBRATION_KIND_MARK = "deft_calibration_kind"
 DETECTION_CALIBRATION_KIND = "detection"
 CLASSIFICATION_CALIBRATION_KIND = "classification"
+# Zero-new-candidate policy (Phase 4). ``fail_closed`` = every maintenance task
+# must be present in the current selection (historical behaviour). With
+# ``skip_exhausted`` a maintenance task may be absent only when the routed
+# candidate set has zero eligible rows for it after history / identity
+# exclusion; the shortage is recorded and the iteration continues. It still
+# fails closed when every maintenance task is exhausted or nothing is added
+# (2026-09-15: iteration 2 of run 4c-B had zero new candidates for two tasks
+# and 4 / 2 / 1024 / 529 for the others; the whole iteration failed).
+ZERO_NEW_CANDIDATE_POLICIES = ("fail_closed", "skip_exhausted")
+DEFAULT_ZERO_NEW_CANDIDATE_POLICY = "fail_closed"
+_PRESENCE_VERIFICATION_KEY = "all_five_maintenance_tasks_present"
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
     ("source", "source_strata", None),
@@ -83,6 +94,16 @@ def _sha256(path: pathlib.Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _verification_policy_exclusions(policy: str) -> list[str]:
+    """Verification keys the policy replaces (``maintenance_tasks_present_or_exhausted`` covers them)."""
+    return [_PRESENCE_VERIFICATION_KEY] if policy == "skip_exhausted" else []
+
+
+def _manifest_verified(verification: dict[str, Any], policy: str) -> bool:
+    excluded = set(_verification_policy_exclusions(policy))
+    return all(value for key, value in verification.items() if key not in excluded)
 
 
 def _record_fingerprint(record: dict[str, Any]) -> str:
@@ -624,9 +645,15 @@ def materialize(
     repetition_seed: int | None = None,
     deficit_weight_source: str | None = None,
     acquisition_rows: int = 0,
+    zero_new_candidate_policy: str = DEFAULT_ZERO_NEW_CANDIDATE_POLICY,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if min(max_rows, row_multiple, epochs, global_batch) <= 0:
         raise ValueError("row, epoch, and global-batch values must be positive")
+    if zero_new_candidate_policy not in ZERO_NEW_CANDIDATE_POLICIES:
+        raise ValueError(
+            f"zero_new_candidate_policy must be one of {list(ZERO_NEW_CANDIDATE_POLICIES)}, "
+            f"not {zero_new_candidate_policy!r}"
+        )
     if minimum_rows is not None and minimum_rows <= 0:
         raise ValueError("minimum_rows must be positive when supplied")
     if global_batch != row_multiple:
@@ -718,6 +745,18 @@ def materialize(
     previous_fingerprints = {
         _record_fingerprint(record) for record in (previous_records or [])
     }
+    # Routed candidates per task before any exclusion: with the skip_exhausted
+    # policy a task may only be skipped when nothing was routed / nothing survived.
+    routed_by_task: Counter[str] = Counter()
+    for candidate in candidate_rows:
+        routed_value = candidate.get("routed_task_types")
+        if isinstance(routed_value, str):
+            try:
+                routed_value = json.loads(routed_value)
+            except json.JSONDecodeError:
+                routed_value = []
+        if isinstance(routed_value, (list, tuple)):
+            routed_by_task.update(str(task) for task in set(routed_value))
     counters: Counter[str] = Counter()
     entries: list[dict[str, Any]] = []
     seen_record_fingerprints: set[str] = set()
@@ -881,6 +920,8 @@ def materialize(
                         counters["invalid_reference_no_change_routes_excluded"] += 1
                         continue
             entries.append(entry)
+    # eligible rows per task after previous-row / evaluation / duplicate exclusion
+    eligible_by_task: Counter[str] = Counter(item["task_type"] for item in entries)
     positive = [
         item
         for item in entries
@@ -1195,6 +1236,11 @@ def materialize(
                 break
     base_selected_entries = selected_dd + selected_maintenance
     base_selected_records = [item["record"] for item in base_selected_entries]
+    if not base_selected_records:
+        raise ValueError(
+            "materialization would add zero new rows: every routed candidate was excluded "
+            "(previous rows, evaluation targets, duplicates or history); no policy accepts an empty iteration"
+        )
     selected_records, repetition_manifest = apply_repetition_blend(
         base_selected_records,
         row_cap=target_rows,
@@ -1298,6 +1344,40 @@ def materialize(
         if hybrid_calibration
         else None
     )
+    # Zero-new-candidate policy: which maintenance tasks are absent, and whether
+    # each absent task is exhausted (no eligible routed row this iteration).
+    missing_maintenance = [task for task in MAINTENANCE_TASK_TYPES if materialized_maintenance[task] == 0]
+    exhausted_tasks = {
+        task: {
+            "routed_candidates": int(routed_by_task[task]),
+            "eligible_after_exclusion": int(eligible_by_task[task]),
+            "selected": int(maintenance_selected[task]),
+            "materialized": 0,
+        }
+        for task in missing_maintenance
+        if eligible_by_task[task] == 0
+    }
+    skip_exhausted = zero_new_candidate_policy == "skip_exhausted"
+    all_maintenance_exhausted = len(exhausted_tasks) == len(MAINTENANCE_TASK_TYPES)
+    if not missing_maintenance:
+        maintenance_present_or_exhausted = True
+        zero_new_candidate_block_reason = None
+    elif not skip_exhausted:
+        maintenance_present_or_exhausted = False
+        zero_new_candidate_block_reason = "policy_fail_closed"
+    elif row_count == 0:
+        maintenance_present_or_exhausted = False
+        zero_new_candidate_block_reason = "zero_new_rows"
+    elif all_maintenance_exhausted:
+        maintenance_present_or_exhausted = False
+        zero_new_candidate_block_reason = "all_maintenance_tasks_exhausted"
+    elif set(missing_maintenance) != set(exhausted_tasks):
+        maintenance_present_or_exhausted = False
+        zero_new_candidate_block_reason = "maintenance_task_absent_with_eligible_candidates"
+    else:
+        maintenance_present_or_exhausted = True
+        zero_new_candidate_block_reason = None
+    skipped_tasks = sorted(exhausted_tasks) if (skip_exhausted and maintenance_present_or_exhausted) else []
     verification = {
         "target_rows_reached": row_count == target_rows,
         "minimum_rows_reached": row_count >= minimum_rows_aligned,
@@ -1372,6 +1452,9 @@ def materialize(
         "all_five_maintenance_tasks_present": all(
             materialized_maintenance[task] > 0 for task in MAINTENANCE_TASK_TYPES
         ),
+        # policy-aware presence: under skip_exhausted an absent task is acceptable
+        # only when it is exhausted (and not every task is, and rows are added)
+        "maintenance_tasks_present_or_exhausted": maintenance_present_or_exhausted,
     }
     # Empty-answer guard evidence: how many of the rows this selection adds carry an
     # empty ground truth ([] / {} / blank), all tasks; the selection itself is unchanged.
@@ -1385,13 +1468,24 @@ def materialize(
         "calibration_scope": "current_new_rows_only",
         "new_rows_empty": sum(new_rows_empty_by_task.values()),
         "new_rows_empty_by_task": dict(sorted(new_rows_empty_by_task.items())),
+        "zero_new_candidate_policy": zero_new_candidate_policy,
+        "verification_policy_exclusions": _verification_policy_exclusions(zero_new_candidate_policy),
+        "maintenance_tasks": {
+            "present": [task for task in MAINTENANCE_TASK_TYPES if materialized_maintenance[task] > 0],
+            "missing": missing_maintenance,
+            "routed_candidates": {task: int(routed_by_task[task]) for task in MAINTENANCE_TASK_TYPES},
+            "eligible_after_exclusion": {task: int(eligible_by_task[task]) for task in MAINTENANCE_TASK_TYPES},
+        },
+        "exhausted_tasks": exhausted_tasks,
+        "skipped_tasks": skipped_tasks,
+        "zero_new_candidate_block_reason": zero_new_candidate_block_reason,
         "previous_records_excluded": counters["previous_records_excluded"],
         "selection_policy": (
             "defect_detection_hybrid_calibration_task_strict_v2"
             if hybrid_calibration
             else "defect_detection_primary_task_strict_v1"
         ),
-        "verified": all(verification.values()),
+        "verified": _manifest_verified(verification, zero_new_candidate_policy),
         "verification": verification,
         "configuration": {
             "media_root": str(media_root),
@@ -1738,6 +1832,8 @@ def bind_cumulative_manifest(
         "repetition_blend": bound.get("repetition_blend"),
         "new_rows_empty": bound.get("new_rows_empty"),
         "new_rows_empty_by_task": bound.get("new_rows_empty_by_task"),
+        "exhausted_tasks": bound.get("exhausted_tasks"),
+        "skipped_tasks": bound.get("skipped_tasks"),
     }
     bound["repetition_blend"] = assembly_summary["repetition_blend"]
     tasks = Counter(str(row.get("task_type")) for row in final_rows)
@@ -1771,7 +1867,10 @@ def bind_cumulative_manifest(
         )
     }
     bound["verification"]["cumulative_lineage_verified"] = True
-    bound["verified"] = all(bound["verification"].values())
+    # the only presence the policy may leave unmet is an exhausted maintenance task
+    bound["verified"] = _manifest_verified(
+        bound["verification"], str(bound.get("zero_new_candidate_policy") or DEFAULT_ZERO_NEW_CANDIDATE_POLICY)
+    )
     return bound
 
 
@@ -1893,6 +1992,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--single-image-calibration-max-empty", type=int)
     parser.add_argument("--single-image-calibration-max-few", type=int)
     parser.add_argument("--reference-calibration-total", type=int)
+    parser.add_argument(
+        "--zero-new-candidate-policy",
+        choices=ZERO_NEW_CANDIDATE_POLICIES,
+        default=DEFAULT_ZERO_NEW_CANDIDATE_POLICY,
+        help=(
+            "fail_closed (default): every maintenance task must be present in the current selection. "
+            "skip_exhausted: a task with zero eligible routed candidates this iteration is skipped and "
+            "recorded (exhausted_tasks / skipped_tasks); still fails when all are exhausted or no rows are added."
+        ),
+    )
     parser.add_argument("--epochs", required=True, type=int)
     parser.add_argument("--global-batch", required=True, type=int)
     near_duplicate = parser.add_mutually_exclusive_group()
@@ -2037,6 +2146,7 @@ def main(argv: list[str] | None = None) -> int:
             row_multiple=args.row_multiple,
             defect_detection_fraction=args.defect_detection_fraction,
             acquisition_rows=args.acquisition_rows,
+            zero_new_candidate_policy=args.zero_new_candidate_policy,
             proxy_empty_rate=empty_rate,
             reference_proxy_empty_rate=float(reference_contract["empty_rate"]),
             single_image_calibration_max_empty=(
@@ -2091,9 +2201,11 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         print(f"defect_detection_ablation: {exc}", file=sys.stderr)
         return 2
+    skipped = manifest.get("skipped_tasks") or []
     print(
         f"defect_detection_ablation: wrote {len(rows)} rows; "
         f"Defect Detection={manifest['row_counts']['defect_detection']} verified=true"
+        + (f" skipped_tasks={skipped} (zero_new_candidate_policy=skip_exhausted)" if skipped else "")
     )
     return 0
 

@@ -376,6 +376,43 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
             self.assertIn("answer_profile", summary)
 
 
+class GuardBackfillTaskIsolationTests(unittest.TestCase):
+    def test_backfill_never_consumes_rows_of_a_task_without_remaining_candidates(self) -> None:
+        # Ref_based Defect Detection has 6 candidates, all already in the aligned corpus (zero spare);
+        # Defect Detection has 4 empties at the front and 44 positives (42 fit). 4 / 48 exceeds the 5%
+        # cap, 2 / 46 does not: trimming 2 Defect Detection empties frees 2 slots that only Defect
+        # Detection's spare positives may back-fill.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined_rows = [_det_row(f"empty-{i}") for i in range(4)] + [_det_row(f"pos-{i}", BOX) for i in range(44)]
+            mined_rows += [_ref_det_row(f"ref-{i}", BOX) for i in range(6)]
+            mined = _write(root / "mined.jsonl", mined_rows)
+            before_rows, before = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, max_rows=48, row_multiple=8,
+            )
+            rows, summary = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, max_rows=48, row_multiple=8,
+                empty_answer_guard=_guard(overall=0.05),
+            )
+            guard = summary["empty_answer_guard"]
+            self.assertEqual((len(before_rows), len(rows)), (48, 48))
+            self.assertEqual((guard["aligned_rows_before"], guard["aligned_rows_after"]), (48, 48))
+            self.assertEqual(guard["rows_trimmed_by_source"], {"mined_empty": 2})
+            self.assertEqual(guard["backfilled_rows"], 2)
+            self.assertEqual(guard["passes"], 2)
+            self.assertEqual(guard["status"], "trimmed_to_caps")
+            self.assertAlmostEqual(guard["after"]["overall_share"], 2 / 48)
+            counts_before = Counter(r["task_type"] for r in before_rows)
+            counts_after = Counter(r["task_type"] for r in rows)
+            self.assertEqual(counts_before["Ref_based Defect Detection"], 6)
+            self.assertEqual(counts_after["Ref_based Defect Detection"], 6)  # untouched: no spare candidates, no trimming
+            self.assertEqual(counts_after["Defect Detection"], 42)
+            backfilled = {r["id"] for r in rows} - {r["id"] for r in before_rows}
+            self.assertEqual(backfilled, {"pos-38", "pos-39"})
+            self.assertEqual(sum(r["id"].startswith("empty-") for r in rows), 2)
+            self.assertAlmostEqual(guard["after"]["per_task"]["Ref_based Defect Detection"], 0.0)
+
+
 class GuardWiringTests(unittest.TestCase):
     def test_runner_passes_guard_options_to_the_assembler_only(self) -> None:
         selector, assembler = render_iteration_mining_runner._partition_materialization_arguments([

@@ -153,3 +153,46 @@ A 5% cross-dataset slice with a per-dataset floor, `plain` (no correctness
 filter) or `residual` (`is_residual == true`) mode, will use the same
 candidate/exclusion machinery; datasets with no residual rows fall back to
 anchors. Its options (`--coverage-blend-*`) will also be assembler-only.
+
+## Zero-new-candidate policy — default `fail_closed`
+
+The materializer (`defect_detection_ablation.py`) verifies
+`all_five_maintenance_tasks_present` over the rows it selects for the current
+iteration; a missing maintenance task makes the quota manifest unverified, the
+CLI exits 2 and `bind_cumulative_manifest` rejects the manifest. In iteration 2
+of run 4c-B (2026-09-15) two tasks (Component Classification, Ref_based Defect
+Classification) had zero new candidates after history filtering while the
+others had 4 / 2 / 1,024 / 529, so the whole iteration failed although the
+launch-recorded operator policy was "skip individually exhausted tasks, record
+the shortage, continue".
+
+`init_deft_state.py --zero-new-candidate-policy fail_closed|skip_exhausted`
+records `config.mining.zero_new_candidate_policy` (plus a
+`zero_new_candidate_policy_rule` sentence). The runner request field
+`zero_new_candidate_policy` makes `render_iteration_mining_runner.py` append
+`--zero-new-candidate-policy <value>` to the materializer command (renderer-owned
+when the field is set). With `skip_exhausted`:
+
+- a maintenance task absent from the current selection is acceptable only
+  when the routed candidate set of this iteration has **zero eligible rows for
+  that task** after history / identity exclusion (counted from the routed
+  candidates input: `maintenance_tasks.routed_candidates` before exclusion,
+  `maintenance_tasks.eligible_after_exclusion` after previous-row, evaluation
+  and duplicate exclusion); a task that had eligible rows but ended up absent
+  (for example every row was a near-duplicate) still fails
+  (`zero_new_candidate_block_reason = maintenance_task_absent_with_eligible_candidates`);
+- the manifest records `exhausted_tasks` (per task: routed, eligible, selected,
+  materialized counts), `skipped_tasks` (the exhausted tasks accepted by the
+  policy) and the verification key `maintenance_tasks_present_or_exhausted`;
+  the raw `all_five_maintenance_tasks_present` fact is kept but listed in
+  `verification_policy_exclusions`, so `verified` and the bound v2 manifest
+  (`bind_cumulative_manifest`, which copies `exhausted_tasks` / `skipped_tasks`
+  under `current_selection`) treat an exhausted task as the only acceptable
+  unmet presence;
+- it still fails closed when every maintenance task is exhausted
+  (`all_maintenance_tasks_exhausted`) or the iteration would add zero new rows
+  (a ValueError before the repetition blend, under both policies).
+
+The empty-answer guard cannot make a task exhausted silently: it only removes
+empty rows and the standard back-fill draws from a task's own remaining
+candidates, so a task with no spare candidates keeps its rows.

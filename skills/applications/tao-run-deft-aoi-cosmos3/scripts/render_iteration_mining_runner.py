@@ -13,6 +13,7 @@ import sys
 from typing import Any
 
 from assemble_training_json import sha256_file
+from defect_detection_ablation import ZERO_NEW_CANDIDATE_POLICIES
 
 
 _ASSEMBLER_ONLY_TOGGLES = {
@@ -155,11 +156,23 @@ def build_plan(
     query_pair_assets_dir: pathlib.Path | None = None,
     mining_commands: dict[str, list[str]] | None = None,
     classification_calibration_command: list[str] | None = None,
+    zero_new_candidate_policy: str | None = None,
 ) -> dict[str, Any]:
     if not selector_command or not all(
         isinstance(value, str) and value for value in selector_command
     ):
         raise ValueError("selector_command must be a non-empty string list")
+    if zero_new_candidate_policy is not None:
+        if zero_new_candidate_policy not in ZERO_NEW_CANDIDATE_POLICIES:
+            raise ValueError(
+                f"zero_new_candidate_policy must be one of {list(ZERO_NEW_CANDIDATE_POLICIES)}, "
+                f"not {zero_new_candidate_policy!r}"
+            )
+        if any(value.partition("=")[0] == "--zero-new-candidate-policy" for value in selector_command):
+            raise ValueError(
+                "selector_command --zero-new-candidate-policy is owned by this renderer when the request "
+                "sets zero_new_candidate_policy"
+            )
     if any(
         value.partition("=")[0]
         in ("--output", "--manifest", "--repetition-manifest", "--classification-calibration-jsonl")
@@ -208,6 +221,9 @@ def build_plan(
     )
     if previous is not None:
         selector_argv.extend(["--previous-jsonl", str(previous)])
+    if zero_new_candidate_policy is not None:
+        # launch-recorded policy for individually exhausted maintenance tasks (materializer option)
+        selector_argv.extend(["--zero-new-candidate-policy", zero_new_candidate_policy])
     selector_argv.extend(
         ["--output", str(mined), "--manifest", str(current_quota)]
     )
@@ -285,6 +301,7 @@ def build_plan(
         "mining_stages": _mining_stages(mining_commands, roots),
         "previous_jsonl": str(previous) if previous is not None else None,
         "previous_sha256": previous_sha256,
+        "zero_new_candidate_policy": zero_new_candidate_policy,
         "selector": {
             "command": selector_argv,
             "output": str(mined),

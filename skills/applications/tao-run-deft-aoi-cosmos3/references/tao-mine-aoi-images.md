@@ -93,6 +93,21 @@ flushed JSON `stage_start`/`stage_end` events with timestamps, elapsed seconds
 on completion, and the exit code; failures stop later stages. Generation only
 writes the plan/runner: execute it solely through an approved platform job.
 
+Two optional request fields extend the handoff. `classification_calibration_command`
+(argv list) renders the classification calibration selector between the
+mined-row selector and the assembler; the renderer owns its
+`--exclude-identities-file` (previous Train, `--anchor-source`, current
+`mined.jsonl`), `--output` and `--manifest`, and passes the output to the
+assembler as `--classification-calibration-jsonl` (`calibration-profile.md`).
+`zero_new_candidate_policy` (`fail_closed` | `skip_exhausted`) appends
+`--zero-new-candidate-policy <value>` to the materializer command and is
+recorded in the plan (`anchor-and-coverage.md`, "Zero-new-candidate policy");
+when the field is set the caller must not pass that flag itself. Assembler-only
+options on the selector command (`--repetition-*`, `--anchor-*`,
+`--coverage-blend-*`, `--max-empty-answer-share*`,
+`--max-classification-empty-share`, `--empty-answer-guard-mode`) are moved to
+the assembler.
+
 ```bash
 "$PYTHON" "$SKILL_ROOT/scripts/task_mining_router.py" \
   --target-embeddings "$MINING_DIR/target_embeddings.parquet" \

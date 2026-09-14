@@ -35,6 +35,8 @@ from defect_detection_ablation import (
     CALIBRATION_KIND_MARK,
     CALIBRATION_MARK,
     CLASSIFICATION_CALIBRATION_KIND,
+    DEFAULT_ZERO_NEW_CANDIDATE_POLICY,
+    ZERO_NEW_CANDIDATE_POLICIES,
 )
 from gap_analysis.config import load_profile, validate_config
 from metric_contract import render_target, validate_contract
@@ -868,6 +870,17 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                 "anchor": anchor_config,
                 "coverage_blend": coverage_config,
                 "component_count_replay_per_iteration": args.component_count_replay_per_iteration,
+                "zero_new_candidate_policy": (
+                    getattr(args, "zero_new_candidate_policy", None) or DEFAULT_ZERO_NEW_CANDIDATE_POLICY
+                ),
+                "zero_new_candidate_policy_rule": (
+                    "fail_closed: every maintenance task must be present in each iteration's selection; "
+                    "skip_exhausted: a maintenance task with zero eligible routed candidates after history / "
+                    "identity exclusion is skipped and recorded (quota manifest exhausted_tasks / skipped_tasks), "
+                    "fail closed only when all maintenance tasks are exhausted or the iteration adds zero rows "
+                    "(defect_detection_ablation.py --zero-new-candidate-policy, rendered by "
+                    "render_iteration_mining_runner.py zero_new_candidate_policy)"
+                ),
                 "top_k_scope": (
                     "target" if mining_router_mode == "image_only" else "target_task"
                 ),
@@ -1172,6 +1185,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--acquisition-gate", type=pathlib.Path, help="capability_gate.json that justified --acquisition-task (recorded)")
     parser.add_argument("--component-count-replay-per-iteration", type=int, default=0)
+    parser.add_argument(
+        "--zero-new-candidate-policy",
+        choices=ZERO_NEW_CANDIDATE_POLICIES,
+        default=DEFAULT_ZERO_NEW_CANDIDATE_POLICY,
+        help=(
+            "Materializer policy when a maintenance task has zero new candidates after history filtering: "
+            "fail_closed (default, the iteration fails) or skip_exhausted (skip the exhausted task, record the "
+            "shortage, continue; still fail when all tasks are exhausted or nothing is added)."
+        ),
+    )
     parser.add_argument(
         "--repetition-config",
         type=pathlib.Path,
