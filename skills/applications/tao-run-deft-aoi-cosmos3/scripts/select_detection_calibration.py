@@ -11,6 +11,7 @@ import json
 import math
 import pathlib
 import sys
+from collections import Counter
 from collections.abc import Iterable, Iterator
 from typing import Any
 
@@ -285,6 +286,157 @@ def _calibration_row(
     }
 
 
+def _rank(seed: int, record_id: str) -> int:
+    import hashlib
+
+    return int.from_bytes(hashlib.sha256(f"{seed}\0{record_id}".encode()).digest(), "big")
+
+
+def _select_profile(
+    records: Iterable[dict[str, Any]],
+    *,
+    media_root: pathlib.Path,
+    task_bin_quotas: dict[str, dict[str, int]],
+    min_fill_fraction: float,
+    excluded: set[str],
+    pair_assets_dir: pathlib.Path | None,
+    seed: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Profile mode: fill each (task, bin) bucket round-robin across datasets by seed/id rank.
+
+    All eligible detection rows are collected first so the selection does not
+    depend on file order (a pool sorted by dataset would otherwise fill every
+    bucket from its first dataset); reference pairs stay content-unique.
+    """
+
+    pool: dict[str, dict[str, dict[str, list[tuple[int, str, dict[str, Any], dict[str, Any], int]]]]] = {
+        task: {name: {} for name, _, _ in COUNT_BINS} for task in task_bin_quotas
+    }
+    examined = 0
+    excluded_previously_mined = 0
+    for index, record in enumerate(records):
+        task = str(record.get("task_type"))
+        if task not in pool:
+            continue
+        examined += 1
+        _, answer = prompt_and_response(record, context=f"calibration record[{index}]")
+        boxes = _json_answer(answer, context=f"calibration record[{index}]")
+        if not isinstance(boxes, list):
+            raise ValueError(f"calibration record[{index}]: detection answer must be a list")
+        bin_name = count_bin(len(boxes))
+        if task_bin_quotas[task][bin_name] <= 0:
+            continue
+        sample = sample_from_record(record, media_root=media_root, context=f"calibration record[{index}]")
+        identity = str(sample["atomic_sample_id"])
+        if identity in excluded or str(sample["target_filepath"]) in excluded:
+            excluded_previously_mined += 1
+            continue
+        dataset = str(record.get("dataset") or "unknown")
+        pool[task][bin_name].setdefault(dataset, []).append(
+            (_rank(seed, str(record.get("id"))), str(record.get("id")), record, sample, len(boxes))
+        )
+    seen: set[str] = set()
+    seen_reference_content: set[str] = set()
+    excluded_duplicate_reference_content = 0
+    selected_by_task_bin: dict[str, dict[str, list[dict[str, Any]]]] = {
+        task: {name: [] for name, _, _ in COUNT_BINS} for task in task_bin_quotas
+    }
+    per_dataset: dict[str, dict[str, dict[str, int]]] = {task: {} for task in task_bin_quotas}
+    for task in sorted(task_bin_quotas):
+        for name, _, _ in COUNT_BINS:
+            quota = int(task_bin_quotas[task][name])
+            buckets = pool[task][name]
+            for entries in buckets.values():
+                entries.sort(key=lambda item: (item[0], item[1]))
+            positions = {dataset: 0 for dataset in buckets}
+            taken: Counter[str] = Counter()
+            destination = selected_by_task_bin[task][name]
+            progress = True
+            while len(destination) < quota and progress:
+                progress = False
+                for dataset in sorted(buckets, key=lambda d: (taken[d], d)):
+                    if len(destination) >= quota:
+                        break
+                    entries = buckets[dataset]
+                    while positions[dataset] < len(entries):
+                        _, _, record, sample, box_count = entries[positions[dataset]]
+                        positions[dataset] += 1
+                        identity = str(sample["atomic_sample_id"])
+                        if identity in seen:
+                            continue
+                        content_sha = None
+                        if sample["sample_kind"] == "reference_pair":
+                            content_sha = content_identity_for_paths("reference_pair", sample["image_paths"])
+                            if content_sha in seen_reference_content:
+                                excluded_duplicate_reference_content += 1
+                                continue
+                        row = _calibration_row(
+                            record,
+                            sample=sample,
+                            filepath=embedding_filepath(sample, pair_assets_dir=pair_assets_dir),
+                            task_type=task,
+                            box_count=box_count,
+                        )
+                        if content_sha is not None:
+                            seen_reference_content.add(content_sha)
+                            row["content_sha256"] = content_sha
+                        row["calibration_count_bin"] = name
+                        row["calibration_policy"] = PROFILE_POLICY
+                        row["calibration_dataset"] = dataset
+                        seen.add(identity)
+                        destination.append(row)
+                        taken[dataset] += 1
+                        progress = True
+                        break
+            per_dataset[task][name] = dict(sorted(taken.items()))
+    selected = [
+        row
+        for task in sorted(selected_by_task_bin)
+        for name, _, _ in COUNT_BINS
+        for row in selected_by_task_bin[task][name]
+    ]
+    tasks_summary: dict[str, Any] = {}
+    failures: list[str] = []
+    for task in sorted(selected_by_task_bin):
+        requested_total = sum(task_bin_quotas[task].values())
+        selected_total = sum(len(rows) for rows in selected_by_task_bin[task].values())
+        fill = selected_total / requested_total if requested_total else 1.0
+        bins = {
+            name: {"requested": int(task_bin_quotas[task][name]), "selected": len(selected_by_task_bin[task][name])}
+            for name, _, _ in COUNT_BINS
+        }
+        shortage = {name: v["requested"] - v["selected"] for name, v in bins.items() if v["selected"] < v["requested"]}
+        tasks_summary[task] = {
+            "requested_total": requested_total,
+            "selected_total": selected_total,
+            "fill_fraction": round(fill, 4),
+            "bins": bins,
+            "shortage": shortage,
+            "datasets_per_bin": per_dataset[task],
+        }
+        threshold = 1.0 if task == DETECTION_COHORTS["reference_based"] else float(min_fill_fraction)
+        if requested_total and fill < threshold:
+            failures.append(f"{task}: selected {selected_total}/{requested_total} ({fill:.1%} < {threshold:.0%}); short bins {shortage}")
+    if failures:
+        raise ValueError("profile calibration quotas cannot be filled: " + "; ".join(failures))
+    summary = {
+        "schema_version": "detection_calibration_v4",
+        "policy": PROFILE_POLICY,
+        "selection_order": "seed_rank_round_robin_over_datasets",
+        "seed": seed,
+        "count_bins": [name for name, _, _ in COUNT_BINS],
+        "min_fill_fraction": float(min_fill_fraction),
+        "selected_total": len(selected),
+        "examined_detection_records": examined,
+        "excluded_many_box": 0,
+        "excluded_previously_mined": excluded_previously_mined,
+        "reference_content_identity": PAIR_CONTENT_IDENTITY,
+        "excluded_duplicate_reference_content": excluded_duplicate_reference_content,
+        "tasks": tasks_summary,
+    }
+    return selected, summary
+
+
 def select_calibration(
     records: Iterable[dict[str, Any]],
     *,
@@ -299,6 +451,7 @@ def select_calibration(
     pair_assets_dir: pathlib.Path | None = None,
     task_bin_quotas: dict[str, dict[str, int]] | None = None,
     min_fill_fraction: float = DEFAULT_MIN_FILL_FRACTION,
+    profile_seed: int = 17,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if max_boxes < 1:
         raise ValueError("max_boxes must be positive")
@@ -323,6 +476,15 @@ def select_calibration(
                 raise ValueError(f"{task}: profile bin quotas require non-negative integers for {bin_names}")
         if sum(sum(bins.values()) for bins in task_bin_quotas.values()) <= 0:
             raise ValueError("at least one profile calibration quota must be positive")
+        return _select_profile(
+            records,
+            media_root=media_root.expanduser().resolve(),
+            task_bin_quotas=task_bin_quotas,
+            min_fill_fraction=float(min_fill_fraction),
+            excluded={_excluded_identity(value) for value in (excluded_identities or set())},
+            pair_assets_dir=pair_assets_dir,
+            seed=int(profile_seed),
+        )
     if cohort_mode:
         if cohort_rates is None or (cohort_quotas is None) == (cohort_bucket_quotas is None):
             raise ValueError(

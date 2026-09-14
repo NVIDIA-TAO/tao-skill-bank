@@ -602,6 +602,7 @@ def materialize(
     deficit_weights: dict[str, float] | None = None,
     repetition_seed: int | None = None,
     deficit_weight_source: str | None = None,
+    acquisition_rows: int = 0,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if min(max_rows, row_multiple, epochs, global_batch) <= 0:
         raise ValueError("row, epoch, and global-batch values must be positive")
@@ -657,8 +658,15 @@ def materialize(
         raise ValueError(
             "minimum_rows cannot be satisfied within the batch-aligned materialization cap"
         )
+    # Capability-gated acquisition (Phase 3): rows reserved for a task in
+    # acquisition mode are excluded from the Defect Detection floor base, so a
+    # large two-image acquisition slice does not force an impossible DD quota.
+    if type(acquisition_rows) is not int or acquisition_rows < 0:
+        raise ValueError("acquisition_rows must be a non-negative integer")
+    if acquisition_rows and acquisition_rows > requested_target_rows - row_multiple:
+        raise ValueError("acquisition_rows must leave at least one global batch for the other tasks")
     target_rows = requested_target_rows
-    dd_target = math.ceil(target_rows * defect_detection_fraction)
+    dd_target = math.ceil((target_rows - acquisition_rows) * defect_detection_fraction)
     dd_selection_limit = (
         dd_target if resolved_repetition["enabled"] else target_rows
     )
@@ -1082,7 +1090,7 @@ def materialize(
             # The configured fraction is a lower bound. Use additional DD
             # capacity when maintenance cannot fill the candidate batch.
             candidate_dd_min = math.ceil(
-                candidate_target * defect_detection_fraction
+                max(candidate_target - acquisition_rows, 0) * defect_detection_fraction
             )
             candidate_dd = max(
                 candidate_dd_min,
@@ -1346,6 +1354,7 @@ def materialize(
             "minimum_rows_requested": minimum_rows_requested,
             "minimum_rows_batch_aligned": minimum_rows_aligned,
             "defect_detection_minimum_fraction": defect_detection_fraction,
+            "acquisition_rows_excluded_from_floor_base": acquisition_rows,
             "near_duplicate_hamming_distance": near_duplicate_hamming_distance,
             "near_duplicate_filter": (
                 "disabled"
@@ -1377,7 +1386,7 @@ def materialize(
             "defect_detection": tasks[DEFECT_DETECTION_TASK],
             "defect_detection_target": dd_target,
             "defect_detection_minimum_target": math.ceil(
-                target_rows * defect_detection_fraction
+                (target_rows - acquisition_rows) * defect_detection_fraction
             ),
             "task_strict_defect_detection": selected_strict_dd_count,
             "maintenance": sum(tasks[task] for task in MAINTENANCE_TASK_TYPES),
@@ -1826,6 +1835,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--row-multiple", required=True, type=int)
     parser.add_argument("--defect-detection-fraction", default=0.5, type=float)
+    parser.add_argument(
+        "--acquisition-rows",
+        type=int,
+        default=0,
+        help="Rows reserved for tasks in acquisition mode (Phase 3 capability gate); excluded from the Defect Detection floor base.",
+    )
     parser.add_argument("--single-image-calibration-max-empty", type=int)
     parser.add_argument("--single-image-calibration-max-few", type=int)
     parser.add_argument("--reference-calibration-total", type=int)
@@ -1972,6 +1987,7 @@ def main(argv: list[str] | None = None) -> int:
             minimum_rows=args.minimum_rows,
             row_multiple=args.row_multiple,
             defect_detection_fraction=args.defect_detection_fraction,
+            acquisition_rows=args.acquisition_rows,
             proxy_empty_rate=empty_rate,
             reference_proxy_empty_rate=float(reference_contract["empty_rate"]),
             single_image_calibration_max_empty=(

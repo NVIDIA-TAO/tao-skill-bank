@@ -57,6 +57,31 @@ profile is 0% empty and 5.3 boxes per row, so give it a total only together
 with a corpus-size decision, because the row cap and the Defect Detection
 floor act on the whole iteration).
 
+## Selection order
+
+Profile mode collects every eligible detection row first and fills each
+`(task, bin)` bucket round-robin across datasets in seed/id-hash order
+(`profile_seed`, default 17), so a pool sorted by dataset cannot fill a bucket
+from its first dataset alone; the summary reports `datasets_per_bin`.
+Reference pairs stay content-unique and any reference shortfall fails closed.
+
+## Capability gate and acquisition mode (Phase 3)
+
+`capability_gate.py --kpi-annotations <KPI set> --raw-report <raw_f1.json of
+the gating checkpoint> --acquisition-rows N --refinement-rows TASK=ROWS
+--output capability_gate.json` compares each detection task's F1 with the
+KPI set's trivial always-empty F1 `2E / (2E + B)`. A task at or below it is in
+**acquisition** mode: the skill is absent, so error-driven mining has nothing
+to refine and the task gets a volume budget with broad dataset coverage.
+Launch-record it with `init_deft_state.py --acquisition-task TASK=ROWS
+--acquisition-gate capability_gate.json` (requires the profile policy): the
+task's profile-binned calibration total becomes ROWS and
+`calibration_quota_contract.acquisition` records tasks, rows and the gate
+file. Pass the materializer `--acquisition-rows <rows>` so those rows are
+excluded from the Defect Detection floor base; otherwise a large acquisition
+slice forces an unsatisfiable DD quota. Re-run the gate every iteration; when
+the task crosses the trivial baseline drop the override (refinement mode).
+
 ## Supply check before launching
 
 Pool box-count bins (full pool, 2026-09-10): Defect Detection `4-9` 1,358 rows,

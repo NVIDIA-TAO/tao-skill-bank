@@ -195,5 +195,68 @@ class InitProfileContractTests(unittest.TestCase):
             self.assertIn("cannot be combined", stderr.getvalue())
 
 
+class ProfileSpreadAndGateTests(unittest.TestCase):
+    def test_profile_selection_spreads_across_datasets_not_file_order(self) -> None:
+        rows = [_row(f"a{i}", _boxes(1)) for i in range(20)] + [_row(f"b{i}", _boxes(1)) for i in range(20)]
+        for r in rows[:20]: r["dataset"] = "dsA"
+        for r in rows[20:]: r["dataset"] = "dsB"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary); _materialize_images(root, rows)
+            quotas = {"Defect Detection": {"0": 0, "1": 10, "2-3": 0, "4-9": 0, "10+": 0}}
+            selected, summary = sdc.select_calibration(rows, media_root=root, pair_assets_dir=root / "pair-assets", task_bin_quotas=quotas)
+            by_ds = {}
+            for r in selected: by_ds[r["calibration_dataset"]] = by_ds.get(r["calibration_dataset"], 0) + 1
+            self.assertEqual(by_ds, {"dsA": 5, "dsB": 5})  # file order alone would give dsA 10
+            self.assertEqual(summary["tasks"]["Defect Detection"]["datasets_per_bin"]["1"], {"dsA": 5, "dsB": 5})
+            again, _ = sdc.select_calibration(list(reversed(rows)), media_root=root, pair_assets_dir=root / "pair-assets", task_bin_quotas=quotas)
+            self.assertEqual([r["calibration_record_id"] for r in selected], [r["calibration_record_id"] for r in again])
+
+    def test_capability_gate_marks_below_trivial_tasks_as_acquisition(self) -> None:
+        import capability_gate as gate
+        kpi = [_row(f"d{i}", _boxes(n)) for i, n in enumerate([0, 0, 3, 5])] + \
+              [_row(f"r{i}", _boxes(n), task="Ref_based Defect Detection") for i, n in enumerate([0, 0, 0, 2])]
+        base = gate.trivial_baselines(kpi)
+        self.assertAlmostEqual(base["Defect Detection"]["trivial_f1"], 2 * 2 / (2 * 2 + 8))  # 0.333
+        self.assertAlmostEqual(base["Ref_based Defect Detection"]["trivial_f1"], 2 * 3 / (2 * 3 + 2))  # 0.75
+        report = {"tasks_by_reference_cohort": {"non_reference_based": {"tasks": {"DET": {"f1": 0.40}}},
+                                                "reference_based": {"tasks": {"DET": {"f1": 0.70}}}}}
+        decisions = gate.decide(base, report, margin=0.0, acquisition_rows=3000, refinement_rows={"Defect Detection": 1024})
+        self.assertEqual(decisions["Defect Detection"]["mode"], "refinement")
+        self.assertEqual(decisions["Defect Detection"]["recommended_rows"], 1024)
+        self.assertEqual(decisions["Ref_based Defect Detection"]["mode"], "acquisition")
+        self.assertEqual(decisions["Ref_based Defect Detection"]["recommended_rows"], 3000)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            kp = root / "kpi.jsonl"; kp.write_text("".join(json.dumps(r) + "\n" for r in kpi))
+            rp = root / "raw_f1.json"; rp.write_text(json.dumps(report))
+            rc = gate.main(["--kpi-annotations", str(kp), "--raw-report", str(rp), "--output", str(root / "gate.json"), "--acquisition-rows", "3000"])
+            self.assertEqual(rc, 0)
+            out = json.loads((root / "gate.json").read_text())
+            self.assertEqual(out["acquisition_tasks"], ["Ref_based Defect Detection"])
+
+    def test_init_records_acquisition_override_and_rows(self) -> None:
+        from test_cosmos3_init_state_contract import Cosmos3InitStateContractTests as Base
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = Base._workspace(root)
+            gate = root / "gate.json"; gate.write_text(json.dumps({"acquisition_tasks": ["Ref_based Defect Detection"]}))
+            rc = init_deft_state.main(Base._argv(root, workspace, "--calibration-task-total", "Defect Detection=8",
+                                                 "--calibration-task-total", "Ref_based Defect Detection=4",
+                                                 "--acquisition-task", "Ref_based Defect Detection=12", "--acquisition-gate", str(gate)))
+            self.assertEqual(rc, 0)
+            contract = json.loads((root / "results/deft_state.json").read_text())["config"]["mining"]["calibration_quota_contract"]
+            self.assertEqual(contract["task_totals"], {"Defect Detection": 8, "Ref_based Defect Detection": 12})
+            self.assertEqual(contract["base_task_totals"], {"Defect Detection": 8, "Ref_based Defect Detection": 4})
+            self.assertEqual(sum(contract["task_bin_quotas"]["Ref_based Defect Detection"].values()), 12)
+            self.assertTrue(contract["acquisition"]["enabled"])
+            self.assertEqual(contract["acquisition"]["rows"], 12)
+            self.assertEqual(contract["acquisition"]["gate_record"], str(gate.resolve()))
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = init_deft_state.main(Base._argv(root / "b", workspace, "--acquisition-task", "Ref_based Defect Detection=12"))
+            self.assertNotEqual(rc, 0)
+            self.assertIn("requires the profile calibration policy", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

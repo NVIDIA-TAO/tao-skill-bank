@@ -493,21 +493,40 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     profile_totals = parse_task_totals(getattr(args, "calibration_task_total", None))
     if profile_totals and hybrid_calibration:
         raise ValueError("--calibration-task-total cannot be combined with the fixed single-image caps")
+    acquisition_totals = parse_task_totals(getattr(args, "acquisition_task", None))
+    if acquisition_totals and not profile_totals:
+        raise ValueError("--acquisition-task requires the profile calibration policy (--calibration-task-total)")
     if profile_totals:
         min_fill = float(getattr(args, "calibration_min_fill", 0.9) or 0.9)
         if not 0.0 < min_fill <= 1.0:
             raise ValueError("--calibration-min-fill must be in (0, 1]")
+        # Acquisition tasks replace their base total with the acquisition volume.
+        effective_totals = dict(profile_totals)
+        for task, rows in acquisition_totals.items():
+            effective_totals[task] = rows
         task_profiles = derive_task_count_profiles(load_records(annotations["proxy"]))
-        task_bin_quotas = profile_bin_quotas(profile_totals, task_profiles)
+        task_bin_quotas = profile_bin_quotas(effective_totals, task_profiles)
+        gate_path = getattr(args, "acquisition_gate", None)
+        acquisition = {
+            "enabled": bool(acquisition_totals),
+            "tasks": acquisition_totals,
+            "rows": sum(acquisition_totals.values()),
+            "gate_rule": "acquisition when KPI F1 <= trivial always-empty F1 (capability_gate.py)",
+            "gate_record": str(gate_path.expanduser().resolve()) if gate_path else None,
+            "gate_sha256": _sha256(gate_path.expanduser().resolve()) if gate_path else None,
+            "materializer": "--acquisition-rows <rows> (excluded from the Defect Detection floor base)",
+        }
         calibration_quota_contract = {
             "policy": PROFILE_POLICY,
             "proxy_annotations": str(annotations["proxy"]),
             "proxy_annotations_sha256": _sha256(annotations["proxy"]),
             "count_bins": [name for name, _, _ in COUNT_BINS],
-            "task_totals": profile_totals,
+            "task_totals": effective_totals,
+            "base_task_totals": profile_totals,
             "task_bin_quotas": task_bin_quotas,
             "task_profiles": {task: task_profiles[task] for task in task_bin_quotas},
             "min_fill_fraction": min_fill,
+            "acquisition": acquisition,
             "cohorts": calibration_cohorts,
             "reference_empty_semantics": "identical_or_no_change_pair_negative",
             "owner": (
@@ -1022,6 +1041,18 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--calibration-min-fill", type=float, default=0.9)
+    parser.add_argument(
+        "--acquisition-task",
+        action="append",
+        metavar="TASK=ROWS",
+        help=(
+            "Phase 3 capability gate: a detection task judged to be in acquisition mode "
+            "(KPI F1 <= trivial always-empty F1) gets this many profile-binned calibration "
+            "rows per iteration instead of its --calibration-task-total; the rows are "
+            "excluded from the Defect Detection floor base (materializer --acquisition-rows)."
+        ),
+    )
+    parser.add_argument("--acquisition-gate", type=pathlib.Path, help="capability_gate.json that justified --acquisition-task (recorded)")
     parser.add_argument("--component-count-replay-per-iteration", type=int, default=0)
     parser.add_argument(
         "--repetition-config",
