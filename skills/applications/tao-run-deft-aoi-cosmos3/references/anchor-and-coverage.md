@@ -62,7 +62,15 @@ option to the assembler, which is the only writer of the cumulative Train.
   are kept, and current mined rows fill the rest in task-balanced order, so the
   cap or global-batch rounding displaces mined rows, never the anchors
   (`anchor.cap_reservation` reports the displaced count). Output order stays
-  current mined → anchors → previous rows.
+  current mined → anchors → previous rows. Calibration rows the materializer
+  marked `deft_calibration` are never displaced either
+  (`cap_reservation.calibration_rows_protected`; fail closed if they alone
+  exceed the current-row capacity), so the verified calibration contract
+  survives assembly (2026-09-14: 382 of 3,000 reference pairs were trimmed).
+- `--anchor-share-exclude-rows <cumulative rows>` (default 0) takes a
+  launch-recorded acquisition slice out of the share base, both for the
+  uncapped target and for the cap reservation; `realized_share_rows` is then
+  relative to that base and `realized_share_of_all_rows` keeps the plain ratio.
 - Not combinable with the repetition blend (fail closed).
 
 Outputs: `assemble_summary.json` gains `materialized_anchor_records` and an

@@ -252,6 +252,12 @@ class Cosmos3DefectDetectionAblationContractTests(unittest.TestCase):
             2_304,
         )
         self.assertTrue(manifest["verified"])
+        # emitted calibration rows carry the inert marker the assembler protects from the cap trim
+        mark = defect_detection_ablation.CALIBRATION_MARK
+        marked = [row for row in selected if row.get(mark) is True]
+        self.assertGreaterEqual(len(marked), 500)
+        self.assertTrue(all(row.get("task_type") in {"Defect Detection", "Ref_based Defect Detection"} for row in marked))
+        self.assertEqual(sum(1 for row in selected if mark in row), len(marked))
 
     def test_calibration_caps_apply_to_new_rows_not_retained_previous_rows(self) -> None:
         previous: list[dict] = []

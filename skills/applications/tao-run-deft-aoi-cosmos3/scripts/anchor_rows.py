@@ -44,14 +44,22 @@ def sha256_file(path: pathlib.Path) -> str:
 
 
 def validate_anchor_config(share: float | None, source: pathlib.Path | None,
-                           task_shares: pathlib.Path | None, source_cap: float | None) -> dict[str, Any]:
-    """Return a resolved anchor config; share 0 / None means the feature is off."""
+                           task_shares: pathlib.Path | None, source_cap: float | None,
+                           share_exclude_rows: int | None = None) -> dict[str, Any]:
+    """Return a resolved anchor config; share 0 / None means the feature is off.
+
+    ``share_exclude_rows`` = cumulative corpus rows that do not count toward the
+    share base (an acquisition slice added on top of the parent's corpus), so the
+    anchor volume matches the parent run instead of growing with that slice."""
     share = 0.0 if share is None else float(share)
     if not 0.0 <= share < 1.0:
         raise ValueError("anchor share must be in [0, 1)")
     cap = 0.35 if source_cap is None else float(source_cap)
     if not 0.0 < cap <= 1.0:
         raise ValueError("anchor source cap must be in (0, 1]")
+    exclude = 0 if share_exclude_rows is None else share_exclude_rows
+    if type(exclude) is not int or exclude < 0:
+        raise ValueError("anchor share-exclude rows must be a non-negative integer")
     enabled = share > 0.0
     if enabled and source is None:
         raise ValueError("--anchor-share > 0 requires --anchor-source")
@@ -59,7 +67,7 @@ def validate_anchor_config(share: float | None, source: pathlib.Path | None,
         raise ValueError("--anchor-share > 0 requires --anchor-task-shares")
     return {"enabled": enabled, "share": share, "source": str(source) if source else None,
             "task_shares": str(task_shares) if task_shares else None, "source_cap": cap,
-            "unit": "rows"}
+            "share_exclude_rows": exclude, "unit": "rows"}
 
 
 def task_shares_from_jsonl(path: pathlib.Path) -> dict[str, float]:

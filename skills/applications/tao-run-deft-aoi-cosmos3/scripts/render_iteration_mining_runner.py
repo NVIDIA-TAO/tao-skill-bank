@@ -38,6 +38,7 @@ _ASSEMBLER_ONLY_VALUES = {
     "--anchor-task-shares",
     "--anchor-source-cap",
     "--anchor-seed",
+    "--anchor-share-exclude-rows",
     "--coverage-blend-share",
     "--coverage-blend-mode",
     "--coverage-blend-source",

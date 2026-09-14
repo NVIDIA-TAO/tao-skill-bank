@@ -82,6 +82,17 @@ excluded from the Defect Detection floor base; otherwise a large acquisition
 slice forces an unsatisfiable DD quota. Re-run the gate every iteration; when
 the task crosses the trivial baseline drop the override (refinement mode).
 
+Two assembler rules keep the acquisition slice intact under the row cap and
+the anchor share (2026-09-14: the task-balanced trim that makes room for the
+anchor slots dropped 382 of 3,000 reference pairs): emitted calibration rows
+carry the inert marker `deft_calibration` and are never displaced by the trim
+(`cap_reservation.calibration_rows_protected`), and the assembler's
+`--anchor-share-exclude-rows <cumulative rows>` takes the slice's increment
+over the parent (e.g. `2500 × iteration` for 3,000 vs 500 pairs) out of the
+share base, so the anchor volume matches the parent instead of growing with
+the acquisition rows (`realized_share_rows` is relative to that base;
+`realized_share_of_all_rows` keeps the plain ratio).
+
 The quota manifest checks the reference empty rate over calibration **and**
 mined reference rows together; the materializer therefore seeds the mined
 slice's running total with the reserved calibration counts so both slices

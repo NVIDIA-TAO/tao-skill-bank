@@ -34,7 +34,7 @@ from coverage_rows import (
     validate_coverage_config,
     write_manifest as write_coverage_manifest,
 )
-from defect_detection_ablation import bind_cumulative_manifest
+from defect_detection_ablation import CALIBRATION_MARK, bind_cumulative_manifest
 from nvpaw_annotations import TASK_SPECS
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
@@ -57,7 +57,7 @@ def _fingerprint(record: dict[str, Any]) -> str:
 # retained anchor/coverage row look like new content: a previous anchor row
 # (marker present) and the same pool row mined again (marker absent) are one
 # training record, and the canonical validator requires unique ids.
-_SLICE_MARKS = (ANCHOR_MARK, COVERAGE_MARK)
+_SLICE_MARKS = (ANCHOR_MARK, COVERAGE_MARK, CALIBRATION_MARK)
 
 
 def _dedup_key(record: dict[str, Any]) -> str:
@@ -267,7 +267,10 @@ def assemble(
         1 for record, item in zip(merged, provenance)
         if item["source_kind"] == "previous_iteration" and record.get(COVERAGE_MARK) is True
     )
-    base_rows = len(merged) - prior_anchor_rows - prior_coverage_rows
+    # rows a launch-recorded acquisition slice adds on top of the parent corpus do
+    # not count toward the anchor share base (anchor volume stays parent-like)
+    share_excluded_rows = min(int(anchor.get("share_exclude_rows", 0) or 0), len(merged))
+    base_rows = len(merged) - prior_anchor_rows - prior_coverage_rows - share_excluded_rows
     slice_targets = joint_targets(
         base_rows,
         {"anchor": anchor["share"] if anchor["enabled"] else 0.0,
@@ -322,6 +325,7 @@ def assemble(
             "prior_anchor_rows": prior_anchor_rows,
             "non_anchor_rows": non_anchor_rows,
             "base_rows": base_rows,
+            "share_base_excluded_rows": share_excluded_rows,
             "target_anchor_rows_total": anchor_total,
             "selection": selection,
         }
@@ -489,8 +493,9 @@ def assemble(
         ]
         anchor_slots = 0
         coverage_slots = 0
+        share_base_rows = max(0, materialized_rows - min(share_excluded_rows, materialized_rows))
         if anchor["enabled"]:
-            wanted_total = int(round(materialized_rows * anchor["share"]))
+            wanted_total = int(round(share_base_rows * anchor["share"]))
             anchor_slots = max(0, min(len(anchors_idx), wanted_total - prior_anchor_rows))
         if coverage["enabled"]:
             wanted_coverage = int(round(materialized_rows * coverage["share"]))
@@ -512,7 +517,18 @@ def assemble(
             coverage_slots += extra_coverage
             leftover -= extra_coverage
             current_limit += min(leftover, len(current) - current_limit)
-        selected = _task_balanced_indices(current, merged, current_limit)
+        # Calibration rows (marked by the materializer) carry a verified quota
+        # contract; the cap / anchor / coverage trim may only displace the other
+        # current rows. Mined rows first, then the protected calibration rows.
+        protected = [index for index in current if merged[index].get(CALIBRATION_MARK) is True]
+        trimmable = [index for index in current if merged[index].get(CALIBRATION_MARK) is not True]
+        if len(protected) > current_limit:
+            raise ValueError(
+                "training materialization cannot retain the calibration rows under the "
+                f"configured cap: calibration={len(protected)}, current_limit={current_limit}"
+            )
+        selected = _task_balanced_indices(trimmable, merged, current_limit - len(protected))
+        selected.extend(protected)
         selected.extend(coverage_idx[:coverage_slots])
         selected.extend(anchors_idx[:anchor_slots])
         selected.extend(prior)
@@ -522,10 +538,13 @@ def assemble(
             anchor_report["cap_reservation"] = {
                 "policy": "anchor_share_of_materialized_rows_v1",
                 "materialized_rows": materialized_rows,
-                "wanted_anchor_rows_total": int(round(materialized_rows * anchor["share"])),
+                "share_base_rows": share_base_rows,
+                "share_base_excluded_rows": materialized_rows - share_base_rows,
+                "wanted_anchor_rows_total": int(round(share_base_rows * anchor["share"])),
                 "new_anchor_slots": anchor_slots,
                 "new_anchors_available": len(anchors_idx),
                 "current_rows_displaced_by_anchors": anchor_displaced,
+                "calibration_rows_protected": len(protected),
             }
         if coverage["enabled"]:
             coverage_report["cap_reservation"] = {
@@ -625,12 +644,24 @@ def assemble(
             "materialized_anchor_records_total": sum(
                 item["source_kind"] == ANCHOR_SOURCE_KIND for item in provenance
             ) + (anchor_report.get("prior_anchor_rows", 0) if anchor_report.get("enabled") else 0),
+            # share relative to the share base (all rows minus the launch-recorded
+            # excluded rows); ``realized_share_of_all_rows`` keeps the plain ratio
             "realized_share_rows": (
+                (sum(item["source_kind"] == ANCHOR_SOURCE_KIND for item in provenance)
+                 + anchor_report.get("prior_anchor_rows", 0))
+                / max(1, len(merged) - min(share_excluded_rows, len(merged)))
+                if anchor_report.get("enabled") and merged else 0.0
+            ),
+            "realized_share_of_all_rows": (
                 (sum(item["source_kind"] == ANCHOR_SOURCE_KIND for item in provenance)
                  + anchor_report.get("prior_anchor_rows", 0)) / len(merged)
                 if anchor_report.get("enabled") and merged else 0.0
             ),
+            "share_base_excluded_rows": share_excluded_rows if anchor_report.get("enabled") else 0,
         },
+        "materialized_calibration_records": sum(
+            record.get(CALIBRATION_MARK) is True for record in merged
+        ),
         "materialized_coverage_records": sum(
             item["source_kind"] == COVERAGE_SOURCE_KIND for item in provenance
         ),
@@ -769,6 +800,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--anchor-task-shares", type=pathlib.Path, help="Evaluation JSONL whose task row shares set the anchor task quotas (the KPI set).")
     parser.add_argument("--anchor-source-cap", type=float, help="Max share of one dataset inside a task's anchors (default 0.35).")
     parser.add_argument("--anchor-seed", type=int)
+    parser.add_argument("--anchor-share-exclude-rows", type=int, help="Cumulative corpus rows excluded from the anchor share base (a launch-recorded acquisition slice); default 0.")
     parser.add_argument("--anchor-manifest", type=pathlib.Path, help="Defaults to anchor_manifest.json beside --output.")
     parser.add_argument("--coverage-blend-share", type=float, help="Cross-dataset coverage share of the cumulative corpus (rows); 0/absent = off.")
     parser.add_argument("--coverage-blend-mode", choices=("plain", "residual"), help="plain = uniform pool rows; residual = scored-wrong rows with correct-row fallback.")
@@ -820,7 +852,8 @@ def main(argv: list[str] | None = None) -> int:
         if repetition_seed is None:
             repetition_seed = 17
         anchor_config = validate_anchor_config(
-            args.anchor_share, args.anchor_source, args.anchor_task_shares, args.anchor_source_cap
+            args.anchor_share, args.anchor_source, args.anchor_task_shares, args.anchor_source_cap,
+            args.anchor_share_exclude_rows,
         )
         coverage_config = validate_coverage_config(
             args.coverage_blend_share,

@@ -289,11 +289,12 @@ class RunnerAndInitAnchorWiringTests(unittest.TestCase):
     def test_runner_moves_anchor_options_to_the_assembler(self) -> None:
         selector, assembler = render_iteration_mining_runner._partition_materialization_arguments(
             ["python", "select.py", "--top-k", "50", "--anchor-share", "0.1", "--anchor-source", "/a.jsonl",
-             "--anchor-task-shares", "/k.jsonl", "--anchor-seed", "17"]
+             "--anchor-task-shares", "/k.jsonl", "--anchor-seed", "17", "--anchor-share-exclude-rows", "2500"]
         )
         self.assertEqual(selector, ["python", "select.py", "--top-k", "50", "--no-repetition-blend"])
         self.assertEqual(assembler, ["--anchor-share", "0.1", "--anchor-source", "/a.jsonl",
-                                     "--anchor-task-shares", "/k.jsonl", "--anchor-seed", "17"])
+                                     "--anchor-task-shares", "/k.jsonl", "--anchor-seed", "17",
+                                     "--anchor-share-exclude-rows", "2500"])
         with self.assertRaisesRegex(ValueError, "unsupported materialization option"):
             render_iteration_mining_runner._partition_materialization_arguments(["x", "--anchor-bogus", "1"])
 
@@ -322,3 +323,90 @@ class RunnerAndInitAnchorWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CalibrationProtectedTrimTests(unittest.TestCase):
+    """2026-09-14: the anchor cap reservation trimmed 382 of 3,000 reference calibration pairs
+    (task-balanced trim over all current rows). Calibration rows (``deft_calibration``) must
+    survive the trim, and an acquisition slice can be taken out of the anchor share base."""
+
+    def _corpus(self, root: pathlib.Path, calibration_rows: int = 30):
+        mined_rows = [_row(f"m-{i}", "Defect Detection", "mine") for i in range(90 - calibration_rows)]
+        mined_rows += [{**_row(f"c-{i}", "Defect Detection", "cal"), assemble_training_json.CALIBRATION_MARK: True}
+                       for i in range(calibration_rows)]
+        mined = _write(root / "mined.jsonl", mined_rows)
+        anchors = [_row(f"a-{i}", "Component Classification", f"ds{i % 3}") for i in range(200)]
+        anchors += [_row(f"b-{i}", "Defect Detection", "pool") for i in range(200)]
+        source = _write(root / "anchor_candidates.jsonl", anchors)
+        kpi = _write(root / "kpi.jsonl", [_row(f"k-{i}", "Component Classification") for i in range(50)]
+                     + [_row(f"kd-{i}", "Defect Detection") for i in range(50)])
+        return mined, source, kpi
+
+    def test_cap_trim_never_displaces_calibration_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, source, kpi = self._corpus(root)
+            cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None)
+            rows, summary = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=96, row_multiple=32
+            )
+            self.assertEqual(len(rows), 96)
+            self.assertEqual(summary["materialized_anchor_records"], 10)
+            self.assertEqual(summary["materialized_current_records"], 86)
+            self.assertEqual(summary["materialized_calibration_records"], 30)
+            self.assertEqual(summary["anchor"]["cap_reservation"]["calibration_rows_protected"], 30)
+            self.assertEqual(summary["anchor"]["cap_reservation"]["current_rows_displaced_by_anchors"], 4)
+            kept_calibration = [r for r in rows if r.get(assemble_training_json.CALIBRATION_MARK) is True]
+            self.assertEqual(len(kept_calibration), 30)
+            kinds = [p["source_kind"] for p in summary["provenance"]]
+            self.assertEqual(kinds[:86], ["current_mining"] * 86)
+            self.assertEqual(kinds[86:], ["anchor_correct"] * 10)
+
+    def test_calibration_rows_alone_over_capacity_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, source, kpi = self._corpus(root, calibration_rows=90)
+            cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None)
+            with self.assertRaisesRegex(ValueError, "cannot retain the calibration rows"):
+                assemble_training_json.assemble(
+                    None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=96, row_multiple=32
+                )
+
+    def test_share_base_excludes_the_acquisition_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, source, kpi = self._corpus(root)
+            cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None, 30)
+            self.assertEqual(cfg["share_exclude_rows"], 30)
+            rows, summary = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=96, row_multiple=32
+            )
+            self.assertEqual(len(rows), 96)
+            # share base = 96 - 30 = 66 -> round(6.6) = 7 anchors; the 30 calibration rows all survive
+            self.assertEqual(summary["materialized_anchor_records"], 7)
+            self.assertEqual(summary["anchor"]["cap_reservation"]["share_base_rows"], 66)
+            self.assertEqual(summary["anchor"]["cap_reservation"]["share_base_excluded_rows"], 30)
+            self.assertEqual(summary["materialized_calibration_records"], 30)
+            self.assertAlmostEqual(summary["anchor"]["realized_share_rows"], 7 / 66, places=6)
+            self.assertAlmostEqual(summary["anchor"]["realized_share_of_all_rows"], 7 / 96, places=6)
+
+    def test_uncapped_share_base_exclusion_and_cli_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined, source, kpi = self._corpus(root)
+            cfg = anchor_rows.validate_anchor_config(0.10, source, kpi, None, 30)
+            rows, summary = assemble_training_json.assemble(None, mined, validation_paths=[], media_root=root, anchor_config=cfg)
+            # base 90 - 30 = 60 -> T = round(60 * 0.1 / 0.9) = 7
+            self.assertEqual(summary["materialized_anchor_records"], 7)
+            self.assertEqual(summary["anchor"]["share_base_excluded_rows"], 30)
+            with self.assertRaises(ValueError):
+                anchor_rows.validate_anchor_config(0.10, source, kpi, None, -1)
+            out = root / "train.jsonl"
+            rc = assemble_training_json.main([
+                "--mined-jsonl", str(mined), "--output", str(out), "--media-root", str(root),
+                "--anchor-share", "0.10", "--anchor-source", str(source), "--anchor-task-shares", str(kpi),
+                "--anchor-share-exclude-rows", "30", "--max-rows", "96", "--row-multiple", "32",
+            ])
+            self.assertEqual(rc, 0)
+            manifest = json.loads((root / "anchor_manifest.json").read_text())
+            self.assertEqual(manifest["cap_reservation"]["share_base_excluded_rows"], 30)

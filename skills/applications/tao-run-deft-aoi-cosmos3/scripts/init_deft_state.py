@@ -442,7 +442,10 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         "task_shares_source": str(anchor_task_shares) if anchor_share > 0.0 else None,
         "source_cap": anchor_cap,
         "seed": getattr(args, "anchor_seed", None),
-        "owner": "assemble_training_json.py (assembler-only options: --anchor-share --anchor-source --anchor-task-shares --anchor-source-cap --anchor-seed)",
+        # rows per iteration that an acquisition slice adds on top of the parent corpus and that
+        # the assembler takes out of the share base (--anchor-share-exclude-rows <cumulative>)
+        "share_exclude_rows_per_iteration": getattr(args, "anchor_share_exclude_rows", None),
+        "owner": "assemble_training_json.py (assembler-only options: --anchor-share --anchor-source --anchor-task-shares --anchor-source-cap --anchor-seed --anchor-share-exclude-rows)",
         "combinable_with_repetition_blend": False,
     }
     coverage_share = float(getattr(args, "coverage_blend_share", 0.0) or 0.0)
@@ -954,6 +957,11 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--anchor-source", type=pathlib.Path, help="anchor_candidates.jsonl from build_anchor_candidates.py")
+    parser.add_argument(
+        "--anchor-share-exclude-rows",
+        type=int,
+        help="Launch record only: rows per iteration of an acquisition slice that the assembler excludes from the anchor share base (pass the cumulative count to the assembler each iteration).",
+    )
     parser.add_argument("--anchor-task-shares", type=pathlib.Path, help="Evaluation JSONL for anchor task quotas (default: the KPI set)")
     parser.add_argument("--anchor-source-cap", type=float, default=0.35)
     parser.add_argument("--anchor-seed", type=int)

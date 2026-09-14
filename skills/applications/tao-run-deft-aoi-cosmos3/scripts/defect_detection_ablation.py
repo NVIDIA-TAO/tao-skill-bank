@@ -53,6 +53,11 @@ CALIBRATION_FEW_EVIDENCE = "calibration_few_box_ground_truth"
 # ground-truth box count; they are recognised by this candidate column.
 PROFILE_CALIBRATION_POLICY = "kpi_profile_count_bins"
 REFERENCE_NO_CHANGE_EVIDENCE = "calibration_reference_no_change_ground_truth"
+# Inert top-level marker on emitted calibration rows (like ``deft_anchor``): the
+# assembler must never trim them when it reserves anchor / coverage slots under
+# the row cap, otherwise the verified calibration contract silently breaks
+# (2026-09-14: 382 of 3,000 reference pairs dropped by the task-balanced trim).
+CALIBRATION_MARK = "deft_calibration"
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
     ("source", "source_strata", None),
@@ -789,7 +794,13 @@ def materialize(
                 raise ValueError("defect_detection_evidence must be a string list")
             evidence = sorted(set(evidence_value))
             entry = {
-                "record": record,
+                # calibration rows carry the marker from here on so every
+                # fingerprint (candidate, emitted, manifest) agrees
+                "record": (
+                    {**record, CALIBRATION_MARK: True}
+                    if route_tier == "calibration"
+                    else record
+                ),
                 "record_id": str(record.get("id")),
                 "task_type": task,
                 "resolved_path": resolved_path,
