@@ -44,9 +44,13 @@ and output directory, then submit the `generate` action:
 scripts/generate_od_defects.py \
   --inputs-dir /results/prepared_inputs \
   --base-checkpoint /models/Cosmos3-Nano/model \
-  --output-dir /new/generation \
+  --output-dir /temporary/generation \
+  --published-root /persistent/generation \
   --num-gpus 1
 ```
+
+When execution uses temporary storage, `--published-root` records the
+persistent locations that will contain the saved results.
 
 The action deliberately exposes no switch that disables the image's default
 guardrail path. An optional Hugging Face cache can provide the tokenizer and

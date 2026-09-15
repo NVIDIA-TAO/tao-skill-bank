@@ -22,6 +22,7 @@ actions:
       recipe: {type: file, optional: true}
       base_checkpoint: {type: folder}
       hf_cache: {type: folder, optional: true}
+      published_root: {type: folder, optional: true}
     outputs:
       results_dir: {type: folder}
       validation_summary: {type: file}
@@ -37,6 +38,7 @@ actions:
       recipe: --recipe {recipe}
       base_checkpoint: --base-checkpoint {base_checkpoint}
       output_dir: --output-dir {results_dir}
+      published_root: --published-root {published_root}
       datasets: --datasets {datasets}
       num_gpus: --num-gpus {num_gpus}
       hf_cache: --hf-cache {hf_cache}
