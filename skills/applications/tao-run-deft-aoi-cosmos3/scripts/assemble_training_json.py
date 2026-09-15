@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import pathlib
 import sys
 from collections import Counter
@@ -114,6 +115,11 @@ def _load_optional_records(path: pathlib.Path) -> list[dict[str, Any]]:
 # this iteration in a fixed order so the share cannot grow again.
 GUARD_MODES = ("enforce", "report")
 GUARD_MAX_PASSES = 25
+# exceeded_untrimmable = a cap is still exceeded but every remaining empty row that
+# counts toward it is never-trimmed (previous rows, anchors, coverage, classification
+# calibration); the residual is recorded and the iteration continues. exceeded = a
+# trimmable remainder is left (enforce mode fails closed).
+GUARD_STATUSES = ("within_caps", "trimmed_to_caps", "exceeded_untrimmable", "exceeded")
 GUARD_TRIM_ORDER = ("detection_calibration_negative", "mined_empty")
 GUARD_NEVER_TRIMMED = (
     "previous_iteration",
@@ -232,6 +238,20 @@ class _GuardLedger:
             },
         }
 
+    def counts_for(self, cap_name: str, config: dict[str, Any]) -> tuple[int, int, float]:
+        """(empty rows, rows, cap) behind one cap name returned by ``exceeded``."""
+        if cap_name == "overall":
+            return self.empty, self.rows, float(config["max_empty_answer_share"])
+        if cap_name.startswith("classification_task:"):
+            task = cap_name.partition(":")[2]
+            return self.cls_task_empty[task], self.cls_task_rows[task], float(config["max_classification_empty_share"])
+        if cap_name == "classification":
+            return self.cls_empty, self.cls_rows, float(config["max_classification_empty_share"])
+        if cap_name.startswith("task:"):
+            task = cap_name.partition(":")[2]
+            return self.task_empty[task], self.task_rows[task], float(config["max_empty_answer_share_task"][task])
+        raise ValueError(f"unknown empty-answer cap {cap_name!r}")
+
     def exceeded(self, config: dict[str, Any]) -> list[str]:
         if not config["enabled"]:
             return []
@@ -250,6 +270,13 @@ class _GuardLedger:
                 if _over_cap(self.cls_task_empty[task], self.cls_task_rows[task], cap):
                     names.append(f"classification_task:{task}")
         return names
+
+
+def _rows_over_cap(empty: int, rows: int, cap: float) -> int:
+    """Smallest number of empty rows to remove (without replacement) to reach the cap."""
+    if rows <= 0 or cap >= 1.0 or not _over_cap(empty, rows, cap):
+        return 0
+    return max(0, math.ceil((empty - cap * rows) / (1.0 - cap) - 1e-9))
 
 
 def _guard_row_helps(profile: dict[str, Any], exceeded: list[str]) -> bool:
@@ -367,10 +394,39 @@ def _run_empty_answer_guard(
     final_ids = [str(record.get("id")) for record in merged]
     assert first_ids is not None
     trimmed_total = sum(trimmed_by_source.values())
+    # Residual excess per still-exceeded cap: which rows carry it and whether any
+    # could still be trimmed. Excess that sits only in never-trimmed rows (previous
+    # rows, anchors, coverage, classification calibration) is recorded and the
+    # iteration continues (2026-09-15, 4c-B r3 iteration 2: Component Classification
+    # had no new candidates and its only new rows were empty-answer anchors, so the
+    # classification cap could not be met by trimming). A trimmable remainder fails closed.
+    untrimmable_excess: dict[str, Any] = {}
+    trimmable_left_any = False
+    for cap_name in exceeded_after:
+        by_source: Counter[str] = Counter()
+        trimmable_left = 0
+        for index, profile in enumerate(profiles):
+            if not profile["empty"] or not _guard_row_helps(profile, [cap_name]):
+                continue
+            source = _guard_trim_source(merged[index], provenance[index], profile)
+            if source is None:
+                by_source[str(provenance[index]["source_kind"])] += 1
+            else:
+                by_source[source] += 1
+                trimmable_left += 1
+        empty, rows, cap = ledger.counts_for(cap_name, config)
+        untrimmable_excess[cap_name] = {
+            "cap": cap,
+            "share_after": _share(empty, rows),
+            "rows_over_cap": _rows_over_cap(empty, rows, cap),
+            "rows_by_source": dict(sorted(by_source.items())),
+            "trimmable_rows_left": trimmable_left,
+        }
+        trimmable_left_any = trimmable_left_any or trimmable_left > 0
     if not config["enabled"]:
         status = "within_caps"
     elif exceeded_after:
-        status = "exceeded"
+        status = "exceeded" if trimmable_left_any else "exceeded_untrimmable"
     elif trimmed_total:
         status = "trimmed_to_caps"
     else:
@@ -403,6 +459,7 @@ def _run_empty_answer_guard(
         # because the trimmed rows freed their slots
         "backfilled_rows": len(set(final_ids) - set(first_ids)),
         "passes": passes,
+        "untrimmable_excess": untrimmable_excess,
         "status": status,
     }
     return merged, provenance, report
@@ -662,13 +719,22 @@ def assemble(
         non_anchor_rows = len(merged) - prior_anchor_rows
         anchor_total, anchor_new = slice_targets["anchor"]
         shares = task_shares_from_jsonl(pathlib.Path(anchor["task_shares"]))
+        def anchor_excluded(record: dict[str, Any]) -> str | None:
+            reason = excluded(record, anchor_source)
+            if reason is None and guard["enabled"] and is_empty_ground_truth(record, context="anchor candidate"):
+                # With the empty-answer guard on, anchors rehearse answers, not "[]":
+                # an empty-answer anchor is never trimmed and could only leave an
+                # untrimmable excess behind (4c-B r3 iteration 2, 2026-09-15).
+                return "empty_ground_truth"
+            return reason
+
         anchors, selection = select_anchors(
             anchor_candidates,
             new_rows=anchor_new,
             task_shares=shares,
             source_cap=anchor["source_cap"],
             seed=17 if anchor_seed is None else anchor_seed,
-            is_excluded=lambda record: excluded(record, anchor_source),
+            is_excluded=anchor_excluded,
         )
         for index, picked in enumerate(anchors):
             record = {**picked, ANCHOR_MARK: True}
@@ -699,6 +765,9 @@ def assemble(
             "share_base_excluded_rows": share_excluded_rows,
             "target_anchor_rows_total": anchor_total,
             "selection": selection,
+            # with the empty-answer guard enabled, empty-ground-truth candidates are skipped
+            "prefer_non_empty_rows": bool(guard["enabled"]),
+            "anchor_empty_rows_excluded": int(selection["skipped"].get("empty_ground_truth", 0)),
         }
     if coverage["enabled"]:
         coverage_source = pathlib.Path(coverage["source"]).expanduser().resolve(strict=True)
@@ -936,7 +1005,7 @@ def assemble(
                     task_shares=shares,
                     source_cap=anchor["source_cap"],
                     seed=(17 if anchor_seed is None else anchor_seed) + 1,
-                    is_excluded=lambda record: excluded(record, anchor_source),
+                    is_excluded=anchor_excluded,
                 )
                 if len(extra) < gap:
                     raise ValueError(
@@ -1388,6 +1457,13 @@ def main(argv: list[str] | None = None) -> int:
                 "empty-answer guard: caps still exceeded after trimming this iteration's empty rows "
                 f"({', '.join(guard_report['exceeded_after'])}); summary written to {summary_path}, "
                 f"{args.output} not written"
+            )
+        if guard_report["status"] == "exceeded_untrimmable":
+            print(
+                "assemble_training_json: empty-answer guard: caps exceeded only by never-trimmed rows "
+                f"({', '.join(guard_report['exceeded_after'])}); residual recorded in "
+                "empty_answer_guard.untrimmable_excess, continuing",
+                file=sys.stderr,
             )
         _write_jsonl(args.output, rows)
         summary = bind_summary(summary, args.output)

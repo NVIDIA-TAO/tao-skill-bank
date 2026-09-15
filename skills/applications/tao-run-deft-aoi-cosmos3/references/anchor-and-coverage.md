@@ -50,7 +50,12 @@ option to the assembler, which is the only writer of the cumulative Train.
   datasets exist), ordered by seed/id hash.
 - Skipped, never fatal: candidates whose id or fingerprint is already in the
   corpus (`already_in_corpus`) or whose atomic identity is an evaluation target
-  (`evaluation_target`). Counts are in the manifest.
+  (`evaluation_target`). Counts are in the manifest. When the empty-answer
+  guard is enabled (`empty-answer-guard.md`), candidates with an empty ground
+  truth are skipped as well (`empty_ground_truth`, reported as
+  `anchor_empty_rows_excluded` with `prefer_non_empty_rows = true`), because
+  anchors are never trimmed and an empty-answer anchor could only leave an
+  untrimmable excess behind.
 - Anchors are not in the mining history, so a later iteration's miner may
   select a retained anchor again as a plain row. The assembler de-duplicates
   current mined rows by id and by marker-free content against the retained

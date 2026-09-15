@@ -101,11 +101,32 @@ reservation is re-solved on the trimmed candidate set, so the realized anchor
 share follows the (possibly smaller) corpus and spare anchors may back-fill a
 leftover slot exactly as in the standard step.
 
-`status`: `within_caps` (nothing to trim), `trimmed_to_caps`, or `exceeded`.
-In enforce mode `exceeded` after trimming makes `assemble_training_json.py`
-write `assemble_summary.json` (for diagnosis) but not `train.jsonl`, and exit
-2; in report mode the corpus is written unchanged and the status is recorded.
-Enforcement cannot be combined with the repetition blend (report mode can).
+### Status
+
+| `status` | meaning | enforce mode | report mode |
+| --- | --- | --- | --- |
+| `within_caps` | no cap exceeded (nothing trimmed) | exit 0 | exit 0 |
+| `trimmed_to_caps` | caps met after trimming this iteration's empty rows | exit 0 | n/a (no trimming) |
+| `exceeded_untrimmable` | a cap is still exceeded but every empty row counting toward it is never-trimmed (previous rows, anchors, coverage, classification calibration) | exit 0, corpus written, residual recorded, stderr note | exit 0, residual recorded |
+| `exceeded` | a cap is still exceeded and trimmable empty rows remain (pass budget hit, or report mode with trimmable rows) | exit 2: `assemble_summary.json` written for diagnosis, `train.jsonl` not written | exit 0, corpus unchanged |
+
+`untrimmable_excess` lists every still-exceeded cap with `cap`, `share_after`,
+`rows_over_cap` (empty rows that would have to go, without replacement, to
+reach the cap), `rows_by_source` (empty rows counting toward the cap by
+provenance: `previous_iteration`, `anchor_correct`, `coverage_blend`,
+`classification_calibration`, or the trimmable groups) and
+`trimmable_rows_left`. 4c-B r3 iteration 2 (2026-09-15) is the motivating
+case: Component Classification had no new candidates, its only new rows were
+anchors with an empty ground truth, and the 0.10 classification cap could not
+be met by trimming; the run now continues with the residual on record.
+
+To stop that excess from arising, anchor selection prefers rows with a
+non-empty answer whenever the guard is enabled: `select_anchors` skips
+empty-ground-truth candidates (`skipped.empty_ground_truth`, reported as
+`anchor.anchor_empty_rows_excluded`, `anchor.prefer_non_empty_rows`), both for
+the standard anchor slice and for the alignment fill. Without a cap the anchor
+selection is unchanged. Enforcement cannot be combined with the repetition
+blend (report mode can).
 
 ## Summary schema (`empty_answer_guard`)
 
@@ -126,6 +147,9 @@ Enforcement cannot be combined with the repetition blend (report mode can).
   "rows_trimmed_by_task": {"Defect Detection": 700, "Ref_based Defect Detection": 500},
   "aligned_rows_before": 2304, "aligned_rows_after": 2304, "aligned_rows_shrunk": 0,
   "backfilled_rows": 1200, "passes": 2,
-  "status": "trimmed_to_caps"
+  "untrimmable_excess": {"classification_task:Component Classification": {
+      "cap": 0.10, "share_after": 0.18, "rows_over_cap": 4,
+      "rows_by_source": {"anchor_correct": 6, "previous_iteration": 3}, "trimmable_rows_left": 0}},
+  "status": "exceeded_untrimmable"
 }
 ```
