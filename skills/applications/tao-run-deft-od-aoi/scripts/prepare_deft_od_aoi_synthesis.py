@@ -24,6 +24,24 @@ def _source(images: Path, row: dict[str, Any]) -> Path:
     return path.resolve()
 
 
+def _image_index(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index canonical COCO ids and filename-stem ids emitted by gap analysis."""
+    output: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        aliases = {str(row.get("id"))}
+        file_name = str(row.get("file_name") or "").strip()
+        if file_name:
+            aliases.add(Path(file_name).stem)
+        for alias in aliases:
+            if not alias or alias == "None":
+                raise ValueError("KPI COCO image lacks an id")
+            existing = output.get(alias)
+            if existing is not None and existing is not row:
+                raise ValueError(f"duplicate KPI image identity: {alias}")
+            output[alias] = row
+    return output
+
+
 def _xyxy(value: Any) -> tuple[float, float, float, float]:
     values = tuple(map(float, value))
     if len(values) != 4 or values[2] <= values[0] or values[3] <= values[1]:
@@ -57,7 +75,7 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
     kpi = policy["sources"]["kpi"]
     images_root = Path(kpi["images"])
     coco = json.loads(Path(kpi["coco"]).read_text())
-    images = {str(row["id"]): row for row in coco["images"]}
+    images = _image_index(coco["images"])
     annotations: dict[str, list[dict[str, Any]]] = {}
     for row in coco.get("annotations", []):
         annotations.setdefault(str(row["image_id"]), []).append(row)
@@ -70,11 +88,14 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
         image_id, box = str(gap["image_id"]), _xyxy(gap["bbox"])
         if image_id not in images:
             raise ValueError(f"FN image id is absent from KPI COCO: {image_id}")
-        ranked = sorted(((_iou(box, row), row) for row in annotations.get(image_id, [])),
+        image = images[image_id]
+        annotation_image_id = str(image["id"])
+        ranked = sorted(((_iou(box, row), row)
+                         for row in annotations.get(annotation_image_id, [])),
                         key=lambda item: item[0], reverse=True)
         if not ranked or ranked[0][0] < 0.999:
             raise ValueError(f"FN box has no exact KPI annotation match: {image_id} {box}")
-        annotation, image = ranked[0][1], images[image_id]
+        annotation = ranked[0][1]
         metadata = {}
         for source in (image, image.get("deft_od_aoi", {}), annotation,
                        annotation.get("deft_od_aoi", {})):
@@ -90,7 +111,12 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
             raise ValueError(f"FN pixel mask is missing: {mask}")
         metadata["fn_mask_source"] = str(mask)
         source_path = _source(images_root, image)
-        if source_path != Path(str(gap["filepath"])).resolve():
+        gap_path = Path(str(gap["filepath"])).expanduser().resolve()
+        try:
+            same_file = source_path.samefile(gap_path)
+        except OSError:
+            same_file = False
+        if not same_file:
             raise ValueError(f"gap filepath does not match frozen KPI image: {image_id}")
         rows.append({**gap, "filepath": str(source_path), "split": "kpi", **metadata,
                      "anomaly_type": f"{metadata['texture_id']}+{metadata['defect_class']}"})
