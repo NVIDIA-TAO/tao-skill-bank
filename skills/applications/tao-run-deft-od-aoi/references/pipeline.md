@@ -22,10 +22,13 @@ completed outputs are immutable and reused by every iteration. Commit the
 
 ## 2. Baseline measurement and gaps
 
-Run `prepare_deft_od_aoi_measurement.py` with the frozen base checkpoint.
-Submit KPI and test inference via `tao-train-rtdetr`. KPI controls selection;
-test is report-only. Submit the emitted loose and strict gap specs via
-`tao-analyze-gaps-od-map`. Commit baseline measurement and gap artifacts.
+Run `prepare_deft_od_aoi_measurement.py --baseline` with the frozen base
+checkpoint. In default `cold_start` mode, it emits empty KPI prediction files
+and no inference specs, so every KPI ground-truth box begins as an FN. In
+explicit `checkpoint` mode, submit its KPI and report-only test inference specs
+using a binary-compatible checkpoint. Then submit the emitted loose and strict
+gap specs via `tao-analyze-gaps-od-map`. Commit baseline measurement and gap
+artifacts.
 
 ## 3. Per-iteration retrieval
 

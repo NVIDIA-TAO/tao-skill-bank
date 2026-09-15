@@ -54,10 +54,29 @@ def _append_boxless_image(role: dict, name: str) -> None:
 def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     state = MODULE.initialize(_config(tmp_path), tmp_path / "results")
     assert state["mode"] == "rtdetr_real_only"
+    assert state["baseline_mode"] == "cold_start"
     assert state["next_stage"] == "candidate_cache"
     assert Path(state["policy"]).is_file()
     assert Path(state["classmap"]).read_text() == "background\ndefect\n"
     assert state["roles"]["clean"]["annotation_count"] == 0
+
+
+def test_initialize_accepts_explicit_checkpoint_baseline(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["baseline_mode"] = "checkpoint"
+    config.write_text(yaml.safe_dump(value))
+    state = MODULE.initialize(config, tmp_path / "results")
+    assert state["baseline_mode"] == "checkpoint"
+
+
+def test_initialize_rejects_automatic_baseline_selection(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["baseline_mode"] = "auto"
+    config.write_text(yaml.safe_dump(value))
+    with pytest.raises(ValueError, match="cold_start or checkpoint"):
+        MODULE.initialize(config, tmp_path / "results")
 
 
 def test_initialize_rejects_role_overlap(tmp_path: Path) -> None:
