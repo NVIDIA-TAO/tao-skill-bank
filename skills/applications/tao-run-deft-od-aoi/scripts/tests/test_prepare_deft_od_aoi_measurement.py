@@ -38,6 +38,13 @@ def test_measurement_freezes_binary_inference_and_dual_gap_specs(tmp_path: Path)
     report = MODULE.prepare(policy, checkpoint, tmp_path / "measure/kpi/inference/labels",
                             tmp_path / "measure", tmp_path / "specs")
     assert report["status"] == "COMPLETE"
+    assert report["checkpoint_sha256"] == MODULE._sha(checkpoint)
+    assert report["inference_roles"] == {
+        "kpi": {"expected_images": 1,
+                "predictions": str((tmp_path / "measure/kpi/inference/labels").resolve())},
+        "test": {"expected_images": 1,
+                 "predictions": str((tmp_path / "measure/test/inference/labels").resolve())},
+    }
     inference = yaml.safe_load((tmp_path / "specs/kpi_inference.yaml").read_text())
     assert inference["dataset"]["num_classes"] == 2
     assert Path(inference["dataset"]["infer_data_sources"]["classmap"]).read_text() == (

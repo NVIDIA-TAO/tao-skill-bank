@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,14 @@ import yaml
 def _yaml(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(value, sort_keys=False))
+
+
+def _sha(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _kitti(coco_path: Path, output: Path) -> dict[str, int]:
@@ -91,8 +100,16 @@ def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
                 "default_recall_threshold": 0.0, "default_precision_threshold": 0.0,
                 "default_ap50_threshold": 0.0}
         _yaml(output / f"gap_{kind}.yaml", spec)
+    test_count = len(json.loads(Path(test["coco"]).read_text()).get("images", []))
     report = {"status": "COMPLETE", "checkpoint": str(checkpoint.resolve()),
+              "checkpoint_sha256": _sha(checkpoint),
               "kpi_ground_truth": projection,
+              "inference_roles": {
+                  "kpi": {"expected_images": projection["images"],
+                          "predictions": str(predictions.resolve())},
+                  "test": {"expected_images": test_count,
+                           "predictions": str((results_root / "test/inference/labels").resolve())},
+              },
               "specs": {name: str((output / name).resolve()) for name in
                         ("kpi_inference.yaml", "test_inference.yaml", "gap_loose.yaml", "gap_strict.yaml")}}
     (output / "measurement_manifest.json").write_text(json.dumps(report, indent=2) + "\n")
