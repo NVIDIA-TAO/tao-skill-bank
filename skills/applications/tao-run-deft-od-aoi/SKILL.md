@@ -39,7 +39,20 @@ Select an installed platform, read its skill, then invoke
 `tao-launch-workflow`. The single launch review must include the four normalized
 COCO roles, trainable RT-DETR base checkpoint, maximum iterations, image and
 Data Services containers, GPU shape, and expected runtime. After approval,
-copy `assets/default_policy.yaml`, fill its required values, and initialize once:
+prepare source COCO files when needed:
+
+```bash
+scripts/prepare_deft_od_aoi_sources.py \
+  --manifest /data/dataset_sources.json --check-only
+
+scripts/prepare_deft_od_aoi_sources.py \
+  --manifest /data/dataset_sources.json \
+  --output-dir /new/results/normalized
+```
+
+The second command emits `sources.json` with the canonical `kpi`, `test`,
+`real`, and `clean` mapping. Copy `assets/default_policy.yaml`, use that mapping
+for `sources`, fill the other required values, and initialize once:
 
 ```bash
 scripts/init_deft_od_aoi.py \
