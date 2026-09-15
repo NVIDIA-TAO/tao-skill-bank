@@ -184,10 +184,12 @@ durable workflow history, not a scheduler substitute.
 
 ## Optional synthesis with existing task weights
 
-Enable `synthesis` only when KPI annotations carry `dataset_id`, `texture_id`,
-`defect_class`, and a pixel `fn_mask_source`. Each configured dataset route
-must provide an existing AnomalyGenNext checkpoint and matching recipe. After
-strict gap analysis, normalize exact FN/annotation matches:
+Enable `synthesis` only when KPI annotations carry `dataset_id`. Dataset IDs
+absent from `synthesis.routes` remain in the normal real-data path. Every FN in
+a configured route must also carry `texture_id`, `defect_class`, and a pixel
+`fn_mask_source`, and the route must provide an existing AnomalyGenNext
+checkpoint and matching recipe. After strict gap analysis, normalize exact
+FN/annotation matches:
 
 ```bash
 scripts/prepare_deft_od_aoi_synthesis.py \
