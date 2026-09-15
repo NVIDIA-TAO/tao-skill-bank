@@ -191,6 +191,65 @@ guard-aware selection off the same iteration must trim 421 calibration
 negatives, the aligned size falls by one global batch and the protected
 calibration rows no longer fit: the assembler fails closed as r4 did.
 
+### Worked example: run v12_p4b_emptyguard_r5, iteration 1 (snapshot 3c4e042b) — Feature B3.1
+
+With guard-aware selection on, the headroom lowered the empty targets to 426
+single-image / 151 no-change (KPI 512 / 278) and the materializer asked for 86
+few-box rows and 127 changed pairs in their place. The calibration FEED had no
+reserve: the run-local runtime had called
+`select_detection_calibration.select_calibration` with the hard-coded
+`cohort_bucket_quotas` 512 / 512 and 278 / 222, so every few-box (512) and
+changed (222) candidate was already in the slot. Result: `fewbox_shortfall`
+86 / 127, slots filled 938 / 1,024 and 373 / 500, "Defect Detection
+materialization quota is not verified" (exit 2), no assembly, run aborted under
+criterion (d), while 86 unused EMPTY candidates sat in the feed.
+
+Two mechanisms, both only with `--calibration-guard-aware on` (guard-off
+selection stays byte-identical; the same golden fixture proves it):
+
+1. **Contract-driven feed reserve.** `init_deft_state.py` writes
+   `config.mining.calibration_quota_contract.feed_bucket_quotas`: with
+   guard-aware on `non_reference_based = {empty: max_empty, few: max_empty +
+   max_few_box}` and `reference_based = {empty: KPI no-change, few: total}`
+   (512 / 1,024 and 278 / 500 for the pinned recipe), so the whole slot can be
+   filled with non-empty rows when the headroom demands it; with guard-aware
+   off the block equals the contract quotas (512 / 512 and 278 / 222). The
+   runtime passes it as `select_calibration(feed_bucket_quotas=...)`; the
+   contract quotas stay the fail-closed floor, the reserve is best-effort and
+   reported per cohort as `feed_reserve_rows`. Rule and controller
+   instruction: `calibration-profile.md`, "Feed reserve".
+2. **Best-effort substitution with recorded overflow.** When the few-box /
+   changed reserve runs out, the materializer fills the remaining slot rows
+   with the next EMPTY calibration candidates of the same ordering (never more
+   than the KPI-rate selection carried) instead of leaving the slot short. The
+   slot is full, the total-slot verification passes, and the manifest records
+   `calibration_headroom_overflow_rows` (per task + `total`),
+   `fewbox_shortfall` (few-box / changed rows asked for and not found), an
+   honest `calibration_fewbox_substituted` (rows actually replaced) and
+   `guard_aware_calibration.status = substituted_with_overflow`. The
+   assembler's guard then trims the overflow empties as calibration negatives.
+   A substitution shortfall never fails the materializer by itself; a slot the
+   feed cannot fill at all still fails closed.
+
+Synthetic reproduction (`FeedReserveAndOverflowTests` in
+`tests/test_cosmos3_guard_aware_calibration.py`): a 6,144-row corpus (8 global
+batches) at 0.280 empty share, the r4-shaped iteration with today's feed (512
+few-box, 222 changed) or the reserve feed (1,024 / 500), caps 0.30 / 0.45 /
+0.50, KPI reference empty rate 0.556. Headroom: overall
+`floor(0.30 × 7,680 − 1,727) = 577`, Defect Detection 480, Ref_based Defect
+Detection 170; the shared 577 splits 426 / 151.
+
+| feed | empty selected | substituted | overflow | `status` | materializer | assembler, 768-row batch |
+|---|---|---|---|---|---|---|
+| today's (512 / 222) | 512 / 278 | 0 / 0 | 86 / 127 | `substituted_with_overflow` | verified, 1,536 rows | guard trims 335 calibration negatives (every trimmed row also shrinks the denominator; no back-fill candidates), then the 1,189 protected calibration rows left do not fit the one 768-row batch that remains: fails closed, `cannot retain the calibration rows under the configured cap` |
+| reserve (1,024 / 500) | 426 / 151 | 86 / 127 | 0 / 0 | `substituted` | verified, 1,536 rows | `within_caps`, `growth_rows = 1536`, overall share 0.300 |
+
+The overflow turns the r5 materializer abort into a recorded, inspectable
+outcome; only the reserve feed lets the iteration through. Put
+`feed_bucket_quotas` from the state on the runtime's `select_calibration` call
+(the r6 prompt says so) and read `guard_aware_calibration.status` in every
+quota manifest.
+
 ### Launch record and pass-through
 
 `init_deft_state.py --max-empty-answer-share ... [--calibration-guard-aware
@@ -224,6 +283,23 @@ gains `max_few_box_effective` and `empty_substituted_by_few_box`;
 `reference_calibration` gains `kpi_target_no_change` and
 `no_change_substituted_by_changed` (`target_no_change` is the guard-aware
 target the content gate verifies).
+
+Feature B3.1 additions. Materializer quota manifest (also copied under
+`current_selection`): `calibration_headroom_overflow_rows` (per task +
+`total`; empties kept beyond the headroom because the reserve ran out);
+`guard_aware_calibration.status` (`no_substitution_needed` | `substituted` |
+`substituted_with_overflow`; `null` when off),
+`guard_aware_calibration.headroom_empty_targets` (the per-task empty targets
+after the headroom split; `null` when off),
+`guard_aware_calibration.substitution` (policy name);
+`single_image_calibration.empty_beyond_headroom` and
+`reference_calibration.no_change_beyond_headroom` (the per-slot overflow;
+`target_no_change` counts the kept no-change pairs, headroom target plus
+overflow). Selector summary (`detection_calibration_v3`, per cohort):
+`feed_bucket_quotas` and `feed_reserve_rows` (`empty` / `few` / `total` rows
+selected beyond the contract). State:
+`config.mining.calibration_quota_contract.feed_bucket_quotas`,
+`.feed_bucket_quotas_rule` and `.owner`.
 
 Assembler summary: `growth_rows` (output − previous rows),
 `anchor.cumulative_share_rows` (anchor rows over all rows, every iteration) with

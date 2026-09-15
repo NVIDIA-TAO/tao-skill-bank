@@ -85,7 +85,14 @@ _PRESENCE_VERIFICATION_KEY = "all_five_maintenance_tasks_present"
 # the slot is unchanged, only the empty / few-box split moves. Without it the guard
 # trimmed almost every calibration negative and the aligned corpus fell back to the
 # previous size (growth 0, fail closed).
+# Feature B3.1 (run v12_p4b_emptyguard_r5 iteration 1, snapshot 3c4e042b): the substitution is
+# best-effort. When the few-box / changed reserve of the feed runs out, the remaining slot rows
+# are empty calibration candidates beyond the headroom (never more than the KPI-rate selection
+# carried); the overflow is recorded (``calibration_headroom_overflow_rows``,
+# ``guard_aware_calibration.status``) and left to the assembler's guard to trim. A substitution
+# shortfall alone never fails the materializer; a genuinely short slot still fails closed.
 GUARD_AWARE_CALIBRATION_TASKS = (DEFECT_DETECTION_TASK, REFERENCE_DEFECT_DETECTION_TASK)
+GUARD_AWARE_CALIBRATION_STATUSES = ("no_substitution_needed", "substituted", "substituted_with_overflow")
 # current-selection facts copied into the bound v2 manifest (bind_cumulative_manifest)
 CURRENT_SELECTION_COPIED_KEYS = (
     "new_rows_empty",
@@ -96,6 +103,7 @@ CURRENT_SELECTION_COPIED_KEYS = (
     "calibration_empty_headroom",
     "calibration_empty_selected",
     "calibration_fewbox_substituted",
+    "calibration_headroom_overflow_rows",
 )
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
@@ -149,6 +157,20 @@ def allocate_empty_headroom(limits: dict[str, int], total: int) -> dict[str, int
             allocated[task] += 1
             remainder -= 1
     return allocated
+
+
+def _guard_aware_status(
+    enabled: bool, substituted: dict[str, int], overflow: dict[str, int]
+) -> str | None:
+    """``guard_aware_calibration.status``: None when off; otherwise whether the headroom moved
+    any slot rows to few-box / changed rows and whether some of them fell back to empties."""
+    if not enabled:
+        return None
+    if sum(overflow.values()):
+        return "substituted_with_overflow"
+    if sum(substituted.values()):
+        return "substituted"
+    return "no_substitution_needed"
 
 
 def _empty_ledger(records: Iterable[dict[str, Any]], *, context: str) -> tuple[Counter[str], Counter[str]]:
@@ -1249,7 +1271,11 @@ def materialize(
         ),
     }
     calibration_fewbox_substituted = {task: 0 for task in GUARD_AWARE_CALIBRATION_TASKS}
+    # few-box / changed rows the guard-aware split asked for that the feed did not hold
     calibration_fewbox_shortfall = {task: 0 for task in GUARD_AWARE_CALIBRATION_TASKS}
+    # Feature B3.1: empty rows kept beyond the headroom because that reserve ran out
+    calibration_headroom_overflow_rows = {task: 0 for task in GUARD_AWARE_CALIBRATION_TASKS}
+    headroom_empty_targets: dict[str, int] | None = None
     reference_empty_substituted = 0
     guard_aware_ledger: dict[str, Any] | None = None
     if calibration_guard_aware:
@@ -1285,6 +1311,7 @@ def materialize(
         empty_targets = (
             allocate_empty_headroom(limits, overall_headroom) if overall_headroom is not None else limits
         )
+        headroom_empty_targets = dict(empty_targets)
         guard_aware_ledger = {
             "previous": {"rows": sum(previous_rows.values()), "empty_rows": sum(previous_empty.values())},
             "previous_by_task": {
@@ -1299,7 +1326,8 @@ def materialize(
         # Reference pairs first (they were reserved first): the empty bucket is consumed in the
         # same order, so the kept no-change pairs are a prefix of the KPI-rate selection.
         reference_target = empty_targets[REFERENCE_DEFECT_DETECTION_TASK]
-        if reference_calibration_total and reference_target < kpi_calibration_empty_targets[REFERENCE_DEFECT_DETECTION_TASK]:
+        kpi_reference_target = kpi_calibration_empty_targets[REFERENCE_DEFECT_DETECTION_TASK]
+        if reference_calibration_total and reference_target < kpi_reference_target:
             kept = [*selected_strict, *mined_maintenance, *selected_calibration]
             reference_pool = _without_visual_duplicates(
                 reference_calibration_candidates,
@@ -1310,44 +1338,70 @@ def materialize(
             reference_max_novel = max(
                 0, novel_image_limit - _novel_rows(selected_strict) - _novel_rows(mined_maintenance) - len(selected_calibration)
             )
-            reserved_reference_calibration = _task_balanced(
-                reference_pool,
-                reference_calibration_total,
-                max_novel=reference_max_novel,
-                reference_empty_rate=reference_target / reference_calibration_total,
-            )
+            # Best-effort substitution (Feature B3.1): changed pairs take the slot rows the headroom
+            # removed from the no-change bucket; when the changed reserve runs out, the rows still
+            # missing are no-change pairs beyond the headroom (the next ones of the KPI-rate
+            # selection, never more than it carried), so the slot stays full and the overflow is
+            # recorded for the assembler's guard instead of failing the count contract here.
+            no_change_allowance = reference_target
+            while True:
+                reserved_reference_calibration = _task_balanced(
+                    reference_pool,
+                    reference_calibration_total,
+                    max_novel=reference_max_novel,
+                    reference_empty_rate=no_change_allowance / reference_calibration_total,
+                )
+                slot_short = reference_calibration_total - len(reserved_reference_calibration)
+                if slot_short <= 0 or no_change_allowance >= kpi_reference_target:
+                    break
+                no_change_allowance = min(kpi_reference_target, no_change_allowance + slot_short)
             reserved_reference_novel = _novel_rows(reserved_reference_calibration)
             selected_maintenance = reserved_reference_calibration + mined_maintenance
-            reference_calibration_empty_target = reference_target
-            calibration_fewbox_shortfall[REFERENCE_DEFECT_DETECTION_TASK] = max(
-                0, reference_calibration_total - len(reserved_reference_calibration)
+            reference_no_change_selected = sum(not item.get("objects") for item in reserved_reference_calibration)
+            reference_calibration_empty_target = reference_no_change_selected
+            calibration_headroom_overflow_rows[REFERENCE_DEFECT_DETECTION_TASK] = max(
+                0, reference_no_change_selected - reference_target
             )
-        reference_empty_substituted = kpi_calibration_empty_targets[REFERENCE_DEFECT_DETECTION_TASK] - sum(
+            calibration_fewbox_shortfall[REFERENCE_DEFECT_DETECTION_TASK] = max(
+                0,
+                (reference_calibration_total - reference_target)
+                - (len(reserved_reference_calibration) - reference_no_change_selected),
+            )
+        reference_empty_substituted = kpi_reference_target - sum(
             not item.get("objects") for item in reserved_reference_calibration
         )
         calibration_fewbox_substituted[REFERENCE_DEFECT_DETECTION_TASK] = reference_empty_substituted
         # Single-image slot: keep the first ``target`` empties (same order), re-run the balanced
-        # few-box selection with the slot's row count as its target.
+        # few-box selection with the slot's row count as its target. Best-effort (Feature B3.1):
+        # when the few-box reserve runs out, the next empties of the same ordering fill the slot
+        # (never more than the KPI selection carried) and the overflow is recorded.
         single_target = empty_targets[DEFECT_DETECTION_TASK]
-        if single_target < kpi_calibration_empty_targets[DEFECT_DETECTION_TASK]:
-            new_empty = selected_calibration_empty[:single_target]
-            kept = [*selected_strict, *selected_maintenance, *new_empty]
-            substituted = len(selected_calibration_empty) - len(new_empty)
-            positive_pool = _without_visual_duplicates(
-                calibration_positive,
-                selected=kept,
-                hamming_distance=near_duplicate_hamming_distance,
-                counters=counters,
-            )
-            new_positive, _ = _balanced_positive_selection(
-                positive_pool,
-                single_image_calibration_max_few + substituted,
-                max_novel=max(0, novel_image_limit - _novel_rows(kept)),
-            )
-            calibration_fewbox_shortfall[DEFECT_DETECTION_TASK] = max(
-                0, single_image_calibration_max_few + substituted - len(new_positive)
-            )
+        kpi_single_target = kpi_calibration_empty_targets[DEFECT_DETECTION_TASK]
+        if single_target < kpi_single_target:
+            fewbox_target = single_image_calibration_max_few + (kpi_single_target - single_target)
+            empty_allowance = single_target
+            while True:
+                new_empty = selected_calibration_empty[:empty_allowance]
+                kept = [*selected_strict, *selected_maintenance, *new_empty]
+                substituted = kpi_single_target - len(new_empty)
+                positive_pool = _without_visual_duplicates(
+                    calibration_positive,
+                    selected=kept,
+                    hamming_distance=near_duplicate_hamming_distance,
+                    counters=counters,
+                )
+                new_positive, _ = _balanced_positive_selection(
+                    positive_pool,
+                    single_image_calibration_max_few + substituted,
+                    max_novel=max(0, novel_image_limit - _novel_rows(kept)),
+                )
+                slot_short = single_image_calibration_max_few + substituted - len(new_positive)
+                if slot_short <= 0 or empty_allowance >= kpi_single_target:
+                    break
+                empty_allowance = min(kpi_single_target, empty_allowance + slot_short)
+            calibration_fewbox_shortfall[DEFECT_DETECTION_TASK] = max(0, fewbox_target - len(new_positive))
             calibration_fewbox_substituted[DEFECT_DETECTION_TASK] = substituted
+            calibration_headroom_overflow_rows[DEFECT_DETECTION_TASK] = len(new_empty) - single_target
             selected_calibration_empty = new_empty
             selected_calibration_positive = new_positive
             selected_calibration = _interleave_groups([new_empty, new_positive])
@@ -1686,6 +1740,11 @@ def materialize(
             **calibration_fewbox_substituted,
             "total": sum(calibration_fewbox_substituted.values()),
         },
+        # Feature B3.1: empty calibration rows kept beyond the headroom (reserve ran out)
+        "calibration_headroom_overflow_rows": {
+            **calibration_headroom_overflow_rows,
+            "total": sum(calibration_headroom_overflow_rows.values()),
+        },
         "guard_aware_calibration": {
             "enabled": bool(calibration_guard_aware),
             "caps": {
@@ -1699,7 +1758,16 @@ def materialize(
                 if calibration_guard_aware
                 else None
             ),
+            "substitution": (
+                "best_effort_reserve_then_empty_overflow_recorded_for_assembler_guard"
+                if calibration_guard_aware
+                else None
+            ),
+            "status": _guard_aware_status(
+                calibration_guard_aware, calibration_fewbox_substituted, calibration_headroom_overflow_rows
+            ),
             "kpi_empty_targets": kpi_calibration_empty_targets,
+            "headroom_empty_targets": headroom_empty_targets,
             "ledger": guard_aware_ledger,
             "fewbox_shortfall": calibration_fewbox_shortfall,
         },
@@ -1830,6 +1898,8 @@ def materialize(
                 else None
             ),
             "empty_substituted_by_few_box": calibration_fewbox_substituted[DEFECT_DETECTION_TASK],
+            # Feature B3.1: empties kept beyond the headroom because the few-box reserve ran out
+            "empty_beyond_headroom": calibration_headroom_overflow_rows[DEFECT_DETECTION_TASK],
             "selected_empty": selected_single_calibration_empty,
             "selected_few_box": selected_single_calibration_few,
             "selected_total": len(selected_single_calibration),
@@ -1852,6 +1922,8 @@ def materialize(
             # the KPI-rate target before guard-aware substitution (equal unless it substituted)
             "kpi_target_no_change": kpi_reference_calibration_empty_target,
             "no_change_substituted_by_changed": reference_empty_substituted,
+            # Feature B3.1: no-change pairs kept beyond the headroom because the changed reserve ran out
+            "no_change_beyond_headroom": calibration_headroom_overflow_rows[REFERENCE_DEFECT_DETECTION_TASK],
             "selected_no_change": selected_reference_calibration_empty,
             "selected_changed": (
                 len(selected_reference_calibration)

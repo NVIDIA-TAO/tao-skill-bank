@@ -447,12 +447,21 @@ def select_calibration(
     excluded_identities: set[str] | None = None,
     cohort_quotas: dict[str, int] | None = None,
     cohort_bucket_quotas: dict[str, dict[str, int]] | None = None,
+    feed_bucket_quotas: dict[str, dict[str, int]] | None = None,
     cohort_rates: dict[str, dict[str, Any]] | None = None,
     pair_assets_dir: pathlib.Path | None = None,
     task_bin_quotas: dict[str, dict[str, int]] | None = None,
     min_fill_fraction: float = DEFAULT_MIN_FILL_FRACTION,
     profile_seed: int = 17,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Select calibration rows. ``feed_bucket_quotas`` (Feature B3.1, fixed-slot contract only)
+    is the per-cohort ``{"empty", "few"}`` row count the FEED carries, at least the contract's
+    ``cohort_bucket_quotas``: the guard-aware materializer may substitute few-box / changed rows
+    for empties it has no headroom for, so the feed keeps a reserve of them
+    (``config.mining.calibration_quota_contract.feed_bucket_quotas`` in the state). The contract
+    quotas stay the fail-closed floor; the reserve is best-effort and reported as
+    ``feed_reserve_rows`` per cohort. Default: the feed equals the contract (today's behaviour)."""
+
     if max_boxes < 1:
         raise ValueError("max_boxes must be positive")
     cohort_mode = (
@@ -461,6 +470,11 @@ def select_calibration(
         or cohort_rates is not None
     )
     profile_mode = task_bin_quotas is not None
+    if feed_bucket_quotas is not None and cohort_bucket_quotas is None:
+        raise ValueError(
+            "feed_bucket_quotas requires the fixed-slot cohort_bucket_quotas contract "
+            "(profile, legacy and proxy-rate cohort quotas carry no feed reserve)"
+        )
     if profile_mode:
         if cohort_mode or max_empty is not None or max_few is not None:
             raise ValueError("profile calibration cannot be combined with cohort or legacy quotas")
@@ -537,6 +551,30 @@ def select_calibration(
                 }
         if sum(item["total"] for item in targets.values()) <= 0:
             raise ValueError("at least one per-cohort calibration quota must be positive")
+        # The selection fills the FEED quotas (contract + reserve); shortages below are
+        # measured against the contract quotas only.
+        if feed_bucket_quotas is not None:
+            if set(feed_bucket_quotas) != set(DETECTION_COHORTS):
+                raise ValueError("feed_bucket_quotas must define both detection cohorts exactly")
+            for cohort in DETECTION_COHORTS:
+                feed = feed_bucket_quotas[cohort]
+                if set(feed) != {"empty", "few"} or any(
+                    type(value) is not int or value < 0 for value in feed.values()
+                ):
+                    raise ValueError(
+                        "every feed_bucket_quotas cohort requires non-negative integer empty/few values"
+                    )
+                for bucket in ("empty", "few"):
+                    if feed[bucket] < int(targets[cohort][bucket]):
+                        raise ValueError(
+                            f"feed_bucket_quotas[{cohort}][{bucket}]={feed[bucket]} is below the "
+                            f"contract quota {int(targets[cohort][bucket])}"
+                        )
+                    targets[cohort][f"feed_{bucket}"] = feed[bucket]
+        else:
+            for cohort in DETECTION_COHORTS:
+                for bucket in ("empty", "few"):
+                    targets[cohort][f"feed_{bucket}"] = int(targets[cohort][bucket])
     elif not profile_mode:
         if max_empty is None or max_few is None:
             raise ValueError("max_empty and max_few are required for legacy calibration")
@@ -596,7 +634,7 @@ def select_calibration(
                 continue
             bucket = "empty" if not boxes else "few"
             destination = cohort_selected[cohort][bucket]
-            quota = int(targets[cohort][bucket])
+            quota = int(targets[cohort][f"feed_{bucket}"])
         else:
             destination = empty if not boxes else few
             quota = max_empty if not boxes else max_few
@@ -634,7 +672,7 @@ def select_calibration(
         ):
             break
         if cohort_mode and all(
-            len(cohort_selected[cohort][bucket]) >= int(targets[cohort][bucket])
+            len(cohort_selected[cohort][bucket]) >= int(targets[cohort][f"feed_{bucket}"])
             for cohort in DETECTION_COHORTS
             for bucket in ("empty", "few")
         ):
@@ -754,6 +792,18 @@ def select_calibration(
                     "selected_few_box": len(cohort_selected[cohort]["few"]),
                     "selected_total": len(cohort_selected[cohort]["empty"])
                     + len(cohort_selected[cohort]["few"]),
+                    # Feature B3.1: the feed quotas and the rows selected beyond the contract
+                    "feed_bucket_quotas": {
+                        "empty": int(targets[cohort]["feed_empty"]),
+                        "few": int(targets[cohort]["feed_few"]),
+                    },
+                    "feed_reserve_rows": {
+                        "empty": len(cohort_selected[cohort]["empty"]) - int(targets[cohort]["empty"]),
+                        "few": len(cohort_selected[cohort]["few"]) - int(targets[cohort]["few"]),
+                        "total": len(cohort_selected[cohort]["empty"])
+                        + len(cohort_selected[cohort]["few"])
+                        - int(targets[cohort]["total"]),
+                    },
                 }
                 for cohort in DETECTION_COHORTS
             },

@@ -4,6 +4,9 @@
 """Feature B3: guard-aware detection calibration selection and no anchor over-fill under the
 empty-answer guard (run v12_p4b_emptyguard_r4 iteration 4, snapshot 6fb5dcbc).
 
+Feature B3.1: contract-driven calibration feed reserve and best-effort substitution with
+recorded headroom overflow (run v12_p4b_emptyguard_r5 iteration 1, snapshot 3c4e042b).
+
 Regenerate the golden fixture from a snapshot whose behaviour is the reference:
 ``python3 tests/test_cosmos3_guard_aware_calibration.py --write-golden``.
 """
@@ -29,7 +32,9 @@ import atomic_samples  # noqa: E402
 import defect_detection_ablation as dda  # noqa: E402
 import init_deft_state  # noqa: E402
 import render_iteration_mining_runner as runner  # noqa: E402
+import select_detection_calibration as sdc  # noqa: E402
 from test_cosmos3_classification_calibration import _det_row, _row as _mcq_row, _write  # noqa: E402
+from test_cosmos3_detection_calibration_contract import _row as _pool_row  # noqa: E402
 from test_cosmos3_empty_answer_guard import _ref_det_row  # noqa: E402
 
 DD = dda.DEFECT_DETECTION_TASK
@@ -72,14 +77,46 @@ def _rows_sha256(rows: list[dict]) -> str:
     return hashlib.sha256("".join(json.dumps(r, sort_keys=True, separators=(",", ":")) + "\n" for r in rows).encode()).hexdigest()
 
 
-def _materialize(prior: list[dict], source: list[dict], candidates: list[dict], **extra) -> tuple[list[dict], dict]:
+def _materialize(prior: list[dict], source: list[dict], candidates: list[dict], *,
+                 reference_proxy_empty_rate: float = 0.542, **extra) -> tuple[list[dict], dict]:
     return dda.materialize(
         candidate_rows=candidates, source_records=source, previous_records=prior or None, validation_records=[],
         media_root=MEDIA, max_rows=1536, row_multiple=768, defect_detection_fraction=0.5, proxy_empty_rate=0.25,
-        epochs=1, global_batch=768, near_duplicate_hamming_distance=None, reference_proxy_empty_rate=0.542,
+        epochs=1, global_batch=768, near_duplicate_hamming_distance=None,
+        reference_proxy_empty_rate=reference_proxy_empty_rate,
         single_image_calibration_max_empty=512, single_image_calibration_max_few=512, reference_calibration_total=500,
         zero_new_candidate_policy="skip_exhausted", **extra,
     )
+
+
+def _iteration_candidates(*, fewbox: int, no_change: int, changed: int) -> tuple[list[dict], list[dict]]:
+    """One calibration-dominated iteration: 512 empty boards, ``fewbox`` few-box boards, ``no_change``
+    / ``changed`` reference pairs (all calibration tier), 9 mined pairs (5 empty) and 3 Ref DC rows."""
+    source: list[dict] = []
+    candidates: list[dict] = []
+
+    def add(record: dict, **kwargs) -> None:
+        source.append(record)
+        candidates.append(_cand(record, **kwargs))
+
+    for i in range(512):
+        add(_det_row(f"c-dd-e-{i:04d}", dataset="pool"), evidence=[dda.CALIBRATION_EMPTY_EVIDENCE], route_tier="calibration")
+    for i in range(fewbox):
+        boxes = [{"bbox_2d": [i % 50, 0, i % 50 + 5 + i % 3, 7], "label": ("open", "short")[i % 2]}]
+        add(_det_row(f"c-dd-f-{i:04d}", boxes, dataset=f"pool{i % 3}"), evidence=[dda.CALIBRATION_FEW_EVIDENCE],
+            route_tier="calibration", contrast=(i % 97) / 100.0)
+    for i in range(no_change):
+        add(_ref_det_row(f"c-ref-e-{i:04d}", dataset="pool"),
+            evidence=[dda.CALIBRATION_EMPTY_EVIDENCE, dda.REFERENCE_NO_CHANGE_EVIDENCE], route_tier="calibration")
+    for i in range(changed):
+        add(_ref_det_row(f"c-ref-c-{i:04d}", BOX, dataset="pool"), evidence=[dda.CALIBRATION_FEW_EVIDENCE], route_tier="calibration")
+    for i in range(5):
+        add(_ref_det_row(f"m-ref-e-{i:04d}", dataset="mine"))
+    for i in range(4):
+        add(_ref_det_row(f"m-ref-p-{i:04d}", BOX, dataset="mine"))
+    for i in range(3):
+        add(_mcq_row(f"m-rdc-{i:04d}", REF_DC, answer="A", dataset="mine", two_images=True))
+    return source, candidates
 
 
 # ---------------------------------------------------------------------------------------------
@@ -94,30 +131,33 @@ def _r4_fixture() -> tuple[list[dict], list[dict], list[dict]]:
     prior += [_ref_det_row(f"p-ref-p-{i:04d}", BOX, dataset="prev") for i in range(800)]
     prior += [_mcq_row(f"p-cc-{i:04d}", CC, answer="A", dataset="prev") for i in range(1876)]
     assert len(prior) == 5376
-    source: list[dict] = []
-    candidates: list[dict] = []
+    source, candidates = _iteration_candidates(fewbox=1024, no_change=400, changed=500)
+    return prior, source, candidates
 
-    def add(record: dict, **kwargs) -> None:
-        source.append(record)
-        candidates.append(_cand(record, **kwargs))
 
-    for i in range(512):
-        add(_det_row(f"c-dd-e-{i:04d}", dataset="pool"), evidence=[dda.CALIBRATION_EMPTY_EVIDENCE], route_tier="calibration")
-    for i in range(1024):
-        boxes = [{"bbox_2d": [i % 50, 0, i % 50 + 5 + i % 3, 7], "label": ("open", "short")[i % 2]}]
-        add(_det_row(f"c-dd-f-{i:04d}", boxes, dataset=f"pool{i % 3}"), evidence=[dda.CALIBRATION_FEW_EVIDENCE],
-            route_tier="calibration", contrast=(i % 97) / 100.0)
-    for i in range(400):
-        add(_ref_det_row(f"c-ref-e-{i:04d}", dataset="pool"),
-            evidence=[dda.CALIBRATION_EMPTY_EVIDENCE, dda.REFERENCE_NO_CHANGE_EVIDENCE], route_tier="calibration")
-    for i in range(500):
-        add(_ref_det_row(f"c-ref-c-{i:04d}", BOX, dataset="pool"), evidence=[dda.CALIBRATION_FEW_EVIDENCE], route_tier="calibration")
-    for i in range(5):
-        add(_ref_det_row(f"m-ref-e-{i:04d}", dataset="mine"))
-    for i in range(4):
-        add(_ref_det_row(f"m-ref-p-{i:04d}", BOX, dataset="mine"))
-    for i in range(3):
-        add(_mcq_row(f"m-rdc-{i:04d}", REF_DC, answer="A", dataset="mine", two_images=True))
+# ---------------------------------------------------------------------------------------------
+# r5 iteration-1 numbers (synthetic, Feature B3.1): prior corpus 6,144 rows (8 global batches)
+# at 0.280 empty share; the caps leave 426 single-image / 151 no-change empties against the KPI
+# targets 512 / 278 (headroom overall floor(0.30 * 7,680 - 1,727) = 577, DD
+# floor(0.45 * 3,024 - 880) = 480, Ref DD floor(0.50 * 2,035 - 847) = 170; the shared 577 splits
+# 426 / 151 by largest remainder), so the guard-aware split asks for 86 few-box rows and 127
+# changed pairs that today's feed (512 few-box, 222 changed) does not hold. ``reserve`` supplies
+# the contract-driven feed instead (1,024 few-box, 500 changed).
+# KPI reference empty rate 0.556 -> floor(500 * 0.556 + 0.5) = 278 no-change, 222 changed.
+# ---------------------------------------------------------------------------------------------
+R5_REFERENCE_RATE = 0.556
+
+
+def _r5_fixture(*, reserve: bool) -> tuple[list[dict], list[dict], list[dict]]:
+    prior = [_det_row(f"p-dd-e-{i:04d}", dataset="prev") for i in range(880)]
+    prior += [_det_row(f"p-dd-p-{i:04d}", BOX, dataset="prev") for i in range(1120)]
+    prior += [_ref_det_row(f"p-ref-e-{i:04d}", dataset="prev") for i in range(842)]
+    prior += [_ref_det_row(f"p-ref-p-{i:04d}", BOX, dataset="prev") for i in range(684)]
+    prior += [_mcq_row(f"p-cc-{i:04d}", CC, answer="A", dataset="prev") for i in range(2618)]
+    assert len(prior) == 6144 == 8 * 768
+    source, candidates = _iteration_candidates(
+        fewbox=1024 if reserve else 512, no_change=278, changed=500 if reserve else 222
+    )
     return prior, source, candidates
 
 
@@ -286,6 +326,195 @@ class GuardAwareCalibrationTests(unittest.TestCase):
             )
 
 
+class FeedReserveAndOverflowTests(unittest.TestCase):
+    """Feature B3.1 (run v12_p4b_emptyguard_r5 iteration 1): the calibration feed carries a
+    contract-driven reserve of non-empty rows, and when the reserve runs out the slot is filled
+    with empty candidates beyond the headroom instead of failing the materializer."""
+
+    R5_HEADROOM = {"overall": 577, f"task:{DD}": 480, f"task:{REF}": 170}
+
+    def test_r5_todays_feed_fills_the_slot_with_overflow_empties_and_the_guard_trims_them(self) -> None:
+        prior, source, candidates = _r5_fixture(reserve=False)
+        guard = _guard(0.30, {DD: 0.45, REF: 0.50})
+        rows, manifest = _materialize(prior, source, candidates, reference_proxy_empty_rate=R5_REFERENCE_RATE,
+                                      empty_answer_guard=guard, calibration_guard_aware=True)
+        # the slot is full (1,024 + 500), so the existing total-slot verification passes
+        self.assertTrue(manifest["verified"], manifest["verification"])
+        self.assertEqual(len(rows), 1536)
+        self.assertEqual(manifest["calibration_empty_headroom"], self.R5_HEADROOM)
+        detail = manifest["guard_aware_calibration"]
+        self.assertEqual(detail["kpi_empty_targets"], {DD: 512, REF: 278})
+        self.assertEqual(detail["headroom_empty_targets"], {DD: 426, REF: 151})
+        # the reserve had 0 few-box / 0 changed rows beyond today's 512 / 222: nothing substituted,
+        # the 86 / 127 remaining slot rows are empties beyond the headroom (recorded, not fatal)
+        self.assertEqual(manifest["calibration_empty_selected"], {DD: 512, REF: 278, "total": 790})
+        self.assertEqual(manifest["calibration_fewbox_substituted"], {DD: 0, REF: 0, "total": 0})
+        self.assertEqual(manifest["calibration_headroom_overflow_rows"], {DD: 86, REF: 127, "total": 213})
+        self.assertEqual(detail["fewbox_shortfall"], {DD: 86, REF: 127})
+        self.assertEqual(detail["status"], "substituted_with_overflow")
+        single = manifest["single_image_calibration"]
+        self.assertEqual((single["selected_empty"], single["selected_few_box"], single["selected_total"]), (512, 512, 1024))
+        self.assertEqual((single["max_few_box_effective"], single["empty_beyond_headroom"]), (512, 86))
+        reference = manifest["reference_calibration"]
+        self.assertEqual((reference["selected_no_change"], reference["selected_changed"], reference["selected_total"]), (278, 222, 500))
+        self.assertEqual((reference["target_no_change"], reference["kpi_target_no_change"], reference["no_change_beyond_headroom"]), (278, 278, 127))
+        self.assertEqual(manifest["new_rows_empty"], 790 + 5)
+        self.assertEqual(sum(r.get(CAL) is True for r in rows), 1524)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            previous = _write(root / "train0.jsonl", prior)
+            previous_sha = atj.sha256_file(previous)
+            mined = _write(root / "mined1.jsonl", rows)
+            # the assembler's guard trims the overflow empties (calibration negatives first); with
+            # no back-fill candidates every trimmed row also shrinks the denominator, so it trims
+            # past the 213 overflow rows until the caps hold
+            out, summary = atj.assemble(previous, mined, previous_sha256=previous_sha, validation_paths=[], media_root=root,
+                                        row_multiple=8, empty_answer_guard=guard, calibration_guard_aware=True)
+            report = summary["empty_answer_guard"]
+            self.assertEqual(report["status"], "trimmed_to_caps")
+            self.assertGreaterEqual(report["rows_trimmed_total"], 213)
+            self.assertEqual(set(report["rows_trimmed_by_source"]), {"detection_calibration_negative"})
+            self.assertLessEqual(report["after"]["overall_share"], 0.30)
+            self.assertLessEqual(report["after"]["per_task"][DD], 0.45)
+            self.assertLessEqual(report["after"]["per_task"][REF], 0.50)
+            self.assertEqual(len(out), 6144 + 1536 - report["rows_trimmed_total"] - (1536 - report["rows_trimmed_total"]) % 8)
+            # at the pinned 768-row global batch the trimmed iteration no longer fills a batch that
+            # holds its protected calibration rows: the assembler fails closed (the reserve feed
+            # below is the fix; the overflow only moves the abort from the materializer to here)
+            with self.assertRaisesRegex(ValueError, "calibration"):
+                atj.assemble(previous, mined, previous_sha256=previous_sha, validation_paths=[], media_root=root,
+                             row_multiple=768, empty_answer_guard=guard, calibration_guard_aware=True)
+
+    def test_r5_reserve_feed_substitutes_without_overflow_and_assembles_at_the_global_batch(self) -> None:
+        prior, source, candidates = _r5_fixture(reserve=True)
+        guard = _guard(0.30, {DD: 0.45, REF: 0.50})
+        rows, manifest = _materialize(prior, source, candidates, reference_proxy_empty_rate=R5_REFERENCE_RATE,
+                                      empty_answer_guard=guard, calibration_guard_aware=True)
+        self.assertTrue(manifest["verified"], manifest["verification"])
+        self.assertEqual(len(rows), 1536)
+        self.assertEqual(manifest["calibration_empty_headroom"], self.R5_HEADROOM)
+        detail = manifest["guard_aware_calibration"]
+        self.assertEqual(detail["headroom_empty_targets"], {DD: 426, REF: 151})
+        self.assertEqual(manifest["calibration_empty_selected"], {DD: 426, REF: 151, "total": 577})
+        self.assertEqual(manifest["calibration_fewbox_substituted"], {DD: 86, REF: 127, "total": 213})
+        self.assertEqual(manifest["calibration_headroom_overflow_rows"], {DD: 0, REF: 0, "total": 0})
+        self.assertEqual(detail["fewbox_shortfall"], {DD: 0, REF: 0})
+        self.assertEqual(detail["status"], "substituted")
+        single = manifest["single_image_calibration"]
+        self.assertEqual((single["selected_empty"], single["selected_few_box"], single["selected_total"]), (426, 598, 1024))
+        self.assertEqual((single["max_few_box_effective"], single["empty_beyond_headroom"]), (598, 0))
+        reference = manifest["reference_calibration"]
+        self.assertEqual((reference["selected_no_change"], reference["selected_changed"], reference["selected_total"]), (151, 349, 500))
+        self.assertEqual((reference["target_no_change"], reference["kpi_target_no_change"], reference["no_change_beyond_headroom"]), (151, 278, 0))
+        self.assertEqual(manifest["new_rows_empty"], 577 + 5)
+        self.assertEqual(sum(r.get(CAL) is True for r in rows), 1524)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            previous = _write(root / "train0.jsonl", prior)
+            mined = _write(root / "mined1.jsonl", rows)
+            out, summary = atj.assemble(previous, mined, previous_sha256=atj.sha256_file(previous), validation_paths=[],
+                                        media_root=root, row_multiple=768, empty_answer_guard=guard, calibration_guard_aware=True)
+            self.assertEqual(len(out), 6144 + 1536)
+            self.assertEqual(summary["growth_rows"], 1536)
+            report = summary["empty_answer_guard"]
+            self.assertEqual(report["status"], "within_caps")
+            self.assertEqual(report["rows_trimmed_total"], 0)
+            self.assertLessEqual(report["after"]["overall_share"], 0.30)
+            self.assertLessEqual(report["after"]["per_task"][DD], 0.45)
+            self.assertLessEqual(report["after"]["per_task"][REF], 0.50)
+
+    def test_init_records_the_contract_driven_feed_reserve_for_guard_aware_on_and_off(self) -> None:
+        from test_cosmos3_init_state_contract import Cosmos3InitStateContractTests as Base
+        slot = ("--single-image-calibration-max-empty", "512", "--single-image-calibration-max-few", "512",
+                "--reference-calibration-total", "500")
+        cap = ("--max-empty-answer-share", "0.30")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            workspace = Base._workspace(root)  # KPI reference empty rate 0.5 -> 250 no-change pairs
+
+            def contract(name: str, *extra: str) -> dict:
+                self.assertEqual(init_deft_state.main(Base._argv(root / name, workspace, *slot, *extra)), 0)
+                state = json.loads((root / name / "results/deft_state.json").read_text())
+                self.assertEqual(state["config"]["mining"]["empty_answer_guard"]["calibration_guard_aware"],
+                                 name.startswith("on"))
+                return state["config"]["mining"]["calibration_quota_contract"]
+
+            on = contract("on", *cap)
+            self.assertEqual(on["feed_bucket_quotas"], {
+                "non_reference_based": {"empty": 512, "few": 1024},
+                "reference_based": {"empty": 250, "few": 500},
+            })
+            self.assertIn("feed_bucket_quotas", on["owner"])
+            self.assertIn("reserve", on["feed_bucket_quotas_rule"])
+            for name, extra in (("off-flag", (*cap, "--calibration-guard-aware", "off")), ("off-no-cap", ())):
+                off = contract(name, *extra)
+                self.assertEqual(off["feed_bucket_quotas"], {
+                    "non_reference_based": {"empty": 512, "few": 512},
+                    "reference_based": {"empty": 250, "few": 250},
+                })
+                self.assertEqual((off["single_image_max_empty"], off["single_image_max_few_box"]), (512, 512))
+                self.assertEqual((off["reference_empty"], off["reference_few_box"]), (250, 250))
+
+    def test_select_calibration_honours_the_feed_reserve_and_records_it(self) -> None:
+        one_box = [{"bbox_2d": [0, 0, 1, 1], "label": "x"}]
+        proxy = [_pool_row("proxy-single-empty", []), _pool_row("proxy-single-few", one_box),
+                 _pool_row("proxy-ref-empty", [], task=REF), *[_pool_row(f"proxy-ref-few{i}", one_box, task=REF) for i in range(3)]]
+        source = [*[_pool_row(f"single-empty{i}", []) for i in range(3)], *[_pool_row(f"single-few{i}", one_box) for i in range(6)],
+                  *[_pool_row(f"ref-empty{i}", [], task=REF) for i in range(2)], *[_pool_row(f"ref-few{i}", one_box, task=REF) for i in range(5)]]
+        contract = {"non_reference_based": {"empty": 2, "few": 3}, "reference_based": {"empty": 1, "few": 3}}
+        with tempfile.TemporaryDirectory() as temporary:
+            media_root = pathlib.Path(temporary)
+            (media_root / "images").mkdir()
+            from PIL import Image
+            for record_index, record in enumerate(source):
+                for image_index, item in enumerate(record["messages"][0]["content"]):
+                    if item.get("type") == "image":
+                        Image.new("RGB", (2, 2), color=(record_index, image_index, 0)).save(media_root / item["image"])
+            rates = sdc.derive_proxy_empty_rates(proxy)
+            common = dict(media_root=media_root, cohort_bucket_quotas=contract, cohort_rates=rates,
+                          pair_assets_dir=media_root / "pair-assets", max_boxes=2)
+            # default: today's behaviour, reserve 0
+            selected, summary = sdc.select_calibration(source, **common)
+            self.assertEqual(len(selected), 9)
+            for cohort in ("non_reference_based", "reference_based"):
+                self.assertEqual(summary["cohorts"][cohort]["feed_bucket_quotas"], contract[cohort])
+                self.assertEqual(summary["cohorts"][cohort]["feed_reserve_rows"], {"empty": 0, "few": 0, "total": 0})
+            # reserve: the feed carries the contract rows plus the reserve; the contract stays the fail-closed floor
+            feed = {"non_reference_based": {"empty": 2, "few": 5}, "reference_based": {"empty": 1, "few": 4}}
+            selected, summary = sdc.select_calibration(source, feed_bucket_quotas=feed, **common)
+            self.assertEqual(len(selected), 12)
+            self.assertEqual(summary["schema_version"], "detection_calibration_v3")
+            single, reference = summary["cohorts"]["non_reference_based"], summary["cohorts"]["reference_based"]
+            self.assertEqual((single["requested_empty"], single["requested_few_box"]), (2, 3))
+            self.assertEqual((single["selected_empty"], single["selected_few_box"], single["selected_total"]), (2, 5, 7))
+            self.assertEqual(single["feed_bucket_quotas"], feed["non_reference_based"])
+            self.assertEqual(single["feed_reserve_rows"], {"empty": 0, "few": 2, "total": 2})
+            self.assertEqual((reference["requested_empty"], reference["requested_few_box"]), (1, 3))
+            self.assertEqual((reference["selected_empty"], reference["selected_few_box"], reference["selected_total"]), (1, 4, 5))
+            self.assertEqual(reference["feed_reserve_rows"], {"empty": 0, "few": 1, "total": 1})
+            self.assertEqual(summary["selected_total"], 12)
+            self.assertEqual(sum(row["calibration_box_count"] == 0 for row in selected), 3)
+            # a reserve the pool cannot fill is best-effort (no error); the contract rows still fail closed
+            over = {"non_reference_based": {"empty": 2, "few": 9}, "reference_based": {"empty": 1, "few": 9}}
+            selected, summary = sdc.select_calibration(source, feed_bucket_quotas=over, **common)
+            self.assertEqual(len(selected), 14)
+            self.assertEqual(summary["cohorts"]["non_reference_based"]["feed_reserve_rows"]["few"], 3)
+            self.assertEqual(summary["cohorts"]["reference_based"]["feed_reserve_rows"]["few"], 2)
+            with self.assertRaisesRegex(ValueError, "reference calibration content-unique shortfall"):
+                sdc.select_calibration(source, feed_bucket_quotas=over, **{**common, "cohort_bucket_quotas": {
+                    "non_reference_based": {"empty": 2, "few": 3}, "reference_based": {"empty": 1, "few": 6}}})
+            # the feed may not undercut the contract, and it only exists for the fixed-slot contract
+            with self.assertRaisesRegex(ValueError, "feed_bucket_quotas"):
+                sdc.select_calibration(source, feed_bucket_quotas={"non_reference_based": {"empty": 1, "few": 3},
+                                                                   "reference_based": {"empty": 1, "few": 3}}, **common)
+            with self.assertRaisesRegex(ValueError, "feed_bucket_quotas"):
+                sdc.select_calibration(source, feed_bucket_quotas=feed, media_root=media_root, cohort_rates=rates,
+                                       cohort_quotas={"non_reference_based": 5, "reference_based": 4},
+                                       pair_assets_dir=media_root / "pair-assets")
+            with self.assertRaisesRegex(ValueError, "feed_bucket_quotas"):
+                sdc.select_calibration(source, feed_bucket_quotas={"non_reference_based": {"empty": 2, "few": 5}}, **common)
+
+
 def _golden_materializer_inputs() -> tuple[list[dict], list[dict], list[dict]]:
     """The golden materializer scenario's inputs (for tests that need a small hybrid corpus)."""
     source: list[dict] = []
@@ -321,6 +550,12 @@ class GoldenSelectionTests(unittest.TestCase):
         self.assertEqual(_rows_sha256(rows), golden["materializer"]["sha256"])
         self.assertEqual(manifest["verified"], golden["materializer"]["verified"])
         self.assertEqual(manifest["row_counts"]["total"], golden["materializer"]["row_counts_total"])
+        # Feature B3.1 fields are inert when the guard-aware selection is off
+        self.assertEqual(manifest["calibration_headroom_overflow_rows"], {DD: 0, REF: 0, "total": 0})
+        self.assertIsNone(manifest["guard_aware_calibration"]["status"])
+        self.assertIsNone(manifest["guard_aware_calibration"]["headroom_empty_targets"])
+        self.assertEqual(manifest["single_image_calibration"]["empty_beyond_headroom"], 0)
+        self.assertEqual(manifest["reference_calibration"]["no_change_beyond_headroom"], 0)
         with tempfile.TemporaryDirectory() as temporary:
             arows, asummary = _golden_assembler_rows(pathlib.Path(temporary))
         self.assertEqual([r["id"] for r in arows], golden["assembler"]["ids"])
@@ -541,7 +776,8 @@ class WiringTests(unittest.TestCase):
             self.assertEqual(rc, 2)
 
     def test_bound_manifest_carries_the_guard_aware_fields_under_current_selection(self) -> None:
-        keys = ("calibration_guard_aware", "calibration_empty_headroom", "calibration_empty_selected", "calibration_fewbox_substituted")
+        keys = ("calibration_guard_aware", "calibration_empty_headroom", "calibration_empty_selected", "calibration_fewbox_substituted",
+                "calibration_headroom_overflow_rows")
         for key in keys:
             self.assertIn(key, dda.CURRENT_SELECTION_COPIED_KEYS)
 

@@ -142,24 +142,82 @@ the iteration are selected and before the feasibility loop:
    order and the balanced few-box selection is re-run with the target
    `max_few + substituted` over the few-box calibration candidates (evidence
    `calibration_few_box_ground_truth`, deduplicated against the kept rows). The
-   mined maintenance and strict rows are not re-selected. When the few-box
-   supply is short the slot falls short by that much (`fewbox_shortfall`); the
-   reference count contract then fails closed exactly as a supply shortfall
-   does today.
+   mined maintenance and strict rows are not re-selected. **Best-effort
+   (Feature B3.1):** when the few-box / changed supply is short, the remaining
+   slot rows are the next empties of the same ordering, never more than the
+   KPI-rate selection carried, so the slot stays full: `fewbox_shortfall`
+   records the non-empty rows asked for and not found,
+   `calibration_headroom_overflow_rows` the empties kept beyond the headroom,
+   `calibration_fewbox_substituted` only the rows actually replaced, and
+   `guard_aware_calibration.status` becomes `substituted_with_overflow`
+   (`substituted` without overflow, `no_substitution_needed` when the headroom
+   covered the KPI targets). The assembler's guard trims the overflow. A
+   substitution shortfall alone never fails the materializer; a slot the feed
+   cannot fill at all (fewer candidates than slot rows) fails closed as before.
 4. **Verification.** `single_image_calibration_caps_respected` compares the
    few-box count with `max_few_box_effective = max_few_box + substituted`; the
-   reference targets `target_no_change` (calibration) and the combined
-   calibration + mined target behind `reference_empty_rate_matched` are lowered
-   by `no_change_substituted_by_changed` (the mined slice keeps tracking the KPI
+   reference targets `target_no_change` (calibration; the kept no-change pairs,
+   headroom target plus overflow) and the combined calibration + mined target
+   behind `reference_empty_rate_matched` are lowered by
+   `no_change_substituted_by_changed` (the mined slice keeps tracking the KPI
    rate, so the guard never gets more empties to trim from it);
    `kpi_target_no_change` keeps the original number.
 
 Manifest: `calibration_guard_aware`, `calibration_empty_headroom`,
-`calibration_empty_selected`, `calibration_fewbox_substituted` and the
-`guard_aware_calibration` block (caps, `kpi_empty_targets`, `ledger`,
-`fewbox_shortfall`), all copied under `current_selection` in the bound v2
-manifest. Worked example with the r4 iteration-4 numbers:
+`calibration_empty_selected`, `calibration_fewbox_substituted`,
+`calibration_headroom_overflow_rows` and the `guard_aware_calibration` block
+(caps, `kpi_empty_targets`, `headroom_empty_targets`, `ledger`,
+`fewbox_shortfall`, `status`), all copied under `current_selection` in the
+bound v2 manifest; `single_image_calibration.empty_beyond_headroom` and
+`reference_calibration.no_change_beyond_headroom` give the per-slot overflow.
+Worked examples with the r4 iteration-4 and r5 iteration-1 numbers:
 `empty-answer-guard.md`, "Guard-aware calibration and anchor share".
+
+## Feed reserve (Feature B3.1) — read `feed_bucket_quotas` from the state
+
+The substitution can only draw few-box / changed rows the calibration FEED
+holds. Run v12_p4b_emptyguard_r5 iteration 1 (snapshot 3c4e042b) fed the
+materializer with the hard-coded contract numbers
+(`cohort_bucket_quotas = {non_reference_based: {empty: 512, few: 512},
+reference_based: {empty: 278, few: 222}}`), the headroom asked for 86 / 127
+more non-empty rows than that, and the run aborted with the slot short while
+86 unused empty candidates sat in the feed.
+
+`init_deft_state.py` therefore records
+`config.mining.calibration_quota_contract.feed_bucket_quotas` next to the
+contract quotas (fixed-slot policy `fixed_single_image_proxy_rate_reference`
+only):
+
+| `empty_answer_guard.calibration_guard_aware` | `non_reference_based` | `reference_based` |
+|---|---|---|
+| `true` | `{"empty": max_empty, "few": max_empty + max_few_box}` → 512 / 1,024 | `{"empty": KPI no-change, "few": total}` → 278 / 500 |
+| `false` | `{"empty": max_empty, "few": max_few_box}` → 512 / 512 (today) | `{"empty": KPI no-change, "few": total − no-change}` → 278 / 222 (today) |
+
+Controller rule: the per-iteration runtime call MUST read this block from the
+state and pass it through, never hard-code the numbers (the r6 prompt says the
+same):
+
+```python
+contract = state["config"]["mining"]["calibration_quota_contract"]
+select_detection_calibration.select_calibration(
+    records, media_root=..., excluded_identities=..., pair_assets_dir=...,
+    cohort_bucket_quotas={
+        "non_reference_based": {"empty": contract["single_image_max_empty"], "few": contract["single_image_max_few_box"]},
+        "reference_based": {"empty": contract["reference_empty"], "few": contract["reference_few_box"]},
+    },
+    feed_bucket_quotas=contract["feed_bucket_quotas"],
+    cohort_rates=contract["cohorts"],
+)
+```
+
+The selector fills the feed quotas, fails closed only against the contract
+quotas (the reserve is best-effort: a pool with fewer few-box rows than the
+reserve is fine) and reports per cohort `feed_bucket_quotas` and
+`feed_reserve_rows` (`empty` / `few` / `total` rows selected beyond the
+contract) in its `detection_calibration_v3` summary. `feed_bucket_quotas`
+requires the fixed-slot `cohort_bucket_quotas` contract and may not undercut
+it. Worked example and outcome table: `empty-answer-guard.md`, "Worked
+example: run v12_p4b_emptyguard_r5".
 
 ## Classification calibration (Phase 4 step 4c-A) — default off
 

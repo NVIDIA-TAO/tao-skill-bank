@@ -653,6 +653,27 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             * calibration_cohorts["reference_based"]["empty_rate"]
             + 0.5
         )
+        # Feature B3.1: the calibration FEED carries a reserve of non-empty rows when the
+        # guard-aware selection may replace empties it has no headroom for (r5 iteration 1: the
+        # feed held exactly the contract's 512 few-box / 222 changed rows, the materializer
+        # needed 86 / 127 more and the run aborted). The runtime passes this block to
+        # select_detection_calibration.select_calibration(feed_bucket_quotas=...) instead of
+        # hard-coding the numbers; with guard-aware off it equals the contract quotas.
+        feed_bucket_quotas = {
+            "non_reference_based": {
+                "empty": args.single_image_calibration_max_empty,
+                "few": args.single_image_calibration_max_few
+                + (args.single_image_calibration_max_empty if calibration_guard_aware else 0),
+            },
+            "reference_based": {
+                "empty": reference_empty,
+                "few": (
+                    args.reference_calibration_total
+                    if calibration_guard_aware
+                    else args.reference_calibration_total - reference_empty
+                ),
+            },
+        }
         calibration_quota_contract = {
             "policy": "fixed_single_image_proxy_rate_reference",
             "proxy_annotations": str(annotations["proxy"]),
@@ -663,8 +684,22 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             "reference_total": args.reference_calibration_total,
             "reference_empty": reference_empty,
             "reference_few_box": args.reference_calibration_total - reference_empty,
+            "feed_bucket_quotas": feed_bucket_quotas,
+            "feed_bucket_quotas_rule": (
+                "rows the calibration feed carries per cohort and bucket. With calibration_guard_aware the "
+                "few-box / changed buckets hold a reserve (single-image few = max_empty + max_few_box, "
+                "reference few = total) so the guard-aware materializer can fill the whole slot with non-empty "
+                "rows when the empty-answer caps' headroom demands it; otherwise equal to the contract quotas. "
+                "The contract quotas stay the fail-closed floor; the reserve is best-effort"
+            ),
             "cohorts": calibration_cohorts,
             "reference_empty_semantics": "identical_or_no_change_pair_negative",
+            "owner": (
+                "select_detection_calibration.select_calibration(cohort_bucket_quotas={non_reference_based: "
+                "{empty: single_image_max_empty, few: single_image_max_few_box}, reference_based: {empty: "
+                "reference_empty, few: reference_few_box}}, feed_bucket_quotas=contract['feed_bucket_quotas'], "
+                "cohort_rates=cohorts, ...) - read feed_bucket_quotas from this state block, do not hard-code it"
+            ),
         }
     else:
         calibration_quota_contract = {
