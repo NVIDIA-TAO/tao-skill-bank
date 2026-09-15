@@ -6,8 +6,10 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
+from PIL import Image
 
 
 SCRIPT = Path(__file__).parents[1] / "run_anomalygennext_amp.py"
@@ -35,11 +37,19 @@ def inputs(root: Path) -> dict:
          "dataset_id": "d", "pool_key": "texture_1",
          "anomaly_type": "texture_1+crack", "od_category": "defect"},
     ]).to_parquet(root / "manifests" / "selected_fn_queries.parquet")
-    pd.DataFrame([
-        {"fn_id": fn, "branch": branch, "mask_path": f"/masks/{fn}-{branch}.png"}
+    mask_rows = []
+    for index, (fn, branch) in enumerate(
+        (fn, branch)
         for fn in ("fn-1", "fn-2")
         for branch in sorted(MODULE.BRANCHES)
-    ]).to_parquet(root / "manifests" / "mask_selection.parquet")
+    ):
+        path = root / "masks" / f"{fn}-{branch}.png"
+        values = np.zeros((32, 32), dtype=np.uint8)
+        values[4 + index:12 + index, 5:15] = 255
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(values).save(path)
+        mask_rows.append({"fn_id": fn, "branch": branch, "mask_path": str(path)})
+    pd.DataFrame(mask_rows).to_parquet(root / "manifests" / "mask_selection.parquet")
     return {"retrieval": {"metric": "cosine", "candidate_topn": 2,
                            "min_similarity": -1.0,
                            "prior_clean_exclusion_manifest": ""}}
@@ -100,3 +110,14 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
 def test_run_requires_sam2_checkpoint(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="SAM2.1 checkpoint"):
         MODULE.run(tmp_path / "config.yaml", tmp_path, tmp_path / "missing.pt")
+
+
+def test_plan_rejects_nonbinary_amp_mask(tmp_path: Path) -> None:
+    config = inputs(tmp_path)
+    masks = pd.read_parquet(tmp_path / "manifests/mask_selection.parquet")
+    bad = Path(masks.iloc[0].mask_path)
+    values = np.zeros((32, 32), dtype=np.uint8)
+    values[4:12, 5:15] = 3
+    Image.fromarray(values).save(bad)
+    with pytest.raises(ValueError, match="exactly binary values"):
+        MODULE.plan(tmp_path, config)
