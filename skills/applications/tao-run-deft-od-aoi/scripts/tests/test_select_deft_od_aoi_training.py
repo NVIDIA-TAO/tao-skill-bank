@@ -20,6 +20,31 @@ def _status(path: Path, epoch: int, score: float) -> None:
     path.write_text(json.dumps({"epoch": epoch, "kpi": {"val_mAP50": score}}) + "\n")
 
 
+def test_metrics_carries_epoch_to_later_kpi_row(tmp_path: Path) -> None:
+    status = tmp_path / "status.json"
+    status.write_text("\n".join((
+        json.dumps({"epoch": 7, "step": 120}),
+        json.dumps({"kpi": {"val_mAP50": 0.61}}),
+    )) + "\n")
+    assert MODULE._metrics([status]) == [(7, 0.61)]
+
+
+def test_metrics_prefers_epoch_row_over_preceding_untagged_copy(
+        tmp_path: Path) -> None:
+    status = tmp_path / "status.json"
+    status.write_text("\n".join((
+        json.dumps({"epoch": 28, "kpi": {"val_mAP50": 0.77}}),
+        json.dumps({"message": "Eval metrics generated",
+                    "kpi": {"val_mAP50": 0.7808247013944787}}),
+        json.dumps({"epoch": 29,
+                    "kpi": {"val_mAP50": 0.7808247013944787}}),
+    )) + "\n")
+    assert MODULE._metrics([status]) == [
+        (28, 0.77),
+        (29, 0.7808247013944787),
+    ]
+
+
 def test_probe_selection_patches_winner_and_updates_history(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"iteration": 3, "train_size": 120,

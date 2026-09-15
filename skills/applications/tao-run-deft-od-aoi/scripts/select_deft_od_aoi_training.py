@@ -24,16 +24,51 @@ def _metrics(paths: list[Path]) -> list[tuple[int, float]]:
     for path in paths:
         if not path.is_file():
             raise FileNotFoundError(path)
+        latest_epoch = None
+        pending_untagged = None
         for line in path.read_text(errors="ignore").splitlines():
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            row_epoch = None
+            if row.get("epoch") is not None:
+                try:
+                    row_epoch = int(row["epoch"])
+                    latest_epoch = row_epoch
+                except (TypeError, ValueError):
+                    pass
             kpi = row.get("kpi") if isinstance(row.get("kpi"), dict) else {}
             score = kpi.get("val_mAP50", kpi.get("mAP50"))
-            epoch = row.get("epoch", kpi.get("epoch"))
-            if score is not None and epoch is not None and math.isfinite(float(score)):
-                result.append((int(epoch), float(score)))
+            epoch = kpi.get("epoch")
+            try:
+                score_value = float(score)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(score_value):
+                continue
+            if epoch is not None:
+                try:
+                    epoch = int(epoch)
+                except (TypeError, ValueError):
+                    continue
+            elif row_epoch is not None:
+                epoch = row_epoch
+
+            if epoch is not None:
+                # TAO can emit an untagged evaluation KPI immediately before
+                # repeating that value on the next epoch-tagged event.
+                if pending_untagged is not None:
+                    if pending_untagged[1] != score_value:
+                        result.append(pending_untagged)
+                    pending_untagged = None
+                result.append((int(epoch), score_value))
+            elif latest_epoch is not None:
+                if pending_untagged is not None:
+                    result.append(pending_untagged)
+                pending_untagged = (latest_epoch, score_value)
+        if pending_untagged is not None:
+            result.append(pending_untagged)
     if not result:
         raise ValueError("status contains no finite KPI val_mAP50 rows")
     return result
