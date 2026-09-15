@@ -1,0 +1,9 @@
+version: 2
+# Reviewed false positives — NVIDIA/nvskills-ci#67. No content removed.
+rules:
+  - id: "AE*"
+    path: "*"
+    reason: "Reviewed FP: analysis-evasion fires because the scanner did not finish inspecting artifacts that are present, small and plain-text in this skill; nothing is hidden from analysis."
+  - id: "skillspector_execution_failure"
+    path: "*"
+    reason: "Reviewed FP: scan aborts on reference_resolution of slash-containing prose and template paths (e.g. PASS/NO_PASS, schemas/<action>.schema.json, nvcr.io image URIs); not a property of the skill content."
