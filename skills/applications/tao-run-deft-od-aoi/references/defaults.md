@@ -11,6 +11,9 @@ policy once.
 - Four normalized roles described in `data-contract.md`.
 - One trainable RT-DETR base checkpoint. Every iteration starts from this same
   checkpoint; a prior iteration checkpoint is never the next initializer.
+- A baseline mode: `cold_start` (default) or `checkpoint`. Cold start avoids
+  binary inference with a multiclass training initializer; checkpoint mode
+  requires a binary-compatible checkpoint.
 - Separate KPI and test roles.
 - An explicit synthesis decision.
 
@@ -25,6 +28,7 @@ The authoritative values live in `assets/default_policy.yaml`. Important
 defaults are:
 
 - inference confidence `0.001`;
+- baseline mode `cold_start`;
 - loose/strict gap confidence `0.3` / `0.8`;
 - match IoU `0.5`;
 - background-like FP boundary below `0.05`;

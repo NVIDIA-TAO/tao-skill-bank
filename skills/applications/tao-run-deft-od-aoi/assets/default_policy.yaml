@@ -2,6 +2,7 @@ class_name: defect
 max_iterations: null
 platform: null
 base_checkpoint: null
+baseline_mode: cold_start
 sources:
   kpi: {images: null, coco: null}
   test: {images: null, coco: null}

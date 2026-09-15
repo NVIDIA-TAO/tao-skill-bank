@@ -60,28 +60,42 @@ def _inference(policy: dict[str, Any], images: str, classmap: Path, checkpoint: 
 
 
 def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
-            results_root: Path, output: Path) -> dict[str, Any]:
+            results_root: Path, output: Path, baseline: bool = False) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     if not checkpoint.is_file():
         raise FileNotFoundError(checkpoint)
     policy = yaml.safe_load(policy_path.read_text())
+    baseline_mode = str(policy.get("baseline_mode") or "cold_start")
+    if baseline_mode not in {"cold_start", "checkpoint"}:
+        raise ValueError("baseline_mode must be cold_start or checkpoint")
     kpi, test = policy["sources"]["kpi"], policy["sources"]["test"]
     for role in (kpi, test):
         if not Path(role["images"]).is_dir() or not Path(role["coco"]).is_file():
             raise ValueError("frozen KPI/test role is missing")
     output.mkdir(parents=True)
-    classmap = output / "inference_classmap.txt"
-    classmap.write_text("background\ndefect\n")
     gt = output / "kpi_ground_truth_kitti"
     projection = _kitti(Path(kpi["coco"]), gt)
-    _yaml(output / "kpi_inference.yaml",
-          _inference(policy, kpi["images"], classmap, checkpoint, results_root / "kpi"))
-    _yaml(output / "test_inference.yaml",
-          _inference(policy, test["images"], classmap, checkpoint, results_root / "test"))
+    cold_start = baseline and baseline_mode == "cold_start"
+    spec_names = ["gap_loose.yaml", "gap_strict.yaml"]
+    gap_predictions = predictions
+    if cold_start:
+        gap_predictions = output / "cold_start_predictions"
+        gap_predictions.mkdir()
+        for label in gt.glob("*.txt"):
+            (gap_predictions / label.name).touch()
+    else:
+        classmap = output / "inference_classmap.txt"
+        classmap.write_text("background\ndefect\n")
+        _yaml(output / "kpi_inference.yaml",
+              _inference(policy, kpi["images"], classmap, checkpoint, results_root / "kpi"))
+        _yaml(output / "test_inference.yaml",
+              _inference(policy, test["images"], classmap, checkpoint, results_root / "test"))
+        spec_names = ["kpi_inference.yaml", "test_inference.yaml", *spec_names]
     for kind in ("loose", "strict"):
         gap = policy["gap"]
-        spec = {"ground_truth_ann_path": str(gt), "inference_ann_path": str(predictions),
+        spec = {"ground_truth_ann_path": str(gt),
+                "inference_ann_path": str(gap_predictions),
                 "images_dir": str(Path(kpi["images"]).resolve()),
                 "results_dir": str((results_root / f"gap_{kind}").resolve()),
                 "kpi": f"kpi_{kind}", "input_format": "kitti",
@@ -92,9 +106,10 @@ def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
                 "default_ap50_threshold": 0.0}
         _yaml(output / f"gap_{kind}.yaml", spec)
     report = {"status": "COMPLETE", "checkpoint": str(checkpoint.resolve()),
+              "baseline": baseline, "baseline_mode": baseline_mode,
+              "cold_start": cold_start,
               "kpi_ground_truth": projection,
-              "specs": {name: str((output / name).resolve()) for name in
-                        ("kpi_inference.yaml", "test_inference.yaml", "gap_loose.yaml", "gap_strict.yaml")}}
+              "specs": {name: str((output / name).resolve()) for name in spec_names}}
     (output / "measurement_manifest.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
@@ -106,10 +121,11 @@ def main() -> int:
     parser.add_argument("--kpi-predictions", type=Path, required=True)
     parser.add_argument("--results-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--baseline", action="store_true")
     args = parser.parse_args()
     report = prepare(args.policy.resolve(), args.checkpoint.resolve(),
                      args.kpi_predictions.resolve(), args.results_root.resolve(),
-                     args.output_dir.resolve())
+                     args.output_dir.resolve(), args.baseline)
     print(json.dumps(report, sort_keys=True))
     return 0
 
