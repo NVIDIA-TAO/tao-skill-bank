@@ -85,6 +85,28 @@ def test_generation_metadata_uses_persistent_output_paths(tmp_path: Path) -> Non
     assert json.loads(metadata.read_text())["image"] == str(published / "generated.png")
 
 
+def test_offline_cache_requires_all_pinned_repositories(tmp_path: Path) -> None:
+    for repo in MODULE.OFFLINE_HF_REPOS:
+        directory = tmp_path / "hub" / f"models--{repo.replace('/', '--')}"
+        (directory / "blobs").mkdir(parents=True)
+        (directory / "snapshots").mkdir()
+    MODULE._validate_offline_hf_cache(tmp_path)
+    (tmp_path / "hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots").rmdir()
+    with pytest.raises(FileNotFoundError, match="Qwen3-VL-8B-Instruct"):
+        MODULE._validate_offline_hf_cache(tmp_path)
+
+
+def test_base_checkpoint_requires_parent_of_model_directory(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    (tmp_path / "checkpoint.json").write_text("{}\n")
+    (model / ".metadata").write_bytes(b"metadata")
+    (model / "__0_0.distcp").write_bytes(b"shard")
+    MODULE._validate_base_checkpoint(tmp_path)
+    with pytest.raises(ValueError, match="parent"):
+        MODULE._validate_base_checkpoint(model)
+
+
 def test_merge_validates_boxes_and_writes_binary_projection(tmp_path: Path) -> None:
     image = tmp_path / "generated.png"
     image.write_bytes(b"image")
