@@ -380,14 +380,15 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
 
     def test_anchor_reservation_is_resolved_on_the_trimmed_candidates(self) -> None:
         # 20 non-empty mined + 12 calibration negatives + 4 anchors -> 32 aligned (17 mined, 12 cal, 3 anchors).
-        # Trimming 4 negatives frees slots that the remaining mined rows and a spare anchor back-fill.
+        # Trimming 4 negatives frees slots that the remaining mined rows and a spare anchor back-fill
+        # (anchor_overfill=allow, the parent behaviour; Feature B3 makes forbid the default under the guard).
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             mined = _write(root / "mined.jsonl", [_det_row(f"pos-{i}", BOX) for i in range(20)] + [_cal_empty(f"cal-empty-{i}") for i in range(12)])
             cfg = self._anchor_assets(root, empty_anchors=False)
             rows, summary = assemble_training_json.assemble(
                 None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=64, row_multiple=8,
-                empty_answer_guard=_guard(overall=0.30),
+                empty_answer_guard=_guard(overall=0.30), anchor_overfill="allow",
             )
             guard = summary["empty_answer_guard"]
             self.assertEqual(len(rows), 32)
@@ -396,10 +397,30 @@ class EmptyAnswerGuardTrimTests(unittest.TestCase):
             self.assertEqual(guard["backfilled_rows"], 4)  # 3 mined rows + 1 spare anchor
             self.assertAlmostEqual(guard["after"]["overall_share"], 8 / 32)
             self.assertEqual(guard["status"], "trimmed_to_caps")
+            self.assertEqual(guard["anchor_overfill"], "allow")
+            self.assertEqual(summary["anchor"]["cap_reservation"]["leftover_fill_anchors"], 1)
             self.assertEqual(summary["materialized_anchor_records"], 4)
             self.assertEqual(summary["materialized_calibration_records"], 8)
             self.assertEqual(sum(r["id"].startswith("pos-") for r in rows), 20)
             self.assertEqual(len({r["id"] for r in rows}), 32)
+            # Default under the guard (forbid): the spare anchor may not fill the 32nd slot, so the
+            # aligned size shrinks to 24 (2 anchors at the 0.10 share) and the guard trims two more
+            # calibration negatives on the smaller corpus; the anchor share stays at its share.
+            rows, summary = assemble_training_json.assemble(
+                None, mined, validation_paths=[], media_root=root, anchor_config=cfg, max_rows=64, row_multiple=8,
+                empty_answer_guard=_guard(overall=0.30),
+            )
+            guard = summary["empty_answer_guard"]
+            self.assertEqual(guard["anchor_overfill"], "forbid")
+            self.assertEqual(len(rows), 24)
+            self.assertEqual(guard["rows_trimmed_by_source"], {"detection_calibration_negative": 6})
+            self.assertLessEqual(guard["after"]["overall_share"], 0.30)
+            self.assertEqual(guard["status"], "trimmed_to_caps")
+            self.assertEqual(summary["materialized_anchor_records"], 2)
+            self.assertEqual(summary["materialized_calibration_records"], 6)
+            self.assertEqual(summary["anchor"]["cap_reservation"]["leftover_fill_anchors"], 0)
+            self.assertLessEqual(summary["anchor"]["cumulative_share_rows"], 0.12)
+            self.assertEqual(summary["operator_attention"], [])
 
     def test_aligned_size_shrinks_only_when_candidates_run_out(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

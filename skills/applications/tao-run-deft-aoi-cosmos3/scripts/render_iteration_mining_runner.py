@@ -49,7 +49,14 @@ _ASSEMBLER_ONLY_VALUES = {
     "--max-empty-answer-share-task",
     "--max-classification-empty-share",
     "--empty-answer-guard-mode",
+    "--anchor-overfill",
 }
+# Feature B3: one launch-recorded value the materializer and the assembler both read
+# (the materializer bounds its calibration empties by the guard headroom, the assembler
+# records the setting and cross-checks the quota manifest); when it is ``on`` the
+# guard caps below are mirrored to the materializer as read-only copies.
+_SHARED_SELECTOR_ASSEMBLER_VALUES = {"--calibration-guard-aware"}
+_GUARD_AWARE_MIRRORED_CAPS = ("--max-empty-answer-share", "--max-empty-answer-share-task")
 _ASSEMBLER_ONLY_PREFIXES = (
     "--repetition-",
     "--no-repetition-",
@@ -108,6 +115,7 @@ def _partition_materialization_arguments(
 
     selector: list[str] = []
     assembler: list[str] = []
+    guard_aware: str | None = None
     index = 0
     while index < len(command):
         value = command[index]
@@ -116,6 +124,23 @@ def _partition_materialization_arguments(
             index += 1
             continue
         option = value.partition("=")[0]
+        if option in _SHARED_SELECTOR_ASSEMBLER_VALUES:
+            if "=" in value:
+                pieces = [value]
+                setting = value.partition("=")[2]
+                index += 1
+            else:
+                if index + 1 == len(command):
+                    raise ValueError(f"{value} requires a value")
+                setting = command[index + 1]
+                pieces = [value, setting]
+                index += 2
+            if setting not in ("on", "off"):
+                raise ValueError(f"{option} must be on or off, not {setting!r}")
+            guard_aware = setting
+            selector.extend(pieces)
+            assembler.extend(pieces)
+            continue
         if option in _ASSEMBLER_ONLY_VALUES:
             assembler.append(value)
             if "=" not in value:
@@ -132,6 +157,21 @@ def _partition_materialization_arguments(
             )
         selector.append(value)
         index += 1
+    if guard_aware == "on":
+        # the materializer needs the caps to compute the empty-row headroom of its
+        # calibration slot; the assembler keeps them (it enforces them)
+        position = 0
+        while position < len(assembler):
+            item = assembler[position]
+            if item.partition("=")[0] in _GUARD_AWARE_MIRRORED_CAPS:
+                if "=" in item:
+                    selector.append(item)
+                    position += 1
+                else:
+                    selector.extend(assembler[position:position + 2])
+                    position += 2
+                continue
+            position += 1
     if assembler:
         selector.append("--no-repetition-blend")
     return selector, assembler
@@ -295,6 +335,7 @@ def build_plan(
         "query_pair_assets_dir": str(query_pair_assets_dir.expanduser().resolve())
         if query_pair_assets_dir is not None else None,
     }
+    caps_mirrored = _option_value(selector_argv, "--calibration-guard-aware") == "on"
     return {
         "schema_version": "deft_iteration_materialization_plan_v1",
         **roots,
@@ -333,10 +374,15 @@ def build_plan(
             "coverage_controls_owned_by_assembler": not any(
                 value.startswith("--coverage-blend-") for value in selector_argv
             ),
+            # the guard mode / classification cap never reach the selector; the empty-answer
+            # caps do only as read-only copies for guard-aware calibration (Feature B3)
             "empty_answer_guard_owned_by_assembler": not any(
-                value.startswith(("--max-empty-answer-", "--max-classification-empty-", "--empty-answer-guard-"))
+                value.startswith(("--max-classification-empty-", "--empty-answer-guard-"))
                 for value in selector_argv
+            ) and (
+                caps_mirrored or not any(value.startswith("--max-empty-answer-") for value in selector_argv)
             ),
+            "calibration_guard_caps_mirrored_to_materializer": caps_mirrored,
             "classification_calibration_output_is_not_training_jsonl": (
                 classification is None or classification["output"] != str(train)
             ),

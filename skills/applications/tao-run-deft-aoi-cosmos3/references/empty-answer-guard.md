@@ -128,6 +128,112 @@ the standard anchor slice and for the alignment fill. Without a cap the anchor
 selection is unchanged. Enforcement cannot be combined with the repetition
 blend (report mode can).
 
+## Guard-aware calibration and anchor share (Feature B3)
+
+### Worked example: run v12_p4b_emptyguard_r4, iteration 4 (snapshot 6fb5dcbc)
+
+Iteration 4 died in the assembler with `training materialization cannot retain
+all previous iteration records and include current Mining data under the
+configured cap`. The chain: (1) the single-image tasks were exhausted, so the
+1,536 new rows were almost all detection calibration rows (Defect Detection
+1,024 incl. 512 empty boards, Ref_based Defect Detection 509 at the KPI empty
+rate, Ref_based Defect Classification 35); (2) the cumulative corpus already sat
+at 0.29 empty share against the 0.30 cap, so the guard trimmed most of this
+iteration's empty rows; (3) the surviving current rows plus the available
+anchors were fewer than 768, the 768 row-multiple rounding dropped the
+materialized size back to the prior corpus, the current capacity became 0 and
+the assembler failed closed. Separately, the guard back-fill of iterations 2–3
+drew extra anchors through the `leftover -> extra_anchors` path whenever the
+mined candidates ran out: 230 / 478 / 386 anchors per iteration, 1,094 of 5,376
+rows = 20.4% against the configured 0.10 share, a confound for the guard arm.
+
+Two mechanisms, one launch-recorded option group (defaults flip only when the
+guard is enabled, so runs without the guard reproduce byte-for-byte; the golden
+fixture `tests/fixtures/guard_aware_calibration_golden.json` proves it):
+
+1. **Guard-aware detection calibration selection** (materializer
+   `defect_detection_ablation.py`, `--calibration-guard-aware on`): before the
+   feasibility loop the materializer computes, under every applicable cap
+   (overall, per-task for Defect Detection and Ref_based Defect Detection), the
+   *empty-row headroom* `floor(cap × rows − empty_rows)` over the cumulative
+   corpus (`--previous-jsonl`) plus this iteration's non-calibration rows, with
+   the calibration slot's row count already added to `rows`. It selects at most
+   that many empty calibration rows (per-task caps first, the shared overall
+   headroom split by largest remainder) and fills the rest of the slot with
+   few-box rows from the same source, same ordering, same per-source rules; the
+   slot's row count (512 + 512 single-image, 500 reference pairs) is unchanged,
+   only the empty / few-box split moves. Rule details: `calibration-profile.md`,
+   "Empty / few-box substitution under the empty-answer guard".
+2. **No anchor over-fill** (assembler `--anchor-overfill forbid`, the default
+   under the guard): the leftover fill may not draw anchors beyond their share
+   (the `extra_anchors` step is dropped; `extra_coverage` and the mined back-fill
+   stay). When the candidates are short, the aligned size shrinks to the largest
+   row-multiple the retained rows, the share-bound anchors, the coverage rows
+   and the current candidates fill; the iteration fails closed only when the
+   growth would be zero rows, with a message naming the shortage
+   (`current_rows_after_guard`, `anchor_slots`, `coverage_slots`,
+   `row_multiple`, `previous_rows`, `aligned_rows`). Rule details:
+   `anchor-and-coverage.md`, "Share ceiling under the empty-answer guard".
+
+Synthetic reproduction of the r4 numbers
+(`tests/test_cosmos3_guard_aware_calibration.py`): a 5,376-row corpus at
+0.294 empty share (Defect Detection 880 / 2,000 empty, Ref_based Defect
+Detection 700 / 1,500), an iteration of 1,024 single-image calibration rows,
+500 reference pairs, 9 mined pairs (5 empty) and 3 Ref_based Defect
+Classification rows, caps 0.30 / 0.45 / 0.50. Headroom: overall
+`floor(0.30 × 6,912 − 1,585) = 488`, Defect Detection
+`floor(0.45 × 3,024 − 880) = 480`, Ref_based Defect Detection
+`floor(0.50 × 2,009 − 705) = 299`; the shared 488 splits 312 / 176, so 200
+single-image and 95 reference empties become few-box rows. The assembler then
+keeps every one of the 1,536 rows (`growth_rows = 1536`,
+`empty_answer_guard.status = within_caps`, overall share 2,073 / 6,912). With
+guard-aware selection off the same iteration must trim 421 calibration
+negatives, the aligned size falls by one global batch and the protected
+calibration rows no longer fit: the assembler fails closed as r4 did.
+
+### Launch record and pass-through
+
+`init_deft_state.py --max-empty-answer-share ... [--calibration-guard-aware
+on|off] [--anchor-overfill allow|forbid]` records
+`config.mining.empty_answer_guard.calibration_guard_aware` (default `true`
+when any cap is given, else `false`) and `.anchor_overfill` (default `forbid`
+when any cap is given, else `allow`); `--calibration-guard-aware on` without a
+cap is rejected. Put the recorded values on every iteration's selector command
+next to the caps: `render_iteration_mining_runner.py` moves `--anchor-overfill`
+to the assembler, passes `--calibration-guard-aware` to **both** the
+materializer and the assembler and, when it is `on`, mirrors
+`--max-empty-answer-share` / `--max-empty-answer-share-task` to the
+materializer as read-only copies (plan invariant
+`calibration_guard_caps_mirrored_to_materializer`; the guard mode and the
+classification cap stay assembler-only). The assembler cross-checks the
+current quota manifest's `calibration_guard_aware` against the launch value
+(its default is on when a cap is given) and fails closed before writing
+anything when they disagree, so a selector command that forgot the flag cannot
+silently produce a non-guard-aware corpus in a guard-aware run.
+
+### Fields added
+
+Materializer quota manifest (copied under `current_selection` in the bound v2
+manifest): `calibration_guard_aware` (bool), `calibration_empty_headroom`
+(`overall`, `task:Defect Detection`, `task:Ref_based Defect Detection`; `null`
+for caps not configured or when off), `calibration_empty_selected` (per task +
+`total`), `calibration_fewbox_substituted` (per task + `total`),
+`guard_aware_calibration` (caps, KPI empty targets, the ledger of previous /
+current non-calibration rows, `fewbox_shortfall`); `single_image_calibration`
+gains `max_few_box_effective` and `empty_substituted_by_few_box`;
+`reference_calibration` gains `kpi_target_no_change` and
+`no_change_substituted_by_changed` (`target_no_change` is the guard-aware
+target the content gate verifies).
+
+Assembler summary: `growth_rows` (output − previous rows),
+`anchor.cumulative_share_rows` (anchor rows over all rows, every iteration) with
+`anchor.cumulative_anchor_rows` and `anchor.share_tolerance` (0.02),
+`operator_attention` (a list; `anchor_share_exceeded` when the cumulative share
+is above `requested_share + 0.02`, also printed to stderr),
+`empty_answer_guard.calibration_guard_aware` and `empty_answer_guard.anchor_overfill`,
+`anchor.cap_reservation.anchor_overfill` / `leftover_fill_anchors` /
+`aligned_rows_shrunk_for_share`.
+
 ## Summary schema (`empty_answer_guard`)
 
 ```json

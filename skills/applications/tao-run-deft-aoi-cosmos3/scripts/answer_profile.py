@@ -241,10 +241,69 @@ def label_counts(records: Iterable[dict[str, Any]], *, context: str = "kpi") -> 
     return counts
 
 
+# Empty-answer guard configuration, shared by the assembler (which enforces the caps)
+# and the materializer (which reads the same caps to compute the empty-row headroom of
+# its calibration slot, Feature B3); the assembler re-exports these names.
+GUARD_MODES = ("enforce", "report")
+
+
+def parse_task_shares(values: list[str] | None) -> dict[str, float]:
+    shares: dict[str, float] = {}
+    for value in values or []:
+        task, separator, share = value.partition("=")
+        if not separator or not task or task in shares:
+            raise ValueError(f"invalid task share {value!r}; expected TASK=SHARE")
+        try:
+            shares[task] = float(share)
+        except ValueError as exc:
+            raise ValueError(f"invalid task share {value!r}; expected TASK=SHARE") from exc
+    return shares
+
+
+def validate_empty_answer_guard_config(
+    max_share: float | None,
+    per_task: dict[str, float] | None,
+    classification_share: float | None,
+    mode: str | None,
+) -> dict[str, Any]:
+    """Resolve the guard caps; no cap = report only (``enabled`` false, ``mode`` None)."""
+
+    def share(name: str, value: Any) -> float | None:
+        if value is None:
+            return None
+        number = float(value)
+        if not 0.0 < number <= 1.0:
+            raise ValueError(f"{name} must be in (0, 1]")
+        return number
+
+    overall = share("--max-empty-answer-share", max_share)
+    tasks: dict[str, float] = {}
+    for task, value in (per_task or {}).items():
+        if task not in TASK_SPECS:
+            raise ValueError(f"--max-empty-answer-share-task names an unsupported task: {task!r}")
+        cap = share(f"--max-empty-answer-share-task {task}", value)
+        assert cap is not None
+        tasks[task] = cap
+    classification = share("--max-classification-empty-share", classification_share)
+    enabled = overall is not None or bool(tasks) or classification is not None
+    if mode is not None and mode not in GUARD_MODES:
+        raise ValueError("--empty-answer-guard-mode must be enforce or report")
+    if mode is not None and not enabled:
+        raise ValueError("--empty-answer-guard-mode requires at least one cap")
+    return {
+        "enabled": enabled,
+        "mode": (mode or "enforce") if enabled else None,
+        "max_empty_answer_share": overall,
+        "max_empty_answer_share_task": tasks,
+        "max_classification_empty_share": classification,
+    }
+
+
 __all__ = [
     "BCQ_PHRASE",
     "EMPTY_DEFINITION",
     "FORMATS",
+    "GUARD_MODES",
     "MCQ_OPTIONS_MARKER",
     "answer_format",
     "image_count",
@@ -254,7 +313,9 @@ __all__ = [
     "mcq_answer_letters",
     "mcq_labels",
     "mcq_options",
+    "parse_task_shares",
     "profile_rows",
     "row_profile",
     "strip_code_fence",
+    "validate_empty_answer_guard_config",
 ]

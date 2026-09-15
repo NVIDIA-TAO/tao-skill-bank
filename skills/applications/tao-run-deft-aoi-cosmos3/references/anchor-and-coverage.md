@@ -91,6 +91,49 @@ counts, skips, shortages); `anchor_manifest.json` beside `train.jsonl`
 repeats it with the training-JSONL binding. Provenance rows carry
 `source_kind = anchor_correct` and `purpose_tags = ["anchor"]`.
 
+## Share ceiling under the empty-answer guard (Feature B3)
+
+Under `--max-rows` / `--row-multiple` two paths could add anchors beyond the
+configured share: the leftover fill (when the current candidates do not fill
+the aligned size, spare anchors from the uncapped target took the slots) and
+the round-up alignment fill above. With the empty-answer guard on, the guard
+trims empty rows and the candidates run out routinely, so the leftover fill
+became a steady drain: run r4 (2026-09-15) drew 230 / 478 / 386 anchors in
+iterations 2–4 and reached 1,094 of 5,376 rows = 20.4% against a 0.10 share.
+
+`--anchor-overfill allow|forbid` (assembler; `init_deft_state.py` records it
+under `config.mining.empty_answer_guard.anchor_overfill`, default `forbid`
+when any empty-answer cap is given, `allow` otherwise, so runs without the
+guard are byte-identical to before):
+
+- `forbid`: the leftover fill may not draw anchors beyond `round(M × share)`
+  (`extra_coverage` and the mined back-fill stay). When the retained rows, the
+  share-bound anchors, the coverage rows and this iteration's candidates do not
+  fill the aligned size `M`, `M` shrinks to the largest `--row-multiple`
+  multiple they do fill (`cap_reservation.aligned_rows_shrunk_for_share`; the
+  guard's `aligned_rows_shrunk` keeps counting the first-pass-to-final
+  difference). The round-up alignment fill is not available either (a
+  calibration-dominated iteration that does not fit fails closed with the
+  existing message plus "anchor over-fill forbidden"). The iteration fails
+  closed **only** when the growth would be zero rows, i.e. nothing of this
+  iteration fits above the previous corpus:
+  `training materialization would add zero rows of this iteration under the
+  empty-answer guard (anchors may not over-fill the global batch):
+  current_rows_after_guard=…, anchor_slots=…, coverage_slots=…,
+  row_multiple=…, previous_rows=…, aligned_rows=…`.
+- `allow`: the parent behaviour; `cap_reservation.leftover_fill_anchors`
+  counts the anchors drawn beyond the share.
+
+Every iteration the summary reports `anchor.cumulative_share_rows` (anchor
+rows, retained and new, over all materialized rows; also when anchors are off
+this iteration) with `cumulative_anchor_rows` and `share_tolerance = 0.02`, and
+`operator_attention` lists `anchor_share_exceeded` when that share is above
+`requested_share + 0.02` (the assembler prints the same line to stderr). Under
+`forbid` the share stays at the configured value up to global-batch rounding;
+`tests/test_cosmos3_guard_aware_calibration.py` drives three iterations whose
+mined candidates run out every time and checks the share never leaves the
+tolerance, while `allow` exceeds it in the first iteration.
+
 ## Exposure accounting
 
 The share is in rows (`unit: rows`); supervised-token share is not measured

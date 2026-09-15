@@ -106,6 +106,61 @@ Pool box-count bins (full pool, 2026-09-10): Defect Detection `4-9` 1,358 rows,
 shares above a 1,024-row DD quota asks for about 184 `4-9` and 23 `10+` rows
 per iteration, so five iterations fit; report the shortage table anyway.
 
+## Empty / few-box substitution under the empty-answer guard (Feature B3)
+
+Applies to the fixed calibration slot of `defect_detection_ablation.py`
+(`--single-image-calibration-max-empty/-few`, `--reference-calibration-total`)
+when `--calibration-guard-aware on` is given together with the guard caps
+(`--max-empty-answer-share`, `--max-empty-answer-share-task`; the runner mirrors
+them from the assembler options). Without the flag the selection is
+byte-identical to before (golden fixture in
+`tests/test_cosmos3_guard_aware_calibration.py`). The flag without a cap, or
+without the fixed slot, fails closed.
+
+Rule, after the strict Defect Detection rows and the mined maintenance rows of
+the iteration are selected and before the feasibility loop:
+
+1. **Headroom per cap.** For the overall cap and for the Defect Detection /
+   Ref_based Defect Detection task caps:
+   `headroom = max(0, floor(cap × rows − empty_rows))`, where `rows` counts the
+   cumulative corpus (`--previous-jsonl`), this iteration's non-calibration
+   rows **and** the calibration slot's rows (their count is fixed), and
+   `empty_rows` counts the empty ground truths of the corpus and the
+   non-calibration rows only. A share equal to its cap is within the cap, as in
+   the assembler.
+2. **Empty targets.** Start from the KPI targets (the empties the slot would
+   select today: `max_empty` single images, `floor(total × KPI empty rate + 0.5)`
+   no-change pairs), bound each by its task headroom, then split the overall
+   headroom over the two by largest remainder (ties by task name) when their
+   sum exceeds it (`allocate_empty_headroom`). Negative headroom means zero
+   empties.
+3. **Substitution, same source.** Reference pairs: the reserved calibration is
+   re-selected with the effective empty rate `target / total`, so the kept
+   no-change pairs are a prefix of the KPI-rate selection and changed pairs fill
+   the remaining slots (content-unique, deduplicated against every row already
+   kept). Single images: the first `target` empties are kept in their original
+   order and the balanced few-box selection is re-run with the target
+   `max_few + substituted` over the few-box calibration candidates (evidence
+   `calibration_few_box_ground_truth`, deduplicated against the kept rows). The
+   mined maintenance and strict rows are not re-selected. When the few-box
+   supply is short the slot falls short by that much (`fewbox_shortfall`); the
+   reference count contract then fails closed exactly as a supply shortfall
+   does today.
+4. **Verification.** `single_image_calibration_caps_respected` compares the
+   few-box count with `max_few_box_effective = max_few_box + substituted`; the
+   reference targets `target_no_change` (calibration) and the combined
+   calibration + mined target behind `reference_empty_rate_matched` are lowered
+   by `no_change_substituted_by_changed` (the mined slice keeps tracking the KPI
+   rate, so the guard never gets more empties to trim from it);
+   `kpi_target_no_change` keeps the original number.
+
+Manifest: `calibration_guard_aware`, `calibration_empty_headroom`,
+`calibration_empty_selected`, `calibration_fewbox_substituted` and the
+`guard_aware_calibration` block (caps, `kpi_empty_targets`, `ledger`,
+`fewbox_shortfall`), all copied under `current_selection` in the bound v2
+manifest. Worked example with the r4 iteration-4 numbers:
+`empty-answer-guard.md`, "Guard-aware calibration and anchor share".
+
 ## Classification calibration (Phase 4 step 4c-A) — default off
 
 ### Why

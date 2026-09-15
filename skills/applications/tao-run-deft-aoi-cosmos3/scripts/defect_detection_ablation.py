@@ -16,7 +16,7 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
-from answer_profile import is_empty_ground_truth
+from answer_profile import is_empty_ground_truth, parse_task_shares, validate_empty_answer_guard_config
 from atomic_samples import PAIR_CONTENT_IDENTITY, content_identity_for_paths, sample_from_record
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
@@ -77,6 +77,26 @@ CLASSIFICATION_CALIBRATION_KIND = "classification"
 ZERO_NEW_CANDIDATE_POLICIES = ("fail_closed", "skip_exhausted")
 DEFAULT_ZERO_NEW_CANDIDATE_POLICY = "fail_closed"
 _PRESENCE_VERIFICATION_KEY = "all_five_maintenance_tasks_present"
+# Guard-aware calibration selection (Feature B3, run v12_p4b_emptyguard_r4 iteration 4,
+# 2026-09-15): with the empty-answer guard on, the fixed calibration slot (512 + 512
+# single-image rows, 500 reference pairs) selects at most as many empty rows as the
+# caps leave room for (cumulative corpus + this iteration's non-calibration rows) and
+# fills the rest of the slot with few-box rows from the same source; the row count of
+# the slot is unchanged, only the empty / few-box split moves. Without it the guard
+# trimmed almost every calibration negative and the aligned corpus fell back to the
+# previous size (growth 0, fail closed).
+GUARD_AWARE_CALIBRATION_TASKS = (DEFECT_DETECTION_TASK, REFERENCE_DEFECT_DETECTION_TASK)
+# current-selection facts copied into the bound v2 manifest (bind_cumulative_manifest)
+CURRENT_SELECTION_COPIED_KEYS = (
+    "new_rows_empty",
+    "new_rows_empty_by_task",
+    "exhausted_tasks",
+    "skipped_tasks",
+    "calibration_guard_aware",
+    "calibration_empty_headroom",
+    "calibration_empty_selected",
+    "calibration_fewbox_substituted",
+)
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
     ("source", "source_strata", None),
@@ -104,6 +124,46 @@ def _verification_policy_exclusions(policy: str) -> list[str]:
 def _manifest_verified(verification: dict[str, Any], policy: str) -> bool:
     excluded = set(_verification_policy_exclusions(policy))
     return all(value for key, value in verification.items() if key not in excluded)
+
+
+def empty_headroom(*, cap: float, rows: int, empty_rows: int) -> int:
+    """Empty rows that may still be added under ``cap`` when the corpus will hold ``rows`` rows
+    (the rows to add are already counted) and ``empty_rows`` of them are empty already.
+    A share equal to its cap is within the cap (the assembler's comparison)."""
+    return max(0, math.floor(cap * rows - empty_rows + 1e-9))
+
+
+def allocate_empty_headroom(limits: dict[str, int], total: int) -> dict[str, int]:
+    """Split a shared headroom over per-task limits by largest remainder; no task above its
+    own limit, ties broken by task name. Not binding when the limits fit."""
+    if sum(limits.values()) <= total:
+        return dict(limits)
+    weight = sum(limits.values())
+    raw = {task: total * limit / weight for task, limit in limits.items()}
+    allocated = {task: min(limits[task], math.floor(raw[task])) for task in limits}
+    remainder = total - sum(allocated.values())
+    for task in sorted(limits, key=lambda name: (-(raw[name] - math.floor(raw[name])), name)):
+        if remainder <= 0:
+            break
+        if allocated[task] < limits[task]:
+            allocated[task] += 1
+            remainder -= 1
+    return allocated
+
+
+def _empty_ledger(records: Iterable[dict[str, Any]], *, context: str) -> tuple[Counter[str], Counter[str]]:
+    """(rows, empty rows) per task type."""
+    rows: Counter[str] = Counter()
+    empty: Counter[str] = Counter()
+    for index, record in enumerate(records):
+        task = str(record.get("task_type"))
+        rows[task] += 1
+        empty[task] += is_empty_ground_truth(record, context=f"{context}[{index}]")
+    return rows, empty
+
+
+def _novel_rows(entries: Iterable[dict[str, Any]]) -> int:
+    return sum(not item["is_replay"] for item in entries)
 
 
 def _record_fingerprint(record: dict[str, Any]) -> str:
@@ -646,6 +706,8 @@ def materialize(
     deficit_weight_source: str | None = None,
     acquisition_rows: int = 0,
     zero_new_candidate_policy: str = DEFAULT_ZERO_NEW_CANDIDATE_POLICY,
+    empty_answer_guard: dict[str, Any] | None = None,
+    calibration_guard_aware: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if min(max_rows, row_multiple, epochs, global_batch) <= 0:
         raise ValueError("row, epoch, and global-batch values must be positive")
@@ -680,6 +742,18 @@ def materialize(
         raise ValueError("calibration caps and totals must be non-negative")
     if hybrid_calibration and reference_proxy_empty_rate is None:
         raise ValueError("hybrid calibration requires the reference Proxy empty rate")
+    guard = empty_answer_guard or validate_empty_answer_guard_config(None, None, None, None)
+    if calibration_guard_aware:
+        if not guard["enabled"]:
+            raise ValueError(
+                "guard-aware calibration selection requires an enabled empty-answer guard "
+                "(--max-empty-answer-share and/or --max-empty-answer-share-task)"
+            )
+        if not hybrid_calibration:
+            raise ValueError(
+                "guard-aware calibration selection requires the fixed calibration slot "
+                "(--single-image-calibration-max-empty/-few and --reference-calibration-total)"
+            )
     if near_duplicate_hamming_distance is not None and not (
         0 <= near_duplicate_hamming_distance <= 64
     ):
@@ -1159,6 +1233,128 @@ def materialize(
             else None
         ),
     )
+    # Guard-aware calibration (Feature B3): the slot keeps its row count; its empty rows are
+    # bounded by the headroom the caps leave once the cumulative corpus and this iteration's
+    # non-calibration rows are counted, and few-box rows from the same source fill the rest.
+    calibration_empty_headroom: dict[str, int | None] = {
+        "overall": None,
+        **{f"task:{task}": None for task in GUARD_AWARE_CALIBRATION_TASKS},
+    }
+    kpi_calibration_empty_targets = {
+        DEFECT_DETECTION_TASK: (
+            len(selected_calibration_empty) if hybrid_calibration else 0
+        ),
+        REFERENCE_DEFECT_DETECTION_TASK: sum(
+            not item.get("objects") for item in reserved_reference_calibration
+        ),
+    }
+    calibration_fewbox_substituted = {task: 0 for task in GUARD_AWARE_CALIBRATION_TASKS}
+    calibration_fewbox_shortfall = {task: 0 for task in GUARD_AWARE_CALIBRATION_TASKS}
+    reference_empty_substituted = 0
+    guard_aware_ledger: dict[str, Any] | None = None
+    if calibration_guard_aware:
+        assert reference_calibration_total is not None
+        assert single_image_calibration_max_few is not None
+        mined_maintenance = selected_maintenance[len(reserved_reference_calibration):]
+        non_calibration = [*selected_strict, *mined_maintenance]
+        previous_rows, previous_empty = _empty_ledger(previous_records or [], context="previous record")
+        current_rows, current_empty = _empty_ledger(
+            (item["record"] for item in non_calibration), context="current non-calibration row"
+        )
+        slot_rows = {
+            DEFECT_DETECTION_TASK: len(selected_calibration),
+            REFERENCE_DEFECT_DETECTION_TASK: len(reserved_reference_calibration),
+        }
+        all_tasks = set(previous_rows) | set(current_rows) | set(slot_rows)
+
+        def headroom_for(cap: float, tasks: Iterable[str]) -> int:
+            names = list(tasks)
+            rows = sum(previous_rows[task] + current_rows[task] + slot_rows.get(task, 0) for task in names)
+            empty = sum(previous_empty[task] + current_empty[task] for task in names)
+            return empty_headroom(cap=cap, rows=rows, empty_rows=empty)
+
+        limits = dict(kpi_calibration_empty_targets)
+        if guard["max_empty_answer_share"] is not None:
+            calibration_empty_headroom["overall"] = headroom_for(guard["max_empty_answer_share"], all_tasks)
+        for task in GUARD_AWARE_CALIBRATION_TASKS:
+            cap = guard["max_empty_answer_share_task"].get(task)
+            if cap is not None:
+                calibration_empty_headroom[f"task:{task}"] = headroom_for(cap, [task])
+                limits[task] = min(limits[task], calibration_empty_headroom[f"task:{task}"])
+        overall_headroom = calibration_empty_headroom["overall"]
+        empty_targets = (
+            allocate_empty_headroom(limits, overall_headroom) if overall_headroom is not None else limits
+        )
+        guard_aware_ledger = {
+            "previous": {"rows": sum(previous_rows.values()), "empty_rows": sum(previous_empty.values())},
+            "previous_by_task": {
+                task: {"rows": previous_rows[task], "empty_rows": previous_empty[task]} for task in sorted(previous_rows)
+            },
+            "current_non_calibration": {"rows": len(non_calibration), "empty_rows": sum(current_empty.values())},
+            "current_non_calibration_by_task": {
+                task: {"rows": current_rows[task], "empty_rows": current_empty[task]} for task in sorted(current_rows)
+            },
+            "calibration_slot_rows": slot_rows,
+        }
+        # Reference pairs first (they were reserved first): the empty bucket is consumed in the
+        # same order, so the kept no-change pairs are a prefix of the KPI-rate selection.
+        reference_target = empty_targets[REFERENCE_DEFECT_DETECTION_TASK]
+        if reference_calibration_total and reference_target < kpi_calibration_empty_targets[REFERENCE_DEFECT_DETECTION_TASK]:
+            kept = [*selected_strict, *mined_maintenance, *selected_calibration]
+            reference_pool = _without_visual_duplicates(
+                reference_calibration_candidates,
+                selected=kept,
+                hamming_distance=near_duplicate_hamming_distance,
+                counters=counters,
+            )
+            reference_max_novel = max(
+                0, novel_image_limit - _novel_rows(selected_strict) - _novel_rows(mined_maintenance) - len(selected_calibration)
+            )
+            reserved_reference_calibration = _task_balanced(
+                reference_pool,
+                reference_calibration_total,
+                max_novel=reference_max_novel,
+                reference_empty_rate=reference_target / reference_calibration_total,
+            )
+            reserved_reference_novel = _novel_rows(reserved_reference_calibration)
+            selected_maintenance = reserved_reference_calibration + mined_maintenance
+            reference_calibration_empty_target = reference_target
+            calibration_fewbox_shortfall[REFERENCE_DEFECT_DETECTION_TASK] = max(
+                0, reference_calibration_total - len(reserved_reference_calibration)
+            )
+        reference_empty_substituted = kpi_calibration_empty_targets[REFERENCE_DEFECT_DETECTION_TASK] - sum(
+            not item.get("objects") for item in reserved_reference_calibration
+        )
+        calibration_fewbox_substituted[REFERENCE_DEFECT_DETECTION_TASK] = reference_empty_substituted
+        # Single-image slot: keep the first ``target`` empties (same order), re-run the balanced
+        # few-box selection with the slot's row count as its target.
+        single_target = empty_targets[DEFECT_DETECTION_TASK]
+        if single_target < kpi_calibration_empty_targets[DEFECT_DETECTION_TASK]:
+            new_empty = selected_calibration_empty[:single_target]
+            kept = [*selected_strict, *selected_maintenance, *new_empty]
+            substituted = len(selected_calibration_empty) - len(new_empty)
+            positive_pool = _without_visual_duplicates(
+                calibration_positive,
+                selected=kept,
+                hamming_distance=near_duplicate_hamming_distance,
+                counters=counters,
+            )
+            new_positive, _ = _balanced_positive_selection(
+                positive_pool,
+                single_image_calibration_max_few + substituted,
+                max_novel=max(0, novel_image_limit - _novel_rows(kept)),
+            )
+            calibration_fewbox_shortfall[DEFECT_DETECTION_TASK] = max(
+                0, single_image_calibration_max_few + substituted - len(new_positive)
+            )
+            calibration_fewbox_substituted[DEFECT_DETECTION_TASK] = substituted
+            selected_calibration_empty = new_empty
+            selected_calibration_positive = new_positive
+            selected_calibration = _interleave_groups([new_empty, new_positive])
+            selected_dd = _interleave_groups([selected_strict, selected_calibration])
+            selected_empty = [item for item in selected_dd if not item["objects"]]
+            selected_positive = [item for item in selected_dd if item["objects"]]
+            marginal_quotas = _positive_quota_report(positive, selected_positive, len(selected_positive))
     accepted_target_rows: int | None = None
     if not resolved_repetition["enabled"]:
         for candidate_target in range(
@@ -1302,8 +1498,10 @@ def materialize(
         if item["task_type"] == REFERENCE_DEFECT_DETECTION_TASK
     ]
     selected_reference_empty = sum(not item.get("objects") for item in selected_reference)
+    # the combined (calibration + mined) reference target; guard-aware calibration lowers it by
+    # the no-change pairs it replaced with changed pairs (the mined slice keeps the KPI rate)
     reference_empty_target = (
-        math.floor(len(selected_reference) * reference_proxy_empty_rate + 0.5)
+        max(0, math.floor(len(selected_reference) * reference_proxy_empty_rate + 0.5) - reference_empty_substituted)
         if reference_proxy_empty_rate is not None
         else None
     )
@@ -1339,9 +1537,14 @@ def materialize(
     selected_reference_calibration_empty = sum(
         not item.get("objects") for item in selected_reference_calibration
     )
-    reference_calibration_empty_target = (
+    kpi_reference_calibration_empty_target = (
         math.floor(reference_calibration_total * reference_proxy_empty_rate + 0.5)
         if hybrid_calibration
+        else None
+    )
+    reference_calibration_empty_target = (
+        kpi_reference_calibration_empty_target - reference_empty_substituted
+        if kpi_reference_calibration_empty_target is not None
         else None
     )
     # Zero-new-candidate policy: which maintenance tasks are absent, and whether
@@ -1392,12 +1595,15 @@ def materialize(
         "empty_rate_matched_before_repetition": (
             True if hybrid_calibration else selected_empty_count == empty_target
         ),
+        # guard-aware substitution moves slots from the empty bucket to the few-box bucket;
+        # the effective few-box cap grows by exactly the substituted count (slot count unchanged)
         "single_image_calibration_caps_respected": (
             True
             if not hybrid_calibration
             else selected_single_calibration_empty
             <= single_image_calibration_max_empty
-            and selected_single_calibration_few <= single_image_calibration_max_few
+            and selected_single_calibration_few
+            <= single_image_calibration_max_few + calibration_fewbox_substituted[DEFECT_DETECTION_TASK]
         ),
         "single_image_proxy_rate_policy_respected": (
             not hybrid_calibration or empty_target is None
@@ -1468,6 +1674,35 @@ def materialize(
         "calibration_scope": "current_new_rows_only",
         "new_rows_empty": sum(new_rows_empty_by_task.values()),
         "new_rows_empty_by_task": dict(sorted(new_rows_empty_by_task.items())),
+        # Feature B3: guard-aware calibration (empty vs few-box split of the fixed slot)
+        "calibration_guard_aware": bool(calibration_guard_aware),
+        "calibration_empty_headroom": calibration_empty_headroom,
+        "calibration_empty_selected": {
+            DEFECT_DETECTION_TASK: selected_single_calibration_empty,
+            REFERENCE_DEFECT_DETECTION_TASK: selected_reference_calibration_empty,
+            "total": selected_single_calibration_empty + selected_reference_calibration_empty,
+        },
+        "calibration_fewbox_substituted": {
+            **calibration_fewbox_substituted,
+            "total": sum(calibration_fewbox_substituted.values()),
+        },
+        "guard_aware_calibration": {
+            "enabled": bool(calibration_guard_aware),
+            "caps": {
+                "overall": guard["max_empty_answer_share"],
+                "per_task": {
+                    task: guard["max_empty_answer_share_task"].get(task) for task in GUARD_AWARE_CALIBRATION_TASKS
+                },
+            },
+            "policy": (
+                "empty_rows_bounded_by_cap_headroom_fewbox_fill_same_source_slot_count_unchanged"
+                if calibration_guard_aware
+                else None
+            ),
+            "kpi_empty_targets": kpi_calibration_empty_targets,
+            "ledger": guard_aware_ledger,
+            "fewbox_shortfall": calibration_fewbox_shortfall,
+        },
         "zero_new_candidate_policy": zero_new_candidate_policy,
         "verification_policy_exclusions": _verification_policy_exclusions(zero_new_candidate_policy),
         "maintenance_tasks": {
@@ -1588,6 +1823,13 @@ def materialize(
         "single_image_calibration": {
             "max_empty": single_image_calibration_max_empty,
             "max_few_box": single_image_calibration_max_few,
+            # the few-box cap after guard-aware substitution (equal to max_few_box unless it substituted)
+            "max_few_box_effective": (
+                single_image_calibration_max_few + calibration_fewbox_substituted[DEFECT_DETECTION_TASK]
+                if hybrid_calibration
+                else None
+            ),
+            "empty_substituted_by_few_box": calibration_fewbox_substituted[DEFECT_DETECTION_TASK],
             "selected_empty": selected_single_calibration_empty,
             "selected_few_box": selected_single_calibration_few,
             "selected_total": len(selected_single_calibration),
@@ -1607,6 +1849,9 @@ def materialize(
             "content_sha256_by_record_id": reference_content_by_record,
             "requested_total": reference_calibration_total,
             "target_no_change": reference_calibration_empty_target,
+            # the KPI-rate target before guard-aware substitution (equal unless it substituted)
+            "kpi_target_no_change": kpi_reference_calibration_empty_target,
+            "no_change_substituted_by_changed": reference_empty_substituted,
             "selected_no_change": selected_reference_calibration_empty,
             "selected_changed": (
                 len(selected_reference_calibration)
@@ -1830,10 +2075,7 @@ def bind_cumulative_manifest(
         "single_image_calibration": bound.get("single_image_calibration"),
         "reference_calibration": bound.get("reference_calibration"),
         "repetition_blend": bound.get("repetition_blend"),
-        "new_rows_empty": bound.get("new_rows_empty"),
-        "new_rows_empty_by_task": bound.get("new_rows_empty_by_task"),
-        "exhausted_tasks": bound.get("exhausted_tasks"),
-        "skipped_tasks": bound.get("skipped_tasks"),
+        **{key: bound.get(key) for key in CURRENT_SELECTION_COPIED_KEYS},
     }
     bound["repetition_blend"] = assembly_summary["repetition_blend"]
     tasks = Counter(str(row.get("task_type")) for row in final_rows)
@@ -1993,6 +2235,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--single-image-calibration-max-few", type=int)
     parser.add_argument("--reference-calibration-total", type=int)
     parser.add_argument(
+        "--calibration-guard-aware",
+        choices=("on", "off"),
+        default="off",
+        help=(
+            "on: bound the empty rows of the fixed calibration slot by the empty-answer guard's headroom "
+            "(cumulative corpus + this iteration's non-calibration rows) and fill the rest with few-box rows "
+            "from the same source; the slot's row count is unchanged. Requires the caps below (the runner "
+            "mirrors them from the assembler options)."
+        ),
+    )
+    parser.add_argument(
+        "--max-empty-answer-share",
+        type=float,
+        help="Empty-answer guard overall cap (read-only copy for --calibration-guard-aware on).",
+    )
+    parser.add_argument(
+        "--max-empty-answer-share-task",
+        action="append",
+        metavar="TASK=SHARE",
+        help="Empty-answer guard per-task cap (read-only copy for --calibration-guard-aware on; repeatable).",
+    )
+    parser.add_argument(
         "--zero-new-candidate-policy",
         choices=ZERO_NEW_CANDIDATE_POLICIES,
         default=DEFAULT_ZERO_NEW_CANDIDATE_POLICY,
@@ -2131,6 +2395,9 @@ def main(argv: list[str] | None = None) -> int:
         validations = proxy[:]
         for path in args.validation_jsonl:
             validations.extend(load_records(path))
+        guard_config = validate_empty_answer_guard_config(
+            args.max_empty_answer_share, parse_task_shares(args.max_empty_answer_share_task), None, None
+        )
         rows, manifest = materialize(
             candidate_rows=_read_parquet(args.candidate_parquet),
             source_records=load_records(args.source_annotations),
@@ -2162,6 +2429,8 @@ def main(argv: list[str] | None = None) -> int:
             deficit_weights=deficit_weights,
             repetition_seed=repetition_seed,
             deficit_weight_source=deficit_weight_source,
+            empty_answer_guard=guard_config,
+            calibration_guard_aware=args.calibration_guard_aware == "on",
         )
         manifest["empty_ground_truth"]["proxy_empty_rows"] = proxy_empty
         manifest["empty_ground_truth"]["proxy_defect_detection_rows"] = proxy_rows

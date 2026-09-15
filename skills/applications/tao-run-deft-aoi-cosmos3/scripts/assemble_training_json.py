@@ -23,7 +23,15 @@ from anchor_rows import (
     validate_anchor_config,
     write_manifest as write_anchor_manifest,
 )
-from answer_profile import EMPTY_DEFINITION, is_empty_ground_truth, profile_rows, row_profile
+from answer_profile import (
+    EMPTY_DEFINITION,
+    GUARD_MODES,
+    is_empty_ground_truth,
+    parse_task_shares,
+    profile_rows,
+    row_profile,
+    validate_empty_answer_guard_config,
+)
 from atomic_samples import logical_record_identity, sample_from_record
 from coverage_rows import (
     COVERAGE_MARK,
@@ -113,8 +121,16 @@ def _load_optional_records(path: pathlib.Path) -> list[dict[str, Any]]:
 # "[]" on 58% of the single-image MCQ; the guard reports the answer profile
 # every iteration and, when caps are launch-recorded, trims empty rows added
 # this iteration in a fixed order so the share cannot grow again.
-GUARD_MODES = ("enforce", "report")
+# (GUARD_MODES, parse_task_shares and validate_empty_answer_guard_config live in
+# answer_profile.py so the materializer can read the same caps; re-exported here.)
 GUARD_MAX_PASSES = 25
+# Feature B3: with the guard on, anchors may not fill leftover global-batch slots
+# beyond their share (r4 reached 20.4% of the corpus against a 0.10 share); the
+# aligned size shrinks instead. ``allow`` keeps the parent behaviour byte-for-byte.
+ANCHOR_OVERFILL_POLICIES = ("allow", "forbid")
+# operator_attention: anchor_share_exceeded when the cumulative anchor share is above
+# the configured share by more than this
+ANCHOR_SHARE_TOLERANCE = 0.02
 # exceeded_untrimmable = a cap is still exceeded but every remaining empty row that
 # counts toward it is never-trimmed (previous rows, anchors, coverage, classification
 # calibration); the residual is recorded and the iteration continues. exceeded = a
@@ -130,56 +146,18 @@ GUARD_NEVER_TRIMMED = (
 _CLASSIFICATION_FORMATS = ("BCQ", "MCQ")
 
 
-def parse_task_shares(values: list[str] | None) -> dict[str, float]:
-    shares: dict[str, float] = {}
-    for value in values or []:
-        task, separator, share = value.partition("=")
-        if not separator or not task or task in shares:
-            raise ValueError(f"invalid task share {value!r}; expected TASK=SHARE")
-        try:
-            shares[task] = float(share)
-        except ValueError as exc:
-            raise ValueError(f"invalid task share {value!r}; expected TASK=SHARE") from exc
-    return shares
-
-
-def validate_empty_answer_guard_config(
-    max_share: float | None,
-    per_task: dict[str, float] | None,
-    classification_share: float | None,
-    mode: str | None,
-) -> dict[str, Any]:
-    """Resolve the guard caps; no cap = report only (``enabled`` false, ``mode`` None)."""
-
-    def share(name: str, value: Any) -> float | None:
-        if value is None:
-            return None
-        number = float(value)
-        if not 0.0 < number <= 1.0:
-            raise ValueError(f"{name} must be in (0, 1]")
-        return number
-
-    overall = share("--max-empty-answer-share", max_share)
-    tasks: dict[str, float] = {}
-    for task, value in (per_task or {}).items():
-        if task not in TASK_SPECS:
-            raise ValueError(f"--max-empty-answer-share-task names an unsupported task: {task!r}")
-        cap = share(f"--max-empty-answer-share-task {task}", value)
-        assert cap is not None
-        tasks[task] = cap
-    classification = share("--max-classification-empty-share", classification_share)
-    enabled = overall is not None or bool(tasks) or classification is not None
-    if mode is not None and mode not in GUARD_MODES:
-        raise ValueError("--empty-answer-guard-mode must be enforce or report")
-    if mode is not None and not enabled:
-        raise ValueError("--empty-answer-guard-mode requires at least one cap")
-    return {
-        "enabled": enabled,
-        "mode": (mode or "enforce") if enabled else None,
-        "max_empty_answer_share": overall,
-        "max_empty_answer_share_task": tasks,
-        "max_classification_empty_share": classification,
-    }
+def check_calibration_guard_aware_manifest(manifest: dict[str, Any], *, expected: bool, source: str) -> None:
+    """Fail closed when the materializer's quota manifest disagrees with the launch on guard-aware
+    calibration (the materializer runs only with ``--calibration-guard-aware on`` on its command)."""
+    actual = manifest.get("calibration_guard_aware") is True
+    if actual != expected:
+        raise ValueError(
+            "guard-aware calibration mismatch: the launch expects --calibration-guard-aware "
+            f"{'on' if expected else 'off'} but the current quota manifest {source} was materialized with it "
+            f"{'on' if actual else 'off'}; put the same --calibration-guard-aware value on the selector command "
+            "(render_iteration_mining_runner.py mirrors the caps to the materializer) or pass the assembler "
+            "--calibration-guard-aware explicitly"
+        )
 
 
 def _share(empty: int, rows: int) -> float:
@@ -561,10 +539,17 @@ def assemble(
     coverage_seed: int | None = None,
     classification_calibration_path: pathlib.Path | None = None,
     empty_answer_guard: dict[str, Any] | None = None,
+    calibration_guard_aware: bool | None = None,
+    anchor_overfill: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     anchor = anchor_config or validate_anchor_config(None, None, None, None)
     coverage = coverage_config or validate_coverage_config(None, None, None, None)
     guard = empty_answer_guard or validate_empty_answer_guard_config(None, None, None, None)
+    # Feature B3: anchors may not over-fill leftover slots when the guard is on (default
+    # forbid under the guard, allow otherwise so parent-equivalent runs reproduce byte-for-byte)
+    anchor_overfill_policy = anchor_overfill or ("forbid" if guard["enabled"] else "allow")
+    if anchor_overfill_policy not in ANCHOR_OVERFILL_POLICIES:
+        raise ValueError(f"anchor_overfill must be one of {list(ANCHOR_OVERFILL_POLICIES)}, not {anchor_overfill!r}")
     if anchor["enabled"] and (repetition_config or {}).get("enabled"):
         raise ValueError("correct-row anchors and the repetition blend cannot be combined")
     if coverage["enabled"] and (repetition_config or {}).get("enabled"):
@@ -943,28 +928,61 @@ def assemble(
             for index, item in enumerate(provenance)
             if item["source_kind"] == COVERAGE_SOURCE_KIND
         ]
-        anchor_slots = 0
-        coverage_slots = 0
-        share_base_rows = max(0, materialized_rows - min(share_excluded_rows, materialized_rows))
-        if anchor["enabled"]:
-            wanted_total = int(round(share_base_rows * anchor["share"]))
-            anchor_slots = max(0, min(len(anchors_idx), wanted_total - prior_anchor_rows))
-        if coverage["enabled"]:
-            wanted_coverage = int(round(materialized_rows * coverage["share"]))
-            coverage_slots = max(0, min(len(coverage_idx), wanted_coverage - prior_coverage_rows))
+        forbid_overfill = anchor_overfill_policy == "forbid"
+
+        def slots_for(rows: int) -> tuple[int, int, int]:
+            """(share base, anchor slots, coverage slots) reserved at an aligned size of ``rows``."""
+            base = max(0, rows - min(share_excluded_rows, rows))
+            anchor_wanted = coverage_wanted = 0
+            if anchor["enabled"]:
+                anchor_wanted = max(0, min(len(anchors_idx), int(round(base * anchor["share"])) - prior_anchor_rows))
+            if coverage["enabled"]:
+                coverage_wanted = max(
+                    0, min(len(coverage_idx), int(round(rows * coverage["share"])) - prior_coverage_rows)
+                )
+            return base, anchor_wanted, coverage_wanted
+
+        shrunk_for_share = 0
+        if forbid_overfill:
+            # Anchors may not fill leftover slots beyond their share (r4: 1,094 of 5,376 rows =
+            # 20.4% against 0.10). When the retained rows, the share-bound anchors, the coverage
+            # rows and this iteration's candidates cannot fill the aligned size, shrink it to the
+            # largest global-batch multiple they do fill instead of drawing extra anchors.
+            def fills(rows: int) -> bool:
+                return len(prior) + slots_for(rows)[1] + len(coverage_idx) + len(current) >= rows
+
+            step = row_multiple or 1
+            fitted = materialized_rows
+            while fitted - step >= len(prior) and not fills(fitted):
+                fitted -= step
+            if not fills(fitted):
+                fitted = len(prior)  # nothing aligned above the previous corpus is fillable
+            shrunk_for_share = materialized_rows - fitted
+            materialized_rows = fitted
+        share_base_rows, anchor_slots, coverage_slots = slots_for(materialized_rows)
         current_capacity = max(0, materialized_rows - len(prior))
         current_limit = min(len(current), current_capacity - anchor_slots - coverage_slots)
         if current and current_limit <= 0:
+            if forbid_overfill:
+                raise ValueError(
+                    "training materialization would add zero rows of this iteration under the empty-answer "
+                    "guard (anchors may not over-fill the global batch): "
+                    f"current_rows_after_guard={len(current)}, anchor_slots={anchor_slots}, "
+                    f"coverage_slots={coverage_slots}, row_multiple={row_multiple}, previous_rows={len(prior)}, "
+                    f"aligned_rows={materialized_rows}"
+                )
             raise ValueError(
                 "training materialization cannot retain all previous iteration records "
                 "and include current Mining data under the configured cap"
             )
         current_limit = max(0, current_limit)
         leftover = materialized_rows - len(prior) - anchor_slots - coverage_slots - current_limit
+        leftover_fill_anchors = 0
         if leftover > 0:
-            extra_anchors = min(leftover, len(anchors_idx) - anchor_slots)
-            anchor_slots += extra_anchors
-            leftover -= extra_anchors
+            if not forbid_overfill:
+                leftover_fill_anchors = min(leftover, len(anchors_idx) - anchor_slots)
+                anchor_slots += leftover_fill_anchors
+                leftover -= leftover_fill_anchors
             extra_coverage = min(leftover, len(coverage_idx) - coverage_slots)
             coverage_slots += extra_coverage
             leftover -= extra_coverage
@@ -983,7 +1001,8 @@ def assemble(
             # rather than deleting verified calibration rows. Fail closed only when
             # the cap or the anchor supply makes that impossible.
             keep_rows = len(prior) + len(current) + coverage_slots
-            fillable = anchor["enabled"] and row_multiple is not None
+            # the round-up fill draws anchors beyond their share: not available under forbid
+            fillable = anchor["enabled"] and row_multiple is not None and not forbid_overfill
             rounded = (
                 -(-(keep_rows + anchor_slots) // row_multiple) * row_multiple if fillable else keep_rows + anchor_slots
             )
@@ -991,6 +1010,7 @@ def assemble(
                 raise ValueError(
                     "training materialization cannot retain the calibration rows under the "
                     f"configured cap: calibration={len(protected)}, current_limit={current_limit}"
+                    + (" (anchor over-fill forbidden under the empty-answer guard)" if forbid_overfill else "")
                 )
             gap = rounded - keep_rows - anchor_slots
             if gap > 0:
@@ -1055,6 +1075,11 @@ def assemble(
                 "alignment_policy": (
                     "round_up_fill_with_anchors" if alignment_fill_anchors else "round_down_trim_mined_rows"
                 ),
+                # Feature B3: anchors drawn to fill leftover slots beyond their share (allow only)
+                # and the rows the aligned size shrank by instead (forbid only)
+                "anchor_overfill": anchor_overfill_policy,
+                "leftover_fill_anchors": leftover_fill_anchors,
+                "aligned_rows_shrunk_for_share": shrunk_for_share,
             }
         if coverage["enabled"]:
             coverage_report["cap_reservation"] = {
@@ -1075,6 +1100,9 @@ def assemble(
             merged, provenance, config=guard, materialize=materialize_capped
         )
         tasks = Counter(str(record.get("task_type", "unknown")) for record in merged)
+    # Feature B3 launch-recorded option group (None = the assembler was not told)
+    guard_report["calibration_guard_aware"] = calibration_guard_aware
+    guard_report["anchor_overfill"] = anchor_overfill_policy
     if repetition_manifest is None:
         merged, repetition_manifest = apply_repetition_blend(
             merged,
@@ -1111,6 +1139,13 @@ def assemble(
     if not previous_fingerprints_subset:
         raise ValueError("previous training fingerprints are not a subset of output")
     row_profiles = [row_profile(record, context=f"answer profile row[{index}]") for index, record in enumerate(merged)]
+    # cumulative anchor share of all materialized rows (marker-based, so it is reported every
+    # iteration, also when anchors are off this iteration but retained from earlier ones)
+    anchor_rows_total = sum(record.get(ANCHOR_MARK) is True for record in merged)
+    cumulative_anchor_share = anchor_rows_total / len(merged) if merged else 0.0
+    operator_attention: list[str] = []
+    if anchor["enabled"] and cumulative_anchor_share > anchor["share"] + ANCHOR_SHARE_TOLERANCE + 1e-9:
+        operator_attention.append("anchor_share_exceeded")
     return merged, {
         "schema_version": 2,
         "format": "jsonl",
@@ -1134,6 +1169,7 @@ def assemble(
         "output_fingerprints_sha256": _fingerprint_set_sha256(output_fingerprints),
         "mined_records": len(mined),
         "output_records": len(merged),
+        "growth_rows": len(merged) - len(previous),
         "uncapped_records": uncapped_records,
         "materialization_cap": max_rows,
         "row_multiple": row_multiple,
@@ -1176,7 +1212,13 @@ def assemble(
                 if anchor_report.get("enabled") and merged else 0.0
             ),
             "share_base_excluded_rows": share_excluded_rows if anchor_report.get("enabled") else 0,
+            # anchor rows (retained + new) over all rows, every iteration; operator_attention
+            # flags anchor_share_exceeded above requested_share + share_tolerance
+            "cumulative_share_rows": cumulative_anchor_share,
+            "cumulative_anchor_rows": anchor_rows_total,
+            "share_tolerance": ANCHOR_SHARE_TOLERANCE,
         },
+        "operator_attention": operator_attention,
         "materialized_calibration_records": sum(
             record.get(CALIBRATION_MARK) is True for record in merged
         ),
@@ -1368,6 +1410,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-classification-empty-share", type=float, help="Cap on empty BCQ+MCQ rows together and per classification task, e.g. 0.10.")
     parser.add_argument("--empty-answer-guard-mode", choices=GUARD_MODES, help="enforce (default when any cap is given: trim this iteration's empty rows, fail closed if still exceeded) or report.")
     parser.add_argument(
+        "--calibration-guard-aware",
+        choices=("on", "off"),
+        help=(
+            "Whether the materializer bounded its calibration empties by the guard headroom (default on when a cap "
+            "is given); recorded in the summary and cross-checked against the current quota manifest."
+        ),
+    )
+    parser.add_argument(
+        "--anchor-overfill",
+        choices=ANCHOR_OVERFILL_POLICIES,
+        help=(
+            "forbid (default when a cap is given): anchors may not fill leftover global-batch slots beyond their "
+            "share, the aligned size shrinks instead; allow (default otherwise): parent behaviour."
+        ),
+    )
+    parser.add_argument(
         "--repetition-manifest",
         type=pathlib.Path,
         help="Defaults to repetition_blend_manifest.json beside --output.",
@@ -1426,6 +1484,17 @@ def main(argv: list[str] | None = None) -> int:
             args.max_classification_empty_share,
             args.empty_answer_guard_mode,
         )
+        calibration_guard_aware = (
+            args.calibration_guard_aware == "on" if args.calibration_guard_aware else guard_config["enabled"]
+        )
+        if args.current_quota_manifest is not None and guard_config["enabled"]:
+            # fail closed before writing anything when the materializer ran with a different
+            # guard-aware setting than the launch expects
+            check_calibration_guard_aware_manifest(
+                json.loads(args.current_quota_manifest.read_text(encoding="utf-8")),
+                expected=calibration_guard_aware,
+                source=str(args.current_quota_manifest),
+            )
         rows, summary = assemble(
             args.previous_jsonl,
             args.mined_jsonl,
@@ -1444,6 +1513,8 @@ def main(argv: list[str] | None = None) -> int:
             coverage_seed=args.coverage_blend_seed,
             classification_calibration_path=args.classification_calibration_jsonl,
             empty_answer_guard=guard_config,
+            calibration_guard_aware=calibration_guard_aware,
+            anchor_overfill=args.anchor_overfill,
         )
         guard_report = summary["empty_answer_guard"]
         if guard_report["enabled"] and guard_report["mode"] == "enforce" and guard_report["status"] == "exceeded":
@@ -1463,6 +1534,14 @@ def main(argv: list[str] | None = None) -> int:
                 "assemble_training_json: empty-answer guard: caps exceeded only by never-trimmed rows "
                 f"({', '.join(guard_report['exceeded_after'])}); residual recorded in "
                 "empty_answer_guard.untrimmable_excess, continuing",
+                file=sys.stderr,
+            )
+        if summary["operator_attention"]:
+            print(
+                "assemble_training_json: operator_attention: "
+                f"{', '.join(summary['operator_attention'])} "
+                f"(anchor.cumulative_share_rows={summary['anchor']['cumulative_share_rows']:.4f}, "
+                f"requested_share={summary['anchor'].get('requested_share')})",
                 file=sys.stderr,
             )
         _write_jsonl(args.output, rows)

@@ -556,6 +556,17 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         getattr(args, "max_classification_empty_share", None),
         getattr(args, "empty_answer_guard_mode", None),
     )
+    # Feature B3 (one option group with the guard): guard-aware calibration selection and no
+    # anchor over-fill default on under the guard, off / allow otherwise (parent-equivalent runs
+    # without the guard reproduce byte-for-byte).
+    guard_aware_flag = getattr(args, "calibration_guard_aware", None)
+    if guard_aware_flag == "on" and not guard["enabled"]:
+        raise ValueError(
+            "--calibration-guard-aware on requires an empty-answer cap (--max-empty-answer-share, "
+            "--max-empty-answer-share-task or --max-classification-empty-share)"
+        )
+    calibration_guard_aware = (guard_aware_flag == "on") if guard_aware_flag else guard["enabled"]
+    anchor_overfill = getattr(args, "anchor_overfill", None) or ("forbid" if guard["enabled"] else "allow")
     empty_answer_guard = {
         **guard,
         "empty_definition": EMPTY_DEFINITION,
@@ -573,9 +584,23 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
             "max_classification_empty_share": 0.10,
             "anchor": "full training pool 22.2% empty overall (2026-09-14); see references/empty-answer-guard.md",
         },
+        "calibration_guard_aware": calibration_guard_aware,
+        "calibration_guard_aware_rule": (
+            "the materializer selects at most as many empty calibration rows as the caps leave headroom for "
+            "(cumulative corpus + this iteration's non-calibration rows, per cap) and fills the rest of the "
+            "fixed calibration slot with few-box rows from the same source; slot row count unchanged"
+        ),
+        "anchor_overfill": anchor_overfill,
+        "anchor_overfill_rule": (
+            "forbid: anchors may not fill leftover global-batch slots beyond their configured share; the aligned "
+            "size shrinks to the largest multiple the candidates fill and the iteration fails closed only when "
+            "the growth would be zero rows. allow: parent behaviour (extra anchors fill the leftover)"
+        ),
         "owner": (
             "assemble_training_json.py (assembler-only options: --max-empty-answer-share "
-            "--max-empty-answer-share-task --max-classification-empty-share --empty-answer-guard-mode)"
+            "--max-empty-answer-share-task --max-classification-empty-share --empty-answer-guard-mode "
+            "--anchor-overfill); --calibration-guard-aware on|off goes to the materializer and the assembler "
+            "(render_iteration_mining_runner.py mirrors the caps to the materializer when it is on)"
         ),
     }
     if profile_totals and hybrid_calibration:
@@ -1171,6 +1196,23 @@ def _parser() -> argparse.ArgumentParser:
         "--empty-answer-guard-mode",
         choices=("enforce", "report"),
         help="Guard mode when a cap is given (default enforce).",
+    )
+    parser.add_argument(
+        "--calibration-guard-aware",
+        choices=("on", "off"),
+        help=(
+            "Guard-aware detection calibration: bound the fixed calibration slot's empty rows by the empty-answer "
+            "caps' headroom and fill the rest with few-box rows (default on when a cap is given, off otherwise); "
+            "recorded under config.mining.empty_answer_guard.calibration_guard_aware."
+        ),
+    )
+    parser.add_argument(
+        "--anchor-overfill",
+        choices=("allow", "forbid"),
+        help=(
+            "Whether anchors may fill leftover global-batch slots beyond their share (default forbid when a cap "
+            "is given, allow otherwise); recorded under config.mining.empty_answer_guard.anchor_overfill."
+        ),
     )
     parser.add_argument(
         "--acquisition-task",
