@@ -7,6 +7,9 @@ empty-answer guard (run v12_p4b_emptyguard_r4 iteration 4, snapshot 6fb5dcbc).
 Feature B3.1: contract-driven calibration feed reserve and best-effort substitution with
 recorded headroom overflow (run v12_p4b_emptyguard_r5 iteration 1, snapshot 3c4e042b).
 
+Feature B4: detection calibration rows yield to the growth slot under the guard instead of
+failing the iteration (run v12_p4b_emptyguard_r6 iteration 2, snapshot bab8537b).
+
 Regenerate the golden fixture from a snapshot whose behaviour is the reference:
 ``python3 tests/test_cosmos3_guard_aware_calibration.py --write-golden``.
 """
@@ -256,9 +259,10 @@ class GuardAwareCalibrationTests(unittest.TestCase):
             root = pathlib.Path(temporary)
             previous = _write(root / "train3.jsonl", prior)
             previous_sha = atj.sha256_file(previous)
-            # HEAD behaviour (guard-aware off): 512 + 271 empty calibration rows on a corpus at
-            # 0.294 -> the guard must trim 421 rows, the aligned size drops by one global batch
-            # and the protected calibration rows no longer fit: the iteration fails closed.
+            # Guard-aware off: 512 + 271 empty calibration rows on a corpus at 0.294 -> the guard
+            # trims 421 rows, the aligned size drops by one global batch and the 1,103 protected
+            # calibration rows left no longer fit its 768 slots. Before Feature B4 the iteration
+            # failed closed (r4); now 347 more Defect Detection negatives yield to the growth slot.
             rows0, manifest0 = _materialize(prior, source, candidates)
             self.assertTrue(manifest0["verified"])
             self.assertFalse(manifest0["calibration_guard_aware"])
@@ -266,9 +270,17 @@ class GuardAwareCalibrationTests(unittest.TestCase):
             self.assertEqual(manifest0["calibration_fewbox_substituted"], {DD: 0, REF: 0, "total": 0})
             self.assertEqual(set(manifest0["calibration_empty_headroom"].values()), {None})
             mined0 = _write(root / "mined0.jsonl", rows0)
-            with self.assertRaises(ValueError):
-                atj.assemble(previous, mined0, previous_sha256=previous_sha, validation_paths=[], media_root=root,
-                             row_multiple=768, empty_answer_guard=guard)
+            out0, summary0 = atj.assemble(previous, mined0, previous_sha256=previous_sha, validation_paths=[], media_root=root,
+                                          row_multiple=768, empty_answer_guard=guard)
+            self.assertEqual((len(out0), summary0["growth_rows"]), (6144, 768))
+            report0 = summary0["empty_answer_guard"]
+            self.assertEqual((report0["status"], report0["passes"]), ("trimmed_to_caps", 2))
+            self.assertEqual(report0["rows_trimmed_by_source"], {"detection_calibration_negative": 421})
+            self.assertEqual(summary0["calibration_rows_dropped_for_cap"],
+                             {"by_task": {DD: 347}, "by_kind": {"empty": 347, "non_empty": 0}, "total": 347})
+            self.assertEqual(summary0["calibration_rows_kept"], {DD: 527, REF: 229})
+            self.assertEqual(summary0["operator_attention"], ["calibration_yielded"])
+            self.assertLessEqual(report0["after"]["overall_share"], 0.30)
             # Guard-aware: headroom overall floor(0.30 * 6912 - 1585) = 488, DD floor(0.45 * 3024 - 880) = 480,
             # Ref DD floor(0.50 * 2009 - 705) = 299; the shared 488 splits 312 / 176 by largest remainder.
             rows, manifest = _materialize(prior, source, candidates, empty_answer_guard=guard, calibration_guard_aware=True)
@@ -379,11 +391,18 @@ class FeedReserveAndOverflowTests(unittest.TestCase):
             self.assertLessEqual(report["after"]["per_task"][REF], 0.50)
             self.assertEqual(len(out), 6144 + 1536 - report["rows_trimmed_total"] - (1536 - report["rows_trimmed_total"]) % 8)
             # at the pinned 768-row global batch the trimmed iteration no longer fills a batch that
-            # holds its protected calibration rows: the assembler fails closed (the reserve feed
-            # below is the fix; the overflow only moves the abort from the materializer to here)
-            with self.assertRaisesRegex(ValueError, "calibration"):
-                atj.assemble(previous, mined, previous_sha256=previous_sha, validation_paths=[], media_root=root,
-                             row_multiple=768, empty_answer_guard=guard, calibration_guard_aware=True)
+            # holds its 1,189 protected calibration rows; before Feature B4 the assembler failed
+            # closed here, now 433 more Defect Detection negatives yield and the step grows by one
+            # batch (the reserve feed below still keeps the full 1,536-row growth)
+            out768, summary768 = atj.assemble(previous, mined, previous_sha256=previous_sha, validation_paths=[], media_root=root,
+                                              row_multiple=768, empty_answer_guard=guard, calibration_guard_aware=True)
+            self.assertEqual((len(out768), summary768["growth_rows"]), (6912, 768))
+            self.assertEqual(summary768["empty_answer_guard"]["rows_trimmed_total"], 335)
+            self.assertEqual(summary768["calibration_rows_dropped_for_cap"],
+                             {"by_task": {DD: 433}, "by_kind": {"empty": 433, "non_empty": 0}, "total": 433})
+            self.assertEqual(summary768["calibration_rows_kept"], {DD: 534, REF: 222})
+            self.assertTrue(summary768["calibration_yielded"])
+            self.assertLessEqual(summary768["empty_answer_guard"]["after"]["overall_share"], 0.30)
 
     def test_r5_reserve_feed_substitutes_without_overflow_and_assembles_at_the_global_batch(self) -> None:
         prior, source, candidates = _r5_fixture(reserve=True)
@@ -657,6 +676,214 @@ class NoAnchorOverfillTests(unittest.TestCase):
             self.assertEqual(rc, 2)
             self.assertRegex(stderr.getvalue(), pattern)
             self.assertFalse(out.exists())
+
+
+def _cal(record: dict) -> dict:
+    """A detection calibration row as the materializer emits it (both markers)."""
+    return {**record, CAL: True, KIND: dda.DETECTION_CALIBRATION_KIND}
+
+
+# ---------------------------------------------------------------------------------------------
+# r6 iteration-2 shape (synthetic, Feature B4): prior 2,304 rows (240 retained anchors, 450
+# empty), this iteration 1,387 current rows = 221 mined non-empty rows (Component Detection 6,
+# Defect Detection 120, Ref_based Defect Detection 95) + 1,166 detection calibration rows (500
+# empty: 350 boards / 150 no-change pairs; 666 non-empty: 450 few-box / 216 changed), 200 anchor
+# candidates. The uncapped anchor target adds 143 anchors, 3,834 candidates align down to 3,072,
+# the 0.10 share reserves 67 new anchors and the growth slot holds 701 current rows, fewer than
+# the 1,166 calibration rows. (The run had 230 retained anchors -> 77 slots / 691; 240 keeps the
+# same inputs on the round-up path when the guard is off, which needs <= 148 anchor candidates in
+# the corpus.)
+# ---------------------------------------------------------------------------------------------
+def _r6_fixture() -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    prior = [{**_mcq_row(f"p-anc-{i:04d}", CC, answer="A", dataset="pool"), anchor_rows.ANCHOR_MARK: True} for i in range(240)]
+    prior += [_det_row(f"p-dd-e-{i:04d}", dataset="prev") for i in range(300)]
+    prior += [_det_row(f"p-dd-p-{i:04d}", BOX, dataset="prev") for i in range(900)]
+    prior += [_ref_det_row(f"p-ref-e-{i:04d}", dataset="prev") for i in range(150)]
+    prior += [_ref_det_row(f"p-ref-p-{i:04d}", BOX, dataset="prev") for i in range(714)]
+    assert len(prior) == 2304 == 3 * 768
+    current = [_det_row(f"m-cd-{i:04d}", BOX, task="Component Detection", dataset="mine") for i in range(6)]
+    current += [_det_row(f"m-dd-{i:04d}", BOX, dataset="mine") for i in range(120)]
+    current += [_ref_det_row(f"m-ref-{i:04d}", BOX, dataset="mine") for i in range(95)]
+    current += [_cal(_det_row(f"c-dd-e-{i:04d}", dataset="pool")) for i in range(350)]
+    current += [_cal(_det_row(f"c-dd-f-{i:04d}", BOX, dataset="pool")) for i in range(450)]
+    current += [_cal(_ref_det_row(f"c-ref-e-{i:04d}", dataset="pool")) for i in range(150)]
+    current += [_cal(_ref_det_row(f"c-ref-c-{i:04d}", BOX, dataset="pool")) for i in range(216)]
+    assert len(current) == 1387 and sum(r.get(CAL) is True for r in current) == 1166
+    anchors = [_mcq_row(f"a-cc-{i:03d}", CC, answer="A", dataset=f"pool{i % 2}") for i in range(200)]
+    kpi = [_mcq_row(f"k-{i}", CC, answer="A") for i in range(50)]
+    return prior, current, anchors, kpi
+
+
+class CalibrationYieldTests(unittest.TestCase):
+    """Feature B4 (run v12_p4b_emptyguard_r6 iteration 2): under the guard the calibration quota is
+    an upper bound and the growth slot is the binding constraint; calibration rows yield instead of
+    the iteration failing, empties first, proportionally over the two detection tasks."""
+
+    GUARD = {DD: 0.45, REF: 0.50}
+
+    def _write_r6(self, root: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path, dict]:
+        prior, current, anchors, kpi = _r6_fixture()
+        previous = _write(root / "train1.jsonl", prior)
+        mined = _write(root / "mined2.jsonl", current)
+        cfg = anchor_rows.validate_anchor_config(
+            0.10, _write(root / "anchor_candidates.jsonl", anchors), _write(root / "kpi.jsonl", kpi), None
+        )
+        return previous, mined, cfg
+
+    def test_r6_iteration_2_shape_yields_calibration_to_the_growth_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            previous, mined, cfg = self._write_r6(root)
+            out, summary = atj.assemble(
+                previous, mined, previous_sha256=atj.sha256_file(previous), validation_paths=[], media_root=root,
+                anchor_config=cfg, row_multiple=768, empty_answer_guard=_guard(0.30, self.GUARD), calibration_guard_aware=True,
+            )
+            self.assertEqual(len(out), 3072)
+            self.assertEqual(summary["growth_rows"], 768)
+            ids = [r["id"] for r in out]
+            # every mined row is kept, the calibration rows fill the 480 slots that are left
+            self.assertEqual(sum(i.startswith("m-") for i in ids), 221)
+            self.assertEqual(summary["materialized_calibration_records"], 480)
+            # empties first (all 500 go), then the non-empty rows proportionally: 666 -> 480 splits
+            # 324 / 156 by largest remainder; a prefix of each task's rows in materializer order
+            self.assertEqual([i for i in ids if i.startswith("c-dd-e-") or i.startswith("c-ref-e-")], [])
+            self.assertEqual([i for i in ids if i.startswith("c-dd-f-")], [f"c-dd-f-{i:04d}" for i in range(324)])
+            self.assertEqual([i for i in ids if i.startswith("c-ref-c-")], [f"c-ref-c-{i:04d}" for i in range(156)])
+            self.assertEqual(summary["calibration_rows_dropped_for_cap"], {
+                "by_task": {DD: 476, REF: 210}, "by_kind": {"empty": 500, "non_empty": 186}, "total": 686,
+            })
+            self.assertEqual(summary["calibration_rows_kept"], {DD: 324, REF: 156})
+            self.assertTrue(summary["calibration_yielded"])
+            self.assertEqual(summary["operator_attention"], ["calibration_yielded"])
+            # anchors exactly at the share: round(0.10 * 3,072) = 307 total, 240 retained -> 67 new
+            self.assertEqual(summary["materialized_anchor_records"], 67)
+            reservation = summary["anchor"]["cap_reservation"]
+            self.assertEqual((reservation["new_anchor_slots"], reservation["alignment_fill_anchors"]), (67, 0))
+            self.assertEqual(reservation["alignment_policy"], "round_down_calibration_yields_to_growth_slot")
+            self.assertEqual(reservation["calibration_rows_protected"], 1166)
+            self.assertEqual(reservation["aligned_rows_shrunk_for_share"], 0)
+            self.assertAlmostEqual(summary["anchor"]["cumulative_share_rows"], 307 / 3072)
+            self.assertEqual(ids[221:701], [i for i in ids if i.startswith("c-")])  # mined -> calibration -> anchors -> prior
+            # the guard measures the final corpus (after the yield) and converges in one pass
+            report = summary["empty_answer_guard"]
+            self.assertEqual((report["status"], report["passes"], report["rows_trimmed_total"]), ("within_caps", 1, 0))
+            self.assertEqual(report["after"]["rows"], 3072)
+            self.assertEqual(report["after"]["empty_rows"], sum(atj.is_empty_ground_truth(r) for r in out))
+            self.assertAlmostEqual(report["after"]["overall_share"], 450 / 3072)
+            self.assertAlmostEqual(report["after"]["per_task"][DD], 300 / 1644)
+            self.assertAlmostEqual(report["after"]["per_task"][REF], 150 / 1115)
+            self.assertEqual(summary["answer_profile"]["empty_rows"], 450)
+            self.assertEqual(summary["answer_profile_new_rows"]["empty_rows"], 0)
+            self.assertEqual(len(set(ids)), 3072)
+
+    def test_same_shape_with_the_guard_off_still_takes_the_round_up_path(self) -> None:
+        # HEAD behaviour: the calibration rows are protected, the corpus rounds UP to 3,840 and the
+        # 82-row gap is filled with anchors (76 spare from the uncapped target + 6 freshly selected)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            previous, mined, cfg = self._write_r6(root)
+            out, summary = atj.assemble(
+                previous, mined, previous_sha256=atj.sha256_file(previous), validation_paths=[], media_root=root,
+                anchor_config=cfg, row_multiple=768,
+            )
+            self.assertEqual(len(out), 3840)
+            self.assertEqual(summary["growth_rows"], 1536)
+            self.assertEqual(summary["materialized_calibration_records"], 1166)
+            self.assertEqual(sum(r["id"].startswith("m-") for r in out), 221)
+            self.assertEqual(summary["materialized_anchor_records"], 149)
+            reservation = summary["anchor"]["cap_reservation"]
+            self.assertEqual(reservation["alignment_policy"], "round_up_fill_with_anchors")
+            self.assertEqual((reservation["alignment_fill_anchors"], reservation["anchor_overfill"]), (6, "allow"))
+            self.assertEqual(sum("alignment_fill" in item.get("purpose_tags", []) for item in summary["provenance"]), 6)
+            self.assertEqual(summary["calibration_rows_dropped_for_cap"],
+                             {"by_task": {}, "by_kind": {"empty": 0, "non_empty": 0}, "total": 0})
+            self.assertEqual(summary["calibration_rows_kept"], {DD: 800, REF: 366})
+            self.assertFalse(summary["calibration_yielded"])
+            self.assertEqual(summary["operator_attention"], [])
+            self.assertEqual(summary["empty_answer_guard"]["anchor_overfill"], "allow")
+
+    def test_zero_growth_still_fails_closed_after_the_yield(self) -> None:
+        # prior 16 rows (4 empty); this iteration 1 mined row + 7 calibration negatives, 3 anchor
+        # candidates at the 0.10 share. Pass 1 yields 2 negatives (7 > 6 slots) but 9 / 24 empties
+        # exceed the cap, the guard trims 3 negatives, and the 5 rows left plus 2 anchors no longer
+        # fill a global batch above the prior corpus: the existing zero-growth message, not a corpus.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            anchors = [_mcq_row(f"a-cc-{i:03d}", CC, answer="A", dataset=f"pool{i % 2}") for i in range(300)]
+            cfg = anchor_rows.validate_anchor_config(
+                0.10, _write(root / "anchor_candidates.jsonl", anchors),
+                _write(root / "kpi.jsonl", [_mcq_row(f"k-{i}", CC, answer="A") for i in range(50)]), None,
+            )
+            previous = _write(root / "train0.jsonl", [_det_row(f"o-e-{i}") for i in range(4)]
+                              + [_det_row(f"o-p-{i:02d}", BOX) for i in range(12)])
+            mined = _write(root / "mined.jsonl", [_det_row("n-p-0", BOX)] + [_cal(_det_row(f"n-cal-e-{i:02d}", dataset="pool")) for i in range(7)])
+            pattern = (r"would add zero rows.*current_rows_after_guard=5.*anchor_slots=2.*row_multiple=8.*"
+                       r"previous_rows=16.*aligned_rows=16")
+            with self.assertRaisesRegex(ValueError, pattern):
+                atj.assemble(previous, mined, previous_sha256=atj.sha256_file(previous), validation_paths=[], media_root=root,
+                             anchor_config=cfg, row_multiple=8, empty_answer_guard=_guard(0.30))
+            # without the guard's trimming the same shape yields and grows by one batch
+            _, summary = atj.assemble(previous, mined, previous_sha256=atj.sha256_file(previous), validation_paths=[], media_root=root,
+                                      anchor_config=cfg, row_multiple=8, empty_answer_guard=_guard(0.30, mode="report"))
+            self.assertEqual((summary["output_records"], summary["growth_rows"]), (24, 8))
+            self.assertEqual(summary["calibration_rows_dropped_for_cap"]["total"], 2)
+            self.assertTrue(summary["calibration_yielded"])
+
+    def test_mined_rows_alone_beyond_the_slot_keep_the_mined_first_rule_and_drop_all_calibration(self) -> None:
+        # prior 16; 30 mined non-empty rows (15 / 15 over the two detection tasks) + 40 calibration
+        # rows (10 empty + 10 non-empty per task) under a 48-row cap: 5 anchor slots, 27 current
+        # slots, the mined rows alone exceed them -> task-balanced mined trim, zero calibration rows.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            anchors = [_mcq_row(f"a-cc-{i:03d}", CC, answer="A", dataset=f"pool{i % 2}") for i in range(300)]
+            anchor_source = _write(root / "anchor_candidates.jsonl", anchors)
+            kpi = _write(root / "kpi.jsonl", [_mcq_row(f"k-{i}", CC, answer="A") for i in range(50)])
+            cfg = anchor_rows.validate_anchor_config(0.10, anchor_source, kpi, None)
+            previous = _write(root / "train0.jsonl", [_det_row(f"o-p-{i:02d}", BOX) for i in range(16)])
+            current = [_det_row(f"m-dd-{i:02d}", BOX) for i in range(15)] + [_ref_det_row(f"m-ref-{i:02d}", BOX) for i in range(15)]
+            current += [_cal(_det_row(f"c-dd-e-{i:02d}", dataset="pool")) for i in range(10)]
+            current += [_cal(_det_row(f"c-dd-f-{i:02d}", BOX, dataset="pool")) for i in range(10)]
+            current += [_cal(_ref_det_row(f"c-ref-e-{i:02d}", dataset="pool")) for i in range(10)]
+            current += [_cal(_ref_det_row(f"c-ref-c-{i:02d}", BOX, dataset="pool")) for i in range(10)]
+            mined = _write(root / "mined.jsonl", current)
+            common = dict(previous_sha256=atj.sha256_file(previous), validation_paths=[], media_root=root,
+                          anchor_config=cfg, max_rows=48, row_multiple=8)
+            out, summary = atj.assemble(previous, mined, empty_answer_guard=_guard(0.30), **common)
+            self.assertEqual((len(out), summary["growth_rows"]), (48, 32))
+            ids = [r["id"] for r in out]
+            balanced = [f"m-{task}-{i:02d}" for i in range(13) for task in ("dd", "ref")] + ["m-dd-13"]
+            self.assertEqual(ids[:27], balanced)  # the existing task-balanced mined trim, unchanged
+            self.assertEqual(sum(i.startswith("m-dd-") for i in ids), 14)
+            self.assertEqual(sum(i.startswith("m-ref-") for i in ids), 13)
+            self.assertEqual(summary["materialized_calibration_records"], 0)
+            self.assertEqual(summary["materialized_anchor_records"], 5)
+            self.assertEqual(summary["calibration_rows_dropped_for_cap"], {
+                "by_task": {DD: 20, REF: 20}, "by_kind": {"empty": 20, "non_empty": 20}, "total": 40,
+            })
+            self.assertEqual(summary["calibration_rows_kept"], {})
+            self.assertTrue(summary["calibration_yielded"])
+            self.assertEqual(summary["operator_attention"], ["calibration_yielded"])
+            self.assertEqual(summary["empty_answer_guard"]["status"], "within_caps")
+            # the same shape without the guard is the HEAD round-up path, which the 48-row cap forbids
+            with self.assertRaisesRegex(ValueError, "cannot retain the calibration rows under the configured cap"):
+                atj.assemble(previous, mined, **common)
+            # CLI: the informational attention line goes to stderr, the corpus is written
+            out_path = root / "train1.jsonl"
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = atj.main([
+                    "--mined-jsonl", str(mined), "--previous-jsonl", str(previous), "--previous-sha256", atj.sha256_file(previous),
+                    "--output", str(out_path), "--media-root", str(root), "--max-rows", "48", "--row-multiple", "8",
+                    "--max-empty-answer-share", "0.30", "--anchor-share", "0.10", "--anchor-source", str(anchor_source),
+                    "--anchor-task-shares", str(kpi),
+                ])
+            self.assertEqual(rc, 0, stderr.getvalue())
+            self.assertIn("operator_attention: calibration_yielded", stderr.getvalue())
+            self.assertIn("calibration_rows_dropped_for_cap=40", stderr.getvalue())
+            self.assertEqual(len(out_path.read_text().splitlines()), 48)
+            written = json.loads((root / "assemble_summary.json").read_text())
+            self.assertEqual(written["calibration_rows_dropped_for_cap"]["total"], 40)
+            self.assertTrue(written["calibration_yielded"])
 
 
 class WiringTests(unittest.TestCase):

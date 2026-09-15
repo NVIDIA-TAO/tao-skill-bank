@@ -188,8 +188,11 @@ single-image and 95 reference empties become few-box rows. The assembler then
 keeps every one of the 1,536 rows (`growth_rows = 1536`,
 `empty_answer_guard.status = within_caps`, overall share 2,073 / 6,912). With
 guard-aware selection off the same iteration must trim 421 calibration
-negatives, the aligned size falls by one global batch and the protected
-calibration rows no longer fit: the assembler fails closed as r4 did.
+negatives, the aligned size falls by one global batch and the 1,103 protected
+calibration rows left no longer fit its 768 slots: before Feature B4 the
+assembler failed closed as r4 did; now 347 more Defect Detection negatives
+yield to the growth slot and the step grows by 768 rows (see "Calibration
+yields to the growth slot").
 
 ### Worked example: run v12_p4b_emptyguard_r5, iteration 1 (snapshot 3c4e042b) — Feature B3.1
 
@@ -241,7 +244,7 @@ Detection 170; the shared 577 splits 426 / 151.
 
 | feed | empty selected | substituted | overflow | `status` | materializer | assembler, 768-row batch |
 |---|---|---|---|---|---|---|
-| today's (512 / 222) | 512 / 278 | 0 / 0 | 86 / 127 | `substituted_with_overflow` | verified, 1,536 rows | guard trims 335 calibration negatives (every trimmed row also shrinks the denominator; no back-fill candidates), then the 1,189 protected calibration rows left do not fit the one 768-row batch that remains: fails closed, `cannot retain the calibration rows under the configured cap` |
+| today's (512 / 222) | 512 / 278 | 0 / 0 | 86 / 127 | `substituted_with_overflow` | verified, 1,536 rows | guard trims 335 calibration negatives (every trimmed row also shrinks the denominator; no back-fill candidates), then the 1,189 protected calibration rows left do not fit the one 768-row batch that remains: before Feature B4 this failed closed (`cannot retain the calibration rows under the configured cap`); now 433 more Defect Detection negatives yield, `growth_rows = 768`, overall share 0.253, `calibration_yielded` |
 | reserve (1,024 / 500) | 426 / 151 | 86 / 127 | 0 / 0 | `substituted` | verified, 1,536 rows | `within_caps`, `growth_rows = 1536`, overall share 0.300 |
 
 The overflow turns the r5 materializer abort into a recorded, inspectable
@@ -249,6 +252,93 @@ outcome; only the reserve feed lets the iteration through. Put
 `feed_bucket_quotas` from the state on the runtime's `select_calibration` call
 (the r6 prompt says so) and read `guard_aware_calibration.status` in every
 quota manifest.
+
+### Calibration yields to the growth slot (Feature B4)
+
+#### Worked example: run v12_p4b_emptyguard_r6, iteration 2 (snapshot bab8537b)
+
+Iteration 2 had the three single-image tasks exhausted (new candidates:
+Component Detection 6, Defect Detection 1,536, Ref_based Defect Detection 807,
+others 0). The materializer emitted 1,536 verified rows: 1,524 detection
+calibration rows (B3.1 substitution 177 / 96, overflow 0) and about 221 mined
+rows. In the assembler, after the duplicate rule (1,387 current rows, 1,166
+protected calibration rows) and the guard's empty trimming, prior 2,304 +
+current + anchors fell below 3,840, so the 768-row alignment rounded the corpus
+down to 3,072: current slot 768, `anchor_slots` 77 (0.10 share), `current_limit`
+691. `materialize_capped` then hit `len(protected) > current_limit` (1,077 >
+691). Its only remedy was the round-up anchor fill, which `--anchor-overfill
+forbid` disables, so it raised `training materialization cannot retain the
+calibration rows under the configured cap` and the run aborted; r4 had passed
+this point only through the anchor over-fill (the 20.4% anchors confound). The
+contradiction: a fixed detection calibration quota (1,024 single-image + 500
+reference pairs) plus the empty-share caps plus exhausted single-image mining
+plus a 10% anchor ceiling do not fit one growth step. Something must yield, and
+the rule (DECISIONS 2026-09-15) is that the calibration quota is a fraction of
+the growth slot, not the other way round.
+
+#### Rule (guard on, i.e. `--anchor-overfill forbid`; guard-off behaviour is byte-identical)
+
+When the protected calibration rows alone exceed the current slot, the pass
+does not raise. Inside the same capped pass that reserves the anchor and
+coverage slots:
+
+1. **Mined rows first.** Every trimmable mined current row that fits is kept;
+   when the mined rows alone exceed the slot, the existing task-balanced mined
+   trim applies and every detection calibration row is dropped.
+2. **Calibration fills the rest**, dropping rows in this order: empty-ground-
+   truth calibration rows first (detection negatives / no-change pairs), then
+   non-empty rows (few-box boards / changed pairs). Inside each bucket the
+   kept rows are split over Defect Detection and Ref_based Defect Detection
+   proportionally to their counts (largest remainder, the materializer's
+   `allocate_empty_headroom`), so neither task loses everything while the
+   other keeps all; each task keeps a prefix of its rows in materializer order
+   (the tail goes, like the guard's trim plan). Classification calibration
+   rows (4c-A) stay protected as before.
+3. **Anchors stay exactly at the share**: no round-up, no over-fill; the
+   aligned size is unchanged by the yield.
+4. **Zero growth still fails closed.** When the aligned size minus the previous
+   rows is below one `--row-multiple` (the iteration would add fewer than one
+   global batch), the existing zero-growth message with its numbers is raised
+   (`current_rows_after_guard`, `anchor_slots`, `coverage_slots`,
+   `row_multiple`, `previous_rows`, `aligned_rows`).
+
+The guard loop is unchanged: it measures the materialized (post-yield) corpus,
+so `empty_answer_guard.after` describes the final rows, and every trim pass
+strictly shrinks the candidate set, so the loop converges. Because the yield
+drops empties first, the rows it removes are the rows the guard would have
+trimmed; when the guard still trims after a yield (the slot could only be
+filled with more empties than the caps allow), the loop ends in the
+zero-growth failure or in `exceeded`, which is the correct fail-closed reading
+of a step that cannot be filled within the caps.
+
+Synthetic reproduction (`CalibrationYieldTests` in
+`tests/test_cosmos3_guard_aware_calibration.py`; the fixture keeps 240 retained
+anchors so the same inputs exercise both paths): prior 2,304 rows (450 empty),
+1,387 current rows = 221 mined non-empty rows + 1,166 detection calibration
+rows (500 empty: 350 boards / 150 no-change; 666 non-empty: 450 few-box / 216
+changed), 200 anchor candidates, caps 0.30 / 0.45 / 0.50.
+
+| `--anchor-overfill` | aligned | anchors new | current slot | mined kept | calibration kept | dropped (`by_kind`, `by_task`) | `growth_rows` |
+|---|---|---|---|---|---|---|---|
+| `forbid` (guard on) | 3,072 | 67 (share) | 701 | 221 | 480 = 324 few-box + 156 changed | 686 = empty 500 + non-empty 186; DD 476 / Ref DD 210 | 768 |
+| `allow` (guard off, HEAD) | 3,840 (round-up) | 149 (67 + 76 spare + 6 `alignment_fill`) | 1,387 | 221 | 1,166 | 0 | 1,536 |
+
+With the guard the corpus stays within the caps in one pass (overall share 450
+/ 3,072); `operator_attention` lists `calibration_yielded`.
+
+#### Fields added (assembler summary)
+
+`calibration_rows_dropped_for_cap = {"by_task": {task: n}, "by_kind":
+{"empty": n, "non_empty": n}, "total": n}` (this iteration's detection
+calibration rows that yielded; zeros when nothing yielded),
+`calibration_rows_kept = {task: n}` (calibration rows of this iteration in the
+corpus, per task), `calibration_yielded` (bool) and the `operator_attention`
+entry `calibration_yielded` when `total > 0` (informational; printed to stderr
+like `anchor_share_exceeded`, with the dropped counts).
+`anchor.cap_reservation.alignment_policy` reads
+`round_down_calibration_yields_to_growth_slot` for a yielding pass;
+`calibration_rows_protected` keeps counting the calibration rows offered.
+`growth_rows` and `aligned_rows_shrunk` keep their meaning.
 
 ### Launch record and pass-through
 

@@ -219,6 +219,30 @@ requires the fixed-slot `cohort_bucket_quotas` contract and may not undercut
 it. Worked example and outcome table: `empty-answer-guard.md`, "Worked
 example: run v12_p4b_emptyguard_r5".
 
+## Calibration quota under the guard is an upper bound (Feature B4)
+
+**Rule: under the empty-answer guard the calibration quota is an upper bound;
+the growth slot is the binding constraint.** The materializer still verifies
+the fixed slot (1,024 single-image + 500 reference pairs for the pinned recipe)
+and the assembler still protects those rows from the ordinary cap trim, but
+when the detection calibration rows alone exceed the current slot of one
+growth step (previous rows + one `--row-multiple`, minus the share-bound
+anchors and coverage rows) the assembler keeps every mined row that fits and
+lets calibration rows yield: empty-ground-truth rows first (negatives,
+no-change pairs), then non-empty rows (few-box, changed pairs), split
+proportionally over Defect Detection and Ref_based Defect Detection with each
+task keeping a prefix in materializer order. Anchors do not round the corpus up
+(that fill is guard-off only). Run v12_p4b_emptyguard_r6 iteration 2 (1,077
+calibration rows against 691 slots) is the worked example, and
+`calibration_rows_dropped_for_cap` / `calibration_rows_kept` /
+`calibration_yielded` in the assembly summary record what yielded:
+`empty-answer-guard.md`, "Calibration yields to the growth slot". Read
+`calibration_yielded` in every guard-on iteration's summary; a yield means the
+calibration slot is larger than the growth step can carry once the single-image
+mining is exhausted, so a smaller `--single-image-calibration-max-*` /
+`--reference-calibration-total` or a larger `--row-multiple` is the lever, not
+more anchors.
+
 ## Classification calibration (Phase 4 step 4c-A) — default off
 
 ### Why

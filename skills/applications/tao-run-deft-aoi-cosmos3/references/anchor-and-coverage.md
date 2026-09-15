@@ -78,7 +78,11 @@ option to the assembler, which is the only writer of the cumulative Train.
   `alignment_fill`, `alignment_policy = round_up_fill_with_anchors`); the
   realized anchor share then exceeds the requested share for that iteration
   and the next iteration's top-up accounts for it. Fail closed only when the
-  rounded-up size exceeds `--max-rows` or the anchor supply runs out.
+  rounded-up size exceeds `--max-rows` or the anchor supply runs out. This
+  round-up fill is guard-off (`--anchor-overfill allow`) only: with the
+  empty-answer guard on, the calibration rows yield to the growth slot instead
+  (Feature B4, `empty-answer-guard.md`, "Calibration yields to the growth
+  slot").
 - `--anchor-share-exclude-rows <cumulative rows>` (default 0) takes a
   launch-recorded acquisition slice out of the share base, both for the
   uncapped target and for the cap reservation; `realized_share_rows` is then
@@ -112,10 +116,12 @@ guard are byte-identical to before):
   fill the aligned size `M`, `M` shrinks to the largest `--row-multiple`
   multiple they do fill (`cap_reservation.aligned_rows_shrunk_for_share`; the
   guard's `aligned_rows_shrunk` keeps counting the first-pass-to-final
-  difference). The round-up alignment fill is not available either (a
-  calibration-dominated iteration that does not fit fails closed with the
-  existing message plus "anchor over-fill forbidden"). The iteration fails
-  closed **only** when the growth would be zero rows, i.e. nothing of this
+  difference). The round-up alignment fill is not available either: a
+  calibration-dominated iteration that does not fit lets its detection
+  calibration rows yield to the growth slot instead (Feature B4,
+  `empty-answer-guard.md`, "Calibration yields to the growth slot";
+  `calibration_yielded` in the summary). The iteration fails closed **only**
+  when the growth would be below one global batch, i.e. nothing of this
   iteration fits above the previous corpus:
   `training materialization would add zero rows of this iteration under the
   empty-answer guard (anchors may not over-fill the global batch):

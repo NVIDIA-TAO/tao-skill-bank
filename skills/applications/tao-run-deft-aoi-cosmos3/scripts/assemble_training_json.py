@@ -48,6 +48,7 @@ from defect_detection_ablation import (
     CALIBRATION_KIND_MARK,
     CALIBRATION_MARK,
     CLASSIFICATION_CALIBRATION_KIND,
+    allocate_empty_headroom,
     bind_cumulative_manifest,
 )
 from nvpaw_annotations import TASK_SPECS
@@ -131,6 +132,59 @@ ANCHOR_OVERFILL_POLICIES = ("allow", "forbid")
 # operator_attention: anchor_share_exceeded when the cumulative anchor share is above
 # the configured share by more than this
 ANCHOR_SHARE_TOLERANCE = 0.02
+# Feature B4 (r6 iteration 2, 2026-09-16): under ``forbid`` the detection calibration rows
+# yield to the growth slot instead of failing the iteration when they alone exceed it; the
+# calibration quota is an upper bound, the growth slot is the binding constraint. Drop order
+# inside the yield (empties first, then non-empty rows; proportional over the tasks).
+CALIBRATION_YIELD_ORDER = ("empty", "non_empty")
+CALIBRATION_YIELD_POLICY = "round_down_calibration_yields_to_growth_slot"
+
+
+def _no_calibration_yield() -> dict[str, Any]:
+    return {"by_task": {}, "by_kind": {kind: 0 for kind in CALIBRATION_YIELD_ORDER}, "total": 0}
+
+
+def _calibration_yield_plan(
+    yielding: list[int], merged: list[dict[str, Any]], slots: int
+) -> tuple[list[int], dict[str, Any]]:
+    """Which detection calibration rows keep their slots when the growth slot is binding (Feature B4).
+
+    Non-empty rows (few-box boards, changed pairs) keep their slots first, empties (negatives,
+    no-change pairs) take what is left, so the drop order is empties first. Inside each bucket
+    the kept rows are split over the tasks proportionally to their counts (largest remainder,
+    ``allocate_empty_headroom``, so neither task loses everything while the other keeps all)
+    and each task keeps a prefix of its rows in materializer order (the tail goes, like the
+    guard's trim plan). Returns the kept indices in their original order and the drop record
+    (``by_task``, ``by_kind``, ``total``).
+    """
+
+    buckets: dict[str, dict[str, list[int]]] = {kind: {} for kind in CALIBRATION_YIELD_ORDER}
+    for index in yielding:
+        record = merged[index]
+        kind = "empty" if is_empty_ground_truth(record, context=f"calibration yield row[{index}]") else "non_empty"
+        buckets[kind].setdefault(str(record.get("task_type") or "unknown"), []).append(index)
+    keep = max(0, min(slots, len(yielding)))
+    kept: set[int] = set()
+    dropped_by_task: Counter[str] = Counter()
+    dropped_by_kind = {kind: 0 for kind in CALIBRATION_YIELD_ORDER}
+    for kind in reversed(CALIBRATION_YIELD_ORDER):  # non-empty rows keep their slots first
+        rows = buckets[kind]
+        allocation = allocate_empty_headroom({task: len(indices) for task, indices in rows.items()}, keep)
+        for task, indices in rows.items():
+            take = allocation.get(task, 0)
+            kept.update(indices[:take])
+            if len(indices) > take:
+                dropped_by_task[task] += len(indices) - take
+                dropped_by_kind[kind] += len(indices) - take
+        keep -= sum(allocation.values())
+    record = {
+        "by_task": dict(sorted(dropped_by_task.items())),
+        "by_kind": dropped_by_kind,
+        "total": sum(dropped_by_kind.values()),
+    }
+    return [index for index in yielding if index in kept], record
+
+
 # exceeded_untrimmable = a cap is still exceeded but every remaining empty row that
 # counts toward it is never-trimmed (previous rows, anchors, coverage, classification
 # calibration); the residual is recorded and the iteration continues. exceeded = a
@@ -879,11 +933,17 @@ def assemble(
     # it: the standard selection then back-fills from the remaining (non-empty)
     # mined candidates and the aligned size stays unchanged whenever enough
     # candidates remain (it shrinks only when they run out).
+    # Feature B4: the detection calibration rows the last pass dropped for the growth slot
+    # (guard on only; reset every pass so the record describes the final corpus).
+    calibration_yield: dict[str, Any] = _no_calibration_yield()
+
     def materialize_capped(
         cand_merged: list[dict[str, Any]], cand_provenance: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         merged = list(cand_merged)
         provenance = list(cand_provenance)
+        calibration_yield.clear()
+        calibration_yield.update(_no_calibration_yield())
         if max_rows is None and row_multiple is None:
             return merged, provenance
         candidate_records = len(merged)
@@ -962,7 +1022,12 @@ def assemble(
         share_base_rows, anchor_slots, coverage_slots = slots_for(materialized_rows)
         current_capacity = max(0, materialized_rows - len(prior))
         current_limit = min(len(current), current_capacity - anchor_slots - coverage_slots)
-        if current and current_limit <= 0:
+        # Feature B4: under the guard this iteration must add at least one global batch (the
+        # calibration yield below never changes the aligned size, so this is decided here)
+        growth_short = (
+            forbid_overfill and row_multiple is not None and materialized_rows - len(prior) < row_multiple
+        )
+        if current and (current_limit <= 0 or growth_short):
             if forbid_overfill:
                 raise ValueError(
                     "training materialization would add zero rows of this iteration under the empty-answer "
@@ -993,7 +1058,39 @@ def assemble(
         protected = [index for index in current if merged[index].get(CALIBRATION_MARK) is True]
         trimmable = [index for index in current if merged[index].get(CALIBRATION_MARK) is not True]
         alignment_fill_anchors = 0
-        if len(protected) > current_limit:
+        kept_protected = protected
+        mined_slots = current_limit - len(protected)
+        if len(protected) > current_limit and forbid_overfill:
+            # Feature B4 (r6 iteration 2: 1,077 calibration rows against 691 slots): under the
+            # guard the round-up fill is not available and the iteration must not fail either.
+            # The calibration quota is an upper bound; the growth slot is the binding
+            # constraint. Every trimmable mined row that fits is kept first (the existing
+            # task-balanced trim when the mined rows alone exceed the slot), the detection
+            # calibration rows fill the remaining slots, dropping empties first, then non-empty
+            # rows, proportionally over the tasks. Classification calibration rows (4c-A) stay
+            # protected from the cap trim as before. Anchors stay exactly at their share.
+            pinned = [
+                index for index in protected
+                if merged[index].get(CALIBRATION_KIND_MARK) == CLASSIFICATION_CALIBRATION_KIND
+            ]
+            if len(pinned) > current_limit:
+                raise ValueError(
+                    "training materialization cannot retain the calibration rows under the "
+                    f"configured cap: calibration={len(protected)}, current_limit={current_limit}"
+                    " (anchor over-fill forbidden under the empty-answer guard; the classification "
+                    f"calibration rows alone exceed the slot: {len(pinned)})"
+                )
+            pinned_set = set(pinned)
+            yielding = [index for index in protected if index not in pinned_set]
+            mined_slots = min(len(trimmable), current_limit - len(pinned))
+            kept_yielding, yield_record = _calibration_yield_plan(
+                yielding, merged, current_limit - len(pinned) - mined_slots
+            )
+            kept_set = set(kept_yielding) | pinned_set
+            kept_protected = [index for index in protected if index in kept_set]
+            calibration_yield.clear()
+            calibration_yield.update(yield_record)
+        elif len(protected) > current_limit:
             # The global-batch rounding cannot be absorbed by trimmable rows (a
             # calibration-dominated iteration: 3,475 calibration rows + 5 mined rows,
             # 2026-09-14). Round the corpus UP to the next multiple instead and fill
@@ -1001,8 +1098,8 @@ def assemble(
             # rather than deleting verified calibration rows. Fail closed only when
             # the cap or the anchor supply makes that impossible.
             keep_rows = len(prior) + len(current) + coverage_slots
-            # the round-up fill draws anchors beyond their share: not available under forbid
-            fillable = anchor["enabled"] and row_multiple is not None and not forbid_overfill
+            # the round-up fill draws anchors beyond their share: guard-off (allow) only
+            fillable = anchor["enabled"] and row_multiple is not None
             rounded = (
                 -(-(keep_rows + anchor_slots) // row_multiple) * row_multiple if fillable else keep_rows + anchor_slots
             )
@@ -1010,7 +1107,6 @@ def assemble(
                 raise ValueError(
                     "training materialization cannot retain the calibration rows under the "
                     f"configured cap: calibration={len(protected)}, current_limit={current_limit}"
-                    + (" (anchor over-fill forbidden under the empty-answer guard)" if forbid_overfill else "")
                 )
             gap = rounded - keep_rows - anchor_slots
             if gap > 0:
@@ -1051,8 +1147,9 @@ def assemble(
                 alignment_fill_anchors = gap
             materialized_rows = rounded
             current_limit = len(current)
-        selected = _task_balanced_indices(trimmable, merged, current_limit - len(protected))
-        selected.extend(protected)
+            mined_slots = current_limit - len(protected)
+        selected = _task_balanced_indices(trimmable, merged, mined_slots)
+        selected.extend(kept_protected)
         selected.extend(coverage_idx[:coverage_slots])
         selected.extend(anchors_idx[:anchor_slots])
         selected.extend(prior)
@@ -1073,7 +1170,9 @@ def assemble(
                 # calibration rows alone exceeded the aligned-down capacity
                 "alignment_fill_anchors": alignment_fill_anchors,
                 "alignment_policy": (
-                    "round_up_fill_with_anchors" if alignment_fill_anchors else "round_down_trim_mined_rows"
+                    "round_up_fill_with_anchors" if alignment_fill_anchors
+                    else CALIBRATION_YIELD_POLICY if calibration_yield["total"]
+                    else "round_down_trim_mined_rows"
                 ),
                 # Feature B3: anchors drawn to fill leftover slots beyond their share (allow only)
                 # and the rows the aligned size shrank by instead (forbid only)
@@ -1146,6 +1245,15 @@ def assemble(
     operator_attention: list[str] = []
     if anchor["enabled"] and cumulative_anchor_share > anchor["share"] + ANCHOR_SHARE_TOLERANCE + 1e-9:
         operator_attention.append("anchor_share_exceeded")
+    # Feature B4: calibration rows of this iteration that yielded to the growth slot (informational)
+    calibration_yielded = calibration_yield["total"] > 0
+    if calibration_yielded:
+        operator_attention.append("calibration_yielded")
+    calibration_rows_kept: Counter[str] = Counter(
+        str(record.get("task_type") or "unknown")
+        for record, item in zip(merged, provenance)
+        if item["source_kind"] in _CURRENT_KINDS and record.get(CALIBRATION_MARK) is True
+    )
     return merged, {
         "schema_version": 2,
         "format": "jsonl",
@@ -1222,6 +1330,11 @@ def assemble(
         "materialized_calibration_records": sum(
             record.get(CALIBRATION_MARK) is True for record in merged
         ),
+        # Feature B4: under the guard the calibration quota is an upper bound and the growth
+        # slot is the binding constraint; these record what yielded this iteration
+        "calibration_rows_dropped_for_cap": calibration_yield,
+        "calibration_rows_kept": dict(sorted(calibration_rows_kept.items())),
+        "calibration_yielded": calibration_yielded,
         "materialized_classification_calibration_records": sum(
             record.get(CALIBRATION_KIND_MARK) == CLASSIFICATION_CALIBRATION_KIND for record in merged
         ),
@@ -1537,11 +1650,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         if summary["operator_attention"]:
+            details = [
+                f"anchor.cumulative_share_rows={summary['anchor']['cumulative_share_rows']:.4f}",
+                f"requested_share={summary['anchor'].get('requested_share')}",
+            ]
+            if summary["calibration_yielded"]:
+                dropped = summary["calibration_rows_dropped_for_cap"]
+                details.append(
+                    f"calibration_rows_dropped_for_cap={dropped['total']} "
+                    f"(empty={dropped['by_kind']['empty']}, non_empty={dropped['by_kind']['non_empty']}, "
+                    f"by_task={dropped['by_task']})"
+                )
             print(
                 "assemble_training_json: operator_attention: "
-                f"{', '.join(summary['operator_attention'])} "
-                f"(anchor.cumulative_share_rows={summary['anchor']['cumulative_share_rows']:.4f}, "
-                f"requested_share={summary['anchor'].get('requested_share')})",
+                f"{', '.join(summary['operator_attention'])} ({', '.join(details)})",
                 file=sys.stderr,
             )
         _write_jsonl(args.output, rows)
