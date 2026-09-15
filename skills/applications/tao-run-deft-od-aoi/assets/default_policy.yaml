@@ -28,6 +28,9 @@ routing:
   near_miss_real_cap: 20
   clean_factor: 2
   clean_cumulative_cap_per_real: 1.0
+admission:
+  minimum_box_area_px: 64
+  maximum_box_aspect: 25.0
 training:
   num_gpus: 4
   batch_size: 8

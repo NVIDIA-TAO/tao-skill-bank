@@ -67,3 +67,6 @@ AnomalyGenNext training inside an iteration.
 to a filtering YAML for `tao-prepare-anomalygennext-inputs`. The resulting
 generation plan is passed to `tao-generate-od-defects`. Only its validated
 binary COCO enters admission, under the cumulative synthetic fraction cap.
+Admission removes undersized, extreme-aspect, and full-frame boxes, then
+allocates available capacity proportionally across source `dataset_id` values
+with deterministic selection.
