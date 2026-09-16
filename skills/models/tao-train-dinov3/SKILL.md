@@ -172,6 +172,10 @@ For `convert`, `export`, and `inference`, copy the training-time backbone config
 
 ## Distributed training
 
+For iterative GRIT or multi-task weakness mining from an unlabeled pool followed
+by DINOv3 SSL retraining, use the related `tao-run-dinov3-ssl-deft` application.
+Ordinary pretraining and fine-tuning remain in this model skill.
+
 Use `train.num_gpus`, `train.gpu_ids`, `train.num_nodes`, and `train.distributed_strategy`. Start with `auto`; use `ddp` or `fsdp` when appropriate for the selected backbone, resolution, and available memory.
 
 ## Common issues
