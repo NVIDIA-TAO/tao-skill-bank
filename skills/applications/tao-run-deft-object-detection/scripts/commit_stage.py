@@ -980,6 +980,14 @@ def main() -> int:
             # wrong on its own.
             if stage == TERMINAL_STAGE and args.status == "ok" and not run_failed:
                 state["status"] = "complete" if report.get("complete") else "stopped"
+                # A run that finished every iteration and a run that stopped early on a
+                # documented condition both record status=complete, and the reason is the
+                # only thing that separates them. The audit computes it and prints it, but
+                # printing is not an artifact: without this the state file says a truncated
+                # run completed and offers nothing to say why.
+                reason = report.get("completion_reason")
+                if reason:
+                    state["completion_reason"] = reason
                 write_state_atomic(results_dir, state)
                 _fsync_path(state_path(results_dir))
 
