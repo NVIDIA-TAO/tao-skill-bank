@@ -37,7 +37,8 @@ defaults are:
 - RT-DETR train shape of four GPUs, batch size eight, base LR `1e-4`, and
   backbone LR `1e-5`;
 - 36 epochs for iterations 1–2;
-- three ten-epoch probes from iteration 3 onward;
+- three ten-epoch probes from `probes_start_iteration` onward, defaulting to
+  iteration 3;
 - adaptive main budget of 24–48 epochs;
 - one 12-epoch late-best extension;
 - synthesis disabled;

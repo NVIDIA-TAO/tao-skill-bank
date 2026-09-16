@@ -41,6 +41,7 @@ training:
   adaptive_min_epochs: 24
   adaptive_max_epochs: 48
   probes_enabled: true
+  probes_start_iteration: 3
   probe_epochs: 10
   workers: 4
   checkpoint_interval: 1

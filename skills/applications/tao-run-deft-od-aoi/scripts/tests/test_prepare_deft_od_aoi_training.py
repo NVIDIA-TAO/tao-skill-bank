@@ -45,6 +45,21 @@ def test_early_iteration_emits_direct_frozen_base_spec(tmp_path: Path) -> None:
     assert spec["dataset"]["num_classes"] == 2
 
 
+def test_configured_first_iteration_emits_all_probe_specs(tmp_path: Path) -> None:
+    policy, coco, images = _fixture(tmp_path, 1, 20)
+    value = yaml.safe_load(policy.read_text())
+    value["training"]["probes_start_iteration"] = 1
+    policy.write_text(yaml.safe_dump(value))
+
+    report = MODULE.prepare(
+        policy, 1, coco, images, tmp_path / "runs", tmp_path / "specs", None, None
+    )
+
+    assert report["probes_enabled"] is True
+    assert len(report["probes"]) == 3
+    assert all((tmp_path / f"specs/probe{index}.yaml").is_file() for index in range(3))
+
+
 def test_later_iteration_emits_three_deterministic_probe_specs(tmp_path: Path) -> None:
     policy, coco, images = _fixture(tmp_path, 3, 10)
     history = tmp_path / "history.json"
