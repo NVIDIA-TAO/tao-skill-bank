@@ -30,7 +30,7 @@ For `trigger="loop-end"`, add `--require-terminal`. It passes only once `loop_st
 
 ### Step 1 — Load disk state
 
-1. `${results_dir}/deft_state.json` — config, `max_iterations`, per-iteration artifact paths.
+1. `${results_dir}/deft_state.json` — config, `max_iterations`, per-iteration artifact paths, and `completion_reason` when the run has ended.
 2. Every line of `${results_dir}/loop_log.jsonl` — stage events, statuses, and durations. Ignore `context_tokens`: it is always 0 and is not a measurement.
 3. Every `${results_dir}/iter*_summary.md` that exists.
 4. Each phase's `kpi/kpi_summary.json` for the mAP and the resolved per-class APs, falling
@@ -48,11 +48,30 @@ Take **Status** from the audit's `--json` report, never from prose and never fro
 | Audit | Status |
 |---|---|
 | `run_failed: true` | `FAILED` |
-| `complete: true` | `COMPLETE` |
+| `complete: true` | `COMPLETE` — append `completion_reason` in parentheses when it names an early stop |
 | `loop_stop_committed: true`, `complete: false` | `STOPPED (INCOMPLETE)` — say how many of `max_iterations` ran |
 | otherwise | `IN PROGRESS` |
 
-`deft_state.json`'s `status` field mirrors that verdict (`running`, `stopped`, `complete`, `failed`) but the audit is the authority: a run stopped early records `stopped`, never `complete`.
+`deft_state.json`'s `status` field mirrors that verdict (`running`, `stopped`, `complete`,
+`failed`) and the audit is the authority for it.
+
+**A run can be `COMPLETE` without having run every iteration.** Two documented early stops
+— an exhausted source pool, and an iteration that found no weak images — end the loop
+having done everything there was to do, so the audit calls them complete rather than
+abandoned. They are not the same run as one that finished all `max_iterations`, and
+`completion_reason` is the only thing that tells them apart.
+
+So whenever `completion_reason` names an early stop, print it beside the status rather
+than leaving `COMPLETE` to be read as "ran to the end":
+
+```
+**Status:** COMPLETE (documented early stop: the source pool was exhausted at iter3)
+**Iterations completed:** 2 / 4
+```
+
+`2 / 4` does not carry that on its own — the counts differ by design, since an iteration
+that stopped part-way is counted as started but not completed. Read the reason from
+`deft_state.json`'s `completion_reason`, falling back to `audit_deft_run.py --json`.
 
 ```markdown
 # DEFT OD Loop Report
