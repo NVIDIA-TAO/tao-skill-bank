@@ -133,9 +133,10 @@ def _run_group(group: dict[str, Any], output: Path, args: argparse.Namespace) ->
                "--checkpoint", group["checkpoint"], "--recipe", group["recipe"],
                "--base_checkpoint", str(args.base_checkpoint),
                "--input_data_path", group["testcase"], "--output_dir", str(raw)]
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, stdout=sys.stderr)
     subprocess.run([sys.executable, str(args.repo / "anomalygen/scripts/texture/pseudo_label.py"),
-                    "--gen_root", str(raw), "--output_dir", str(labels), "--no_caption"], check=True)
+                    "--gen_root", str(raw), "--output_dir", str(labels), "--no_caption"],
+                   check=True, stdout=sys.stderr)
     generated = _csv_count(raw / "texture_ft_generation_result.csv")
     blocked = _csv_count(raw / "guardrail_blocked.csv")
     if generated + blocked != group["requested_rows"]:
@@ -200,6 +201,16 @@ def _merge(results: list[dict[str, Any]], output: Path) -> dict[str, Any]:
     return report
 
 
+def _publish_paths(output: Path, published_root: Path) -> None:
+    source, destination = str(output.resolve()), str(published_root.resolve())
+    if source == destination:
+        return
+    for path in sorted(output.rglob("*.json")) + sorted(output.rglob("*.jsonl")):
+        value = path.read_text(encoding="utf-8")
+        if source in value:
+            path.write_text(value.replace(source, destination), encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs-dir", type=Path)
@@ -211,6 +222,7 @@ def main() -> int:
     parser.add_argument("--datasets")
     parser.add_argument("--base-checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--published-root", type=Path)
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--hf-cache", type=Path)
     parser.add_argument("--repo", type=Path, default=Path("/workspace/paidf-anomalygen"))
@@ -229,6 +241,7 @@ def main() -> int:
     try:
         report = _merge([_run_group(group, args.output_dir / group["dataset_id"], args)
                          for group in selected], args.output_dir)
+        _publish_paths(args.output_dir, args.published_root or args.output_dir)
         _json(args.output_dir / "status.json", {"status": "COMPLETE"})
     except Exception as exc:
         _json(args.output_dir / "status.json", {"status": "ERROR", "message": str(exc)})
