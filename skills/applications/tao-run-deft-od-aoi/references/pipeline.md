@@ -68,5 +68,8 @@ inference and dual gap analysis. Commit measurement and gaps. Start the next
 iteration only from the committed state.
 
 After every application-owned stage, use `commit_deft_od_aoi_stage.py` with
-at least one existing completion artifact. The state is durable history; native
-platform status remains authoritative while work is live.
+the stage evidence it names: retrieval manifest and enabled-role parquets,
+admission report, generation report when synthesis runs, checkpoint-selection
+report, measurement manifest, and both gap reports and gap parquets. The
+committer validates their identities and counts before advancing. The state is
+durable history; native platform status remains authoritative while work is live.
