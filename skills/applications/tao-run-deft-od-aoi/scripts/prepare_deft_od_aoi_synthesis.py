@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +85,7 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
     if not required.issubset(gaps):
         raise ValueError(f"strict gaps lack {sorted(required - set(gaps))}")
     rows = []
+    skipped_unrouted: Counter[str] = Counter()
     for gap in gaps[gaps.gap_type.astype(str).str.upper().eq("FN")].to_dict("records"):
         image_id, box = str(gap["image_id"]), _xyxy(gap["bbox"])
         if image_id not in images:
@@ -100,12 +102,15 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
         for source in (image, image.get("deft_od_aoi", {}), annotation,
                        annotation.get("deft_od_aoi", {})):
             metadata.update({key: source[key] for key in FIELDS if key in source})
-        missing = [key for key in FIELDS if not str(metadata.get(key) or "").strip()]
+        dataset = str(metadata.get("dataset_id") or "").strip()
+        if not dataset:
+            raise ValueError(f"FN metadata is incomplete for {image_id}: ['dataset_id']")
+        if dataset not in routes:
+            skipped_unrouted[dataset] += 1
+            continue
+        missing = [key for key in FIELDS[1:] if not str(metadata.get(key) or "").strip()]
         if missing:
             raise ValueError(f"FN metadata is incomplete for {image_id}: {missing}")
-        dataset = str(metadata["dataset_id"])
-        if dataset not in routes:
-            raise ValueError(f"FN dataset has no synthesis route: {dataset}")
         mask = Path(str(metadata["fn_mask_source"])).expanduser().resolve()
         if not mask.is_file():
             raise ValueError(f"FN pixel mask is missing: {mask}")
@@ -142,7 +147,13 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
               "amp": {"model_id": synthesis["amp_model_id"], "seed": 43}}
     config_path = output / "anomalygen_filtering.yaml"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
-    report = {"status": "COMPLETE", "fn_count": len(rows), "config": str(config_path.resolve())}
+    report = {
+        "status": "COMPLETE",
+        "fn_count": len(rows),
+        "skipped_unrouted_fn_count": sum(skipped_unrouted.values()),
+        "skipped_unrouted_by_dataset": dict(sorted(skipped_unrouted.items())),
+        "config": str(config_path.resolve()),
+    }
     (output / "synthesis_request.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 

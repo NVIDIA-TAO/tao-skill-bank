@@ -165,6 +165,74 @@ def test_synthesis_accepts_hardlinked_normalized_kpi_view(tmp_path: Path) -> Non
         MODULE.prepare(policy, gaps, tmp_path / "out-unrelated")
 
 
+def test_synthesis_skips_unrouted_dataset_without_weakening_routed_masks(
+    tmp_path: Path,
+) -> None:
+    images = tmp_path / "kpi"
+    images.mkdir()
+    routed_image = images / "routed.png"
+    unrouted_image = images / "unrouted.png"
+    mask = tmp_path / "mask.png"
+    for path in (routed_image, unrouted_image, mask):
+        path.write_bytes(b"input")
+    coco = tmp_path / "kpi.json"
+    coco.write_text(json.dumps({
+        "images": [
+            {"id": 1, "file_name": routed_image.name, "dataset_id": "route",
+             "texture_id": "texture"},
+            {"id": 2, "file_name": unrouted_image.name, "dataset_id": "boxes_only",
+             "texture_id": "board"},
+        ],
+        "annotations": [
+            {"id": 1, "image_id": 1, "category_id": 1, "bbox": [1, 2, 3, 4],
+             "defect_class": "crack", "fn_mask_source": str(mask)},
+            {"id": 2, "image_id": 2, "category_id": 1, "bbox": [5, 6, 7, 8],
+             "defect_class": "open"},
+        ],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    defect_spec = tmp_path / "defect.jsonl"
+    checkpoint = tmp_path / "adapter.pt"
+    recipe = tmp_path / "recipe.yaml"
+    defect_spec.write_text(json.dumps({"defect_type": "texture+crack"}) + "\n")
+    checkpoint.write_bytes(b"adapter")
+    recipe.write_text("anomaly_types: [[texture, crack]]\n")
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(yaml.safe_dump({
+        "sources": {"kpi": {"images": str(images), "coco": str(coco)}},
+        "retrieval": {"model": "SigLIP", "model_path": "siglip",
+                      "candidate_overfetch": 15},
+        "synthesis": {"enabled": True, "pool_dataset_root": str(pool),
+                      "defect_spec": str(defect_spec),
+                      "routes": {"route": {"checkpoint": str(checkpoint),
+                                             "recipe": str(recipe)}},
+                      "max_neighbors_per_fn": 5, "min_similarity": 0.9,
+                      "amp_model_id": "nvidia/Cosmos3-Nano"},
+    }))
+    gaps = tmp_path / "strict.parquet"
+    pd.DataFrame([
+        {"image_id": 1, "filepath": str(routed_image), "gap_type": "FN",
+         "bbox": [1, 2, 4, 6], "class": "defect"},
+        {"image_id": 2, "filepath": str(unrouted_image), "gap_type": "FN",
+         "bbox": [5, 6, 12, 14], "class": "defect"},
+    ]).to_parquet(gaps)
+
+    report = MODULE.prepare(policy, gaps, tmp_path / "out")
+
+    assert report["fn_count"] == 1
+    assert report["skipped_unrouted_by_dataset"] == {"boxes_only": 1}
+    normalized = pd.read_parquet(tmp_path / "out/normalized_fn_gaps.parquet")
+    assert list(normalized.dataset_id) == ["route"]
+
+    coco_value = json.loads(coco.read_text())
+    coco_value["annotations"][0].pop("fn_mask_source")
+    coco.write_text(json.dumps(coco_value))
+    with pytest.raises(ValueError, match="fn_mask_source"):
+        MODULE.prepare(policy, gaps, tmp_path / "out-missing-routed-mask")
+
+
 def test_image_index_rejects_duplicate_filename_stems() -> None:
     with pytest.raises(ValueError, match="duplicate KPI image identity: shared"):
         MODULE._image_index([

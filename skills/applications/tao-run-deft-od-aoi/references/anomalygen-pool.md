@@ -16,9 +16,12 @@ POOL/
 
 The frozen `defect_spec.jsonl` must define every selected
 `TEXTURE+DEFECT`. Text-routed definitions require
-`roi_prompt_defect_location`. KPI FNs provide explicit
-`dataset_id`, `texture_id`, `defect_class`, and `fn_mask_source`.
-A box is not a mask, and this application never invents masks or prompts.
+`roi_prompt_defect_location`. Every KPI FN provides `dataset_id` so the
+application can decide whether it is routed for synthesis. FNs whose dataset
+ID is not in `synthesis.routes` remain in the normal real-data path and are
+counted in the synthesis request report. Routed FNs must also provide explicit
+`texture_id`, `defect_class`, and `fn_mask_source`. A box is not a mask, and
+this application never invents masks or prompts.
 
 ## Existing task weights
 
