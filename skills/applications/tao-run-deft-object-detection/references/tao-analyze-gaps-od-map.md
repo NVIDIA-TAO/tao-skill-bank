@@ -51,8 +51,24 @@ Build it the same way every other stage does — emit, then fill the run-specifi
   --set images_dir="$KPI_IMAGES_DIR" \
   --set results_dir="${RESULTS_DIR}/iter${N}/gaps" \
   --set kpi="iter${N}" \
-  --set-from-file weak_thresholds="<the threshold mapping from the section above>"
+  --set-from-file weak_thresholds="${RESULTS_DIR}/iter${N}/gaps/weak_thresholds.yaml"
 ```
+
+`weak_thresholds` is the one gate the run owns, and it is the only entry here that is a
+block rather than a scalar, so it comes from a file. Write that file from state first —
+the thresholds were frozen at init and re-typing them is how the spec and
+`deft_state.json` come to disagree:
+
+```bash
+<skill_root>/scripts/deft_python.sh \
+  <skill_root>/scripts/prepare_thresholds_for_gap_analysis.py \
+  --results-dir "${RESULTS_DIR}" \
+  --out "${RESULTS_DIR}/iter${N}/gaps/weak_thresholds.yaml"
+```
+
+Without it the stage keeps the gates hardcoded in the shipped asset and exits 0, so a run
+gates on values nobody chose. That is not only a reporting difference: the weak set sizes
+the mining budget, so the substituted gates change which images the iteration mines.
 
 `gap_analysis` is absent from TAO's `default_specs` list, so unlike the other stages
 there is no container to emit from: `emit_default_spec.py` copies

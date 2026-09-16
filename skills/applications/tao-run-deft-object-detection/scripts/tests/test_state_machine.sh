@@ -2618,6 +2618,51 @@ case "$(state_json_top "$G29S_RUN" completion_reason)" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G30 — the AP50 gates the run declared are the gates the stage uses
+#
+# init validates and stores config.ap50_thresholds, and gap_analysis needs them as a
+# weak_thresholds block. Nothing produced that block, so the documented build could
+# not be run and the stage kept the asset's hardcoded gates while exiting 0. The weak
+# set sizes the mining budget, so a substituted gate changes what gets mined.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G30 ap50 thresholds reach gap_analysis"
+
+G30=$(new_workspace g30); make_pool "$G30"
+make_file "$G30/classes/classes_its.yaml" "car: [car]
+bicycle: [bicycle]
+person: [person]"
+G28_RUN="$G30/results/run_g28"
+# Deliberately far from the asset's 0.99/0.7/0.7 so a match cannot be coincidental.
+init_run "$G30" "$G28_RUN" 1 --target-classes bicycle,car,person \
+  --ap50-thresholds-json '{"car": 0.50, "bicycle": 0.90, "person": 0.90}'
+assert_rc 0 "[G30] init accepts and stores the declared gates"
+
+run "$PY" "$SCRIPTS_DIR/prepare_thresholds_for_gap_analysis.py" \
+  --results-dir "$G28_RUN" --out "$G28_RUN/weak_thresholds.yaml"
+assert_rc 0 "[G30] the gates are written to a file the spec build can consume"
+assert_eq '0.5' "$("$PY" -c 'import yaml,sys
+print(yaml.safe_load(open(sys.argv[1]))["weak_thresholds"]["car"]["ap50"])' "$G28_RUN/weak_thresholds.yaml")" \
+  "[G30] the declared value reaches the file, not the asset's default"
+assert_eq '0.9' "$("$PY" -c 'import yaml,sys
+print(yaml.safe_load(open(sys.argv[1]))["weak_thresholds"]["bicycle"]["ap50"])' "$G28_RUN/weak_thresholds.yaml")" \
+  "[G30] every target class carries its own declared gate"
+
+# The file is the stage's input, so it re-checks what init checked.
+"$PY" - "$G28_RUN/deft_state.json" <<'EOF'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p))
+s["config"]["ap50_thresholds"] = {"car": 0.5}       # person/bicycle left ungated
+json.dump(s, open(p, "w"))
+EOF
+run "$PY" "$SCRIPTS_DIR/prepare_thresholds_for_gap_analysis.py" \
+  --results-dir "$G28_RUN" --out "$G28_RUN/weak_thresholds.yaml"
+assert_rc 1 "[G30] a target class with no gate is refused"
+case "$RUN_OUT" in
+  *"never mined for"*) ok "[G30] the refusal says the class could never be mined for" ;;
+  *) notok "[G30] the refusal says the class could never be mined for" "output: $RUN_OUT" ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then
