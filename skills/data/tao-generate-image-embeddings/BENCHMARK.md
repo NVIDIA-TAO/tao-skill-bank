@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-analyze-gaps-visual-changenet
+# Skill Benchmark: tao-generate-image-embeddings
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,12 +8,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-analyze-gaps-visual-changenet`
+- Skill: `tao-generate-image-embeddings`
 - Evaluation date: 2026-09-17
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:ae84a6a3fa64e143c6bed275bc0db66b4be02dc112bc310fce577d286399c2d4` (skill-evaluator-dataset-snapshot/1)
+- Dataset digest: `sha256:5cf432748165358cd9e6fcbb2b75232683f679076f5839eca5ac1f8b5e33bd2f` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 3
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
@@ -35,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.4% — baseline ran, but no comparable score was available; uplift unavailable | 73.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 99.6% — baseline ran, but no comparable score was available; uplift unavailable | 71.7% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 13.3% → 100.0% (+86.7 points) | 20.0% → 100.0% (+80.0 points) |
+| Correctness | 13.3% → 100.0% (+86.7 points) | 30.0% → 100.0% (+70.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 22.2% → 100.0% (+77.8 points) | 48.3% → 70.0% (+21.7 points) |
-| Efficiency | 71.9% — baseline ran, but no comparable score was available; uplift unavailable | 99.7% → 98.6% (-1.1 points) |
+| Effectiveness | 10.0% → 100.0% (+90.0 points) | 22.5% → 60.0% (+37.5 points) |
+| Efficiency | 98.0% — baseline ran, but no comparable score was available; uplift unavailable | 99.7% → 98.5% (-1.2 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -54,11 +54,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 101,993 | 312,456 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-analyze-gaps-visual-changenet-basic | 101,993 | 312,456 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | All cases | 13,769 | 13,608 | +161 | +1.18% | skill 1/1; base 1/1 |
-| codex | tao-analyze-gaps-visual-changenet-basic | 13,769 | 13,608 | +161 | +1.18% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 115,762 | 326,064 | N/A | N/A | skill 2/2; base 4/4 |
+| claude-code | All cases | 65,925 | 119,856 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-generate-image-embeddings-basic | 65,925 | 119,856 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 13,947 | 27,095 | N/A | N/A | skill 1/1; base 2/2 |
+| codex | tao-generate-image-embeddings-basic | 13,947 | 27,095 | N/A | N/A | skill 1/1; base 2/2 |
+| ALL AGENTS | Dataset aggregate | 79,872 | 146,951 | N/A | N/A | skill 2/2; base 5/5 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -66,8 +66,8 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 41 finding(s) |
-| Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 1 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 23 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
 
 ## Findings and Observations
@@ -75,14 +75,12 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/container-setup.md:
-  "## Setup" in SKILL.md (lines 31-35)
-  vs "# Container Setup and Path Mounting" in references/container-setup.md (lines 1-5) (`SKILL.md:31`)
-- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/data/tao-analyze-gaps-visual-changenet/SKILL.md`)
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/data/tao-analyze-gaps-visual-changenet/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/data/tao-analyze-gaps-visual-changenet`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/data/tao-analyze-gaps-visual-changenet/SKILL.md`)
-- 37 additional finding(s) are available in the full evaluation artifacts.
+- **MEDIUM** QUALITY/quality_correctness: No documented scripts in table format (`skills/data/tao-generate-image-embeddings/SKILL.md`)
+- **MEDIUM** QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/data/tao-generate-image-embeddings/SKILL.md`)
+- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/data/tao-generate-image-embeddings/SKILL.md`)
+- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/data/tao-generate-image-embeddings/SKILL.md`)
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/data/tao-generate-image-embeddings`)
+- 18 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 
