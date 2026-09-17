@@ -79,7 +79,8 @@ def prepare(policy_path: Path, iteration: int, train_coco: Path, train_images: P
     epochs = _epochs(training, iteration, size)
     output.mkdir(parents=True)
     template = _base(policy, train_coco.resolve(), train_images.resolve(), results / "main", epochs)
-    probes = bool(training["probes_enabled"]) and iteration >= 3
+    probes = (bool(training["probes_enabled"])
+              and iteration >= int(training.get("probes_start_iteration", 3)))
     manifest: dict[str, Any] = {"status": "COMPLETE", "iteration": iteration,
                                 "train_size": size, "planned_epochs": epochs,
                                 "probes_enabled": probes, "probes": []}
