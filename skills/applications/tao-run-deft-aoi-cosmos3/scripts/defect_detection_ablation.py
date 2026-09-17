@@ -16,8 +16,10 @@ import sys
 from collections import Counter
 from typing import Any, Iterable
 
+from anchor_rows import ANCHOR_MARK
 from answer_profile import is_empty_ground_truth, parse_task_shares, validate_empty_answer_guard_config
 from atomic_samples import PAIR_CONTENT_IDENTITY, content_identity_for_paths, sample_from_record
+from coverage_rows import COVERAGE_MARK
 from repetition_blend import (
     POLICIES as REPETITION_POLICIES,
     apply_repetition_blend,
@@ -42,6 +44,16 @@ MAINTENANCE_TASK_TYPES = (
     "Ref_based Defect Classification",
     "Ref_based Defect Detection",
 )
+ALL_TASK_TYPES = (DEFECT_DETECTION_TASK, *MAINTENANCE_TASK_TYPES)
+# Mined per-task pool caps (Feature P5-S, 2026-09-17): ``--mined-task-pool-cap TASK=FRACTION``
+# bounds the *mined* rows of a task at ``floor(pool_rows * fraction)`` over the whole run, where
+# pool_rows is the task's row count in the canonical Mining pool (--source-annotations). Rows the
+# cumulative Train JSONL already holds for the task count against the cap unless they carry one of
+# these inert markers (calibration, anchor and coverage rows are not mined rows). The fill order
+# (``--mined-task-fill-order``) gives the listed maintenance tasks their rows before the others.
+# Neither option changes the default selection: no caps and an empty order reproduce the
+# round-robin of the parent snapshot byte-for-byte. (``HISTORY_NON_MINED_MARKS`` below.)
+MINED_TASK_POOL_CAP_POLICY = "floor_of_task_mining_pool_rows_times_fraction_cumulative_over_iterations_mined_rows_only"
 POSITIVE_EVIDENCE = {
     "coverage_stratified_positive",
     "hard_positive_proxy_false_negative",
@@ -66,6 +78,9 @@ CALIBRATION_MARK = "deft_calibration"
 CALIBRATION_KIND_MARK = "deft_calibration_kind"
 DETECTION_CALIBRATION_KIND = "detection"
 CLASSIFICATION_CALIBRATION_KIND = "classification"
+# rows of the cumulative Train JSONL that are not mined rows (they never count against a mined
+# per-task pool cap): detection / classification calibration, anchors, coverage-blend rows
+HISTORY_NON_MINED_MARKS = (CALIBRATION_MARK, ANCHOR_MARK, COVERAGE_MARK)
 # Zero-new-candidate policy (Phase 4). ``fail_closed`` = every maintenance task
 # must be present in the current selection (historical behaviour). With
 # ``skip_exhausted`` a maintenance task may be absent only when the routed
@@ -104,6 +119,9 @@ CURRENT_SELECTION_COPIED_KEYS = (
     "calibration_empty_selected",
     "calibration_fewbox_substituted",
     "calibration_headroom_overflow_rows",
+    "mined_task_pool_usage",
+    "mined_task_fill_realized",
+    "capped_tasks",
 )
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
@@ -132,6 +150,88 @@ def _verification_policy_exclusions(policy: str) -> list[str]:
 def _manifest_verified(verification: dict[str, Any], policy: str) -> bool:
     excluded = set(_verification_policy_exclusions(policy))
     return all(value for key, value in verification.items() if key not in excluded)
+
+
+def validate_defect_detection_fraction(value: Any) -> float:
+    """The Defect Detection lower bound of an iteration (share of the target rows); (0, 1]."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Defect Detection fraction must be a number in (0, 1], not {value!r}") from exc
+    if not 0.0 < number <= 1.0:
+        raise ValueError(f"Defect Detection fraction must be in (0, 1], not {number}")
+    return number
+
+
+def validate_mined_task_pool_caps(caps: Any) -> dict[str, float]:
+    """``{task: fraction}`` over the six task types, every fraction in (0, 1]; missing tasks are uncapped."""
+    if caps is None:
+        return {}
+    if not isinstance(caps, dict):
+        raise ValueError("mined task pool caps must be an object of TASK: FRACTION")
+    result: dict[str, float] = {}
+    for task, fraction in caps.items():
+        if task not in ALL_TASK_TYPES:
+            raise ValueError(
+                f"mined task pool cap names an unknown task {task!r}; expected one of {list(ALL_TASK_TYPES)}"
+            )
+        try:
+            number = float(fraction)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"mined task pool cap for {task!r} must be a fraction in (0, 1], not {fraction!r}") from exc
+        if not 0.0 < number <= 1.0:
+            raise ValueError(f"mined task pool cap for {task!r} must be in (0, 1], not {number}")
+        result[str(task)] = number
+    return result
+
+
+def parse_mined_task_pool_caps(values: Iterable[str] | None) -> dict[str, float]:
+    """CLI form: repeatable ``TASK=FRACTION`` (a task may appear once)."""
+    caps: dict[str, Any] = {}
+    for value in values or []:
+        task, separator, fraction = str(value).partition("=")
+        if not separator or not task:
+            raise ValueError(f"invalid mined task pool cap {value!r}; expected TASK=FRACTION")
+        if task in caps:
+            raise ValueError(f"mined task pool cap repeats {task!r}")
+        caps[task] = fraction
+    return validate_mined_task_pool_caps(caps)
+
+
+def validate_mined_task_fill_order(order: Any) -> list[str]:
+    """Maintenance tasks filled first, in this order; Defect Detection is filled by its fraction and
+    cannot appear; an empty order is today's round-robin."""
+    if order is None:
+        return []
+    if isinstance(order, (str, bytes)) or not isinstance(order, (list, tuple)):
+        raise ValueError("mined task fill order must be a list of maintenance task names")
+    result: list[str] = []
+    for task in order:
+        if task == DEFECT_DETECTION_TASK:
+            raise ValueError(
+                "Defect Detection is filled by --defect-detection-fraction first and cannot appear in the mined task fill order"
+            )
+        if task not in MAINTENANCE_TASK_TYPES:
+            raise ValueError(
+                f"mined task fill order names an unknown maintenance task {task!r}; "
+                f"expected a subset of {list(MAINTENANCE_TASK_TYPES)}"
+            )
+        if task in result:
+            raise ValueError(f"mined task fill order repeats {task!r}")
+        result.append(str(task))
+    return result
+
+
+def parse_mined_task_fill_order(value: str | None) -> list[str]:
+    """CLI form: ``T1,T2,...`` (blank = no priority tasks)."""
+    if value is None or not str(value).strip():
+        return []
+    return validate_mined_task_fill_order([part.strip() for part in str(value).split(",")])
+
+
+def mined_task_cap_rows(pool_rows: int, fraction: float) -> int:
+    """``floor(pool_rows * fraction)`` with a guard against float representation (0.29 * 100)."""
+    return max(0, math.floor(pool_rows * fraction + 1e-9))
 
 
 def empty_headroom(*, cap: float, rows: int, empty_rows: int) -> int:
@@ -533,12 +633,21 @@ def _task_balanced(
     max_novel: int,
     reference_empty_rate: float | None = None,
     reference_seed: tuple[int, int] | None = None,
+    task_limits: dict[str, int] | None = None,
+    fill_order: Iterable[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Round-robin over the maintenance tasks. With ``reference_empty_rate`` the
     reference rows track ``floor(total * rate + 0.5)`` empties. ``reference_seed``
     = (rows, empties) already selected outside this call (the reserved reference
     calibration): seeding makes the running total track the *combined* target the
-    quota manifest verifies, so two separately rounded slices cannot miss it by one."""
+    quota manifest verifies, so two separately rounded slices cannot miss it by one.
+
+    ``task_limits`` (Feature P5-S) bounds the rows a task may contribute (its mined
+    pool-cap remainder; absent = unbounded). ``fill_order`` lists maintenance tasks to
+    fill first: one row of every task with candidates is placed first (so a later task
+    is never starved and the presence policies stay satisfiable), then each listed task
+    takes rows in order up to its limit / availability, then the remaining tasks fill
+    the rest round-robin as before. Without both options the selection is unchanged."""
     groups = {
         task: sorted(
             (item for item in entries if item["task_type"] == task),
@@ -570,57 +679,83 @@ def _task_balanced(
     reference_selected = Counter()
     if reference_seed is not None:
         reference_selected["total"], reference_selected["empty"] = reference_seed
-    while len(selected) < target:
-        advanced = False
-        for task in MAINTENANCE_TASK_TYPES:
-            if task == REFERENCE_DEFECT_DETECTION_TASK and reference_empty_rate is not None:
-                next_total = reference_selected["total"] + 1
-                desired_empty = math.floor(next_total * reference_empty_rate + 0.5)
-                bucket = (
-                    "empty"
-                    if desired_empty > reference_selected["empty"]
-                    else "positive"
-                )
-                group = reference_groups[bucket]
-                position = reference_positions[bucket]
-                while (
-                    position < len(group)
-                    and not group[position]["is_replay"]
-                    and novel_count >= max_novel
-                ):
-                    position += 1
-                reference_positions[bucket] = position
-                if position >= len(group):
-                    continue
-                chosen = group[position]
-                selected.append(chosen)
-                novel_count += not chosen["is_replay"]
-                reference_positions[bucket] = position + 1
-                reference_selected["total"] += 1
-                reference_selected["empty"] += bucket == "empty"
-                advanced = True
-                if len(selected) == target:
-                    break
-                continue
-            position = positions[task]
+    limits = dict(task_limits or {})
+    selected_by_task: Counter[str] = Counter()
+
+    def take(task: str) -> bool:
+        """Append the next eligible row of ``task``; False when it has none left or is at its limit."""
+        nonlocal novel_count
+        if task in limits and selected_by_task[task] >= limits[task]:
+            return False
+        if task == REFERENCE_DEFECT_DETECTION_TASK and reference_empty_rate is not None:
+            next_total = reference_selected["total"] + 1
+            desired_empty = math.floor(next_total * reference_empty_rate + 0.5)
+            bucket = (
+                "empty"
+                if desired_empty > reference_selected["empty"]
+                else "positive"
+            )
+            group = reference_groups[bucket]
+            position = reference_positions[bucket]
             while (
-                position < len(groups[task])
-                and not groups[task][position]["is_replay"]
+                position < len(group)
+                and not group[position]["is_replay"]
                 and novel_count >= max_novel
             ):
                 position += 1
-            positions[task] = position
-            if position >= len(groups[task]):
-                continue
-            chosen = groups[task][position]
+            reference_positions[bucket] = position
+            if position >= len(group):
+                return False
+            chosen = group[position]
             selected.append(chosen)
             novel_count += not chosen["is_replay"]
-            positions[task] = position + 1
-            advanced = True
-            if len(selected) == target:
+            reference_positions[bucket] = position + 1
+            reference_selected["total"] += 1
+            reference_selected["empty"] += bucket == "empty"
+            selected_by_task[task] += 1
+            return True
+        position = positions[task]
+        while (
+            position < len(groups[task])
+            and not groups[task][position]["is_replay"]
+            and novel_count >= max_novel
+        ):
+            position += 1
+        positions[task] = position
+        if position >= len(groups[task]):
+            return False
+        chosen = groups[task][position]
+        selected.append(chosen)
+        novel_count += not chosen["is_replay"]
+        positions[task] = position + 1
+        selected_by_task[task] += 1
+        return True
+
+    priority = list(fill_order or [])
+    if priority:
+        remaining = [task for task in MAINTENANCE_TASK_TYPES if task not in priority]
+        # presence: one row of every task that has one, so the priority fill (and the
+        # materializer's later trim of the tail) can never starve a later task
+        for task in [*priority, *remaining]:
+            if len(selected) < target:
+                take(task)
+        # priority fill, in order, each task up to its limit / availability
+        for task in priority:
+            while len(selected) < target and take(task):
+                pass
+        cycles = [remaining, list(MAINTENANCE_TASK_TYPES)]
+    else:
+        cycles = [list(MAINTENANCE_TASK_TYPES)]
+    for cycle in cycles:
+        while len(selected) < target:
+            advanced = False
+            for task in cycle:
+                if take(task):
+                    advanced = True
+                    if len(selected) == target:
+                        break
+            if not advanced:
                 break
-        if not advanced:
-            break
     return selected
 
 
@@ -730,9 +865,16 @@ def materialize(
     zero_new_candidate_policy: str = DEFAULT_ZERO_NEW_CANDIDATE_POLICY,
     empty_answer_guard: dict[str, Any] | None = None,
     calibration_guard_aware: bool = False,
+    mined_task_pool_caps: dict[str, float] | None = None,
+    mined_task_fill_order: Iterable[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if min(max_rows, row_multiple, epochs, global_batch) <= 0:
         raise ValueError("row, epoch, and global-batch values must be positive")
+    # Feature P5-S: launch-recorded mined per-task pool caps and fill order (defaults = no change)
+    mined_caps = validate_mined_task_pool_caps(mined_task_pool_caps)
+    fill_order = validate_mined_task_fill_order(
+        list(mined_task_fill_order) if mined_task_fill_order is not None else None
+    )
     if zero_new_candidate_policy not in ZERO_NEW_CANDIDATE_POLICIES:
         raise ValueError(
             f"zero_new_candidate_policy must be one of {list(ZERO_NEW_CANDIDATE_POLICIES)}, "
@@ -742,8 +884,8 @@ def materialize(
         raise ValueError("minimum_rows must be positive when supplied")
     if global_batch != row_multiple:
         raise ValueError("row_multiple must equal effective global_batch")
-    if not 0.5 <= defect_detection_fraction <= 1.0:
-        raise ValueError("Defect Detection minimum fraction must be in [0.5, 1.0]")
+    # launch-recorded since Feature P5-S (was a hard-coded 0.5 lower bound; [0.5, 1] before)
+    defect_detection_fraction = validate_defect_detection_fraction(defect_detection_fraction)
     if not 0.0 <= proxy_empty_rate <= 1.0:
         raise ValueError("Proxy empty-ground-truth rate must be in [0, 1]")
     if reference_proxy_empty_rate is not None and not (
@@ -840,6 +982,28 @@ def materialize(
     )
     previous_fingerprints = {
         _record_fingerprint(record) for record in (previous_records or [])
+    }
+    # Mined per-task pool caps (Feature P5-S): the cap is a fraction of the task's rows in the
+    # canonical Mining pool, cumulative over the run; the mined rows the cumulative Train JSONL
+    # already holds (no calibration / anchor / coverage marker) are used budget.
+    pool_rows_by_task: Counter[str] = Counter(
+        str(record.get("task_type")) for record in source_records if record.get("task_type") in ALL_TASK_TYPES
+    )
+    mined_used_before: Counter[str] = Counter(
+        str(record.get("task_type"))
+        for record in (previous_records or [])
+        if record.get("task_type") in ALL_TASK_TYPES
+        and not any(record.get(mark) is True for mark in HISTORY_NON_MINED_MARKS)
+    )
+    cap_rows_by_task = {
+        task: mined_task_cap_rows(pool_rows_by_task[task], fraction) for task, fraction in mined_caps.items()
+    }
+    mined_remaining_before = {
+        task: max(0, cap_rows - mined_used_before[task]) for task, cap_rows in cap_rows_by_task.items()
+    }
+    dd_mined_limit = mined_remaining_before.get(DEFECT_DETECTION_TASK)
+    maintenance_limits = {
+        task: remaining for task, remaining in mined_remaining_before.items() if task in MAINTENANCE_TASK_TYPES
     }
     # Routed candidates per task before any exclusion: with the skip_exhausted
     # policy a task may only be skipped when nothing was routed / nothing survived.
@@ -1154,6 +1318,9 @@ def materialize(
         selected_strict: list[dict[str, Any]] = []
         selected_novel = sum(not item["is_replay"] for item in selected_calibration)
         for item in strict_ordered:
+            # mined pool cap on Defect Detection: only the task-strict (mined) rows count
+            if dd_mined_limit is not None and len(selected_strict) >= dd_mined_limit:
+                break
             if (
                 not item["is_replay"]
                 and selected_novel >= defect_detection_novel_limit
@@ -1172,6 +1339,10 @@ def materialize(
     else:
         assert empty_target is not None
         assert positive_target is not None
+        # mined pool cap on Defect Detection under the proxy-rate policy: no fixed calibration
+        # slot exists here, so the cap bounds every selected Defect Detection row (conservative)
+        if dd_mined_limit is not None:
+            dd_selection_limit = min(dd_selection_limit, dd_mined_limit)
         empty_selection_limit = math.floor(
             dd_selection_limit * proxy_empty_rate + 0.5
         )
@@ -1254,6 +1425,9 @@ def materialize(
             if hybrid_calibration and reserved_reference_calibration
             else None
         ),
+        # Feature P5-S: mined pool-cap remainders and the priority fill order (defaults: unchanged)
+        task_limits=maintenance_limits or None,
+        fill_order=fill_order or None,
     )
     # Guard-aware calibration (Feature B3): the slot keeps its row count; its empty rows are
     # bounded by the headroom the caps leave once the cumulative corpus and this iteration's
@@ -1635,6 +1809,30 @@ def materialize(
         maintenance_present_or_exhausted = True
         zero_new_candidate_block_reason = None
     skipped_tasks = sorted(exhausted_tasks) if (skip_exhausted and maintenance_present_or_exhausted) else []
+    # Mined per-task pool caps (Feature P5-S): usage ledger over the mined rows this selection emits
+    # (calibration rows never count). A task whose remainder is gone is ``capped``, which the
+    # zero-new-candidate policies above do not treat specially: an absent capped task is still an
+    # absent task (it is never listed as exhausted while eligible rows remain).
+    mined_selected_by_task: Counter[str] = Counter(
+        item["task_type"] for item in emitted_base_entries if item["route_tier"] != "calibration"
+    )
+    mined_task_pool_usage: dict[str, dict[str, Any]] = {}
+    for task in ALL_TASK_TYPES:
+        cap_rows = cap_rows_by_task.get(task)
+        used_before = int(mined_used_before[task])
+        selected_now = int(mined_selected_by_task[task])
+        remaining_after = max(0, cap_rows - used_before - selected_now) if cap_rows is not None else None
+        mined_task_pool_usage[task] = {
+            "pool_rows": int(pool_rows_by_task[task]),
+            "cap_fraction": mined_caps.get(task),
+            "cap_rows": cap_rows,
+            "used_before": used_before,
+            "selected_now": selected_now,
+            "remaining_after": remaining_after,
+            "capped_this_iteration": cap_rows is not None and remaining_after == 0,
+        }
+    capped_tasks = [task for task in ALL_TASK_TYPES if mined_task_pool_usage[task]["capped_this_iteration"]]
+    mined_task_fill_realized = {task: int(mined_selected_by_task[task]) for task in ALL_TASK_TYPES}
     verification = {
         "target_rows_reached": row_count == target_rows,
         "minimum_rows_reached": row_count >= minimum_rows_aligned,
@@ -1715,6 +1913,12 @@ def materialize(
         # policy-aware presence: under skip_exhausted an absent task is acceptable
         # only when it is exhausted (and not every task is, and rows are added)
         "maintenance_tasks_present_or_exhausted": maintenance_present_or_exhausted,
+        # Feature P5-S: no task emitted more mined rows than its cap remainder allowed
+        "mined_task_pool_caps_respected": all(
+            usage["selected_now"] <= max(0, usage["cap_rows"] - usage["used_before"])
+            for usage in mined_task_pool_usage.values()
+            if usage["cap_rows"] is not None
+        ),
     }
     # Empty-answer guard evidence: how many of the rows this selection adds carry an
     # empty ground truth ([] / {} / blank), all tasks; the selection itself is unchanged.
@@ -1773,6 +1977,14 @@ def materialize(
         },
         "zero_new_candidate_policy": zero_new_candidate_policy,
         "verification_policy_exclusions": _verification_policy_exclusions(zero_new_candidate_policy),
+        # Feature P5-S: launch-recorded Defect Detection fraction, mined per-task pool caps and fill order
+        "defect_detection_fraction": defect_detection_fraction,
+        "mined_task_pool_caps": dict(mined_caps),
+        "mined_task_pool_cap_policy": MINED_TASK_POOL_CAP_POLICY,
+        "mined_task_pool_usage": mined_task_pool_usage,
+        "mined_task_fill_order": list(fill_order),
+        "mined_task_fill_realized": mined_task_fill_realized,
+        "capped_tasks": capped_tasks,
         "maintenance_tasks": {
             "present": [task for task in MAINTENANCE_TASK_TYPES if materialized_maintenance[task] > 0],
             "missing": missing_maintenance,
@@ -2296,7 +2508,38 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--row-multiple", required=True, type=int)
-    parser.add_argument("--defect-detection-fraction", default=0.5, type=float)
+    parser.add_argument(
+        "--defect-detection-fraction",
+        default=0.5,
+        type=float,
+        help=(
+            "Lower bound on the single-image Defect Detection share of the target rows, in (0, 1] "
+            "(default 0.5; launch-recorded by init_deft_state.py --defect-detection-fraction and "
+            "rendered by the runner). Recorded in the quota manifest as defect_detection_fraction."
+        ),
+    )
+    parser.add_argument(
+        "--mined-task-pool-cap",
+        action="append",
+        metavar="TASK=FRACTION",
+        help=(
+            "Cap the mined rows of a task at floor(rows of the task in --source-annotations * FRACTION) "
+            "over the whole run (repeatable; FRACTION in (0, 1]; missing tasks are uncapped). The mined rows "
+            "the --previous-jsonl corpus already holds for the task (no calibration / anchor / coverage "
+            "marker) are used budget; calibration rows never count. Recorded as mined_task_pool_caps / "
+            "mined_task_pool_usage."
+        ),
+    )
+    parser.add_argument(
+        "--mined-task-fill-order",
+        metavar="T1,T2,...",
+        help=(
+            "Maintenance tasks whose mined rows are filled first, in this order, each up to its cap "
+            "remainder / availability, before the remaining tasks fill round-robin (default: today's "
+            "round-robin). Defect Detection keeps its fraction lower bound first. Recorded as "
+            "mined_task_fill_order / mined_task_fill_realized."
+        ),
+    )
     parser.add_argument(
         "--acquisition-rows",
         type=int,
@@ -2470,6 +2713,8 @@ def main(argv: list[str] | None = None) -> int:
         guard_config = validate_empty_answer_guard_config(
             args.max_empty_answer_share, parse_task_shares(args.max_empty_answer_share_task), None, None
         )
+        mined_task_pool_caps = parse_mined_task_pool_caps(args.mined_task_pool_cap)
+        mined_task_fill_order = parse_mined_task_fill_order(args.mined_task_fill_order)
         rows, manifest = materialize(
             candidate_rows=_read_parquet(args.candidate_parquet),
             source_records=load_records(args.source_annotations),
@@ -2503,6 +2748,8 @@ def main(argv: list[str] | None = None) -> int:
             deficit_weight_source=deficit_weight_source,
             empty_answer_guard=guard_config,
             calibration_guard_aware=args.calibration_guard_aware == "on",
+            mined_task_pool_caps=mined_task_pool_caps,
+            mined_task_fill_order=mined_task_fill_order,
         )
         manifest["empty_ground_truth"]["proxy_empty_rows"] = proxy_empty
         manifest["empty_ground_truth"]["proxy_defect_detection_rows"] = proxy_rows

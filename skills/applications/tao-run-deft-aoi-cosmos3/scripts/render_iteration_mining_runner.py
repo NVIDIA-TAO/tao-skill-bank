@@ -13,7 +13,12 @@ import sys
 from typing import Any
 
 from assemble_training_json import sha256_file
-from defect_detection_ablation import ZERO_NEW_CANDIDATE_POLICIES
+from defect_detection_ablation import (
+    ZERO_NEW_CANDIDATE_POLICIES,
+    validate_defect_detection_fraction,
+    validate_mined_task_fill_order,
+    validate_mined_task_pool_caps,
+)
 
 
 _ASSEMBLER_ONLY_TOGGLES = {
@@ -197,11 +202,31 @@ def build_plan(
     mining_commands: dict[str, list[str]] | None = None,
     classification_calibration_command: list[str] | None = None,
     zero_new_candidate_policy: str | None = None,
+    defect_detection_fraction: float | None = None,
+    mined_task_pool_caps: dict[str, float] | None = None,
+    mined_task_fill_order: list[str] | None = None,
 ) -> dict[str, Any]:
     if not selector_command or not all(
         isinstance(value, str) and value for value in selector_command
     ):
         raise ValueError("selector_command must be a non-empty string list")
+    # Feature P5-S: launch-recorded materializer options (init_deft_state.py config.mining.*);
+    # renderer-owned flags whenever the request field is set (None = caller keeps ownership)
+    if defect_detection_fraction is not None:
+        defect_detection_fraction = validate_defect_detection_fraction(defect_detection_fraction)
+    if mined_task_pool_caps is not None:
+        mined_task_pool_caps = validate_mined_task_pool_caps(mined_task_pool_caps)
+    if mined_task_fill_order is not None:
+        mined_task_fill_order = validate_mined_task_fill_order(mined_task_fill_order)
+    for option, field, value in (
+        ("--defect-detection-fraction", "defect_detection_fraction", defect_detection_fraction),
+        ("--mined-task-pool-cap", "mined_task_pool_caps", mined_task_pool_caps),
+        ("--mined-task-fill-order", "mined_task_fill_order", mined_task_fill_order),
+    ):
+        if value is not None and any(item.partition("=")[0] == option for item in selector_command):
+            raise ValueError(
+                f"selector_command {option} is owned by this renderer when the request sets {field}"
+            )
     if zero_new_candidate_policy is not None:
         if zero_new_candidate_policy not in ZERO_NEW_CANDIDATE_POLICIES:
             raise ValueError(
@@ -264,6 +289,14 @@ def build_plan(
     if zero_new_candidate_policy is not None:
         # launch-recorded policy for individually exhausted maintenance tasks (materializer option)
         selector_argv.extend(["--zero-new-candidate-policy", zero_new_candidate_policy])
+    # Feature P5-S: Defect Detection fraction, mined per-task pool caps and fill order (materializer
+    # options; an empty cap set / order adds no flag, which is the materializer's default)
+    if defect_detection_fraction is not None:
+        selector_argv.extend(["--defect-detection-fraction", str(defect_detection_fraction)])
+    for task, fraction in (mined_task_pool_caps or {}).items():
+        selector_argv.extend(["--mined-task-pool-cap", f"{task}={fraction}"])
+    if mined_task_fill_order:
+        selector_argv.extend(["--mined-task-fill-order", ",".join(mined_task_fill_order)])
     selector_argv.extend(
         ["--output", str(mined), "--manifest", str(current_quota)]
     )
@@ -343,6 +376,9 @@ def build_plan(
         "previous_jsonl": str(previous) if previous is not None else None,
         "previous_sha256": previous_sha256,
         "zero_new_candidate_policy": zero_new_candidate_policy,
+        "defect_detection_fraction": defect_detection_fraction,
+        "mined_task_pool_caps": mined_task_pool_caps,
+        "mined_task_fill_order": mined_task_fill_order,
         "selector": {
             "command": selector_argv,
             "output": str(mined),

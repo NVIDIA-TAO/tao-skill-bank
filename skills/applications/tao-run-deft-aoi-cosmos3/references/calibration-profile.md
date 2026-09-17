@@ -243,6 +243,12 @@ mining is exhausted, so a smaller `--single-image-calibration-max-*` /
 `--reference-calibration-total` or a larger `--row-multiple` is the lever, not
 more anchors.
 
+Calibration rows are never mined rows: the Phase 5-S mined per-task pool caps
+(`mining-budget.md`) count neither the fixed-slot detection calibration nor the
+classification calibration against a task's cap, and the launch-recorded
+`--defect-detection-fraction` lower bound counts the whole Defect Detection
+slice (calibration + task-strict rows), as it always did.
+
 ## Classification calibration (Phase 4 step 4c-A) — default off
 
 ### Why

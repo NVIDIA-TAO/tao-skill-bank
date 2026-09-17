@@ -102,7 +102,13 @@ assembler as `--classification-calibration-jsonl` (`calibration-profile.md`).
 `zero_new_candidate_policy` (`fail_closed` | `skip_exhausted`) appends
 `--zero-new-candidate-policy <value>` to the materializer command and is
 recorded in the plan (`anchor-and-coverage.md`, "Zero-new-candidate policy");
-when the field is set the caller must not pass that flag itself. Assembler-only
+when the field is set the caller must not pass that flag itself. The Phase 5-S
+mining-budget fields work the same way (`mining-budget.md`):
+`defect_detection_fraction` appends `--defect-detection-fraction <F>`,
+`mined_task_pool_caps` (`{task: fraction}`) appends one
+`--mined-task-pool-cap "TASK=FRACTION"` per task and `mined_task_fill_order`
+(list) appends `--mined-task-fill-order "T1,T2,..."`; copy them from
+`config.mining` of the state. Assembler-only
 options on the selector command (`--repetition-*`, `--anchor-*`,
 `--coverage-blend-*`, `--max-empty-answer-share*`,
 `--max-classification-empty-share`, `--empty-answer-guard-mode`) are moved to

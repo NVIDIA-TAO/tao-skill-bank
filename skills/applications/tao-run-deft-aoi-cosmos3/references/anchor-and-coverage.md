@@ -245,7 +245,12 @@ when the field is set). With `skip_exhausted`:
   unmet presence;
 - it still fails closed when every maintenance task is exhausted
   (`all_maintenance_tasks_exhausted`) or the iteration would add zero new rows
-  (a ValueError before the repetition blend, under both policies).
+  (a ValueError before the repetition blend, under both policies);
+- a task that stopped at its mined pool cap (`mining-budget.md`, Phase 5-S) is
+  reported as `capped` (`capped_tasks`, `mined_task_pool_usage`), never as
+  exhausted while it still has eligible candidates; this policy does not treat
+  it specially, so a fully consumed cap makes the task absent in later
+  iterations and blocks exactly like any other absent task.
 
 The empty-answer guard cannot make a task exhausted silently: it only removes
 empty rows and the standard back-fill draws from a task's own remaining

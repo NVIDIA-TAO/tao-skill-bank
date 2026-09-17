@@ -36,7 +36,11 @@ from defect_detection_ablation import (
     CALIBRATION_MARK,
     CLASSIFICATION_CALIBRATION_KIND,
     DEFAULT_ZERO_NEW_CANDIDATE_POLICY,
+    MINED_TASK_POOL_CAP_POLICY,
     ZERO_NEW_CANDIDATE_POLICIES,
+    parse_mined_task_fill_order,
+    parse_mined_task_pool_caps,
+    validate_defect_detection_fraction,
 )
 from gap_analysis.config import load_profile, validate_config
 from metric_contract import render_target, validate_contract
@@ -781,6 +785,13 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
         if args.learning_rate_policy == "linear_global_batch"
         else args.learning_rate
     )
+    # Feature P5-S (2026-09-17): launch-recorded mining budget controls, all materializer options
+    # rendered by render_iteration_mining_runner.py from the request fields of the same names.
+    # Defaults (0.5, no caps, no fill order) reproduce the parent snapshot byte-for-byte.
+    fraction_value = getattr(args, "defect_detection_fraction", None)
+    defect_detection_fraction = validate_defect_detection_fraction(0.5 if fraction_value is None else fraction_value)
+    mined_task_pool_caps = parse_mined_task_pool_caps(getattr(args, "mined_task_pool_cap", None))
+    mined_task_fill_order = parse_mined_task_fill_order(getattr(args, "mined_task_fill_order", None))
     return {
         "version": 7,
         "workflow": WORKFLOW,
@@ -940,6 +951,35 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     "fail closed only when all maintenance tasks are exhausted or the iteration adds zero rows "
                     "(defect_detection_ablation.py --zero-new-candidate-policy, rendered by "
                     "render_iteration_mining_runner.py zero_new_candidate_policy)"
+                ),
+                "defect_detection_fraction": defect_detection_fraction,
+                "defect_detection_fraction_rule": (
+                    "lower bound on the single-image Defect Detection share of every iteration's target rows, "
+                    "in (0, 1]; the materializer fills Defect Detection to this bound first and may exceed it "
+                    "only when the maintenance tasks cannot fill the batch (defect_detection_ablation.py "
+                    "--defect-detection-fraction, rendered by render_iteration_mining_runner.py "
+                    "defect_detection_fraction; quota manifest defect_detection_fraction)"
+                ),
+                "mined_task_pool_caps": mined_task_pool_caps,
+                "mined_task_pool_caps_rule": (
+                    "per task, the mined rows of the whole run are capped at floor(rows of the task in the "
+                    "Mining pool * fraction); cumulative over iterations (the mined rows the cumulative Train "
+                    "JSONL already holds count, calibration / anchor / coverage rows do not); slots a capped task "
+                    "frees flow to the next task in the fill order; a task at its cap is reported as capped, not "
+                    f"exhausted. Missing tasks are uncapped. Policy {MINED_TASK_POOL_CAP_POLICY} "
+                    "(defect_detection_ablation.py --mined-task-pool-cap TASK=FRACTION, rendered by "
+                    "render_iteration_mining_runner.py mined_task_pool_caps; quota manifest mined_task_pool_caps / "
+                    "mined_task_pool_usage / capped_tasks)"
+                ),
+                "mined_task_fill_order": mined_task_fill_order,
+                "mined_task_fill_order_rule": (
+                    "maintenance tasks whose mined rows are filled first, in this order, each up to its cap "
+                    "remainder / availability (one row of every task with candidates is placed first so no later "
+                    "task is starved), before the remaining tasks fill round-robin; Defect Detection keeps its "
+                    "fraction lower bound first; an empty order is today's round-robin "
+                    "(defect_detection_ablation.py --mined-task-fill-order T1,T2,..., rendered by "
+                    "render_iteration_mining_runner.py mined_task_fill_order; quota manifest mined_task_fill_order / "
+                    "mined_task_fill_realized)"
                 ),
                 "top_k_scope": (
                     "target" if mining_router_mode == "image_only" else "target_task"
@@ -1270,6 +1310,36 @@ def _parser() -> argparse.ArgumentParser:
             "Materializer policy when a maintenance task has zero new candidates after history filtering: "
             "fail_closed (default, the iteration fails) or skip_exhausted (skip the exhausted task, record the "
             "shortage, continue; still fail when all tasks are exhausted or nothing is added)."
+        ),
+    )
+    parser.add_argument(
+        "--defect-detection-fraction",
+        type=float,
+        default=0.5,
+        help=(
+            "Lower bound on the single-image Defect Detection share of each iteration's target rows, in (0, 1] "
+            "(default 0.5 = today's hard-coded bound); recorded under config.mining.defect_detection_fraction "
+            "and passed to the materializer's --defect-detection-fraction by the runner."
+        ),
+    )
+    parser.add_argument(
+        "--mined-task-pool-cap",
+        action="append",
+        metavar="TASK=FRACTION",
+        help=(
+            "Cap a task's mined rows over the whole run at floor(rows of the task in the Mining pool * FRACTION) "
+            "(repeatable; FRACTION in (0, 1]; missing tasks uncapped; cumulative over iterations, mined rows only); "
+            "recorded under config.mining.mined_task_pool_caps and passed to the materializer's "
+            "--mined-task-pool-cap by the runner."
+        ),
+    )
+    parser.add_argument(
+        "--mined-task-fill-order",
+        metavar="T1,T2,...",
+        help=(
+            "Maintenance tasks whose mined rows are filled first, in this order, before the remaining tasks fill "
+            "round-robin (default: today's round-robin); recorded under config.mining.mined_task_fill_order and "
+            "passed to the materializer's --mined-task-fill-order by the runner."
         ),
     )
     parser.add_argument(
