@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,24 @@ def _source(images: Path, row: dict[str, Any]) -> Path:
         images / str(row["file_name"])
     )
     return path.resolve()
+
+
+def _image_index(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index canonical COCO ids and filename-stem ids emitted by gap analysis."""
+    output: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        aliases = {str(row.get("id"))}
+        file_name = str(row.get("file_name") or "").strip()
+        if file_name:
+            aliases.add(Path(file_name).stem)
+        for alias in aliases:
+            if not alias or alias == "None":
+                raise ValueError("KPI COCO image lacks an id")
+            existing = output.get(alias)
+            if existing is not None and existing is not row:
+                raise ValueError(f"duplicate KPI image identity: {alias}")
+            output[alias] = row
+    return output
 
 
 def _xyxy(value: Any) -> tuple[float, float, float, float]:
@@ -57,7 +76,7 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
     kpi = policy["sources"]["kpi"]
     images_root = Path(kpi["images"])
     coco = json.loads(Path(kpi["coco"]).read_text())
-    images = {str(row["id"]): row for row in coco["images"]}
+    images = _image_index(coco["images"])
     annotations: dict[str, list[dict[str, Any]]] = {}
     for row in coco.get("annotations", []):
         annotations.setdefault(str(row["image_id"]), []).append(row)
@@ -66,31 +85,43 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
     if not required.issubset(gaps):
         raise ValueError(f"strict gaps lack {sorted(required - set(gaps))}")
     rows = []
+    skipped_unrouted: Counter[str] = Counter()
     for gap in gaps[gaps.gap_type.astype(str).str.upper().eq("FN")].to_dict("records"):
         image_id, box = str(gap["image_id"]), _xyxy(gap["bbox"])
         if image_id not in images:
             raise ValueError(f"FN image id is absent from KPI COCO: {image_id}")
-        ranked = sorted(((_iou(box, row), row) for row in annotations.get(image_id, [])),
+        image = images[image_id]
+        annotation_image_id = str(image["id"])
+        ranked = sorted(((_iou(box, row), row)
+                         for row in annotations.get(annotation_image_id, [])),
                         key=lambda item: item[0], reverse=True)
         if not ranked or ranked[0][0] < 0.999:
             raise ValueError(f"FN box has no exact KPI annotation match: {image_id} {box}")
-        annotation, image = ranked[0][1], images[image_id]
+        annotation = ranked[0][1]
         metadata = {}
         for source in (image, image.get("deft_od_aoi", {}), annotation,
                        annotation.get("deft_od_aoi", {})):
             metadata.update({key: source[key] for key in FIELDS if key in source})
-        missing = [key for key in FIELDS if not str(metadata.get(key) or "").strip()]
+        dataset = str(metadata.get("dataset_id") or "").strip()
+        if not dataset:
+            raise ValueError(f"FN metadata is incomplete for {image_id}: ['dataset_id']")
+        if dataset not in routes:
+            skipped_unrouted[dataset] += 1
+            continue
+        missing = [key for key in FIELDS[1:] if not str(metadata.get(key) or "").strip()]
         if missing:
             raise ValueError(f"FN metadata is incomplete for {image_id}: {missing}")
-        dataset = str(metadata["dataset_id"])
-        if dataset not in routes:
-            raise ValueError(f"FN dataset has no synthesis route: {dataset}")
         mask = Path(str(metadata["fn_mask_source"])).expanduser().resolve()
         if not mask.is_file():
             raise ValueError(f"FN pixel mask is missing: {mask}")
         metadata["fn_mask_source"] = str(mask)
         source_path = _source(images_root, image)
-        if source_path != Path(str(gap["filepath"])).resolve():
+        gap_path = Path(str(gap["filepath"])).expanduser().resolve()
+        try:
+            same_file = source_path.samefile(gap_path)
+        except OSError:
+            same_file = False
+        if not same_file:
             raise ValueError(f"gap filepath does not match frozen KPI image: {image_id}")
         rows.append({**gap, "filepath": str(source_path), "split": "kpi", **metadata,
                      "anomaly_type": f"{metadata['texture_id']}+{metadata['defect_class']}"})
@@ -116,7 +147,13 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
               "amp": {"model_id": synthesis["amp_model_id"], "seed": 43}}
     config_path = output / "anomalygen_filtering.yaml"
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
-    report = {"status": "COMPLETE", "fn_count": len(rows), "config": str(config_path.resolve())}
+    report = {
+        "status": "COMPLETE",
+        "fn_count": len(rows),
+        "skipped_unrouted_fn_count": sum(skipped_unrouted.values()),
+        "skipped_unrouted_by_dataset": dict(sorted(skipped_unrouted.items())),
+        "config": str(config_path.resolve()),
+    }
     (output / "synthesis_request.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 

@@ -39,7 +39,27 @@ Select an installed platform, read its skill, then invoke
 `tao-launch-workflow`. The single launch review must include the four normalized
 COCO roles, trainable RT-DETR base checkpoint, maximum iterations, image and
 Data Services containers, GPU shape, and expected runtime. After approval,
-copy `assets/default_policy.yaml`, fill its required values, and initialize once:
+prepare source COCO files when needed:
+
+```bash
+scripts/prepare_deft_od_aoi_sources.py \
+  --manifest /data/dataset_sources.json --check-only
+
+scripts/prepare_deft_od_aoi_sources.py \
+  --manifest /data/dataset_sources.json \
+  --output-dir /new/results/normalized
+```
+
+`--check-only` runs without a container. Materialization must run in the pinned
+TAO Data Services image because it delegates each role's canonical COCO merge
+to the existing `annotations merge` action. The application then validates the
+merged role contracts before emitting `sources.json`.
+
+The user-facing manifest calls the held-out input `benchmark`. The second
+command maps it to the existing internal `kpi` role and emits `sources.json`
+with the canonical `kpi`, `test`, `real`, and `clean` mapping. Copy
+`assets/default_policy.yaml`, use that mapping for `sources`, fill the other
+required values, and initialize once:
 
 ```bash
 scripts/init_deft_od_aoi.py \
@@ -123,9 +143,11 @@ output share a filesystem; portable staging should keep the copy default.
 For the baseline, pass `--baseline`. The default `cold_start` mode creates an
 empty prediction file for every KPI image, making all KPI ground-truth boxes
 initial false negatives without loading an incompatible multiclass checkpoint
-into the binary inference head. Explicit `checkpoint` mode emits normal
-baseline KPI/test inference specs and therefore requires a binary-compatible
-checkpoint. Neither mode changes training initialization.
+into the binary inference head. It also emits cardinality-matched empty test
+prediction evidence so the measurement manifest retains the same KPI/test
+completion contract without running inference. Explicit `checkpoint` mode
+emits normal baseline KPI/test inference specs and therefore requires a
+binary-compatible checkpoint. Neither mode changes training initialization.
 
 ```bash
 scripts/prepare_deft_od_aoi_measurement.py \
@@ -162,7 +184,8 @@ scripts/prepare_deft_od_aoi_training.py \
 
 Invoke the RT-DETR leaf as direct training with `automl_policy: off`; the AOI
 application already owns its frozen probe policy. Iterations 1–2 use 36 epochs.
-Later iterations use the clipped size-adaptive budget. When probes are enabled,
+Later iterations use the clipped size-adaptive budget. When probes are enabled
+and the iteration reaches the frozen `training.probes_start_iteration`,
 the helper emits independent incumbent, data-growth-scaled, and deterministic
 jitter specs, all initialized from the same frozen base checkpoint. Run all
 three before selecting and materializing `train.yaml`; never initialize the
@@ -194,10 +217,12 @@ durable workflow history, not a scheduler substitute.
 
 ## Optional synthesis with existing task weights
 
-Enable `synthesis` only when KPI annotations carry `dataset_id`, `texture_id`,
-`defect_class`, and a pixel `fn_mask_source`. Each configured dataset route
-must provide an existing AnomalyGenNext checkpoint and matching recipe. After
-strict gap analysis, normalize exact FN/annotation matches:
+Enable `synthesis` only when KPI annotations carry `dataset_id`. Dataset IDs
+absent from `synthesis.routes` remain in the normal real-data path. Every FN in
+a configured route must also carry `texture_id`, `defect_class`, and a pixel
+`fn_mask_source`, and the route must provide an existing AnomalyGenNext
+checkpoint and matching recipe. After strict gap analysis, normalize exact
+FN/annotation matches:
 
 ```bash
 scripts/prepare_deft_od_aoi_synthesis.py \

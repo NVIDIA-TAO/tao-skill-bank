@@ -29,6 +29,9 @@ routing:
   near_miss_real_cap: 20
   clean_factor: 2
   clean_cumulative_cap_per_real: 1.0
+admission:
+  minimum_box_area_px: 64
+  maximum_box_aspect: 25.0
 training:
   num_gpus: 4
   batch_size: 8
@@ -39,6 +42,7 @@ training:
   adaptive_min_epochs: 24
   adaptive_max_epochs: 48
   probes_enabled: true
+  probes_start_iteration: 3
   probe_epochs: 10
   workers: 4
   checkpoint_interval: 1

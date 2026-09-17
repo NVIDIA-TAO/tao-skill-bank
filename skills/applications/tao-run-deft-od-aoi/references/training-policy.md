@@ -16,10 +16,13 @@ Read this before preparing, submitting, resuming, or selecting training.
 
 ## Epoch policy
 
-Iterations 1–2 skip probes and train for 36 epochs.
+Iterations 1–2 train for 36 epochs. They skip probes under the packaged
+`probes_start_iteration: 3` default; freeze a lower positive start iteration
+when an approved workflow needs the tuning path earlier.
 
-From iteration 3 onward, when probes are enabled, run three independent
-ten-epoch probes from the frozen base:
+When probes are enabled and the current iteration has reached
+`probes_start_iteration`, run three independent ten-epoch probes from the
+frozen base:
 
 1. incumbent learning rates;
 2. a data-growth-scaled candidate;

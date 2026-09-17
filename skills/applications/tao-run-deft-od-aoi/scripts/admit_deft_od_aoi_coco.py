@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import json
+import math
 import os
 import shutil
 from pathlib import Path
@@ -89,6 +91,93 @@ def _place(source: Path, images: Path, mode: str) -> Path:
     return target
 
 
+def _synthetic_candidates(document: dict[str, Any], images_root: Path,
+                          minimum_area: float, maximum_aspect: float
+                          ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    categories = document.get("categories")
+    if not isinstance(categories, list) or len(categories) != 1:
+        raise ValueError("synthetic COCO must declare exactly one category")
+    category_id = categories[0].get("id")
+    annotations: dict[int, list[dict[str, Any]]] = {}
+    for row in document.get("annotations", []):
+        if row.get("category_id") != category_id:
+            raise ValueError("synthetic COCO contains an unexpected category")
+        annotations.setdefault(int(row["image_id"]), []).append(row)
+    quality = collections.Counter({
+        "input_images": 0, "input_annotations": 0,
+        "rejected_annotations_small": 0, "rejected_annotations_aspect": 0,
+        "rejected_annotations_full_frame": 0,
+        "rejected_images_no_eligible_boxes": 0,
+    })
+    candidates = []
+    for image in document.get("images", []):
+        width, height = int(image["width"]), int(image["height"])
+        if width < 1 or height < 1:
+            raise ValueError("synthetic COCO image has invalid dimensions")
+        quality["input_images"] += 1
+        rows = []
+        for row in annotations.get(int(image["id"]), []):
+            quality["input_annotations"] += 1
+            try:
+                x, y, box_width, box_height = map(float, row["bbox"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("synthetic COCO contains an invalid bbox") from error
+            if (not all(math.isfinite(value) for value in (x, y, box_width, box_height))
+                    or min(x, y) < 0 or box_width <= 0 or box_height <= 0
+                    or x + box_width > width or y + box_height > height):
+                raise ValueError("synthetic COCO bbox is invalid or outside its image")
+            if box_width * box_height < minimum_area:
+                quality["rejected_annotations_small"] += 1
+                continue
+            if max(box_width / box_height, box_height / box_width) > maximum_aspect:
+                quality["rejected_annotations_aspect"] += 1
+                continue
+            if x == 0 and y == 0 and box_width == width and box_height == height:
+                quality["rejected_annotations_full_frame"] += 1
+                continue
+            rows.append(row)
+        if not rows:
+            quality["rejected_images_no_eligible_boxes"] += 1
+            continue
+        source = Path(str(image.get("source_path") or image["file_name"]))
+        if not source.is_absolute():
+            source = images_root / source
+        if not source.is_file():
+            raise FileNotFoundError(f"synthetic image is missing: {source}")
+        candidates.append({"source": source.resolve(), "image": image, "rows": rows,
+                           "stratum": str(image.get("dataset_id") or "unknown")})
+    quality["eligible_images"] = len(candidates)
+    quality["eligible_annotations"] = sum(len(row["rows"]) for row in candidates)
+    return candidates, dict(quality)
+
+
+def _stratified_synthetic(candidates: list[dict[str, Any]], limit: int
+                          ) -> list[dict[str, Any]]:
+    if limit <= 0 or not candidates:
+        return []
+    unique = {str(row["source"]): row for row in candidates}
+    groups: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in unique.values():
+        groups[row["stratum"]].append(row)
+    if limit >= len(unique):
+        return [unique[key] for key in sorted(unique)]
+    exact = {name: limit * len(rows) / len(unique) for name, rows in groups.items()}
+    allocation = {name: math.floor(value) for name, value in exact.items()}
+    remaining = limit - sum(allocation.values())
+    for name in sorted(groups, key=lambda value: (-(exact[value] % 1), value)):
+        if remaining <= 0:
+            break
+        allocation[name] += 1
+        remaining -= 1
+    selected = []
+    for name, rows in groups.items():
+        ranked = sorted(rows, key=lambda row: (
+            hashlib.sha256(str(row["source"]).encode()).hexdigest(), str(row["source"]),
+        ))
+        selected.extend(ranked[:allocation[name]])
+    return sorted(selected, key=lambda row: str(row["source"]))
+
+
 def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output: Path,
           previous_path: Path | None, mode: str, synthetic_coco: Path | None = None,
           synthetic_images: Path | None = None) -> dict[str, Any]:
@@ -156,27 +245,40 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             admitted_rows.append({"source_filepath": str(source), "kind": kind,
                                   "similarity": float(selected["similarity"])})
     synthetic_admitted = 0
+    synthetic_quality: dict[str, int] = {}
+    synthetic_requested = 0
+    admitted_by_stratum: dict[str, int] = {}
     if bool(synthetic_coco) != bool(synthetic_images):
         raise ValueError("pass both synthetic COCO and synthetic images, or neither")
     if synthetic_coco and synthetic_images:
         document = json.loads(synthetic_coco.read_text())
-        synthetic_annotations: dict[int, list[dict[str, Any]]] = {}
-        for row in document.get("annotations", []):
-            synthetic_annotations.setdefault(int(row["image_id"]), []).append(row)
+        admission = policy.get("admission") or {}
+        candidates, synthetic_quality = _synthetic_candidates(
+            document, synthetic_images,
+            float(admission.get("minimum_box_area_px", 64)),
+            float(admission.get("maximum_box_aspect", 25.0)),
+        )
+        unique = {}
+        for candidate in candidates:
+            key = str(candidate["source"])
+            if key in existing_sources:
+                continue
+            if key in unique and unique[key]["rows"] != candidate["rows"]:
+                raise ValueError(f"conflicting duplicate synthetic source: {key}")
+            unique.setdefault(key, candidate)
+        synthetic_requested = len(unique)
         limit = int(real_total * float(policy["synthesis"]["cumulative_fraction_of_real_defects"]))
         room = max(0, limit - by_kind["synthetic_defect"])
-        for image in document.get("images", []):
-            source = Path(str(image["file_name"]))
-            if not source.is_file():
-                source = synthetic_images / source.name
-            rows = synthetic_annotations.get(int(image["id"]), [])
-            if (synthetic_admitted >= room or not rows or not source.is_file()
-                    or str(source.resolve()) in existing_sources):
-                continue
-            append(source.resolve(), image, rows, "synthetic_defect", None)
-            existing_sources.add(str(source.resolve()))
+        admitted = _stratified_synthetic(list(unique.values()), room)
+        admitted_by_stratum = dict(sorted(collections.Counter(
+            row["stratum"] for row in admitted
+        ).items()))
+        for candidate in admitted:
+            source = candidate["source"]
+            append(source, candidate["image"], candidate["rows"], "synthetic_defect", None)
+            existing_sources.add(str(source))
             synthetic_admitted += 1
-            admitted_rows.append({"source_filepath": str(source.resolve()),
+            admitted_rows.append({"source_filepath": str(source),
                                   "kind": "synthetic_defect", "similarity": None})
     coco = {"images": images, "annotations": annotations,
             "categories": [{"id": 1, "name": "defect"}]}
@@ -192,6 +294,13 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
               "total_images": len(images), "total_annotations": len(annotations),
               "by_kind": {kind: sum(row["deft_kind"] == kind for row in images)
                           for kind in ("real_defect", "clean_negative", "synthetic_defect")},
+              "synthetic_admission": {
+                  "requested_new": synthetic_requested,
+                  "admitted_new": synthetic_admitted,
+                  "excluded_by_cap": synthetic_requested - synthetic_admitted,
+                  "admitted_by_stratum": admitted_by_stratum,
+                  "quality_filter": synthetic_quality,
+              },
               "training_pool_mutated": False}
     _json(output / "admission_report.json", report)
     return report

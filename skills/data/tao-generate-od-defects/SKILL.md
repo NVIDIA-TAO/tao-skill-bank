@@ -43,14 +43,20 @@ and output directory, then submit the `generate` action:
 ```bash
 scripts/generate_od_defects.py \
   --inputs-dir /results/prepared_inputs \
-  --base-checkpoint /models/Cosmos3-Nano/model \
-  --output-dir /new/generation \
+  --base-checkpoint /models/Cosmos3-Nano \
+  --output-dir /temporary/generation \
+  --published-root /persistent/generation \
   --num-gpus 1
 ```
 
+When execution uses temporary storage, `--published-root` records the
+persistent locations that will contain the saved results.
+
 The action deliberately exposes no switch that disables the image's default
 guardrail path. An optional Hugging Face cache can provide the tokenizer and
-guardrail assets for offline execution.
+guardrail assets for offline execution. Offline mode validates the required
+pinned repositories before generation starts. The base-checkpoint argument is
+the parent containing `checkpoint.json` and the `model/` checkpoint directory.
 
 ## Completion
 

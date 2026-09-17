@@ -38,6 +38,13 @@ def test_measurement_freezes_binary_inference_and_dual_gap_specs(tmp_path: Path)
     report = MODULE.prepare(policy, checkpoint, tmp_path / "measure/kpi/inference/labels",
                             tmp_path / "measure", tmp_path / "specs", baseline=True)
     assert report["status"] == "COMPLETE"
+    assert report["checkpoint_sha256"] == MODULE._sha(checkpoint)
+    assert report["inference_roles"] == {
+        "kpi": {"expected_images": 1,
+                "predictions": str((tmp_path / "measure/kpi/inference/labels").resolve())},
+        "test": {"expected_images": 1,
+                 "predictions": str((tmp_path / "measure/test/inference/labels").resolve())},
+    }
     inference = yaml.safe_load((tmp_path / "specs/kpi_inference.yaml").read_text())
     assert inference["dataset"]["num_classes"] == 2
     assert Path(inference["dataset"]["infer_data_sources"]["classmap"]).read_text() == (
@@ -81,11 +88,24 @@ def test_cold_start_baseline_emits_empty_kpi_predictions_without_inference(
     )
 
     assert report["cold_start"] is True
+    assert report["checkpoint_sha256"] == MODULE._sha(checkpoint)
     assert set(report["specs"]) == {"gap_loose.yaml", "gap_strict.yaml"}
     assert not (tmp_path / "specs/kpi_inference.yaml").exists()
-    assert (tmp_path / "specs/cold_start_predictions/kpi.txt").read_text() == ""
+    assert not (tmp_path / "specs/test_inference.yaml").exists()
+    assert report["inference_roles"] == {
+        "kpi": {
+            "expected_images": 1,
+            "predictions": str((tmp_path / "specs/cold_start_predictions/kpi").resolve()),
+        },
+        "test": {
+            "expected_images": 1,
+            "predictions": str((tmp_path / "specs/cold_start_predictions/test").resolve()),
+        },
+    }
+    for role in ("kpi", "test"):
+        assert (tmp_path / f"specs/cold_start_predictions/{role}/{role}.txt").read_text() == ""
     strict = yaml.safe_load((tmp_path / "specs/gap_strict.yaml").read_text())
-    assert strict["inference_ann_path"] == str(tmp_path / "specs/cold_start_predictions")
+    assert strict["inference_ann_path"] == str(tmp_path / "specs/cold_start_predictions/kpi")
 
     later = MODULE.prepare(
         policy, checkpoint, tmp_path / "later/kpi/inference/labels", tmp_path / "later",
@@ -94,3 +114,5 @@ def test_cold_start_baseline_emits_empty_kpi_predictions_without_inference(
     assert later["cold_start"] is False
     assert (tmp_path / "later_specs/kpi_inference.yaml").is_file()
     assert (tmp_path / "later_specs/test_inference.yaml").is_file()
+    assert later["checkpoint_sha256"] == MODULE._sha(checkpoint)
+    assert set(later["inference_roles"]) == {"kpi", "test"}

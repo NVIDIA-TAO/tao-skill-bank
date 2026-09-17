@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import yaml
+from PIL import Image
 
 
 BRANCHES = {"fn_mask", "same_type_sampled_mask"}
@@ -36,12 +37,32 @@ def _pair_id(fn_id: str, clean: str) -> str:
     return "pair-" + hashlib.sha256(f"{fn_id}\0{clean}".encode()).hexdigest()[:16]
 
 
+def _validate_amp_mask(path: Path) -> None:
+    if not path.is_file():
+        raise FileNotFoundError(f"AMP mask is missing: {path}")
+    with Image.open(path) as image:
+        mask = np.asarray(image)
+        canvas = image.size
+    if mask.ndim != 2 or set(np.unique(mask).tolist()) != {0, 255}:
+        raise ValueError(f"AMP mask must contain exactly binary values 0 and 255: {path}")
+    foreground = mask == 255
+    count = int(np.count_nonzero(foreground))
+    if count == 0 or count == foreground.size:
+        raise ValueError(f"AMP mask foreground must be nonempty and non-full: {path}")
+    ys, xs = np.nonzero(foreground)
+    tight = (int(xs.max()) - int(xs.min()) + 1, int(ys.max()) - int(ys.min()) + 1)
+    if tight == canvas:
+        raise ValueError(f"AMP mask tight extent fills the canvas: {path}")
+
+
 def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     manifests, embeddings = root / "manifests", root / "embeddings"
     clean = pd.read_parquet(embeddings / "clean_embeddings.parquet").reset_index(drop=True)
     embedded = pd.read_parquet(embeddings / "fn_embeddings.parquet")
     queries = pd.read_parquet(manifests / "selected_fn_queries.parquet")
     masks = pd.read_parquet(manifests / "mask_selection.parquet")
+    for mask_path in sorted(set(masks.mask_path.astype(str))):
+        _validate_amp_mask(Path(mask_path))
     for label, frame in (("clean", clean), ("FN", embedded)):
         if frame.empty or not {"filepath", "embedding"}.issubset(frame.columns):
             raise ValueError(f"{label} embeddings lack filepath/embedding")
@@ -105,24 +126,46 @@ def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
             "embedding_dim": int(clean_vectors.shape[1])}
 
 
-def run(config_path: Path, root: Path) -> dict[str, Any]:
+def _publish_paths(amp_dir: Path, runtime_root: Path, published_root: Path) -> None:
+    source, destination = str(runtime_root.resolve()), str(published_root.resolve())
+    if source == destination:
+        return
+    for path in sorted(amp_dir.rglob("*.json")) + sorted(amp_dir.rglob("*.jsonl")):
+        value = path.read_text(encoding="utf-8")
+        if source in value:
+            path.write_text(value.replace(source, destination), encoding="utf-8")
+
+
+def run(config_path: Path, root: Path, sam2_checkpoint: Path,
+        published_root: Path | None = None) -> dict[str, Any]:
+    if not sam2_checkpoint.is_file():
+        raise FileNotFoundError(f"SAM2.1 checkpoint is missing: {sam2_checkpoint}")
     frozen = root / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
     if config_path.read_bytes() != frozen.read_bytes():
         raise ValueError("config differs from the frozen preparation snapshot")
     config = yaml.safe_load(frozen.read_text())
     report = plan(root, config)
     amp = config.get("amp") or {}
-    command = [sys.executable, "-m", "anomalygen.scripts.auto_mask_placement.roi_place",
+    bootstrap = (
+        "import runpy,sys; "
+        "from anomalygen.auto_mask_placement.roi_generation import model; "
+        "model._SAM2_CKPT=sys.argv.pop(1); "
+        "runpy.run_module('anomalygen.scripts.auto_mask_placement.roi_place', "
+        "run_name='__main__')"
+    )
+    command = [sys.executable, "-c", bootstrap, str(sam2_checkpoint.resolve()),
                "--input_pair_path", str(root / "amp" / "amp_samples.json"),
                "--defect_desc", str(Path(config["defect_spec"]).resolve()),
                "--output_dir", str(root / "amp"), "--n_seeds", "1",
                "--seed", str(int(amp.get("seed", 43))),
                "--model_id", str(amp.get("model_id", "nvidia/Cosmos3-Nano"))]
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, stdout=sys.stderr)
+    published_root = (published_root or root).resolve()
+    _publish_paths(root / "amp", root, published_root)
     testcase = root / "amp" / "testcase.jsonl"
     if not testcase.is_file() or not testcase.read_text().strip():
         raise ValueError("AMP produced no testcase rows")
-    report["testcase"] = str(testcase)
+    report["testcase"] = str(published_root / "amp" / "testcase.jsonl")
     return report
 
 
@@ -130,8 +173,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     parser.add_argument("--prepared-root", required=True)
+    parser.add_argument("--published-root", type=Path)
+    parser.add_argument("--sam2-checkpoint", type=Path, required=True)
     args = parser.parse_args()
-    result = run(Path(args.config).resolve(), Path(args.prepared_root).resolve())
+    result = run(Path(args.config).resolve(), Path(args.prepared_root).resolve(),
+                 args.sam2_checkpoint.resolve(), args.published_root)
     print(json.dumps(result, sort_keys=True))
     return 0
 

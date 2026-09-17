@@ -3,7 +3,15 @@
 Read this for stage order and completion gates. Read only the stage-specific
 reference and leaf skill needed for the current step.
 
-## 0. Freeze the contract
+## 0. Prepare sources and freeze the contract
+
+If the customer supplied source COCO files instead of an existing four-role
+handoff, author `dataset_sources.json`, run `prepare_deft_od_aoi_sources.py
+--check-only`, then materialize it in the pinned Data Services image. The
+preparer writes canonical per-source COCO shards, delegates each role merge to
+`annotations merge`, and validates the merged outputs before publishing the
+new normalized directory. Use the emitted `sources.json` as the policy's
+`sources` mapping.
 
 Copy and complete `assets/default_policy.yaml`, then run
 `init_deft_od_aoi.py` into a new result directory. Gate on
@@ -24,11 +32,12 @@ completed outputs are immutable and reused by every iteration. Commit the
 
 Run `prepare_deft_od_aoi_measurement.py --baseline` with the frozen base
 checkpoint. In default `cold_start` mode, it emits empty KPI prediction files
-and no inference specs, so every KPI ground-truth box begins as an FN. In
-explicit `checkpoint` mode, submit its KPI and report-only test inference specs
-using a binary-compatible checkpoint. Then submit the emitted loose and strict
-gap specs via `tao-analyze-gaps-od-map`. Commit baseline measurement and gap
-artifacts.
+and cardinality-matched empty test prediction evidence, but no inference specs,
+so every KPI ground-truth box begins as an FN while the KPI/test completion
+contract remains intact. In explicit `checkpoint` mode, submit its KPI and
+report-only test inference specs using a binary-compatible checkpoint. Then
+submit the emitted loose and strict gap specs via `tao-analyze-gaps-od-map`.
+Commit baseline measurement and gap artifacts.
 
 ## 3. Per-iteration retrieval
 
@@ -71,5 +80,8 @@ inference and dual gap analysis. Commit measurement and gaps. Start the next
 iteration only from the committed state.
 
 After every application-owned stage, use `commit_deft_od_aoi_stage.py` with
-at least one existing completion artifact. The state is durable history; native
-platform status remains authoritative while work is live.
+the stage evidence it names: retrieval manifest and enabled-role parquets,
+admission report, generation report when synthesis runs, checkpoint-selection
+report, measurement manifest, and both gap reports and gap parquets. The
+committer validates their identities and counts before advancing. The state is
+durable history; native platform status remains authoritative while work is live.

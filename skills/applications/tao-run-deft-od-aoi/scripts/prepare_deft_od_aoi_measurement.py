@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,14 @@ import yaml
 def _yaml(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(value, sort_keys=False))
+
+
+def _sha(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _kitti(coco_path: Path, output: Path) -> dict[str, int]:
@@ -59,6 +68,17 @@ def _inference(policy: dict[str, Any], images: str, classmap: Path, checkpoint: 
                           "conf_threshold": float(policy["gap"]["inference_confidence"])}}
 
 
+def _empty_predictions(coco_path: Path, output: Path) -> int:
+    images = json.loads(coco_path.read_text()).get("images", [])
+    stems = [Path(str(row["file_name"])).stem for row in images]
+    if not images or len(stems) != len(set(stems)):
+        raise ValueError("held-out images need unique stems for empty predictions")
+    output.mkdir(parents=True)
+    for stem in stems:
+        (output / f"{stem}.txt").touch()
+    return len(stems)
+
+
 def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
             results_root: Path, output: Path, baseline: bool = False) -> dict[str, Any]:
     if output.exists():
@@ -79,11 +99,12 @@ def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
     cold_start = baseline and baseline_mode == "cold_start"
     spec_names = ["gap_loose.yaml", "gap_strict.yaml"]
     gap_predictions = predictions
+    test_predictions = results_root / "test/inference/labels"
     if cold_start:
-        gap_predictions = output / "cold_start_predictions"
-        gap_predictions.mkdir()
-        for label in gt.glob("*.txt"):
-            (gap_predictions / label.name).touch()
+        gap_predictions = output / "cold_start_predictions/kpi"
+        test_predictions = output / "cold_start_predictions/test"
+        _empty_predictions(Path(kpi["coco"]), gap_predictions)
+        test_count = _empty_predictions(Path(test["coco"]), test_predictions)
     else:
         classmap = output / "inference_classmap.txt"
         classmap.write_text("background\ndefect\n")
@@ -92,6 +113,7 @@ def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
         _yaml(output / "test_inference.yaml",
               _inference(policy, test["images"], classmap, checkpoint, results_root / "test"))
         spec_names = ["kpi_inference.yaml", "test_inference.yaml", *spec_names]
+        test_count = len(json.loads(Path(test["coco"]).read_text()).get("images", []))
     for kind in ("loose", "strict"):
         gap = policy["gap"]
         spec = {"ground_truth_ann_path": str(gt),
@@ -106,9 +128,16 @@ def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
                 "default_ap50_threshold": 0.0}
         _yaml(output / f"gap_{kind}.yaml", spec)
     report = {"status": "COMPLETE", "checkpoint": str(checkpoint.resolve()),
+              "checkpoint_sha256": _sha(checkpoint),
               "baseline": baseline, "baseline_mode": baseline_mode,
               "cold_start": cold_start,
               "kpi_ground_truth": projection,
+              "inference_roles": {
+                  "kpi": {"expected_images": projection["images"],
+                          "predictions": str(gap_predictions.resolve())},
+                  "test": {"expected_images": test_count,
+                           "predictions": str(test_predictions.resolve())},
+              },
               "specs": {name: str((output / name).resolve()) for name in spec_names}}
     (output / "measurement_manifest.json").write_text(json.dumps(report, indent=2) + "\n")
     return report

@@ -21,6 +21,12 @@ import yaml
 
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+OFFLINE_HF_REPOS = (
+    "Qwen/Qwen3-VL-8B-Instruct",
+    "Qwen/Qwen3Guard-Gen-0.6B",
+    "nvidia/Cosmos-Guardrail1",
+    "nvidia/Cosmos3-Edge",
+)
 
 
 def _json(path: Path, value: Any) -> None:
@@ -38,6 +44,30 @@ def _sha(path: Path) -> str:
 
 def _rows(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _validate_offline_hf_cache(root: Path) -> None:
+    hub = root / "hub" if (root / "hub").is_dir() else root
+    missing = []
+    for repo in OFFLINE_HF_REPOS:
+        directory = hub / f"models--{repo.replace('/', '--')}"
+        if not (directory / "blobs").is_dir() or not (directory / "snapshots").is_dir():
+            missing.append(repo)
+    if missing:
+        raise FileNotFoundError(
+            "offline Hugging Face cache lacks required repositories: " + ", ".join(missing)
+        )
+
+
+def _validate_base_checkpoint(root: Path) -> None:
+    model = root / "model"
+    if (not (root / "checkpoint.json").is_file()
+            or not (model / ".metadata").is_file()
+            or not any(model.glob("*.distcp"))):
+        raise ValueError(
+            "base checkpoint must be the parent containing "
+            "checkpoint.json and model/{.metadata,*.distcp}"
+        )
 
 
 def _validate_manifest(root: Path) -> None:
@@ -133,9 +163,10 @@ def _run_group(group: dict[str, Any], output: Path, args: argparse.Namespace) ->
                "--checkpoint", group["checkpoint"], "--recipe", group["recipe"],
                "--base_checkpoint", str(args.base_checkpoint),
                "--input_data_path", group["testcase"], "--output_dir", str(raw)]
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, stdout=sys.stderr)
     subprocess.run([sys.executable, str(args.repo / "anomalygen/scripts/texture/pseudo_label.py"),
-                    "--gen_root", str(raw), "--output_dir", str(labels), "--no_caption"], check=True)
+                    "--gen_root", str(raw), "--output_dir", str(labels), "--no_caption"],
+                   check=True, stdout=sys.stderr)
     generated = _csv_count(raw / "texture_ft_generation_result.csv")
     blocked = _csv_count(raw / "guardrail_blocked.csv")
     if generated + blocked != group["requested_rows"]:
@@ -200,6 +231,16 @@ def _merge(results: list[dict[str, Any]], output: Path) -> dict[str, Any]:
     return report
 
 
+def _publish_paths(output: Path, published_root: Path) -> None:
+    source, destination = str(output.resolve()), str(published_root.resolve())
+    if source == destination:
+        return
+    for path in sorted(output.rglob("*.json")) + sorted(output.rglob("*.jsonl")):
+        value = path.read_text(encoding="utf-8")
+        if source in value:
+            path.write_text(value.replace(source, destination), encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs-dir", type=Path)
@@ -211,24 +252,29 @@ def main() -> int:
     parser.add_argument("--datasets")
     parser.add_argument("--base-checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--published-root", type=Path)
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--hf-cache", type=Path)
     parser.add_argument("--repo", type=Path, default=Path("/workspace/paidf-anomalygen"))
     args = parser.parse_args()
-    if args.output_dir.exists() or args.num_gpus < 1 or not args.base_checkpoint.exists():
-        raise ValueError("output must be new; GPU count positive; base checkpoint must exist")
+    if args.output_dir.exists() or args.num_gpus < 1:
+        raise ValueError("output must be new and GPU count must be positive")
+    _validate_base_checkpoint(args.base_checkpoint)
     if not args.repo.is_dir():
         raise FileNotFoundError(args.repo)
     env = os.environ
     if args.hf_cache:
         if not args.hf_cache.is_dir():
             raise FileNotFoundError(args.hf_cache)
+        if os.environ.get("HF_HUB_OFFLINE", "").lower() in {"1", "true", "yes"}:
+            _validate_offline_hf_cache(args.hf_cache)
         env["HF_HOME"] = str(args.hf_cache.resolve())
     selected = groups(args)
     args.output_dir.mkdir(parents=True)
     try:
         report = _merge([_run_group(group, args.output_dir / group["dataset_id"], args)
                          for group in selected], args.output_dir)
+        _publish_paths(args.output_dir, args.published_root or args.output_dir)
         _json(args.output_dir / "status.json", {"status": "COMPLETE"})
     except Exception as exc:
         _json(args.output_dir / "status.json", {"status": "ERROR", "message": str(exc)})
