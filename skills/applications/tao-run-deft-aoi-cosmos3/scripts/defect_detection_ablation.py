@@ -128,8 +128,31 @@ _PRESENCE_OR_EXHAUSTED_OR_CAPPED_KEY = "maintenance_tasks_present_or_exhausted_o
 # carried); the overflow is recorded (``calibration_headroom_overflow_rows``,
 # ``guard_aware_calibration.status``) and left to the assembler's guard to trim. A substitution
 # shortfall alone never fails the materializer; a genuinely short slot still fails closed.
+# Feature P5-S.2 (run v12_p5s_pool10_r9 iteration 1, snapshot 9acf22f9, 2026-09-17), guard-on only:
+# (1) reserve protection: the rows the calibration feed reserved for this iteration (calibration
+# route tier of the two detection tasks) are kept out of the mined candidate set of the same task
+# before mined selection (a record / image identity appears once, as a calibration row;
+# ``calibration_reserve_rows_protected``), and the reserve keeps its first claim on the novel-image
+# budget when the guard-aware split re-selects it. In r9 the re-selection's budget was computed
+# from the pre-trim over-selection of the mined rows (31,756 maintenance + 4,384 strict rows against
+# a 32,256-row limit), so it could take no novel row and the reservation was empty
+# (``selected_total 0``, 500 changed pairs sitting in the feed). (2) guard-induced shortfall
+# acceptance: when the empty headroom target of a slot is 0 and its non-empty reserve is exhausted
+# after protection so the slot cannot be filled even with the B3.1 overflow, the slot carries no
+# empty beyond the zero headroom (the assembler's guard would trim every one) and yields the missing
+# rows to mined rows (``calibration_shortfall_accepted_under_guard``,
+# ``substituted_with_guard_shortfall``); the count verdict becomes
+# ``reference_calibration_contract_reached_or_yielded``. A short slot while empty headroom is
+# available is not guard-induced and still fails closed.
 GUARD_AWARE_CALIBRATION_TASKS = (DEFECT_DETECTION_TASK, REFERENCE_DEFECT_DETECTION_TASK)
-GUARD_AWARE_CALIBRATION_STATUSES = ("no_substitution_needed", "substituted", "substituted_with_overflow")
+GUARD_AWARE_CALIBRATION_STATUSES = (
+    "no_substitution_needed",
+    "substituted",
+    "substituted_with_overflow",
+    "substituted_with_guard_shortfall",
+)
+_REFERENCE_CONTRACT_KEY = "reference_calibration_contract_reached"
+_REFERENCE_CONTRACT_OR_YIELDED_KEY = "reference_calibration_contract_reached_or_yielded"
 # current-selection facts copied into the bound v2 manifest (bind_cumulative_manifest)
 CURRENT_SELECTION_COPIED_KEYS = (
     "new_rows_empty",
@@ -147,6 +170,10 @@ CURRENT_SELECTION_COPIED_KEYS = (
     "capped_absent_tasks",
     "cross_task_visual_dedup",
     "maintenance_rows_unlocked_by_cross_task",
+    "calibration_reserve_rows_protected",
+    "calibration_shortfall_accepted_under_guard",
+    "reference_calibration_shortfall_accepted_under_guard",
+    "single_image_calibration_shortfall_accepted_under_guard",
 )
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
@@ -294,12 +321,18 @@ def allocate_empty_headroom(limits: dict[str, int], total: int) -> dict[str, int
 
 
 def _guard_aware_status(
-    enabled: bool, substituted: dict[str, int], overflow: dict[str, int]
+    enabled: bool,
+    substituted: dict[str, int],
+    overflow: dict[str, int],
+    shortfall_accepted: dict[str, int] | None = None,
 ) -> str | None:
     """``guard_aware_calibration.status``: None when off; otherwise whether the headroom moved
-    any slot rows to few-box / changed rows and whether some of them fell back to empties."""
+    any slot rows to few-box / changed rows, whether some of them fell back to empties, or whether
+    a slot yielded rows to mined rows under the guard (Feature P5-S.2)."""
     if not enabled:
         return None
+    if sum((shortfall_accepted or {}).values()):
+        return "substituted_with_guard_shortfall"
     if sum(overflow.values()):
         return "substituted_with_overflow"
     if sum(substituted.values()):
@@ -1092,6 +1125,12 @@ def materialize(
     counters: Counter[str] = Counter()
     entries: list[dict[str, Any]] = []
     seen_record_fingerprints: set[str] = set()
+    # Feature P5-S.2 reserve protection (guard-on only): a record the calibration feed carries for
+    # a detection task is a calibration row even when a mined (strict) candidate of the same task
+    # carries it too, whatever the candidate order; the strict copy leaves the mined candidate set.
+    entry_by_fingerprint: dict[str, dict[str, Any]] = {}
+    displaced_entries: set[int] = set()
+    calibration_reserve_protected: Counter[str] = Counter()
     for candidate in candidate_rows:
         candidate_tiers = candidate.get("route_tiers") or [candidate.get("route_tier")]
         if isinstance(candidate_tiers, str):
@@ -1160,9 +1199,23 @@ def materialize(
                 counters["previous_records_excluded"] += 1
                 seen_record_fingerprints.add(fingerprint)
                 continue
+            displaced: dict[str, Any] | None = None
             if fingerprint in validation_fingerprints or fingerprint in seen_record_fingerprints:
-                counters["exact_record_duplicates_excluded"] += 1
-                continue
+                existing = entry_by_fingerprint.get(fingerprint) if calibration_guard_aware else None
+                if (
+                    existing is not None
+                    and existing["task_type"] == task
+                    and task in GUARD_AWARE_CALIBRATION_TASKS
+                    and {existing["route_tier"], route_tier} == {"strict", "calibration"}
+                ):
+                    if route_tier == "strict":
+                        # the calibration copy is already the entry: the strict copy is protected away
+                        calibration_reserve_protected[task] += 1
+                        continue
+                    displaced = existing  # the calibration copy replaces the strict entry below
+                else:
+                    counters["exact_record_duplicates_excluded"] += 1
+                    continue
             seen_record_fingerprints.add(fingerprint)
             evidence_value = candidate.get("defect_detection_evidence") or []
             if isinstance(evidence_value, str):
@@ -1252,6 +1305,36 @@ def materialize(
                         counters["invalid_reference_no_change_routes_excluded"] += 1
                         continue
             entries.append(entry)
+            if calibration_guard_aware:
+                entry_by_fingerprint[fingerprint] = entry
+                if displaced is not None:
+                    displaced_entries.add(id(displaced))
+                    calibration_reserve_protected[task] += 1
+    if calibration_guard_aware:
+        entries = [item for item in entries if id(item) not in displaced_entries]
+        # image-identity protection: a strict row of a detection task on the same image / pair as a
+        # calibration row of that task leaves the mined candidate set (the reserve is selected from
+        # the calibration rows only, so the mined selection could otherwise consume the identity)
+        for protected_task in GUARD_AWARE_CALIBRATION_TASKS:
+            reserve = [item for item in entries if item["task_type"] == protected_task and item["route_tier"] == "calibration"]
+            reserve_paths = {item["resolved_path"] for item in reserve}
+            reserve_content = {item["content_sha256"] for item in reserve}
+            kept_entries: list[dict[str, Any]] = []
+            for item in entries:
+                if (
+                    item["task_type"] == protected_task
+                    and item["route_tier"] == "strict"
+                    and (item["resolved_path"] in reserve_paths or item["content_sha256"] in reserve_content)
+                ):
+                    calibration_reserve_protected[protected_task] += 1
+                    continue
+                kept_entries.append(item)
+            entries = kept_entries
+    calibration_reserve_rows_protected: dict[str, int] | None = (
+        {task: int(calibration_reserve_protected[task]) for task in GUARD_AWARE_CALIBRATION_TASKS}
+        if calibration_guard_aware
+        else None
+    )
     # eligible rows per task after previous-row / evaluation / duplicate exclusion
     eligible_by_task: Counter[str] = Counter(item["task_type"] for item in entries)
     positive = [
@@ -1547,7 +1630,11 @@ def materialize(
     calibration_headroom_overflow_rows = {task: 0 for task in GUARD_AWARE_CALIBRATION_TASKS}
     headroom_empty_targets: dict[str, int] | None = None
     reference_empty_substituted = 0
+    reference_seed_offset = 0
     guard_aware_ledger: dict[str, Any] | None = None
+    # Feature P5-S.2: slot rows yielded to mined rows because the empty headroom target was 0 and
+    # the non-empty reserve could not fill the slot (guard-on only; 0 otherwise)
+    calibration_shortfall_accepted = {task: 0 for task in GUARD_AWARE_CALIBRATION_TASKS}
     if calibration_guard_aware:
         assert reference_calibration_total is not None
         assert single_image_calibration_max_few is not None
@@ -1607,8 +1694,13 @@ def materialize(
                 hamming_distance=near_duplicate_hamming_distance,
                 counters=counters,
             )
+            # Reserve protection (Feature P5-S.2): the reserve was selected first with the whole
+            # novel-image budget, so the re-selection keeps at least the claim the reservation holds.
+            # The strict and mined rows are still the pre-trim over-selection here (the feasibility
+            # loop trims them later), so subtracting them alone starved the r9 re-selection to 0.
             reference_max_novel = max(
-                0, novel_image_limit - _novel_rows(selected_strict) - _novel_rows(mined_maintenance) - len(selected_calibration)
+                reserved_reference_novel,
+                novel_image_limit - _novel_rows(selected_strict) - _novel_rows(mined_maintenance) - len(selected_calibration),
             )
             # Best-effort substitution (Feature B3.1): changed pairs take the slot rows the headroom
             # removed from the no-change bucket; when the changed reserve runs out, the rows still
@@ -1627,6 +1719,17 @@ def materialize(
                 if slot_short <= 0 or no_change_allowance >= kpi_reference_target:
                     break
                 no_change_allowance = min(kpi_reference_target, no_change_allowance + slot_short)
+            if slot_short > 0 and reference_target == 0:
+                # Guard-induced shortfall (Feature P5-S.2): no no-change pair fits under the zero
+                # headroom and the changed reserve cannot fill the slot even with the overflow. Every
+                # overflow no-change pair would be trimmed by the assembler's guard, so the slot keeps
+                # the changed pairs only and yields the missing rows to mined rows (below).
+                reserved_reference_calibration = _task_balanced(
+                    reference_pool, reference_calibration_total, max_novel=reference_max_novel, reference_empty_rate=0.0
+                )
+                calibration_shortfall_accepted[REFERENCE_DEFECT_DETECTION_TASK] = (
+                    reference_calibration_total - len(reserved_reference_calibration)
+                )
             reserved_reference_novel = _novel_rows(reserved_reference_calibration)
             selected_maintenance = reserved_reference_calibration + mined_maintenance
             reference_no_change_selected = sum(not item.get("objects") for item in reserved_reference_calibration)
@@ -1643,6 +1746,51 @@ def materialize(
             not item.get("objects") for item in reserved_reference_calibration
         )
         calibration_fewbox_substituted[REFERENCE_DEFECT_DETECTION_TASK] = reference_empty_substituted
+        reference_shortfall = calibration_shortfall_accepted[REFERENCE_DEFECT_DETECTION_TASK]
+        if reference_shortfall:
+            # The yielded slot rows become mined rows: the same task first (its remaining eligible
+            # candidates, continuing the KPI-rate tracking of the mined slice from where it stopped),
+            # then the other maintenance tasks in the fill order. The mined slice keeps the KPI-rate
+            # seed of the full slot so the guard gets no extra empties from it.
+            taken = {id(item) for item in mined_maintenance}
+            remaining_unique = [item for item in maintenance_unique if id(item) not in taken]
+            mined_reference = [item for item in mined_maintenance if item["task_type"] == REFERENCE_DEFECT_DETECTION_TASK]
+            # the mined slice was seeded with the first-pass reservation (its rows / no-change pairs)
+            top_up_seed = (
+                slot_rows[REFERENCE_DEFECT_DETECTION_TASK] + len(mined_reference),
+                kpi_reference_target + sum(not item.get("objects") for item in mined_reference),
+            )
+            mined_by_task: Counter[str] = Counter(item["task_type"] for item in mined_maintenance)
+            top_up_limits = {task: max(0, limit - mined_by_task[task]) for task, limit in maintenance_limits.items()}
+            top_up_novel = max(
+                0,
+                novel_image_limit
+                - (0 if not resolved_repetition["enabled"] and novel_image_limit >= target_rows else _novel_rows(selected_strict))
+                - reserved_reference_novel
+                - _novel_rows(mined_maintenance),
+            )
+            top_up = _task_balanced(
+                [item for item in remaining_unique if item["task_type"] == REFERENCE_DEFECT_DETECTION_TASK],
+                reference_shortfall,
+                max_novel=top_up_novel,
+                reference_empty_rate=reference_proxy_empty_rate,
+                reference_seed=top_up_seed,
+                task_limits=top_up_limits or None,
+            )
+            if len(top_up) < reference_shortfall:
+                top_up += _task_balanced(
+                    [item for item in remaining_unique if item["task_type"] != REFERENCE_DEFECT_DETECTION_TASK],
+                    reference_shortfall - len(top_up),
+                    max_novel=max(0, top_up_novel - _novel_rows(top_up)),
+                    task_limits=top_up_limits or None,
+                    fill_order=fill_order or None,
+                )
+            mined_maintenance = mined_maintenance + top_up
+            selected_maintenance = reserved_reference_calibration + mined_maintenance
+        # the mined reference slice tracks the KPI rate from the first-pass reservation's seed; the
+        # combined empty-rate target below counts the first-pass rows the final slot no longer
+        # holds (0 unless the slot yielded rows under the guard or the re-selection came out short)
+        reference_seed_offset = slot_rows[REFERENCE_DEFECT_DETECTION_TASK] - len(reserved_reference_calibration)
         # Single-image slot: keep the first ``target`` empties (same order), re-run the balanced
         # few-box selection with the slot's row count as its target. Best-effort (Feature B3.1):
         # when the few-box reserve runs out, the next empties of the same ordering fill the slot
@@ -1651,11 +1799,14 @@ def materialize(
         kpi_single_target = kpi_calibration_empty_targets[DEFECT_DETECTION_TASK]
         if single_target < kpi_single_target:
             fewbox_target = single_image_calibration_max_few + (kpi_single_target - single_target)
-            empty_allowance = single_target
-            while True:
-                new_empty = selected_calibration_empty[:empty_allowance]
+            # Reserve protection (Feature P5-S.2): the single-image slot was selected before the
+            # strict and mined rows with the budget left by the reference reservation; the few-box
+            # re-selection keeps at least that claim (minus the empties it keeps) instead of the
+            # remainder after the pre-trim over-selection of the other rows.
+            slot_novel_claim = max(0, novel_image_limit - reserved_reference_novel)
+
+            def _reselect_fewbox(new_empty: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 kept = [*selected_strict, *selected_maintenance, *new_empty]
-                substituted = kpi_single_target - len(new_empty)
                 positive_pool = _without_visual_duplicates(
                     calibration_positive,
                     selected=_visual_exclusion_scope(
@@ -1666,13 +1817,29 @@ def materialize(
                 )
                 new_positive, _ = _balanced_positive_selection(
                     positive_pool,
-                    single_image_calibration_max_few + substituted,
-                    max_novel=max(0, novel_image_limit - _novel_rows(kept)),
+                    single_image_calibration_max_few + kpi_single_target - len(new_empty),
+                    max_novel=max(0, slot_novel_claim - _novel_rows(new_empty), novel_image_limit - _novel_rows(kept)),
                 )
+                return new_positive
+
+            empty_allowance = single_target
+            while True:
+                new_empty = selected_calibration_empty[:empty_allowance]
+                substituted = kpi_single_target - len(new_empty)
+                new_positive = _reselect_fewbox(new_empty)
                 slot_short = single_image_calibration_max_few + substituted - len(new_positive)
                 if slot_short <= 0 or empty_allowance >= kpi_single_target:
                     break
                 empty_allowance = min(kpi_single_target, empty_allowance + slot_short)
+            if slot_short > 0 and single_target == 0:
+                # Guard-induced shortfall (Feature P5-S.2): no empty fits under the zero headroom and
+                # the few-box reserve cannot fill the slot even with the overflow; the slot keeps the
+                # few-box rows only and yields the missing rows (strict Defect Detection rows and
+                # the mined maintenance fill the batch as for any short slot).
+                new_empty = []
+                substituted = kpi_single_target
+                new_positive = _reselect_fewbox(new_empty)
+                calibration_shortfall_accepted[DEFECT_DETECTION_TASK] = max(0, fewbox_target - len(new_positive))
             calibration_fewbox_shortfall[DEFECT_DETECTION_TASK] = max(0, fewbox_target - len(new_positive))
             calibration_fewbox_substituted[DEFECT_DETECTION_TASK] = substituted
             calibration_headroom_overflow_rows[DEFECT_DETECTION_TASK] = len(new_empty) - single_target
@@ -1683,6 +1850,12 @@ def materialize(
             selected_empty = [item for item in selected_dd if not item["objects"]]
             selected_positive = [item for item in selected_dd if item["objects"]]
             marginal_quotas = _positive_quota_report(positive, selected_positive, len(selected_positive))
+    # Feature P5-S.2: the reference slot the feasibility loop and the count verdicts bind to is the
+    # requested total minus the rows the slot yielded under the guard (equal without a shortfall)
+    reference_shortfall_accepted = calibration_shortfall_accepted[REFERENCE_DEFECT_DETECTION_TASK]
+    effective_reference_total = (
+        reference_calibration_total - reference_shortfall_accepted if hybrid_calibration else None
+    )
     accepted_target_rows: int | None = None
     if not resolved_repetition["enabled"]:
         for candidate_target in range(
@@ -1703,7 +1876,7 @@ def materialize(
             if hybrid_calibration:
                 reference_calibration_complete = (
                     len(reserved_reference_calibration)
-                    == reference_calibration_total
+                    == effective_reference_total
                     and sum(
                         not item.get("objects")
                         for item in reserved_reference_calibration
@@ -1713,7 +1886,7 @@ def materialize(
                 feasible = (
                     candidate_dd <= len(selected_dd)
                     and candidate_maintenance <= len(selected_maintenance)
-                    and candidate_maintenance >= reference_calibration_total
+                    and candidate_maintenance >= effective_reference_total
                     and reference_calibration_complete
                 )
             else:
@@ -1840,9 +2013,15 @@ def materialize(
     ]
     selected_reference_empty = sum(not item.get("objects") for item in selected_reference)
     # the combined (calibration + mined) reference target; guard-aware calibration lowers it by
-    # the no-change pairs it replaced with changed pairs (the mined slice keeps the KPI rate)
+    # the no-change pairs it replaced with changed pairs (the mined slice keeps the KPI rate).
+    # Slot rows yielded under the guard (Feature P5-S.2) count as KPI-rate rows here: the mined
+    # slice tracked the full slot's seed and the yielded rows were never selected.
     reference_empty_target = (
-        max(0, math.floor(len(selected_reference) * reference_proxy_empty_rate + 0.5) - reference_empty_substituted)
+        max(
+            0,
+            math.floor((len(selected_reference) + reference_seed_offset) * reference_proxy_empty_rate + 0.5)
+            - reference_empty_substituted,
+        )
         if reference_proxy_empty_rate is not None
         else None
     )
@@ -1883,8 +2062,16 @@ def materialize(
         if hybrid_calibration
         else None
     )
+    # the no-change pairs the slot must hold: the KPI-rate first-pass reservation minus the pairs
+    # the guard-aware split substituted (under the guard the first pass is the reservation taken,
+    # which a short feed leaves below the formula target; without it the two are equal)
     reference_calibration_empty_target = (
-        kpi_reference_calibration_empty_target - reference_empty_substituted
+        (
+            kpi_calibration_empty_targets[REFERENCE_DEFECT_DETECTION_TASK]
+            if calibration_guard_aware
+            else kpi_reference_calibration_empty_target
+        )
+        - reference_empty_substituted
         if kpi_reference_calibration_empty_target is not None
         else None
     )
@@ -2008,7 +2195,9 @@ def materialize(
             or selected_strict_dd_count > 0
             or not any(item["route_tier"] == "strict" for item in positive + empty)
         ),
-        "reference_calibration_contract_reached": (
+        # Feature P5-S.2: the full-slot fact; replaced by ``_or_yielded`` (the effective slot) when
+        # the slot yielded rows under the guard, and accompanied by it whenever the guard is on
+        _REFERENCE_CONTRACT_KEY: (
             True
             if not hybrid_calibration
             else len(selected_reference_calibration) == reference_calibration_total
@@ -2066,6 +2255,13 @@ def materialize(
             if usage["cap_rows"] is not None
         ),
     }
+    if calibration_guard_aware:
+        verification[_REFERENCE_CONTRACT_OR_YIELDED_KEY] = (
+            len(selected_reference_calibration) == effective_reference_total
+            and selected_reference_calibration_empty == reference_calibration_empty_target
+        )
+        if reference_shortfall_accepted:
+            del verification[_REFERENCE_CONTRACT_KEY]
     # Empty-answer guard evidence: how many of the rows this selection adds carry an
     # empty ground truth ([] / {} / blank), all tasks; the selection itself is unchanged.
     new_rows_empty_by_task: Counter[str] = Counter(
@@ -2095,6 +2291,16 @@ def materialize(
             **calibration_headroom_overflow_rows,
             "total": sum(calibration_headroom_overflow_rows.values()),
         },
+        # Feature P5-S.2: mined (strict) candidate rows per detection task removed because a
+        # calibration-feed row of the task carries the same record / image identity (None when off)
+        "calibration_reserve_rows_protected": calibration_reserve_rows_protected,
+        # Feature P5-S.2: slot rows yielded to mined rows under the guard (zero headroom, reserve exhausted)
+        "calibration_shortfall_accepted_under_guard": {
+            **calibration_shortfall_accepted,
+            "total": sum(calibration_shortfall_accepted.values()),
+        },
+        "reference_calibration_shortfall_accepted_under_guard": reference_shortfall_accepted,
+        "single_image_calibration_shortfall_accepted_under_guard": calibration_shortfall_accepted[DEFECT_DETECTION_TASK],
         "guard_aware_calibration": {
             "enabled": bool(calibration_guard_aware),
             "caps": {
@@ -2114,12 +2320,22 @@ def materialize(
                 else None
             ),
             "status": _guard_aware_status(
-                calibration_guard_aware, calibration_fewbox_substituted, calibration_headroom_overflow_rows
+                calibration_guard_aware,
+                calibration_fewbox_substituted,
+                calibration_headroom_overflow_rows,
+                calibration_shortfall_accepted,
             ),
             "kpi_empty_targets": kpi_calibration_empty_targets,
             "headroom_empty_targets": headroom_empty_targets,
             "ledger": guard_aware_ledger,
             "fewbox_shortfall": calibration_fewbox_shortfall,
+            # Feature P5-S.2: the part of fewbox_shortfall the slot yielded to mined rows
+            "shortfall_accepted_under_guard": dict(calibration_shortfall_accepted),
+            "shortfall_policy": (
+                "zero_headroom_slot_keeps_non_empty_reserve_only_and_yields_missing_rows_to_mined_rows"
+                if calibration_guard_aware
+                else None
+            ),
         },
         "zero_new_candidate_policy": zero_new_candidate_policy,
         "verification_policy_exclusions": _verification_policy_exclusions(zero_new_candidate_policy),
@@ -2264,6 +2480,8 @@ def materialize(
             "empty_substituted_by_few_box": calibration_fewbox_substituted[DEFECT_DETECTION_TASK],
             # Feature B3.1: empties kept beyond the headroom because the few-box reserve ran out
             "empty_beyond_headroom": calibration_headroom_overflow_rows[DEFECT_DETECTION_TASK],
+            # Feature P5-S.2: slot rows yielded to strict / mined rows under the guard
+            "shortfall_accepted_under_guard": calibration_shortfall_accepted[DEFECT_DETECTION_TASK],
             "selected_empty": selected_single_calibration_empty,
             "selected_few_box": selected_single_calibration_few,
             "selected_total": len(selected_single_calibration),
@@ -2282,6 +2500,10 @@ def materialize(
             "content_identity": PAIR_CONTENT_IDENTITY,
             "content_sha256_by_record_id": reference_content_by_record,
             "requested_total": reference_calibration_total,
+            # Feature P5-S.2: the slot after the rows it yielded under the guard (the content gate
+            # and the ``_or_yielded`` verdict bind to this total; equal to requested_total otherwise)
+            "shortfall_accepted_under_guard": reference_shortfall_accepted,
+            "effective_total": effective_reference_total,
             "target_no_change": reference_calibration_empty_target,
             # the KPI-rate target before guard-aware substitution (equal unless it substituted)
             "kpi_target_no_change": kpi_reference_calibration_empty_target,
@@ -2387,6 +2609,17 @@ def _verify_reference_calibration_content(
     required = reference.get("requested_total")
     if required is None or required == 0:
         return
+    # Feature P5-S.2: a slot that yielded rows under the guard binds to its effective total
+    # (manifests written before the field carry the requested total only)
+    effective = reference.get("effective_total")
+    if effective is not None:
+        if type(effective) is not int or not 0 <= effective <= required:
+            raise ValueError("reference calibration effective_total is invalid")
+        required = effective
+        if required == 0:
+            if reference.get("selected_total") != 0 or reference.get("content_sha256_by_record_id"):
+                raise ValueError("reference calibration content evidence disagrees with a fully yielded slot")
+            return
     identities = reference.get("content_sha256_by_record_id")
     media_root = manifest.get("configuration", {}).get("media_root")
     if (
@@ -2963,11 +3196,21 @@ def main(argv: list[str] | None = None) -> int:
         ([f" skipped_tasks={skipped}"] if skipped else [])
         + ([f" capped_tasks={capped_absent}"] if capped_absent else [])
     )
+    # Feature P5-S.2: calibration slot rows yielded to mined rows under the guard
+    shortfall = manifest.get("calibration_shortfall_accepted_under_guard") or {}
+    yielded = (
+        f" calibration_shortfall_accepted_under_guard={shortfall['total']} ("
+        + ", ".join(f"{task}={shortfall[task]}" for task in GUARD_AWARE_CALIBRATION_TASKS if shortfall.get(task))
+        + ")"
+        if shortfall.get("total")
+        else ""
+    )
     print(
         f"defect_detection_ablation: wrote {len(rows)} rows; "
         f"Defect Detection={manifest['row_counts']['defect_detection']} verified=true"
         + "".join(notes)
         + (" (zero_new_candidate_policy=skip_exhausted)" if notes else "")
+        + yielded
     )
     return 0
 

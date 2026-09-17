@@ -1,4 +1,4 @@
-# Mining budget (Phase 5-S) — Defect Detection fraction, mined per-task pool caps, fill order, cross-task visual de-duplication switch — defaults off
+# Mining budget (Phase 5-S) — Defect Detection fraction, mined per-task pool caps, fill order, cross-task visual de-duplication switch, calibration reserve protection under the guard — defaults off
 
 ## Why
 
@@ -113,11 +113,70 @@ and are unaffected.
 | `cross_task_visual_dedup` | `on` / `off` (Feature P5-S.1; see "Cross-task visual de-duplication") |
 | `maintenance_rows_unlocked_by_cross_task` | when `off`: `{task: n}` maintenance rows per task that today's cross-task exclusion would have dropped; `null` when `on` |
 | `uniqueness.visual_identity_scope` | `all_tasks` (`on`) or `within_task` (`off`): the scope of `verification.unique_target_images` / `unique_image_content` / `near_duplicate_free` |
+| `calibration_reserve_rows_protected` | guard-on: `{task: n}` mined rows of a detection task removed because a calibration-feed row carries the same record / image identity; `null` guard-off (Feature P5-S.2) |
+| `calibration_shortfall_accepted_under_guard` | `{task: n, total}` calibration slot rows yielded to mined rows under the guard (Feature P5-S.2; also per slot `reference_calibration_shortfall_accepted_under_guard`, `single_image_calibration_shortfall_accepted_under_guard`) |
 
 `bind_cumulative_manifest` copies `mined_task_pool_usage`,
-`mined_task_fill_realized`, `capped_tasks`, `cross_task_visual_dedup` and
-`maintenance_rows_unlocked_by_cross_task` into `current_selection` of the v2
-manifest like the other current-selection facts.
+`mined_task_fill_realized`, `capped_tasks`, `cross_task_visual_dedup`,
+`maintenance_rows_unlocked_by_cross_task`, `calibration_reserve_rows_protected`
+and the three shortfall fields into `current_selection` of the v2 manifest like
+the other current-selection facts.
+
+## Calibration reserve under the 10 percent budget (Feature P5-S.2)
+
+**Why.** Run `v12_p5s_pool10_r9` iteration 1 (snapshot 9acf22f9): the supply
+chain was finally large enough (1,734 queries, 35,892 candidates, 37,164 rows
+selected before alignment) and the materializer failed closed on the reference
+calibration slot instead:
+
+| fact (r9 iteration 1) | value |
+|---|---:|
+| mined Ref_based Defect Detection rows selected (before the target trim) | 8,936 |
+| of them empty ground truth | 4,966 (55.6 percent; task cap 0.50) |
+| `calibration_empty_headroom["task:Ref_based Defect Detection"]` | 0 |
+| no-change target (KPI 278) after the guard-aware split | 0 → 278 substituted by changed pairs |
+| changed pairs in the feed / reserved | 500 / **0** (`fewbox_shortfall 500`, `selected_total 0`) |
+| feasible batch-aligned target | none; 37,164 unverified rows dumped, exit 2 |
+
+At 32k rows per iteration the mined maintenance is over-selected to the target
+before the feasibility loop trims it (31,756 rows plus 4,384 strict Defect
+Detection rows against a 32,256-row novel-image limit), and the guard-aware
+re-selection of the reference reserve computed its novel-image budget from that
+over-selection: 0, so it refused every changed pair of the feed. The mined
+selection consumed the reserve's *budget*; no record or image overlap is needed
+(the merged candidate parquet gives a pair the feed carries the calibration
+tier for its task). With the small budgets of the r4–r6 runs the over-selection
+never exceeded the limit, which is why the defect only appeared at 10 percent.
+
+**Rules** (guard-on only, `--calibration-guard-aware on`; the full statement,
+the field table and the short-feed arithmetic are in `calibration-profile.md`,
+"Reserve protection and guard-induced shortfall acceptance"):
+
+1. **Reserve protection** — the rows the calibration feed reserved for the
+   iteration are kept out of the mined candidate set of the same task before
+   mined selection (a record / image identity appears once, as a calibration
+   row; `calibration_reserve_rows_protected`), and the reserve keeps its first
+   claim on the novel-image budget when the guard-aware split re-selects it. In
+   the r9 shape the 500 changed pairs are reserved and the 32,256-row target is
+   accepted (`tests/test_cosmos3_calibration_reserve_protection.py`, 1:32 scale).
+2. **Guard-induced shortfall acceptance** — when a slot's empty headroom target
+   is 0 and its non-empty reserve cannot fill it even with the B3.1 overflow,
+   the slot keeps the non-empty rows only and yields the missing rows to mined
+   rows of the same task first, then the fill order
+   (`calibration_shortfall_accepted_under_guard`, status
+   `substituted_with_guard_shortfall`, verification
+   `reference_calibration_contract_reached_or_yielded`, CLI line
+   `calibration_shortfall_accepted_under_guard=<total> (...)`). A short slot
+   while empty headroom is available still fails closed.
+
+Read `calibration_reserve_rows_protected`, `calibration_shortfall_accepted_under_guard`
+and `guard_aware_calibration.status` next to `mined_task_pool_usage` after every
+Phase 5-S iteration. A non-zero shortfall says the feed's non-empty reserve
+(`feed_bucket_quotas`, `calibration-profile.md`) is smaller than the slot a zero
+headroom demands: raise the reserve or accept the smaller slot, the iteration no
+longer stops for it. The 8,936-row / 55.6 percent mined Ref_based Defect
+Detection slice that zeroed the headroom is itself a `--mined-task-pool-cap` /
+fill-order question, not a calibration one.
 
 ## Cross-task visual de-duplication (Feature P5-S.1)
 

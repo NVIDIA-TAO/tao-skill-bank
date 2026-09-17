@@ -249,6 +249,95 @@ classification calibration against a task's cap, and the launch-recorded
 `--defect-detection-fraction` lower bound counts the whole Defect Detection
 slice (calibration + task-strict rows), as it always did.
 
+## Reserve protection and guard-induced shortfall acceptance (Feature P5-S.2)
+
+**Why.** Run v12_p5s_pool10_r9 iteration 1 (snapshot 9acf22f9; 10 percent
+mining budget, `--calibration-guard-aware on`, `--cross-task-visual-dedup off`,
+2026-09-17): the materializer received 35,892 candidates and selected 8,936
+Ref_based Defect Detection rows, 4,966 of them empty (55.6 percent, above the
+0.50 task cap), so `calibration_empty_headroom["task:Ref_based Defect Detection"]`
+was 0, the no-change target dropped from 278 to 0 and the guard-aware split
+asked for 500 changed pairs. The feed held 500 changed pairs, yet the re-selection
+reserved none: `reference_calibration.selected_total 0`, `selected_changed 0`,
+`no_change_substituted_by_changed 278`, `fewbox_shortfall 500`,
+`reference_calibration_contract_reached false`. No batch-aligned target was
+feasible, 37,164 unverified rows were dumped and the materializer exited 2 (the
+single-image slot was fine: 512 + 512, headroom 1,192).
+
+**Mechanism** (reproduced 1:32 in `tests/test_cosmos3_calibration_reserve_protection.py`).
+The re-selection's novel-image budget was `novel_image_limit − novel(strict rows)
+− novel(mined maintenance rows) − single-image slot rows`. At that point the
+strict and mined rows are still the pre-trim over-selection (31,756 maintenance
++ 4,384 strict rows against the 32,256-row limit; the feasibility loop trims
+them afterwards), so the budget was 0 and every changed pair of the feed was
+refused as a novel row. The mined selection had consumed the reserve's budget,
+not its rows: no record or image overlap between the feed and the mined rows is
+needed (the merged candidate parquet gives a pair the feed carries the
+calibration tier for its task), and the synthetic shape fails identically with
+and without overlap.
+
+**Rules** (guard-on only; `--calibration-guard-aware off` is byte-identical to
+the parent snapshot, pinned on three shapes in the test module):
+
+1. **Reserve protection.** The rows the calibration feed reserved for the
+   iteration (calibration route tier of Defect Detection and Ref_based Defect
+   Detection) are kept out of the mined candidate set of the same task before
+   mined selection: a record the feed carries is a calibration row even when a
+   mined (strict) candidate carries the same record, whatever the candidate
+   order, and a strict row on the same image / pair identity as a calibration
+   row of the task leaves the mined set; the manifest records the removed mined
+   rows as `calibration_reserve_rows_protected = {task: n}` (0 with the merged
+   feed of the pipeline, `null` when the guard is off). The reserve also keeps
+   its first claim on the novel-image budget when the guard-aware split
+   re-selects it: the reference re-selection may take at least the novel rows
+   the reservation holds, the few-box re-selection at least the single-image
+   slot's budget minus the empties it keeps. In the r9 shape the 500 changed
+   pairs are reserved (`selected_changed 500`, `target_no_change 0`, status
+   `substituted`) and the 32,256-row target is accepted.
+2. **Guard-induced shortfall acceptance.** When the empty headroom target of a
+   slot is 0 and its non-empty reserve (changed pairs / few-box rows) cannot
+   fill the slot even with the B3.1 overflow, the slot carries no empty beyond
+   the zero headroom (the assembler's guard would trim every one) and yields the
+   missing rows to mined rows: the same task first (its remaining eligible
+   candidates, continuing the mined slice's KPI-rate tracking), then the other
+   maintenance tasks in the fill order (strict Defect Detection rows for the
+   single-image slot). `calibration_shortfall_accepted_under_guard = {task: n,
+   total}`, `reference_calibration_shortfall_accepted_under_guard` and
+   `single_image_calibration_shortfall_accepted_under_guard` record the yielded
+   rows, `reference_calibration.effective_total = requested_total − n` is the
+   slot the content gate and the count verdict bind to, and
+   `guard_aware_calibration.status` becomes `substituted_with_guard_shortfall`.
+   The verification key `reference_calibration_contract_reached` (full slot) is
+   replaced by `reference_calibration_contract_reached_or_yielded` (effective
+   slot; present whenever the guard is on), the feasibility loop binds to the
+   effective slot, and the CLI success line appends
+   `calibration_shortfall_accepted_under_guard=<total> (<task>=<n>, ...)`.
+   A slot that is short while empty headroom is available is not
+   guard-induced and still fails closed; a slot the B3.1 overflow can still fill
+   keeps the overflow (unchanged; the assembler's guard trims it).
+
+With a short feed the KPI-rate first pass is itself short (28 no-change + 15
+changed pairs at rate 0.556 stop at 34 pairs, 19 no-change); `kpi_empty_targets`,
+`no_change_substituted_by_changed` and the mined slice's seed follow the first
+pass actually taken, `kpi_target_no_change` keeps the formula target, and the
+combined `reference_empty_rate_matched` target counts the first-pass rows the
+final slot no longer holds as KPI-rate rows (they were never selected).
+
+| manifest field | meaning |
+|---|---|
+| `calibration_reserve_rows_protected` | `{task: n}` mined rows removed because a feed row of the task carries the same record / image identity; `null` guard-off |
+| `calibration_shortfall_accepted_under_guard` | `{task: n, total}` slot rows yielded to mined rows (zero headroom, reserve exhausted) |
+| `reference_calibration_shortfall_accepted_under_guard`, `single_image_calibration_shortfall_accepted_under_guard` | the same per slot (also `reference_calibration.shortfall_accepted_under_guard`, `single_image_calibration.shortfall_accepted_under_guard`) |
+| `reference_calibration.effective_total` | `requested_total − shortfall`; the content gate and `_or_yielded` bind to it |
+| `guard_aware_calibration.shortfall_accepted_under_guard`, `.shortfall_policy`, `.status = substituted_with_guard_shortfall` | the yielded part of `fewbox_shortfall` and the rule |
+| `verification.reference_calibration_contract_reached_or_yielded` | effective-slot verdict (guard-on); replaces `reference_calibration_contract_reached` when rows yielded |
+
+All of them are copied under `current_selection` in the bound v2 manifest. Read
+`calibration_reserve_rows_protected`, `calibration_shortfall_accepted_under_guard`
+and `guard_aware_calibration.status` after every guard-on iteration of a
+Phase 5-S run: a non-zero shortfall means the feed's non-empty reserve
+(`feed_bucket_quotas`) is smaller than the slot the zero headroom demands.
+
 ## Classification calibration (Phase 4 step 4c-A) — default off
 
 ### Why
