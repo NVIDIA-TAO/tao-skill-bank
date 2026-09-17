@@ -92,6 +92,15 @@ HISTORY_NON_MINED_MARKS = (CALIBRATION_MARK, ANCHOR_MARK, COVERAGE_MARK)
 ZERO_NEW_CANDIDATE_POLICIES = ("fail_closed", "skip_exhausted")
 DEFAULT_ZERO_NEW_CANDIDATE_POLICY = "fail_closed"
 _PRESENCE_VERIFICATION_KEY = "all_five_maintenance_tasks_present"
+# Feature P5-S follow-up (2026-09-17): under ``skip_exhausted`` a maintenance task absent because its
+# mined pool cap was consumed before this selection (remainder 0, eligible candidates left) is
+# accepted like an exhausted one and recorded in ``capped_absent_tasks`` (disjoint from
+# ``exhausted_tasks`` / ``skipped_tasks``). The binding presence verdict under that policy is
+# ``maintenance_tasks_present_or_exhausted_or_capped``; the older ``maintenance_tasks_present_or_exhausted``
+# stays a raw fact (false when a capped task is absent) and is excluded from ``verified`` there.
+# ``fail_closed`` still fails on any absent task; every task absent still fails under both policies.
+_PRESENCE_OR_EXHAUSTED_KEY = "maintenance_tasks_present_or_exhausted"
+_PRESENCE_OR_EXHAUSTED_OR_CAPPED_KEY = "maintenance_tasks_present_or_exhausted_or_capped"
 # Guard-aware calibration selection (Feature B3, run v12_p4b_emptyguard_r4 iteration 4,
 # 2026-09-15): with the empty-answer guard on, the fixed calibration slot (512 + 512
 # single-image rows, 500 reference pairs) selects at most as many empty rows as the
@@ -122,6 +131,7 @@ CURRENT_SELECTION_COPIED_KEYS = (
     "mined_task_pool_usage",
     "mined_task_fill_realized",
     "capped_tasks",
+    "capped_absent_tasks",
 )
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
@@ -143,8 +153,8 @@ def _sha256(path: pathlib.Path) -> str:
 
 
 def _verification_policy_exclusions(policy: str) -> list[str]:
-    """Verification keys the policy replaces (``maintenance_tasks_present_or_exhausted`` covers them)."""
-    return [_PRESENCE_VERIFICATION_KEY] if policy == "skip_exhausted" else []
+    """Verification keys the policy replaces (``maintenance_tasks_present_or_exhausted_or_capped`` covers them)."""
+    return [_PRESENCE_VERIFICATION_KEY, _PRESENCE_OR_EXHAUSTED_KEY] if policy == "skip_exhausted" else []
 
 
 def _manifest_verified(verification: dict[str, Any], policy: str) -> bool:
@@ -1788,31 +1798,61 @@ def materialize(
         for task in missing_maintenance
         if eligible_by_task[task] == 0
     }
+    # Feature P5-S follow-up: a maintenance task absent because its mined pool cap was consumed
+    # before this selection (remainder 0) while eligible candidates remain; disjoint from
+    # exhausted_tasks (a task with no eligible row is exhausted, whatever its cap says).
+    capped_absent_tasks = {
+        task: {
+            "routed_candidates": int(routed_by_task[task]),
+            "eligible_after_exclusion": int(eligible_by_task[task]),
+            "cap_rows": cap_rows_by_task[task],
+            "used_before": int(mined_used_before[task]),
+            "selected": int(maintenance_selected[task]),
+            "materialized": 0,
+        }
+        for task in missing_maintenance
+        if task not in exhausted_tasks and mined_remaining_before.get(task) == 0
+    }
     skip_exhausted = zero_new_candidate_policy == "skip_exhausted"
     all_maintenance_exhausted = len(exhausted_tasks) == len(MAINTENANCE_TASK_TYPES)
+    all_maintenance_absent = len(exhausted_tasks) + len(capped_absent_tasks) == len(MAINTENANCE_TASK_TYPES)
+    # verdicts: ``present_or_exhausted`` is the pre-P5-S fact (every absent task exhausted);
+    # ``present_or_exhausted_or_capped`` is the binding verdict under skip_exhausted
     if not missing_maintenance:
         maintenance_present_or_exhausted = True
+        maintenance_present_or_exhausted_or_capped = True
         zero_new_candidate_block_reason = None
     elif not skip_exhausted:
         maintenance_present_or_exhausted = False
+        maintenance_present_or_exhausted_or_capped = False
         zero_new_candidate_block_reason = "policy_fail_closed"
     elif row_count == 0:
         maintenance_present_or_exhausted = False
+        maintenance_present_or_exhausted_or_capped = False
         zero_new_candidate_block_reason = "zero_new_rows"
     elif all_maintenance_exhausted:
         maintenance_present_or_exhausted = False
+        maintenance_present_or_exhausted_or_capped = False
         zero_new_candidate_block_reason = "all_maintenance_tasks_exhausted"
-    elif set(missing_maintenance) != set(exhausted_tasks):
+    elif all_maintenance_absent:
         maintenance_present_or_exhausted = False
+        maintenance_present_or_exhausted_or_capped = False
+        zero_new_candidate_block_reason = "all_maintenance_tasks_exhausted_or_capped"
+    elif set(missing_maintenance) != set(exhausted_tasks) | set(capped_absent_tasks):
+        maintenance_present_or_exhausted = False
+        maintenance_present_or_exhausted_or_capped = False
         zero_new_candidate_block_reason = "maintenance_task_absent_with_eligible_candidates"
     else:
-        maintenance_present_or_exhausted = True
+        maintenance_present_or_exhausted = not capped_absent_tasks
+        maintenance_present_or_exhausted_or_capped = True
         zero_new_candidate_block_reason = None
-    skipped_tasks = sorted(exhausted_tasks) if (skip_exhausted and maintenance_present_or_exhausted) else []
+    # the exhausted tasks the policy accepted (accepted capped ones are the capped_absent_tasks keys)
+    skipped_tasks = (
+        sorted(exhausted_tasks) if (skip_exhausted and maintenance_present_or_exhausted_or_capped) else []
+    )
     # Mined per-task pool caps (Feature P5-S): usage ledger over the mined rows this selection emits
-    # (calibration rows never count). A task whose remainder is gone is ``capped``, which the
-    # zero-new-candidate policies above do not treat specially: an absent capped task is still an
-    # absent task (it is never listed as exhausted while eligible rows remain).
+    # (calibration rows never count). A task whose remainder is gone is ``capped``; when it is absent
+    # for that reason it is in ``capped_absent_tasks`` above, never in ``exhausted_tasks``.
     mined_selected_by_task: Counter[str] = Counter(
         item["task_type"] for item in emitted_base_entries if item["route_tier"] != "calibration"
     )
@@ -1910,9 +1950,12 @@ def materialize(
         "all_five_maintenance_tasks_present": all(
             materialized_maintenance[task] > 0 for task in MAINTENANCE_TASK_TYPES
         ),
-        # policy-aware presence: under skip_exhausted an absent task is acceptable
-        # only when it is exhausted (and not every task is, and rows are added)
-        "maintenance_tasks_present_or_exhausted": maintenance_present_or_exhausted,
+        # pre-P5-S presence fact: every absent task is exhausted (policy-aware as before; false
+        # when a capped task is absent, and excluded from ``verified`` under skip_exhausted)
+        _PRESENCE_OR_EXHAUSTED_KEY: maintenance_present_or_exhausted,
+        # binding verdict under skip_exhausted: an absent task is acceptable only when it is
+        # exhausted or capped (and not every task is absent, and rows are added)
+        _PRESENCE_OR_EXHAUSTED_OR_CAPPED_KEY: maintenance_present_or_exhausted_or_capped,
         # Feature P5-S: no task emitted more mined rows than its cap remainder allowed
         "mined_task_pool_caps_respected": all(
             usage["selected_now"] <= max(0, usage["cap_rows"] - usage["used_before"])
@@ -1985,6 +2028,8 @@ def materialize(
         "mined_task_fill_order": list(fill_order),
         "mined_task_fill_realized": mined_task_fill_realized,
         "capped_tasks": capped_tasks,
+        # absent because the cap was consumed (accepted under skip_exhausted, fatal under fail_closed)
+        "capped_absent_tasks": capped_absent_tasks,
         "maintenance_tasks": {
             "present": [task for task in MAINTENANCE_TASK_TYPES if materialized_maintenance[task] > 0],
             "missing": missing_maintenance,
@@ -2790,10 +2835,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"defect_detection_ablation: {exc}", file=sys.stderr)
         return 2
     skipped = manifest.get("skipped_tasks") or []
+    capped_absent = sorted(manifest.get("capped_absent_tasks") or {})
+    notes = (
+        ([f" skipped_tasks={skipped}"] if skipped else [])
+        + ([f" capped_tasks={capped_absent}"] if capped_absent else [])
+    )
     print(
         f"defect_detection_ablation: wrote {len(rows)} rows; "
         f"Defect Detection={manifest['row_counts']['defect_detection']} verified=true"
-        + (f" skipped_tasks={skipped} (zero_new_candidate_policy=skip_exhausted)" if skipped else "")
+        + "".join(notes)
+        + (" (zero_new_candidate_policy=skip_exhausted)" if notes else "")
     )
     return 0
 

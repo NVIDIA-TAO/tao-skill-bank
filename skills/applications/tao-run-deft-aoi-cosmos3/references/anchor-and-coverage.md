@@ -248,9 +248,11 @@ when the field is set). With `skip_exhausted`:
   (a ValueError before the repetition blend, under both policies);
 - a task that stopped at its mined pool cap (`mining-budget.md`, Phase 5-S) is
   reported as `capped` (`capped_tasks`, `mined_task_pool_usage`), never as
-  exhausted while it still has eligible candidates; this policy does not treat
-  it specially, so a fully consumed cap makes the task absent in later
-  iterations and blocks exactly like any other absent task.
+  exhausted while it still has eligible candidates; when the consumed cap makes
+  it absent, `skip_exhausted` accepts it too (`capped_absent_tasks`, binding
+  key `maintenance_tasks_present_or_exhausted_or_capped`), `fail_closed` blocks
+  as for any absent task, and every task absent still fails
+  (`all_maintenance_tasks_exhausted_or_capped`).
 
 The empty-answer guard cannot make a task exhausted silently: it only removes
 empty rows and the standard back-fill draws from a task's own remaining

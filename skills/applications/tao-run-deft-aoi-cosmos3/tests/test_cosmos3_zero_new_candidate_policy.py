@@ -128,7 +128,11 @@ class ZeroNewCandidatePolicyTests(unittest.TestCase):
         self.assertEqual(manifest["zero_new_candidate_policy"], "skip_exhausted")
         self.assertFalse(manifest["verification"]["all_five_maintenance_tasks_present"])  # the raw fact is kept
         self.assertTrue(manifest["verification"]["maintenance_tasks_present_or_exhausted"])
-        self.assertEqual(manifest["verification_policy_exclusions"], ["all_five_maintenance_tasks_present"])
+        self.assertTrue(manifest["verification"]["maintenance_tasks_present_or_exhausted_or_capped"])
+        # the binding verdict under this policy is the ..._or_capped key (Feature P5-S follow-up)
+        self.assertEqual(manifest["verification_policy_exclusions"],
+                         ["all_five_maintenance_tasks_present", "maintenance_tasks_present_or_exhausted"])
+        self.assertEqual(manifest["capped_absent_tasks"], {})
         self.assertEqual(manifest["skipped_tasks"], list(ABSENT))
         for task in ABSENT:
             self.assertEqual(manifest["exhausted_tasks"][task], {

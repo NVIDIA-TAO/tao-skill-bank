@@ -61,14 +61,18 @@ request fields of the same names.
   as any other shortage does.
 - **Capped, not exhausted.** `mined_task_pool_usage[task].capped_this_iteration`
   is true when the remainder is used up (before or by this selection) and the
-  task is listed in `capped_tasks`. `exhausted_tasks`, `skipped_tasks` and the
-  zero-new-candidate policies are unchanged: a task whose cap is fully consumed
-  is *absent* from later selections while it still has eligible candidates, and
-  the unchanged policies treat it like any other absent task (`fail_closed`:
-  `policy_fail_closed`; `skip_exhausted`:
-  `maintenance_task_absent_with_eligible_candidates`). Size the caps so that the
-  last planned iteration still has a remainder for every task you cap, or treat a
-  populated `capped_tasks` as the planned end of the run. The empty-answer guard
+  task is listed in `capped_tasks`. A task whose cap was consumed *before* this
+  selection is absent while it still has eligible candidates; it is recorded in
+  `capped_absent_tasks` (per task: routed, eligible, cap_rows, used_before,
+  selected, materialized), never in `exhausted_tasks` / `skipped_tasks`. Under
+  `--zero-new-candidate-policy skip_exhausted` such a task is accepted like an
+  exhausted one: the binding verification key is
+  `maintenance_tasks_present_or_exhausted_or_capped` (the older
+  `maintenance_tasks_present_or_exhausted` stays a raw fact and is listed in
+  `verification_policy_exclusions`), and the CLI line reports `capped_tasks=[...]`.
+  `fail_closed` still fails on any absent task (`policy_fail_closed`), and every
+  maintenance task absent still fails under both policies
+  (`all_maintenance_tasks_exhausted_or_capped`). The empty-answer guard
   (B3/B3.1/B4) and the anchors are untouched and still run after materialization.
 
 ## Fill order
@@ -149,10 +153,10 @@ mined Defect Detection rows at 13,109 (0.15 is feasible: 3 x 3,815 = 11,445) and
 the three single-image maintenance tasks at 35,352 rows together; everything
 above that goes to the uncapped Ref_based Defect Classification. Read
 `mined_task_pool_usage` after every iteration; when a task shows
-`remaining_after = 0` it will be absent next iteration and the unchanged
-presence policy blocks (see "Capped, not exhausted"), so the third iteration is
-the last one the caps above can carry when the routing offers more candidates
-than the remainders.
+`remaining_after = 0` it will be absent next iteration, which `skip_exhausted`
+accepts and records in `capped_absent_tasks` while `fail_closed` blocks (see
+"Capped, not exhausted"), so launch Phase 5-S with
+`--zero-new-candidate-policy skip_exhausted`.
 
 A default launch (`--defect-detection-fraction 0.5`, no caps, no fill order)
 records `defect_detection_fraction = 0.5`, `mined_task_pool_caps = {}`,

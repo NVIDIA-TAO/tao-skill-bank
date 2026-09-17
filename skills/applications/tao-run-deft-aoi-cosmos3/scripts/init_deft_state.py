@@ -950,7 +950,8 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     "identity exclusion is skipped and recorded (quota manifest exhausted_tasks / skipped_tasks), "
                     "fail closed only when all maintenance tasks are exhausted or the iteration adds zero rows "
                     "(defect_detection_ablation.py --zero-new-candidate-policy, rendered by "
-                    "render_iteration_mining_runner.py zero_new_candidate_policy)"
+                    "render_iteration_mining_runner.py zero_new_candidate_policy); a task absent because its "
+                    "mined pool cap is consumed is skipped the same way and recorded as capped_absent_tasks"
                 ),
                 "defect_detection_fraction": defect_detection_fraction,
                 "defect_detection_fraction_rule": (
@@ -966,7 +967,8 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     "Mining pool * fraction); cumulative over iterations (the mined rows the cumulative Train "
                     "JSONL already holds count, calibration / anchor / coverage rows do not); slots a capped task "
                     "frees flow to the next task in the fill order; a task at its cap is reported as capped, not "
-                    f"exhausted. Missing tasks are uncapped. Policy {MINED_TASK_POOL_CAP_POLICY} "
+                    "exhausted (an absent capped task is accepted under skip_exhausted, fatal under fail_closed). "
+                    f"Missing tasks are uncapped. Policy {MINED_TASK_POOL_CAP_POLICY} "
                     "(defect_detection_ablation.py --mined-task-pool-cap TASK=FRACTION, rendered by "
                     "render_iteration_mining_runner.py mined_task_pool_caps; quota manifest mined_task_pool_caps / "
                     "mined_task_pool_usage / capped_tasks)"

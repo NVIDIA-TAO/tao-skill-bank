@@ -255,21 +255,71 @@ class MinedTaskPoolCapTests(unittest.TestCase):
         self.assertEqual(manifest2["mined_task_fill_realized"][DC], 2)
         self.assertTrue(manifest2["verification"]["mined_task_pool_caps_respected"])
         self.assertNotIn(DC, manifest2["exhausted_tasks"])
-        # iteration 3: the cap is consumed; the task is reported as capped, not exhausted, and the
-        # unchanged zero-new-candidate policies treat the absent task exactly as before
-        for policy, reason in (("fail_closed", "policy_fail_closed"),
-                               ("skip_exhausted", "maintenance_task_absent_with_eligible_candidates")):
-            with self.subTest(policy=policy):
-                third, manifest3 = _materialize(rows, candidates, previous_records=[*first, *second],
-                                                zero_new_candidate_policy=policy, **options)
-                self.assertNotIn(DC, _by_task(third))
-                self.assertEqual(manifest3["mined_task_pool_usage"][DC],
-                                 _usage(manifest3, DC, pool=10, fraction=0.6, cap=6, before=6, now=0))
-                self.assertEqual(manifest3["capped_tasks"], [DC])
-                self.assertEqual(manifest3["maintenance_tasks"]["missing"], [DC])
-                self.assertNotIn(DC, manifest3["exhausted_tasks"])
-                self.assertFalse(manifest3["verified"])
-                self.assertEqual(manifest3["zero_new_candidate_block_reason"], reason)
+        # iteration 3: the cap is consumed; the absent task is reported as capped, not exhausted.
+        # fail_closed fails as for any absent task; skip_exhausted accepts it (Feature P5-S follow-up)
+        prior3 = [*first, *second]
+        capped_record = {"routed_candidates": 10, "eligible_after_exclusion": 4, "cap_rows": 6, "used_before": 6,
+                         "selected": 0, "materialized": 0}
+        third, manifest3 = _materialize(rows, candidates, previous_records=prior3, zero_new_candidate_policy="fail_closed", **options)
+        self.assertNotIn(DC, _by_task(third))
+        self.assertEqual(manifest3["mined_task_pool_usage"][DC], _usage(manifest3, DC, pool=10, fraction=0.6, cap=6, before=6, now=0))
+        self.assertEqual(manifest3["capped_tasks"], [DC])
+        self.assertEqual(manifest3["capped_absent_tasks"], {DC: capped_record})
+        self.assertEqual(manifest3["maintenance_tasks"]["missing"], [DC])
+        self.assertEqual(manifest3["exhausted_tasks"], {})
+        self.assertFalse(manifest3["verified"])
+        self.assertFalse(manifest3["verification"]["maintenance_tasks_present_or_exhausted_or_capped"])
+        self.assertEqual(manifest3["zero_new_candidate_block_reason"], "policy_fail_closed")
+        accepted, manifest4 = _materialize(rows, candidates, previous_records=prior3, zero_new_candidate_policy="skip_exhausted", **options)
+        self.assertTrue(manifest4["verified"], manifest4["verification"])
+        # 24, not 30: only one Defect Detection empty is left for the 0.15 bound (2 needed at 30 rows),
+        # so the batch shrinks one multiple; a DD shortage, not the caps (shortfall.accepted)
+        self.assertEqual(len(accepted), 24)
+        self.assertTrue(manifest4["shortfall"]["accepted"])
+        self.assertNotIn(DC, _by_task(accepted))
+        self.assertEqual(manifest4["capped_absent_tasks"], {DC: capped_record})
+        self.assertEqual(manifest4["capped_tasks"], [DC])
+        self.assertEqual((manifest4["exhausted_tasks"], manifest4["skipped_tasks"]), ({}, []))
+        self.assertTrue(manifest4["verification"]["maintenance_tasks_present_or_exhausted_or_capped"])
+        self.assertFalse(manifest4["verification"]["maintenance_tasks_present_or_exhausted"])  # raw fact kept
+        self.assertFalse(manifest4["verification"]["all_five_maintenance_tasks_present"])
+        self.assertEqual(manifest4["verification_policy_exclusions"],
+                         ["all_five_maintenance_tasks_present", "maintenance_tasks_present_or_exhausted"])
+        self.assertIsNone(manifest4["zero_new_candidate_block_reason"])
+        self.assertTrue(manifest4["verification"]["mined_task_pool_caps_respected"])
+        # the bound v2 manifest carries the capped record and stays verified under the policy
+        import assemble_training_json
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            mined = _write(root / "mined3.jsonl", accepted)
+            bound_input = ablation.bind_manifest(manifest4, mined)
+            train_rows, summary = assemble_training_json.assemble(None, mined, validation_paths=[], media_root=pathlib.Path("/data"), row_multiple=6)
+            train = _write(root / "train3.jsonl", train_rows)
+            summary = assemble_training_json.bind_summary(summary, train)
+            bound = ablation.bind_cumulative_manifest(bound_input, current_jsonl=mined, training_jsonl=train,
+                                                      assembly_summary=summary, epochs=1, global_batch=6)
+            self.assertTrue(bound["verified"])
+            self.assertEqual(bound["current_selection"]["capped_absent_tasks"], {DC: capped_record})
+            self.assertEqual(bound["current_selection"]["capped_tasks"], [DC])
+
+    def test_every_maintenance_task_absent_still_fails_when_caps_are_consumed(self) -> None:
+        # caps of one row per maintenance task, all consumed by the prior corpus: every task is absent
+        # (capped, with eligible candidates) -> skip_exhausted still fails closed
+        rows, candidates = _pool(dc_rows=4, maintenance_rows=4, ref_dc_rows=4)
+        caps = {task: 0.25 for task in ablation.MAINTENANCE_TASK_TYPES}
+        prior = [row for row in rows if row["task_type"] != DD and row["id"].endswith("-000")]
+        self.assertEqual(len(prior), 5)
+        selected, manifest = _materialize(rows, candidates, previous_records=prior, max_rows=12,
+                                          mined_task_pool_caps=caps, zero_new_candidate_policy="skip_exhausted")
+        self.assertEqual(set(_by_task(selected)), {DD})
+        self.assertEqual(sorted(manifest["capped_absent_tasks"]), sorted(ablation.MAINTENANCE_TASK_TYPES))
+        self.assertEqual(manifest["exhausted_tasks"], {})
+        self.assertFalse(manifest["verified"])
+        self.assertFalse(manifest["verification"]["maintenance_tasks_present_or_exhausted_or_capped"])
+        self.assertEqual(manifest["zero_new_candidate_block_reason"], "all_maintenance_tasks_exhausted_or_capped")
+        for task in ablation.MAINTENANCE_TASK_TYPES:
+            usage = manifest["mined_task_pool_usage"][task]
+            self.assertEqual((usage["cap_rows"], usage["used_before"], usage["selected_now"]), (1, 1, 0))
 
     def test_defect_detection_fraction_moves_the_lower_bound_and_is_recorded(self) -> None:
         rows, candidates = _pool()
