@@ -41,17 +41,16 @@ Config (env or `~/.tao-kit/kit.env`): `WS` required; `MODEL`, `TRAIN_IMG`,
   (scripts: `commit_stage.py`, `audit_deft_run.py`, `deft_python.sh`,
   `metric_contract.py`), mining-only routing (AnomalyGen committed with
   `--skip`), NV_PCB_Siamese workspace layout, Pi harness.
-- **Known drift vs the current bank scripts:** the current `commit_stage.py`
-  (a) requires `--duration-sec` on every commit — the cards now pass a
-  session-relative value from the driver-exported `STAGE_T0` (mechanical
-  update, argparse-verified, not yet re-validated in a full loop); and
-  (b) requires `--mining-candidates`, `--mining-history`, and
-  `--mining-history-summary` evidence for non-skip `data_mining` commits and
-  `--anomalygen-allocation` for non-skip AnomalyGen commits — card 50 predates
-  these, so its commit will be rejected until re-validated (commit_stage names
-  the missing evidence on rejection; the cards' bounded self-repair rule
-  covers exactly this case). **Re-validate the pack end-to-end before relying
-  on an unattended full-loop run.**
+- Cards supply session-relative `--duration-sec` on commits. Card 50 uses
+  `prepare_card_mining.py` and the bank's history filter to produce candidate,
+  selected, and history evidence required by the current audit. It never asks
+  the execution model to invent missing evidence.
+- A committed `loop_stop` is not completion: the driver prepares the inference
+  handoff and requires a successful completion audit before reporting DONE.
+  Finalization failures halt with a nonzero status.
+- These contract repairs have offline regression coverage. Re-validate the
+  pack end-to-end on the selected GPU/image before an unattended full-loop run;
+  the historical measurements above are not current-version validation.
 - Cards are compiled artifacts: when this skill's contract changes, update the
   cards in the same MR, or re-author the pack (kit skill → authoring prompt).
 - Relaunching after a completed run starts a fresh run (the driver refreshes

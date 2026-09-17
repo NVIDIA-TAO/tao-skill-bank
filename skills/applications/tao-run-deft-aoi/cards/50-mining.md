@@ -12,7 +12,7 @@ bash -c '$DPY -c "import json,pandas as pd;st=json.load(open(\"$RD/deft_state.js
 ```
 | gate output | do |
 |---|---|
-| `ROWS=0` | legal skip: `$DPY $SKILL_ROOT/scripts/commit_stage.py --duration-sec $(( $(date +%s) - STAGE_T0 + 1 )) --results-dir $RD --iter-label $ITER --stage data_mining --skip --summary "routing produced zero mining rows"` (fallback if --skip rejected: `--status ok`, same summary) → `STAGE_DONE 50` |
+| `ROWS=0` | legal skip: `$DPY $SKILL_ROOT/scripts/commit_stage.py --duration-sec $(( $(date +%s) - STAGE_T0 + 1 )) --results-dir $RD --iter-label $ITER --stage data_mining --skip --summary "routing produced zero mining rows"` → `STAGE_DONE 50` |
 | `ROWS=N` (N>0) | steps 1→4 |
 
 1) Embed targets + pool (CPU), then k-NN (GPU) — ONE command, three container runs, evidence logs kept. For iter2+ the pool embeddings AND their PASS log are copied from iter1 (the audit requires a real TAO PASS marker in every mining log — never hand-write a log):
@@ -28,30 +28,11 @@ print(\"pool_files rows:\", len(df))"; docker run --rm --ipc=host -e CUDA_VISIBL
 ```
 Every log must end `Execution status: PASS`. A FAIL in an embedding log while `--gpus` was used = the sm_75 trap: rerun that exact step CPU-only as written.
 
-2) Cosine filter (≥0.9) → write BOTH `mined_filtered.parquet` (this is what gets committed; kept rows only) and ChangeNet rows with the path-form rule (file→DIRECTORY collapse on BOTH input_path and golden_path; PASS rows from the OK-only pool stage into mined-input AND mined-golden dirs; object_name must have the `_SolderLight` suffix STRIPPED — the dataloader re-appends it) + `knn_summary.csv` — ONE command:
+2) Apply the configured cosine cutoff, exclude previously selected images using the bank's history helper, and stage the selected ChangeNet rows — ONE command:
 ```bash
-bash -c 'set -e; $DPY -c "
-import pandas as pd, shutil, pathlib
-m=pd.read_parquet(\"$RD/$ITER/mining_filter/mined.parquet\")
-simc=[c for c in m.columns if \"sim\" in c.lower() or \"dist\" in c.lower() or \"score\" in c.lower()][0]
-cand=len(m.drop_duplicates(subset=[m.columns[0]]))
-keep=m[m[simc]>=0.9].drop_duplicates(subset=[m.columns[0]])
-keep.to_parquet(\"$RD/$ITER/mining_filter/mined_filtered.parquet\")
-run=pathlib.Path(\"$RD\").name; base=pathlib.Path(\"$WS\")
-mi=base/f\"results/{run}/$ITER/dataset/images/mined_input\"; mg=base/f\"results/{run}/$ITER/dataset/images/mined_golden\"
-mi.mkdir(parents=True,exist_ok=True); mg.mkdir(parents=True,exist_ok=True)
-rows=[]
-for _,r in keep.iterrows():
-    src=pathlib.Path(str(r.iloc[0]))
-    if not src.exists(): continue
-    obj=src.stem[:-len(\"_SolderLight\")] if src.stem.endswith(\"_SolderLight\") else src.stem
-    dst=obj+\"_SolderLight\"+src.suffix
-    shutil.copy2(src, mi/dst); shutil.copy2(src, mg/dst)
-    rows.append({\"input_path\":f\"results/{run}/$ITER/dataset/images/mined_input\",\"golden_path\":f\"results/{run}/$ITER/dataset/images/mined_golden\",\"label\":\"PASS\",\"object_name\":obj})
-pd.DataFrame(rows).to_csv(\"$RD/$ITER/mining_filter/mining_pool.csv\",index=False)
-pd.DataFrame([{\"candidate_count\":cand,\"kept_count\":len(rows),\"rejected_count\":cand-len(keep),\"similarity_threshold\":0.9}]).to_csv(\"$RD/$ITER/mining_filter/knn_summary.csv\",index=False)
-print(open(\"$RD/$ITER/mining_filter/knn_summary.csv\").read())"'
+$DPY $SKILL_ROOT/scripts/prepare_card_mining.py --results-dir $RD --workspace $WS --iter-label $ITER
 ```
+This writes `mining_candidates.parquet` (pre-history), `mined_filtered.parquet` (novel rows), the configured run-level `mining_history.json`, `mining_history_summary.json`, `knn_summary.csv`, and `mining_pool.csv`. Re-execution verifies and reuses the committed selection; it must not overwrite history. On failure, commit data_mining with `--status error` and the actual diagnostic, then stop.
 
 3) Mid-iteration leakage check (hard stop on any hit):
 ```bash
@@ -59,10 +40,10 @@ $DPY $SKILL_ROOT/scripts/validate_training_csv.py --csv $RD/$ITER/mining_filter/
 ```
 On leakage: commit data_mining `--status error --summary "train/val leakage in mined rows"` → `STAGE_DONE 50` → stop.
 
-4) Commit data_mining with full evidence — the committed parquet is the FILTERED one (its row count must equal kept_count) — ONE command:
+4) Commit data_mining with full evidence — the committed parquet is the history-filtered one (its row count must equal selected_count; knn_summary kept_count describes pre-history candidates) — ONE command:
 ```bash
-bash -c 'set -e; MF=$RD/$ITER/mining_filter; K=$($DPY -c "import csv;print(next(csv.DictReader(open(\"$RD/$ITER/mining_filter/knn_summary.csv\")))[\"kept_count\"])"); $DPY $SKILL_ROOT/scripts/commit_stage.py --duration-sec $(( $(date +%s) - STAGE_T0 + 1 )) --results-dir $RD --iter-label $ITER --stage data_mining --mining-parquet $MF/mined_filtered.parquet --mining-count "$K" --mining-summary $MF/knn_summary.csv --mining-source-embeddings $MF/source_embeddings.parquet --mining-target-embeddings $MF/target_embeddings.parquet --mining-source-log $MF/source_embeddings.log --mining-target-log $MF/target_embeddings.log --mining-knn-log $MF/nearest_neighbors.log --summary "mined kept=$K (cosine>=0.9)"'
+bash -c 'set -e; MF=$RD/$ITER/mining_filter; K=$($DPY -c "import json;print(json.load(open(\"$RD/$ITER/mining_filter/mining_history_summary.json\"))[\"selected_count\"])"); $DPY $SKILL_ROOT/scripts/commit_stage.py --duration-sec $(( $(date +%s) - STAGE_T0 + 1 )) --results-dir $RD --iter-label $ITER --stage data_mining --mining-parquet $MF/mined_filtered.parquet --mining-count "$K" --mining-candidates $MF/mining_candidates.parquet --mining-history $RD/mining_history.json --mining-history-summary $MF/mining_history_summary.json --mining-summary $MF/knn_summary.csv --mining-source-embeddings $MF/source_embeddings.parquet --mining-target-embeddings $MF/target_embeddings.parquet --mining-source-log $MF/source_embeddings.log --mining-target-log $MF/target_embeddings.log --mining-knn-log $MF/nearest_neighbors.log --summary "mined novel=$K (cosine>=0.9)"'
 ```
-If commit_stage rejects: stderr names the missing evidence flag/file — produce exactly that, rerun. Never bypass.
+If commit_stage rejects, report its diagnostic and stop. Never fabricate evidence or bypass the audit.
 
 Final message exactly: `STAGE_DONE 50`

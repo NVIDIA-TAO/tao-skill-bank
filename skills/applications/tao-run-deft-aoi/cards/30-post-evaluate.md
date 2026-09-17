@@ -29,12 +29,6 @@ Final message exactly: `STAGE_DONE 30`
 
 1) `$DPY $SKILL_ROOT/scripts/commit_stage.py --duration-sec $(( $(date +%s) - STAGE_T0 + 1 )) --results-dir $RD --iter-label $ITER --stage loop_stop --summary "max_iterations reached; run-best per metric contract"`
 2) Token backfill (`align_token_usage.py`) is NOT applicable on this harness (it reads Claude Code transcripts); skip it — documented harness deviation, do not substitute anything.
-3) HTML report render (`reporter` agent spawn) is likewise NOT available on this harness; skip it — documented harness deviation (completion proof does not depend on it), do not render inline.
-4) `$DPY $SKILL_ROOT/scripts/prepare_inference_spec.py --results-dir $RD`
-5) Prove completion — MUST exit zero before any completion claim:
-```bash
-$DPY $SKILL_ROOT/scripts/audit_deft_run.py --results-dir $RD --require-complete && echo COMPLETE_PROVEN
-```
-If it exits non-zero the run is NOT complete: fix exactly what it names or commit `--status error`; never claim completion without `COMPLETE_PROVEN`.
+3) End the session. The driver now owns finalization: it calls `prepare_inference_spec.py`, then `audit_deft_run.py --require-complete`, and reports DONE only if both succeed. Do not prepare the handoff, re-commit loop_stop, or claim completion here. If this session is interrupted after the commit, the next driver iteration performs the same finalization.
 
 Final message exactly: `STAGE_DONE 30`

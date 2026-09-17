@@ -2,7 +2,7 @@
 name: tao-token-efficient-execution
 description: Token-efficient execution kit for repeated TAO agentic workflows. Compiles a skill into stage cards once (with a strong model), then executes them forever in fresh, small headless sessions coordinated by a bash driver — measured 67-91% token reduction and 3-5x lower peak context vs one long conversation. Use when a TAO workflow will be run repeatedly, when token cost matters, when the target model has a small context window, or on trigger phrases like "token efficient", "reduce token cost", "card pack", "stage cards", "run this workflow on a small model", "compile this skill into cards".
 license: Apache-2.0
-compatibility: Requires bash, jq, and Python 3.10+. An agent harness is needed to execute cards (Pi coding agent or Claude Code; see adapters/). The shipped card packs additionally need docker and the prerequisites of their application skill.
+compatibility: Requires bash, jq, Python 3.10+, and a headless agent harness with tool interception (see adapters/ for supported versions). The shipped card packs additionally need docker and the prerequisites of their application skill.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -76,11 +76,15 @@ tail -f ~/.tao-kit/automl/driver.log
 
 The driver waits while jobs run (activity-based, not process-based), fires one
 fresh session per stage, halts on committed errors (no auto-retry — an
-operator decides), and exits 0 when the pack's DONE marker appears.
+operator decides), and exits 0 only after verified completion. DEFT prepares
+its inference handoff and passes the completion audit; AutoML requires its
+DONE marker with no trailing failure. Round-cap exhaustion exits nonzero.
 
 Starting a pack driver is side-effecting work: complete the
 `tao-launch-workflow` gate (platform, credentials, image, datasets, launch
-review) before launching it, exactly as for in-conversation execution.
+review) before launching it, exactly as for in-conversation execution. Pi guards are
+not an OS sandbox: use an isolated trusted worker, not a workstation containing
+unrelated credentials (see `adapters/pi/README.md`).
 
 ## Quick start — author a pack for another workflow
 

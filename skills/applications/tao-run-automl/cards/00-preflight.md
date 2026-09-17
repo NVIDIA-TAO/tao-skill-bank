@@ -14,9 +14,9 @@ bash -c 'grep -h "ok$\|FAIL$" $RD/progress.log 2>/dev/null | tail -3; echo "---G
 ```bash
 $VENV/bin/python3 -c "import tao_automl, tao_sdk; from tao_automl.runner import AutoMLRunner; from tao_sdk.platforms.docker import DockerSDK; print('automl pkg OK')"
 ```
-Known fix — import fails / venv missing: `bash -c 'python3 -m venv $VENV && $VENV/bin/pip install "nvidia-tao-automl[docker]==7.0.1"'` then rerun step 1. (7.0.1 is the newest published wheel; rc versions were never published.)
+If imports fail, append `preflight FAIL` and stop. Have the operator run the application preflight with the wheel pin from `$SB/versions.yaml`; do not install a historical wheel inside this card.
 
-2) Docker + GPU + image (LOCAL ONLY — never docker pull; 6.26.3-pyt deliberately overrides versions.yaml):
+2) Docker + GPU + image (LOCAL ONLY — never docker pull; the driver resolves TRAIN_IMG from $SB/versions.yaml unless explicitly overridden):
 ```bash
 bash -c 'docker image inspect $TRAIN_IMG --format "image OK: {{.Id}}" | head -1 && nvidia-smi --query-gpu=name,memory.total --format=csv,noheader'
 ```

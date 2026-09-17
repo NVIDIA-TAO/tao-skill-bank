@@ -55,7 +55,9 @@ measured failures:
 Per-host values (workspace, venv, model, images) come from
 `~/.tao-kit/kit.env`, sourced by every pack driver. Credentials are never
 written anywhere — drivers check presence of the API key variable and abort
-with the export instruction if missing.
+with the export instruction if missing. Pi keeps provider credentials in the
+harness process but strips them and arbitrary startup hooks from bash tool
+subprocesses. See the adapter README for the isolated-worker requirement.
 
 ## Driver obligations
 
@@ -64,7 +66,10 @@ with the export instruction if missing.
    agent — cards launch long jobs detached and end the turn. Idle zombie
    containers must not count as work (check CPU, not existence).
 3. **Halt** on committed errors and on N consecutive no-progress rounds.
-   Never auto-retry a committed failure.
+   Check failure status before any completion marker. Never auto-retry a
+   committed failure. Exhausting the round cap must return nonzero; only
+   verified completion returns zero. For DEFT, loop_stop alone is insufficient:
+   the driver must prepare the inference handoff and pass the completion audit.
 4. **Snapshot** state into the prompt (progress tail, commands.log tail) so
    the fresh session starts with everything it needs and nothing more.
 5. **Write nothing into the skill bank checkout** — sessions and driver logs

@@ -60,6 +60,10 @@ for round in $(seq 1 60); do
   LAST=""
   # Route on the last OK stage only — error entries must not advance routing.
   [ -n "$RD" ] && [ -f "$RD/progress.log" ] && LAST=$(grep ' ok$' "$RD/progress.log" | tail -1 | awk '{print $1}')
+  if [ -n "$RD" ] && tail -1 "$RD/progress.log" 2>/dev/null | grep -q ' FAIL$'; then
+    echo "[driver] HALT: latest mark is FAIL — no auto-retry $(date)" >> "$LOG"
+    exit 2
+  fi
   [ -n "$RD" ] && [ -f "$RD/DONE.marker" ] && { echo "[driver] DONE after $((round-1)) sessions $(date)" >> "$LOG"; exit 0; }
 
   # ---- 1. STAGE ROUTING (edit for your workflow's stages) ------------------
@@ -101,3 +105,4 @@ ${CMDS:-<empty>}"
   else noop=0; fi
 done
 echo "[driver] round cap reached $(date)" >> "$LOG"
+exit 1

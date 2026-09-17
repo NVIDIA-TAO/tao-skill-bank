@@ -8,36 +8,107 @@
  * Pi contract: return { block: true, reason } from a tool_call handler —
  * the reason is returned to the model as the tool error.
  *
- * Guards are the ONLY permission layer under Pi (no permission prompts exist),
- * so this file also carries a small deny-list of generally destructive
- * commands that Claude Code's permission system used to catch.
+ * Defense in depth, NOT a sandbox: arbitrary shell code and Docker access
+ * require a trusted, isolated worker. Provider credentials stay in Pi's
+ * environment; the bash tool gets an explicit non-secret environment.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition, VERSION } from "@earendil-works/pi-coding-agent";
 import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+// Do not inherit provider keys, shell startup hooks, exported functions, or
+// arbitrary host variables into model-controlled subprocesses.
+const TOOL_ENV = new Set([
+	"PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TZ", "TERM",
+	"WS", "RD", "ITER", "SB", "VENV", "TRAIN_IMG", "DS_IMG", "SKILL_ROOT", "DPY", "DEFT_PYTHON",
+	"MOUNTS", "STAGE_T0", "AUTOML_RD", "PI_KIT_WS", "PI_KIT_RD", "PI_KIT_RUN_PREFIX",
+]);
+
+export function toolEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	return Object.fromEntries(Object.entries(env).filter(([name]) => TOOL_ENV.has(name)));
+}
+
+export function supportsSafeBash(version: string): boolean {
+	const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+	if (!match) return false;
+	const [, major, minor, patch] = match.map(Number);
+	return major > 0 || minor > 85 || (minor === 85 && patch >= 1);
+}
+
+const SECRET_REFERENCE = /\b(?:[A-Z0-9_]*(?:API_KEY|ACCESS_TOKEN|SECRET|PASSWORD)|NGC_KEY|HF_TOKEN)\b/;
+const SECRET_PATH = /(?:^|[/\\\s("'\x60])(?:\.env(?:\.[^/\\\s"'\x60;|<>]*)?|secrets?\.[^/\\\s"'\x60;|<>]+|\.ssh|\.aws|\.azure|\.gnupg|\.netrc|\.npmrc|\.pypirc|auth\.json|credentials(?:\.json)?)(?:[/\\\s"'\x60;|<>]|$)|(?:^|[/\\\s("'\x60])\.config[/\\](?:gcloud|tao)(?:[/\\]|$)|(?:^|[/\\\s("'\x60])\.docker[/\\]config\.json\b|[/\\]proc[/\\][^/\\]+[/\\](?:environ|mem)\b|\.(?:pem|key)(?:[\s"'\x60;|<>]|$)/i;
+
+function credentialPath(value: string, cwd: string): boolean {
+	const expanded = value.replace(/^~(?=\/|$)/, process.env.HOME ?? "");
+	const absolute = path.resolve(cwd, expanded);
+	if (SECRET_PATH.test(expanded) || SECRET_PATH.test(absolute)) return true;
+	// Resolve existing parents too, so writes through directory symlinks cannot
+	// bypass the same check that protects reads of credential files.
+	let parent = absolute;
+	while (!fs.existsSync(parent) && path.dirname(parent) !== parent) parent = path.dirname(parent);
+	try {
+		return SECRET_PATH.test(path.join(fs.realpathSync(parent), path.relative(parent, absolute)));
+	} catch {
+		return true; // fail closed if the target cannot be inspected
+	}
+}
+
 export default function (pi: ExtensionAPI) {
+	const supported = supportsSafeBash(VERSION);
+	const bash = createBashToolDefinition(process.cwd(), {
+		shellPath: "/bin/bash",
+		spawnHook: (context) => ({ ...context, env: toolEnvironment(context.env) }),
+	});
+	pi.registerTool({
+		...bash,
+		execute: (id, params, signal, onUpdate, ctx) => {
+			if (!supported) throw new Error("Credential-safe tools require Pi 0.85.1 or newer.");
+			return bash.execute(id, params, signal, onUpdate, ctx);
+		},
+	});
 	const recent: string[] = [];
 	let calls = 0;
 	let budgetWarned = false;
 	const budget = parseInt(process.env.PI_KIT_TURN_BUDGET ?? "0", 10) || 0;
 
-	pi.on("tool_call", async (event) => {
-		if (event.toolName !== "bash") return undefined;
-		const cmd = String(event.input.command ?? "");
-		if (!cmd) return undefined;
-
+	pi.on("tool_call", async (event, ctx) => {
+		if (!supported) {
+			ctx.abort();
+			return { block: true, reason: "GUARD(runtime): upgrade to Pi 0.85.1+ before running this pack." };
+		}
 		// Turn budget (generic, env-gated) — measured: models that cannot end
 		// their turn burn 1000+ messages per session. Warn near the budget,
 		// hard-block past it.
 		calls++;
 		if (budget > 0 && calls > budget) {
+			ctx.abort();
 			return { block: true, reason: `GUARD(budget): tool-call budget (${budget}) exhausted for this session. STOP now: print the card's STAGE_DONE token as your final message and end your turn. The driver will re-enter with a fresh session.` };
 		}
 		if (budget > 0 && !budgetWarned && calls > budget - 10) {
 			budgetWarned = true;
 			return { block: true, reason: `GUARD(budget): only ${budget - calls + 1} tool calls left in this session. Finish the CURRENT card step, commit what is committable, print the STAGE_DONE token, and end your turn. (This call was blocked only to deliver the warning — you may re-issue it.)` };
+		}
+
+		if (["read", "edit", "write"].includes(event.toolName)) {
+			if (credentialPath(String(event.input.path ?? ""), ctx.cwd)) {
+				return { block: true, reason: "GUARD(secrets): credential files must not be read, changed, or copied into the session." };
+			}
+			return undefined;
+		}
+		if (event.toolName !== "bash") return undefined;
+		const cmd = String(event.input.command ?? "");
+		if (!cmd) return undefined;
+
+		// Catch dumps inside compound commands and nested shells as well as
+		// simple invocations. This is a diagnostic guard, not a shell parser;
+		// the environment allowlist above is the subprocess credential boundary.
+		if (SECRET_REFERENCE.test(cmd) || SECRET_PATH.test(cmd) ||
+			/(?:^|[\s;&|("'\x60])(?:\/usr\/bin\/|\/bin\/)?(?:env|printenv)\b/.test(cmd) ||
+			/(?:^|[\s;&|("'\x60])(?:export|declare)\s+-[a-zA-Z]*p\b/.test(cmd) ||
+			/(?:^|[\s;&|("'\x60])set\s*(?:$|[;&|)"'\x60])/.test(cmd)) {
+			return { block: true, reason: "GUARD(secrets): do not dump environments or access credential variables/files. Use only the card's named non-secret variables." };
 		}
 
 		// Loop breaker — at temperature 0 the nano model wedges itself repeating
@@ -86,18 +157,6 @@ export default function (pi: ExtensionAPI) {
 		// Baseline safety net (Pi has no permission system underneath us).
 		if (/\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\b\s+(\/|\$HOME|~)(\s|$)/.test(cmd) || /\bsudo\b/.test(cmd)) {
 			return { block: true, reason: "GUARD(safety): destructive/root command blocked by kit policy. Work inside $WS and $RD only; nothing in this workflow needs sudo." };
-		}
-
-		// Secrets: the session inherits the provider API key in its environment,
-		// and everything the model prints is persisted to the session JSONL and
-		// re-sent off-host. No card ever needs a credential value — block env
-		// dumps and any command naming a known credential var. (Anchored so
-		// routine `set -e` inside compound commands does not false-positive.)
-		if (
-			/^\s*(env|printenv|export\s+-p|declare\s+-p|set)\s*(\||>|$)/.test(cmd) ||
-			/(NVIDIA_INFERENCE_API_KEY|ANTHROPIC_API_KEY|NGC_(API_)?KEY|HF_TOKEN|WANDB_API_KEY)/.test(cmd)
-		) {
-			return { block: true, reason: "GUARD(secrets): this workflow never needs credential values — do not read or print environment secrets; their values must never enter the session log. Use only the card's named variables ($WS, $RD, $ITER, ...)." };
 		}
 
 		// Guard 1 — SigLIP embedding has no cuDNN conv engine on this GPU (sm_75).

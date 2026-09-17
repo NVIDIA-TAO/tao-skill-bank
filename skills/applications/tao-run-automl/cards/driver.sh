@@ -31,7 +31,10 @@ case "$WS" in *[[:space:]]*) echo "[a-driver] ABORT: WS must not contain whitesp
 RESULTS=$WS/results
 SB=${SB:-$BANK}                                     # skill bank the cards read references from
 VENV=${VENV:?export VENV (venv with the nvidia-tao-automl wheel; see tao-run-automl preflight) or set it in ~/.tao-kit/kit.env}
-TRAIN_IMG=${TRAIN_IMG:-nvcr.io/nvidia/tao/tao-toolkit:6.26.3-pyt}
+# Resolve from the same bank that supplies the recommendation spec template.
+if [ -z "${TRAIN_IMG:-}" ]; then
+  TRAIN_IMG=$("$VENV/bin/python" "$SB/scripts/resolve_versions_key.py" images.tao_toolkit.pyt --skill-bank "$SB") || exit 1
+fi
 SYSPROMPT="You are a precise task executor operating in a bash environment on a GPU workstation. You MUST perform every action by calling your tools (bash, read, edit, write) — never describe, simulate, or invent a result or command output. Follow the stage card exactly; work alone; never ask questions; end your turn the moment the card says to."
 
 MODEL=${MODEL:-nim/nvidia/qwen/qwen3.6-35b-a3b:off}
@@ -79,16 +82,22 @@ RD=$(find "$RESULTS" -maxdepth 1 -type d -name 'automl2_*' -newer "$MARKER" -pri
 export RD AUTOML_RD="$RD" PI_KIT_RD="$RD"
 echo "[a-driver] RD=$RD" >> "$LOG"
 
+finish_if_terminal() {
+  # On DONE, refresh the marker so the NEXT driver launch starts a fresh run
+  # instead of re-selecting this completed one and exiting immediately.
+  # Halt only when the LATEST mark is a FAIL (a recovered run appends new ok lines after a stale FAIL).
+  tail -1 "$RD/progress.log" 2>/dev/null | grep -q " FAIL$" && { echo "[a-driver] HALT: latest mark is FAIL — no auto-retry $(date)" >> "$LOG"; exit 2; }
+  [ -f "$RD/AUTOML_DONE.marker" ] && { touch "$MARKER"; echo "[a-driver] DONE after $((round-1)) sessions $(date)" >> "$LOG"; exit 0; }
+
+  return 0
+}
+
 noop=0
 for round in $(seq 1 40); do
   while working; do sleep 30; done
   sleep 12; working && continue
 
-  # On DONE, refresh the marker so the NEXT driver launch starts a fresh run
-  # instead of re-selecting this completed one and exiting immediately.
-  [ -f "$RD/AUTOML_DONE.marker" ] && { touch "$MARKER"; echo "[a-driver] DONE after $((round-1)) sessions $(date)" >> "$LOG"; exit 0; }
-  # Halt only when the LATEST mark is a FAIL (a recovered run appends new ok lines after a stale FAIL).
-  tail -1 "$RD/progress.log" 2>/dev/null | grep -q " FAIL$" && { echo "[a-driver] HALT: latest mark is FAIL — no auto-retry $(date)" >> "$LOG"; exit 2; }
+  finish_if_terminal
 
   LAST=$(grep ' ok$' "$RD/progress.log" 2>/dev/null | tail -1 | awk '{print $1}')
   case "$LAST" in
@@ -136,4 +145,6 @@ ${CMDS:-<none>}"
     [ $noop -ge 5 ] && { echo "[a-driver] ABORT: 5 no-progress rounds" >> "$LOG"; exit 1; }
   else noop=0; fi
 done
+finish_if_terminal
 echo "[a-driver] 40-round cap $(date)" >> "$LOG"
+exit 1

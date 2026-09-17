@@ -76,6 +76,33 @@ working() {
   return 1
 }
 
+finish_if_terminal() {
+  LAST=""; ILAB=""
+  if [ -n "$RD" ] && [ -f "$RD/loop_log.jsonl" ]; then
+    LAST=$(jq -rRs 'split("\n") | map(select(length>0) | (fromjson? // empty)) | map(select(.status=="ok")) | last | .stage // empty' "$RD/loop_log.jsonl" 2>/dev/null)
+    ILAB=$(jq -rRs 'split("\n") | map(select(length>0) | (fromjson? // empty)) | map(select(.status=="ok")) | last | .iter // empty' "$RD/loop_log.jsonl" 2>/dev/null)
+  fi
+  # No-auto-retry contract: a committed error halts the loop (operator decision).
+  ERRLAST=""
+  [ -n "$RD" ] && [ -f "$RD/loop_log.jsonl" ] && ERRLAST=$(jq -rRs 'split("\n") | map(select(length>0) | (fromjson? // empty)) | last | select(.status=="error") | "\(.iter)/\(.stage)"' "$RD/loop_log.jsonl" 2>/dev/null)
+  [ -n "$ERRLAST" ] && { echo "[driver] HALT: committed error at $ERRLAST — no auto-retry (operator must decide) $(date)" >> "$LOG"; exit 2; }
+
+  # loop_stop commits the training result, not the inference handoff. Finalize
+  # deterministically here, including after an interrupted terminal card.
+  if [ "$LAST" = "loop_stop" ]; then
+    if ! "$DPY" "$SKILL_ROOT/scripts/prepare_inference_spec.py" --results-dir "$RD" >> "$LOG" 2>&1 ||
+       ! "$DPY" "$SKILL_ROOT/scripts/audit_deft_run.py" --results-dir "$RD" --require-complete >> "$LOG" 2>&1; then
+      echo "[driver] HALT: finalization failed; run is NOT complete (operator must decide) $(date)" >> "$LOG"
+      exit 2
+    fi
+    touch "$MARKER"
+    echo "[driver] handoff prepared and completion audited - DONE $(date)" >> "$LOG"
+    exit 0
+  fi
+
+  return 0
+}
+
 noop=0
 for round in $(seq 1 80); do
   while working; do sleep 30; done
@@ -85,19 +112,7 @@ for round in $(seq 1 80); do
   # fork a fresh run (and a fresh baseline training) each round. Refuse instead.
   [ -f "$MARKER" ] || { echo "[driver] ABORT: $MARKER vanished mid-run — refusing to fork a new run dir" >> "$LOG"; exit 1; }
   RD=$(find "$RESULTS" -maxdepth 1 -type d -name 'run_*' -newer "$MARKER" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
-  LAST=""; ILAB=""
-  if [ -n "$RD" ] && [ -f "$RD/loop_log.jsonl" ]; then
-    LAST=$(jq -rRs 'split("\n") | map(select(length>0) | (fromjson? // empty)) | map(select(.status=="ok")) | last | .stage // empty' "$RD/loop_log.jsonl" 2>/dev/null)
-    ILAB=$(jq -rRs 'split("\n") | map(select(length>0) | (fromjson? // empty)) | map(select(.status=="ok")) | last | .iter // empty' "$RD/loop_log.jsonl" 2>/dev/null)
-  fi
-  # On DONE, refresh the marker so the NEXT driver launch starts a fresh run
-  # instead of re-selecting this completed one and exiting immediately.
-  [ "$LAST" = "loop_stop" ] && { touch "$MARKER"; echo "[driver] loop_stop after $((round-1)) sessions - DONE $(date)" >> "$LOG"; exit 0; }
-
-  # No-auto-retry contract: a committed error halts the loop (operator decision).
-  ERRLAST=""
-  [ -n "$RD" ] && [ -f "$RD/loop_log.jsonl" ] && ERRLAST=$(jq -rRs 'split("\n") | map(select(length>0) | (fromjson? // empty)) | last | select(.status=="error") | "\(.iter)/\(.stage)"' "$RD/loop_log.jsonl" 2>/dev/null)
-  [ -n "$ERRLAST" ] && { echo "[driver] HALT: committed error at $ERRLAST — no auto-retry (operator must decide) $(date)" >> "$LOG"; exit 2; }
+  finish_if_terminal
 
   next_iter() { # baseline -> iter1, iterN -> iterN+1
     if [ "$1" = "baseline" ]; then echo iter1; else echo "iter$(( ${1#iter} + 1 ))"; fi
@@ -153,4 +168,6 @@ ${CMDS:-<none>}"
     [ $noop -ge 5 ] && { echo "[driver] ABORT: 5 no-progress rounds" >> "$LOG"; exit 1; }
   else noop=0; fi
 done
+finish_if_terminal
 echo "[driver] hit 80-round cap $(date)" >> "$LOG"
+exit 1
