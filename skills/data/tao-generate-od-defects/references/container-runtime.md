@@ -29,11 +29,12 @@ container:
 ```bash
 python /opt/tao-generate-od-defects/scripts/generate_od_defects.py \
   --inputs-dir /inputs/prepared \
-  --base-checkpoint /models/Cosmos3-Nano/model \
+  --base-checkpoint /models/Cosmos3-Nano \
   --output-dir /results/generation \
   --num-gpus 1
 ```
 
 The exposed GPU count must match `--num-gpus`. The output directory must not
-already exist. Read `execution-contract.md` for the completion and accounting
-gates.
+already exist. The base path must contain `checkpoint.json` and the `model/`
+checkpoint directory. Read `execution-contract.md` for the completion and
+accounting gates.
