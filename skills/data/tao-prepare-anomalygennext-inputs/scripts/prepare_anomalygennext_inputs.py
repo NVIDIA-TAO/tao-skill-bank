@@ -63,25 +63,52 @@ def _recipe_types(path: Path) -> set[str]:
     return {f"{row[0]}+{row[1]}" for row in rows if isinstance(row, list) and len(row) == 2}
 
 
-def _isolate_mask(mask_path: Path, image_path: Path, bbox: Any, output: Path) -> None:
-    with Image.open(image_path) as image, Image.open(mask_path) as mask_image:
-        mask = np.asarray(mask_image.convert("L"))
-        if mask.shape != (image.height, image.width):
-            raise ValueError(f"mask/image dimensions differ: {mask_path}")
+def _foreground(mask_path: Path) -> np.ndarray:
+    with Image.open(mask_path) as image:
+        mask = np.asarray(image)
+    if mask.ndim == 2:
+        return mask > 0
+    if mask.ndim == 3 and mask.shape[2] >= 1:
+        return np.any(mask[..., :3] > 0, axis=2)
+    raise ValueError(f"unsupported mask shape {mask.shape}: {mask_path}")
+
+
+def _write_binary_mask(foreground: np.ndarray, source: Path, output: Path) -> dict[str, Any]:
+    if foreground.ndim != 2:
+        raise ValueError(f"mask foreground must be two-dimensional: {source}")
+    pixels = int(np.count_nonzero(foreground))
+    if pixels == 0 or pixels == foreground.size:
+        raise ValueError(f"AMP mask foreground must be nonempty and non-full: {source}")
+    ys, xs = np.nonzero(foreground)
+    x1, y1, x2, y2 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+    if (x2 - x1, y2 - y1) == (foreground.shape[1], foreground.shape[0]):
+        raise ValueError(f"AMP mask tight extent fills the canvas: {source}")
+    binary = np.where(foreground, 255, 0).astype(np.uint8)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(binary).save(output)
+    return {"canvas_width": int(foreground.shape[1]), "canvas_height": int(foreground.shape[0]),
+            "foreground_bbox": [x1, y1, x2, y2], "foreground_pixels": pixels}
+
+
+def _isolate_mask(mask_path: Path, image_path: Path, bbox: Any, output: Path) -> dict[str, Any]:
+    with Image.open(image_path) as image:
+        canvas = (image.width, image.height)
+    foreground = _foreground(mask_path)
+    if foreground.shape != (canvas[1], canvas[0]):
+        raise ValueError(f"mask/image dimensions differ: {mask_path}")
     box = np.asarray(bbox, dtype=float).reshape(-1)
     if box.size != 4 or not np.isfinite(box).all():
         raise ValueError(f"invalid bbox: {bbox!r}")
     x1, y1, x2, y2 = box
     x1, y1 = max(0, int(np.floor(x1))), max(0, int(np.floor(y1)))
-    x2, y2 = min(mask.shape[1], int(np.ceil(x2))), min(mask.shape[0], int(np.ceil(y2)))
+    x2, y2 = min(canvas[0], int(np.ceil(x2))), min(canvas[1], int(np.ceil(y2)))
     if x2 <= x1 or y2 <= y1:
         raise ValueError(f"empty clipped bbox: {bbox!r}")
-    isolated = np.zeros_like(mask)
-    isolated[y1:y2, x1:x2] = mask[y1:y2, x1:x2]
+    isolated = np.zeros_like(foreground)
+    isolated[y1:y2, x1:x2] = foreground[y1:y2, x1:x2]
     if not np.any(isolated):
         raise ValueError(f"FN bbox contains no mask pixels: {mask_path}")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(isolated).save(output)
+    return _write_binary_mask(isolated, mask_path, output)
 
 
 def _select(rows: pd.DataFrame, selection: dict[str, Any]) -> pd.DataFrame:
@@ -169,18 +196,23 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
         fn_id, anomaly = str(row.fn_id), str(row.anomaly_type)
         mask_dir = masks_root / fn_id
         isolated = mask_dir / f"{fn_id}__fn_mask.png"
-        _isolate_mask(Path(row.fn_mask_source), Path(row.filepath), row.bbox, isolated)
+        isolated_metadata = _isolate_mask(
+            Path(row.fn_mask_source), Path(row.filepath), row.bbox, isolated
+        )
         candidates = _images(Path(row.sampled_dir))
         rng = random.Random(int(_stable_id(seed, fn_id), 16))
         available = [path for path in candidates if path not in sampled_used[anomaly]] or candidates
         sampled = available[rng.randrange(len(available))]
         sampled_used[anomaly].add(sampled)
         sampled_output = mask_dir / f"{fn_id}__same_type_sampled_mask.png"
-        with Image.open(sampled) as image:
-            image.convert("L").save(sampled_output)
-        for branch, path in (("fn_mask", isolated), ("same_type_sampled_mask", sampled_output)):
+        sampled_metadata = _write_binary_mask(_foreground(sampled), sampled, sampled_output)
+        for branch, path, metadata in (
+            ("fn_mask", isolated, isolated_metadata),
+            ("same_type_sampled_mask", sampled_output, sampled_metadata),
+        ):
             mask_rows.append({"fn_id": fn_id, "query_order": order, "dataset_id": row.dataset_id,
-                              "anomaly_type": anomaly, "branch": branch, "mask_path": str(path)})
+                              "anomaly_type": anomaly, "branch": branch, "mask_path": str(path),
+                              **metadata})
         query_rows.append({"filepath": row.filepath, "fn_id": fn_id, "query_order": order,
                            "dataset_id": row.dataset_id, "pool_key": row.texture_id,
                            "anomaly_type": anomaly, "od_category": row["class"]})

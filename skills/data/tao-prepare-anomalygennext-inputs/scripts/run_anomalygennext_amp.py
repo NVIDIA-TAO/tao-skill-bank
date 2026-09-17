@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import yaml
+from PIL import Image
 
 
 BRANCHES = {"fn_mask", "same_type_sampled_mask"}
@@ -36,12 +37,32 @@ def _pair_id(fn_id: str, clean: str) -> str:
     return "pair-" + hashlib.sha256(f"{fn_id}\0{clean}".encode()).hexdigest()[:16]
 
 
+def _validate_amp_mask(path: Path) -> None:
+    if not path.is_file():
+        raise FileNotFoundError(f"AMP mask is missing: {path}")
+    with Image.open(path) as image:
+        mask = np.asarray(image)
+        canvas = image.size
+    if mask.ndim != 2 or set(np.unique(mask).tolist()) != {0, 255}:
+        raise ValueError(f"AMP mask must contain exactly binary values 0 and 255: {path}")
+    foreground = mask == 255
+    count = int(np.count_nonzero(foreground))
+    if count == 0 or count == foreground.size:
+        raise ValueError(f"AMP mask foreground must be nonempty and non-full: {path}")
+    ys, xs = np.nonzero(foreground)
+    tight = (int(xs.max()) - int(xs.min()) + 1, int(ys.max()) - int(ys.min()) + 1)
+    if tight == canvas:
+        raise ValueError(f"AMP mask tight extent fills the canvas: {path}")
+
+
 def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
     manifests, embeddings = root / "manifests", root / "embeddings"
     clean = pd.read_parquet(embeddings / "clean_embeddings.parquet").reset_index(drop=True)
     embedded = pd.read_parquet(embeddings / "fn_embeddings.parquet")
     queries = pd.read_parquet(manifests / "selected_fn_queries.parquet")
     masks = pd.read_parquet(manifests / "mask_selection.parquet")
+    for mask_path in sorted(set(masks.mask_path.astype(str))):
+        _validate_amp_mask(Path(mask_path))
     for label, frame in (("clean", clean), ("FN", embedded)):
         if frame.empty or not {"filepath", "embedding"}.issubset(frame.columns):
             raise ValueError(f"{label} embeddings lack filepath/embedding")
