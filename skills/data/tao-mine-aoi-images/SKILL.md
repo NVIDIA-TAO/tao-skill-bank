@@ -59,7 +59,7 @@ Every host path the container reads or writes must be bind-mounted. The most pre
 
 ```bash
 WORKSPACE=<absolute path that contains all parquets, outputs, and the source-pool images>
-DOCKER="docker run --gpus all --rm --ipc=host -v $WORKSPACE:$WORKSPACE -w $WORKSPACE $DS_IMAGE"
+DOCKER="docker run --gpus all --rm --shm-size=8g -v $WORKSPACE:$WORKSPACE -w $WORKSPACE $DS_IMAGE"
 ```
 
 Do **not** pass `--user $(id -u):$(id -g)` — it triggers a `getpwuid()` `KeyError` during the `transformers` import before any work starts. The container runs as root; chown outputs back to the host UID afterward.
