@@ -94,7 +94,7 @@ class_mapping: {}
 <skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-analyze-gaps-od-map/scripts/verify_object_detection_spec.py \
   --spec "$OD_GAP_SPEC"
 
-docker run --rm --name "deft_iter${N}_gap" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
+docker run --rm --name "deft_iter${N}_gap" --gpus all --shm-size=8g --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
   "$TAO_DS_IMAGE" \
   gap_analysis object_detection -e "$OD_GAP_SPEC"
