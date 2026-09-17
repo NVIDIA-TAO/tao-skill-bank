@@ -15,6 +15,7 @@ from typing import Any
 from assemble_training_json import sha256_file
 from defect_detection_ablation import (
     ZERO_NEW_CANDIDATE_POLICIES,
+    validate_cross_task_visual_dedup,
     validate_defect_detection_fraction,
     validate_mined_task_fill_order,
     validate_mined_task_pool_caps,
@@ -205,12 +206,13 @@ def build_plan(
     defect_detection_fraction: float | None = None,
     mined_task_pool_caps: dict[str, float] | None = None,
     mined_task_fill_order: list[str] | None = None,
+    cross_task_visual_dedup: str | None = None,
 ) -> dict[str, Any]:
     if not selector_command or not all(
         isinstance(value, str) and value for value in selector_command
     ):
         raise ValueError("selector_command must be a non-empty string list")
-    # Feature P5-S: launch-recorded materializer options (init_deft_state.py config.mining.*);
+    # Feature P5-S / P5-S.1: launch-recorded materializer options (init_deft_state.py config.mining.*);
     # renderer-owned flags whenever the request field is set (None = caller keeps ownership)
     if defect_detection_fraction is not None:
         defect_detection_fraction = validate_defect_detection_fraction(defect_detection_fraction)
@@ -218,10 +220,13 @@ def build_plan(
         mined_task_pool_caps = validate_mined_task_pool_caps(mined_task_pool_caps)
     if mined_task_fill_order is not None:
         mined_task_fill_order = validate_mined_task_fill_order(mined_task_fill_order)
+    if cross_task_visual_dedup is not None:
+        cross_task_visual_dedup = validate_cross_task_visual_dedup(cross_task_visual_dedup)
     for option, field, value in (
         ("--defect-detection-fraction", "defect_detection_fraction", defect_detection_fraction),
         ("--mined-task-pool-cap", "mined_task_pool_caps", mined_task_pool_caps),
         ("--mined-task-fill-order", "mined_task_fill_order", mined_task_fill_order),
+        ("--cross-task-visual-dedup", "cross_task_visual_dedup", cross_task_visual_dedup),
     ):
         if value is not None and any(item.partition("=")[0] == option for item in selector_command):
             raise ValueError(
@@ -297,6 +302,9 @@ def build_plan(
         selector_argv.extend(["--mined-task-pool-cap", f"{task}={fraction}"])
     if mined_task_fill_order:
         selector_argv.extend(["--mined-task-fill-order", ",".join(mined_task_fill_order)])
+    # Feature P5-S.1: cross-task visual de-duplication switch (materializer option)
+    if cross_task_visual_dedup is not None:
+        selector_argv.extend(["--cross-task-visual-dedup", cross_task_visual_dedup])
     selector_argv.extend(
         ["--output", str(mined), "--manifest", str(current_quota)]
     )
@@ -379,6 +387,7 @@ def build_plan(
         "defect_detection_fraction": defect_detection_fraction,
         "mined_task_pool_caps": mined_task_pool_caps,
         "mined_task_fill_order": mined_task_fill_order,
+        "cross_task_visual_dedup": cross_task_visual_dedup,
         "selector": {
             "command": selector_argv,
             "output": str(mined),

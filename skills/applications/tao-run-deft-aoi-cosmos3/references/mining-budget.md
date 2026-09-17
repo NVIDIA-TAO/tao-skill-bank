@@ -1,4 +1,4 @@
-# Mining budget (Phase 5-S) — Defect Detection fraction, mined per-task pool caps, fill order — defaults off
+# Mining budget (Phase 5-S) — Defect Detection fraction, mined per-task pool caps, fill order, cross-task visual de-duplication switch — defaults off
 
 ## Why
 
@@ -20,21 +20,25 @@ Decision (Sean Lin, 2026-09-17): the task mix is controlled by per-task caps
 expressed as a fraction of each task's own pool, single-image tasks are filled
 first, and the Defect Detection fraction is a launch-recorded option. All three
 are launch-recorded; their defaults reproduce the parent snapshot byte-for-byte
-(`tests/test_cosmos3_mined_task_pool_caps.py`, golden test).
+(`tests/test_cosmos3_mined_task_pool_caps.py`, golden test). Feature P5-S.1 adds
+a fourth launch-recorded switch, the cross-task visual de-duplication (see the
+section of that name): the first Phase 5-S run showed the materializer's
+cross-task image exclusion starving the very tasks the caps and fill order aim at.
 
-## The three options
+## The launch-recorded options
 
 | init flag (`init_deft_state.py`) | state path (`config.mining.*`) | runner request field | materializer flag |
 |---|---|---|---|
 | `--defect-detection-fraction F` (default 0.5, (0, 1]) | `defect_detection_fraction` (+ `_rule`) | `defect_detection_fraction` | `--defect-detection-fraction F` |
 | `--mined-task-pool-cap "TASK=FRACTION"` (repeatable; six task types; (0, 1]) | `mined_task_pool_caps` = `{task: fraction}` (+ `_rule`; `{}` = uncapped) | `mined_task_pool_caps` (object) | `--mined-task-pool-cap "TASK=FRACTION"` per task |
 | `--mined-task-fill-order "T1,T2,..."` (maintenance tasks only, no repeats) | `mined_task_fill_order` = `[T1, T2, ...]` (+ `_rule`; `[]` = today's round-robin) | `mined_task_fill_order` (list) | `--mined-task-fill-order "T1,T2,..."` |
+| `--cross-task-visual-dedup on\|off` (default `on`; Feature P5-S.1) | `cross_task_visual_dedup` = `"on"` / `"off"` (+ `_rule`) | `cross_task_visual_dedup` (string) | `--cross-task-visual-dedup on\|off` |
 
 `render_iteration_mining_runner.py` appends the flags to the materializer command
 whenever the request field is set (an empty cap object / empty order adds no
-flag) and records the three values in the plan; when a field is set the caller
+flag) and records the four values in the plan; when a field is set the caller
 must not pass that flag itself (renderer-owned, like `zero_new_candidate_policy`).
-Build the request from the state: copy the three `config.mining` values into the
+Build the request from the state: copy the four `config.mining` values into the
 request fields of the same names.
 
 ## Cap semantics
@@ -106,10 +110,74 @@ and are unaffected.
 | `mined_task_fill_realized` | mined rows selected this iteration per task (all six; calibration rows excluded) |
 | `capped_tasks` | tasks with `capped_this_iteration` true |
 | `verification.mined_task_pool_caps_respected` | no task selected more mined rows than its remainder (part of `verified`) |
+| `cross_task_visual_dedup` | `on` / `off` (Feature P5-S.1; see "Cross-task visual de-duplication") |
+| `maintenance_rows_unlocked_by_cross_task` | when `off`: `{task: n}` maintenance rows per task that today's cross-task exclusion would have dropped; `null` when `on` |
+| `uniqueness.visual_identity_scope` | `all_tasks` (`on`) or `within_task` (`off`): the scope of `verification.unique_target_images` / `unique_image_content` / `near_duplicate_free` |
 
 `bind_cumulative_manifest` copies `mined_task_pool_usage`,
-`mined_task_fill_realized` and `capped_tasks` into `current_selection` of the v2
+`mined_task_fill_realized`, `capped_tasks`, `cross_task_visual_dedup` and
+`maintenance_rows_unlocked_by_cross_task` into `current_selection` of the v2
 manifest like the other current-selection facts.
+
+## Cross-task visual de-duplication (Feature P5-S.1)
+
+**Why.** Run `v12_p5s_pool10_r8` iteration 1: the router routed 858 candidate
+images to Defect Classification (842 of them also to Defect Detection), yet the
+materializer reported `maintenance_marginal_quota.available["Defect Classification"] = 19`
+and materialized 19 Defect Classification rows (r7 iteration 1: 275 routed, 10
+available). The materializer de-duplicated the maintenance rows against every
+image already selected for Defect Detection (and for the other maintenance
+tasks). In the NVPAW pool the single-image Defect Classification (MCQ) rows and
+the Defect Detection rows are asked on the SAME board images, so Defect Detection
+consumed the images first and Defect Classification starved; the same happens
+between Component Classification and Component Detection. For Phase 5-S the
+single-image MCQ tasks are the target, so this exclusion defeated the per-task
+caps and the fill order.
+
+**Semantics.**
+
+- `on` (default): today's rule, byte-identical to the parent snapshot. A
+  maintenance-task row is dropped when its image path / content (or, with the
+  near-duplicate filter, its perceptual hash) was already selected for any task,
+  Defect Detection or another maintenance task.
+- `off`: visual de-duplication still applies WITHIN each task type (no two rows
+  of one task on the same image content), and the exact-record, previous-record
+  and benchmark / proxy leakage exclusions are unchanged. A maintenance row is no
+  longer dropped because its image was selected for a DIFFERENT task: every
+  task's exclusion set holds only its own already-selected rows (Defect
+  Detection selections do not exclude Defect Classification / Component
+  Classification / Component Detection / reference rows; reference-pair tasks
+  keep their pair identity). The guard-aware calibration re-selection (Feature
+  B3) applies the same same-task rule, so a Defect Classification row on a
+  few-box board no longer evicts that few-box calibration row. The novel-image
+  accounting (`novel_image_limit`) counts selected rows as today.
+- Under `off` the verification keys `unique_target_images`,
+  `unique_image_content` and `near_duplicate_free` are evaluated within each task
+  type (`uniqueness.visual_identity_scope = within_task`); `uniqueness.unique_images`
+  and `uniqueness.unique_image_content` stay the counts over all emitted rows, so
+  `row_counts.total - uniqueness.unique_images` is the number of rows that share
+  an image with a row of another task.
+
+**Records.** `cross_task_visual_dedup` (`on` / `off`) and, when `off`,
+`maintenance_rows_unlocked_by_cross_task` = `{task: n}`: the rows per maintenance
+task that survived only because the cross-task exclusion was off (the same
+candidates are also run through today's shared exclusion and the difference is
+recorded; `null` when `on`). Both are copied into `current_selection` of the v2
+manifest.
+
+**Rule.** Phase 5-S runs launch with `--cross-task-visual-dedup off`: the
+single-image MCQ tasks are the target and the caps / fill order steer the mix,
+so the cross-task exclusion only starves them. Runs that must keep every image
+unique across all tasks (the pre-Phase-5-S Defect Detection ablations) keep the
+default.
+
+Synthetic check (`tests/test_cosmos3_cross_task_visual_dedup.py`): a pool where
+every board carries one Defect Detection and one Defect Classification row (12
+boards plus one solo Defect Classification row). `on` leaves
+`available["Defect Classification"] = 1` and the batch shrinks to 24 rows; `off`
+gives 13 (= routed), `maintenance_rows_unlocked_by_cross_task["Defect Classification"] = 12`,
+the 30-row target is reached and the manifest verifies. Without shared images
+`off` selects exactly the rows `on` selects and unlocks nothing.
 
 ## Worked example — Phase 5-S
 
@@ -128,7 +196,8 @@ python3 "$SKILL_ROOT/scripts/init_deft_state.py" ... \
   --mined-task-pool-cap "Component Detection=0.6" \
   --mined-task-pool-cap "Component Classification=0.6" \
   --mined-task-pool-cap "Ref_based Defect Detection=0.4" \
-  --mined-task-fill-order "Defect Classification,Component Detection,Component Classification"
+  --mined-task-fill-order "Defect Classification,Component Detection,Component Classification" \
+  --cross-task-visual-dedup off
 ```
 
 | task | pool_rows | cap_fraction | cap_rows (whole run) | if spread over 3 iterations |
@@ -158,8 +227,14 @@ accepts and records in `capped_absent_tasks` while `fail_closed` blocks (see
 "Capped, not exhausted"), so launch Phase 5-S with
 `--zero-new-candidate-policy skip_exhausted`.
 
-A default launch (`--defect-detection-fraction 0.5`, no caps, no fill order)
-records `defect_detection_fraction = 0.5`, `mined_task_pool_caps = {}`,
-`mined_task_fill_order = []`, and the materializer's selection is byte-identical
-to the parent snapshot (golden test on the guard-aware fixture and on the Phase
-5-S synthetic pool).
+Read `maintenance_rows_unlocked_by_cross_task` next to `mined_task_pool_usage`
+after every iteration: it is the Defect Classification / Component
+Classification / Component Detection availability the `off` switch restored
+(r8 iteration 1 would have shown about 840 Defect Classification rows).
+
+A default launch (`--defect-detection-fraction 0.5`, no caps, no fill order,
+`--cross-task-visual-dedup on`) records `defect_detection_fraction = 0.5`,
+`mined_task_pool_caps = {}`, `mined_task_fill_order = []`,
+`cross_task_visual_dedup = "on"`, and the materializer's selection is
+byte-identical to the parent snapshot (golden test on the guard-aware fixture and
+on the Phase 5-S synthetic pool).

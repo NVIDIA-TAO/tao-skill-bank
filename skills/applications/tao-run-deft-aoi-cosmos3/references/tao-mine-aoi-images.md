@@ -106,9 +106,10 @@ when the field is set the caller must not pass that flag itself. The Phase 5-S
 mining-budget fields work the same way (`mining-budget.md`):
 `defect_detection_fraction` appends `--defect-detection-fraction <F>`,
 `mined_task_pool_caps` (`{task: fraction}`) appends one
-`--mined-task-pool-cap "TASK=FRACTION"` per task and `mined_task_fill_order`
-(list) appends `--mined-task-fill-order "T1,T2,..."`; copy them from
-`config.mining` of the state. Assembler-only
+`--mined-task-pool-cap "TASK=FRACTION"` per task, `mined_task_fill_order`
+(list) appends `--mined-task-fill-order "T1,T2,..."` and `cross_task_visual_dedup`
+(`on` | `off`, Feature P5-S.1) appends `--cross-task-visual-dedup <value>`; copy
+them from `config.mining` of the state. Assembler-only
 options on the selector command (`--repetition-*`, `--anchor-*`,
 `--coverage-blend-*`, `--max-empty-answer-share*`,
 `--max-classification-empty-share`, `--empty-answer-guard-mode`) are moved to

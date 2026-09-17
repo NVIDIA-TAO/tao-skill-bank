@@ -35,11 +35,14 @@ from defect_detection_ablation import (
     CALIBRATION_KIND_MARK,
     CALIBRATION_MARK,
     CLASSIFICATION_CALIBRATION_KIND,
+    CROSS_TASK_VISUAL_DEDUP_MODES,
+    DEFAULT_CROSS_TASK_VISUAL_DEDUP,
     DEFAULT_ZERO_NEW_CANDIDATE_POLICY,
     MINED_TASK_POOL_CAP_POLICY,
     ZERO_NEW_CANDIDATE_POLICIES,
     parse_mined_task_fill_order,
     parse_mined_task_pool_caps,
+    validate_cross_task_visual_dedup,
     validate_defect_detection_fraction,
 )
 from gap_analysis.config import load_profile, validate_config
@@ -792,6 +795,10 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
     defect_detection_fraction = validate_defect_detection_fraction(0.5 if fraction_value is None else fraction_value)
     mined_task_pool_caps = parse_mined_task_pool_caps(getattr(args, "mined_task_pool_cap", None))
     mined_task_fill_order = parse_mined_task_fill_order(getattr(args, "mined_task_fill_order", None))
+    # Feature P5-S.1: cross-task visual de-duplication switch (default on = today's exclusion)
+    cross_task_visual_dedup = validate_cross_task_visual_dedup(
+        getattr(args, "cross_task_visual_dedup", None) or DEFAULT_CROSS_TASK_VISUAL_DEDUP
+    )
     return {
         "version": 7,
         "workflow": WORKFLOW,
@@ -982,6 +989,19 @@ def build_state(args: argparse.Namespace) -> dict[str, Any]:
                     "(defect_detection_ablation.py --mined-task-fill-order T1,T2,..., rendered by "
                     "render_iteration_mining_runner.py mined_task_fill_order; quota manifest mined_task_fill_order / "
                     "mined_task_fill_realized)"
+                ),
+                "cross_task_visual_dedup": cross_task_visual_dedup,
+                "cross_task_visual_dedup_rule": (
+                    "on: a maintenance-task row is dropped when its image path / content was already selected for "
+                    "any task (today's rule; the NVPAW pool asks Defect Classification and Defect Detection on the "
+                    "same board images, so Defect Detection consumed them first and Defect Classification starved: "
+                    "run v12_p5s_pool10_r8 iteration 1 routed 858 images, 19 available). off: visual "
+                    "de-duplication applies within the same task type only and the exact-record / previous-record / "
+                    "benchmark-proxy leakage exclusions are unchanged, so a row is no longer dropped because its "
+                    "image was selected for a different task; Phase 5-S runs use off "
+                    "(defect_detection_ablation.py --cross-task-visual-dedup on|off, rendered by "
+                    "render_iteration_mining_runner.py cross_task_visual_dedup; quota manifest "
+                    "cross_task_visual_dedup / maintenance_rows_unlocked_by_cross_task)"
                 ),
                 "top_k_scope": (
                     "target" if mining_router_mode == "image_only" else "target_task"
@@ -1342,6 +1362,18 @@ def _parser() -> argparse.ArgumentParser:
             "Maintenance tasks whose mined rows are filled first, in this order, before the remaining tasks fill "
             "round-robin (default: today's round-robin); recorded under config.mining.mined_task_fill_order and "
             "passed to the materializer's --mined-task-fill-order by the runner."
+        ),
+    )
+    parser.add_argument(
+        "--cross-task-visual-dedup",
+        choices=CROSS_TASK_VISUAL_DEDUP_MODES,
+        default=DEFAULT_CROSS_TASK_VISUAL_DEDUP,
+        help=(
+            "on (default, today's rule): a maintenance-task row whose image was already selected for another task "
+            "is dropped; off: visual de-duplication stays within each task type (record-level and leakage "
+            "exclusions unchanged), so tasks asked on the same board images no longer starve each other. Recorded "
+            "under config.mining.cross_task_visual_dedup and passed to the materializer's --cross-task-visual-dedup "
+            "by the runner."
         ),
     )
     parser.add_argument(

@@ -54,6 +54,19 @@ ALL_TASK_TYPES = (DEFECT_DETECTION_TASK, *MAINTENANCE_TASK_TYPES)
 # Neither option changes the default selection: no caps and an empty order reproduce the
 # round-robin of the parent snapshot byte-for-byte. (``HISTORY_NON_MINED_MARKS`` below.)
 MINED_TASK_POOL_CAP_POLICY = "floor_of_task_mining_pool_rows_times_fraction_cumulative_over_iterations_mined_rows_only"
+# Cross-task visual de-duplication (Feature P5-S.1, run v12_p5s_pool10_r8 iteration 1, 2026-09-17):
+# ``--cross-task-visual-dedup on`` (default) is today's rule: a maintenance-task row is dropped when
+# its image path / content (or near-duplicate hash) was already selected for *any* task. In the NVPAW
+# pool the single-image Defect Classification (MCQ) and Defect Detection rows are asked on the same
+# board images, so Defect Detection consumed the images first and Defect Classification starved
+# (858 routed images, 19 available). ``off`` keeps the exact-record, previous-record and benchmark /
+# proxy leakage exclusions and the visual de-duplication WITHIN each task type, but no longer drops
+# a row because its image was selected for a different task (reference pairs keep their pair
+# identity); the manifest records the rows this unlocked per task
+# (``maintenance_rows_unlocked_by_cross_task``) and the uniqueness verification keys are evaluated
+# within each task type. ``on`` reproduces the parent snapshot byte-for-byte.
+CROSS_TASK_VISUAL_DEDUP_MODES = ("on", "off")
+DEFAULT_CROSS_TASK_VISUAL_DEDUP = "on"
 POSITIVE_EVIDENCE = {
     "coverage_stratified_positive",
     "hard_positive_proxy_false_negative",
@@ -132,6 +145,8 @@ CURRENT_SELECTION_COPIED_KEYS = (
     "mined_task_fill_realized",
     "capped_tasks",
     "capped_absent_tasks",
+    "cross_task_visual_dedup",
+    "maintenance_rows_unlocked_by_cross_task",
 )
 CORRECT_ANCHOR_EVIDENCE = "proxy_correct"
 POSITIVE_MARGINS = (
@@ -171,6 +186,15 @@ def validate_defect_detection_fraction(value: Any) -> float:
     if not 0.0 < number <= 1.0:
         raise ValueError(f"Defect Detection fraction must be in (0, 1], not {number}")
     return number
+
+
+def validate_cross_task_visual_dedup(value: Any) -> str:
+    """``on`` (today's cross-task exclusion) or ``off`` (within-task only); Feature P5-S.1."""
+    if not isinstance(value, str) or value not in CROSS_TASK_VISUAL_DEDUP_MODES:
+        raise ValueError(
+            f"cross-task visual de-duplication must be one of {list(CROSS_TASK_VISUAL_DEDUP_MODES)}, not {value!r}"
+        )
+    return value
 
 
 def validate_mined_task_pool_caps(caps: Any) -> dict[str, float]:
@@ -819,6 +843,40 @@ def _without_visual_duplicates(
     return output
 
 
+def _without_cross_task_visual_duplicates(
+    entries: Iterable[dict[str, Any]],
+    *,
+    selected: list[dict[str, Any]],
+    hamming_distance: int | None,
+    counters: Counter[str],
+) -> list[dict[str, Any]]:
+    """``_without_visual_duplicates`` applied per task type (Feature P5-S.1,
+    ``--cross-task-visual-dedup off``): a row is dropped only when a row of the *same* task
+    already holds its image identity, and ``selected`` seeds every task with its own
+    already-selected rows only. The input order is preserved."""
+    items = list(entries)
+    kept: set[int] = set()
+    for task in dict.fromkeys(item["task_type"] for item in items):
+        kept.update(
+            id(item)
+            for item in _without_visual_duplicates(
+                [item for item in items if item["task_type"] == task],
+                selected=[item for item in selected if item["task_type"] == task],
+                hamming_distance=hamming_distance,
+                counters=counters,
+            )
+        )
+    return [item for item in items if id(item) in kept]
+
+
+def _visual_exclusion_scope(
+    kept: list[dict[str, Any]], task: str, *, within_task_only: bool
+) -> list[dict[str, Any]]:
+    """The rows a re-selection of ``task`` de-duplicates against: every kept row (cross-task
+    de-duplication on) or only the kept rows of the same task (Feature P5-S.1, off)."""
+    return [item for item in kept if item["task_type"] == task] if within_task_only else kept
+
+
 def _validation_identities(
     records: list[dict[str, Any]], media_root: pathlib.Path
 ) -> tuple[set[str], set[str], _HammingIndex, set[str]]:
@@ -877,6 +935,7 @@ def materialize(
     calibration_guard_aware: bool = False,
     mined_task_pool_caps: dict[str, float] | None = None,
     mined_task_fill_order: Iterable[str] | None = None,
+    cross_task_visual_dedup: str = DEFAULT_CROSS_TASK_VISUAL_DEDUP,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if min(max_rows, row_multiple, epochs, global_batch) <= 0:
         raise ValueError("row, epoch, and global-batch values must be positive")
@@ -885,6 +944,9 @@ def materialize(
     fill_order = validate_mined_task_fill_order(
         list(mined_task_fill_order) if mined_task_fill_order is not None else None
     )
+    # Feature P5-S.1: cross-task visual de-duplication switch (default on = today's exclusion)
+    cross_task_visual_dedup = validate_cross_task_visual_dedup(cross_task_visual_dedup)
+    within_task_only = cross_task_visual_dedup == "off"
     if zero_new_candidate_policy not in ZERO_NEW_CANDIDATE_POLICIES:
         raise ValueError(
             f"zero_new_candidate_policy must be one of {list(ZERO_NEW_CANDIDATE_POLICIES)}, "
@@ -1386,20 +1448,44 @@ def materialize(
             ),
         )
         selected_dd = selected_empty + selected_positive
-    maintenance_unique = _without_visual_duplicates(
-        (
-            item
-            for item in maintenance
-            if not (
-                hybrid_calibration
-                and item["task_type"] == REFERENCE_DEFECT_DETECTION_TASK
-                and item["route_tier"] == "calibration"
-            )
-        ),
-        selected=selected_dd + reserved_reference_calibration,
-        hamming_distance=near_duplicate_hamming_distance,
-        counters=counters,
-    )
+    maintenance_pool = [
+        item
+        for item in maintenance
+        if not (
+            hybrid_calibration
+            and item["task_type"] == REFERENCE_DEFECT_DETECTION_TASK
+            and item["route_tier"] == "calibration"
+        )
+    ]
+    # Feature P5-S.1: under ``off`` every maintenance task is de-duplicated against its own
+    # already-selected rows only (reference pairs keep their pair identity); the rows this unlocks
+    # are counted against today's shared exclusion so the effect stays auditable in the manifest.
+    maintenance_rows_unlocked: dict[str, int] | None = None
+    if within_task_only:
+        maintenance_unique = _without_cross_task_visual_duplicates(
+            maintenance_pool,
+            selected=selected_dd + reserved_reference_calibration,
+            hamming_distance=near_duplicate_hamming_distance,
+            counters=counters,
+        )
+        shared_unique = _without_visual_duplicates(
+            maintenance_pool,
+            selected=selected_dd + reserved_reference_calibration,
+            hamming_distance=near_duplicate_hamming_distance,
+            counters=Counter(),
+        )
+        kept_within_task = Counter(item["task_type"] for item in maintenance_unique)
+        kept_shared = Counter(item["task_type"] for item in shared_unique)
+        maintenance_rows_unlocked = {
+            task: int(kept_within_task[task] - kept_shared[task]) for task in MAINTENANCE_TASK_TYPES
+        }
+    else:
+        maintenance_unique = _without_visual_duplicates(
+            maintenance_pool,
+            selected=selected_dd + reserved_reference_calibration,
+            hamming_distance=near_duplicate_hamming_distance,
+            counters=counters,
+        )
     selected_dd_novel = sum(not item["is_replay"] for item in selected_dd)
     selected_maintenance = reserved_reference_calibration + _task_balanced(
         maintenance_unique,
@@ -1515,7 +1601,9 @@ def materialize(
             kept = [*selected_strict, *mined_maintenance, *selected_calibration]
             reference_pool = _without_visual_duplicates(
                 reference_calibration_candidates,
-                selected=kept,
+                selected=_visual_exclusion_scope(
+                    kept, REFERENCE_DEFECT_DETECTION_TASK, within_task_only=within_task_only
+                ),
                 hamming_distance=near_duplicate_hamming_distance,
                 counters=counters,
             )
@@ -1570,7 +1658,9 @@ def materialize(
                 substituted = kpi_single_target - len(new_empty)
                 positive_pool = _without_visual_duplicates(
                     calibration_positive,
-                    selected=kept,
+                    selected=_visual_exclusion_scope(
+                        kept, DEFECT_DETECTION_TASK, within_task_only=within_task_only
+                    ),
                     hamming_distance=near_duplicate_hamming_distance,
                     counters=counters,
                 )
@@ -1693,16 +1783,29 @@ def materialize(
     ]
     selected_paths = {item["resolved_path"] for item in emitted_base_entries}
     selected_content = {item["content_sha256"] for item in emitted_base_entries}
-    selected_phashes = [item["perceptual_hash"] for item in emitted_base_entries]
-    verification_index = _HammingIndex()
+    # Feature P5-S.1: visual identity is verified over all emitted rows (cross-task
+    # de-duplication on) or within each task type (off)
+    visual_scopes = (
+        [[item for item in emitted_base_entries if item["task_type"] == task] for task in ALL_TASK_TYPES]
+        if within_task_only
+        else [emitted_base_entries]
+    )
     near_duplicate_pairs = 0
-    for phash in selected_phashes:
-        if (
-            near_duplicate_hamming_distance is not None
-            and verification_index.has_within(phash, near_duplicate_hamming_distance)
-        ):
-            near_duplicate_pairs += 1
-        verification_index.add(phash)
+    for scope in visual_scopes:
+        verification_index = _HammingIndex()
+        for phash in (item["perceptual_hash"] for item in scope):
+            if (
+                near_duplicate_hamming_distance is not None
+                and verification_index.has_within(phash, near_duplicate_hamming_distance)
+            ):
+                near_duplicate_pairs += 1
+            verification_index.add(phash)
+    unique_target_images = all(
+        len({item["resolved_path"] for item in scope}) == len(scope) for scope in visual_scopes
+    )
+    unique_image_content = all(
+        len({item["content_sha256"] for item in scope}) == len(scope) for scope in visual_scopes
+    )
     selected_empty_count = len(selected_empty)
     selected_positive_count = len(selected_positive)
     materialized_empty_count = (
@@ -1927,8 +2030,8 @@ def materialize(
             if reference_proxy_empty_rate is None
             else selected_reference_empty == reference_empty_target
         ),
-        "unique_target_images": len(selected_paths) == len(emitted_base_entries),
-        "unique_image_content": len(selected_content) == len(emitted_base_entries),
+        "unique_target_images": unique_target_images,
+        "unique_image_content": unique_image_content,
         "near_duplicate_free": near_duplicate_pairs == 0,
         "near_duplicate_filter_policy_respected": (
             near_duplicate_hamming_distance is None or near_duplicate_pairs == 0
@@ -2030,6 +2133,10 @@ def materialize(
         "capped_tasks": capped_tasks,
         # absent because the cap was consumed (accepted under skip_exhausted, fatal under fail_closed)
         "capped_absent_tasks": capped_absent_tasks,
+        # Feature P5-S.1: cross-task visual de-duplication switch; when off, the maintenance rows per
+        # task that today's shared exclusion would have dropped (None when on)
+        "cross_task_visual_dedup": cross_task_visual_dedup,
+        "maintenance_rows_unlocked_by_cross_task": maintenance_rows_unlocked,
         "maintenance_tasks": {
             "present": [task for task in MAINTENANCE_TASK_TYPES if materialized_maintenance[task] > 0],
             "missing": missing_maintenance,
@@ -2251,6 +2358,8 @@ def materialize(
         "positive_marginal_quotas": marginal_quotas,
         "uniqueness": {
             "scope": "unique_rows_emitted_before_intentional_repetition",
+            # the scope of unique_target_images / unique_image_content / near_duplicate_free
+            "visual_identity_scope": "within_task" if within_task_only else "all_tasks",
             "unique_rows": len({_record_fingerprint(item["record"]) for item in emitted_base_entries}),
             "unique_images": len(selected_paths),
             "unique_image_content": len(selected_content),
@@ -2586,6 +2695,19 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--cross-task-visual-dedup",
+        choices=CROSS_TASK_VISUAL_DEDUP_MODES,
+        default=DEFAULT_CROSS_TASK_VISUAL_DEDUP,
+        help=(
+            "on (default, today's rule): a maintenance-task row is dropped when its image was already selected "
+            "for any task. off: visual de-duplication stays within each task type and every record-level / "
+            "leakage exclusion is unchanged, but a row is no longer dropped because its image was selected for a "
+            "different task (the NVPAW pool asks Defect Classification and Defect Detection on the same boards). "
+            "Launch-recorded by init_deft_state.py and rendered by the runner; recorded as cross_task_visual_dedup / "
+            "maintenance_rows_unlocked_by_cross_task."
+        ),
+    )
+    parser.add_argument(
         "--acquisition-rows",
         type=int,
         default=0,
@@ -2795,6 +2917,7 @@ def main(argv: list[str] | None = None) -> int:
             calibration_guard_aware=args.calibration_guard_aware == "on",
             mined_task_pool_caps=mined_task_pool_caps,
             mined_task_fill_order=mined_task_fill_order,
+            cross_task_visual_dedup=args.cross_task_visual_dedup,
         )
         manifest["empty_ground_truth"]["proxy_empty_rows"] = proxy_empty
         manifest["empty_ground_truth"]["proxy_defect_detection_rows"] = proxy_rows
