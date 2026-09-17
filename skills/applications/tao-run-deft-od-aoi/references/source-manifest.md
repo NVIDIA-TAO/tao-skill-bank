@@ -12,7 +12,8 @@ Create `dataset_sources.json` with one or more COCO inputs per role:
 {
   "schema_version": 1,
   "inputs": {
-    "kpi": [{"coco": "/data/kpi.json", "images_dir": "/data/kpi/images"}],
+    "benchmark": [{"coco": "/data/benchmark.json",
+                   "images_dir": "/data/benchmark/images"}],
     "test": [{"coco": "/data/test.json", "images_dir": "/data/test/images"}],
     "mining": [{"coco": ["/data/train.json", "/data/mine.json"],
                 "images_dir": "/data/images"}],
@@ -22,8 +23,10 @@ Create `dataset_sources.json` with one or more COCO inputs per role:
 ```
 
 Paths may be absolute or relative to the manifest. `coco` accepts one path or
-a list. KPI and test may contain boxed and boxless images. Every mining image
-must have a box, while every explicit clean COCO must have zero annotations.
+a list. Benchmark and test inputs may contain boxed and boxless images. The
+preparer maps user-facing `benchmark` to the downstream internal `kpi` role.
+Every mining image must have a box, while every explicit clean COCO must have
+zero annotations.
 The preparer maps all input categories to the one `defect` category and rejects
 cross-role image overlap.
 
@@ -71,7 +74,7 @@ contracts and resolves every referenced image during initialization.
 - Never place one resolved image identity in more than one role.
 - Preserve provenance metadata needed for audit.
 - For synthesis, preserve exact `dataset_id`, `texture_id`, `defect_class`,
-  and pixel-mask paths on eligible KPI records.
+  and pixel-mask paths on eligible benchmark records.
 - Do not infer AnomalyGenNext types from filenames at this boundary.
 
 Validate the resulting handoff with `init_deft_od_aoi.py`; its output policy is

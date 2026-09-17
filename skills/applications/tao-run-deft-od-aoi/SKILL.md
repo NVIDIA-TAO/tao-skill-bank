@@ -55,9 +55,11 @@ TAO Data Services image because it delegates each role's canonical COCO merge
 to the existing `annotations merge` action. The application then validates the
 merged role contracts before emitting `sources.json`.
 
-The second command emits `sources.json` with the canonical `kpi`, `test`,
-`real`, and `clean` mapping. Copy `assets/default_policy.yaml`, use that mapping
-for `sources`, fill the other required values, and initialize once:
+The user-facing manifest calls the held-out input `benchmark`. The second
+command maps it to the existing internal `kpi` role and emits `sources.json`
+with the canonical `kpi`, `test`, `real`, and `clean` mapping. Copy
+`assets/default_policy.yaml`, use that mapping for `sources`, fill the other
+required values, and initialize once:
 
 ```bash
 scripts/init_deft_od_aoi.py \

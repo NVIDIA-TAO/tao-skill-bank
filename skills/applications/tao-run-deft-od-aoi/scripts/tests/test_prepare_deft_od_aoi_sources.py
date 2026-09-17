@@ -65,7 +65,7 @@ def _manifest(root: Path) -> Path:
     path.write_text(json.dumps({
         "schema_version": 1,
         "inputs": {
-            "kpi": [_source(root, "kpi", boxed=True)],
+            "benchmark": [_source(root, "kpi", boxed=True)],
             "test": [_source(root, "test", boxed=False)],
             "mining": [_source(root, "mine", boxed=True)],
             "clean": [_source(root, "clean", boxed=False)],
@@ -84,6 +84,8 @@ def test_prepares_binary_roles_and_customer_handoff(tmp_path: Path) -> None:
     assert documents["real"][0]["images"][0]["customer_field"] == "mine"
     assert not documents["clean"][0]["annotations"]
     assert report["roles"]["real"] == {"images": 1, "annotations": 1}
+    assert report["sources"][0]["input"] == "benchmark"
+    assert report["sources"][0]["role"] == "kpi"
 
     output = tmp_path / "normalized"
     handoff = MODULE.materialize(
@@ -106,6 +108,16 @@ def test_prepares_binary_roles_and_customer_handoff(tmp_path: Path) -> None:
     state = INIT_MODULE.initialize(policy, tmp_path / "contract")
     assert state["roles"]["real"]["annotation_count"] == 1
     assert state["roles"]["clean"]["annotation_count"] == 0
+
+
+def test_rejects_internal_kpi_name_at_user_manifest_boundary(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    value = json.loads(manifest.read_text())
+    value["inputs"]["kpi"] = value["inputs"].pop("benchmark")
+    manifest.write_text(json.dumps(value))
+
+    with pytest.raises(ValueError, match=r"inputs\.benchmark"):
+        MODULE.prepare(manifest)
 
 
 def test_accepts_multiple_coco_shards_in_one_role(tmp_path: Path) -> None:
@@ -180,7 +192,7 @@ def test_rejects_annotations_in_verified_clean_source(tmp_path: Path) -> None:
 def test_rejects_cross_role_image_overlap(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     value = json.loads(manifest.read_text())
-    value["inputs"]["test"] = value["inputs"]["kpi"]
+    value["inputs"]["test"] = value["inputs"]["benchmark"]
     manifest.write_text(json.dumps(value))
 
     with pytest.raises(ValueError, match="overlaps kpi and test"):

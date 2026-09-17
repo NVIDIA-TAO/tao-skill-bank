@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 
 CATEGORY = [{"id": 1, "name": "defect"}]
-INPUT_TO_ROLE = {"kpi": "kpi", "test": "test", "mining": "real", "clean": "clean"}
+INPUT_TO_ROLE = {"benchmark": "kpi", "test": "test", "mining": "real", "clean": "clean"}
 
 
 def _read_object(path: Path) -> dict[str, Any]:
