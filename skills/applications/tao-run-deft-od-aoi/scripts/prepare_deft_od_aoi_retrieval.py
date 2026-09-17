@@ -50,6 +50,10 @@ def _gap_box(value: Any, width: int, height: int, scale: float) -> tuple[int, in
     x1, y1, x2, y2 = map(float, value)
     if x2 <= x1 or y2 <= y1:
         raise ValueError(f"invalid xyxy gap box: {value}")
+    x1, y1 = max(0.0, min(x1, width)), max(0.0, min(y1, height))
+    x2, y2 = max(0.0, min(x2, width)), max(0.0, min(y2, height))
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError(f"gap box clips empty: {value}")
     return _box((x1, y1, x2 - x1, y2 - y1), width, height, scale)
 
 
