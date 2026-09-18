@@ -1,17 +1,19 @@
-# Skill Benchmark: tao-run-on-kubernetes
+# Skill Benchmark: tao-data-io
 
-> ❌ **Overall verdict: FAIL — Publication blocked**
+> ✅ **Overall verdict: PASS — Recommended for publication**
 
-The skill should be reviewed before publication. Address the blocking findings below, then rerun Skill Evaluator.
+## Publication Recommendation
+
+Recommended for publication based on the completed evaluation evidence in this report.
 
 ## Evaluation Metadata
 
-- Skill: `tao-run-on-kubernetes`
+- Skill: `tao-data-io`
 - Evaluation date: 2026-09-17
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:7ec1d30a7bdad9358b2758fb7f4f6bc53cd6b93ea77c8f66ccfae6b41327ba45` (skill-evaluator-dataset-snapshot/1)
+- Dataset digest: `sha256:9df227152dd4d53d020412fb78f24217f966c8a4553452c2910a01ae6d87b881` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 3
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
@@ -33,18 +35,16 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.2% — baseline ran, but no comparable score was available; uplift unavailable | 74.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 92.7% — baseline ran, but no comparable score was available; uplift unavailable | 95.4% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 13.3% → 100.0% (+86.7 points) |
-| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 16.7% → 100.0% (+83.3 points) | 20.0% → 75.0% (+55.0 points) |
-| Efficiency | 71.2% — baseline ran, but no comparable score was available; uplift unavailable | 99.7% → 98.5% (-1.2 points) |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 0.0% → 100.0% (+100.0 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 16.7% → 100.0% (+83.3 points) | 16.7% → 83.3% (+66.6 points) |
+| Efficiency | 63.4% — baseline ran, but no comparable score was available; uplift unavailable | 98.5% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
 Example: `47.0% → 92.0% (+45.0 points)` means the skill-assisted run scored 92.0%, 45.0 percentage points above its 47.0% no-skill baseline.
-
-A partial dimension was calculated from only the available configured signals; review the detailed report before relying on it.
 
 ## Token Usage
 
@@ -52,11 +52,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 104,924 | 92,146 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-run-on-kubernetes-basic | 104,924 | 92,146 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | All cases | 14,009 | 40,881 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | tao-run-on-kubernetes-basic | 14,009 | 40,881 | N/A | N/A | skill 1/1; base 3/3 |
-| ALL AGENTS | Dataset aggregate | 118,933 | 133,027 | N/A | N/A | skill 2/2; base 6/6 |
+| claude-code | All cases | 105,471 | 90,096 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-data-io-staging | 105,471 | 90,096 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 29,813 | 41,035 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-data-io-staging | 29,813 | 41,035 | N/A | N/A | skill 1/1; base 3/3 |
+| ALL AGENTS | Dataset aggregate | 135,284 | 131,131 | N/A | N/A | skill 2/2; base 6/6 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -64,26 +64,21 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **FAILED** | 11 validator(s); 23 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 19 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
-
-## Blocking Findings
-
-- **MEDIUM** BANDIT/B108:hardcoded_tmp_directory: Probable insecure usage of temp file/directory. (CWE-377) (`skills/platform/tao-run-on-kubernetes/scripts/render_action_job.py:398`)
-- **MEDIUM** BANDIT/B108:hardcoded_tmp_directory: Probable insecure usage of temp file/directory. (CWE-377) (`skills/platform/tao-run-on-kubernetes/scripts/render_action_job.py:401`)
 
 ## Findings and Observations
 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** BANDIT/B108:hardcoded_tmp_directory: Probable insecure usage of temp file/directory. (CWE-377) (`skills/platform/tao-run-on-kubernetes/scripts/render_action_job.py:398`)
-- **MEDIUM** BANDIT/B108:hardcoded_tmp_directory: Probable insecure usage of temp file/directory. (CWE-377) (`skills/platform/tao-run-on-kubernetes/scripts/render_action_job.py:401`)
-- **MEDIUM** QUALITY/quality_correctness: No documented scripts in table format (`skills/platform/tao-run-on-kubernetes/SKILL.md`)
-- **MEDIUM** QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/platform/tao-run-on-kubernetes/SKILL.md`)
-- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/platform/tao-run-on-kubernetes/SKILL.md`)
-- 18 additional finding(s) are available in the full evaluation artifacts.
+- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/platform/tao-data-io/SKILL.md`)
+- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/platform/tao-data-io/SKILL.md`)
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/platform/tao-data-io`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/platform/tao-data-io/SKILL.md`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/platform/tao-data-io/SKILL.md`)
+- 14 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 

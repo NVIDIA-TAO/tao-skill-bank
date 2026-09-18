@@ -1,5 +1,5 @@
 ## Description: <br>
-Sparse4D for multi-camera temporal 3D object detection and tracking, using sparse queries with deformable attention across camera views and time for end-to-end 3D perception with an instance bank for temporal tracking. <br>
+Run a Python training/eval script directly in an existing local virtualenv — no docker, no container. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need to train, evaluate, export, quantize, or run inference on Sparse4D multi-camera temporal 3D object detection and tracking models using NVIDIA TAO. <br>
+Developers and engineers who need to run Python training or evaluation scripts directly in a local virtualenv on hosts where Docker is unavailable or unnecessary. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [No] <br>
+**Credential Type(s):** [None] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -25,10 +25,10 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Local Docker Conversion Guide](references/local_docker_conversion.md) <br>
-- [Skill Info](references/skill_info.yaml) <br>
-- [Spec Param Inference Mappings](references/spec_param_inference.md) <br>
+- [Skill configuration (skill_info.yaml)](references/skill_info.yaml) <br>
+- [Virtualenv runner (process lifecycle CLI)](references/virtualenv_runner.py) <br>
 - [NVIDIA TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+- [Agent Skills open standard](https://agentskills.io) <br>
 
 
 ## Skill Output: <br>
@@ -44,36 +44,36 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive), 3 attempts per task, each run in an isolated k8s-sandbox pod. <br>
+Evaluated against 1 task (1 positive) across 3 attempts per task in k8s-sandbox environment. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Checks final-answer correctness against the reference answer. <br>
-- Discoverability: Checks whether the expected skill was selected and the workflow executed. <br>
-- Effectiveness: Checks whether the skill helped complete the user's goal and followed the expected workflow. <br>
-- Efficiency: Checks tool-call productivity and token efficiency to avoid wasted usage. <br>
+- Security: Is it safe to use? Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Is the answer correct? Final-answer correctness against the reference answer. <br>
+- Discoverability: Was the right skill loaded when needed? Whether the expected skill was selected and the workflow executed. <br>
+- Effectiveness: Did the skill help complete the task? Equal-weight mean of goal completion and expected workflow adherence. <br>
+- Efficiency: Did it avoid wasted tool calls and token usage? 50% tool-call productivity and 50% token efficiency. <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
-- `skill_execution`: Whether the expected skill was selected, decoys avoided, and workflow executed. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
 - `skill_efficiency`: Tool-call productivity (routing scored under Discoverability). <br>
-- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
+- `token_efficiency`: Actual uncached prompt plus completion usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.5% | 62.4% |
+| Overall | 94.6% | 72.4% |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 100.0% → 60.0% (-40.0 points) |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 20.0% → 100.0% (+80.0 points) |
 | Discoverability | 100.0% | 0.0% |
-| Effectiveness | 5.6% → 100.0% (+94.4 points) | 70.0% → 53.3% (-16.7 points) |
-| Efficiency | 97.5% | 99.5% → 98.5% (-1.0 points) |
+| Effectiveness | 11.1% → 100.0% (+88.9 points) | 18.3% → 63.3% (+45.0 points) |
+| Efficiency | 73.2% | 99.5% → 98.6% (-0.9 points) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
