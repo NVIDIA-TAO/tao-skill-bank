@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-launch-workflow
+# Skill Benchmark: tao-setup
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,12 +8,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-launch-workflow`
+- Skill: `tao-setup`
 - Evaluation date: 2026-09-17
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:5edd8af3c36794f4387498841fc8ffd7ba340b18d18d277703ae2b5c4da2c361` (skill-evaluator-dataset-snapshot/1)
+- Dataset digest: `sha256:646cc2eff75323f4c19ef8aa7bab21af9f0d483032dbd24c960e512200242a6c` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 3
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
@@ -35,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.5% — baseline ran, but no comparable score was available; uplift unavailable | 78.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 94.5% — baseline ran, but no comparable score was available; uplift unavailable | 73.7% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 20.0% → 100.0% (+80.0 points) |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 0.0% → 100.0% (+100.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 16.7% → 100.0% (+83.3 points) | 43.3% → 95.0% (+51.7 points) |
-| Efficiency | 97.4% — baseline ran, but no comparable score was available; uplift unavailable | 99.7% → 98.5% (-1.2 points) |
+| Effectiveness | 16.7% → 100.0% (+83.3 points) | 16.7% → 70.0% (+53.3 points) |
+| Efficiency | 72.6% — baseline ran, but no comparable score was available; uplift unavailable | 99.5% → 98.6% (-0.9 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -54,11 +54,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 68,672 | 90,431 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-launch-workflow-basic | 68,672 | 90,431 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | All cases | 13,983 | 13,583 | +400 | +2.94% | skill 1/1; base 1/1 |
-| codex | tao-launch-workflow-basic | 13,983 | 13,583 | +400 | +2.94% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 82,655 | 104,014 | N/A | N/A | skill 2/2; base 4/4 |
+| claude-code | All cases | 98,394 | 120,129 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-setup-basic | 98,394 | 120,129 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 13,682 | 41,805 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-setup-basic | 13,682 | 41,805 | N/A | N/A | skill 1/1; base 3/3 |
+| ALL AGENTS | Dataset aggregate | 112,076 | 161,934 | N/A | N/A | skill 2/2; base 6/6 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -66,7 +66,7 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 16 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 21 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
 
@@ -75,12 +75,12 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/core/tao-launch-workflow/SKILL.md`)
-- **MEDIUM** QUALITY/quality_discoverability: Description uses first/second person (`skills/core/tao-launch-workflow/SKILL.md`)
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/core/tao-launch-workflow/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/core/tao-launch-workflow`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/core/tao-launch-workflow/SKILL.md`)
-- 11 additional finding(s) are available in the full evaluation artifacts.
+- **MEDIUM** QUALITY/quality_correctness: No documented scripts in table format (`skills/core/tao-setup/SKILL.md`)
+- **MEDIUM** QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/core/tao-setup/SKILL.md`)
+- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/core/tao-setup/SKILL.md`)
+- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/core/tao-setup/SKILL.md`)
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/core/tao-setup`)
+- 16 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 
