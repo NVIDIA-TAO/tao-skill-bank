@@ -2496,6 +2496,41 @@ init_run "$G27" "$G27/results/run_g27" 1 --force --kpi-conf-threshold 1.5
 assert_rc 1 "[G27] a threshold outside [0, 1] is refused"
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G28 — dropping the exclude set is refused however it is dropped
+#
+# Iterations stay disjoint because each mine excludes everything mined before. A
+# missing --parquet-b was caught, but only when the flag was given and the path was
+# wrong; omitting the flag skipped the check and lost every earlier exclusion. The
+# check is argument consistency, so it fires before any parquet is opened.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G28 exclude set cannot be dropped silently"
+
+G28=$(new_workspace g28)
+EXCL="$SCRIPTS_DIR/prepare_exclude_for_mining.py"
+
+run "$PY" "$EXCL" --parquet-a "$G28/a.parquet" --iteration 2 --output "$G28/o1.parquet"
+assert_rc 1 "[G28] iteration 2 with --parquet-b omitted is refused"
+case "$RUN_OUT" in
+  *"re-mine images earlier iterations already used"*)
+    ok "[G28] the refusal says what continuing would cost" ;;
+  *) notok "[G28] the refusal says what continuing would cost" "output: $RUN_OUT" ;;
+esac
+
+# Refused on the arguments alone, before any file is read -- neither parquet exists.
+case "$RUN_OUT" in
+  *"parquet-a"*) notok "[G28] the argument check fires before the file check" "output: $RUN_OUT" ;;
+  *) ok "[G28] the argument check fires before the file check" ;;
+esac
+
+run "$PY" "$EXCL" --parquet-a "$G28/a.parquet" --iteration 1 --output "$G28/o3.parquet"
+assert_rc 1 "[G28] iteration 1 gets past the argument check and fails on the real file"
+case "$RUN_OUT" in
+  *"--parquet-a does not exist"*)
+    ok "[G28] iteration 1 may legitimately omit the previous cumulative" ;;
+  *) notok "[G28] iteration 1 may legitimately omit the previous cumulative" "output: $RUN_OUT" ;;
+esac
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then
