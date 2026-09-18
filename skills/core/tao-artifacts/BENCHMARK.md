@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-train-mask2former
+# Skill Benchmark: tao-artifacts
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,12 +8,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-train-mask2former`
+- Skill: `tao-artifacts`
 - Evaluation date: 2026-09-18
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:52024b5b07978a81d4aabc7184678bc6e720de4e36c431bd53f4d2b666606646` (skill-evaluator-dataset-snapshot/1)
+- Dataset digest: `sha256:615d7cbfd18bece2985875429c1ee5e8d6c108e1dab4c4a54a048980eb6a637c` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 3
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
@@ -35,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.3% — baseline ran, but no comparable score was available; uplift unavailable | 62.4% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 98.4% — baseline ran, but no comparable score was available; uplift unavailable | 75.7% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 100.0% → 60.0% (-40.0 points) |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 0.0% → 100.0% (+100.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 5.6% → 100.0% (+94.4 points) | 70.0% → 53.3% (-16.7 points) |
-| Efficiency | 71.3% — baseline ran, but no comparable score was available; uplift unavailable | 99.5% → 98.5% (-1.0 points) |
+| Effectiveness | 16.7% → 95.0% (+78.3 points) | 16.7% → 80.0% (+63.3 points) |
+| Efficiency | 97.0% — baseline ran, but no comparable score was available; uplift unavailable | 99.7% → 98.5% (-1.2 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -54,11 +54,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 105,068 | 1,002,445 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-train-mask2former-basic | 105,068 | 1,002,445 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | All cases | 13,880 | 13,968 | -88 | -0.63% | skill 1/1; base 1/1 |
-| codex | tao-train-mask2former-basic | 13,880 | 13,968 | -88 | -0.63% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 118,948 | 1,016,413 | N/A | N/A | skill 2/2; base 4/4 |
+| claude-code | All cases | 101,983 | 91,564 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-artifacts-schemas | 101,983 | 91,564 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 13,994 | 40,774 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-artifacts-schemas | 13,994 | 40,774 | N/A | N/A | skill 1/1; base 3/3 |
+| ALL AGENTS | Dataset aggregate | 115,977 | 132,338 | N/A | N/A | skill 2/2; base 6/6 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -66,7 +66,7 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 26 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 13 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
 
@@ -75,12 +75,12 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/models/tao-train-mask2former/SKILL.md`)
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-train-mask2former/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-train-mask2former`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-train-mask2former/SKILL.md`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/models/tao-train-mask2former/SKILL.md`)
-- 21 additional finding(s) are available in the full evaluation artifacts.
+- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/core/tao-artifacts/SKILL.md`)
+- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/core/tao-artifacts/SKILL.md`)
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/core/tao-artifacts`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/core/tao-artifacts/SKILL.md`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/core/tao-artifacts/SKILL.md`)
+- 8 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 

@@ -1,82 +1,129 @@
-# Evaluation Report
+# Skill Benchmark: tao-generate-anomalies
 
-Evaluation of the `tao-generate-anomalies` skill before publication through NVSkills-Eval.
+> ❌ **Overall verdict: FAIL — Publication blocked**
 
-This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the skill. The goal is to document whether the skill is safe, discoverable, effective, and useful for agents before it is published for broader workflow use.
+The skill should be reviewed before publication. Address the blocking findings below, then rerun Skill Evaluator.
 
-## Evaluation Summary
+## Evaluation Metadata
 
 - Skill: `tao-generate-anomalies`
-- Evaluation date: 2026-06-20
-- NVSkills-Eval profile: `external`
-- Environment: `astra-sandbox`
-- Dataset: 1 evaluation tasks
-- Attempts per task: 1
-- Pass threshold: 50%
-- Overall verdict: PASS
+- Evaluation date: 2026-09-18
+- Evaluator version: `1.5.6`
+- Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
+- Tasks: 1 evaluation tasks (1 positive)
+- Dataset digest: `sha256:f16074998b03223a85c3a4a806ad96050ff9fba4c9d9125dd3ab7b9e54d2c850` (skill-evaluator-dataset-snapshot/1)
+- Attempts per task: 3
+- Environment: `k8s-sandbox`
+- Tier 2 evidence: required for publication
+- Tier 3 evidence: required for publication
 
-## Agents Used
+Each task attempt ran in its own isolated sandbox pod.
 
-- `claude-code`
-- `codex`
+## What This Report Answers
 
-## Metrics Used
+The three-tier evaluation checks whether the skill:
 
-Reported benchmark dimensions:
+- is safe to use;
+- produces correct answers;
+- is discovered and activated when needed;
+- helps the agent complete the user's goal and expected workflow; and
+- avoids wasted skill and tool usage.
 
-- Security: checks whether skill-assisted execution avoids unsafe behavior such as secret leakage, destructive commands, or unauthorized access.
-- Correctness: checks whether the agent follows the expected workflow and produces the correct final output.
-- Discoverability: checks whether the agent loads the skill when relevant and avoids using it when irrelevant.
-- Effectiveness: checks whether the agent performs measurably better with the skill than without it.
-- Efficiency: checks whether the agent uses fewer tokens and avoids redundant work.
+## Results at a Glance
 
-Underlying evaluation signals used in this run:
+| Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
+|---|---:|---:|
+| Overall | 94.1% — baseline ran, but no comparable score was available; uplift unavailable | 79.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 20.0% → 100.0% (+80.0 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 16.7% → 100.0% (+83.3 points) | 32.5% → 100.0% (+67.5 points) |
+| Efficiency | 70.6% — baseline ran, but no comparable score was available; uplift unavailable | 99.7% → 98.4% (-1.3 points) |
 
-- `security` (Security): checks for unsafe operations, secret leakage, and unauthorized access.
-- `skill_execution` (Skill Execution): verifies that the agent loaded the expected skill and workflow.
-- `skill_efficiency` (Efficiency): checks routing quality, decoy avoidance, and redundant tool usage.
-- `accuracy` (Accuracy): grades final-answer correctness against the reference answer.
-- `goal_accuracy` (Goal Accuracy): checks whether the overall user task completed successfully.
-- `behavior_check` (Behavior Check): verifies expected behavior steps, including safety expectations.
-- `token_efficiency` (Token Efficiency): compares token usage with and without the skill.
+**How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
-## Test Tasks
+Example: `47.0% → 92.0% (+45.0 points)` means the skill-assisted run scored 92.0%, 45.0 percentage points above its 47.0% no-skill baseline.
 
-The benchmark dataset contained 1 evaluation tasks:
+A partial dimension was calculated from only the available configured signals; review the detailed report before relying on it.
 
-- Positive tasks: 1 tasks where the skill was expected to activate.
-- Negative tasks: 0 tasks where no skill was expected.
-- Unlabeled tasks: 0 tasks where positive/negative intent could not be inferred.
+## Token Usage
 
-Task composition is derived from the evaluation dataset when possible. Entries with `expected_skill` set are treated as positive skill-activation cases, while entries with `expected_skill: null` are treated as negative activation cases.
+Actual Tier 3 execution usage is reported for every observed agent/case pair and both conditions.
 
-## Results
+| Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
+|---|---|---:|---:|---:|---:|---|
+| claude-code | All cases | 109,217 | 90,376 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-generate-anomalies-basic | 109,217 | 90,376 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 14,211 | 27,054 | N/A | N/A | skill 1/1; base 2/2 |
+| codex | tao-generate-anomalies-basic | 14,211 | 27,054 | N/A | N/A | skill 1/1; base 2/2 |
+| ALL AGENTS | Dataset aggregate | 123,428 | 117,430 | N/A | N/A | skill 2/2; base 5/5 |
 
-| Dimension | Num | `claude-code` | `codex` |
-|---|---:|---:|---:|
-| Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 90% (+90%) | 97% (+97%) |
-| Discoverability | 1 | 100% (+100%) | 97% (+97%) |
-| Effectiveness | 1 | 60% (+50%) | 90% (+66%) |
-| Efficiency | 1 | 95% (+67%) | 96% (+68%) |
+Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
-Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
+## Tier Status
 
-## Tier 1: Static Validation Summary
+| Tier | Purpose | Status | Evidence |
+|---|---|---|---|
+| Tier 1 | Static validation | **FAILED** | 11 validator(s); 22 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 8 finding(s) |
+| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
 
-Tier 1 validation passed with observations. NVSkills-Eval ran 1 checks and found 4 total findings.
+## Findings and Observations
 
-Top findings:
+<details>
+<summary>Show detailed findings and successful checks</summary>
 
-- MEDIUM SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/data/tao-generate-anomalies`)
-- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/data/tao-generate-anomalies/SKILL.md`)
-- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/data/tao-generate-anomalies/SKILL.md`)
-- LOW SCHEMA/author_format: Author must be of the form 'Name <email@host>' (`skills/data/tao-generate-anomalies/SKILL.md`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/inference.md and references/prep-testcase.md:
+  "### Submask handling" in references/inference.md (lines 93-100)
+  vs "## Submask handling" in references/prep-testcase.md (lines 138-148) (`references/inference.md:93`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/inference.md and references/sdg-refine.md:
+  "### Re-rolling AMP (optional)" in references/inference.md (lines 291-308)
+  vs "## Re-rolling AMP augmentation (optional)" in references/sdg-refine.md (lines 105-128) (`references/inference.md:291`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/inference.md and references/sdg-refine.md:
+  "### draws.json format" in references/inference.md (lines 273-290)
+  vs "## draws.json format" in references/sdg-refine.md (lines 77-94) (`references/inference.md:273`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/eval.md and references/inference.md:
+  "## Feature counts" in references/eval.md (lines 147-157)
+  vs "### Feature counts" in references/inference.md (lines 234-240) (`references/eval.md:147`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/eval.md and references/inference.md:
+  "## Invocation" in references/eval.md (lines 87-99)
+  vs "### run_eval.sh flags" in references/inference.md (lines 202-216) (`references/eval.md:87`)
+- 25 additional finding(s) are available in the full evaluation artifacts.
 
-## Tier 2: Deduplication Summary
+</details>
 
-This tier was not run or did not produce findings in this report.
+## Scoring Methodology
 
-## Publication Recommendation
+<details>
+<summary>Show dimension definitions, source signals, and thresholds</summary>
 
-The skill is suitable to proceed toward NVSkills-Eval publication based on this benchmark. Skill owners should keep this file with the skill and refresh it when the evaluation dataset, skill behavior, or target agents materially change.
+| Dimension | Question | Scored signals |
+|---|---|---|
+| Security | Is it safe to use? | `security` (100%) |
+| Correctness | Is the answer correct? | `accuracy` (100%) |
+| Discoverability | Was the right skill loaded when needed? | `skill_execution` (100%) |
+| Effectiveness | Did the skill help complete the task? | `goal_accuracy` (50%) + `behavior_check` (50%) |
+| Efficiency | Did it avoid wasted tool calls and token usage? | `skill_efficiency` (50%) + `token_efficiency` (50%) |
+
+- Dimension bands: PASS at 50% or above; NEUTRAL from 40% to below 50%; FAIL below 40%.
+- Overall Tier 3 lift: PASS at +5 points or more; FAIL at -10 points or less; values between those bands are NEUTRAL.
+- Overall verdict: PASS only when every configured dimension passes for at least one supported agent. Lift is reported as diagnostic evidence and does not override this gate.
+- The 50% attempt pass threshold is a separate per-task gate; it is not the dimension pass threshold.
+- Effectiveness is the equal-weight mean of goal completion (`goal_accuracy`) and expected workflow adherence (`behavior_check`).
+- Efficiency is 50% tool-call productivity (the backward-compatible `skill_efficiency` wire id) and 50% `token_efficiency`. Positive-case skill routing is scored under Discoverability, not Efficiency; a negative case without a routing target is N/A. N/A sources are omitted, remaining weights are renormalized, and the dimension is marked partial.
+
+Signals present in this run:
+
+- `security` (Security): unsafe operations, secret leakage, and unauthorized access.
+- `skill_execution` (Skill Execution): whether the expected skill was selected, decoys were avoided, and the workflow executed.
+- `skill_efficiency` (Tool Productivity): tool-call productivity (legacy wire id; routing is scored under Discoverability).
+- `accuracy` (Accuracy): final-answer correctness against the reference answer.
+- `goal_accuracy` (Goal Accuracy): whether the user's goal was achieved.
+- `behavior_check` (Behavior Check): whether the expected workflow behavior was followed.
+- `token_efficiency` (Token Efficiency): actual uncached prompt plus completion usage (50% of Efficiency).
+
+</details>
+
+## Freshness
+
+Regenerate this benchmark when the skill, evaluation dataset, target agent/model, evaluator version, environment, or scoring policy changes.
