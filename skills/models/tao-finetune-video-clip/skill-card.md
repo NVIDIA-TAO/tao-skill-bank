@@ -1,5 +1,5 @@
 ## Description: <br>
-Trains, evaluates, and runs inference on BEVFusion multi-sensor 3D object detection models, fusing LiDAR point clouds and camera images in bird's-eye-view (BEV) space for autonomous driving 3D perception. <br>
+InternVideo2-CLIP L14 (TAO video_clip) for video-text retrieval, zero-shot classification, embedding extraction, LoRA fine-tuning, ONNX export, and TensorRT deployment. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers training, evaluating, and running inference on BEVFusion 3D object detection models for autonomous driving and multi-sensor 3D perception applications. <br>
+Developers and engineers who need to fine-tune, evaluate, export, and deploy InternVideo2-CLIP L14 models for video-text retrieval, zero-shot video classification, and embedding extraction using NVIDIA TAO Toolkit containers. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [Yes] <br>
+**Credential Type(s):** [API key] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -26,10 +26,9 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [skill_info.yaml](references/skill_info.yaml) <br>
-- [spec_template_train.yaml](references/spec_template_train.yaml) <br>
-- [spec_template_evaluate.yaml](references/spec_template_evaluate.yaml) <br>
-- [spec_template_inference.yaml](references/spec_template_inference.yaml) <br>
-- [spec_template_dataset_convert.yaml](references/spec_template_dataset_convert.yaml) <br>
+- [tao-deploy-video-clip.md](references/tao-deploy-video-clip.md) <br>
+- [tao-deploy-video-clip.skill_info.yaml](references/tao-deploy-video-clip.skill_info.yaml) <br>
+- [TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
 
 
 ## Skill Output: <br>
@@ -45,36 +44,36 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive) in k8s-sandbox environment, evaluator version 1.5.6. <br>
+3 evaluation tasks (3 positive), each with 3 attempts per task in isolated k8s-sandbox pods. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
 - Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
 - Correctness: Checks final-answer correctness against the reference answer. <br>
-- Discoverability: Checks whether the expected skill was selected and the workflow executed. <br>
-- Effectiveness: Checks whether the skill helped complete the user's goal via goal completion (50%) and expected workflow adherence (50%). <br>
+- Discoverability: Checks whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- Effectiveness: Checks goal completion (50%) and expected workflow behavior adherence (50%). <br>
 - Efficiency: Checks tool-call productivity (50%) and token efficiency (50%). <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Verifies no unsafe operations, secret leakage, or unauthorized access occurred. <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
 - `accuracy`: Verifies final-answer correctness against the reference answer. <br>
-- `skill_execution`: Verifies the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `skill_execution`: Verifies skill selection, decoy avoidance, and workflow execution. <br>
 - `goal_accuracy`: Verifies whether the user's goal was achieved. <br>
 - `behavior_check`: Verifies whether the expected workflow behavior was followed. <br>
-- `skill_efficiency`: Verifies tool-call productivity. <br>
-- `token_efficiency`: Verifies actual uncached prompt plus completion token usage. <br>
+- `skill_efficiency`: Measures tool-call productivity. <br>
+- `token_efficiency`: Measures actual uncached prompt plus completion token usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.4% — baseline ran, but no comparable score was available; uplift unavailable | 62.4% — baseline ran, but no comparable score was available; uplift unavailable |
-| Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 100.0% → 60.0% (-40.0 points) |
-| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 5.6% → 100.0% (+94.4 points) | 48.3% → 53.3% (+5.0 points) |
-| Efficiency | 71.8% — baseline ran, but no comparable score was available; uplift unavailable | 99.5% → 98.4% (-1.1 points) |
+| Overall | 95.3% | 80.2% |
+| Security | 100.0% → 100.0% (±0.0 pts) | 100.0% → 100.0% (±0.0 pts) |
+| Correctness | 2.2% → 100.0% (+97.8 pts) | 30.0% → 84.0% (+54.0 pts) |
+| Discoverability | 100.0% | 56.0% |
+| Effectiveness | 8.3% → 91.1% (+82.8 pts) | 15.3% → 62.7% (+47.4 pts) |
+| Efficiency | 85.5% | 98.5% |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
