@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-train-bevfusion
+# Skill Benchmark: tao-finetune-video-clip
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,12 +8,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-train-bevfusion`
+- Skill: `tao-finetune-video-clip`
 - Evaluation date: 2026-09-17
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
-- Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:6bc3159f9695c8804be60ab19012c770f3925eca5d587c746e79b549704c967f` (skill-evaluator-dataset-snapshot/1)
+- Tasks: 3 evaluation tasks (3 positive)
+- Dataset digest: `sha256:4ad92205ac85db52d1f0afec780b50c3453900d9a29d2f0b9e60eb9be7225ee0` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 3
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
@@ -35,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.4% — baseline ran, but no comparable score was available; uplift unavailable | 62.4% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 95.3% — baseline ran, but no comparable score was available; uplift unavailable | 80.2% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 100.0% → 60.0% (-40.0 points) |
-| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 5.6% → 100.0% (+94.4 points) | 48.3% → 53.3% (+5.0 points) |
-| Efficiency | 71.8% — baseline ran, but no comparable score was available; uplift unavailable | 99.5% → 98.4% (-1.1 points) |
+| Correctness | 2.2% → 100.0% (+97.8 points) | 30.0% → 84.0% (+54.0 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 56.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 8.3% → 91.1% (+82.8 points) | 15.3% → 62.7% (+47.4 points) |
+| Efficiency | 85.5% — baseline ran, but no comparable score was available; uplift unavailable | 98.5% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -54,11 +54,15 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 102,929 | 1,030,062 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-train-bevfusion-basic | 102,929 | 1,030,062 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | All cases | 14,064 | 13,970 | +94 | +0.67% | skill 1/1; base 1/1 |
-| codex | tao-train-bevfusion-basic | 14,064 | 13,970 | +94 | +0.67% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 116,993 | 1,044,032 | N/A | N/A | skill 2/2; base 4/4 |
+| claude-code | All cases | 372,020 | 2,636,566 | N/A | N/A | skill 3/3; base 9/9 |
+| claude-code | tao-finetune-video-clip-basic | 101,065 | 1,298,717 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-finetune-video-clip-evaluate-metrics-mode | 73,109 | 291,219 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-finetune-video-clip-tensorrt-deploy | 197,846 | 1,046,630 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 159,368 | 84,457 | N/A | N/A | skill 5/5; base 6/6 |
+| codex | tao-finetune-video-clip-basic | 31,219 | 14,037 | +17,182 | +122.41% | skill 1/1; base 1/1 |
+| codex | tao-finetune-video-clip-evaluate-metrics-mode | 77,239 | 42,016 | +35,223 | +83.83% | skill 3/3; base 3/3 |
+| codex | tao-finetune-video-clip-tensorrt-deploy | 50,910 | 28,404 | N/A | N/A | skill 1/1; base 2/2 |
+| ALL AGENTS | Dataset aggregate | 531,388 | 2,721,023 | N/A | N/A | skill 8/8; base 15/15 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -66,21 +70,21 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 19 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 28 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
-| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
+| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 3 task(s) |
 
 ## Findings and Observations
 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/models/tao-train-bevfusion/SKILL.md`)
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-train-bevfusion/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-train-bevfusion`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-train-bevfusion/SKILL.md`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/models/tao-train-bevfusion/SKILL.md`)
-- 14 additional finding(s) are available in the full evaluation artifacts.
+- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/models/tao-finetune-video-clip/SKILL.md`)
+- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-finetune-video-clip/SKILL.md`)
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-finetune-video-clip`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-finetune-video-clip/SKILL.md`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/models/tao-finetune-video-clip/SKILL.md`)
+- 23 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 
