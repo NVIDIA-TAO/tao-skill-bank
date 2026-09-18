@@ -227,7 +227,9 @@ For more complex workflows, see `skills/applications/tao-run-deft-aoi/SKILL.md`
 (`tao-run-deft-aoi`, shorthand `tao-deft-aoi`) for AOI iterative fine-tuning,
 `skills/applications/tao-run-deft-pas/SKILL.md` (`tao-run-deft-pas`, shorthand
 `tao-deft-pas`) for the self-contained local-Docker People Attribute Search
-(PAS) loop, and
+(PAS) loop,
+`skills/applications/tao-run-dinov3-ssl-deft/SKILL.md`
+(`tao-run-dinov3-ssl-deft`) for GRIT or multi-task DINOv3 SSL refinement, and
 `skills/applications/tao-run-automl/SKILL.md` (`tao-run-automl`) for
 hyperparameter optimization. AutoML launch reviews should show the number of
 recommendations, metric, search space, expected runtime, and resolved train
