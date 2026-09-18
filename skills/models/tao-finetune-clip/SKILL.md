@@ -56,6 +56,13 @@ The standalone evaluate action reports the corresponding held-out metric as
 with the selected training validation metric rather than expecting a `val/`
 key from the evaluate action.
 
+PAS metadata-aware training is an explicit exception: it emits and selects
+`val/pas/overall_mAP`. When a request names PAS V3.1.1 PA/PASA loss, fixed
+partial-negative alignment, or the recorded 83.7930% test mAP run, read
+`references/pas-pa-reproduction.md` before constructing the spec. That profile
+sets `automl_policy: off`; do not route it through AutoML, substitute a 384px
+backbone, or substitute RandLoRA.
+
 ### Supported Models
 
 - **OpenCLIP / NV-CLIP:** `ViT-L-14-SigLIP-CLIPA-224` (default), `ViT-L-14-SigLIP-CLIPA-336`, `ViT-H-14-SigLIP-CLIPA-224`, `ViT-H-14-SigLIP-CLIPA-336`, `ViT-H-14-SigLIP-CLIPA-574`
@@ -185,6 +192,7 @@ Use `evaluate.trt_engine` for TensorRT evaluation and `inference.trt_engine` for
 - **train.optim.vision_lr / train.optim.text_lr**: Learning rates for the two encoders. CLIP is sensitive to high learning rates; reduce both if loss is unstable.
 - **model.freeze_vision_encoder / model.freeze_text_encoder**: Defaults are false. Freezing one encoder can help when the dataset is small or only one modality needs adaptation.
 - **train.loss_type**: `siglip` is recommended for SigLIP2 and Radio-CLIP. Use `clip` for CLIP-style softmax loss.
+- **train.pa_loss_weight / pa_margin / pa_inverse_temperature / pa_top_ratio**: Opt-in Partial-negative Alignment controls. They require a TAO PyTorch revision that contains the PA implementation; read `references/pas-pa-reproduction.md` for the pinned source and fixed PAS profile.
 - **export.encoder_type**: `combined` exports one ONNX graph. `separate` exports independent vision and text graphs.
 - **gen_trt_engine.tensorrt.data_type**: TensorRT deployment supports `fp16` and `fp32`.
 
