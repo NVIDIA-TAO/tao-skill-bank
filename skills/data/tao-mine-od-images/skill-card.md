@@ -1,5 +1,5 @@
 ## Description: <br>
-Runs the embed-then-mine workflow for object detection iterations using unique neighbor matching — consumes precomputed embeddings for a gap parquet of weak OD images and a source pool, and mines bijectively-assigned source images via `tmm unique_neighbor_matching` for downstream OD training augmentation. <br>
+Run TAO Data Services TMM unique-neighbor matching mining from embedding parquet files for object detection workflows. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -8,51 +8,70 @@ NVIDIA <br>
 
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
-
 ## Use Case: <br>
-Developers and engineers expanding real-image augmentation queues for object detection training iterations by mining uniquely-assigned source images from a pool against gap-analysis target parquets. <br>
+Developers and engineers who need to mine a bijectively-assigned set of unique source images closest to target samples for object detection data pipelines. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Not Specified] <br>
+**Credential Type(s):** [None identified] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
 Mitigation: Review and scan skill before deployment. <br>
 
-Risk: Source pool smaller than target set leaves some targets unassigned with no fallback. <br>
-Mitigation: Check `summary.json` for `retrieved_unique_count` and `coverage_pct` and expand the source pool or switch to `nearest_neighbors` if needed. <br>
-
 ## Reference(s): <br>
+- [skill_info.yaml](references/skill_info.yaml) <br>
+- [TAO Skill Bank Repository](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Files, Analysis] <br>
+**Output Type(s):** [Shell commands, Configuration instructions] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- Claude Code (`claude-code`) <br>
-- Codex (`codex`) <br>
+- Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
+- Codex (`openai/openai/gpt-5.5`) <br>
+
+
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task in the NVSkills-Eval external profile (astra-sandbox environment). <br>
+1 evaluation task (1 positive) evaluated across 3 attempts per task in isolated k8s-sandbox pods. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Checks whether skill-assisted execution avoids unsafe behavior such as secret leakage, destructive commands, or unauthorized access. <br>
-- Correctness: Checks whether the agent follows the expected workflow and produces the correct final output. <br>
-- Discoverability: Checks whether the agent loads the skill when relevant and avoids using it when irrelevant. <br>
-- Effectiveness: Checks whether the agent performs measurably better with the skill than without it. <br>
-- Efficiency: Checks whether the agent uses fewer tokens and avoids redundant work. <br>
+- Security: Checks whether the skill is safe to use: unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Checks whether the answer is correct against the reference answer. <br>
+- Discoverability: Checks whether the right skill was loaded when needed. <br>
+- Effectiveness: Checks whether the skill helped complete the user's goal and expected workflow. <br>
+- Efficiency: Checks whether the skill avoided wasted tool calls and token usage. <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- `skill_execution`: Verifies that the agent loaded the expected skill and workflow. <br>
-- `skill_efficiency`: Checks routing quality, decoy avoidance, and redundant tool usage. <br>
-- `accuracy`: Grades final-answer correctness against the reference answer. <br>
-- `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
-- `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
-- `token_efficiency`: Compares token usage with and without the skill. <br>
+- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `skill_efficiency`: Tool-call productivity (routing scored under Discoverability). <br>
+- `accuracy`: Final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Whether the user's goal was achieved. <br>
+- `behavior_check`: Whether the expected workflow behavior was followed. <br>
+- `token_efficiency`: Actual uncached prompt plus completion usage. <br>
+
+
+
+## Evaluation Results: <br>
+| Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
+|---|---:|---:|
+| Overall | 99.6% — uplift unavailable | 69.7% — uplift unavailable |
+| Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
+| Correctness | 6.7% → 100.0% (+93.3 points) | 20.0% → 100.0% (+80.0 points) |
+| Discoverability | 100.0% — uplift unavailable | 0.0% — uplift unavailable |
+| Effectiveness | 4.2% → 100.0% (+95.8 points) | 40.0% → 50.0% (+10.0 points) |
+| Efficiency | 97.8% — uplift unavailable | 99.7% → 98.5% (-1.2 points) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
