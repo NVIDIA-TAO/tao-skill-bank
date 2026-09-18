@@ -68,6 +68,10 @@ One row per phase — `baseline`, then every iteration — and one AP50 column p
 class alongside the mAP. Both are required: the mean can move while an individual class
 moves the other way, and a loop mining for rare classes is judged on those classes.
 
+Every number in this table is scored by `kpi_analyze` against the KPI evaluation set and
+its human ground truth. Open the section with one sentence saying so. These are the only
+accuracy figures in the report, and the only mAP anywhere in it.
+
 | Phase | mAP | AP50 <class A> | AP50 <class B> | … |
 |---|---|---|---|---|
 | baseline | … | … | … | |
@@ -105,12 +109,23 @@ lacked annotations for some images. Call that gap out when it is non-zero.
 One row per `loop_log.jsonl` event: seq, iter, stage, status, duration, summary.
 Include the `tokens` column only when the field is present.
 
+**Drop any `val_` metric a summary carries.** A `train` summary should read
+`trained iter<N>: <epochs> epochs, <M> data sources`, but one that improvises from the
+training container's stdout can arrive carrying `val_mAP` or `val_mAP50`. Those score the
+model against the validation split of the staged mined data, whose labels are Co-DETR
+pseudo-labels, so they measure how closely the student reproduces the teacher rather than
+accuracy. Rendered here they sit two rows from the KPI `mAP` and differ from it by one
+prefix, and the agreement number can be the higher of the two — so the report would
+overstate the model. Reproduce the rest of the summary verbatim and omit only the metric;
+it stays in `loop_log.jsonl` for anyone who wants it. The report carries one accuracy
+figure, in section 1, and no other mAP.
+
 ## 4. Configuration
 
 Encoder, allocation policy, rare classes, mining multiplier, per-class AP50
 thresholds, epochs, learning rate, GPU count, and `kpi_conf_threshold`.
 
-State the KPI confidence threshold whenever it is not `0.0`. Every mAP in the
+State the KPI confidence threshold whenever it is not `0.0`. Every KPI mAP in the
 report is scored at it, and a run scored anywhere else is not comparable to one
 scored at `0.0` — a reader who cannot see the value cannot know that.
 
@@ -118,7 +133,7 @@ scored at `0.0` — a reader who cannot see the value cannot know that.
 
 Only what disk supports. Flag: any iteration whose mining coverage fell below
 50%; any staging gap; any stage that committed `status=error`; and the
-iteration with the best mAP.
+iteration with the best KPI mAP.
 ```
 
 For `trigger != "loop-end"`, set status to `IN PROGRESS` and include only iterations whose final stage (`kpi_analyze`) committed `ok`. Do not project or extrapolate incomplete iterations.
