@@ -4712,7 +4712,7 @@ def render_docker(args: argparse.Namespace, plan: Mapping[str, Any]) -> str:
         raise WorkflowError("Docker plan has no resolved GPU allocation")
     command = [
         "docker", "run", "-d", "--name", args.tao_job_id,
-        "--label", f"tao-job={args.tao_job_id}", "--gpus", gpu_request, "--ipc=host",
+        "--label", f"tao-job={args.tao_job_id}", "--gpus", gpu_request, "--shm-size=8g",
         "--shm-size=32g", '"${HOST_IDENTITY_ARGS[@]}"',
     ]
     for mount in args.container_mount:

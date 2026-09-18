@@ -146,7 +146,7 @@ python -m cosmos_rl.model_preparation.vlm_safetensors \
         "docker",
         "run",
         "--rm",
-        "--ipc=host",
+        "--shm-size=8g",
         "--entrypoint",
         "bash",
         "--user",

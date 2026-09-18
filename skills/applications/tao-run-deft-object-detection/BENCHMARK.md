@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-train-mask2former
+# Skill Benchmark: tao-run-deft-object-detection
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,12 +8,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-train-mask2former`
-- Evaluation date: 2026-09-18
+- Skill: `tao-run-deft-object-detection`
+- Evaluation date: 2026-09-17
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
-- Tasks: 1 evaluation tasks (1 positive)
-- Dataset digest: `sha256:52024b5b07978a81d4aabc7184678bc6e720de4e36c431bd53f4d2b666606646` (skill-evaluator-dataset-snapshot/1)
+- Tasks: 4 evaluation tasks (4 positive)
+- Dataset digest: `sha256:d3fce2a83efb9ec178ecc5fc8a20f8c2280adffa3b279916a073015372c25237` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 3
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
@@ -35,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.3% — baseline ran, but no comparable score was available; uplift unavailable | 62.4% — baseline ran, but no comparable score was available; uplift unavailable |
-| Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 100.0% → 60.0% (-40.0 points) |
-| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 5.6% → 100.0% (+94.4 points) | 70.0% → 53.3% (-16.7 points) |
-| Efficiency | 71.3% — baseline ran, but no comparable score was available; uplift unavailable | 99.5% → 98.5% (-1.0 points) |
+| Overall | 91.7% — baseline ran, but no comparable score was available; uplift unavailable | 83.4% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 83.3% → 100.0% (+16.7 points) | 100.0% → 100.0% (±0.0 points) |
+| Correctness | 5.0% → 95.0% (+90.0 points) | 24.0% → 100.0% (+76.0 points) |
+| Discoverability | 95.0% — baseline ran, but no comparable score was available; uplift unavailable | 42.5% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 10.4% → 86.0% (+75.6 points) | 17.3% → 80.5% (+63.2 points) |
+| Efficiency | 82.6% — baseline ran, but no comparable score was available; uplift unavailable | 94.2% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -54,11 +54,17 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 105,068 | 1,002,445 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-train-mask2former-basic | 105,068 | 1,002,445 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | All cases | 13,880 | 13,968 | -88 | -0.63% | skill 1/1; base 1/1 |
-| codex | tao-train-mask2former-basic | 13,880 | 13,968 | -88 | -0.63% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 118,948 | 1,016,413 | N/A | N/A | skill 2/2; base 4/4 |
+| claude-code | All cases | 562,944 | 2,793,793 | N/A | N/A | skill 4/4; base 12/12 |
+| claude-code | tao-run-deft-object-detection-basic | 107,777 | 531,281 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-run-deft-object-detection-resume-state | 285,769 | 716,791 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-run-deft-object-detection-run-loop | 69,514 | 95,207 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-run-deft-object-detection-stage-skills | 99,884 | 1,450,514 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 365,449 | 417,290 | N/A | N/A | skill 4/4; base 10/10 |
+| codex | tao-run-deft-object-detection-basic | 13,944 | 13,786 | +158 | +1.15% | skill 1/1; base 1/1 |
+| codex | tao-run-deft-object-detection-resume-state | 305,336 | 320,957 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-run-deft-object-detection-run-loop | 14,410 | 41,751 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-run-deft-object-detection-stage-skills | 31,759 | 40,796 | N/A | N/A | skill 1/1; base 3/3 |
+| ALL AGENTS | Dataset aggregate | 928,393 | 3,211,083 | N/A | N/A | skill 8/8; base 22/22 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -66,21 +72,23 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 26 finding(s) |
-| Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
-| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 117 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 1 finding(s) |
+| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 4 task(s) |
 
 ## Findings and Observations
 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/models/tao-train-mask2former/SKILL.md`)
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-train-mask2former/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-train-mask2former`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-train-mask2former/SKILL.md`)
-- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/models/tao-train-mask2former/SKILL.md`)
-- 21 additional finding(s) are available in the full evaluation artifacts.
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/scripts-and-agents.md:
+  "## Stage Reference Modules" in SKILL.md (lines 111-130)
+  vs "## Stage Reference Modules" in references/scripts-and-agents.md (lines 106-119) (`SKILL.md:111`)
+- **MEDIUM** QUALITY/quality_correctness: No documented scripts in table format (`skills/applications/tao-run-deft-object-detection/SKILL.md`)
+- **MEDIUM** QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/applications/tao-run-deft-object-detection/SKILL.md`)
+- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/applications/tao-run-deft-object-detection/SKILL.md`)
+- **MEDIUM** QUALITY/quality_discoverability: Description uses first/second person (`skills/applications/tao-run-deft-object-detection/SKILL.md`)
+- 113 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 
