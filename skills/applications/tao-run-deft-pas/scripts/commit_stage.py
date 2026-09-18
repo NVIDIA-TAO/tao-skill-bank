@@ -30,6 +30,7 @@ import sys
 import tempfile
 from typing import Any
 
+from archive_contract import verify_archive_bindings
 from checkpoint_contract import (
     checkpoint_lineage_started_ns,
     validate_best_checkpoint,
@@ -515,6 +516,11 @@ def _apply_success(
                 "visualize must use --skip when both approved visualization flags are false"
             )
     if stage == "dataset_setup":
+        if not isinstance(config, dict):
+            raise ValueError("state.config must be an object")
+        # This is the final gate before archive-derived outputs become
+        # committed state, even if a caller bypassed the documented adapter.
+        verify_archive_bindings(config)
         splits = pathlib.Path(
             _require_exact(
                 _required_dir(args.pas_splits_dir, "--pas-splits-dir"),
