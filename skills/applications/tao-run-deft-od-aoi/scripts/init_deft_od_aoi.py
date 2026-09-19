@@ -96,6 +96,9 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     checkpoint = Path(str(policy.get("base_checkpoint") or "")).expanduser().resolve()
     if not checkpoint.is_file():
         raise ValueError("base_checkpoint must be a trainable RT-DETR file")
+    baseline_mode = str(policy.get("baseline_mode") or "")
+    if baseline_mode not in {"cold_start", "checkpoint"}:
+        raise ValueError("baseline_mode must be cold_start or checkpoint")
     role_reports = {name: _role(name, policy["sources"][name]) for name in ROLES}
     owners: dict[str, str] = {}
     for name, report in role_reports.items():
@@ -143,6 +146,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     )
     state = {"schema_version": 1, "status": "READY",
              "mode": "rtdetr_with_synthesis" if synthesis_enabled else "rtdetr_real_only",
+             "baseline_mode": baseline_mode,
              "synthesis_enabled": synthesis_enabled,
              "synthesis_bootstrap_required": bootstrap_required,
              "current_iteration": 0,
