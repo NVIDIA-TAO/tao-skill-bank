@@ -23,8 +23,10 @@ def inputs(root: Path) -> dict:
     (root / "manifests").mkdir(parents=True)
     (root / "embeddings").mkdir()
     pd.DataFrame([
-        {"filepath": "/clean/a.png", "pool_key": "texture_1", "embedding": [1.0, 0.0]},
-        {"filepath": "/clean/b.png", "pool_key": "texture_1", "embedding": [0.8, 0.2]},
+        {"filepath": "/clean/a.png", "pool_key": "texture_1",
+         "anomaly_type_eligibility": "texture_1+crack", "embedding": [1.0, 0.0]},
+        {"filepath": "/clean/b.png", "pool_key": "texture_1",
+         "anomaly_type_eligibility": "texture_1+crack", "embedding": [0.8, 0.2]},
     ]).to_parquet(root / "embeddings" / "clean_embeddings.parquet")
     pd.DataFrame([
         {"filepath": "/defect/shared.png", "embedding": [1.0, 0.0]},
@@ -63,6 +65,33 @@ def test_plan_preserves_pairs_for_same_source_image(tmp_path: Path) -> None:
     assert candidates.groupby("fn_id").clean_filepath.nunique().eq(2).all()
     requests = json.loads((tmp_path / "amp" / "amp_samples.json").read_text())
     assert len({row["name"] for row in requests}) == 8
+
+
+def test_plan_ranks_distinct_images_using_their_best_crop(tmp_path: Path) -> None:
+    config = inputs(tmp_path)
+    pd.DataFrame([
+        {"filepath": "/clean/a.png", "pool_key": "texture_1",
+         "anomaly_type_eligibility": "texture_1+crack", "embedding": [0.6, 0.8]},
+        {"filepath": "/clean/a.png", "pool_key": "texture_1",
+         "anomaly_type_eligibility": "texture_1+crack", "embedding": [1.0, 0.0]},
+        {"filepath": "/clean/b.png", "pool_key": "texture_1",
+         "anomaly_type_eligibility": "texture_1+crack", "embedding": [0.9, 0.1]},
+        {"filepath": "/clean/c.png", "pool_key": "texture_1",
+         "anomaly_type_eligibility": "texture_1+crack", "embedding": [0.8, 0.2]},
+        {"filepath": "/clean/0-ineligible.png", "pool_key": "texture_1",
+         "anomaly_type_eligibility": "texture_1+oil", "embedding": [1.0, 0.0]},
+    ]).to_parquet(tmp_path / "embeddings" / "clean_embeddings.parquet")
+
+    report = MODULE.plan(tmp_path, config)
+
+    assert report == {"candidates": 4, "amp_rows": 8, "embedding_dim": 2}
+    candidates = pd.read_parquet(tmp_path / "manifests" / "knn_candidates.parquet")
+    assert candidates.groupby("fn_id").clean_filepath.nunique().eq(2).all()
+    assert candidates.groupby("fn_id").clean_filepath.apply(list).tolist() == [
+        ["/clean/a.png", "/clean/b.png"],
+        ["/clean/a.png", "/clean/b.png"],
+    ]
+    assert "/clean/0-ineligible.png" not in set(candidates.clean_filepath)
 
 
 def test_plan_rejects_zero_norm_embeddings(tmp_path: Path) -> None:
