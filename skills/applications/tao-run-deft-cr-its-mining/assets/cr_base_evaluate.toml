@@ -11,7 +11,7 @@ system_prompt = "You are a helpful assistant."
 
 [model]
 model_name = ""
-tokenizer_model_name = "qwen2.5-vl-7b"
+tokenizer_model_name = "qwen2.5-vl-7b"  # gitleaks:allow (model name, not a credential)
 dtype = "bfloat16"
 tp_size = 8
 max_length = 32768

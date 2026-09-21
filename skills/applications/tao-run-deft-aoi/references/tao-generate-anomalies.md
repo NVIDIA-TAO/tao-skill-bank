@@ -299,7 +299,7 @@ STEP=$(sed 's/^iter_0*\([0-9]*\)\.pt$/\1/' $CKPT/checkpoints/latest_checkpoint.t
 SDG_LOG=$RUN_DIR/sdg.log
 
 # Phase 2: AMP routing → testcase.jsonl  (~10s, no GPU)
-docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
+docker run --pull=never --rm --gpus all --shm-size=8g --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \
@@ -314,7 +314,7 @@ docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
 test -s "$COSMOS/nvidia/Cosmos-Guardrail1/video_content_safety_filter/safety_filter.pt" || { echo "FATAL: AnomalyGen Guardrail checkpoint missing; guardrail=not_run" >&2; exit 2; }
 
 set -o pipefail
-docker run --pull=never --rm --gpus all --ipc=host --shm-size=16g \
+docker run --pull=never --rm --gpus all --shm-size=8g --shm-size=16g \
   --user $(id -u):$(id -g) -e USER="$(id -un)" -e LOGNAME="$(id -un)" -e HOME=/tmp \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PYTHONPATH=/workspace/paidf-anomalygen \

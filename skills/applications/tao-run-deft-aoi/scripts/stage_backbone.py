@@ -280,7 +280,7 @@ def main() -> int:
 
     token = os.environ.get("HF_TOKEN") or None
     try:
-        src = hf_hub_download(repo_id=repo_id, filename=filename, token=token)
+        src = hf_hub_download(repo_id=repo_id, filename=filename, token=token)  # nosec B615 - pinned repo_id and filename from skill config
     except Exception as exc:  # network, auth, missing file — all are hard stops
         sys.exit(
             f"stage_backbone: failed to download {filename} from {repo_id}: {exc}\n"

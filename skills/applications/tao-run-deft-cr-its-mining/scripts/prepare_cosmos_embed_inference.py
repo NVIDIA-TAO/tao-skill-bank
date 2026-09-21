@@ -61,7 +61,7 @@ def download_hf_checkpoint(model_id: str, workspace: Path) -> Path:
             "Install it or set mining.cosmos_embed_checkpoint_path to a local absolute path."
         ) from exc
     cache_dir = hf_cache_dir(workspace)
-    return Path(snapshot_download(model_id, cache_dir=str(cache_dir)))
+    return Path(snapshot_download(model_id, cache_dir=str(cache_dir)))  # nosec B615 - pinned model_id from skill config
 
 
 def normalize_hf_model_id(value: str) -> str:
