@@ -41,8 +41,8 @@ from command_contract import (  # noqa: E402
 
 
 PLATFORMS = ("docker", "slurm", "kubernetes", "brev", "virtualenv")
-PYT_IMAGE = action_contract.PINNED_IMAGES["pyt"]
-DS_IMAGE = action_contract.PINNED_IMAGES["ds"]
+PYT_IMAGE = "registry.example/tao-pyt:test"
+DS_IMAGE = "registry.example/tao-ds:test"
 SPEC_NAMES = (
     "deft_config.yaml",
     "tao_spec.yaml",
@@ -149,6 +149,8 @@ def test_platform_cli_options_default_to_local_docker_for_compatibility():
             "--images-archive", "/inputs/images_raw.tar",
             "--metadata-archive", "/inputs/meta.tar.gz",
             "--max-iterations", "1",
+            "--pyt-image", PYT_IMAGE,
+            "--ds-image", DS_IMAGE,
         ]
     )
     state_args = init_deft_state._build_parser().parse_args(  # noqa: SLF001
@@ -1191,6 +1193,10 @@ def test_config_materialization_rejects_existing_config_symlink(tmp_path):
             "docker",
             "--max-iterations",
             "1",
+            "--pyt-image",
+            PYT_IMAGE,
+            "--ds-image",
+            DS_IMAGE,
         ]
     )
 
@@ -1698,6 +1704,10 @@ def test_config_approval_immutably_binds_selected_platform(tmp_path, platform):
             platform,
             "--max-iterations",
             "1",
+            "--pyt-image",
+            PYT_IMAGE,
+            "--ds-image",
+            DS_IMAGE,
             *(
                 [
                     "--pyt-virtualenv",
@@ -1748,6 +1758,10 @@ def test_config_approval_immutably_binds_remote_docker_mode(tmp_path):
             "--docker-remote",
             "--max-iterations",
             "1",
+            "--pyt-image",
+            PYT_IMAGE,
+            "--ds-image",
+            DS_IMAGE,
         ]
     )
     report = prepare_config.materialize(args)
@@ -1777,6 +1791,10 @@ def test_virtualenv_selection_requires_a_real_virtualenv(tmp_path):
             "virtualenv",
             "--max-iterations",
             "1",
+            "--pyt-image",
+            PYT_IMAGE,
+            "--ds-image",
+            DS_IMAGE,
         ]
     )
     with pytest.raises(ValueError, match="--pyt-virtualenv and --ds-virtualenv"):
@@ -1805,6 +1823,10 @@ def test_virtualenv_execution_profiles_cannot_reuse_workspace_control_env(tmp_pa
             str(tmp_path / "tao-ds-venv"),
             "--max-iterations",
             "1",
+            "--pyt-image",
+            PYT_IMAGE,
+            "--ds-image",
+            DS_IMAGE,
         ]
     )
     with pytest.raises(ValueError, match="separate from the workspace control"):

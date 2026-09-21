@@ -88,9 +88,6 @@ RUN_SPEC_NAMES = (
     "mining_spec.yaml",
     "approval.json",
 )
-PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
-PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
-
 # Artifact fields recorded by commit_stage._apply_success, grouped by the
 # containment scope commit_stage enforced at commit time.
 RESULTS_SCOPED_FILE_FIELDS = {
@@ -1469,10 +1466,9 @@ def audit(results_dir: pathlib.Path, require_complete: bool = False) -> dict[str
             errors.append(
                 "state virtualenv configuration must be null unless platform is virtualenv"
             )
-        if config.get("pyt_image") != PINNED_PYT_IMAGE:
-            errors.append("state.config.pyt_image must be the pinned PAS PyTorch image")
-        if config.get("ds_image") != PINNED_DS_IMAGE:
-            errors.append("state.config.ds_image must be the pinned PAS data-services image")
+        for field in ("pyt_image", "ds_image"):
+            if not isinstance(config.get(field), str) or not config[field].strip():
+                errors.append(f"state.config.{field} must be a non-empty approved image")
         for field in (
             "training_epochs",
             "num_gpus",

@@ -15,6 +15,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PAS_ROOT = REPO_ROOT / "skills/applications/tao-run-deft-pas"
 PREPARE = PAS_ROOT / "scripts/prepare_deft_config.py"
 INITIALIZE = PAS_ROOT / "scripts/init_deft_state.py"
+PYT_IMAGE = "registry.example/tao-pyt:test"
+DS_IMAGE = "registry.example/tao-ds:test"
+
+
 def _base_args(tmp_path: Path, selected: str):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -41,6 +45,10 @@ def _base_args(tmp_path: Path, selected: str):
         "docker",
         "--max-iterations",
         "1",
+        "--pyt-image",
+        PYT_IMAGE,
+        "--ds-image",
+        DS_IMAGE,
         "--num-gpus",
         str(len(selected.split(","))),
         "--gpu-ids",

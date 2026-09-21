@@ -185,7 +185,7 @@ every rendered mount, the bundle command (`command` followed by `args`),
 variable names in `forward_env`. Mark `RUNNING` with the native handle.
 
 For Docker, SLURM, Kubernetes, and Brev the executable argv is the bundle argv
-inside the pinned image. Virtualenv mirrors the two image families with two
+inside the approved image. Virtualenv mirrors the two image families with two
 immutable profiles. `image_kind=pyt` selects the approved `pyt` environment
 for `clip`; `image_kind=ds` selects the approved `ds` environment for
 `embedding` or `tmm`. A single environment is compatible only when it passes

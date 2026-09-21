@@ -46,7 +46,7 @@ rejects duplicate, skipped-ahead, post-KPI, and out-of-range transitions.
 `deft_state.json` is a schema-v3 resume snapshot. It records:
 
 - immutable workspace, archives, intended dataset root, bundled-runtime hash,
-  selected TAO platform, pinned images/runtime, config paths and hashes;
+  selected TAO platform, approved images/runtime, config paths and hashes;
 - immutable loop/config values and metric contract;
 - current iteration, gate flag, per-label stage proofs, and stop reason.
 

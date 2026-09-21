@@ -80,10 +80,13 @@ Use two intake phases:
    `tao-run-deft-pas`; never offer AOI or unidentified DEFT state as PAS.
    Do not validate large archives to EOF or inspect platforms, images, GPUs, or
    credentials yet.
-2. If `max_iterations` or a time budget is absent, ask one consolidated
-   question for that required value and any genuinely ambiguous path/run
-   choice. State the documented defaults and that a complete read-only
-   preflight plus approval summary follows. Do not ask whether the user wants
+2. If `max_iterations` or a time budget is absent, or the fine-tuning method
+   is absent, ask one consolidated question for the missing required values
+   and any genuinely ambiguous path/run choice. The fine-tuning portion must
+   be one mutually exclusive question:
+   `Fine-tuning method: LoRA (default) or full-parameter SFT?` State the
+   documented defaults and that a complete read-only preflight plus approval
+   summary follows. Do not ask whether the user wants
    optional KPI, authentication, or parameter overrides; apply their defaults
    unless the prompt already supplies an override.
 
@@ -93,6 +96,8 @@ After required intake is resolved, discover and validate:
 - `images_raw.tar` and `meta.tar.gz`; `SHA256SUMS` is optional;
 - `max_iterations`, or a user-supplied time budget from which an iteration
   limit can be estimated;
+- one fine-tuning method choice: LoRA by default, or full-parameter SFT when
+  explicitly selected;
 - metric name, query type, operator, and optional target;
 - whether the deployment requires authenticated Hugging Face model access;
 - selected TAO execution platform and its platform-specific prerequisites;
@@ -109,6 +114,18 @@ unspecified values and must be identified as defaults in the pre-flight
 summary. `max_iterations` has no default. An absent metric target means an
 ungated run that stops after `max_iterations`. Hugging Face token forwarding
 defaults to disabled because the bundled model is public.
+
+The packaged PAS/CLIP spec supports full-parameter SFT: both encoders are
+trainable and no LoRA/PEFT block exists. Selecting SFT sets
+`model.freeze_vision_encoder: false` and `model.freeze_text_encoder: false` and
+omits LoRA/PEFT fields. Selecting LoRA does not authorize invented Hydra keys:
+before approval, establish that the exact selected PyTorch image exposes a
+complete CLIP LoRA contract. Because that capability check requires a
+launch-gated container probe, list the probe in the approval summary. If the
+image does not declare the enable/config fields, target modules, rank, alpha,
+dropout, and checkpoint semantics, stop as unsupported; never fall back to
+SFT. Selecting SFT disables LoRA by omitting all LoRA/PEFT fields. Freezing one
+encoder is partial SFT and must not be reported as LoRA.
 
 The authoritative parameter contract is the nested dataclass schema in
 `scripts/pas_deft/config.py`, adapted from the PAS reference notebook. Read

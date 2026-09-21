@@ -34,6 +34,31 @@ This model is AutoML-enabled at the model layer. Before handling any train-stage
 
 The packaged CLIP train schema enables `train.optim.vision_lr` and `train.optim.text_lr` as default AutoML search parameters. For smoke tests, keep the search small by using the Bayesian algorithm with two recommendations and narrow LR ranges.
 
+### Fine-tuning method intake
+
+For every new CLIP train or PAS DEFT run, ask one mutually exclusive question
+when the user has not already chosen a method:
+
+```text
+Fine-tuning method: LoRA (default) or full-parameter SFT?
+```
+
+Do not infer LoRA from words such as "fine-tune", and do not silently fall
+back from LoRA to SFT. The packaged CLIP schema currently supports
+full-parameter supervised fine-tuning only:
+
+| Method | Enable | Disable | Current packaged support |
+|---|---|---|---|
+| full-parameter SFT | set `model.freeze_vision_encoder: false` and `model.freeze_text_encoder: false`; omit LoRA/PEFT fields | select a validated parameter-efficient method instead; freezing one encoder is partial SFT, not LoRA | supported; this is the existing template behavior |
+| LoRA (default selection) | require the selected image's CLIP schema/help to declare exact LoRA/PEFT fields, then write only those nested fields | omit the declared LoRA/PEFT block and use the SFT settings above | not declared by the packaged schema; block preflight unless an explicitly selected image proves support |
+
+An image capability probe is a launch-gated `docker run`, so include it in the
+approval summary before executing it. Documentation, an image tag, or an
+unrecognized Hydra override is not proof of LoRA support. If the probe does
+not expose a complete adapter contract (enable flag/config, target modules,
+rank, alpha, dropout, checkpoint behavior), report LoRA as unsupported for
+that image and stop before materializing a run.
+
 Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows stay in this model skill. The per-run `automl_policy` override does not change model metadata.
 
 ## Instructions

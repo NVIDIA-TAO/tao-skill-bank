@@ -30,6 +30,8 @@ import prepare_deft_config as prepare  # noqa: E402
 from command_contract import command_sha256, expected_container_command  # noqa: E402
 
 PAS_ROOT = PAS_SCRIPTS.parent
+PYT_IMAGE = "registry.example/tao-pyt:test"
+DS_IMAGE = "registry.example/tao-ds:test"
 
 
 def test_pas_workflow_and_package_names_are_canonical():
@@ -99,6 +101,10 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
             "2",
             "--gpu-ids",
             "1,3",
+            "--pyt-image",
+            PYT_IMAGE,
+            "--ds-image",
+            DS_IMAGE,
         ]
     ) == 0
 
@@ -126,9 +132,9 @@ def test_nonzero_host_devices_become_dense_container_ordinals(tmp_path):
             "--platform",
             "docker",
             "--pyt-image",
-            prepare.PINNED_PYT_IMAGE,
+            PYT_IMAGE,
             "--ds-image",
-            prepare.PINNED_DS_IMAGE,
+            DS_IMAGE,
             "--deft-config",
             str(results / "config" / "deft_config.yaml"),
             "--tao-spec",
@@ -191,8 +197,8 @@ def test_interrupted_wrapper_reconciles_completed_auto_removed_container(
         "tao_spec": str(config_dir / "tao_spec.yaml"),
         "spec_sha256": hashes,
         "platform": "docker",
-        "pyt_image": container.PINNED_IMAGES["pyt"],
-        "ds_image": container.PINNED_IMAGES["ds"],
+        "pyt_image": PYT_IMAGE,
+        "ds_image": DS_IMAGE,
         "num_gpus": 1,
         "gpu_ids": [0],
         "requires_hf_token": False,
@@ -236,7 +242,7 @@ def test_interrupted_wrapper_reconciles_completed_auto_removed_container(
                 "name": "pool_embed",
                 "attempt": 1,
                 "image_kind": "ds",
-                "image": container.PINNED_IMAGES["ds"],
+                "image": DS_IMAGE,
                 "command": command,
                 "command_sha256": command_sha256(command),
                 "passed_hf_token": False,

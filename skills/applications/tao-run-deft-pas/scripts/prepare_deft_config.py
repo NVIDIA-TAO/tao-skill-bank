@@ -27,10 +27,6 @@ from deft_action_contract import SUPPORTED_PLATFORMS, safe_absolute_path
 from virtualenv_runtime import resolve_virtualenv_profiles
 
 
-PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
-PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
-
-
 def _bool(value: str) -> bool:
     lowered = value.strip().lower()
     if lowered in {"true", "1", "yes"}:
@@ -218,6 +214,9 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "positive integers required: "
             + ", ".join(f"{key}={value}" for key, value in invalid.items())
         )
+    for option, image in (("--pyt-image", args.pyt_image), ("--ds-image", args.ds_image)):
+        if not image.strip():
+            raise ValueError(f"{option} must be a non-empty image reference")
     if not 0.0 <= args.replay_fraction <= 1.0:
         raise ValueError("--replay-fraction must be in [0, 1]")
     if args.knn_metric not in {"cosine", "euclidean"}:
@@ -370,8 +369,8 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
             "host_gpu_ids": host_gpu_ids,
             "container_gpu_ids": container_gpu_ids,
             "metric_contract": metric_contract,
-            "pyt_image": PINNED_PYT_IMAGE,
-            "ds_image": PINNED_DS_IMAGE,
+            "pyt_image": args.pyt_image,
+            "ds_image": args.ds_image,
         },
     )
 
@@ -453,6 +452,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-iterations", required=True, type=int)
     parser.add_argument("--training-epochs", default=1, type=int)
+    parser.add_argument(
+        "--pyt-image",
+        required=True,
+        help="PyTorch image resolved from the workflow versions key.",
+    )
+    parser.add_argument(
+        "--ds-image",
+        required=True,
+        help="Data-services image resolved from the workflow versions key.",
+    )
     parser.add_argument("--num-gpus", default=1, type=int)
     parser.add_argument("--gpu-ids", default="0")
     parser.add_argument("--mining-topn", default=25, type=int)

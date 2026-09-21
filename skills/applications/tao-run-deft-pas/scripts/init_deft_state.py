@@ -22,10 +22,8 @@ CLI:
         --max-iterations 3 \
         --metric-target 0.85 \
         --platform docker \
-        # unpinned: illustrative CLI placeholder; executable default is release-managed below
-        --pyt-image nvcr.io/nvidia/tao/tao-toolkit:pyt \
-        # unpinned: illustrative CLI placeholder; executable default is release-managed below
-        --ds-image nvcr.io/nvidia/tao/tao-toolkit:ds \
+        --pyt-image "$PAS_PYT_IMAGE" \
+        --ds-image "$PAS_DS_IMAGE" \
         --deft-config ~/workspace/specs/deft_config.yaml \
         --tao-spec ~/workspace/specs/tao_spec.yaml
 
@@ -57,8 +55,6 @@ from metric_contract import validate_contract
 
 
 WORKFLOW = "tao-run-deft-pas"
-PINNED_PYT_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch"  # versions-key: images.tao_toolkit.deft_pas_pyt
-PINNED_DS_IMAGE = "nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch"  # versions-key: images.tao_toolkit.deft_pas_data_services
 RUN_SPEC_NAMES = (
     "deft_config.yaml",
     "tao_spec.yaml",
@@ -728,10 +724,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if args.pyt_image != PINNED_PYT_IMAGE or args.ds_image != PINNED_DS_IMAGE:
+    if not args.pyt_image.strip() or not args.ds_image.strip():
         print(
-            "init_deft_state: --pyt-image and --ds-image must be the pinned "
-            "PAS workflow images",
+            "init_deft_state: --pyt-image and --ds-image must be non-empty",
             file=sys.stderr,
         )
         return 2

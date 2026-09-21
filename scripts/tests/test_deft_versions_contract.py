@@ -22,13 +22,17 @@ DEFT_SKILLS = {
         "images.tao_toolkit.data_services",
         "images.metropolis_sdg.paidf_anomalygen",
     ),
+    REPO_ROOT / "skills/applications/tao-run-deft-pas": (
+        "images.tao_toolkit.deft_pas_pyt",
+        "images.tao_toolkit.deft_pas_data_services",
+    ),
 }
 
 
 @pytest.mark.parametrize(
     ("skill_root", "image_keys"),
     DEFT_SKILLS.items(),
-    ids=("changenet", "cosmos3"),
+    ids=("changenet", "cosmos3", "pas"),
 )
 def test_preflight_resolves_images_from_versions_yaml(
     skill_root: Path, image_keys: tuple[str, ...]
@@ -38,7 +42,13 @@ def test_preflight_resolves_images_from_versions_yaml(
     assert text.count("resolve_versions_key.py") >= len(image_keys)
     for key in image_keys:
         assert key in text
-    for variable in ("TAO_PYT_IMAGE", "TAO_DS_IMAGE", "AG_IMAGE"):
+    for variable in (
+        "TAO_PYT_IMAGE",
+        "TAO_DS_IMAGE",
+        "AG_IMAGE",
+        "PAS_PYT_IMAGE",
+        "PAS_DS_IMAGE",
+    ):
         assert not re.search(rf"(?:export\s+)?{variable}=nvcr\.io/", text)
 
 

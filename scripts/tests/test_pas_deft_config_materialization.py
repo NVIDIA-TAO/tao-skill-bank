@@ -19,6 +19,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PAS_ROOT = REPO_ROOT / "skills" / "applications" / "tao-run-deft-pas"
 PAS_SCRIPTS = PAS_ROOT / "scripts"
+PYT_IMAGE = "registry.example/tao-pyt:test"
+DS_IMAGE = "registry.example/tao-ds:test"
 sys.path.insert(0, str(PAS_SCRIPTS))
 
 import prepare_deft_config as prepare  # noqa: E402
@@ -60,6 +62,10 @@ def _base_argv(tmp_path: Path) -> tuple[list[str], Path, Path]:
             "docker",
             "--max-iterations",
             "10",
+            "--pyt-image",
+            PYT_IMAGE,
+            "--ds-image",
+            DS_IMAGE,
         ],
         results,
         dataset,
@@ -176,13 +182,33 @@ def test_mining_spec_is_the_only_materialized_mining_parameter_authority(tmp_pat
     assert "knn_metric" not in deft["mining"]
 
 
-def test_pas_uses_workflow_scoped_tao_7_2_image_contract():
+def test_pas_workflow_images_are_declared_in_versions_yaml():
     versions = _yaml(REPO_ROOT / "versions.yaml")
     tao_images = versions["images"]["tao_toolkit"]
-    assert prepare.PINNED_PYT_IMAGE == tao_images["deft_pas_pyt"]
-    assert prepare.PINNED_DS_IMAGE == tao_images["deft_pas_data_services"]
-    assert ":7.2.0-" in prepare.PINNED_PYT_IMAGE
-    assert ":7.2.0-" in prepare.PINNED_DS_IMAGE
+    assert tao_images["deft_pas_pyt"].strip()
+    assert tao_images["deft_pas_data_services"].strip()
+
+
+def test_pas_materializes_explicit_pytorch_image_override(tmp_path):
+    override = "registry.example/tao-pyt:capability"
+    report, results, _ = _materialize(tmp_path, "--pyt-image", override)
+    approval = json.loads((results / "config" / "approval.json").read_text())
+    assert approval["pyt_image"] == override
+    assert report["approval_manifest"] == str(results / "config" / "approval.json")
+
+
+def test_pas_rejects_empty_pytorch_image_override(tmp_path):
+    argv, _, _ = _base_argv(tmp_path)
+    args = prepare._parser().parse_args([*argv, "--pyt-image", ""])  # noqa: SLF001
+    with pytest.raises(ValueError, match="non-empty image reference"):
+        prepare.materialize(args)
+
+
+def test_pas_rejects_empty_data_services_image(tmp_path):
+    argv, _, _ = _base_argv(tmp_path)
+    args = prepare._parser().parse_args([*argv, "--ds-image", ""])  # noqa: SLF001
+    with pytest.raises(ValueError, match="non-empty image reference"):
+        prepare.materialize(args)
 
 
 def test_tao_7_2_pas_evaluation_artifacts_are_the_runtime_contract(tmp_path):
