@@ -7,12 +7,13 @@ description: DINO (DETR with Improved DeNoising Anchor Boxes) for 2D object dete
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
+  tags:
+  - object
+  - detection
   version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
-tags:
-- object
-- detection
+
 ---
 
 # DINO
@@ -128,7 +129,7 @@ checkpoint location, and the distillation FAN-teacher / student rules.
 
 ## Important Parameters And Defaults
 
-Key defaults: `num_epochs=10`, `batch_size=4`, `learning_rate=2e-4`,
+Default values: `num_epochs=10`, `batch_size=4`, `learning_rate=2e-4`,
 `lr_backbone=2e-5`, `num_classes=91`, `backbone=resnet_50`.
 
 - **dataset.num_classes**: Default 91 (COCO). Must be >= `max(category_id) + 1`. Too low causes `CUDA error: device-side assert triggered`. Set as `<num_classes> + 1` in spec overrides.

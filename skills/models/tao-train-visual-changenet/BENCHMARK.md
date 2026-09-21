@@ -1,13 +1,15 @@
 # Skill Benchmark: tao-train-visual-changenet
 
-> ❌ **Overall verdict: FAIL — Publication blocked**
+> ✅ **Overall verdict: PASS — Recommended for publication**
 
-The skill should be reviewed before publication. Address the blocking findings below, then rerun Skill Evaluator.
+## Publication Recommendation
+
+Recommended for publication based on the completed evaluation evidence in this report.
 
 ## Evaluation Metadata
 
 - Skill: `tao-train-visual-changenet`
-- Evaluation date: 2026-09-17
+- Evaluation date: 2026-09-21
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 1 evaluation tasks (1 positive)
@@ -33,18 +35,16 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.3% — baseline ran, but no comparable score was available; uplift unavailable | 72.4% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 99.4% — baseline ran, but no comparable score was available; uplift unavailable | 95.3% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 6.7% → 100.0% (+93.3 points) | 100.0% → 100.0% (±0.0 points) |
-| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 12.2% → 100.0% (+87.8 points) | 70.0% → 63.3% (-6.7 points) |
-| Efficiency | 96.5% — baseline ran, but no comparable score was available; uplift unavailable | 99.4% → 98.4% (-1.0 points) |
+| Correctness | 33.3% → 100.0% (+66.7 points) | 100.0% → 100.0% (±0.0 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 17.8% → 100.0% (+82.2 points) | 70.0% → 83.3% (+13.3 points) |
+| Efficiency | 96.8% — baseline ran, but no comparable score was available; uplift unavailable | 98.3% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
 Example: `47.0% → 92.0% (+45.0 points)` means the skill-assisted run scored 92.0%, 45.0 percentage points above its 47.0% no-skill baseline.
-
-A partial dimension was calculated from only the available configured signals; review the detailed report before relying on it.
 
 ## Token Usage
 
@@ -52,11 +52,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 72,872 | 662,918 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-train-visual-changenet-basic | 72,872 | 662,918 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | All cases | 14,128 | 14,129 | -1 | -0.01% | skill 1/1; base 1/1 |
-| codex | tao-train-visual-changenet-basic | 14,128 | 14,129 | -1 | -0.01% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 87,000 | 677,047 | N/A | N/A | skill 2/2; base 4/4 |
+| claude-code | All cases | 71,427 | 827,896 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-train-visual-changenet-basic | 71,427 | 827,896 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 31,078 | 14,046 | +17,032 | +121.26% | skill 1/1; base 1/1 |
+| codex | tao-train-visual-changenet-basic | 31,078 | 14,046 | +17,032 | +121.26% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 102,505 | 841,942 | N/A | N/A | skill 2/2; base 4/4 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -64,25 +64,21 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **FAILED** | 11 validator(s); 57 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 42 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
-
-## Blocking Findings
-
-- **MEDIUM** BANDIT/B615:huggingface_unsafe_download: Unsafe Hugging Face Hub download without revision pinning in hf_hub_download() (CWE-494) (`skills/models/tao-train-visual-changenet/scripts/stage_backbone.py:104`)
 
 ## Findings and Observations
 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **MEDIUM** BANDIT/B615:huggingface_unsafe_download: Unsafe Hugging Face Hub download without revision pinning in hf_hub_download() (CWE-494) (`skills/models/tao-train-visual-changenet/scripts/stage_backbone.py:104`)
 - **MEDIUM** QUALITY/quality_correctness: No documented scripts in table format (`skills/models/tao-train-visual-changenet/SKILL.md`)
 - **MEDIUM** QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/models/tao-train-visual-changenet/SKILL.md`)
 - **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/models/tao-train-visual-changenet/SKILL.md`)
 - **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-train-visual-changenet/SKILL.md`)
-- 52 additional finding(s) are available in the full evaluation artifacts.
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-train-visual-changenet`)
+- 37 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 

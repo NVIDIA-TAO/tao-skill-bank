@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers training, evaluating, exporting, and running inference on Visual ChangeNet models for automated optical inspection (AOI) defect detection, PCB visual inspection, and change-segmentation workflows. <br>
+Developers and engineers training, evaluating, exporting, and running inference on Visual ChangeNet models for PCB defect detection and visual inspection, comparing image pairs for PASS/NO_PASS classification or producing change-segmentation masks. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -28,16 +28,16 @@ Mitigation: Review and scan skill before deployment. <br>
 - [data-formats.md](references/data-formats.md) <br>
 - [dinov3-backbones.md](references/dinov3-backbones.md) <br>
 - [local-docker.md](references/local-docker.md) <br>
-- [parent-model-inference.md](references/parent-model-inference.md) <br>
 - [tuning-parameters.md](references/tuning-parameters.md) <br>
 - [troubleshooting.md](references/troubleshooting.md) <br>
 - [tao-deploy-visual-changenet.md](references/tao-deploy-visual-changenet.md) <br>
-- [skill_info.yaml](references/skill_info.yaml) <br>
+- [parent-model-inference.md](references/parent-model-inference.md) <br>
+- [NVIDIA TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Configuration instructions, Code] <br>
-**Output Format:** [Markdown with inline bash and Python code blocks] <br>
+**Output Type(s):** [Shell commands, Configuration instructions] <br>
+**Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -48,36 +48,36 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive), 3 attempts per task, in k8s-sandbox environment. <br>
+1 evaluation task across 2 agents, each attempt isolated in its own sandbox pod. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
 - Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
 - Correctness: Final-answer correctness against the reference answer. <br>
 - Discoverability: Whether the expected skill was selected and the workflow executed. <br>
-- Effectiveness: Whether the user's goal was achieved and expected workflow behavior was followed. <br>
-- Efficiency: Tool-call productivity and token efficiency. <br>
+- Effectiveness: Whether the skill helped complete the user's goal and expected workflow (equal-weight mean of goal completion and behavior adherence). <br>
+- Efficiency: Tool-call productivity and token efficiency (50% each). <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
-- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
 - `skill_efficiency`: Tool-call productivity. <br>
-- `token_efficiency`: Actual uncached prompt plus completion usage. <br>
+- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.3% | 72.4% |
+| Overall | 99.4% — baseline ran, but no comparable score was available; uplift unavailable | 95.3% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 6.7% → 100.0% (+93.3 points) | 100.0% → 100.0% (±0.0 points) |
-| Discoverability | 100.0% | 0.0% |
-| Effectiveness | 12.2% → 100.0% (+87.8 points) | 70.0% → 63.3% (-6.7 points) |
-| Efficiency | 96.5% | 99.4% → 98.4% (-1.0 points) |
+| Correctness | 33.3% → 100.0% (+66.7 points) | 100.0% → 100.0% (±0.0 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 17.8% → 100.0% (+82.2 points) | 70.0% → 83.3% (+13.3 points) |
+| Efficiency | 96.8% — baseline ran, but no comparable score was available; uplift unavailable | 98.3% — baseline ran, but no comparable score was available; uplift unavailable |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>

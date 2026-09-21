@@ -1,13 +1,15 @@
 # Skill Benchmark: tao-train-dino
 
-> ❌ **Overall verdict: FAIL — Publication blocked**
+> ✅ **Overall verdict: PASS — Recommended for publication**
 
-The skill should be reviewed before publication. Address the blocking findings below, then rerun Skill Evaluator.
+## Publication Recommendation
+
+Recommended for publication based on the completed evaluation evidence in this report.
 
 ## Evaluation Metadata
 
 - Skill: `tao-train-dino`
-- Evaluation date: 2026-09-17
+- Evaluation date: 2026-09-21
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 1 evaluation tasks (1 positive)
@@ -33,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.5% — baseline ran, but no comparable score was available; uplift unavailable | 94.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 94.4% — baseline ran, but no comparable score was available; uplift unavailable | 94.3% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
 | Correctness | 0.0% → 100.0% (+100.0 points) | 100.0% → 100.0% (±0.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 5.6% → 100.0% (+94.4 points) | 36.7% → 78.3% (+41.6 points) |
-| Efficiency | 97.4% — baseline ran, but no comparable score was available; uplift unavailable | 98.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 11.1% → 100.0% (+88.9 points) | 70.0% → 78.3% (+8.3 points) |
+| Efficiency | 72.0% — baseline ran, but no comparable score was available; uplift unavailable | 98.1% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -50,11 +52,11 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 68,519 | 1,160,764 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-train-dino-basic | 68,519 | 1,160,764 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | All cases | 30,715 | 14,031 | +16,684 | +118.91% | skill 1/1; base 1/1 |
-| codex | tao-train-dino-basic | 30,715 | 14,031 | +16,684 | +118.91% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 99,234 | 1,174,795 | N/A | N/A | skill 2/2; base 4/4 |
+| claude-code | All cases | 102,497 | 1,006,820 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-train-dino-basic | 102,497 | 1,006,820 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 31,558 | 14,025 | +17,533 | +125.01% | skill 1/1; base 1/1 |
+| codex | tao-train-dino-basic | 31,558 | 14,025 | +17,533 | +125.01% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 134,055 | 1,020,845 | N/A | N/A | skill 2/2; base 4/4 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -62,8 +64,8 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **FAILED** | 11 validator(s); 31 finding(s) |
-| Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 3 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 29 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 1 task(s) |
 
 ## Findings and Observations
@@ -71,26 +73,12 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/dino-data-specs.md:
-  "## Train Action Policy" in SKILL.md (lines 30-35)
-  vs "## Train Action Policy" in references/dino-data-specs.md (lines 50-55) (`SKILL.md:30`)
-- **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/dino-data-specs.md:
-  "## Dataclass Schemas" in SKILL.md (lines 26-29)
-  vs "## Dataclass Schemas" in references/dino-data-specs.md (lines 46-49) (`SKILL.md:26`)
-- **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/dino-data-specs.md and references/tao-deploy-dino.md:
-  "# DINO" in SKILL.md (lines 1-8)
-  vs "## When To Use" in SKILL.md (lines 9-17)
-  vs "# DINO" in references/dino-data-specs.md (lines 35-45)
-  vs "# At runtime the SDK extracts it and points DINO at the extracted "images" folder." in references/dino-data-specs.md (lines 236-237)
-  vs "# DINO Deploy" in references/tao-deploy-dino.md (lines 1-10)
-  vs "### Generate TensorRT Engine" in references/tao-deploy-dino.md (lines 20-30)
-  vs "### Evaluate TensorRT Engine" in references/tao-deploy-dino.md (lines 31-42)
-  vs "### TensorRT Inference" in references/tao-deploy-dino.md (lines 43-61)
-  vs "## Deploy Workflow" in references/tao-deploy-dino.md (lines 62-73)
-  vs "## Required Inputs" in references/tao-deploy-dino.md (lines 74-93) (`SKILL.md:1`)
-- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/models/tao-train-dino/SKILL.md`)
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/models/tao-train-dino/SKILL.md`)
-- 29 additional finding(s) are available in the full evaluation artifacts.
+- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/models/tao-train-dino`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/models/tao-train-dino/SKILL.md`)
+- **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/models/tao-train-dino/SKILL.md`)
+- **MEDIUM** SECURITY/Autonomous Decision Making (EA2): Excessive Agency: Do not ask the user (`references/dino-data-specs.md:294`)
+- **MEDIUM** SECURITY/Unknown (RP1): MCP Rug Pull: Docker image references without a specific tag (:latest is implicit) or digest (@sha256:...) can be silently replaced by (`references/tao-deploy-dino.md:23`)
+- 24 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 
