@@ -7,12 +7,13 @@ description: DINO (DETR with Improved DeNoising Anchor Boxes) for 2D object dete
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit.
 metadata:
+  tags:
+  - object
+  - detection
   version: "0.1.0"
   author: NVIDIA Corporation
 allowed-tools: Read Bash
-tags:
-- object
-- detection
+
 ---
 
 # DINO

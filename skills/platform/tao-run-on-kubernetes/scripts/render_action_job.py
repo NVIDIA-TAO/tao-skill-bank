@@ -395,10 +395,10 @@ def _mounts(
     if not isinstance(rows, list) or not rows:
         raise RenderError("request.mounts must be a non-empty array")
     rendered: list[dict[str, Any]] = [
-        {"name": "dshm", "mountPath": "/dev/shm", "readOnly": False}
+        {"name": "dshm", "mountPath": "/dev/shm", "readOnly": False}  # nosec B108 - k8s emptyDir shm mount, not a temp file
     ]
     used_sources: set[str] = set()
-    targets: set[str] = {"/dev/shm"}
+    targets: set[str] = {"/dev/shm"}  # nosec B108 - k8s emptyDir shm mount, not a temp file
     source_modes: list[tuple[pathlib.PurePosixPath, bool]] = []
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
