@@ -1,5 +1,5 @@
 ## Description: <br>
-Kubernetes execution platform — submits TAO container jobs as k8s Jobs with NVIDIA GPU scheduling; single-pod for one node, Indexed Jobs for multi-node distributed training. <br>
+Kubernetes execution platform that submits TAO container jobs as k8s Jobs with NVIDIA GPU scheduling, supporting single-pod and multi-node distributed training via Indexed Jobs. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -7,16 +7,16 @@ This skill is ready for commercial/non-commercial use. <br>
 NVIDIA <br>
 
 ### License/Terms of Use: <br>
-Apache 2.0 <br>
+Apache-2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need to submit NVIDIA TAO container training, evaluation, and inference jobs on Kubernetes clusters (EKS, GKE, AKS, or on-prem) with NVIDIA GPU scheduling. <br>
+Developers and ML engineers who need to submit and manage NVIDIA TAO container-based training and inference jobs on Kubernetes clusters (EKS, GKE, AKS, on-prem) with NVIDIA GPU scheduling. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
 **Requires API Key or External Credential:** [Yes] <br>
-**Credential Type(s):** [API key, Cloud Credentials] <br>
+**Credential Type(s):** [Cloud Credentials] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -25,17 +25,16 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [action-request.md](references/action-request.md) <br>
-- [local-cluster.md](references/local-cluster.md) <br>
-- [NVIDIA GPU Operator — Getting Started](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html) <br>
-- [Kubernetes Indexed Job — Completion Mode](https://kubernetes.io/docs/concepts/workloads/controllers/job/#completion-mode) <br>
-- [PyTorch Distributed — Elastic Run](https://pytorch.org/docs/stable/elastic/run.html) <br>
-- [NCCL Environment Variables](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html) <br>
+- [Action Request Reference](references/action-request.md) <br>
+- [Local Cluster Setup](references/local-cluster.md) <br>
+- [NVIDIA GPU Operator Getting Started](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html) <br>
+- [Kubernetes Indexed Job](https://kubernetes.io/docs/concepts/workloads/controllers/job/#completion-mode) <br>
+- [TAO Skill Bank Repository](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Configuration instructions, Kubernetes manifests] <br>
-**Output Format:** [Markdown with inline bash code blocks and YAML manifests] <br>
+**Output Type(s):** [Shell commands, Configuration instructions] <br>
+**Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -46,36 +45,36 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive) executed across 3 attempts per task in a k8s-sandbox environment. <br>
+1 evaluation task (1 positive), 3 attempts per task, in k8s-sandbox environment. Dataset digest: sha256:7ec1d30a7bdad9358b2758fb7f4f6bc53cd6b93ea77c8f66ccfae6b41327ba45. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
 - Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Final-answer correctness against the reference answer. <br>
-- Discoverability: Whether the expected skill was selected and the workflow executed. <br>
-- Effectiveness: Whether the skill helped complete the user's goal and expected workflow (goal_accuracy 50% + behavior_check 50%). <br>
-- Efficiency: Tool-call productivity and token efficiency (skill_efficiency 50% + token_efficiency 50%). <br>
+- Correctness: Verifies final-answer correctness against the reference answer. <br>
+- Discoverability: Checks whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- Effectiveness: Measures goal completion (50%) and expected workflow behavior adherence (50%). <br>
+- Efficiency: Measures tool-call productivity (50%) and token efficiency (50%). <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Whether the expected skill was selected and the workflow executed. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
-- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
-- `skill_efficiency`: Tool-call productivity. <br>
+- `skill_efficiency`: Tool-call productivity; routing scored under Discoverability. <br>
 - `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
 
 
 
 ## Evaluation Results: <br>
-| Measure | Claude Code | Codex |
+| Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.2% | 74.7% |
-| Security | 100.0% | 100.0% |
-| Correctness | 100.0% | 100.0% |
+| Overall | 94.2% | 70.4% |
+| Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 13.3% → 100.0% (+86.7 points) |
 | Discoverability | 100.0% | 0.0% |
-| Effectiveness | 100.0% | 75.0% |
-| Efficiency | 71.2% | 98.5% |
+| Effectiveness | 16.7% → 100.0% (+83.3 points) | 20.0% → 53.3% (+33.3 points) |
+| Efficiency | 71.1% | 99.5% → 98.5% (-1.0 points) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>

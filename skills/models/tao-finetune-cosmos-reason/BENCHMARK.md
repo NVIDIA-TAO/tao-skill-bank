@@ -1,13 +1,15 @@
 # Skill Benchmark: tao-finetune-cosmos-reason
 
-> ❌ **Overall verdict: FAIL — Publication blocked**
+> ✅ **Overall verdict: PASS — Recommended for publication**
 
-The skill should be reviewed before publication. Address the blocking findings below, then rerun Skill Evaluator.
+## Publication Recommendation
+
+Recommended for publication based on the completed evaluation evidence in this report.
 
 ## Evaluation Metadata
 
 - Skill: `tao-finetune-cosmos-reason`
-- Evaluation date: 2026-09-18
+- Evaluation date: 2026-09-21
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 7 evaluation tasks (7 positive)
@@ -33,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 86.1% — baseline ran, but no comparable score was available; uplift unavailable | 74.1% — baseline ran, but no comparable score was available; uplift unavailable |
-| Security | 96.7% → 100.0% (+3.3 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 26.7% → 68.6% (+41.9 points) | 45.3% → 84.0% (+38.7 points) |
-| Discoverability | 96.4% — baseline ran, but no comparable score was available; uplift unavailable | 35.5% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 20.7% → 80.0% (+59.3 points) | 26.9% → 52.6% (+25.7 points) |
-| Efficiency | 85.6% — baseline ran, but no comparable score was available; uplift unavailable | 98.4% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 87.8% — baseline ran, but no comparable score was available; uplift unavailable | 72.1% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 94.1% → 100.0% (+5.9 points) | 100.0% → 100.0% (±0.0 points) |
+| Correctness | 29.4% → 74.3% (+44.9 points) | 46.7% → 77.8% (+31.1 points) |
+| Discoverability | 94.3% — baseline ran, but no comparable score was available; uplift unavailable | 40.6% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 17.8% → 85.4% (+67.6 points) | 26.7% → 44.1% (+17.4 points) |
+| Efficiency | 84.9% — baseline ran, but no comparable score was available; uplift unavailable | 98.0% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -52,23 +54,23 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 1,990,421 | 4,090,642 | N/A | N/A | skill 7/7; base 15/15 |
-| claude-code | tao-finetune-cosmos-reason-backend-selection | 254,087 | 399,349 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-finetune-cosmos-reason-basic | 110,166 | 1,016,263 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-finetune-cosmos-reason-container-runtime | 116,327 | 91,669 | +24,658 | +26.90% | skill 1/1; base 1/1 |
-| claude-code | tao-finetune-cosmos-reason-conversation-single-gpu | 305,827 | 1,597,430 | N/A | N/A | skill 1/1; base 2/2 |
-| claude-code | tao-finetune-cosmos-reason-dense-sft-parity | 775,073 | 601,218 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-finetune-cosmos-reason-evaluation-inheritance | 215,574 | 163,831 | +51,743 | +31.58% | skill 1/1; base 1/1 |
-| claude-code | tao-finetune-cosmos-reason-framework-status | 213,367 | 220,882 | N/A | N/A | skill 1/1; base 2/2 |
-| codex | All cases | 465,079 | 433,088 | N/A | N/A | skill 10/10; base 15/15 |
-| codex | tao-finetune-cosmos-reason-backend-selection | 49,239 | 61,184 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | tao-finetune-cosmos-reason-basic | 13,969 | 41,915 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | tao-finetune-cosmos-reason-container-runtime | 14,078 | 18,955 | -4,877 | -25.73% | skill 1/1; base 1/1 |
-| codex | tao-finetune-cosmos-reason-conversation-single-gpu | 249,200 | 46,380 | +202,820 | +437.30% | skill 1/1; base 1/1 |
-| codex | tao-finetune-cosmos-reason-dense-sft-parity | 45,777 | 83,360 | N/A | N/A | skill 2/2; base 3/3 |
-| codex | tao-finetune-cosmos-reason-evaluation-inheritance | 49,807 | 14,376 | +35,431 | +246.46% | skill 1/1; base 1/1 |
-| codex | tao-finetune-cosmos-reason-framework-status | 43,009 | 166,918 | -123,909 | -74.23% | skill 3/3; base 3/3 |
-| ALL AGENTS | Dataset aggregate | 2,455,500 | 4,523,730 | N/A | N/A | skill 17/17; base 30/30 |
+| claude-code | All cases | 2,225,288 | 3,497,765 | N/A | N/A | skill 7/7; base 17/17 |
+| claude-code | tao-finetune-cosmos-reason-backend-selection | 255,458 | 451,656 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-finetune-cosmos-reason-basic | 111,670 | 951,931 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-finetune-cosmos-reason-container-runtime | 176,711 | 123,467 | +53,244 | +43.12% | skill 1/1; base 1/1 |
+| claude-code | tao-finetune-cosmos-reason-conversation-single-gpu | 654,692 | 848,907 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-finetune-cosmos-reason-dense-sft-parity | 660,079 | 707,646 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-finetune-cosmos-reason-evaluation-inheritance | 117,562 | 127,972 | -10,410 | -8.13% | skill 1/1; base 1/1 |
+| claude-code | tao-finetune-cosmos-reason-framework-status | 249,116 | 286,186 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 474,847 | 312,687 | N/A | N/A | skill 9/9; base 12/12 |
+| codex | tao-finetune-cosmos-reason-backend-selection | 31,154 | 78,329 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-finetune-cosmos-reason-basic | 14,108 | 41,912 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-finetune-cosmos-reason-container-runtime | 13,944 | 32,260 | -18,316 | -56.78% | skill 1/1; base 1/1 |
+| codex | tao-finetune-cosmos-reason-conversation-single-gpu | 99,769 | 72,574 | +27,195 | +37.47% | skill 1/1; base 1/1 |
+| codex | tao-finetune-cosmos-reason-dense-sft-parity | 30,850 | 14,950 | +15,900 | +106.35% | skill 1/1; base 1/1 |
+| codex | tao-finetune-cosmos-reason-evaluation-inheritance | 240,999 | 14,475 | +226,524 | +1564.93% | skill 1/1; base 1/1 |
+| codex | tao-finetune-cosmos-reason-framework-status | 44,023 | 58,187 | N/A | N/A | skill 3/3; base 2/2 |
+| ALL AGENTS | Dataset aggregate | 2,700,135 | 3,810,452 | N/A | N/A | skill 16/16; base 29/29 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -76,33 +78,31 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **FAILED** | 11 validator(s); 97 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 98 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 28 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 7 task(s) |
-
-## Blocking Findings
-
-- **MEDIUM** BANDIT/B310:blacklist: Audit url open for permitted schemes. Allowing use of file:/ or custom schemes is often unexpected. (CWE-22) (`skills/models/tao-finetune-cosmos-reason/scripts/cosmos_workflow.py:158`)
 
 ## Findings and Observations
 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **CRITICAL** CONTENT_DEDUP/llm_error: LLM analysis failed for a content cluster (`skills/models/tao-finetune-cosmos-reason`)
-- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/cosmos-actions-parameters.md and references/cosmos-reason-parameters.md:
-  "### Logging" in references/cosmos-actions-parameters.md (lines 203-206)
-  vs "### Logging" in references/cosmos-reason-parameters.md (lines 110-113) (`references/cosmos-actions-parameters.md:203`)
-- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/cosmos-actions-parameters.md and references/cosmos-reason-parameters.md:
-  "## Error Patterns" in references/cosmos-actions-parameters.md (lines 215-215)
-  vs "## Error Patterns" in references/cosmos-reason-parameters.md (lines 130-130) (`references/cosmos-actions-parameters.md:215`)
 - **HIGH** DUPLICATE/duplicate: Duplicate content found across references/cosmos-actions-parameters.md and references/cosmos-reason-parameters.md:
   "## Error Patterns" in references/cosmos-actions-parameters.md (lines 218-218)
   vs "## Error Patterns" in references/cosmos-reason-parameters.md (lines 133-133) (`references/cosmos-actions-parameters.md:218`)
 - **HIGH** DUPLICATE/duplicate: Duplicate content found across references/cosmos-actions-parameters.md and references/cosmos-reason-parameters.md:
+  "### Logging" in references/cosmos-actions-parameters.md (lines 203-206)
+  vs "### Logging" in references/cosmos-reason-parameters.md (lines 110-113) (`references/cosmos-actions-parameters.md:203`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/cosmos-actions-parameters.md and references/cosmos-reason-parameters.md:
+  "## Error Patterns" in references/cosmos-actions-parameters.md (lines 219-222)
+  vs "## Error Patterns" in references/cosmos-reason-parameters.md (lines 134-137) (`references/cosmos-actions-parameters.md:219`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/cosmos-actions-parameters.md and references/cosmos-reason-parameters.md:
   "## Error Patterns" in references/cosmos-actions-parameters.md (lines 217-217)
   vs "## Error Patterns" in references/cosmos-reason-parameters.md (lines 132-132) (`references/cosmos-actions-parameters.md:217`)
-- 120 additional finding(s) are available in the full evaluation artifacts.
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across references/cosmos-actions-parameters.md and references/cosmos-reason-parameters.md:
+  "## Error Patterns" in references/cosmos-actions-parameters.md (lines 215-215)
+  vs "## Error Patterns" in references/cosmos-reason-parameters.md (lines 130-130) (`references/cosmos-actions-parameters.md:215`)
+- 121 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 

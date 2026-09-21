@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need to train, evaluate, export, quantize, or run inference on Sparse4D multi-camera temporal 3D object detection and tracking models using NVIDIA TAO. <br>
+Developers and engineers training, evaluating, exporting, quantizing, or running inference on NVIDIA TAO Sparse4D multi-camera temporal 3D object detection and tracking models. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,10 +25,10 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Local Docker Conversion Guide](references/local_docker_conversion.md) <br>
-- [Skill Info](references/skill_info.yaml) <br>
-- [Spec Param Inference Mappings](references/spec_param_inference.md) <br>
-- [NVIDIA TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+- [TAO Skill Bank Repository](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+- [local_docker_conversion.md](references/local_docker_conversion.md) <br>
+- [spec_param_inference.md](references/spec_param_inference.md) <br>
+- [skill_info.yaml](references/skill_info.yaml) <br>
 
 
 ## Skill Output: <br>
@@ -44,36 +44,36 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive), 3 attempts per task, each run in an isolated k8s-sandbox pod. <br>
+1 evaluation task (1 positive), each attempt ran in its own isolated sandbox pod with 3 attempts per task. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
 - Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
 - Correctness: Checks final-answer correctness against the reference answer. <br>
-- Discoverability: Checks whether the expected skill was selected and the workflow executed. <br>
-- Effectiveness: Checks whether the skill helped complete the user's goal and followed the expected workflow. <br>
-- Efficiency: Checks tool-call productivity and token efficiency to avoid wasted usage. <br>
+- Discoverability: Checks whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- Effectiveness: Checks whether the user's goal was achieved and the expected workflow behavior was followed (equal-weight mean of goal completion and behavior check). <br>
+- Efficiency: Checks tool-call productivity and actual uncached token usage (equal-weight mean of tool productivity and token efficiency). <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
-- `skill_execution`: Whether the expected skill was selected, decoys avoided, and workflow executed. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
-- `skill_efficiency`: Tool-call productivity (routing scored under Discoverability). <br>
-- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
+- `skill_efficiency`: Tool-call productivity (routing is scored under Discoverability). <br>
+- `token_efficiency`: Actual uncached prompt plus completion usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.5% | 62.4% |
+| Overall | 99.5% — baseline ran, but no comparable score was available; uplift unavailable | 77.7% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 100.0% → 60.0% (-40.0 points) |
-| Discoverability | 100.0% | 0.0% |
-| Effectiveness | 5.6% → 100.0% (+94.4 points) | 70.0% → 53.3% (-16.7 points) |
-| Efficiency | 97.5% | 99.5% → 98.5% (-1.0 points) |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 100.0% → 100.0% (±0.0 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 0.0% → 100.0% (+100.0 points) | 70.0% → 90.0% (+20.0 points) |
+| Efficiency | 97.5% — baseline ran, but no comparable score was available; uplift unavailable | 99.4% → 98.5% (-0.9 points) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
