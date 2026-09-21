@@ -1,5 +1,5 @@
 ## Description: <br>
-Optical inspection for defect detection using Siamese networks that compares image pairs to detect manufacturing defects, anomalies, or quality issues when training, evaluating, exporting, or running inference for a TAO Optical Inspection model on AOI / quality-control data. <br>
+The Docker execution platform for TAO jobs — a local daemon or a remote GPU box via DOCKER_HOST=ssh://user@host, implementing the four-verb consumer contract (submit/status/logs/cancel) over the docker CLI. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers training, evaluating, exporting, or running inference on NVIDIA TAO Optical Inspection Siamese models for automated optical inspection (AOI) and manufacturing quality-control defect detection. <br>
+Developers and engineers running single-node TAO container training, evaluation, and inference jobs on Docker without the NVIDIA TAO SDK. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [Yes] <br>
+**Credential Type(s):** [API key] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -25,9 +25,11 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [TAO Deploy Optical Inspection](references/tao-deploy-optical-inspection.md) <br>
-- [Skill Info (AutoML and model metadata)](references/skill_info.yaml) <br>
-- [NVIDIA TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+- [Docker CLI Reference](https://docs.docker.com/reference/cli/docker/) <br>
+- [Docker Engine Install](https://docs.docker.com/engine/install/) <br>
+- [NGC](https://ngc.nvidia.com/) <br>
+- [TAO Skill Bank GitHub](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+- [skill_info.yaml](references/skill_info.yaml) <br>
 
 
 ## Skill Output: <br>
@@ -43,36 +45,36 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (tao-train-optical-inspection-basic) across 2 agents with 3 attempts per task in isolated k8s-sandbox pods. <br>
+2 evaluation tasks (2 positive), each with 3 attempts per task in isolated k8s-sandbox pods. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Whether the skill is safe to use, checking for unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Whether the answer is correct, measured by final-answer accuracy against the reference answer. <br>
-- Discoverability: Whether the right skill was loaded when needed, including skill selection and decoy avoidance. <br>
-- Effectiveness: Whether the skill helped complete the user's goal, combining goal completion (50%) and expected workflow adherence (50%). <br>
-- Efficiency: Whether the skill avoided wasted tool calls and token usage, combining tool-call productivity (50%) and token efficiency (50%). <br>
+- Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- Correctness: Final-answer correctness against the reference answer. <br>
+- Discoverability: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- Effectiveness: Equal-weight mean of goal completion (goal_accuracy) and expected workflow adherence (behavior_check). <br>
+- Efficiency: 50% tool-call productivity and 50% token efficiency. <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- `skill_execution`: Verifies the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `skill_efficiency`: Tool-call productivity (routing is scored under Discoverability). <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
-- `skill_efficiency`: Tool-call productivity for skill and tool usage. <br>
-- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
+- `token_efficiency`: Actual uncached prompt plus completion usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.4% | 76.9% |
-| Security | 100.0% → 100.0% (±0.0 pts) | 100.0% → 100.0% (±0.0 pts) |
-| Correctness | 13.3% → 100.0% (+86.7 pts) | 100.0% → 70.0% (-30.0 pts) |
-| Discoverability | 100.0% | 47.5% |
-| Effectiveness | 10.0% → 100.0% (+90.0 pts) | 31.7% → 68.3% (+36.6 pts) |
-| Efficiency | 96.9% | 98.7% |
+| Overall | 61.1% | 45.4% |
+| Security | 50.0% → 25.0% (-25.0 pp) | 40.0% → 25.0% (-15.0 pp) |
+| Correctness | 20.0% → 90.0% (+70.0 pp) | 4.0% → 45.0% (+41.0 pp) |
+| Discoverability | 76.3% | 62.5% |
+| Effectiveness | 13.6% → 41.1% (+27.5 pp) | 17.3% → 30.4% (+13.1 pp) |
+| Efficiency | 73.2% | 64.3% |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
