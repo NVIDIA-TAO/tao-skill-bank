@@ -1,4 +1,4 @@
-# Skill Benchmark: tao-finetune-huggingface-model
+# Skill Benchmark: tao-run-deft-cr-its-mining
 
 > ✅ **Overall verdict: PASS — Recommended for publication**
 
@@ -8,12 +8,12 @@ Recommended for publication based on the completed evaluation evidence in this r
 
 ## Evaluation Metadata
 
-- Skill: `tao-finetune-huggingface-model`
-- Evaluation date: 2026-09-21
+- Skill: `tao-run-deft-cr-its-mining`
+- Evaluation date: 2026-09-22
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 4 evaluation tasks (4 positive)
-- Dataset digest: `sha256:28fd5bf04229375b8bfea649e9cb787a04bb482b80b6ae2ae31e5ff9f076838a` (skill-evaluator-dataset-snapshot/1)
+- Dataset digest: `sha256:e2415bd85ab17e2af8a9afff1301e63b0145eceba60a95906283869558f70186` (skill-evaluator-dataset-snapshot/1)
 - Attempts per task: 3
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
@@ -35,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 80.2% — baseline ran, but no comparable score was available; uplift unavailable | 58.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 96.3% — baseline ran, but no comparable score was available; uplift unavailable | 59.6% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 25.7% → 85.0% (+59.3 points) | 52.0% → 55.0% (+3.0 points) |
-| Discoverability | 58.8% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 35.2% → 81.7% (+46.5 points) | 45.0% → 39.1% (-5.9 points) |
-| Efficiency | 75.7% — baseline ran, but no comparable score was available; uplift unavailable | 98.8% → 99.3% (+0.5 points) |
+| Correctness | 1.7% → 100.0% (+98.3 points) | 40.0% → 53.3% (+13.3 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 7.3% → 93.1% (+85.8 points) | 42.7% → 46.0% (+3.3 points) |
+| Efficiency | 88.5% — baseline ran, but no comparable score was available; uplift unavailable | 97.9% → 98.9% (+1.0 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -54,17 +54,17 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 594,721 | 755,784 | N/A | N/A | skill 4/4; base 7/7 |
-| claude-code | tao-finetune-huggingface-model-basic | 70,212 | 506,739 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-finetune-huggingface-model-dedicated-routing | 206,194 | 31,329 | +174,865 | +558.16% | skill 1/1; base 1/1 |
-| claude-code | tao-finetune-huggingface-model-dedicated-routing-non-cosmos | 288,161 | 61,641 | N/A | N/A | skill 1/1; base 2/2 |
-| claude-code | tao-finetune-huggingface-model-unclaimed-routing | 30,154 | 156,075 | -125,921 | -80.68% | skill 1/1; base 1/1 |
-| codex | All cases | 111,184 | 76,963 | N/A | N/A | skill 8/8; base 5/5 |
-| codex | tao-finetune-huggingface-model-basic | 13,984 | 13,606 | +378 | +2.78% | skill 1/1; base 1/1 |
-| codex | tao-finetune-huggingface-model-dedicated-routing | 41,788 | 31,641 | N/A | N/A | skill 3/3; base 2/2 |
-| codex | tao-finetune-huggingface-model-dedicated-routing-non-cosmos | 41,565 | 17,862 | N/A | N/A | skill 3/3; base 1/1 |
-| codex | tao-finetune-huggingface-model-unclaimed-routing | 13,847 | 13,854 | -7 | -0.05% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 705,905 | 832,747 | -126,842 | -15.23% | skill 12/12; base 12/12 |
+| claude-code | All cases | 1,073,272 | 1,843,618 | N/A | N/A | skill 4/4; base 12/12 |
+| claude-code | tao-run-deft-cr-its-mining-basic | 71,928 | 90,508 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-run-deft-cr-its-mining-multi-question | 337,992 | 549,881 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-run-deft-cr-its-mining-plugin-paths | 411,625 | 581,372 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-run-deft-cr-its-mining-resume | 251,727 | 621,857 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | All cases | 85,146 | 86,989 | N/A | N/A | skill 6/6; base 5/5 |
+| codex | tao-run-deft-cr-its-mining-basic | 14,086 | 13,560 | +526 | +3.88% | skill 1/1; base 1/1 |
+| codex | tao-run-deft-cr-its-mining-multi-question | 14,072 | 13,911 | +161 | +1.16% | skill 1/1; base 1/1 |
+| codex | tao-run-deft-cr-its-mining-plugin-paths | 14,665 | 45,618 | N/A | N/A | skill 1/1; base 2/2 |
+| codex | tao-run-deft-cr-its-mining-resume | 42,323 | 13,900 | N/A | N/A | skill 3/3; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 1,158,418 | 1,930,607 | N/A | N/A | skill 10/10; base 17/17 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -72,8 +72,8 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 63 finding(s) |
-| Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 1 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 47 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 3 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 4 task(s) |
 
 ## Findings and Observations
@@ -81,12 +81,19 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
-- **CRITICAL** CONTENT_DEDUP/chunk_count_limit: Tier 2 produced more than 512 content chunks. (`references/workflow-intake-preflight.md`)
-- **MEDIUM** QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/applications/tao-finetune-huggingface-model/SKILL.md`)
-- **MEDIUM** QUALITY/quality_efficiency: Deeply nested references in docker-runs.md (`skills/applications/tao-finetune-huggingface-model/SKILL.md`)
-- **MEDIUM** SCHEMA/frontmatter_field_placement: Root field 'tags' is ignored; use 'metadata.tags' (`skills/applications/tao-finetune-huggingface-model/SKILL.md`)
-- **MEDIUM** SCHEMA/folder_hierarchy: Unexpected nesting depth for general skill (`skills/applications/tao-finetune-huggingface-model`)
-- 59 additional finding(s) are available in the full evaluation artifacts.
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across scripts/restore_docker_mount_permissions.py and scripts/workflow_common.py:
+  "absolute_path()" in scripts/restore_docker_mount_permissions.py (lines 17-19)
+  vs "absolute_path()" in scripts/workflow_common.py (lines 35-37) (`scripts/restore_docker_mount_permissions.py:17`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across SKILL.md and references/mining-loop.md:
+  "## Completion Criteria" in SKILL.md (lines 173-192)
+  vs "## Completion Criteria" in references/mining-loop.md (lines 311-329) (`SKILL.md:173`)
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across scripts/prepare_gap_analysis_predictions.py and scripts/workflow_common.py:
+  "load_json_array()" in scripts/prepare_gap_analysis_predictions.py (lines 16-25)
+  vs "load_json_array()" in scripts/workflow_common.py (lines 48-57)
+  vs "read_jsonl()" in scripts/workflow_common.py (lines 101-116) (`scripts/prepare_gap_analysis_predictions.py:16`)
+- **MEDIUM** QUALITY/quality_correctness: No documented scripts in table format (`skills/applications/tao-run-deft-cr-its-mining/SKILL.md`)
+- **MEDIUM** QUALITY/quality_correctness: Instructions don't mention 'run_script' (`skills/applications/tao-run-deft-cr-its-mining/SKILL.md`)
+- 45 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 
