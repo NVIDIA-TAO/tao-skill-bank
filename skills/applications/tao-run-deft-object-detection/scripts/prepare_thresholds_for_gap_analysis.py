@@ -18,11 +18,16 @@ reported weak.
 Reads the state the run already froze rather than taking the thresholds again on the
 command line: a second source is a second thing to disagree with deft_state.json.
 
-Inputs:  --results-dir (reads config.ap50_thresholds), --out
-Output:  a YAML file with a single top-level ``weak_thresholds`` key
+Only the run's target classes are written. ``gap_analysis`` marks an image weak when any
+listed class is under its gate, so a gate for a class the run does not target would
+enlarge the weak set and with it the mining budget.
 
-Exits 1 when the state has no thresholds, when a target class has no gate, or when a
-gate is outside [0, 1].
+Inputs:  --results-dir (reads config.ap50_thresholds and config.target_classes), --out
+Output:  a YAML file with a single top-level ``weak_thresholds`` key, one entry per
+         target class
+
+Exits 1 when the state has no thresholds or no target classes, when a target class has
+no gate, or when a target's gate is outside [0, 1].
 """
 
 from __future__ import annotations
@@ -70,6 +75,11 @@ def main() -> int:
         if isinstance(targets, str):
             targets = [c.strip() for c in targets.split(",") if c.strip()]
 
+        if not targets:
+            raise ValueError(
+                f"{args.results_dir}: config.target_classes is empty. The gates written "
+                f"here are scoped to it, so there is nothing to write")
+
         # A target with no gate is scored against gap_analysis's default_ap50_threshold
         # of 0.0, which can never mark an image weak, so that class can never be mined
         # for. init already refuses this; re-checked here because the file is what the
@@ -80,16 +90,25 @@ def main() -> int:
                 f"target class(es) {ungated} have no AP50 gate in config.ap50_thresholds "
                 f"{sorted(thresholds)}; they would be gated at 0.0 and never mined for")
 
-        for name, value in thresholds.items():
+        for name in targets:
+            value = thresholds[name]
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError(f"ap50_thresholds[{name!r}] is {value!r}, not a number")
             if not 0 <= float(value) <= 1:
                 raise ValueError(f"ap50_thresholds[{name!r}] is {value}, outside [0, 1]")
 
-        # Target-class order, so the file reads the way the run declares its classes.
-        ordered = [c for c in targets if c in thresholds]
-        ordered += [c for c in thresholds if c not in ordered]
-        block = {"weak_thresholds": {c: {"ap50": float(thresholds[c])} for c in ordered}}
+        # Target classes only, in the order the run declares them. A class listed in
+        # config.ap50_thresholds but not targeted must not reach this file: gap_analysis
+        # marks an image weak when *any* listed class is under its gate, so a stray gate
+        # would enlarge the weak set and with it the mining budget -- spending the
+        # iteration's images on a class the run is not training for. init warns that
+        # extra thresholds "will be ignored"; dropping them here is what makes that true.
+        block = {"weak_thresholds": {c: {"ap50": float(thresholds[c])} for c in targets}}
+
+        untargeted = [c for c in thresholds if c not in targets]
+        if untargeted:
+            print(f"note: {sorted(untargeted)} have gates in config.ap50_thresholds but "
+                  f"are not target classes; omitted from {args.out}", file=sys.stderr)
 
         out = Path(args.out).expanduser().resolve()
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -100,7 +119,7 @@ def main() -> int:
                 json.dumps({"out": str(out), "weak_thresholds": block["weak_thresholds"]},
                            indent=2) + "\n", encoding="utf-8")
 
-        for name in ordered:
+        for name in targets:
             print(f"  {name}: {float(thresholds[name])}")
         print(f"wrote {out}")
         return 0
