@@ -29,9 +29,9 @@
 
 images:
   tao_toolkit:
-    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch
-    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch
-    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
+    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-76-multiarch
+    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.3.0-rc-74-multiarch
+    data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-74-multiarch
     deft_pas_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
     deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
@@ -39,7 +39,7 @@ images:
     cosmos_rl:          nvcr.io/nvstaging/tao/cosmos_rl:7.2.0-rc-241-multiarch
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
-    cosmos_embed:       nvcr.io/nvidia/tao/tao-toolkit:7.1.0-cosmos-embed
+    cosmos_embed:       nvcr.io/nvstaging/tao/cosmos-embed:7.3.0-rc-116
     vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
