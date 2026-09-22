@@ -100,7 +100,13 @@ inputs; Pre-Flight validates them and `init_deft_state.py` pins them, so a run c
 
 ## Launch Intake
 
-After the user confirms they want to run this workflow, ask which supported platform they intend to run on. Discover the execution platforms from the installed platform skills (tao-run-on-docker / -slurm / -kubernetes / -brev). After platform selection, read the chosen platform skill's `## Credentials` section.
+**Do not ask which platform to run on.** This workflow supports one: every stage launches
+with `docker run`, and its `compatibility` line requires docker plus the
+nvidia-container-toolkit. The bank's rule in `AGENTS.md` is to treat a single supported
+platform as the selection and only ask when an application supports several — asking here
+would offer a choice that nothing downstream can act on.
+
+Read `tao-run-on-docker`'s `## Credentials` section.
 
 Never ask for or read credential values. Check only whether the required environment variable is set; if unset, tell the user which variable to export.
 
