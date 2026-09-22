@@ -127,6 +127,10 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    zero-shot one, and for the same reason: it is published, so a run should not depend
    on a file somebody staged by hand.
 
+   `--dest` belongs under `$WORKSPACE`. The Co-DETR container mounts `$WORKSPACE` and
+   `$EXTRA_MOUNTS` and nothing else, so a checkpoint anywhere else needs an extra `-v`
+   on every launch that reads it.
+
    ```bash
    # Report first; --plan prints a sentence, not a path.
    <skill_root>/scripts/deft_python.sh \
