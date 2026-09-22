@@ -39,7 +39,7 @@ TAO task **`video_clip`** wraps OpenGVLab **InternVideo2-CLIP L14**. The PyTorch
 
 Container images and per-action commands are in `references/skill_info.yaml` and `references/tao-deploy-video-clip.skill_info.yaml`. Starting specs are in `references/spec_template_*.yaml`.
 
-> **Release note:** The pinned PyTorch image is the TAO 7.2 FC build validated for Video-CLIP. The pinned tag resolves to OCI digest `sha256:faeb58559e1d87afd16453580999c178feb345f9dc87e35b8f40098e9604dd09`; it includes PyAV 17.1.0 as the primary decoder and ONNXScript 0.7.1 for export, with decord absent. The TAO Deploy image is pinned independently because `gen_trt_engine` and TensorRT-backed actions do not run in the PyTorch image.
+> **Release note:** The pinned PyTorch image is the TAO 7.2 release-candidate build validated for Video-CLIP. It includes PyAV 17.1.0 as the primary decoder and ONNXScript 0.7.1 for export, with decord absent. The TAO Deploy image is pinned independently because `gen_trt_engine` and TensorRT-backed actions do not run in the PyTorch image.
 >
 > **Known-broken images:** interim builds cut before tao-pytorch commit `0cc31de4` ship a `video_clip` package with no `model.backbones` submodule, so `train`/`evaluate`/`inference` die at import while `video_clip --help` still exits 0. Images without PyAV also fail at data loading. Run both import checks in the preflight below before pulling data or launching a run.
 
@@ -52,7 +52,7 @@ AutoML is not packaged for this model skill. Always use direct `video_clip` acti
 Use the pinned TAO container declared in `references/skill_info.yaml`. Pull with `NGC_KEY` when the image is not cached locally.
 
 ```bash
-VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-06"  # versions-key: images.tao_toolkit.video_clip
+VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch"  # versions-key: images.tao_toolkit.pyt
 VIDEO_CLIP_IMAGE="${VIDEO_CLIP_IMAGE:-$VIDEO_CLIP_IMAGE_DEFAULT}"
 docker pull "$VIDEO_CLIP_IMAGE"
 ```
@@ -84,7 +84,7 @@ workspace/
 Docker options for all actions (skill-eval CI uses the same `$WORKSPACE_DIR` bind-mount pattern):
 
 ```bash
-VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:v7.0.1-pyt2.1.0-py3-06"  # versions-key: images.tao_toolkit.video_clip
+VIDEO_CLIP_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch"  # versions-key: images.tao_toolkit.pyt
 VIDEO_CLIP_IMAGE="${VIDEO_CLIP_IMAGE:-$VIDEO_CLIP_IMAGE_DEFAULT}"
 RUN_ROOT="${RUN_ROOT:-$PWD}"
 DOCKER_COMMON=(
@@ -153,7 +153,7 @@ docker run "${DOCKER_COMMON[@]}" "$VIDEO_CLIP_IMAGE" \
 Use the independently pinned TAO Deploy image after PyTorch export. Read `references/tao-deploy-video-clip.md` before running the deploy actions; its templates cover the engine build, retrieval evaluation, and embedding inference contracts.
 
 ```bash
-VIDEO_CLIP_DEPLOY_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-47-multiarch"  # versions-key: images.tao_toolkit.video_clip_deploy
+VIDEO_CLIP_DEPLOY_IMAGE_DEFAULT="nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch"  # versions-key: images.tao_toolkit.deploy
 VIDEO_CLIP_DEPLOY_IMAGE="${VIDEO_CLIP_DEPLOY_IMAGE:-$VIDEO_CLIP_DEPLOY_IMAGE_DEFAULT}"
 
 # Verify the independently pinned image before staging artifacts or using a GPU.
