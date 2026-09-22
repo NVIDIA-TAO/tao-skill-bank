@@ -45,6 +45,7 @@ from deft_stages import (  # noqa: E402
     write_log_atomic,
     write_state_atomic,
 )
+from render_report import render as render_loop_report  # noqa: E402
 
 ALLOCATION_POLICIES = ("global", "class_stratified")
 # The encoder families the embedding stage accepts. Kept in step with
@@ -694,6 +695,16 @@ def main() -> int:
             "status": "running",
         }
         write_state_atomic(results_dir, state)
+
+        # An empty report from the first moment, so the file a reader is told to open
+        # exists before any stage has run and every later commit refreshes it in place.
+        # Initialization is not blocked by a presentation failure.
+        try:
+            render_loop_report(results_dir)
+        except Exception as exc:  # noqa: BLE001 - presentation is not transactional
+            warnings.append(f"the initial loop report was not rendered "
+                            f"({type(exc).__name__}: {exc}); commit_stage.py will "
+                            "re-render it at the first commit")
 
         for warning in warnings:
             print(f"WARNING: {warning}", file=sys.stderr)
