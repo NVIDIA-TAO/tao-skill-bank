@@ -2546,53 +2546,75 @@ esac
 CURRENT_SECTION="G29 completion reason reaches state"
 
 G29=$(new_workspace g29); make_pool "$G29"
-G28_RUN="$G29/results/run_g29"
-init_run "$G29" "$G28_RUN" 3
-make_phase_artifacts "$G28_RUN" baseline
-commit "$G28_RUN" baseline inference \
-  --inference-labels-dir "$G28_RUN/baseline/inference/labels" --summary s --duration-sec 1
-commit "$G28_RUN" baseline kpi_analyze \
-  --kpi-csv "$G28_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 --summary s --duration-sec 1
+G29_RUN="$G29/results/run_g29"
+init_run "$G29" "$G29_RUN" 3
+make_phase_artifacts "$G29_RUN" baseline
+commit "$G29_RUN" baseline inference \
+  --inference-labels-dir "$G29_RUN/baseline/inference/labels" --summary s --duration-sec 1
+commit "$G29_RUN" baseline kpi_analyze \
+  --kpi-csv "$G29_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 --summary s --duration-sec 1
 
-make_iter_artifacts "$G28_RUN" iter1
+make_iter_artifacts "$G29_RUN" iter1
 for st in gap_analysis embed mine stage train inference kpi_analyze; do
   case "$st" in
-    gap_analysis) commit "$G28_RUN" iter1 gap_analysis \
-        --weak-images "$G28_RUN/iter1/gaps/weak_images.parquet" \
-        --gap-report "$G28_RUN/iter1/gaps/gap_report.json" \
+    gap_analysis) commit "$G29_RUN" iter1 gap_analysis \
+        --weak-images "$G29_RUN/iter1/gaps/weak_images.parquet" \
+        --gap-report "$G29_RUN/iter1/gaps/gap_report.json" \
         --weak-image-count 9 --summary s --duration-sec 1 ;;
-    embed) commit "$G28_RUN" iter1 embed \
-        --embeddings-parquet "$G28_RUN/iter1/embeddings/weak_images_embeddings.parquet" \
+    embed) commit "$G29_RUN" iter1 embed \
+        --embeddings-parquet "$G29_RUN/iter1/embeddings/weak_images_embeddings.parquet" \
         --summary s --duration-sec 1 ;;
-    mine) commit "$G28_RUN" iter1 mine \
-        --mining-output "$G28_RUN/iter1/mining/final_unique_files.parquet" \
-        --mining-summary "$G28_RUN/iter1/mining/summary.json" --summary s --duration-sec 1 ;;
-    stage) commit "$G28_RUN" iter1 stage \
-        --odvg "$G28_RUN/iter1/tmm/annotations/tmm_odvg.jsonl" \
-        --label-map "$G28_RUN/iter1/tmm/annotations/labelmap.json" \
-        --staged-images-dir "$G28_RUN/iter1/tmm/images" \
-        --exclude-parquet "$G28_RUN/iter1/mined_cumulative.parquet" --summary s --duration-sec 1 ;;
-    train) commit "$G28_RUN" iter1 train \
-        --checkpoint "$G28_RUN/iter1/train/gdino_model_latest.pth" \
-        --training-spec "$G28_RUN/iter1/train_grounding_dino.yaml" --summary s --duration-sec 1 ;;
-    inference) commit "$G28_RUN" iter1 inference \
-        --inference-labels-dir "$G28_RUN/iter1/inference/labels" --summary s --duration-sec 1 ;;
-    kpi_analyze) commit "$G28_RUN" iter1 kpi_analyze \
-        --kpi-csv "$G28_RUN/iter1/kpi/kpi_calc.csv" --map-value 0.6 --summary s --duration-sec 1 ;;
+    mine) commit "$G29_RUN" iter1 mine \
+        --mining-output "$G29_RUN/iter1/mining/final_unique_files.parquet" \
+        --mining-summary "$G29_RUN/iter1/mining/summary.json" --summary s --duration-sec 1 ;;
+    stage) commit "$G29_RUN" iter1 stage \
+        --odvg "$G29_RUN/iter1/tmm/annotations/tmm_odvg.jsonl" \
+        --label-map "$G29_RUN/iter1/tmm/annotations/labelmap.json" \
+        --staged-images-dir "$G29_RUN/iter1/tmm/images" \
+        --exclude-parquet "$G29_RUN/iter1/mined_cumulative.parquet" --summary s --duration-sec 1 ;;
+    train) commit "$G29_RUN" iter1 train \
+        --checkpoint "$G29_RUN/iter1/train/gdino_model_latest.pth" \
+        --training-spec "$G29_RUN/iter1/train_grounding_dino.yaml" --summary s --duration-sec 1 ;;
+    inference) commit "$G29_RUN" iter1 inference \
+        --inference-labels-dir "$G29_RUN/iter1/inference/labels" --summary s --duration-sec 1 ;;
+    kpi_analyze) commit "$G29_RUN" iter1 kpi_analyze \
+        --kpi-csv "$G29_RUN/iter1/kpi/kpi_calc.csv" --map-value 0.6 --summary s --duration-sec 1 ;;
   esac
 done
 
 # Pool exhausted at iter2, with one iteration finished: a documented early stop.
-commit "$G28_RUN" iter2 loop_stop --pool-exhausted --pool-remaining 4 \
+commit "$G29_RUN" iter2 loop_stop --pool-exhausted --pool-remaining 4 \
   --summary "pool exhausted" --duration-sec 1
 assert_rc 0 "[G29] the documented early stop commits"
-assert_eq '"complete"' "$(state_json_top "$G28_RUN" status)" \
+assert_eq '"complete"' "$(state_json_top "$G29_RUN" status)" \
   "[G29] an early stop after a completed iteration is still complete"
-case "$(state_json_top "$G28_RUN" completion_reason)" in
+case "$(state_json_top "$G29_RUN" completion_reason)" in
   *"pool was exhausted"*)
     ok "[G29] state records why, so the report need not re-derive it" ;;
   *) notok "[G29] state records why, so the report need not re-derive it" \
-       "got: $(state_json_top "$G28_RUN" completion_reason)" ;;
+       "got: $(state_json_top "$G29_RUN" completion_reason)" ;;
+esac
+
+# A run stopped short of its iterations by no documented condition is `stopped`, not
+# complete -- and the reason is written for it too, since "why did it stop" is the
+# first question a stopped run raises.
+G29S=$(new_workspace g29s); make_pool "$G29S"
+G29S_RUN="$G29S/results/run_g29s"
+init_run "$G29S" "$G29S_RUN" 3
+make_phase_artifacts "$G29S_RUN" baseline
+commit "$G29S_RUN" baseline inference \
+  --inference-labels-dir "$G29S_RUN/baseline/inference/labels" --summary s --duration-sec 1
+commit "$G29S_RUN" baseline kpi_analyze \
+  --kpi-csv "$G29S_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 --summary s --duration-sec 1
+commit "$G29S_RUN" iter1 loop_stop --summary "stopped by hand" --duration-sec 1
+assert_rc 0 "[G29] an undocumented stop commits"
+assert_eq '"stopped"' "$(state_json_top "$G29S_RUN" status)" \
+  "[G29] a run stopped short of its iterations is stopped, not complete"
+case "$(state_json_top "$G29S_RUN" completion_reason)" in
+  *"only 0 of 3 iterations"*)
+    ok "[G29] a stopped run records why it stopped short" ;;
+  *) notok "[G29] a stopped run records why it stopped short" \
+       "got: $(state_json_top "$G29S_RUN" completion_reason)" ;;
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════

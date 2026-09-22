@@ -985,9 +985,12 @@ def main() -> int:
                 # only thing that separates them. The audit computes it and prints it, but
                 # printing is not an artifact: without this the state file says a truncated
                 # run completed and offers nothing to say why.
-                reason = report.get("completion_reason")
-                if reason:
-                    state["completion_reason"] = reason
+                #
+                # Written unconditionally, beside `status` and from the same report, so the
+                # two cannot drift: a guarded write would keep a stale reason next to a
+                # fresh status if the audit ever returned none. A `stopped` run gets one
+                # too, which says why it stopped short.
+                state["completion_reason"] = report.get("completion_reason") or None
                 write_state_atomic(results_dir, state)
                 _fsync_path(state_path(results_dir))
 

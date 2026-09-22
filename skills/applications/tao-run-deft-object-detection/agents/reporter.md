@@ -49,7 +49,7 @@ Take **Status** from the audit's `--json` report, never from prose and never fro
 |---|---|
 | `run_failed: true` | `FAILED` |
 | `complete: true` | `COMPLETE` — append `completion_reason` in parentheses when it names an early stop |
-| `loop_stop_committed: true`, `complete: false` | `STOPPED (INCOMPLETE)` — say how many of `max_iterations` ran |
+| `loop_stop_committed: true`, `complete: false` | `STOPPED (INCOMPLETE)` — say how many of `max_iterations` ran, and append `completion_reason` in parentheses: it says why the run stopped short |
 | otherwise | `IN PROGRESS` |
 
 `deft_state.json`'s `status` field mirrors that verdict (`running`, `stopped`, `complete`,
