@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to prepare and run PAIDF Cosmos Predict video generation pipelines, producing synthetic videos from input media samples within DEFT data-augmentation workflows. <br>
+Developers and engineers use this skill to prepare and run PAIDF Cosmos Predict video generation from DEFT media samples, producing synthetic videos with VLM captioning for data augmentation workflows. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,12 +25,12 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [NVIDIA TAO Skill Bank](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
+- [TAO Skill Bank Repository](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
 - [Agent Skills Open Standard](https://agentskills.io) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Configuration files, JSONL data files] <br>
+**Output Type(s):** [Files, Shell commands, Configuration instructions] <br>
 **Output Format:** [JSONL handoff files, YAML configuration, and Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -42,7 +42,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive) across 3 attempts per task in isolated k8s-sandbox pods. <br>
+1 evaluation task (1 positive), 3 attempts per task, evaluated in isolated k8s-sandbox pods. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -50,7 +50,7 @@ Reported benchmark dimensions: <br>
 - Correctness: Checks final-answer correctness against the reference answer. <br>
 - Discoverability: Checks whether the right skill was loaded when needed. <br>
 - Effectiveness: Checks whether the skill helped complete the user's goal and expected workflow. <br>
-- Efficiency: Checks whether the skill avoided wasted tool calls and token usage. <br>
+- Efficiency: Checks for wasted tool calls and token usage. <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
@@ -59,19 +59,19 @@ Underlying evaluation signals used in this run: <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
 - `skill_efficiency`: Tool-call productivity. <br>
-- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
+- `token_efficiency`: Actual uncached prompt plus completion usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.3% | 95.1% |
+| Overall | 94.4% | 76.4% |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 0.0% → 100.0% (+100.0 points) | 0.0% → 100.0% (+100.0 points) |
-| Discoverability | 100.0% | 95.0% |
-| Effectiveness | 11.1% → 100.0% (+88.9 points) | 16.7% → 83.3% (+66.6 points) |
-| Efficiency | 71.6% | 97.2% |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 60.0% → 70.0% (+10.0 points) |
+| Discoverability | 100.0% | 47.5% |
+| Effectiveness | 16.7% → 100.0% (+83.3 points) | 43.3% → 65.8% (+22.5 points) |
+| Efficiency | 71.8% | 98.4% |
 
 ## Skill Version(s): <br>
 0.1.0 (source: frontmatter) <br>
