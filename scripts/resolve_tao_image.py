@@ -35,15 +35,19 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SKILL_BANK,
         help="Path to the packaged TAO skill bank.",
     )
-    parser.add_argument(
+    subject = parser.add_mutually_exclusive_group(required=True)
+    subject.add_argument(
         "--model",
         "--network",
         dest="model",
-        required=True,
         help=(
             "Packaged model skill directory or network_arch, for example "
             "tao-finetune-cosmos-reason or cosmos-rl."
         ),
+    )
+    subject.add_argument(
+        "--application",
+        help="Packaged application skill directory, for example tao-run-dinov3-ssl-deft.",
     )
     parser.add_argument(
         "--action",
@@ -142,6 +146,33 @@ def load_model_metadata(
     )
 
 
+def load_application_metadata(
+    skill_bank: Path,
+    requested_application: str,
+) -> tuple[str, Path, dict[str, Any]]:
+    """Load one explicitly named packaged application contract."""
+    application = requested_application.strip()
+    metadata_path = (
+        skill_bank.expanduser()
+        / "skills"
+        / "applications"
+        / application
+        / "references"
+        / "skill_info.yaml"
+    )
+    if not metadata_path.is_file():
+        raise FileNotFoundError(
+            f"Application metadata not found for {application!r}: {metadata_path}"
+        )
+    metadata = load_yaml(metadata_path)
+    declared_name = str(metadata.get("name", application)).strip()
+    if declared_name and declared_name != application:
+        raise ValueError(
+            f"Application metadata name {declared_name!r} does not match {application!r}"
+        )
+    return application, metadata_path, metadata
+
+
 def resolve_image_key(skill_bank: Path, image: str) -> tuple[str, str]:
     """Resolve a versions.yaml image key to a URI when possible."""
     image = image.strip()
@@ -158,6 +189,56 @@ def resolve_image_key(skill_bank: Path, image: str) -> tuple[str, str]:
     if not isinstance(cursor, str) or not cursor.strip():
         return image, "unresolved_key"
     return cursor.strip(), "versions.yaml"
+
+
+def resolve_application_image(
+    skill_bank: Path,
+    application: str,
+    action: str,
+) -> dict[str, Any]:
+    """Resolve an application-owned action image without model fallback."""
+    resolved, metadata_path, metadata = load_application_metadata(
+        skill_bank, application
+    )
+    actions = metadata.get("actions", {})
+    if not isinstance(actions, dict) or action not in actions:
+        available = ", ".join(sorted(actions)) if isinstance(actions, dict) else "none"
+        raise ValueError(
+            f"Action {action!r} is not packaged for application {resolved!r}; "
+            f"available actions: {available}"
+        )
+    action_config = actions[action]
+    if not isinstance(action_config, dict):
+        raise ValueError(
+            f"skills/applications/{resolved}/references/skill_info.yaml "
+            f"actions.{action} must be an object"
+        )
+    candidates = [
+        ("action.container_image", action_config.get("container_image")),
+        ("action.image", action_config.get("image")),
+        ("application.container_image", metadata.get("container_image")),
+        ("application.image", metadata.get("image")),
+    ]
+    for source, declared in candidates:
+        if isinstance(declared, str) and declared.strip():
+            image, resolved_from = resolve_image_key(skill_bank, declared)
+            return {
+                "schema_version": 1,
+                "requested_application": application,
+                "application": resolved,
+                "action": action,
+                "image": image,
+                "declared_image": declared.strip(),
+                "resolved_from": resolved_from,
+                "source": source,
+                "metadata_path": str(metadata_path),
+                "confirmation_required": True,
+                "override_key": "image",
+            }
+    raise ValueError(
+        f"No container image found for application {resolved!r} action {action!r} "
+        f"in {metadata_path}"
+    )
 
 
 def resolve_image(
@@ -187,7 +268,12 @@ def resolve_image(
             backend_contract = contracts[selected_backend]
             action_config = backend_contract.get("actions", {}).get(action, {})
             candidates = [
-                ("backend.action.container_image", action_config.get("container_image") if isinstance(action_config, dict) else None),
+                (
+                    "backend.action.container_image",
+                    action_config.get("container_image")
+                    if isinstance(action_config, dict)
+                    else None,
+                ),
                 (
                     backend_contract.get(
                         "container_image_source", "backend.container_image"
@@ -196,7 +282,10 @@ def resolve_image(
                 ),
             ]
             for source, image in candidates:
-                if isinstance(image, dict) and image.get("policy") == "repository_derived":
+                if (
+                    isinstance(image, dict)
+                    and image.get("policy") == "repository_derived"
+                ):
                     return {
                         "schema_version": 4,
                         "requested_model": model,
@@ -282,19 +371,30 @@ def resolve_image(
 
 def format_text(data: dict[str, Any]) -> str:
     """Format resolved image metadata for launch prompts."""
-    lines = [
-            "TAO container image resolution:",
+    if data.get("application"):
+        subject = [
+            f"- requested application: {data['requested_application']}",
+            f"- application: {data['application']}",
+        ]
+    else:
+        subject = [
             f"- requested model: {data.get('requested_model', data['model'])}",
             f"- model: {data['model']} ({data['network_arch']})",
-            f"- action: {data['action']}",
-            f"- default image: {data['image'] or 'none; clean repository build required'}",
-            f"- declared image: {data['declared_image']}",
-            f"- source: {data['source']} in {data['metadata_path']}",
-            f"- resolved from: {data['resolved_from']}",
-            "- confirmation: ask the user to use this image or provide image=<override> before launch",
         ]
+    lines = [
+        "TAO container image resolution:",
+        *subject,
+        f"- action: {data['action']}",
+        f"- default image: {data['image'] or 'none; clean repository build required'}",
+        f"- declared image: {data['declared_image']}",
+        f"- source: {data['source']} in {data['metadata_path']}",
+        f"- resolved from: {data['resolved_from']}",
+        "- confirmation: ask the user to use this image or provide image=<override> before launch",
+    ]
     if data.get("backend"):
-        lines.insert(3, f"- backend: {data['backend']} ({data['backend_selection_reason']})")
+        lines.insert(
+            3, f"- backend: {data['backend']} ({data['backend_selection_reason']})"
+        )
         lines.insert(4, f"- backend contract: {data['backend_contract_path']}")
     return "\n".join(lines)
 
@@ -302,12 +402,16 @@ def format_text(data: dict[str, Any]) -> str:
 def main() -> int:
     """Run the image resolver."""
     args = parse_args()
-    data = resolve_image(
-        args.skill_bank,
-        args.model,
-        args.action,
-        backend=args.backend,
-        workload=args.workload,
+    data = (
+        resolve_application_image(args.skill_bank, args.application, args.action)
+        if args.application
+        else resolve_image(
+            args.skill_bank,
+            args.model,
+            args.action,
+            backend=args.backend,
+            workload=args.workload,
+        )
     )
     if args.format == "json":
         print(json.dumps(data, indent=2, sort_keys=True))
