@@ -2654,6 +2654,38 @@ case "$RUN_OUT" in
   *) notok "[G31] the existing path is printed for reuse" "output: $RUN_OUT" ;;
 esac
 
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA" --verify
+assert_rc 0 "[G31] --verify accepts an intact checkpoint on reuse"
+
+# The case --verify exists for: right length, wrong bytes. Reuse checks size only,
+# so without the flag this file is handed to prep as the checkpoint.
+"$PY" - "$G31/dest/pytorch_model.pth" <<'PYEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = bytearray(p.read_bytes())
+data[0] ^= 0xFF
+p.write_bytes(bytes(data))
+PYEOF
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA"
+assert_rc 0 "[G31] without --verify, a same-size corrupt file is reused"
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA" --verify
+assert_rc 1 "[G31] --verify refuses a same-size corrupt file"
+case "$RUN_OUT" in
+  *"right size but not the right checkpoint"*)
+    ok "[G31] the refusal says why size alone did not catch it" ;;
+  *) notok "[G31] the refusal says why size alone did not catch it" "output: $RUN_OUT" ;;
+esac
+[ -f "$G31/dest/pytorch_model.pth" ] \
+  && ok "[G31] the suspect file is left for the operator, not deleted" \
+  || notok "[G31] the suspect file is left for the operator, not deleted"
+
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "" --verify
+assert_rc 1 "[G31] --verify with no digest to compare against is refused"
+
 # A wrong digest is the case the .part dance exists for: the bad bytes must not
 # survive under the final name, and no partial file may be left behind either.
 rm -f "$G31/dest/pytorch_model.pth"
