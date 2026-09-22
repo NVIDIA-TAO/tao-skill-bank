@@ -1,13 +1,15 @@
 # Skill Benchmark: tao-run-deft-pas
 
-> ❌ **Overall verdict: FAIL — Publication blocked**
+> ✅ **Overall verdict: PASS — Recommended for publication**
 
-The skill should be reviewed before publication. Address the blocking findings below, then rerun Skill Evaluator.
+## Publication Recommendation
+
+Recommended for publication based on the completed evaluation evidence in this report.
 
 ## Evaluation Metadata
 
 - Skill: `tao-run-deft-pas`
-- Evaluation date: 2026-09-18
+- Evaluation date: 2026-09-22
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 14 evaluation tasks (14 positive)
@@ -33,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 78.0% — baseline ran, but no comparable score was available; uplift unavailable | 63.9% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 85.7% — baseline ran, but no comparable score was available; uplift unavailable | 62.5% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 24.4% → 81.1% (+56.7 points) | 33.9% → 70.9% (+37.0 points) |
-| Discoverability | 45.6% — baseline ran, but no comparable score was available; uplift unavailable | 3.4% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 22.8% → 65.4% (+42.6 points) | 25.1% → 45.6% (+20.5 points) |
-| Efficiency | 97.9% — baseline ran, but no comparable score was available; uplift unavailable | 99.5% — baseline ran, but no comparable score was available; uplift unavailable |
+| Correctness | 21.3% → 96.0% (+74.7 points) | 33.3% → 67.8% (+34.5 points) |
+| Discoverability | 54.7% — baseline ran, but no comparable score was available; uplift unavailable | 0.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 25.1% → 80.2% (+55.1 points) | 25.0% → 45.4% (+20.4 points) |
+| Efficiency | 97.8% — baseline ran, but no comparable score was available; uplift unavailable | 99.6% → 99.2% (-0.4 points) |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -52,37 +54,37 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 977,870 | 991,740 | N/A | N/A | skill 18/18; base 32/32 |
-| claude-code | tao-run-deft-pas-attached-loop-liveness | 32,255 | 31,824 | +431 | +1.35% | skill 1/1; base 1/1 |
-| claude-code | tao-run-deft-pas-basic | 70,284 | 89,362 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-run-deft-pas-bounded-nested-discovery | 71,724 | 101,369 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-run-deft-pas-clean-intake | 135,105 | 93,186 | +41,919 | +44.98% | skill 3/3; base 3/3 |
-| claude-code | tao-run-deft-pas-discovery-provenance | 123,476 | 100,117 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-run-deft-pas-explicit-root-ambiguity | 72,682 | 30,787 | +41,895 | +136.08% | skill 1/1; base 1/1 |
-| claude-code | tao-run-deft-pas-history-recovery-plan | 70,425 | 32,069 | +38,356 | +119.60% | skill 1/1; base 1/1 |
-| claude-code | tao-run-deft-pas-metric-contract | 71,679 | 34,272 | +37,407 | +109.15% | skill 1/1; base 1/1 |
-| claude-code | tao-run-deft-pas-plain-language-routing | 29,319 | 86,999 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | All cases | 870,435 | 924,669 | N/A | N/A | skill 15/15; base 30/30 |
+| claude-code | tao-run-deft-pas-attached-loop-liveness | 31,568 | 64,088 | N/A | N/A | skill 1/1; base 2/2 |
+| claude-code | tao-run-deft-pas-basic | 70,820 | 89,772 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-run-deft-pas-bounded-nested-discovery | 71,536 | 33,777 | +37,759 | +111.79% | skill 1/1; base 1/1 |
+| claude-code | tao-run-deft-pas-clean-intake | 101,365 | 94,592 | N/A | N/A | skill 2/2; base 3/3 |
+| claude-code | tao-run-deft-pas-discovery-provenance | 123,679 | 97,890 | N/A | N/A | skill 1/1; base 3/3 |
+| claude-code | tao-run-deft-pas-explicit-root-ambiguity | 71,138 | 31,453 | +39,685 | +126.17% | skill 1/1; base 1/1 |
+| claude-code | tao-run-deft-pas-history-recovery-plan | 69,565 | 32,747 | +36,818 | +112.43% | skill 1/1; base 1/1 |
+| claude-code | tao-run-deft-pas-metric-contract | 71,045 | 35,159 | +35,886 | +102.07% | skill 1/1; base 1/1 |
+| claude-code | tao-run-deft-pas-plain-language-routing | 29,319 | 86,997 | N/A | N/A | skill 1/1; base 3/3 |
 | claude-code | tao-run-deft-pas-plain-language-routing-kpi-paraphrase | 29,350 | 87,090 | N/A | N/A | skill 1/1; base 3/3 |
 | claude-code | tao-run-deft-pas-plain-language-routing-no-model-name | 29,312 | 86,976 | N/A | N/A | skill 1/1; base 3/3 |
 | claude-code | tao-run-deft-pas-plain-language-routing-stage-paraphrase | 29,347 | 87,081 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-run-deft-pas-resume-plan | 69,226 | 96,158 | N/A | N/A | skill 1/1; base 3/3 |
-| claude-code | tao-run-deft-pas-virtualenv-contract | 143,686 | 34,450 | N/A | N/A | skill 3/3; base 1/1 |
-| codex | All cases | 328,379 | 450,310 | N/A | N/A | skill 22/22; base 33/33 |
-| codex | tao-run-deft-pas-attached-loop-liveness | 14,095 | 13,534 | +561 | +4.15% | skill 1/1; base 1/1 |
-| codex | tao-run-deft-pas-basic | 13,797 | 40,589 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | tao-run-deft-pas-bounded-nested-discovery | 43,071 | 41,727 | +1,344 | +3.22% | skill 3/3; base 3/3 |
-| codex | tao-run-deft-pas-clean-intake | 41,820 | 40,774 | +1,046 | +2.57% | skill 3/3; base 3/3 |
-| codex | tao-run-deft-pas-discovery-provenance | 43,113 | 41,805 | +1,308 | +3.13% | skill 3/3; base 3/3 |
-| codex | tao-run-deft-pas-explicit-root-ambiguity | 14,023 | 27,319 | N/A | N/A | skill 1/1; base 2/2 |
-| codex | tao-run-deft-pas-history-recovery-plan | 14,227 | 13,762 | +465 | +3.38% | skill 1/1; base 1/1 |
-| codex | tao-run-deft-pas-metric-contract | 15,800 | 14,604 | +1,196 | +8.19% | skill 1/1; base 1/1 |
-| codex | tao-run-deft-pas-plain-language-routing | 13,466 | 39,666 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | tao-run-deft-pas-plain-language-routing-kpi-paraphrase | 13,524 | 39,867 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | tao-run-deft-pas-plain-language-routing-no-model-name | 13,477 | 39,779 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | tao-run-deft-pas-plain-language-routing-stage-paraphrase | 13,477 | 39,918 | N/A | N/A | skill 1/1; base 3/3 |
-| codex | tao-run-deft-pas-resume-plan | 42,766 | 14,150 | N/A | N/A | skill 3/3; base 1/1 |
-| codex | tao-run-deft-pas-virtualenv-contract | 31,723 | 42,816 | N/A | N/A | skill 1/1; base 3/3 |
-| ALL AGENTS | Dataset aggregate | 1,306,249 | 1,442,050 | N/A | N/A | skill 40/40; base 65/65 |
+| claude-code | tao-run-deft-pas-resume-plan | 69,971 | 30,946 | +39,025 | +126.11% | skill 1/1; base 1/1 |
+| claude-code | tao-run-deft-pas-virtualenv-contract | 72,420 | 66,101 | N/A | N/A | skill 1/1; base 2/2 |
+| codex | All cases | 327,187 | 451,025 | N/A | N/A | skill 23/23; base 33/33 |
+| codex | tao-run-deft-pas-attached-loop-liveness | 13,906 | 13,518 | +388 | +2.87% | skill 1/1; base 1/1 |
+| codex | tao-run-deft-pas-basic | 13,855 | 40,752 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-run-deft-pas-bounded-nested-discovery | 43,325 | 28,212 | N/A | N/A | skill 3/3; base 2/2 |
+| codex | tao-run-deft-pas-clean-intake | 42,332 | 41,026 | +1,306 | +3.18% | skill 3/3; base 3/3 |
+| codex | tao-run-deft-pas-discovery-provenance | 28,846 | 41,977 | N/A | N/A | skill 2/2; base 3/3 |
+| codex | tao-run-deft-pas-explicit-root-ambiguity | 14,109 | 13,584 | +525 | +3.86% | skill 1/1; base 1/1 |
+| codex | tao-run-deft-pas-history-recovery-plan | 14,226 | 13,998 | +228 | +1.63% | skill 1/1; base 1/1 |
+| codex | tao-run-deft-pas-metric-contract | 15,569 | 14,720 | +849 | +5.77% | skill 1/1; base 1/1 |
+| codex | tao-run-deft-pas-plain-language-routing | 13,532 | 39,666 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-run-deft-pas-plain-language-routing-kpi-paraphrase | 13,489 | 39,890 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-run-deft-pas-plain-language-routing-no-model-name | 13,463 | 39,720 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-run-deft-pas-plain-language-routing-stage-paraphrase | 13,481 | 39,921 | N/A | N/A | skill 1/1; base 3/3 |
+| codex | tao-run-deft-pas-resume-plan | 43,233 | 41,577 | +1,656 | +3.98% | skill 3/3; base 3/3 |
+| codex | tao-run-deft-pas-virtualenv-contract | 43,821 | 42,464 | +1,357 | +3.20% | skill 3/3; base 3/3 |
+| ALL AGENTS | Dataset aggregate | 1,197,622 | 1,375,694 | N/A | N/A | skill 38/38; base 63/63 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -90,36 +92,30 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **FAILED** | 11 validator(s); 128 finding(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 122 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED WITH OBSERVATIONS** | 2 validator(s); 4 finding(s) |
 | Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 14 task(s) |
-
-## Blocking Findings
-
-- **MEDIUM** BANDIT/B614:pytorch_load: Use of unsafe PyTorch load (CWE-502) (`skills/applications/tao-run-deft-pas/scripts/pas_deft/utils.py:652`)
-- **MEDIUM** BANDIT/B614:pytorch_load: Use of unsafe PyTorch load (CWE-502) (`skills/applications/tao-run-deft-pas/scripts/pas_deft/utils.py:658`)
-- **MEDIUM** BANDIT/B108:hardcoded_tmp_directory: Probable insecure usage of temp file/directory. (CWE-377) (`skills/applications/tao-run-deft-pas/scripts/run_deft_action.py:333`)
 
 ## Findings and Observations
 
 <details>
 <summary>Show detailed findings and successful checks</summary>
 
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across scripts/audit_deft_run.py and scripts/commit_stage.py:
+  "_results_root_for_scope()" in scripts/audit_deft_run.py (lines 607-613)
+  vs "_results_root_for_scope()" in scripts/commit_stage.py (lines 347-353) (`scripts/audit_deft_run.py:607`)
 - **HIGH** DUPLICATE/duplicate: Duplicate content found across scripts/init_deft_state.py and scripts/prepare_deft_config.py and scripts/run_deft_container.py:
   "_workspace_child()" in scripts/init_deft_state.py (lines 123-131)
   vs "_workspace_child()" in scripts/prepare_deft_config.py (lines 74-82)
   vs "_workspace_child()" in scripts/run_deft_container.py (lines 122-130) (`scripts/init_deft_state.py:123`)
 - **HIGH** DUPLICATE/duplicate: Duplicate content found across scripts/deft_action_contract.py and scripts/run_deft_container.py:
-  "launch_label()" in scripts/deft_action_contract.py (lines 263-275)
-  vs "_launch_label()" in scripts/run_deft_container.py (lines 407-419) (`scripts/deft_action_contract.py:263`)
-- **HIGH** DUPLICATE/duplicate: Duplicate content found across scripts/audit_deft_run.py and scripts/commit_stage.py:
-  "_results_root_for_scope()" in scripts/audit_deft_run.py (lines 607-613)
-  vs "_results_root_for_scope()" in scripts/commit_stage.py (lines 347-353) (`scripts/audit_deft_run.py:607`)
-- **HIGH** DUPLICATE/duplicate: Duplicate content found across scripts/deft_action_contract.py and scripts/run_deft_container.py:
   "fresh_output_path()" in scripts/deft_action_contract.py (lines 125-141)
   vs "_fresh_output_path()" in scripts/run_deft_container.py (lines 82-103) (`scripts/deft_action_contract.py:125`)
-- **MEDIUM** BANDIT/B614:pytorch_load: Use of unsafe PyTorch load (CWE-502) (`skills/applications/tao-run-deft-pas/scripts/pas_deft/utils.py:652`)
-- 127 additional finding(s) are available in the full evaluation artifacts.
+- **HIGH** DUPLICATE/duplicate: Duplicate content found across scripts/deft_action_contract.py and scripts/run_deft_container.py:
+  "launch_label()" in scripts/deft_action_contract.py (lines 263-275)
+  vs "_launch_label()" in scripts/run_deft_container.py (lines 407-419) (`scripts/deft_action_contract.py:263`)
+- **MEDIUM** QUALITY/quality_correctness: No documented scripts in table format (`skills/applications/tao-run-deft-pas/SKILL.md`)
+- 121 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 

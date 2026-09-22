@@ -157,7 +157,7 @@ def verify_captioning_base_url(base_url: str, timeout_seconds: float = 5.0) -> N
 
     models_url = models_probe_url(base_url)
     try:
-        with urllib.request.urlopen(models_url, timeout=timeout_seconds) as response:
+        with urllib.request.urlopen(models_url, timeout=timeout_seconds) as response:  # nosec B310 - https endpoint from skill config
             if 200 <= response.status < 500:
                 return
             detail = f"HTTP {response.status}"

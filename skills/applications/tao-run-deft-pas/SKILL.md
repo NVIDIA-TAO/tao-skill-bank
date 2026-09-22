@@ -15,17 +15,18 @@ description: >
 license: Apache-2.0 AND CC-BY-4.0
 compatibility: Requires one supported TAO execution platform (Docker, SLURM, Kubernetes, Brev, or virtualenv), accessible NVIDIA GPUs, the two PAS dataset export archives, and Python 3.9+ for control; virtualenv execution additionally requires the documented CPython 3.12 pyt and ds profiles.
 metadata:
+  tags:
+  - application
+  - workflow
+  - deft
+  - pas
+  - clip
+  - retrieval
+  - loop
   author: NVIDIA Corporation
   version: "0.4.0"
 allowed-tools: Read Bash Write
-tags:
-- application
-- workflow
-- deft
-- pas
-- clip
-- retrieval
-- loop
+
 ---
 
 # PAS DEFT Workflow
