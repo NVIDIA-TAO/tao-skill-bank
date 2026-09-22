@@ -72,11 +72,11 @@
     "question": "A user says: \"Use the tao-run-deft-pas skill to plan a PAS DEFT run.\" Identify the applicable skill and outline its documented workflow. This is a planning evaluation: do not run commands, scripts, containers, installs, web searches, audits, or any other tools.",
     "expected_skill": "tao-run-deft-pas",
     "expected_script": null,
-    "ground_truth": "Identify tao-run-deft-pas and describe its self-contained, disk-backed workflow on Docker, SLURM, Kubernetes, Brev, or virtualenv: select one platform when none was supplied; perform read-only preflight and one approval boundary; deterministic config/state initialization; dataset setup and one-time pool embedding; zero-shot evaluation; a bounded gap, mining, history-selection, optional-visualization, train, and evaluate loop; platform four-verb job records; validated commits; final audit and deterministic report. The customer supplies data archives, not an implementation checkout. Do not execute anything.",
+    "ground_truth": "Identify tao-run-deft-pas and describe its self-contained, disk-backed workflow on Docker, SLURM, Kubernetes, Brev, or virtualenv: select one platform when none was supplied; perform read-only preflight that computes both archive SHA-256 identities and one approval boundary; deterministic config/state initialization that freezes those identities; dataset setup and one-time pool embedding; zero-shot evaluation; a bounded gap, mining, history-selection, optional-visualization, train, and evaluate loop; platform four-verb job records; validated commits; final audit and deterministic report. The customer supplies data archives, not an implementation checkout. Do not execute anything.",
     "expected_behavior": [
       "Identifies tao-run-deft-pas as the relevant self-contained skill and does not request an implementation checkout",
       "Names all five supported TAO platforms and asks once for a platform because none was supplied, without defaulting to Docker",
-      "Outlines read-only preflight, one approval boundary, deterministic initialization, dataset_setup, pool_embed, zero-shot evaluate, and the bounded per-iteration loop",
+      "Outlines read-only preflight with approved archive content identities, one approval boundary, deterministic initialization, dataset_setup, pool_embed, zero-shot evaluate, and the bounded per-iteration loop",
       "Explains that each stage is artifact-validated before a canonical state commit and that completion requires a successful require-complete audit",
       "Does not run commands, scripts, containers, installs, web searches, audits, or other tools"
     ]

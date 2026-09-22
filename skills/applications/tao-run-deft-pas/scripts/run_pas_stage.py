@@ -25,6 +25,7 @@ import tempfile
 import time
 from typing import Any
 
+from archive_contract import verify_archive_bindings
 from checkpoint_contract import (
     METADATA_RELPATH,
     checkpoint_lineage_started_ns,
@@ -150,13 +151,21 @@ def _training_checkpoint(cfg, number: int) -> str:
 
 
 def dataset_materialize(args: argparse.Namespace) -> dict[str, Any]:
+    results = _results(args.results_dir)
+    state = _state(results)
+    config = state.get("config")
+    if not isinstance(config, dict):
+        raise ValueError("state.config must be an object")
+    # Recheck after archive extraction/rebuild and before accepting any derived
+    # dataset outputs. This closes the gap between the pre-stage audit and use.
+    verify_archive_bindings(config)
+
     from pas_deft.data_mining import (
         convert_clip_image_list_to_parquet,
         materialize_pas_eval_split,
         materialize_pas_pool_split,
     )
 
-    results = _results(args.results_dir)
     cfg = _config(args.deft_config, results)
     splits = results / "pas_splits"
     eval_list = splits / "eval_list.txt"

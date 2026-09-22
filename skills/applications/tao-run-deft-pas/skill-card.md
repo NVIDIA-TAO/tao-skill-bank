@@ -17,7 +17,7 @@ Global <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: GPU/container cost, interrupted multi-stage runs, stale artifacts, data leakage, or incorrect metric evidence can make an iterative result unreliable. <br>
-Mitigation: The skill uses one explicit approval boundary before side effects, a bounded loop, deterministic config and platform-neutral action bundles, native job-record plus exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. Credentials are inherited only from the launching process environment; credential files are never opened or sourced, and values are never printed, inspected, or persisted. <br>
+Mitigation: The skill uses one explicit approval boundary before side effects, SHA-256 content identities for both required archives, a bounded loop, deterministic config and platform-neutral action bundles, native job-record plus exact argv/digest and fresh-output evidence, current-attempt checkpoint provenance, evaluation-split leakage checks, immutable metric contracts, journaled canonical state commits, fail-closed audits, and bounded recovery. Credentials are inherited only from the launching process environment; credential files are never opened or sourced, and values are never printed, inspected, or persisted. <br>
 
 ## Reference(s): <br>
 - [Pipeline and State](references/pipeline-and-state.md) <br>

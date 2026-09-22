@@ -90,7 +90,8 @@ Use two intake phases:
 After required intake is resolved, discover and validate:
 
 - workspace and either a new `${RESULTS_DIR}` or one existing run to resume;
-- `images_raw.tar` and `meta.tar.gz`; `SHA256SUMS` is optional;
+- `images_raw.tar` and `meta.tar.gz`, including the SHA-256 identity computed
+  during read-only discovery; publisher-provided `SHA256SUMS` is optional;
 - `max_iterations`, or a user-supplied time budget from which an iteration
   limit can be estimated;
 - metric name, query type, operator, and optional target;
@@ -138,7 +139,8 @@ file and warn about group/other readability.
 
 Show the summary defined in `references/preflight.md`, including every
 parameter and source, planned file creation/extraction, image pulls, estimated
-runtime, and resume status. Wait for explicit approval before registry login or
+runtime, archive content digests, and resume status. Wait for explicit approval
+before registry login or
 pulls, platform submit, package installation, archive extraction, config/state
 creation, or any write under the workspace.
 
