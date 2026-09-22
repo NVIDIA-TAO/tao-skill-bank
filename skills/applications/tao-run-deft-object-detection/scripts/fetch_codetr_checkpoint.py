@@ -85,6 +85,13 @@ def download(url: str, target: Path, expect_sha: str) -> None:
     part = target.with_suffix(target.suffix + ".part")
     digest = hashlib.sha256()
     written = 0
+    # Anything that is not a completed, verified transfer leaves nothing behind. A
+    # partial file is 2.8 GiB of disk that the next run's free-space check has to
+    # account for, and it is the state this whole .part dance exists to avoid --
+    # so the cleanup belongs in `finally`, not on the one error class that happens
+    # to be named here. A read timeout, IncompleteRead, a reset connection and
+    # Ctrl-C all reach it.
+    moved = False
     try:
         with urllib.request.urlopen(url, timeout=120) as response:
             declared = response.headers.get("Content-Length")
@@ -108,18 +115,20 @@ def download(url: str, target: Path, expect_sha: str) -> None:
                               end="", file=sys.stderr, flush=True)
         if declared:
             print(file=sys.stderr)
-    except urllib.error.URLError as exc:
-        part.unlink(missing_ok=True)
-        raise RuntimeError(f"download failed: {exc}") from exc
 
-    if expect_sha and digest.hexdigest() != expect_sha:
-        part.unlink(missing_ok=True)
-        raise ValueError(
-            f"digest mismatch: got {digest.hexdigest()}, expected {expect_sha}. The file "
-            f"was not kept. A checkpoint whose weights do not match the pinned "
-            f"architecture loads nothing and still exits 0, so this is refused rather "
-            f"than warned about")
-    part.replace(target)
+        if expect_sha and digest.hexdigest() != expect_sha:
+            raise ValueError(
+                f"digest mismatch: got {digest.hexdigest()}, expected {expect_sha}. The "
+                f"file was not kept. A checkpoint whose weights do not match the pinned "
+                f"architecture loads nothing and still exits 0, so this is refused rather "
+                f"than warned about")
+        part.replace(target)
+        moved = True
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"download failed: {exc}") from exc
+    finally:
+        if not moved:
+            part.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -150,8 +159,11 @@ def main() -> int:
             return 0
 
         dest.mkdir(parents=True, exist_ok=True)
+        # EXPECT_BYTES describes the published checkpoint, so it only bounds the
+        # default download. A --url pointing somewhere else has no known size, and
+        # demanding 3 GiB of free space for it would refuse transfers that fit.
         free = shutil.disk_usage(dest).free
-        if free < EXPECT_BYTES * 1.1:
+        if args.url == URL and free < EXPECT_BYTES * 1.1:
             raise ValueError(
                 f"{dest} has {_human(free)} free; the checkpoint needs "
                 f"{_human(EXPECT_BYTES)} plus room for the partial file")

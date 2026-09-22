@@ -18,7 +18,7 @@ mkdir -p "$PREP_DIR"
 
 export CLASSES_YAML="<path to the run's classes.yaml>"
 export POOL_IMAGES="<config.pool_images>"   # the raw images this prep labels
-export CODETR_CHECKPOINT="<from Pre-Flight check 7>"  # the pseudo-labeller's weights
+export CODETR_CHECKPOINT="<config.codetr_checkpoint>"  # the pseudo-labeller's weights
 export CODETR_CLASSMAP="<config.codetr_classmap>"     # its own vocabulary, one per line
 export CODETR_SPEC="${PREP_DIR}/codetr_inference.yaml"
 ```
