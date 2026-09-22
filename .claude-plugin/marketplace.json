@@ -34,6 +34,7 @@
         "./skills/applications/tao-run-deft-aoi",
         "./skills/applications/tao-run-deft-aoi-cosmos3",
         "./skills/applications/tao-run-deft-pas",
+        "./skills/applications/tao-run-dinov3-ssl-deft",
         "./skills/applications/tao-run-deft-cr-its-mining",
         "./skills/applications/tao-validate-recipe-transfer",
         "./skills/applications/tao-run-deft-object-detection",
