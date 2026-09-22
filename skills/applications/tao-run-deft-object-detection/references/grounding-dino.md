@@ -319,7 +319,16 @@ That is the reason to keep it at `0.0`. The labels then carry the full curve, an
   --training-spec "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
   --duration-sec "$(( SECONDS - started ))" \
   --summary "trained iter${N}: <epochs> epochs, <N> data sources"
+```
 
+Use that `--summary` as written. Training prints `val_mAP` and `val_mAP50` as it runs;
+do not carry them into the summary. They score the model against the validation split of
+the staged mined data, whose labels are Co-DETR pseudo-labels, so they measure agreement
+with the teacher rather than accuracy — and a summary is rendered into the report, where
+that sits beside the KPI mAP and reads like a competing accuracy figure. The loop's
+accuracy metric comes from `kpi_analyze` alone.
+
+```bash
 # inference
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/commit_stage.py \
   --results-dir "${RESULTS_DIR}" --iter-label "<phase>" --stage inference \
