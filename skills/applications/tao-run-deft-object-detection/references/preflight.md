@@ -153,6 +153,11 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    not match the pinned architecture loads no weights, exits 0, prints
    `Execution status: PASS` and writes one empty label file per image.
 
+   A checkpoint already at `--dest` is reused after a **size** check, which catches the
+   truncated file an interrupted transfer leaves. Add `--verify` to check its SHA-256 as
+   well when the file is suspect — copied from another host, or left by a run whose
+   pseudo-labels came out empty. It is off by default because it reads the full 2.8 GiB.
+
 8. **Train-spec template.** Must exist and parse as YAML, and `dataset.train_data_sources` must be a **list** (Grounding DINO ODVG shape). A mapping there means the spec is COCO-shaped and this workflow cannot append to it.
 
    **Seed training data is optional.** Unlike the AOI loop — where ChangeNet must learn the task from a mandatory seed set — Grounding DINO is zero-shot capable and can start cold. Inspect the list and branch:
