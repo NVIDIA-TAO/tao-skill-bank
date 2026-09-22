@@ -12,6 +12,7 @@ Run every bundled script through `scripts/deft_python.sh`. Resolve every path ar
 | `init_deft_state.py` | Write a fresh `deft_state.json`. Atomic; refuses to overwrite without `--force`. Fresh runs only. | `--results-dir --workspace --max-iterations ...` |
 | `commit_stage.py` | The only supported state writer. Validates the ordered transition, updates state, appends one log event, audits, rolls back on failure. | `--results-dir --iter-label --stage --summary [artifact flags] [--status ok\|error]` |
 | `audit_deft_run.py` | Read-only cross-check of state, log, and artifacts. Prints the safe next action and `read_before_action`. | `--results-dir [--require-terminal] [--require-complete]` |
+| `render_report.py` | Render `DEFT_Loop_Report.md` from disk state. Called automatically by `init_deft_state.py` and by every accepted commit; run it directly only to refresh out of band. | `--results-dir [--out] [--require-terminal]` |
 
 ## Pipeline glue scripts
 
@@ -79,29 +80,51 @@ must be derived from the run's classes, never pinned.
 
 If no reliable start time was captured, omit `--duration-sec`; it records `0`. Do not invent a duration.
 
-## Agents
+## Reporting
 
-| Agent | Purpose | Invoke when |
-|---|---|---|
-| `agents/reporter.md` | Render `results/DEFT_Loop_Report.md` from disk state. Atomic write; no HTML template. | After each completed iteration (`trigger="after-iteration"`) and at loop end (`trigger="loop-end"`). |
+`results/DEFT_Loop_Report.md` is rendered by `scripts/render_report.py`, not by an
+agent. **Do not spawn a subagent for it and do not compose it by hand.**
 
-Spawn via the Task tool, passing paths only — the agent reads disk as the single source of truth:
+`init_deft_state.py` writes it before any stage has run, and every accepted
+`commit_stage.py` call re-renders it as a post-commit hook, so it is current after
+each stage rather than after each iteration. The hook is deliberately outside the
+commit transaction: a rendering failure prints a warning and leaves the commit
+standing, because presentation must never roll back a GPU stage or block the state
+machine.
 
+Rendering deterministically is also what makes the report reachable from a runtime
+with no subagent tool. Every stage of this loop already has a fallback that needs
+nothing but `Bash` — a mapped skill falls back to the overlay's documented
+`docker run` — and reporting is now the same.
+
+The renderer reads the audit verdict, `deft_state.json`, `loop_log.jsonl`, each
+phase's `kpi_summary.json` (falling back to `kpi_calc.csv` plus `kpi_analyze.log`),
+and each iteration's mining summary and staging report. Two of its rules matter
+when reading the output:
+
+- **The only mAP in the report is the KPI mAP**, scored against the evaluation set.
+  A `train` summary that improvised from the training container's stdout can carry
+  `val_mAP`/`val_mAP50`, which score agreement with the Co-DETR pseudo-labels on the
+  mined-data validation split rather than accuracy; the timeline drops them. They
+  remain in `loop_log.jsonl`.
+- **A number that is not on disk is left out**, never guessed. A phase whose CSV has
+  no `class_name` column and no committed `kpi_analyze.log` reports its mAP alone
+  and says the per-class breakdown was unavailable, because row order is not a
+  class order.
+
+To re-render by hand, or after fixing whatever made the hook warn:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/render_report.py \
+  --results-dir "${RESULTS_DIR}"
 ```
-Task(
-  description="Render DEFT OD report",
-  subagent_type="general-purpose",
-  prompt=(
-    f"Read {skill_root}/agents/reporter.md and follow its instructions exactly.\n"
-    f"Inputs:\n"
-    f"  results_dir = {RESULTS_DIR}\n"
-    f"  skill_root  = {skill_root}\n"
-    f"  trigger     = after-iteration\n"
-  ),
-)
-```
 
-Never render the report inline in the parent — the agent exists so an end-of-loop render survives a saturated parent context.
+Add `--require-terminal` for an end-of-loop render: it refuses to render until
+`loop_stop` is committed, so a hard stop that has not been finalized cannot be
+presented as a finished run.
+
+`agents/reporter.md` remains only as a compatibility wrapper for a runtime that
+invokes the legacy agent by name; it shells out to the same script.
 
 ## Stage Reference Modules
 

@@ -103,6 +103,7 @@ from deft_stages import (  # noqa: E402
     write_state_atomic,
 )
 from audit_deft_run import EXTRA_ARTIFACT_FIELDS  # noqa: E402
+from render_report import render as render_loop_report  # noqa: E402
 
 AUDIT_SCRIPT = Path(__file__).resolve().parent / "audit_deft_run.py"
 
@@ -1013,6 +1014,17 @@ def main() -> int:
                 )
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2 if dirty else 1
+
+    # Rendering is a post-commit hook, deliberately outside the transaction above.
+    # The commit is already accepted by the audit and durable on disk; a failure to
+    # present it must be visible but must not roll back a GPU stage that ran for an
+    # hour, nor leave the caller unable to advance the state machine.
+    try:
+        render_loop_report(results_dir, report)
+    except Exception as exc:  # noqa: BLE001 - presentation is not transactional
+        print(f"WARNING: the commit succeeded but the loop report was not re-rendered "
+              f"({type(exc).__name__}: {exc}); re-run render_report.py to refresh it",
+              file=sys.stderr)
 
     for flag in unavailable:
         print(f"WARNING: {flag} was not on disk; not recorded (status=error)", file=sys.stderr)
