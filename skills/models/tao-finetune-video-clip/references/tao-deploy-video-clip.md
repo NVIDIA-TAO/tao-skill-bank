@@ -7,7 +7,7 @@ Supported actions: `gen_trt_engine`, `evaluate`, `inference`.
 ## Quick Start
 
 ```bash
-VIDEO_CLIP_DEPLOY_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-47-multiarch  # versions-key: images.tao_toolkit.video_clip_deploy
+VIDEO_CLIP_DEPLOY_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch  # versions-key: images.tao_toolkit.deploy
 ```
 
 Copy the matching template for each action:
