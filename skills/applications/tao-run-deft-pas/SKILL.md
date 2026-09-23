@@ -80,10 +80,13 @@ Use two intake phases:
    `tao-run-deft-pas`; never offer AOI or unidentified DEFT state as PAS.
    Do not validate large archives to EOF or inspect platforms, images, GPUs, or
    credentials yet.
-2. If `max_iterations` or a time budget is absent, ask one consolidated
-   question for that required value and any genuinely ambiguous path/run
-   choice. State the documented defaults and that a complete read-only
-   preflight plus approval summary follows. Do not ask whether the user wants
+2. If `max_iterations` or a time budget is absent, or the fine-tuning method
+   is absent, ask one consolidated question for the missing required values
+   and any genuinely ambiguous path/run choice. The fine-tuning portion must
+   be one mutually exclusive question:
+   `Fine-tuning method: LoRA (default) or full-parameter SFT?` State the
+   documented defaults and that a complete read-only preflight plus approval
+   summary follows. Do not ask whether the user wants
    optional KPI, authentication, or parameter overrides; apply their defaults
    unless the prompt already supplies an override.
 
@@ -93,6 +96,8 @@ After required intake is resolved, discover and validate:
 - `images_raw.tar` and `meta.tar.gz`; `SHA256SUMS` is optional;
 - `max_iterations`, or a user-supplied time budget from which an iteration
   limit can be estimated;
+- one fine-tuning method choice: LoRA by default, or full-parameter SFT when
+  explicitly selected;
 - metric name, query type, operator, and optional target;
 - whether the deployment requires authenticated Hugging Face model access;
 - selected TAO execution platform and its platform-specific prerequisites;
@@ -109,6 +114,15 @@ unspecified values and must be identified as defaults in the pre-flight
 summary. `max_iterations` has no default. An absent metric target means an
 ungated run that stops after `max_iterations`. Hugging Face token forwarding
 defaults to disabled because the bundled model is public.
+
+The materializer defaults `--finetuning-method` to `lora`. LoRA is enabled by
+the nested `peft.enabled: true`, `peft.method: lora`, and per-tower `vision`
+and `text` adapter blocks; SigLIP2 attention targets are `q_proj`, `k_proj`,
+`v_proj`, and `out_proj`. Full-parameter SFT is selected with
+`--finetuning-method sft`: it writes `peft.enabled: false` and makes both
+encoders trainable. Never represent encoder freezing as LoRA or silently fall
+back between methods. Probe a changed image's schema before approval and stop
+if it does not expose this complete PEFT contract.
 
 The authoritative parameter contract is the nested dataclass schema in
 `scripts/pas_deft/config.py`, adapted from the PAS reference notebook. Read

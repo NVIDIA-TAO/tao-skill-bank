@@ -12,7 +12,9 @@ and synchronizes one CUDA tensor on every requested visible device.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
+import pathlib
 import shutil
 import sys
 from typing import Any, Callable
@@ -70,10 +72,57 @@ def probe_runtime(
     }
 
 
+def probe_clip_lora_contract(config_type: Any, lora_module: Any) -> dict[str, Any]:
+    """Verify the CLIP schema plus adapter/checkpoint implementation contract."""
+    peft = dataclasses.asdict(config_type().peft)
+    required_targets = ["q_proj", "k_proj", "v_proj", "out_proj"]
+    if peft.get("method") != "lora" or not isinstance(peft.get("enabled"), bool):
+        raise RuntimeError("CLIP PEFT schema lacks the LoRA enable/method contract")
+    for tower in ("vision", "text"):
+        block = peft.get(tower, {})
+        required_fields = (
+            "mode",
+            "target_modules",
+            "num_last_blocks",
+            "rank",
+            "alpha",
+            "dropout",
+        )
+        missing = [key for key in required_fields if key not in block]
+        if missing or block.get("target_modules") != required_targets:
+            raise RuntimeError(f"CLIP PEFT {tower} contract is incomplete")
+    symbols = (
+        "LoRALinear",
+        "inject_lora",
+        "merge_lora",
+        "_register_lora_checkpoint_compatibility",
+    )
+    missing_symbols = [
+        name
+        for name in symbols
+        if name != "LoRALinear" and not callable(getattr(lora_module, name, None))
+    ]
+    if not isinstance(getattr(lora_module, "LoRALinear", None), type):
+        missing_symbols.append("LoRALinear")
+    if missing_symbols:
+        raise RuntimeError(
+            "CLIP LoRA runtime lacks: "
+            + ", ".join(sorted(set(missing_symbols)))
+        )
+    return {
+        "schema": peft,
+        "runtime_symbols": list(symbols),
+        "checkpoint_behavior": "register-and-merge",
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--min-gpus", type=int, required=True)
     parser.add_argument("--require-cli", action="append", default=[])
+    parser.add_argument("--require-clip-lora", action="store_true")
+    parser.add_argument("--image-ref")
+    parser.add_argument("--output", type=pathlib.Path)
     return parser
 
 
@@ -87,12 +136,23 @@ def main() -> int:
             required_clis=args.require_cli,
             torch_module=torch,
         )
+        if args.require_clip_lora:
+            if not args.image_ref or args.output is None:
+                raise ValueError("--require-clip-lora requires --image-ref and --output")
+            from nvidia_tao_pytorch.config.clip.default_config import CLIPExperimentConfig
+            from nvidia_tao_pytorch.multimodal.clip.model import lora
+
+            result["image_ref"] = args.image_ref
+            result["clip_lora"] = probe_clip_lora_contract(CLIPExperimentConfig, lora)
     except Exception as exc:
         print(
             f"PAS_CUDA_PROBE=FAIL reason={type(exc).__name__}: {exc}",
             file=sys.stderr,
         )
         return 1
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print("PAS_CUDA_PROBE=PASS " + json.dumps(result, sort_keys=True))
     return 0
 

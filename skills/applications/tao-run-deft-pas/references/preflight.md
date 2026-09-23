@@ -112,8 +112,10 @@ questions:
    Never resolve ambiguity by search order, directory name, modification time,
    or archive size.
 
-If `max_iterations` or a time budget is absent, stop here and ask one
-consolidated question for that value plus any ambiguous archive/run selection.
+If `max_iterations` or a time budget is absent, or the fine-tuning method is
+absent, stop here and ask one consolidated question for the missing values plus
+any ambiguous archive/run selection. Ask the method as one mutually exclusive
+question: `Fine-tuning method: LoRA (default) or full-parameter SFT?`
 State the defaults below and explain that full read-only discovery and the one
 approval summary come next. Do not ask whether the user wants a KPI target,
 authenticated Hugging Face access, or other overrides; their documented
@@ -148,7 +150,7 @@ Run this section only after required intake is resolved.
    a blocker; `rebuild.py` verification remains mandatory.
 4. Read the selected platform skill and run its read-only access preflight.
    For Docker, SLURM, Kubernetes, and Brev, also run the shared checker with
-   the exact platform, pinned image, and approved GPU requirements. Do not pass
+   the exact platform, approved image, and approved GPU requirements. Do not pass
    local archive paths to a remote platform check; validate their staged
    compute paths after the approved staging step. Do not use
    `--skip-platform-access` for launch readiness. The shared checker's Docker
@@ -157,9 +159,24 @@ Run this section only after required intake is resolved.
    Virtualenv uses its platform skill's venv/import/CLI checks instead of the
    container-oriented shared checker. Platform-native checks are:
 
+   Resolve both workflow images from the installed bank before invoking the
+   checker or showing the approval summary. Never copy an image tag into this
+   document or preserve one from an earlier run:
+
    ```bash
-   PAS_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
-   PAS_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
+   PAS_PYT_IMAGE=$(
+     "$SKILL_ROOT/scripts/deft_python.sh" \
+       "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+       images.tao_toolkit.deft_pas_pyt --skill-bank "$TAO_SKILL_BANK_PATH"
+   )
+   PAS_DS_IMAGE=$(
+     "$SKILL_ROOT/scripts/deft_python.sh" \
+       "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+       images.tao_toolkit.deft_pas_data_services --skill-bank "$TAO_SKILL_BANK_PATH"
+   )
+   : "${PAS_PYT_IMAGE:?versions key images.tao_toolkit.deft_pas_pyt did not resolve}"
+   : "${PAS_DS_IMAGE:?versions key images.tao_toolkit.deft_pas_data_services did not resolve}"
+   export PAS_PYT_IMAGE PAS_DS_IMAGE
    TARGET_GPU_ARGS=()
    if [[ "$PLATFORM" == docker ]]; then
      IFS=, read -r -a GPU_ID_LIST <<< "$GPU_IDS"
@@ -229,7 +246,8 @@ Run this section only after required intake is resolved.
    checkout, and do not launch GPU work before the audit.
 
 Ask one consolidated question for unresolved required inputs. `max_iterations`
-is required unless a time budget was supplied. Estimate conservatively:
+is required unless a time budget was supplied, and a fine-tuning method is
+required for every new run. Estimate conservatively:
 baseline setup and pool embedding can take tens of minutes, and one 8-GPU
 iteration is commonly about 30 minutes at the bundled 10k/1-epoch settings;
 hardware, pool size, and accumulated data can change this substantially.
@@ -240,6 +258,7 @@ hardware, pool size, and accumulated data can change this substantially.
 |---|---|
 | metric | `Rank-1`, query type `medium`, operator `>=`, no target |
 | training epochs | `1` per iteration |
+| fine-tuning method | `LoRA`; ask once and allow explicit `full-parameter SFT` selection |
 | GPU shape | `num_gpus=1`, `gpu_ids=0` |
 | mining | budget `10000`, top-N `25`, cosine distance |
 | gap generation | `256` queries per slice; query types `easy,medium` |
@@ -251,8 +270,8 @@ hardware, pool size, and accumulated data can change this substantially.
 | continual behavior | dataset `true`, model `false` |
 | visualization | contact sheets `true`, embedding plot `true` |
 | Hugging Face token forwarding | disabled; enable only when the approved model/environment requires it |
-| PyTorch image | `nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch` | <!-- versions-key: images.tao_toolkit.deft_pas_pyt -->
-| data-services image | `nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch` | <!-- versions-key: images.tao_toolkit.deft_pas_data_services -->
+| PyTorch image | value resolved from `images.tao_toolkit.deft_pas_pyt` in `versions.yaml` |
+| data-services image | value resolved from `images.tao_toolkit.deft_pas_data_services` in `versions.yaml` |
 | monitoring | attached, poll every `5 minutes` |
 
 An ungated run evaluates every allowed iteration and completes with
@@ -282,6 +301,7 @@ Run
         target=<value | no target> (source=<user | default>);
         max_iterations=<N> (source=<user | derived from approved time budget>)
   train: epochs=<N> (source=<user | template | default>);
+         method=<full-parameter SFT | LoRA> (source=<user | default>);
          num_gpus=<N> (source=<user | default>);
          gpu_ids=<list> (source=<user | default>)
   mining: budget=<N> (source=<user | template | default>);
@@ -315,10 +335,12 @@ Inputs
                NGC_KEY=<set | not needed | missing>;
                HF_TOKEN=<set | optional/unset | missing>
   token forwarding: requires_hf_token=<bool> (source=<user | default>)
-  PyTorch image: nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
-                 (source=versions.yaml; status=<available | acquire after approval>)
-  data-services image: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
-                       (source=versions.yaml; status=<available | acquire after approval>)
+  PyTorch image: <resolved image>
+                 (source=versions.yaml:images.tao_toolkit.deft_pas_pyt;
+                  status=<available | acquire after approval>)
+  data-services image: <resolved image>
+                       (source=versions.yaml:images.tao_toolkit.deft_pas_data_services;
+                        status=<available | acquire after approval>)
   virtualenv profiles: pyt=<absolute path | n/a>; ds=<absolute path | n/a>;
                        ABI/packages/entrypoints/imports/pip/CUDA=<pass | fail | n/a>
   control environment: <absolute path>; distinct from execution profiles=<true | false>
@@ -329,6 +351,7 @@ Inputs
 
 Planned writes/actions
   <platform image/venv preparation>; image-specific CUDA framework/CLI probes;
+  <LoRA capability probe when method=LoRA>;
   <runtime venv install if needed>;
   config/state creation; archive extraction/rebuild; staged action submits;
   baseline and at most N iterations
@@ -347,7 +370,7 @@ after approval, show only the changed rows and wait for approval again.
 For a new run, perform the following in order.
 
 1. Follow the selected platform skill's approved image/runtime acquisition.
-   Docker and Brev acquire the pinned images through Docker; SLURM converts and
+   Docker and Brev acquire the approved images through Docker; SLURM converts and
    caches both images as SQSH before allocating GPUs; Kubernetes makes both
    images pullable by the namespace. Virtualenv uses two immutable execution
    profiles: `pyt` for `clip` train/evaluate and `ds` for `embedding`/`tmm`.
@@ -368,8 +391,8 @@ For a new run, perform the following in order.
      printf '%s' "$NGC_KEY" | docker login nvcr.io \
        --username '$oauthtoken' --password-stdin >/dev/null
    )
-   docker pull nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
-   docker pull nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
+   docker pull "$PAS_PYT_IMAGE"
+   docker pull "$PAS_DS_IMAGE"
    ```
 
    Virtualenv:
@@ -408,6 +431,21 @@ For a new run, perform the following in order.
    python3 /probe/check_pas_cuda_runtime.py \
      --min-gpus "$NUM_GPUS" --require-cli embedding --require-cli tmm
    ```
+
+   For LoRA, make the PyTorch probe image-bound and persist its non-secret
+   attestation outside the not-yet-created run directory:
+
+   ```bash
+   LORA_ATTESTATION="$WORKSPACE/.tao/preflight/pas-clip-lora.json"
+   python3 /probe/check_pas_cuda_runtime.py \
+     --min-gpus "$NUM_GPUS" --require-cli clip \
+     --require-clip-lora --image-ref "$PAS_PYT_IMAGE" \
+     --output "$LORA_ATTESTATION"
+   ```
+
+   This verifies the PEFT schema, SigLIP2 targets, adapter injection,
+   checkpoint compatibility registration, and merge path. A missing, failed,
+   or different-image attestation blocks config creation.
 
    The selected platform consumer owns the surrounding Docker, `srun`, pod, or
    Brev command and must allocate the approved GPUs to the probe exactly as it
@@ -478,6 +516,9 @@ For a new run, perform the following in order.
    if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
      PREP_OPTIONAL_ARGS+=(--requires-hf-token)
    fi
+   if [ "$FINETUNING_METHOD" = lora ]; then
+     PREP_OPTIONAL_ARGS+=(--lora-capability-attestation "$LORA_ATTESTATION")
+   fi
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
      "$SKILL_ROOT/scripts/prepare_deft_config.py" \
@@ -489,6 +530,8 @@ For a new run, perform the following in order.
        "${PREP_OPTIONAL_ARGS[@]}" \
        --max-iterations "$MAX_ITERATIONS" \
        --training-epochs "$TRAINING_EPOCHS" \
+       --finetuning-method "$FINETUNING_METHOD" \
+       --pyt-image "$PAS_PYT_IMAGE" --ds-image "$PAS_DS_IMAGE" \
        --num-gpus "$NUM_GPUS" --gpu-ids "$GPU_IDS" \
        --mining-topn "$MINING_TOPN" --knn-metric "$KNN_METRIC" \
        --target-query-count "$TARGET_QUERY_COUNT" \
@@ -533,9 +576,6 @@ For a new run, perform the following in order.
    if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
      INIT_OPTIONAL_ARGS+=(--requires-hf-token)
    fi
-
-   PAS_PYT_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch  # versions-key: images.tao_toolkit.deft_pas_pyt
-   PAS_DS_IMAGE=nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch  # versions-key: images.tao_toolkit.deft_pas_data_services
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \
      "$SKILL_ROOT/scripts/init_deft_state.py" \
