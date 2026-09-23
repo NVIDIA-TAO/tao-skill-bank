@@ -119,6 +119,24 @@ def _init_command(results: Path, dataset: Path, approval: dict) -> list[str]:
     ]
 
 
+def test_lora_is_default_and_sft_explicitly_disables_peft(tmp_path):
+    _, results, _ = _materialize(tmp_path / "lora")
+    lora = _yaml(results / "config" / "tao_spec.yaml")
+    assert lora["peft"]["enabled"] is True
+    assert lora["peft"]["method"] == "lora"
+    assert lora["peft"]["vision"]["target_modules"] == [
+        "q_proj", "k_proj", "v_proj", "out_proj"
+    ]
+
+    _, results, _ = _materialize(
+        tmp_path / "sft", "--finetuning-method", "sft"
+    )
+    sft = _yaml(results / "config" / "tao_spec.yaml")
+    assert sft["peft"] == {"enabled": False}
+    assert sft["model"]["freeze_vision_encoder"] is False
+    assert sft["model"]["freeze_text_encoder"] is False
+
+
 def test_pas_notebook_controls_are_materialized_without_semantic_drift(tmp_path):
     report, results, dataset = _materialize(
         tmp_path,

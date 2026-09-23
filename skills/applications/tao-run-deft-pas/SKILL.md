@@ -115,17 +115,14 @@ summary. `max_iterations` has no default. An absent metric target means an
 ungated run that stops after `max_iterations`. Hugging Face token forwarding
 defaults to disabled because the bundled model is public.
 
-The packaged PAS/CLIP spec supports full-parameter SFT: both encoders are
-trainable and no LoRA/PEFT block exists. Selecting SFT sets
-`model.freeze_vision_encoder: false` and `model.freeze_text_encoder: false` and
-omits LoRA/PEFT fields. Selecting LoRA does not authorize invented Hydra keys:
-before approval, establish that the exact selected PyTorch image exposes a
-complete CLIP LoRA contract. Because that capability check requires a
-launch-gated container probe, list the probe in the approval summary. If the
-image does not declare the enable/config fields, target modules, rank, alpha,
-dropout, and checkpoint semantics, stop as unsupported; never fall back to
-SFT. Selecting SFT disables LoRA by omitting all LoRA/PEFT fields. Freezing one
-encoder is partial SFT and must not be reported as LoRA.
+The materializer defaults `--finetuning-method` to `lora`. LoRA is enabled by
+the nested `peft.enabled: true`, `peft.method: lora`, and per-tower `vision`
+and `text` adapter blocks; SigLIP2 attention targets are `q_proj`, `k_proj`,
+`v_proj`, and `out_proj`. Full-parameter SFT is selected with
+`--finetuning-method sft`: it writes `peft.enabled: false` and makes both
+encoders trainable. Never represent encoder freezing as LoRA or silently fall
+back between methods. Probe a changed image's schema before approval and stop
+if it does not expose this complete PEFT contract.
 
 The authoritative parameter contract is the nested dataclass schema in
 `scripts/pas_deft/config.py`, adapted from the PAS reference notebook. Read

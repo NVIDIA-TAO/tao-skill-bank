@@ -44,13 +44,12 @@ Fine-tuning method: LoRA (default) or full-parameter SFT?
 ```
 
 Do not infer LoRA from words such as "fine-tune", and do not silently fall
-back from LoRA to SFT. The packaged CLIP schema currently supports
-full-parameter supervised fine-tuning only:
+back from LoRA to SFT. The selected CLIP image supports both methods:
 
 | Method | Enable | Disable | Current packaged support |
 |---|---|---|---|
-| full-parameter SFT | set `model.freeze_vision_encoder: false` and `model.freeze_text_encoder: false`; omit LoRA/PEFT fields | select a validated parameter-efficient method instead; freezing one encoder is partial SFT, not LoRA | supported; this is the existing template behavior |
-| LoRA (default selection) | require the selected image's CLIP schema/help to declare exact LoRA/PEFT fields, then write only those nested fields | omit the declared LoRA/PEFT block and use the SFT settings above | not declared by the packaged schema; block preflight unless an explicitly selected image proves support |
+| full-parameter SFT | set both encoder freeze flags to `false` and `peft.enabled: false` | select LoRA | supported |
+| LoRA (default selection) | set `peft.enabled: true`, `peft.method: lora`, and nested `vision`/`text` adapter blocks | set `peft.enabled: false` and use SFT settings | supported for SigLIP2; use targets `q_proj`, `k_proj`, `v_proj`, `out_proj` |
 
 An image capability probe is a launch-gated `docker run`, so include it in the
 approval summary before executing it. Documentation, an image tag, or an

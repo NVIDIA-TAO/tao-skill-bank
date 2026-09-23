@@ -301,7 +301,7 @@ Run
         target=<value | no target> (source=<user | default>);
         max_iterations=<N> (source=<user | derived from approved time budget>)
   train: epochs=<N> (source=<user | template | default>);
-         method=<full-parameter SFT | LoRA> (source=user);
+         method=<full-parameter SFT | LoRA> (source=<user | default>);
          num_gpus=<N> (source=<user | default>);
          gpu_ids=<list> (source=<user | default>)
   mining: budget=<N> (source=<user | template | default>);
@@ -512,6 +512,7 @@ For a new run, perform the following in order.
        "${PREP_OPTIONAL_ARGS[@]}" \
        --max-iterations "$MAX_ITERATIONS" \
        --training-epochs "$TRAINING_EPOCHS" \
+       --finetuning-method "$FINETUNING_METHOD" \
        --pyt-image "$PAS_PYT_IMAGE" --ds-image "$PAS_DS_IMAGE" \
        --num-gpus "$NUM_GPUS" --gpu-ids "$GPU_IDS" \
        --mining-topn "$MINING_TOPN" --knn-metric "$KNN_METRIC" \

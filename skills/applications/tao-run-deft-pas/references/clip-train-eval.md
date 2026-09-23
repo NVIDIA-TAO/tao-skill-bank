@@ -100,13 +100,14 @@ another label/path even when its numeric value is plausible.
 
 ## Train
 
-The fine-tuning method is immutable for a run. Full-parameter SFT is enabled
-by `model.freeze_vision_encoder: false` and
-`model.freeze_text_encoder: false` with no LoRA/PEFT block. This is the only
-method declared by the packaged CLIP schema. A user-selected LoRA run may
-proceed only after the exact approved image exposes and passes the capability
-contract described in `preflight.md`; otherwise stop before config creation.
-Never translate LoRA into encoder freezing or silently run SFT.
+The fine-tuning method is immutable for a run. LoRA is enabled with
+`peft.enabled: true`, `peft.method: lora`, and nested `vision` and `text`
+adapter blocks. For SigLIP2, target `q_proj`, `k_proj`, `v_proj`, and
+`out_proj`; the materializer emits this contract for `--finetuning-method
+lora`, which is its default. Full-parameter SFT uses
+`--finetuning-method sft`, writes `peft.enabled: false`, and makes both
+encoders trainable. Never translate encoder freezing into LoRA or silently
+switch methods.
 
 1. Generate the canonical train config:
 

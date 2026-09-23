@@ -303,6 +303,27 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
     tao["train"].setdefault("optim", {}).update(
         {"vision_lr": args.vision_lr, "text_lr": args.text_lr}
     )
+    tao.setdefault("model", {}).update(
+        {"freeze_vision_encoder": False, "freeze_text_encoder": False}
+    )
+    if args.finetuning_method == "lora":
+        tower = {
+            "mode": "lora",
+            "target_modules": ["q_proj", "k_proj", "v_proj", "out_proj"],
+            "num_last_blocks": 3,
+            "rank": 8,
+            "alpha": 16,
+            "dropout": 0.05,
+        }
+        tao["peft"] = {
+            "enabled": True,
+            "method": "lora",
+            "train_logit_calibration": True,
+            "vision": dict(tower),
+            "text": dict(tower),
+        }
+    else:
+        tao["peft"] = {"enabled": False}
     tao["dataset"].setdefault("train", {}).update(
         {"batch_size": args.train_batch_size}
     )
@@ -401,6 +422,7 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         "val_batch_size": args.val_batch_size,
         "eval_batch_size": args.eval_batch_size,
         "text_embed_model": args.text_embed_model,
+        "finetuning_method": args.finetuning_method,
         "approval_manifest": str(config_dir / "approval.json"),
     }
 
@@ -452,6 +474,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-iterations", required=True, type=int)
     parser.add_argument("--training-epochs", default=1, type=int)
+    parser.add_argument(
+        "--finetuning-method",
+        choices=("lora", "sft"),
+        default="lora",
+        help="Fine-tuning method (default: lora). SFT explicitly disables PEFT.",
+    )
     parser.add_argument(
         "--pyt-image",
         required=True,
