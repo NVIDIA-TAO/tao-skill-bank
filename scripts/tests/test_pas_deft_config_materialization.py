@@ -46,6 +46,38 @@ def _base_argv(tmp_path: Path) -> tuple[list[str], Path, Path]:
     metadata_archive = tmp_path / "meta.tar.gz"
     images_archive.write_bytes(b"images")
     metadata_archive.write_bytes(b"metadata")
+    lora_attestation = tmp_path / "lora-capability.json"
+    tower = {
+        "mode": "last_n",
+        "target_modules": ["q_proj", "k_proj", "v_proj", "out_proj"],
+        "num_last_blocks": 3,
+        "rank": 8,
+        "alpha": 16,
+        "dropout": 0.05,
+    }
+    lora_attestation.write_text(
+        json.dumps(
+            {
+                "status": "PASS",
+                "image_ref": PYT_IMAGE,
+                "clip_lora": {
+                    "checkpoint_behavior": "register-and-merge",
+                    "runtime_symbols": [
+                        "LoRALinear",
+                        "inject_lora",
+                        "merge_lora",
+                        "_register_lora_checkpoint_compatibility",
+                    ],
+                    "schema": {
+                        "enabled": False,
+                        "method": "lora",
+                        "vision": tower,
+                        "text": tower,
+                    },
+                },
+            }
+        )
+    )
     return (
         [
             "--workspace",
@@ -64,6 +96,8 @@ def _base_argv(tmp_path: Path) -> tuple[list[str], Path, Path]:
             "10",
             "--pyt-image",
             PYT_IMAGE,
+            "--lora-capability-attestation",
+            str(lora_attestation),
             "--ds-image",
             DS_IMAGE,
         ],
@@ -135,6 +169,28 @@ def test_lora_is_default_and_sft_explicitly_disables_peft(tmp_path):
     assert sft["peft"] == {"enabled": False}
     assert sft["model"]["freeze_vision_encoder"] is False
     assert sft["model"]["freeze_text_encoder"] is False
+
+
+def test_lora_stops_before_config_without_matching_image_attestation(tmp_path):
+    argv, results, _ = _base_argv(tmp_path)
+    index = argv.index("--lora-capability-attestation")
+    argv[index + 1] = str(tmp_path / "missing.json")
+    with pytest.raises(ValueError, match="does not exist"):
+        prepare.materialize(prepare._parser().parse_args(argv))  # noqa: SLF001
+    assert not (results / "config").exists()
+    assert not (results / "deft_state.json").exists()
+
+
+def test_lora_rejects_attestation_for_another_image_before_config(tmp_path):
+    argv, results, _ = _base_argv(tmp_path)
+    attestation = Path(argv[argv.index("--lora-capability-attestation") + 1])
+    payload = json.loads(attestation.read_text())
+    payload["image_ref"] = "registry.example/unsupported:image"
+    attestation.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="does not pass for --pyt-image"):
+        prepare.materialize(prepare._parser().parse_args(argv))  # noqa: SLF001
+    assert not (results / "config").exists()
+    assert not (results / "deft_state.json").exists()
 
 
 def test_pas_notebook_controls_are_materialized_without_semantic_drift(tmp_path):
@@ -209,7 +265,13 @@ def test_pas_workflow_images_are_declared_in_versions_yaml():
 
 def test_pas_materializes_explicit_pytorch_image_override(tmp_path):
     override = "registry.example/tao-pyt:capability"
-    report, results, _ = _materialize(tmp_path, "--pyt-image", override)
+    argv, results, _ = _base_argv(tmp_path)
+    attestation = Path(argv[argv.index("--lora-capability-attestation") + 1])
+    payload = json.loads(attestation.read_text())
+    payload["image_ref"] = override
+    attestation.write_text(json.dumps(payload))
+    args = prepare._parser().parse_args([*argv, "--pyt-image", override])  # noqa: SLF001
+    report = prepare.materialize(args)
     approval = json.loads((results / "config" / "approval.json").read_text())
     assert approval["pyt_image"] == override
     assert report["approval_manifest"] == str(results / "config" / "approval.json")

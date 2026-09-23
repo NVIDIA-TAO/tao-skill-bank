@@ -45,6 +45,8 @@ def _base_args(tmp_path: Path, selected: str):
         "docker",
         "--max-iterations",
         "1",
+        "--finetuning-method",
+        "sft",
         "--pyt-image",
         PYT_IMAGE,
         "--ds-image",

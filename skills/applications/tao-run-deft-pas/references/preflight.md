@@ -432,6 +432,21 @@ For a new run, perform the following in order.
      --min-gpus "$NUM_GPUS" --require-cli embedding --require-cli tmm
    ```
 
+   For LoRA, make the PyTorch probe image-bound and persist its non-secret
+   attestation outside the not-yet-created run directory:
+
+   ```bash
+   LORA_ATTESTATION="$WORKSPACE/.tao/preflight/pas-clip-lora.json"
+   python3 /probe/check_pas_cuda_runtime.py \
+     --min-gpus "$NUM_GPUS" --require-cli clip \
+     --require-clip-lora --image-ref "$PAS_PYT_IMAGE" \
+     --output "$LORA_ATTESTATION"
+   ```
+
+   This verifies the PEFT schema, SigLIP2 targets, adapter injection,
+   checkpoint compatibility registration, and merge path. A missing, failed,
+   or different-image attestation blocks config creation.
+
    The selected platform consumer owns the surrounding Docker, `srun`, pod, or
    Brev command and must allocate the approved GPUs to the probe exactly as it
    will to the action. A bounded verification that uses only one image may
@@ -500,6 +515,9 @@ For a new run, perform the following in order.
    fi
    if [ "${REQUIRES_HF_TOKEN:-false}" = true ]; then
      PREP_OPTIONAL_ARGS+=(--requires-hf-token)
+   fi
+   if [ "$FINETUNING_METHOD" = lora ]; then
+     PREP_OPTIONAL_ARGS+=(--lora-capability-attestation "$LORA_ATTESTATION")
    fi
 
    "$SKILL_ROOT/scripts/deft_python.sh" --workspace "$WORKSPACE" --runtime \

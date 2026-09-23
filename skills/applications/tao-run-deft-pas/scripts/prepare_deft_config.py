@@ -96,6 +96,58 @@ def _existing_path(path: pathlib.Path, name: str, *, directory: bool) -> pathlib
     return resolved
 
 
+def _validate_lora_attestation(path: pathlib.Path, image: str) -> None:
+    attestation_path = _existing_path(
+        path, "--lora-capability-attestation", directory=False
+    )
+    attestation = json.loads(attestation_path.read_text())
+    if not isinstance(attestation, dict):
+        raise ValueError("LoRA capability attestation root must be an object")
+    if attestation.get("status") != "PASS" or attestation.get("image_ref") != image:
+        raise ValueError("LoRA capability attestation does not pass for --pyt-image")
+
+    contract = attestation.get("clip_lora")
+    if not isinstance(contract, dict):
+        raise ValueError("LoRA capability attestation lacks the CLIP contract")
+    if contract.get("checkpoint_behavior") != "register-and-merge":
+        raise ValueError("LoRA capability attestation lacks checkpoint behavior")
+    required_symbols = {
+        "LoRALinear",
+        "inject_lora",
+        "merge_lora",
+        "_register_lora_checkpoint_compatibility",
+    }
+    runtime_symbols = contract.get("runtime_symbols")
+    if not isinstance(runtime_symbols, list) or set(runtime_symbols) != required_symbols:
+        raise ValueError("LoRA capability attestation lacks runtime symbols")
+    schema = contract.get("schema")
+    if (
+        not isinstance(schema, dict)
+        or schema.get("method") != "lora"
+        or not isinstance(schema.get("enabled"), bool)
+    ):
+        raise ValueError("LoRA capability attestation lacks the PEFT schema")
+    expected_targets = ["q_proj", "k_proj", "v_proj", "out_proj"]
+    required_fields = {
+        "mode",
+        "target_modules",
+        "num_last_blocks",
+        "rank",
+        "alpha",
+        "dropout",
+    }
+    for tower in ("vision", "text"):
+        block = schema.get(tower)
+        if (
+            not isinstance(block, dict)
+            or not required_fields.issubset(block)
+            or block.get("target_modules") != expected_targets
+        ):
+            raise ValueError(
+                f"LoRA capability attestation lacks the {tower} adapter contract"
+            )
+
+
 def _python_tree_sha256(root: pathlib.Path) -> str:
     files = sorted(path for path in root.rglob("*.py") if "__pycache__" not in path.parts)
     if not files:
@@ -221,6 +273,10 @@ def materialize(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--replay-fraction must be in [0, 1]")
     if args.knn_metric not in {"cosine", "euclidean"}:
         raise ValueError("--knn-metric must be cosine or euclidean")
+    if args.finetuning_method == "lora":
+        if args.lora_capability_attestation is None:
+            raise ValueError("LoRA requires --lora-capability-attestation")
+        _validate_lora_attestation(args.lora_capability_attestation, args.pyt_image)
     # ``gpu_ids`` is an allocation in the launcher/host namespace. Container
     # runtimes expose that allocation as a dense zero-based CUDA namespace, so
     # TAO must never receive the host ordinals directly.
@@ -480,6 +536,7 @@ def _parser() -> argparse.ArgumentParser:
         default="lora",
         help="Fine-tuning method (default: lora). SFT explicitly disables PEFT.",
     )
+    parser.add_argument("--lora-capability-attestation", type=pathlib.Path)
     parser.add_argument(
         "--pyt-image",
         required=True,

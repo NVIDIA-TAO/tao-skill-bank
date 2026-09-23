@@ -56,7 +56,7 @@ def _initialized_run(tmp_path: Path) -> Path:
         "--ds-image",
         DS_IMAGE,
     ]
-    assert prepare.main(common) == 0
+    assert prepare.main([*common, "--finetuning-method", "sft"]) == 0
     assert state.main(
         [
             *common,
