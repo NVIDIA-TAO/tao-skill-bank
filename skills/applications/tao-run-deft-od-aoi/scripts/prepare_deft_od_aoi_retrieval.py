@@ -13,7 +13,7 @@ from typing import Any
 
 import pandas as pd
 import yaml
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def _json(path: Path, value: Any) -> None:
@@ -56,7 +56,12 @@ def _gap_box(value: Any, width: int, height: int, scale: float) -> tuple[int, in
 def _crop(source: Path, box: tuple[int, int, int, int], output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(source) as image:
-        image.convert("RGB").crop(box).save(output, format="PNG")
+        ImageOps.exif_transpose(image).convert("RGB").crop(box).save(output, format="PNG")
+
+
+def _size(source: Path) -> tuple[int, int]:
+    with Image.open(source) as image:
+        return ImageOps.exif_transpose(image).size
 
 
 def _embedding_spec(policy: dict[str, Any], input_path: Path, output: Path) -> dict[str, Any]:
@@ -82,8 +87,7 @@ def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
         rows = []
         for image_row in coco["images"]:
             source_path = _source(images, image_row)
-            with Image.open(source_path) as image:
-                width, height = image.size
+            width, height = _size(source_path)
             if role == "real":
                 for annotation in annotations.get(int(image_row["id"]), []):
                     box = _box(annotation["bbox"], width, height,
@@ -148,9 +152,9 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         rows = []
         for index, (_, reason, event) in enumerate(item for item in events if item[0] == role):
             source = Path(str(event["filepath"])).resolve()
-            with Image.open(source) as image:
-                box = _gap_box(event["bbox"], image.width, image.height,
-                               float(policy["retrieval"]["defect_context_scale"]))
+            width, height = _size(source)
+            box = _gap_box(event["bbox"], width, height,
+                           float(policy["retrieval"]["defect_context_scale"]))
             query_id = f"iter{iteration}-{role}-" + _id(source, event["bbox"], reason, index)
             crop = output / "crops" / role / f"{query_id}.png"
             _crop(source, box, crop)

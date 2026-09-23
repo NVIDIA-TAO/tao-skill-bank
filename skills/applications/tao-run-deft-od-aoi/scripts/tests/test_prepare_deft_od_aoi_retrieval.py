@@ -23,6 +23,13 @@ def _image(path: Path, value: int = 80) -> None:
     Image.fromarray(np.full((32, 32, 3), value, dtype=np.uint8)).save(path)
 
 
+def _oriented_image(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    exif = Image.Exif()
+    exif[274] = 8
+    Image.fromarray(np.full((20, 40, 3), 80, dtype=np.uint8)).save(path, exif=exif)
+
+
 def _policy(root: Path) -> Path:
     sources = {}
     for role in ("real", "clean"):
@@ -56,6 +63,24 @@ def test_candidate_cache_uses_defect_crops_and_clean_grid(tmp_path: Path) -> Non
     clean = pd.read_parquet(tmp_path / "candidates/clean_candidates.parquet")
     assert real.source_filepath.nunique() == clean.source_filepath.nunique() == 1
     assert all(Path(path).is_file() for path in list(real.filepath) + list(clean.filepath))
+
+
+def test_candidate_cache_applies_exif_orientation_before_cropping(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    source = tmp_path / "real/real.png"
+    _oriented_image(source)
+    coco = tmp_path / "real.json"
+    payload = json.loads(coco.read_text())
+    payload["images"][0].update(width=20, height=40)
+    payload["annotations"][0]["bbox"] = [2, 25, 5, 5]
+    coco.write_text(json.dumps(payload))
+
+    report = MODULE.candidates(policy, tmp_path / "candidates")
+
+    assert report["real"] == 1
+    frame = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
+    with Image.open(frame.iloc[0].filepath) as crop:
+        assert crop.size == (9, 9)
 
 
 def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
