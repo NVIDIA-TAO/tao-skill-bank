@@ -4,17 +4,17 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 --recipe PATH --results-dir PATH [--hf-cache PATH] [--num-gpus N] [--min-nn-improvement X] [--parallelism ddp|fsdp] [--compile true|false] [--job-id ID] [--resume]"
+  echo "Usage: $0 --recipe PATH --results-dir PATH --checkpoint-root PATH [--num-gpus N] [--min-nn-improvement X] [--parallelism ddp|fsdp] [--compile true|false] [--job-id ID] [--resume]"
 }
 
-recipe= results_dir= hf_cache= job_id=
+recipe= results_dir= checkpoint_root= job_id=
 num_gpus=1 min_improvement=0.0 parallelism=ddp compile=true resume=false
 repo=/workspace/paidf-anomalygen
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --recipe) recipe=$2; shift 2 ;;
     --results-dir) results_dir=$2; shift 2 ;;
-    --hf-cache) hf_cache=$2; shift 2 ;;
+    --checkpoint-root) checkpoint_root=$2; shift 2 ;;
     --num-gpus) num_gpus=$2; shift 2 ;;
     --min-nn-improvement) min_improvement=$2; shift 2 ;;
     --parallelism) parallelism=$2; shift 2 ;;
@@ -25,18 +25,28 @@ while [[ $# -gt 0 ]]; do
     *) usage >&2; exit 2 ;;
   esac
 done
-[[ -f "$recipe" && -n "$results_dir" ]] || { usage >&2; exit 2; }
+[[ -f "$recipe" && -n "$results_dir" && -d "$checkpoint_root" ]] || { usage >&2; exit 2; }
 [[ -d "$repo" ]] || { echo "Pinned image source is missing: $repo" >&2; exit 2; }
 [[ "$num_gpus" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid GPU count" >&2; exit 2; }
 [[ "$parallelism" == ddp || "$parallelism" == fsdp ]] || { echo "Invalid parallelism" >&2; exit 2; }
 [[ "$compile" == true || "$compile" == false ]] || { echo "Invalid compile value" >&2; exit 2; }
-dinov2=$repo/checkpoints/facebook/dinov2-large
+mounted_root=$(cd "$checkpoint_root" && pwd -P)
+image_root=$(cd "$repo/checkpoints" && pwd -P)
+[[ "$mounted_root" == "$image_root" ]] || {
+  echo "Checkpoint root must be bind-mounted at $repo/checkpoints: $checkpoint_root" >&2
+  exit 2
+}
+qwen_assets=$checkpoint_root/hf
+dinov2=$checkpoint_root/facebook/dinov2-large
+[[ -d "$qwen_assets" ]] || {
+  echo "Required Qwen tokenizer assets missing under hf/: $qwen_assets" >&2
+  exit 2
+}
 [[ -f "$dinov2/config.json" ]] || { echo "DINOv2 config missing: $dinov2" >&2; exit 2; }
 [[ -f "$dinov2/model.safetensors" || -f "$dinov2/pytorch_model.bin" ]] || {
   echo "DINOv2 weights missing: $dinov2" >&2; exit 2;
 }
-[[ -z "$hf_cache" || -d "$hf_cache" ]] || { echo "HF cache missing: $hf_cache" >&2; exit 2; }
-[[ -z "$hf_cache" ]] || export HF_HOME=$hf_cache
+export HF_HOME=$qwen_assets
 script_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 dataset=$(python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])); assert d.get("run_validation_on_start") is True; print(d["dataset_name"])' "$recipe")
 job=$(python3 -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["job_name"])' "$recipe")

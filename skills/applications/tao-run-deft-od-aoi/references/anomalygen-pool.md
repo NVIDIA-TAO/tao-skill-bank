@@ -49,11 +49,16 @@ routes:
       validation_testcase: /data/line_a/validation.jsonl
       base_checkpoint: /models/Cosmos3-Nano
       vae_path: /models/Wan2.2_VAE.pth
-      nn_backbone: /models/dinov2-large
+      checkpoint_root: /models/anomalygen-checkpoints
       result_handoff: /results/line_a/training_handoff.json
       recipe_template: /data/line_a/recipe.yaml   # optional
       defect_spec: /data/line_a/defect_spec.jsonl # optional override
 ```
+
+`checkpoint_root` must contain the required Qwen tokenizer model assets under
+`hf/` and `facebook/dinov2-large/` with its Transformers config and weights.
+The training action mounts this entire directory over the image's
+`/workspace/paidf-anomalygen/checkpoints`; mounting only DINOv2 is insufficient.
 
 Run `resolve_deft_od_aoi_synthesis.py` before the candidate cache. A missing
 handoff produces `finetune_requests.json`. Execute each request through
