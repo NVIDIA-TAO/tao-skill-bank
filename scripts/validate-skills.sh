@@ -346,7 +346,7 @@ for layer in ('models',):
                     continue
                 # "runnable from SKILL.md alone" is satisfied by a docker-native run
                 # path OR a self-contained local venv/uv Quick Start (the 7.1.0
-                # VirtualEnv platform option, e.g. NV-Tesseract / AutoML venv skills).
+                # VirtualEnv platform option, e.g. Kumo-Forecast / Kumo-Anomaly / AutoML venv skills).
                 if ('docker run' in text
                         or 'uv run' in text or 'uv sync' in text or 'uv pip install' in text
                         or 'python -m venv' in text or 'uv venv' in text or 'virtualenv' in text):
