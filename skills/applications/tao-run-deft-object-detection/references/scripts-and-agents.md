@@ -28,8 +28,8 @@ These replace internal container images from the reference pipeline whose script
 `assets/overlays/<stage>.yaml` holds the settings a stage needs but that do not
 vary per run. A field nobody mentions keeps whatever `default_specs` or the Hydra
 schema emitted, and TAO's default is not always the value the stage wants:
-`kpi.ignore_sqwidth` is 0 by default and the reference pipeline agrees, and the
-only symptom of the difference is that a different set of boxes gets scored. Each
+`kpi.num_recall_points` is 11 by default against the reference pipeline's 101, and
+the only symptom of the difference is that every AP is read off a coarser curve. Each
 overlay line carries TAO's default in a comment, so the cost of removing it is
 visible without diffing against a container.
 
