@@ -66,8 +66,10 @@ def parse_args() -> argparse.Namespace:
                         help="Directory to hold the checkpoint. Created if absent.")
     parser.add_argument("--plan", action="store_true",
                         help="Report what would be fetched and exit, without downloading. "
-                             "Prints a sentence, not a path -- do not capture it into a "
-                             "variable the later stages use.")
+                             "A checkpoint already present gets the same checks as reuse "
+                             "(size; the digest too with --verify) and fails here if it "
+                             "would be refused later. Prints a sentence, not a path -- do "
+                             "not capture it into a variable the later stages use.")
     parser.add_argument("--url", default=URL, help="Override the source URL.")
     parser.add_argument("--expect-sha256", default=EXPECT_SHA256,
                         help="Expected digest. Pass an empty string to skip the check, "
@@ -148,14 +150,45 @@ def download(url: str, target: Path, expect_sha: str) -> None:
             part.unlink(missing_ok=True)
 
 
+def _check_existing(target: Path, args: argparse.Namespace) -> None:
+    """Raise unless the checkpoint already at `target` is fit to reuse.
+
+    Size catches truncation, which is what an interrupted transfer leaves, and a
+    truncated checkpoint loads no weights while the stage still reports success. It
+    cannot catch a file of the right length with the wrong bytes, which loads no
+    weights just as quietly -- so the digest is checked on request (--verify) rather
+    than on every resume, where it would cost a 2.8 GiB read.
+    """
+    size = target.stat().st_size
+    if args.url == URL and size != EXPECT_BYTES:
+        raise ValueError(
+            f"{target} is {size} bytes, expected {EXPECT_BYTES}. Remove it and re-run; "
+            f"a truncated checkpoint loads no weights and the stage still reports success")
+    if args.verify:
+        if not args.expect_sha256:
+            raise ValueError(
+                "--verify needs a digest to compare against, but --expect-sha256 is empty")
+        print(f"verifying {target} ({_human(size)})", file=sys.stderr)
+        actual = _sha256_of(target)
+        if actual != args.expect_sha256:
+            raise ValueError(
+                f"{target} has digest {actual}, expected {args.expect_sha256}. It is the "
+                f"right size but not the right checkpoint. It was left in place; remove "
+                f"it and re-run to fetch a verified copy")
+
+
 def main() -> int:
     try:
         args = parse_args()
         dest = Path(args.dest).expanduser().resolve()
         target = dest / FILENAME
 
+        # --plan runs the same checks as reuse. A plan that only asked "is a file
+        # there" would report a truncated checkpoint as ALREADY PRESENT in the
+        # Pre-Flight Summary, and the run would be approved against it.
         if args.plan:
             if target.is_file():
+                _check_existing(target, args)
                 print(f"ALREADY PRESENT: {target} ({_human(target.stat().st_size)})",
                       file=sys.stderr)
             else:
@@ -163,31 +196,9 @@ def main() -> int:
                       f"({_human(EXPECT_BYTES)}) -> {target}", file=sys.stderr)
             return 0
 
-        # Idempotent, and checked rather than trusted: a half-written file from an
-        # interrupted transfer is the same size problem as a wrong checkpoint.
+        # Idempotent, and checked rather than trusted.
         if target.is_file():
-            size = target.stat().st_size
-            if args.url == URL and size != EXPECT_BYTES:
-                raise ValueError(
-                    f"{target} is {size} bytes, expected {EXPECT_BYTES}. Remove it and "
-                    f"re-run; a truncated checkpoint loads no weights and the stage still "
-                    f"reports success")
-            # Size catches truncation, which is what an interrupted transfer leaves.
-            # It cannot catch a file of the right length with the wrong bytes, and
-            # that loads no weights just as quietly -- so the digest is available on
-            # request rather than on every resume, where it would cost a 2.8 GiB read.
-            if args.verify:
-                if not args.expect_sha256:
-                    raise ValueError(
-                        "--verify needs a digest to compare against, but "
-                        "--expect-sha256 is empty")
-                print(f"verifying {target} ({_human(size)})", file=sys.stderr)
-                actual = _sha256_of(target)
-                if actual != args.expect_sha256:
-                    raise ValueError(
-                        f"{target} has digest {actual}, expected {args.expect_sha256}. "
-                        f"It is the right size but not the right checkpoint. It was left "
-                        f"in place; remove it and re-run to fetch a verified copy")
+            _check_existing(target, args)
             print(target)
             return 0
 

@@ -2638,6 +2638,19 @@ assert_rc 0 "[G31] --plan reports without downloading"
   && notok "[G31] --plan writes nothing" \
   || ok "[G31] --plan writes nothing"
 
+# A truncated checkpoint already at --dest must fail the plan, not read as
+# ALREADY PRESENT in the Pre-Flight Summary and fail only after approval. The size
+# check applies to the published URL, which --plan never contacts, so the default
+# URL is safe to use offline here.
+make_file "$G31/truncated/pytorch_model.pth" "a few bytes of a 2.8 GiB file"
+run "$PY" "$FETCH" --dest "$G31/truncated" --plan
+assert_rc 1 "[G31] --plan refuses a truncated checkpoint already at --dest"
+case "$RUN_OUT" in
+  *"ALREADY PRESENT"*) notok "[G31] --plan does not report a truncated file as present" \
+                         "output: $RUN_OUT" ;;
+  *) ok "[G31] --plan does not report a truncated file as present" ;;
+esac
+
 run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
   --expect-sha256 "$G31_SHA"
 assert_rc 0 "[G31] a transfer whose digest matches is kept"
@@ -2681,6 +2694,9 @@ esac
 [ -f "$G31/dest/pytorch_model.pth" ] \
   && ok "[G31] the suspect file is left for the operator, not deleted" \
   || notok "[G31] the suspect file is left for the operator, not deleted"
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA" --verify --plan
+assert_rc 1 "[G31] --plan --verify catches it before approval, not after"
 
 run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
   --expect-sha256 "" --verify

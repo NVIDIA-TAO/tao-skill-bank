@@ -121,13 +121,24 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    image the checkpoint was trained with in the Summary; the pinned image is not
    automatically the right one.
 
-7. **Co-DETR checkpoint — only when `prep` will run.** Prep pseudo-labels the whole
-   pool with Co-DETR, and `assets/overlays/codetr_inference.yaml` pins the ViT-L/16
-   geometry that exactly one published checkpoint loads. Fetch it the same way as the
-   zero-shot one, and for the same reason: it is published, so a run should not depend
-   on a file somebody staged by hand.
+7. **Co-DETR checkpoint — only when `prep` will run; fetch it unless the user supplied
+   one.** Prep pseudo-labels the whole pool with Co-DETR, and
+   `assets/overlays/codetr_inference.yaml` pins the ViT-L/16 geometry that exactly one
+   published checkpoint loads.
 
-   `--dest` belongs under `$WORKSPACE`. The Co-DETR container mounts `$WORKSPACE` and
+   **The user's own path always wins**, as for the zero-shot checkpoint. It is how an
+   air-gapped host runs prep at all, and a checkpoint someone already staged is not
+   replaced. Hard-stop if the path does not exist. Its size should be
+   2,934,763,233 bytes, the published checkpoint's; flag a different size in the
+   Summary rather than stopping, since a compatible fine-tune can differ, but say that
+   a checkpoint the pinned architecture cannot load empties every pseudo-label and
+   `verify_pseudo_labels.py` catches it only after the labelling pass. A path outside
+   `$WORKSPACE` needs its directory in `$EXTRA_MOUNTS`, or the container cannot see it.
+   Record the source (`user`) in the Summary and skip the fetcher entirely.
+
+   When the user gave no path, fetch the published checkpoint rather than asking: a
+   run should not depend on a file somebody staged by hand. `--dest` belongs under
+   `$WORKSPACE`. The Co-DETR container mounts `$WORKSPACE` and
    `$EXTRA_MOUNTS` and nothing else, so a checkpoint anywhere else needs an extra `-v`
    on every launch that reads it.
 
@@ -157,6 +168,8 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    truncated file an interrupted transfer leaves. Add `--verify` to check its SHA-256 as
    well when the file is suspect — copied from another host, or left by a run whose
    pseudo-labels came out empty. It is off by default because it reads the full 2.8 GiB.
+   `--plan` applies the same checks, so a truncated file fails Pre-Flight instead of
+   appearing in the Summary as `ALREADY PRESENT` and failing after approval.
 
 8. **Train-spec template.** Must exist and parse as YAML, and `dataset.train_data_sources` must be a **list** (Grounding DINO ODVG shape). A mapping there means the spec is COCO-shaped and this workflow cannot append to it.
 
