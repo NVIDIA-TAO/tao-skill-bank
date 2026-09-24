@@ -38,7 +38,26 @@ Write per-iteration under `${RESULTS_DIR}/iter${N}/gaps/od_gap_spec.yaml` — th
 OD_GAP_SPEC="${RESULTS_DIR}/iter${N}/gaps/od_gap_spec.yaml"
 ```
 
-Build it the same way every other stage does — emit, then fill the run-specific fields:
+**First, write the run's gates to a file.** `weak_thresholds` is the one gate the run
+owns, and it is the only entry in this spec that is a block rather than a scalar, so it
+comes from a file. Write it from state — the thresholds were frozen at init, and
+re-typing them is how the spec and `deft_state.json` come to disagree:
+
+```bash
+<skill_root>/scripts/deft_python.sh \
+  <skill_root>/scripts/prepare_thresholds_for_gap_analysis.py \
+  --results-dir "${RESULTS_DIR}" \
+  --out "${RESULTS_DIR}/iter${N}/gaps/weak_thresholds.yaml"
+```
+
+It writes one entry per `config.target_classes` and nothing else. Skip it and the stage
+keeps the gates hardcoded in the shipped asset and exits 0, so a run gates on values
+nobody chose. That is not only a reporting difference: the weak set sizes the mining
+budget, so the substituted gates change which images the iteration mines.
+
+**Then build the spec** the same way every other stage does — emit, then fill the
+run-specific fields, with the file above replacing the asset's whole `weak_thresholds`
+block:
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
@@ -54,22 +73,6 @@ Build it the same way every other stage does — emit, then fill the run-specifi
   --set-from-file weak_thresholds="${RESULTS_DIR}/iter${N}/gaps/weak_thresholds.yaml"
 ```
 
-`weak_thresholds` is the one gate the run owns, and it is the only entry here that is a
-block rather than a scalar, so it comes from a file. Write that file from state first —
-the thresholds were frozen at init and re-typing them is how the spec and
-`deft_state.json` come to disagree:
-
-```bash
-<skill_root>/scripts/deft_python.sh \
-  <skill_root>/scripts/prepare_thresholds_for_gap_analysis.py \
-  --results-dir "${RESULTS_DIR}" \
-  --out "${RESULTS_DIR}/iter${N}/gaps/weak_thresholds.yaml"
-```
-
-Without it the stage keeps the gates hardcoded in the shipped asset and exits 0, so a run
-gates on values nobody chose. That is not only a reporting difference: the weak set sizes
-the mining budget, so the substituted gates change which images the iteration mines.
-
 `gap_analysis` is absent from TAO's `default_specs` list, so unlike the other stages
 there is no container to emit from: `emit_default_spec.py` copies
 `assets/gap_analysis_object_detection.yaml`, which is hand-maintained for exactly that
@@ -77,8 +80,11 @@ reason. That asset is a **starting spec, not an overlay** — do not pass it to
 `--apply-workflow-defaults`. It carries a nested `weak_thresholds` mapping, and the
 overlay mechanism takes one dotted key per leaf, so it is rejected with
 `'weak_thresholds' has a mapping value`. There is no `--apply-workflow-defaults` step
-for this stage; the emitted spec already holds every documented default.
+for this stage: the emitted spec holds every documented default except
+`weak_thresholds`, whose car/bicycle/person entries are the reference ITS gates and a
+placeholder for this run's — the file above replaces them whole.
 
+The resulting spec:
 
 ```yaml
 ground_truth_ann_path: <config.ground_truth_labels_dir>
@@ -90,10 +96,8 @@ input_format:          kitti          # LOWERCASE — see below
 iou_threshold:         0.5
 conf_threshold:        0.0            # inference already filtered; see below
 min_area:              0
-weak_thresholds:
-  car:      {ap50: 0.99}
-  bicycle:  {ap50: 0.7}
-  person:   {ap50: 0.7}
+weak_thresholds:                      # from weak_thresholds.yaml: one entry per
+  <target class>: {ap50: <gate>}      # config.target_classes, gate from config.ap50_thresholds
 default_recall_threshold:    0.0
 default_precision_threshold: 0.0
 default_ap50_threshold:      0.0
