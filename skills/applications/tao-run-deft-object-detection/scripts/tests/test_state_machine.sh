@@ -2618,6 +2618,191 @@ case "$(state_json_top "$G29S_RUN" completion_reason)" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G32. the loop report is written by the scripts, not by an agent
+#
+# Reporting used to be reachable only by spawning a subagent, which a runtime
+# without that tool cannot do, and rendering inline was forbidden. It is now a
+# post-commit hook: init writes the report, every accepted commit refreshes it,
+# and no stage of the loop needs anything but Bash.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G32 the report renders itself"
+
+G32=$(new_workspace g32); make_pool "$G32"
+G32_RUN="$G32/results/run_g32"
+init_run "$G32" "$G32_RUN" 1
+[ -f "$G32_RUN/DEFT_Loop_Report.md" ] \
+  && ok "[G32] init writes the report before any stage has run" \
+  || notok "[G32] init writes the report before any stage has run"
+
+grep -q 'IN PROGRESS' "$G32_RUN/DEFT_Loop_Report.md" \
+  && ok "[G32] a run with no committed stage reports IN PROGRESS" \
+  || notok "[G32] a run with no committed stage reports IN PROGRESS"
+
+# A summary carrying the training container's validation metric. It scores
+# agreement with the Co-DETR pseudo-labels, not accuracy, and beside the KPI mAP
+# it reads as a competing accuracy figure -- so it must not reach the report.
+make_phase_artifacts "$G32_RUN" baseline
+commit "$G32_RUN" baseline inference \
+  --inference-labels-dir "$G32_RUN/baseline/inference/labels" \
+  --summary "baseline inference: 1 label file, val_mAP50 = 0.8266" --duration-sec 12
+assert_rc 0 "[G32] commit baseline/inference"
+
+grep -q 'val_mAP' "$G32_RUN/DEFT_Loop_Report.md" \
+  && notok "[G32] no val_ metric reaches the report" \
+  || ok "[G32] no val_ metric reaches the report"
+grep -q 'baseline inference: 1 label file' "$G32_RUN/DEFT_Loop_Report.md" \
+  && ok "[G32] the rest of the summary is reproduced verbatim" \
+  || notok "[G32] the rest of the summary is reproduced verbatim"
+grep -q 'val_mAP50 = 0.8266' "$G32_RUN/loop_log.jsonl" \
+  && ok "[G32] the metric is still in the log, only withheld from the report" \
+  || notok "[G32] the metric is still in the log, only withheld from the report"
+
+commit "$G32_RUN" baseline kpi_analyze \
+  --kpi-csv "$G32_RUN/baseline/kpi/kpi_calc.csv" \
+  --kpi-log "$G32_RUN/baseline/kpi/kpi_analyze.log" \
+  --map-value 0.42 \
+  --summary "kpi: mAP=0.42" --duration-sec 20
+assert_rc 0 "[G32] commit baseline/kpi_analyze"
+grep -q '0.4200' "$G32_RUN/DEFT_Loop_Report.md" \
+  && ok "[G32] each commit re-renders, so the KPI trend is current" \
+  || notok "[G32] each commit re-renders, so the KPI trend is current"
+
+# Presentation is not transactional. A render that cannot write must cost a
+# warning, never a GPU stage that already passed the audit.
+#
+# The failure is injected at the temp path the renderer writes before its atomic
+# rename. Making the report itself unreadable would not do it: os.replace swaps a
+# directory entry, so the old file's mode never blocks the new one.
+mkdir -p "$G32_RUN/DEFT_Loop_Report.md.tmp"
+make_iter_artifacts "$G32_RUN" iter1
+commit "$G32_RUN" iter1 gap_analysis \
+  --weak-images "$G32_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G32_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 120 \
+  --summary "gap_analysis: 120 weak images" --duration-sec 30
+assert_rc 0 "[G32] a render that cannot write does not fail the commit"
+case "$RUN_OUT" in
+  *"the loop report was not re-rendered"*)
+    ok "[G32] the commit says the report is stale" ;;
+  *) notok "[G32] the commit says the report is stale" "output: $RUN_OUT" ;;
+esac
+assert_eq 'iter1/gap_analysis' "$(report_field "$G32_RUN" last_committed)" \
+  "[G32] the commit it could not render still stands"
+rmdir "$G32_RUN/DEFT_Loop_Report.md.tmp"
+
+# --out replaces the destination rather than adding a second copy, and
+# --require-terminal leaves the existing report alone for a run still in flight.
+before=$(cat "$G32_RUN/DEFT_Loop_Report.md")
+run "$PY" "$SCRIPTS_DIR/render_report.py" --results-dir "$G32_RUN" --out "$G32/elsewhere.md"
+assert_rc 0 "[G32] --out renders"
+[ -f "$G32/elsewhere.md" ] && ok "[G32] --out writes where it is pointed" \
+  || notok "[G32] --out writes where it is pointed"
+assert_eq "$before" "$(cat "$G32_RUN/DEFT_Loop_Report.md")" \
+  "[G32] --out leaves the results-dir report untouched"
+run "$PY" "$SCRIPTS_DIR/render_report.py" --results-dir "$G32_RUN" --require-terminal
+assert_rc 1 "[G32] --require-terminal refuses a run that has not committed loop_stop"
+assert_eq "$before" "$(cat "$G32_RUN/DEFT_Loop_Report.md")" \
+  "[G32] a refused end-of-loop render leaves the existing report as it was"
+
+# How individual inputs render. compose() is driven directly with a hand-built state,
+# because each case is about one input, and a real run cannot produce most of them.
+# One line per case: "ok <label>" or "not ok <label> :: <detail>".
+while IFS= read -r line; do
+  case "$line" in
+    "ok "*) ok "[G32] ${line#ok }" ;;
+    "not ok "*) notok "[G32] ${line#not ok }" ;;
+  esac
+done < <("$PY" - "$SCRIPTS_DIR" "$G32/compose" <<'PYEOF'
+import json, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import render_report as rr
+
+root = pathlib.Path(sys.argv[2])
+root.mkdir(parents=True, exist_ok=True)
+
+def check(label, cond, detail=""):
+    print(f"ok {label}" if cond else f"not ok {label} :: {detail}")
+
+def write(rel, text):
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    return str(p)
+
+REPORT = {"status": "VALID", "iterations_completed": 1, "max_iterations": None,
+          "complete": False, "run_failed": False, "loop_stop_committed": False}
+
+# The staging gap counts from Mined: an image missing from the pool is never copied,
+# so a gap counted from the copies would not see it.
+stage_report = write("iter1/tmm/staging_report.json", json.dumps({
+    "mined_unique": 10, "images_copied": 9, "annotations_written": 7,
+    "missing_images": ["a.jpg"], "missing_annotations": ["b.jpg", "c.jpg"]}))
+# A mining summary that parses, but as a list: renders as unknown, never crashes.
+mining = write("iter1/mining/summary.json", "[1, 2, 3]")
+# A CSV row with more fields than the header, which csv.DictReader keys under None.
+csv_extra = write("iter1/kpi/kpi_calc.csv",
+                  "Sequence Name,class_name,AP\nkpi,car,0.8,surplus\nkpi,person,0.6\n")
+# One class scored in two sequences: a single AP for it would be a silent guess.
+csv_dup = write("baseline/kpi/kpi_calc.csv",
+                "Sequence Name,class_name,AP\ns1,car,0.9\ns2,car,0.1\n")
+# A summary whose mAP disagrees with the committed --map-value.
+write("iter1/kpi/kpi_summary.json", json.dumps({"map_value": 0.99}))
+
+state = {"config": {"max_iterations": 4, "rare_class_list": "a|b"},
+         "iterations": {
+    "baseline": {"kpi_csv": csv_dup, "map_value": 0.5},
+    "iter1": {"kpi_csv": csv_extra, "map_value": 0.7,
+              "mining_summary_json": mining,
+              "odvg_jsonl": str(root / "iter1/tmm/annotations/tmm_odvg.jsonl")}}}
+events = [
+    {"seq": 1, "iter": "iter1", "stage": "train", "status": "ok", "duration_sec": 0,
+     "summary": "trained iter1: 2 epochs, val mAP50 = 0.91 | 3 sources"},
+]
+
+try:
+    doc = rr.compose(root, state, events, REPORT, "2026-01-01T00:00:00Z")
+    check("malformed inputs render instead of crashing", True)
+except Exception as exc:  # noqa: BLE001
+    print(f"not ok malformed inputs render instead of crashing :: {type(exc).__name__}: {exc}")
+    sys.exit(0)
+
+check("the staging gap is counted from Mined", "lost 3 of 10 mined images" in doc, doc)
+check("the gap names both causes",
+      "1 missing from the pool" in doc and "2 with no annotation in the pool" in doc, doc)
+check("a class scored twice gets no single AP",
+      "| baseline | 0.5000 |" in doc and "0.9000" not in doc and "0.1000" not in doc, doc)
+check("the committed --map-value wins over a disagreeing summary",
+      "| iter1 | 0.7000 |" in doc and "0.9900" not in doc, doc)
+check("a val mAP spelled with a space is dropped too", "0.91" not in doc, doc)
+check("pipes in cells are escaped",
+      "\\| 3 sources" in doc and "a\\|b" in doc, doc)
+check("an unrecorded duration is not printed as 0s", "| 0s |" not in doc, doc)
+check("max_iterations falls back to the config when the audit carries None",
+      "**Iterations completed:** 1 / 4" in doc, doc)
+
+# The status line carries the completion reason wherever the word alone misleads.
+def status_of(report, state_reason=None):
+    st = {"config": {}, "iterations": {}}
+    if state_reason is not None:
+        st["completion_reason"] = state_reason
+    line = next(l for l in rr.compose(root, st, [], report, "t").splitlines()
+                if l.startswith("**Status:**"))
+    return line[len("**Status:** "):]
+
+early = "documented early stop: the source pool was exhausted at iter2 (pool_remaining=58)"
+got = status_of({"complete": True, "completion_reason": early})
+check("an early stop says so beside COMPLETE", got == f"COMPLETE ({early})", got)
+got = status_of({"complete": True, "completion_reason": "all 3 iterations completed every stage"})
+check("a run that finished every iteration is plain COMPLETE", got == "COMPLETE", got)
+stopped = "only 0 of 3 iterations finished kpi_analyze"
+got = status_of({"loop_stop_committed": True, "completion_reason": stopped})
+check("a stopped run says why it stopped short", got == f"STOPPED (INCOMPLETE) ({stopped})", got)
+got = status_of({"complete": True, "completion_reason": "from the audit"}, state_reason=early)
+check("the reason recorded in state wins over the audit's", got == f"COMPLETE ({early})", got)
+PYEOF
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then
