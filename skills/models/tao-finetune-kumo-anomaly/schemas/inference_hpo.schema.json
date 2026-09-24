@@ -128,10 +128,10 @@
   "type": "object",
   "x_tao_schema": {
     "action": "inference_hpo",
-    "model": "tao-finetune-nv-tesseract-ad-diffusion",
-    "network_arch": "nv_tesseract_ad_diffusion",
+    "model": "tao-finetune-kumo-anomaly",
+    "network_arch": "kumo_anomaly",
     "schema_action": "inference_hpo",
     "schema_version": 1,
-    "source": "hand-authored for NV-Tesseract AD Diffusion inference HPO"
+    "source": "hand-authored for Kumo-Anomaly inference HPO"
   }
 }

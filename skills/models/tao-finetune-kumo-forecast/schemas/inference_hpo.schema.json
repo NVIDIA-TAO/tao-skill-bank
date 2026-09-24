@@ -202,10 +202,10 @@
   "type": "object",
   "x_tao_schema": {
     "action": "inference_hpo",
-    "model": "tao-finetune-nv-tesseract-forecasting",
-    "network_arch": "nv_tesseract_forecasting",
+    "model": "tao-finetune-kumo-forecast",
+    "network_arch": "kumo_forecast",
     "schema_action": "inference_hpo",
     "schema_version": 1,
-    "source": "hand-authored for NV-Tesseract Forecasting DARR HPO"
+    "source": "hand-authored for Kumo-Forecast DARR HPO"
   }
 }

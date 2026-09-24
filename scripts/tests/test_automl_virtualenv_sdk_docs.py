@@ -5,7 +5,7 @@
 
 Three skills forward-referenced each other and the loop never closed, so
 users constructed the SDK without ``work_dir=`` and every trial's checkpoints
-landed in ``$HOME`` (~1.4 GB per NV-Tesseract Forecasting trial).
+landed in ``$HOME`` (~1.4 GB per Kumo-Forecast trial).
 
 The full construction can only live under ``skills/applications/tao-run-automl/``
 because validate-skills.sh check 4 bans the literal ``tao_sdk`` everywhere else;
@@ -32,8 +32,8 @@ PREFLIGHT = AUTOML / "references" / "automl-preflight-concepts.md"
 MODEL_REFS = [
     REPO / "skills" / "models" / s / "references" / "automl.md"
     for s in (
-        "tao-finetune-nv-tesseract-forecasting",
-        "tao-finetune-nv-tesseract-ad-diffusion",
+        "tao-finetune-kumo-forecast",
+        "tao-finetune-kumo-anomaly",
     )
 ]
 
