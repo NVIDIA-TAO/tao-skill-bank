@@ -15,7 +15,7 @@ Iteration stage 2, immediately after `gap_analysis`. Skipped only when `gap_anal
 
 The embedding written here is compared against the **source-pool** embedding parquet during mining. Both must come from the same encoder — same `model` and same `model_path`. Mismatched encoders produce vectors that are not comparable, and the failure is silent: mining succeeds and returns confidently wrong neighbours.
 
-Resolve `model` / `model_path` once in Pre-Flight (check 9) and reuse those exact values on every iteration from `state.config.embedding_model` / `state.config.embedding_model_path`. Never let one iteration pick a different encoder, and never let this stage fall back to a bare HuggingFace id at run time — Pre-Flight already decided between a local snapshot and a verified online id, and re-deciding mid-loop is how the two sides drift apart.
+Resolve `model` / `model_path` once in Pre-Flight (check 10) and reuse those exact values on every iteration from `state.config.embedding_model` / `state.config.embedding_model_path`. Never let one iteration pick a different encoder, and never let this stage fall back to a bare HuggingFace id at run time — Pre-Flight already decided between a local snapshot and a verified online id, and re-deciding mid-loop is how the two sides drift apart.
 
 ## Spec
 

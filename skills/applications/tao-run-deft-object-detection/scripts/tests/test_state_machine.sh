@@ -2618,6 +2618,161 @@ case "$(state_json_top "$G29S_RUN" completion_reason)" in
 esac
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G31. the Co-DETR checkpoint is verified, and a failed fetch leaves nothing
+#
+# The checkpoint is 2.8 GiB and its weights must match the architecture pinned in
+# the inference overlay -- a mismatch loads nothing and still exits 0. urllib
+# accepts file:// URLs, so the whole contract is exercised here without a network.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G31 co-detr checkpoint fetch"
+
+G31=$(new_workspace g31)
+FETCH="$SCRIPTS_DIR/fetch_codetr_checkpoint.py"
+make_file "$G31/src/small.bin" "co-detr stand-in payload"
+G31_SHA=$("$PY" -c 'import hashlib,sys
+print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$G31/src/small.bin")
+
+run "$PY" "$FETCH" --dest "$G31/dest" --plan
+assert_rc 0 "[G31] --plan reports without downloading"
+[ -f "$G31/dest/pytorch_model.pth" ] \
+  && notok "[G31] --plan writes nothing" \
+  || ok "[G31] --plan writes nothing"
+
+# A truncated checkpoint already at --dest must fail the plan, not read as
+# ALREADY PRESENT in the Pre-Flight Summary and fail only after approval. The size
+# check applies to the published URL, which --plan never contacts, so the default
+# URL is safe to use offline here.
+make_file "$G31/truncated/pytorch_model.pth" "a few bytes of a 2.8 GiB file"
+run "$PY" "$FETCH" --dest "$G31/truncated" --plan
+assert_rc 1 "[G31] --plan refuses a truncated checkpoint already at --dest"
+case "$RUN_OUT" in
+  *"ALREADY PRESENT"*) notok "[G31] --plan does not report a truncated file as present" \
+                         "output: $RUN_OUT" ;;
+  *) ok "[G31] --plan does not report a truncated file as present" ;;
+esac
+
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA"
+assert_rc 0 "[G31] a transfer whose digest matches is kept"
+[ -f "$G31/dest/pytorch_model.pth" ] \
+  && ok "[G31] the checkpoint is moved into place under its final name" \
+  || notok "[G31] the checkpoint is moved into place under its final name"
+
+# Reuse: the second call must not re-transfer, and must print the path either way.
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA"
+assert_rc 0 "[G31] a second call is idempotent"
+case "$RUN_OUT" in
+  *"$G31/dest/pytorch_model.pth"*) ok "[G31] the existing path is printed for reuse" ;;
+  *) notok "[G31] the existing path is printed for reuse" "output: $RUN_OUT" ;;
+esac
+
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA" --verify
+assert_rc 0 "[G31] --verify accepts an intact checkpoint on reuse"
+
+# The case --verify exists for: right length, wrong bytes. Reuse checks size only,
+# so without the flag this file is handed to prep as the checkpoint.
+"$PY" - "$G31/dest/pytorch_model.pth" <<'PYEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = bytearray(p.read_bytes())
+data[0] ^= 0xFF
+p.write_bytes(bytes(data))
+PYEOF
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA"
+assert_rc 0 "[G31] without --verify, a same-size corrupt file is reused"
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA" --verify
+assert_rc 1 "[G31] --verify refuses a same-size corrupt file"
+case "$RUN_OUT" in
+  *"right size but not the right checkpoint"*)
+    ok "[G31] the refusal says why size alone did not catch it" ;;
+  *) notok "[G31] the refusal says why size alone did not catch it" "output: $RUN_OUT" ;;
+esac
+[ -f "$G31/dest/pytorch_model.pth" ] \
+  && ok "[G31] the suspect file is left for the operator, not deleted" \
+  || notok "[G31] the suspect file is left for the operator, not deleted"
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "$G31_SHA" --verify --plan
+assert_rc 1 "[G31] --plan --verify catches it before approval, not after"
+
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "" --verify
+assert_rc 1 "[G31] --verify with no digest to compare against is refused"
+
+# A wrong digest is the case the .part dance exists for: the bad bytes must not
+# survive under the final name, and no partial file may be left behind either.
+rm -f "$G31/dest/pytorch_model.pth"
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/small.bin" \
+  --expect-sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+assert_rc 1 "[G31] a digest mismatch is refused"
+[ -f "$G31/dest/pytorch_model.pth" ] \
+  && notok "[G31] the rejected bytes are not kept under the final name" \
+  || ok "[G31] the rejected bytes are not kept under the final name"
+assert_eq '0' "$(find "$G31/dest" -name '*.part' | wc -l | tr -d ' ')" \
+  "[G31] no partial file is left behind"
+
+# A source that cannot be opened at all must leave the directory as it found it.
+run "$PY" "$FETCH" --dest "$G31/dest" --url "file://$G31/src/does_not_exist.bin" \
+  --expect-sha256 "$G31_SHA"
+assert_rc 1 "[G31] an unreachable source fails"
+assert_eq '0' "$(find "$G31/dest" -name '*.part' | wc -l | tr -d ' ')" \
+  "[G31] a failed transfer leaves no partial file"
+
+# The case a file:// URL cannot produce: bytes arrive, then the transfer dies. A
+# read timeout, IncompleteRead, a reset connection and Ctrl-C all land here, and
+# none of them is a URLError -- so the cleanup has to be in `finally` rather than
+# on that one error class. Left behind, the partial file is 2.8 GiB the next run's
+# free-space check has to account for. download() is driven directly because the
+# failure has to happen between two reads.
+run "$PY" - "$FETCH" "$G31/midflight" <<'PYEOF'
+import importlib.util, pathlib, sys
+
+spec = importlib.util.spec_from_file_location("fetch_codetr", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+dest = pathlib.Path(sys.argv[2])
+dest.mkdir(parents=True, exist_ok=True)
+
+
+class _DiesMidTransfer:
+    headers = {}
+
+    def __init__(self):
+        self.reads = 0
+
+    def read(self, _size):
+        self.reads += 1
+        if self.reads == 1:
+            return b"the first chunk arrives"
+        raise ConnectionResetError("connection reset by peer")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+mod.urllib.request.urlopen = lambda *_a, **_k: _DiesMidTransfer()
+try:
+    mod.download("https://example.invalid/checkpoint.pth", dest / mod.FILENAME, "")
+except ConnectionResetError:
+    pass
+else:
+    print("download() swallowed a mid-transfer failure")
+    raise SystemExit(1)
+
+print(",".join(sorted(p.name for p in dest.iterdir())) or "<empty>")
+PYEOF
+assert_rc 0 "[G31] a mid-transfer failure propagates"
+assert_eq '<empty>' "$RUN_OUT" \
+  "[G31] a transfer that dies after the first chunk leaves nothing behind"
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then
