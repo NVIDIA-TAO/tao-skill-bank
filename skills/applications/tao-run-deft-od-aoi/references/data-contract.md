@@ -43,4 +43,6 @@ iteration 2 onward. Clean negatives are capped by
 `routing.clean_cumulative_cap_per_real`. When synthesis is enabled, pass both
 the generated binary COCO and its image root. Synthetic admission is capped by
 `synthesis.cumulative_fraction_of_real_defects`. Existing records remain
-unchanged.
+unchanged. Admission also emits `admission_preview.json`. When overfetched crops
+do not contain enough novel parent images for a branch target, it admits the
+available parents and records the shortfall instead of failing the iteration.

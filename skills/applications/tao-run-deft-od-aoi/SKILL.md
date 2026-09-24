@@ -106,9 +106,15 @@ scripts/prepare_deft_od_aoi_retrieval.py queries \
   --policy "$RESULTS/deft_od_aoi_policy.yaml" \
   --strict-gaps "$ITER/strict/box_gaps.parquet" \
   --loose-gaps "$ITER/loose/box_gaps.parquet" \
+  --previous-coco "$PREVIOUS/train.json" \
   --iteration 1 --candidate-root "$RESULTS/candidates" \
   --output-dir "$ITER/retrieval"
 ```
+
+Omit `--previous-coco` only for iteration 1. Later iterations exclude every
+candidate crop whose source image is already present in the cumulative training
+COCO before unique-neighbor matching. Admission still performs the authoritative
+source-level deduplication gate.
 
 Run every emitted embedding spec through `tao-generate-image-embeddings`, then
 each enabled mining spec through `tao-mine-od-images`. Defective candidates

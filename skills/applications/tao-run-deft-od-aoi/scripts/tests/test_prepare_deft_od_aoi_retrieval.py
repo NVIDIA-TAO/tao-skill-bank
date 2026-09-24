@@ -52,6 +52,9 @@ def _policy(root: Path) -> Path:
                                                     "clean_grids": [1, 2],
                                                     "candidate_overfetch": 15},
                                       "routing": {"real_mine_factor_min": 1,
+                                                  "real_mine_factor_max": 6,
+                                                  "near_miss_real_factor": 2,
+                                                  "near_miss_real_cap": 20,
                                                   "clean_factor": 2}}))
     return policy
 
@@ -87,6 +90,17 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     policy = _policy(tmp_path)
     query_image = tmp_path / "query.png"
     _image(query_image)
+    document = json.loads(policy.read_text()) if policy.suffix == ".json" else yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({"images": [{"id": 1, "file_name": query_image.name,
+                                            "source_path": str(query_image),
+                                            "deft_od_aoi": {"benchmark": "visa",
+                                                            "texture": "pcb1",
+                                                            "defect_type": "bad"}}],
+                                "annotations": [], "categories": [{"id": 1, "name": "defect"}]}))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
     strict = tmp_path / "strict.parquet"
     loose = tmp_path / "loose.parquet"
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
@@ -97,9 +111,80 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     report = MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
                             tmp_path / "candidates", None)
     assert report["query_counts"] == {"real": 2, "clean": 1}
+    assert report["admission_targets"] == {
+        "real": {"fn": 1, "near_miss_fp": 2},
+        "clean": {"background_fp": 2},
+    }
     real = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
     assert set(real.reason) == {"fn", "near_miss_fp"}
     real_mining = yaml.safe_load((tmp_path / "queries/mine_real.yaml").read_text())
     clean_mining = yaml.safe_load((tmp_path / "queries/mine_clean.yaml").read_text())
-    assert real_mining["desired_unique_count"] == 2
-    assert clean_mining["desired_unique_count"] == 2
+    assert real_mining["desired_unique_count"] == 1
+    assert clean_mining["desired_unique_count"] == 5
+    assert real_mining["candidate_expansion_factor"] == 15
+
+
+def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": query_image.name,
+                    "source_path": str(query_image),
+                    "deft_od_aoi": {"benchmark": "visa", "texture": "pcb1",
+                                    "defect_type": "bad"}}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.1}]).to_parquet(strict)
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [2, 2, 10, 10], "best_iou": 0.01}]).to_parquet(loose)
+
+    candidates = tmp_path / "candidates"
+    candidates.mkdir()
+    prior_real = tmp_path / "prior_real.png"
+    novel_real = tmp_path / "novel_real.png"
+    prior_clean = tmp_path / "prior_clean.png"
+    novel_clean = tmp_path / "novel_clean.png"
+    for path in (prior_real, novel_real, prior_clean, novel_clean):
+        _image(path)
+    pd.DataFrame([
+        {"filepath": str(candidates / "real-prior-a.png"),
+         "source_filepath": str(prior_real)},
+        {"filepath": str(candidates / "real-prior-b.png"),
+         "source_filepath": str(prior_real)},
+        {"filepath": str(candidates / "real-novel.png"),
+         "source_filepath": str(novel_real)},
+    ]).to_parquet(candidates / "real_candidates.parquet", index=False)
+    pd.DataFrame([
+        {"filepath": str(candidates / "clean-prior.png"),
+         "source_filepath": str(prior_clean)},
+        {"filepath": str(candidates / "clean-novel.png"),
+         "source_filepath": str(novel_clean)},
+    ]).to_parquet(candidates / "clean_candidates.parquet", index=False)
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({"images": [
+        {"deft_kind": "real_defect", "original_source_path": str(prior_real)},
+        {"deft_kind": "clean_negative", "source_path": str(prior_clean)},
+        {"deft_kind": "synthetic_defect", "source_path": str(tmp_path / "synthetic.png")},
+    ]}))
+
+    report = MODULE.queries(policy, strict, loose, 4, tmp_path / "queries",
+                            candidates, None, previous)
+
+    assert report["excluded_candidate_crops"] == {"real": 2, "clean": 1}
+    assert report["excluded_source_images"] == {"real": 1, "clean": 1}
+    real_spec = yaml.safe_load((tmp_path / "queries/mine_real.yaml").read_text())
+    clean_spec = yaml.safe_load((tmp_path / "queries/mine_clean.yaml").read_text())
+    real_excluded = pd.read_parquet(real_spec["exclude_path"])
+    clean_excluded = pd.read_parquet(clean_spec["exclude_path"])
+    assert set(real_excluded.filepath) == {
+        str(candidates / "real-prior-a.png"), str(candidates / "real-prior-b.png")
+    }
+    assert set(clean_excluded.filepath) == {str(candidates / "clean-prior.png")}

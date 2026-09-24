@@ -71,6 +71,24 @@ def _embedding_spec(policy: dict[str, Any], input_path: Path, output: Path) -> d
             "model_config_path": "", "batch_size": 64}
 
 
+def _kpi_pockets(policy: dict[str, Any]) -> dict[str, dict[str, str]]:
+    source = policy["sources"]["kpi"]
+    images = Path(source["images"])
+    document = json.loads(Path(source["coco"]).read_text())
+    result = {}
+    for row in document["images"]:
+        path = _source(images, row)
+        metadata = row.get("deft_od_aoi") or {}
+        values = {
+            "dataset": str(metadata.get("benchmark") or row.get("benchmark") or "unknown"),
+            "texture": str(metadata.get("texture") or "unknown"),
+            "defect": str(metadata.get("defect_type") or "unknown"),
+        }
+        values["pocket"] = "/".join((values["dataset"], values["texture"], values["defect"]))
+        result[str(path)] = values
+    return result
+
+
 def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -126,8 +144,41 @@ def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
     return result
 
 
+def _previous_sources(previous_path: Path | None) -> dict[str, set[Path]]:
+    result = {"real": set(), "clean": set()}
+    if previous_path is None:
+        return result
+    previous = json.loads(previous_path.read_text())
+    kinds = {"real_defect": "real", "clean_negative": "clean"}
+    for row in previous.get("images", []):
+        role = kinds.get(str(row.get("deft_kind") or ""))
+        raw = row.get("original_source_path") or row.get("source_path")
+        if role and raw:
+            result[role].add(Path(str(raw)).resolve())
+    return result
+
+
+def _exclude_candidates(candidate_root: Path, role: str, prior_sources: set[Path],
+                        output: Path) -> tuple[Path | None, int, int]:
+    if not prior_sources:
+        return None, 0, 0
+    candidates = pd.read_parquet(candidate_root / f"{role}_candidates.parquet")
+    required = {"filepath", "source_filepath"}
+    if not required.issubset(candidates.columns):
+        raise ValueError(f"{role} candidates lack {sorted(required - set(candidates.columns))}")
+    source_paths = candidates.source_filepath.map(lambda value: Path(str(value)).resolve())
+    excluded = candidates.loc[source_paths.isin(prior_sources), ["filepath"]].drop_duplicates()
+    if excluded.empty:
+        return None, 0, 0
+    exclude_path = output / f"exclude_{role}_candidate_crops.parquet"
+    excluded.to_parquet(exclude_path, index=False)
+    matched_sources = set(source_paths[source_paths.isin(prior_sources)])
+    return exclude_path, len(excluded), len(matched_sources)
+
+
 def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: int,
-            output: Path, candidate_root: Path, real_factor: int | None) -> dict[str, Any]:
+            output: Path, candidate_root: Path, real_factor: int | None,
+            previous_path: Path | None = None) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
@@ -147,11 +198,18 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         elif iou < gap["near_miss_iou_upper"]:
             events.append(("real", "near_miss_fp", row))
     output.mkdir(parents=True)
-    counts, frames = {}, {}
+    pockets = _kpi_pockets(policy)
+    counts, frames, targets, requested = {}, {}, {}, {}
+    prior_sources = _previous_sources(previous_path)
+    excluded_candidate_crops, excluded_source_images = {}, {}
     for role in ("real", "clean"):
         rows = []
         for index, (_, reason, event) in enumerate(item for item in events if item[0] == role):
             source = Path(str(event["filepath"])).resolve()
+            if str(source) not in pockets:
+                raise ValueError(f"gap image is absent from the frozen KPI role: {source}")
+            if "unknown" in pockets[str(source)].values():
+                raise ValueError(f"gap image lacks frozen pocket metadata: {source}")
             width, height = _size(source)
             box = _gap_box(event["bbox"], width, height,
                            float(policy["retrieval"]["defect_context_scale"]))
@@ -160,7 +218,8 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             _crop(source, box, crop)
             rows.append({"filepath": str(crop), "query_id": query_id, "role": role,
                          "reason": reason, "source_filepath": str(source),
-                         "source_bbox": event["bbox"], "best_iou": float(event["best_iou"])})
+                         "source_bbox": event["bbox"], "best_iou": float(event["best_iou"]),
+                         **pockets[str(source)]})
         counts[role], frames[role] = len(rows), pd.DataFrame(rows)
         if not rows:
             continue
@@ -171,15 +230,40 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             yaml.safe_dump(_embedding_spec(policy, parquet, embedded), sort_keys=False)
         )
         routing = policy["routing"]
-        factor = (real_factor or int(routing["real_mine_factor_min"])) if role == "real" else int(routing["clean_factor"])
-        desired = max(1, len(rows) * factor)
+        if role == "real":
+            factor = real_factor or int(routing["real_mine_factor_min"])
+            if not int(routing["real_mine_factor_min"]) <= factor <= int(routing["real_mine_factor_max"]):
+                raise ValueError("real factor is outside the frozen policy range")
+            strict_count = sum(row["reason"] == "fn" for row in rows)
+            near = pd.DataFrame(row for row in rows if row["reason"] == "near_miss_fp")
+            near_target = (0 if near.empty else sum(
+                min(len(group) * int(routing["near_miss_real_factor"]),
+                    int(routing["near_miss_real_cap"]))
+                for _, group in near.groupby("pocket")
+            ))
+            targets[role] = {"fn": strict_count * factor, "near_miss_fp": near_target}
+        else:
+            targets[role] = {"background_fp": len(rows) * int(routing["clean_factor"])}
+        desired = sum(targets[role].values())
+        candidate_count = len(pd.read_parquet(candidate_root / f"{role}_candidates.parquet"))
+        requested[role] = min(candidate_count, desired * int(policy["retrieval"]["candidate_overfetch"]))
         mining = {"source_path": str(candidate_root / f"{role}_candidate_embeddings.parquet"),
                   "target_path": str(embedded), "output_dir": str(output / f"mine_{role}"),
-                  "desired_unique_count": desired, "allocation_policy": "global",
+                  "desired_unique_count": requested[role], "allocation_policy": "global",
                   "distance_metric": "cosine", "candidate_expansion_factor": int(policy["retrieval"]["candidate_overfetch"])}
+        exclude_path, crop_count, source_count = _exclude_candidates(
+            candidate_root, role, prior_sources[role], output
+        )
+        excluded_candidate_crops[role] = crop_count
+        excluded_source_images[role] = source_count
+        if exclude_path is not None:
+            mining["exclude_path"] = str(exclude_path)
         (output / f"mine_{role}.yaml").write_text(yaml.safe_dump(mining, sort_keys=False))
     report = {"status": "COMPLETE", "iteration": iteration, "query_counts": counts,
-              "enabled_roles": [role for role, count in counts.items() if count]}
+              "enabled_roles": [role for role, count in counts.items() if count],
+              "admission_targets": targets, "requested_crop_counts": requested,
+              "excluded_candidate_crops": excluded_candidate_crops,
+              "excluded_source_images": excluded_source_images}
     _json(output / "query_manifest.json", report)
     return report
 
@@ -198,11 +282,13 @@ def main() -> int:
     query.add_argument("--output-dir", type=Path, required=True)
     query.add_argument("--candidate-root", type=Path, required=True)
     query.add_argument("--real-factor", type=int)
+    query.add_argument("--previous-coco", type=Path)
     args = parser.parse_args()
     result = (candidates(args.policy.resolve(), args.output_dir.resolve()) if args.command == "candidates"
               else queries(args.policy.resolve(), args.strict_gaps.resolve(), args.loose_gaps.resolve(),
                            args.iteration, args.output_dir.resolve(), args.candidate_root.resolve(),
-                           args.real_factor))
+                           args.real_factor,
+                           args.previous_coco.resolve() if args.previous_coco else None))
     print(json.dumps(result, sort_keys=True))
     return 0
 
