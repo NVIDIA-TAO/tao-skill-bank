@@ -2668,22 +2668,48 @@ print(",".join(yaml.safe_load(open(sys.argv[1]))["weak_thresholds"]))' \
   "$G30B_RUN/weak_thresholds.yaml")" \
   "[G30] a gate for a class the run does not target is left out"
 
-# The build line the fix exists to make runnable. --set-from-file must unwrap the
-# single top-level key and replace the asset's whole weak_thresholds leaf rather than
-# merging into it, or the asset's classes survive alongside the run's.
+# The asset leaves weak_thresholds mandatory, so a build that skips the prepare step
+# fails at the build, naming the field -- not in the container, and not by gating on
+# a default nobody chose.
+G30_SET_PATHS=(--set ground_truth_ann_path=/gt --set inference_ann_path=/inf
+               --set images_dir=/img --set results_dir=/out --set kpi=iter1)
+cp "$SKILL_DIR/assets/gap_analysis_object_detection.yaml" "$G30B_RUN/skipped.yaml"
+run "$PY" "$SCRIPTS_DIR/apply_spec_overrides.py" --spec "$G30B_RUN/skipped.yaml" \
+  "${G30_SET_PATHS[@]}" --require-no-mandatory
+assert_rc 1 "[G30] a build that skipped the gates file is refused"
+case "$RUN_OUT" in
+  *weak_thresholds*) ok "[G30] the refusal names weak_thresholds" ;;
+  *) notok "[G30] the refusal names weak_thresholds" "output: $RUN_OUT" ;;
+esac
+
+# The documented build line, end to end on the asset: every ??? filled, the gates
+# from the file.
 cp "$SKILL_DIR/assets/gap_analysis_object_detection.yaml" "$G30B_RUN/gap_spec.yaml"
-run "$PY" "$SCRIPTS_DIR/apply_spec_overrides.py" \
-  --spec "$G30B_RUN/gap_spec.yaml" \
-  --set-from-file "weak_thresholds=$G30B_RUN/weak_thresholds.yaml"
-assert_rc 0 "[G30] the documented --set-from-file build line runs"
-assert_eq 'bus' "$("$PY" -c 'import yaml,sys
-print(",".join(yaml.safe_load(open(sys.argv[1]))["weak_thresholds"]))' \
-  "$G30B_RUN/gap_spec.yaml")" \
-  "[G30] the asset's own gates are replaced, not merged with the run's"
+run "$PY" "$SCRIPTS_DIR/apply_spec_overrides.py" --spec "$G30B_RUN/gap_spec.yaml" \
+  "${G30_SET_PATHS[@]}" \
+  --set-from-file "weak_thresholds=$G30B_RUN/weak_thresholds.yaml" --require-no-mandatory
+assert_rc 0 "[G30] the documented build line runs and leaves nothing mandatory"
 assert_eq '0.6' "$("$PY" -c 'import yaml,sys
 print(yaml.safe_load(open(sys.argv[1]))["weak_thresholds"]["bus"]["ap50"])' \
   "$G30B_RUN/gap_spec.yaml")" \
   "[G30] the gate in the built spec is the one the run declared"
+
+# --set-from-file must unwrap the single top-level key and replace a whole existing
+# weak_thresholds mapping, not merge into it -- a spec from anywhere but the asset may
+# already carry one. Planted here, since the asset no longer does.
+"$PY" - "$G30B_RUN/planted.yaml" "$SKILL_DIR/assets/gap_analysis_object_detection.yaml" <<'EOF'
+import sys, yaml
+spec = yaml.safe_load(open(sys.argv[2]))
+spec["weak_thresholds"] = {"car": {"ap50": 0.99}, "person": {"ap50": 0.7}}
+yaml.safe_dump(spec, open(sys.argv[1], "w"))
+EOF
+run "$PY" "$SCRIPTS_DIR/apply_spec_overrides.py" --spec "$G30B_RUN/planted.yaml" \
+  --set-from-file "weak_thresholds=$G30B_RUN/weak_thresholds.yaml"
+assert_rc 0 "[G30] the gates file applies over an existing mapping"
+assert_eq 'bus' "$("$PY" -c 'import yaml,sys
+print(",".join(yaml.safe_load(open(sys.argv[1]))["weak_thresholds"]))' \
+  "$G30B_RUN/planted.yaml")" \
+  "[G30] an existing mapping is replaced, not merged with the run's gates"
 
 # The file is the stage's input, so it re-checks what init checked.
 "$PY" - "$G30_RUN/deft_state.json" <<'EOF'

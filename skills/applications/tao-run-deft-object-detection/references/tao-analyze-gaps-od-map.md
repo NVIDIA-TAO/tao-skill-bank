@@ -50,14 +50,13 @@ re-typing them is how the spec and `deft_state.json` come to disagree:
   --out "${RESULTS_DIR}/iter${N}/gaps/weak_thresholds.yaml"
 ```
 
-It writes one entry per `config.target_classes` and nothing else. Skip it and the stage
-keeps the gates hardcoded in the shipped asset and exits 0, so a run gates on values
-nobody chose. That is not only a reporting difference: the weak set sizes the mining
-budget, so the substituted gates change which images the iteration mines.
+It writes one entry per `config.target_classes` and nothing else. The asset leaves
+`weak_thresholds` as `???`, so skipping this step fails the build below rather than
+gating on values nobody chose. That matters beyond reporting: the weak set sizes the
+mining budget, so a substituted gate changes which images the iteration mines.
 
 **Then build the spec** the same way every other stage does — emit, then fill the
-run-specific fields, with the file above replacing the asset's whole `weak_thresholds`
-block:
+run-specific fields, with the file above filling `weak_thresholds`:
 
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/emit_default_spec.py \
@@ -70,8 +69,13 @@ block:
   --set images_dir="$KPI_IMAGES_DIR" \
   --set results_dir="${RESULTS_DIR}/iter${N}/gaps" \
   --set kpi="iter${N}" \
-  --set-from-file weak_thresholds="${RESULTS_DIR}/iter${N}/gaps/weak_thresholds.yaml"
+  --set-from-file weak_thresholds="${RESULTS_DIR}/iter${N}/gaps/weak_thresholds.yaml" \
+  --require-no-mandatory
 ```
+
+`--require-no-mandatory` is what makes a missing input fail here, naming the field,
+instead of reaching the container: every field the asset leaves `???` is one this
+build must set.
 
 `gap_analysis` is absent from TAO's `default_specs` list, so unlike the other stages
 there is no container to emit from: `emit_default_spec.py` copies
@@ -80,9 +84,8 @@ reason. That asset is a **starting spec, not an overlay** — do not pass it to
 `--apply-workflow-defaults`. It carries a nested `weak_thresholds` mapping, and the
 overlay mechanism takes one dotted key per leaf, so it is rejected with
 `'weak_thresholds' has a mapping value`. There is no `--apply-workflow-defaults` step
-for this stage: the emitted spec holds every documented default except
-`weak_thresholds`, whose car/bicycle/person entries are the reference ITS gates and a
-placeholder for this run's — the file above replaces them whole.
+for this stage: the emitted spec holds every documented default, and leaves
+`weak_thresholds` and the run's paths `???` for the build to fill.
 
 The resulting spec:
 

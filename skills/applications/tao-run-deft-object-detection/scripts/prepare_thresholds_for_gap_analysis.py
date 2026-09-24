@@ -7,13 +7,12 @@
 ``init_deft_state.py`` accepts per-class AP50 thresholds, validates them, and stores
 them at ``config.ap50_thresholds``. The gap spec needs them under ``weak_thresholds``,
 in ``{class: {ap50: value}}`` shape, and ``apply_spec_overrides.py`` can only set a
-nested block from a file. Nothing produced that file, so the documented build could not
-be run and the stage fell back to the gates hardcoded in the shipped asset -- exiting 0,
-warning about nothing, and gating on values the caller never chose.
+nested block from a file. This writes that file.
 
-That matters beyond the gate itself. The weak set decides the mining budget, so a
-substituted threshold changes which images the iteration mines, not just which are
-reported weak.
+The shipped asset leaves ``weak_thresholds`` as ``???``, so a build that skips this
+step fails rather than gating on values the caller never chose. That matters beyond
+the gate itself: the weak set decides the mining budget, so a substituted threshold
+changes which images the iteration mines, not just which are reported weak.
 
 Reads the state the run already froze rather than taking the thresholds again on the
 command line: a second source is a second thing to disagree with deft_state.json.
