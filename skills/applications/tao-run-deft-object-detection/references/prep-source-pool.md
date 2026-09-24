@@ -461,7 +461,8 @@ prep. Omitting the flag leaves the field unset and `mine` refuses.
 
 Hard-stop before the baseline when any of these hold:
 
-- `$CODETR_CHECKPOINT` is unset or not on disk. Pre-Flight check 7 fetches it, so this
+- `$CODETR_CHECKPOINT` is unset or not on disk. Pre-Flight check 7 resolves it — the
+  user's own path, or a verified fetch — so this
   gate catches a run that skipped Pre-Flight or had the file removed since. It is listed
   first because it is the cheapest to check and the most expensive to discover late: the
   Co-DETR pass is the longest stage in the workflow and it is the first thing prep does.
