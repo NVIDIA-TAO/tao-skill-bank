@@ -24,6 +24,8 @@ actions:
         type: file
       selected_fn_queries:
         type: file
+      input_contract:
+        type: file
     upload_excludes:
     - inputs/
     args:

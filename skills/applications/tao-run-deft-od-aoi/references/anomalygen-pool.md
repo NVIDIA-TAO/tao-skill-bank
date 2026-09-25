@@ -19,9 +19,10 @@ The frozen `defect_spec.jsonl` must define every selected
 `roi_prompt_defect_location`. Every KPI FN provides `dataset_id` so the
 application can decide whether it is routed for synthesis. FNs whose dataset
 ID is not in `synthesis.routes` remain in the normal real-data path and are
-counted in the synthesis request report. Routed FNs must also provide explicit
-`texture_id`, `defect_class`, and `fn_mask_source`. A box is not a mask, and
-this application never invents masks or prompts.
+counted in the synthesis request report. A missing or empty `dataset_id` is
+malformed metadata, not an opt-out mechanism. Routed FNs must also provide
+explicit `texture_id`, `defect_class`, and `fn_mask_source`. A box is not a
+mask, and this application never invents masks or prompts.
 
 ## Existing task weights
 
@@ -73,3 +74,10 @@ binary COCO enters admission, under the cumulative synthetic fraction cap.
 Admission removes undersized, extreme-aspect, and full-frame boxes, then
 allocates available capacity proportionally across source `dataset_id` values
 with deterministic selection.
+
+If there are no routed FNs, `synthesis_request.json` is a typed `SKIPPED`
+contract whose evidence lists the observed dataset IDs, configured route keys,
+total skipped count, per-dataset skipped counts, and a human-readable summary.
+If every routed FN fails mask eligibility, the preparation leaf emits a typed
+`SKIPPED` `input_contract.json` with per-FN reasons. Either contract completes
+the optional synthesis stage without AMP, generation, or synthetic re-admission.

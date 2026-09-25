@@ -61,6 +61,10 @@ embedding and AMP actions, then invoke `tao-generate-od-defects`.
 
 Re-run admission with the generated binary COCO and image root. Commit
 `iteration_synthesis`. Never synthesize from a box without its exact mask.
+When the request has no routed FNs, commit `synthesis_request.json` as the
+`synthesis_request` artifact. When mask preparation has no eligible FNs, commit
+its `input_contract.json` as `synthesis_preparation`. These typed skips advance
+to training without embedding, AMP, generation, or synthetic re-admission.
 
 ## 6. Train and select
 

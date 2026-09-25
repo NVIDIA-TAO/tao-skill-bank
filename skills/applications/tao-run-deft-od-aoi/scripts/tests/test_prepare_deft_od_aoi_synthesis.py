@@ -232,6 +232,25 @@ def test_synthesis_skips_unrouted_dataset_without_weakening_routed_masks(
     with pytest.raises(ValueError, match="fn_mask_source"):
         MODULE.prepare(policy, gaps, tmp_path / "out-missing-routed-mask")
 
+    coco_value["annotations"][0]["fn_mask_source"] = str(mask)
+    coco_value["images"][0].pop("dataset_id")
+    coco.write_text(json.dumps(coco_value))
+    with pytest.raises(ValueError, match="real nonempty dataset_id.*allowlist"):
+        MODULE.prepare(policy, gaps, tmp_path / "out-missing-dataset-id")
+
+    coco_value["images"][0]["dataset_id"] = "boxes_only"
+    coco.write_text(json.dumps(coco_value))
+    skipped = MODULE.prepare(policy, gaps, tmp_path / "out-all-unrouted")
+    assert skipped == {
+        "status": "SKIPPED", "reason": "no_routed_false_negatives", "fn_count": 0,
+        "skipped_unrouted_fn_count": 2,
+        "skipped_unrouted_by_dataset": {"boxes_only": 2},
+        "observed_dataset_ids": ["boxes_only"], "configured_route_keys": ["route"],
+        "message": ("Skipped synthesis: all 2 strict false negatives use unrouted "
+                    "dataset IDs ['boxes_only']; configured synthesis routes are ['route']."),
+        "config": "",
+    }
+
 
 def test_image_index_rejects_duplicate_filename_stems() -> None:
     with pytest.raises(ValueError, match="duplicate KPI image identity: shared"):
