@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 from PIL import Image
 
@@ -78,3 +79,38 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     clean_mining = yaml.safe_load((tmp_path / "queries/mine_clean.yaml").read_text())
     assert real_mining["desired_unique_count"] == 2
     assert clean_mining["desired_unique_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("size", "box", "expected_box", "expected_padding"),
+    [
+        ((32, 32), (0, 0, 2, 2), (0, 0, 8, 8), (0, 0, 0, 0)),
+        ((32, 32), (30, 30, 32, 32), (24, 24, 32, 32), (0, 0, 0, 0)),
+        ((5, 3), (0, 0, 1, 1), (0, 0, 5, 3), (3, 4, 0, 1)),
+        ((32, 32), (4, 5, 20, 24), (4, 5, 20, 24), (0, 0, 0, 0)),
+    ],
+)
+def test_minimum_crop_geometry_expands_then_pads_only_when_required(
+    size: tuple[int, int], box: tuple[int, int, int, int],
+    expected_box: tuple[int, int, int, int], expected_padding: tuple[int, int, int, int],
+) -> None:
+    assert MODULE._minimum_crop_geometry(box, *size) == (expected_box, expected_padding)
+
+
+def test_tiny_gap_crops_are_embedding_safe_at_boundaries(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    query_image = tmp_path / "narrow.png"
+    Image.fromarray(np.full((3, 5, 3), 80, dtype=np.uint8)).save(query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [0, 0, 1, 1], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [4, 2, 5, 3], "best_iou": 0.01}]).to_parquet(loose)
+
+    MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
+                   tmp_path / "candidates", None)
+
+    crops = list((tmp_path / "queries/crops").rglob("*.png"))
+    assert len(crops) == 2
+    assert all(Image.open(path).size == (8, 8) for path in crops)
