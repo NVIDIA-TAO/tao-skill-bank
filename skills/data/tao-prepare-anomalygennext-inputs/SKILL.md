@@ -54,6 +54,7 @@ Run through the selected platform after the common launch review:
 ```bash
 scripts/prepare_anomalygennext_inputs.py \
   --config /path/to/filtering.yaml \
+  --pool-dataset-root /path/to/anomalygen_pool \
   --output-dir /new/result/root
 ```
 
@@ -61,23 +62,37 @@ The output root must not exist. The action emits `fn_queries.parquet`,
 `selected_fn_queries.parquet`, `mask_selection.parquet`, `clean_pool.parquet`,
 two `tao-generate-image-embeddings` specs, the copied filtering config, and
 `input_contract.json`.
+`pool_dataset_root` is one user-level folder input for the workflow. The
+platform stages it once and retains the binding between its source and the
+compute-visible path passed to preparation. Preparation freezes that compute
+path into `filtering_config.yaml`, every clean filepath in `clean_pool.parquet`,
+and `input_contract.json`. The contract declares the same typed folder as a
+read-only downstream input for clean-image embedding and AMP. Each later
+container must remount the original source at that exact compute path; the
+generated script arguments are platform plumbing, not new user choices.
 
 Run both emitted specs through `tao-generate-image-embeddings`, preserving the
-same encoder. Place their outputs under `embeddings/` as named by the specs,
-then submit the `run_amp` action:
+same encoder. The clean-image embedding action must consume
+`input_contract.json.downstream_inputs.clean_embeddings` so the pool paths in
+its parquet resolve. The FN embedding action likewise needs mounts for the
+source-image paths already carried by its input parquet. Place both outputs
+under `embeddings/` as named by the specs, then submit the `run_amp` action:
 
 ```bash
 scripts/run_anomalygennext_amp.py \
-  --config /path/to/filtering.yaml \
   --prepared-root /temporary/execution/root \
   --published-root /persistent/result/root \
+  --pool-dataset-root /path/to/anomalygen_pool \
   --sam2-checkpoint /models/sam2.1_hiera_large.pt
 ```
 
-This writes `knn_candidates.parquet`, the native AMP request, and
-`amp/testcase.jsonl`. When execution uses temporary storage, `--published-root`
-records the persistent locations that will contain the saved results. Finalize
-the saved output in that persistent result root:
+`run_amp` always loads the frozen config below `--prepared-root`; it accepts no
+second config. Its typed pool argument confirms that the platform remounted the
+folder at the path already frozen into the config and parquets. This writes
+`knn_candidates.parquet`, the native AMP request, and `amp/testcase.jsonl`.
+When execution uses temporary storage, `--published-root` records the
+persistent locations that will contain the saved results. Finalize the saved
+output in that persistent result root:
 
 ```bash
 scripts/finalize_anomalygennext_inputs.py --prepared-root /existing/result/root

@@ -79,9 +79,9 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
 ) -> None:
     frozen = tmp_path / "prepared_anomalygennext_inputs/filtering_config.yaml"
     frozen.parent.mkdir()
-    frozen.write_text("defect_spec: /input/defects.jsonl\n")
-    config = tmp_path / "filtering.yaml"
-    config.write_bytes(frozen.read_bytes())
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    frozen.write_text(f"defect_spec: /input/defects.jsonl\npool_dataset_root: {pool}\n")
     checkpoint = tmp_path / "sam2.pt"
     checkpoint.write_bytes(b"weights")
     published = tmp_path.parent / "persistent-output"
@@ -98,7 +98,7 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
         )
 
     monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
-    report = MODULE.run(config, tmp_path, checkpoint, published)
+    report = MODULE.run(tmp_path, checkpoint, pool, published)
 
     assert report["testcase"] == str(published.resolve() / "amp/testcase.jsonl")
     row = json.loads((tmp_path / "amp/testcase.jsonl").read_text())
@@ -109,7 +109,21 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
 
 def test_run_requires_sam2_checkpoint(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="SAM2.1 checkpoint"):
-        MODULE.run(tmp_path / "config.yaml", tmp_path, tmp_path / "missing.pt")
+        MODULE.run(tmp_path, tmp_path / "missing.pt", tmp_path / "pool")
+
+
+def test_run_rejects_pool_mount_that_differs_from_frozen_path(tmp_path: Path) -> None:
+    frozen = tmp_path / "prepared_anomalygennext_inputs/filtering_config.yaml"
+    frozen.parent.mkdir()
+    expected, wrong = tmp_path / "pool", tmp_path / "wrong-pool"
+    expected.mkdir()
+    wrong.mkdir()
+    frozen.write_text(f"pool_dataset_root: {expected}\n")
+    checkpoint = tmp_path / "sam2.pt"
+    checkpoint.write_bytes(b"weights")
+
+    with pytest.raises(ValueError, match="pool must be remounted.*expected.*received"):
+        MODULE.run(tmp_path, checkpoint, wrong)
 
 
 def test_plan_rejects_nonbinary_amp_mask(tmp_path: Path) -> None:

@@ -136,14 +136,19 @@ def _publish_paths(amp_dir: Path, runtime_root: Path, published_root: Path) -> N
             path.write_text(value.replace(source, destination), encoding="utf-8")
 
 
-def run(config_path: Path, root: Path, sam2_checkpoint: Path,
+def run(root: Path, sam2_checkpoint: Path, pool_dataset_root: Path,
         published_root: Path | None = None) -> dict[str, Any]:
     if not sam2_checkpoint.is_file():
         raise FileNotFoundError(f"SAM2.1 checkpoint is missing: {sam2_checkpoint}")
     frozen = root / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
-    if config_path.read_bytes() != frozen.read_bytes():
-        raise ValueError("config differs from the frozen preparation snapshot")
     config = yaml.safe_load(frozen.read_text())
+    pool = pool_dataset_root.expanduser().resolve()
+    expected_pool = Path(config["pool_dataset_root"]).expanduser().resolve()
+    if not pool.is_dir() or expected_pool != pool:
+        raise ValueError(
+            "pool must be remounted at the compute path frozen during preparation: "
+            f"expected {expected_pool}, received {pool}"
+        )
     report = plan(root, config)
     amp = config.get("amp") or {}
     bootstrap = (
@@ -171,13 +176,13 @@ def run(config_path: Path, root: Path, sam2_checkpoint: Path,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True)
     parser.add_argument("--prepared-root", required=True)
     parser.add_argument("--published-root", type=Path)
+    parser.add_argument("--pool-dataset-root", type=Path, required=True)
     parser.add_argument("--sam2-checkpoint", type=Path, required=True)
     args = parser.parse_args()
-    result = run(Path(args.config).resolve(), Path(args.prepared_root).resolve(),
-                 args.sam2_checkpoint.resolve(), args.published_root)
+    result = run(Path(args.prepared_root).resolve(), args.sam2_checkpoint.resolve(),
+                 args.pool_dataset_root.resolve(), args.published_root)
     print(json.dumps(result, sort_keys=True))
     return 0
 
