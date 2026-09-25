@@ -234,7 +234,9 @@ scripts/prepare_deft_od_aoi_synthesis.py \
 Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
 then its finalized generation plan through `tao-generate-od-defects`. Commit
 `iteration_synthesis` before training. Re-run admission with the generated
-native COCO and image root; synthetic categories are folded to `defect`, and
+generation root via `--generation-root`; admission resolves the declared
+logical `binary_coco` output instead of hardcoding its filename. Synthetic
+categories are folded to `defect`, and
 the frozen cumulative fraction cap is applied against admitted real defects.
 Boxes alone never substitute for the required pixel mask.
 
