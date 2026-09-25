@@ -66,6 +66,29 @@ def _embedding_spec(policy: dict[str, Any], input_path: Path, output: Path) -> d
             "model_config_path": "", "batch_size": 64}
 
 
+def _path_values(path: Path, label: str) -> set[str]:
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} exclusion input is missing: {path}")
+    frame = pd.read_parquet(path)
+    if "filepath" not in frame:
+        raise ValueError(f"{label} exclusion input lacks filepath")
+    return {str(Path(value).expanduser().resolve()) for value in frame.filepath.astype(str)}
+
+
+def _history_sources(path: Path | None) -> set[str]:
+    if path is None:
+        return set()
+    if not path.is_file():
+        raise FileNotFoundError(f"previous COCO is missing: {path}")
+    value = json.loads(path.read_text())
+    if not isinstance(value.get("images"), list):
+        raise ValueError("previous COCO lacks images")
+    return {
+        str(Path(str(row.get("source_path") or path.parent / "images" / row["file_name"])).resolve())
+        for row in value["images"]
+    }
+
+
 def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
@@ -123,7 +146,9 @@ def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
 
 
 def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: int,
-            output: Path, candidate_root: Path, real_factor: int | None) -> dict[str, Any]:
+            output: Path, candidate_root: Path, real_factor: int | None,
+            previous_coco: Path | None = None,
+            exclusion_paths: dict[str, Path] | None = None) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
@@ -143,7 +168,9 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         elif iou < gap["near_miss_iou_upper"]:
             events.append(("real", "near_miss_fp", row))
     output.mkdir(parents=True)
-    counts, frames = {}, {}
+    history = _history_sources(previous_coco)
+    configured_exclusions = exclusion_paths or {}
+    counts, frames, role_status = {}, {}, {}
     for role in ("real", "clean"):
         rows = []
         for index, (_, reason, event) in enumerate(item for item in events if item[0] == role):
@@ -159,23 +186,81 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
                          "source_bbox": event["bbox"], "best_iou": float(event["best_iou"])})
         counts[role], frames[role] = len(rows), pd.DataFrame(rows)
         if not rows:
+            role_status[role] = {"status": "NO_QUERIES", "query_count": 0,
+                                 "candidate_count": 0, "excluded_count": 0,
+                                 "remaining_candidate_count": 0}
             continue
         parquet = output / f"{role}_queries.parquet"
         frames[role].to_parquet(parquet, index=False)
+        candidate_path = candidate_root / f"{role}_candidates.parquet"
+        if not candidate_path.is_file():
+            raise FileNotFoundError(f"{role} candidate manifest is missing: {candidate_path}")
+        candidates = pd.read_parquet(candidate_path)
+        required_candidates = {"filepath", "source_filepath"}
+        if candidates.empty or not required_candidates.issubset(candidates):
+            raise ValueError(
+                f"{role} candidate manifest lacks usable {sorted(required_candidates)}"
+            )
+        candidate_files = {
+            str(Path(value).expanduser().resolve()) for value in candidates.filepath.astype(str)
+        }
+        candidate_sources = {
+            str(Path(value).expanduser().resolve()) for value in candidates.source_filepath.astype(str)
+        }
+        explicit = set()
+        if role in configured_exclusions:
+            explicit = _path_values(configured_exclusions[role], role)
+            unmatched = explicit - candidate_files - candidate_sources
+            if unmatched:
+                raise ValueError(
+                    f"{role} exclusion input contains {len(unmatched)} paths absent from candidates"
+                )
+        excluded = candidates[
+            candidates.source_filepath.astype(str).map(
+                lambda value: str(Path(value).expanduser().resolve()) in history | explicit
+            )
+            | candidates.filepath.astype(str).map(
+                lambda value: str(Path(value).expanduser().resolve()) in explicit
+            )
+        ]
+        exclusion_file = output / f"exclude_{role}_candidates.parquet"
+        excluded[["filepath"]].drop_duplicates().to_parquet(exclusion_file, index=False)
+        remaining = len(candidate_files - {
+            str(Path(value).expanduser().resolve()) for value in excluded.filepath.astype(str)
+        })
+        role_status[role] = {
+            "status": "READY" if remaining else "EXHAUSTED",
+            "query_count": len(rows), "candidate_count": len(candidate_files),
+            "excluded_count": int(excluded.filepath.nunique()),
+            "remaining_candidate_count": remaining,
+            "exclusion_manifest": str(exclusion_file.resolve()),
+            "history_source_count": len(history & candidate_sources),
+            "explicit_exclusion_count": len(explicit),
+        }
+        if not remaining:
+            continue
         embedded = output / f"{role}_query_embeddings.parquet"
         (output / f"embed_{role}_queries.yaml").write_text(
             yaml.safe_dump(_embedding_spec(policy, parquet, embedded), sort_keys=False)
         )
         routing = policy["routing"]
         factor = (real_factor or int(routing["real_mine_factor_min"])) if role == "real" else int(routing["clean_factor"])
-        desired = max(1, len(rows) * factor)
+        desired = min(remaining, max(1, len(rows) * factor))
         mining = {"source_path": str(candidate_root / f"{role}_candidate_embeddings.parquet"),
                   "target_path": str(embedded), "output_dir": str(output / f"mine_{role}"),
                   "desired_unique_count": desired, "allocation_policy": "global",
                   "distance_metric": "cosine", "candidate_expansion_factor": int(policy["retrieval"]["candidate_overfetch"])}
+        if role_status[role]["excluded_count"]:
+            mining["exclude_path"] = str(exclusion_file.resolve())
         (output / f"mine_{role}.yaml").write_text(yaml.safe_dump(mining, sort_keys=False))
+    enabled = [role for role, evidence in role_status.items() if evidence["status"] == "READY"]
+    synthesis_pending = bool(policy.get("synthesis", {}).get("enabled")) and any(
+        strict.gap_type.astype(str).str.upper().eq("FN")
+    )
     report = {"status": "COMPLETE", "iteration": iteration, "query_counts": counts,
-              "enabled_roles": [role for role, count in counts.items() if count]}
+              "enabled_roles": enabled, "role_status": role_status,
+              "converged": not enabled and not synthesis_pending,
+              "synthesis_pending": synthesis_pending}
     _json(output / "query_manifest.json", report)
     return report
 
@@ -194,11 +279,18 @@ def main() -> int:
     query.add_argument("--output-dir", type=Path, required=True)
     query.add_argument("--candidate-root", type=Path, required=True)
     query.add_argument("--real-factor", type=int)
+    query.add_argument("--previous-coco", type=Path)
+    query.add_argument("--real-exclusions", type=Path)
+    query.add_argument("--clean-exclusions", type=Path)
     args = parser.parse_args()
     result = (candidates(args.policy.resolve(), args.output_dir.resolve()) if args.command == "candidates"
               else queries(args.policy.resolve(), args.strict_gaps.resolve(), args.loose_gaps.resolve(),
                            args.iteration, args.output_dir.resolve(), args.candidate_root.resolve(),
-                           args.real_factor))
+                           args.real_factor,
+                           args.previous_coco.resolve() if args.previous_coco else None,
+                           {role: getattr(args, f"{role}_exclusions").resolve()
+                            for role in ("real", "clean")
+                            if getattr(args, f"{role}_exclusions", None)}))
     print(json.dumps(result, sort_keys=True))
     return 0
 

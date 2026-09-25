@@ -64,24 +64,46 @@ def _nonzero_counts(value: Any) -> dict[str, int]:
     return result
 
 
-def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) -> None:
+def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     manifest = _read_json(artifacts, "query_manifest")
     if manifest.get("status") != "COMPLETE" or int(manifest.get("iteration", -1)) != iteration:
         raise ValueError("query manifest is incomplete or for another iteration")
     counts = _nonzero_counts(manifest.get("query_counts"))
-    if set(manifest.get("enabled_roles") or []) != set(counts):
+    enabled = set(manifest.get("enabled_roles") or [])
+    if not enabled.issubset(counts):
         raise ValueError("enabled retrieval roles disagree with nonzero query counts")
+    role_status = manifest.get("role_status")
+    if not isinstance(role_status, dict) or set(role_status) != {"real", "clean"}:
+        raise ValueError("retrieval manifest lacks per-role exhaustion evidence")
     for role, count in counts.items():
-        for suffix in ("queries", "query_embeddings", "mined"):
+        evidence = role_status.get(role) or {}
+        if int(evidence.get("query_count", -1)) != count:
+            raise ValueError(f"{role} role evidence disagrees with query count")
+        if evidence.get("status") not in {"READY", "EXHAUSTED"}:
+            raise ValueError(f"{role} role has invalid retrieval status")
+        if int(evidence.get("candidate_count", -1)) != (
+                int(evidence.get("excluded_count", -1))
+                + int(evidence.get("remaining_candidate_count", -1))):
+            raise ValueError(f"{role} exclusion audit does not reconcile")
+        for suffix in (("queries", "exclusions", "query_embeddings", "mined")
+                       if role in enabled else ("queries", "exclusions")):
             name = f"{role}_{suffix}"
             if name not in artifacts:
                 raise ValueError(f"iteration retrieval requires artifact {name}")
         if len(pd.read_parquet(artifacts[f"{role}_queries"]["path"])) != count:
             raise ValueError(f"{role} query count disagrees with its manifest")
-        if len(pd.read_parquet(artifacts[f"{role}_query_embeddings"]["path"])) != count:
+        exclusions = pd.read_parquet(artifacts[f"{role}_exclusions"]["path"])
+        if "filepath" not in exclusions or exclusions.filepath.nunique() != int(
+                evidence["excluded_count"]):
+            raise ValueError(f"{role} exclusion manifest disagrees with its audit")
+        if role in enabled and len(pd.read_parquet(
+                artifacts[f"{role}_query_embeddings"]["path"])) != count:
             raise ValueError(f"{role} embedding count disagrees with its manifest")
-        if pd.read_parquet(artifacts[f"{role}_mined"]["path"]).empty:
+        if role in enabled and pd.read_parquet(artifacts[f"{role}_mined"]["path"]).empty:
             raise ValueError(f"{role} mining produced no selected candidates")
+    if bool(manifest.get("converged")) != (not enabled and not manifest.get("synthesis_pending")):
+        raise ValueError("retrieval convergence evidence is inconsistent")
+    return manifest
 
 
 def _validate_admission(iteration: int, artifacts: dict[str, dict[str, Any]]) -> None:
@@ -228,8 +250,9 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         artifacts[name] = {"path": str(path), "sha256": _sha(path), "bytes": path.stat().st_size}
     if not artifacts:
         raise ValueError("at least one completion artifact is required")
+    retrieval = None
     if stage == "iteration_retrieval":
-        _validate_retrieval(iteration, artifacts)
+        retrieval = _validate_retrieval(iteration, artifacts)
     elif stage == "iteration_admission":
         _validate_admission(iteration, artifacts)
     elif stage == "iteration_synthesis":
@@ -241,6 +264,9 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
     elif stage == "iteration_gaps":
         _validate_gaps(artifacts)
     next_stage, status = NEXT.get(stage), "RUNNING"
+    if stage == "iteration_retrieval" and retrieval and retrieval.get("converged"):
+        next_stage, status = None, "COMPLETE"
+        state["completion_reason"] = "mining_exhausted"
     if stage == "iteration_admission" and state.get("synthesis_enabled"):
         next_stage = "iteration_synthesis"
     if stage == "iteration_gaps":
