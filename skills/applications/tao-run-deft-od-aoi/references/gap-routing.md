@@ -37,6 +37,14 @@ partition the index. Empty query roles emit no action. Admission recomputes
 maximum cosine similarity from the frozen embeddings, applies the frozen
 minimum, deduplicates parent images, and enforces cumulative caps.
 
+Pass the prior cumulative COCO when preparing iteration 2 and later so every
+already admitted source is expanded to its candidate-crop exclusion set.
+Role-specific exclusion parquets are reconciled against candidate crop or
+source paths and are never ignored. A role with zero remaining candidates is
+typed `EXHAUSTED` while other roles continue. When every role is exhausted and
+no synthesis work is pending, the query manifest marks convergence and the
+workflow completes without submitting an empty mining request.
+
 The initial `-1.0` similarity threshold is an explicit calibration policy,
 not evidence that all candidates are equally useful. Review retrieval outputs
 before freezing a stricter value for a later run.

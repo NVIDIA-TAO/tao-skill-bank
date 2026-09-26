@@ -25,24 +25,42 @@ def _state(root: Path) -> tuple[Path, Path]:
     return state, artifact
 
 
-def _retrieval(root: Path, sparse: bool = False) -> list[str]:
+def _retrieval(root: Path, sparse: bool = False, exhausted: bool = False) -> list[str]:
     manifest = root / "query_manifest.json"
     counts = {"real": 1} if sparse else {"real": 1, "clean": 1}
+    enabled = [] if exhausted else list(counts)
+    role_status = {
+        role: ({"status": "EXHAUSTED" if exhausted else "READY",
+                "query_count": count, "candidate_count": 1,
+                "excluded_count": 1 if exhausted else 0,
+                "remaining_candidate_count": 0 if exhausted else 1}
+               if count else {"status": "NO_QUERIES", "query_count": 0,
+                              "candidate_count": 0, "excluded_count": 0,
+                              "remaining_candidate_count": 0})
+        for role, count in {"real": counts.get("real", 0),
+                            "clean": counts.get("clean", 0)}.items()
+    }
     manifest.write_text(json.dumps({"status": "COMPLETE", "iteration": 1,
-                                    "query_counts": counts,
-                                    "enabled_roles": list(counts)}))
+                                    "query_counts": counts, "enabled_roles": enabled,
+                                    "role_status": role_status,
+                                    "converged": exhausted, "synthesis_pending": False}))
     artifacts = [f"query_manifest={manifest}"]
     for role, count in counts.items():
         queries = root / f"{role}_queries.parquet"
+        exclusions = root / f"{role}_exclusions.parquet"
         embeddings = root / f"{role}_query_embeddings.parquet"
         mined = root / f"{role}_mined.parquet"
         pd.DataFrame({"filepath": [f"/{role}-query"] * count}).to_parquet(queries)
-        pd.DataFrame({"filepath": [f"/{role}-query"] * count,
-                      "embedding": [[1.0, 0.0]] * count}).to_parquet(embeddings)
-        pd.DataFrame({"filepath": [f"/{role}-candidate"]}).to_parquet(mined)
-        artifacts.extend((f"{role}_queries={queries}",
-                          f"{role}_query_embeddings={embeddings}",
-                          f"{role}_mined={mined}"))
+        pd.DataFrame({"filepath": ([f"/{role}-candidate"] if exhausted else [])}).to_parquet(
+            exclusions, index=False
+        )
+        artifacts.extend((f"{role}_queries={queries}", f"{role}_exclusions={exclusions}"))
+        if not exhausted:
+            pd.DataFrame({"filepath": [f"/{role}-query"] * count,
+                          "embedding": [[1.0, 0.0]] * count}).to_parquet(embeddings)
+            pd.DataFrame({"filepath": [f"/{role}-candidate"]}).to_parquet(mined)
+            artifacts.extend((f"{role}_query_embeddings={embeddings}",
+                              f"{role}_mined={mined}"))
     return artifacts
 
 
@@ -114,6 +132,20 @@ def test_retrieval_accepts_omitted_zero_count_role(tmp_path: Path) -> None:
     state.write_text(json.dumps(value))
     result = MODULE.commit(state, "iteration_retrieval", 1, _retrieval(tmp_path, sparse=True))
     assert result["next_stage"] == "iteration_admission"
+
+
+def test_retrieval_commits_all_role_exhaustion_as_convergence(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_retrieval",
+                 current_iteration=0, last_stage="baseline_gaps")
+    state.write_text(json.dumps(value))
+
+    result = MODULE.commit(state, "iteration_retrieval", 1,
+                           _retrieval(tmp_path, exhausted=True))
+
+    assert result["status"] == "COMPLETE" and result["next_stage"] is None
+    assert result["completion_reason"] == "mining_exhausted"
 
 
 def test_measurement_rejects_incomplete_inference(tmp_path: Path) -> None:

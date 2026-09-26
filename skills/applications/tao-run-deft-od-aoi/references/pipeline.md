@@ -42,9 +42,11 @@ Commit baseline measurement and gap artifacts.
 ## 3. Per-iteration retrieval
 
 Run `prepare_deft_od_aoi_retrieval.py queries` with the previous strict and
-loose gap parquets. Submit each enabled query-embedding action, then each
-enabled `tao-mine-od-images` action. Empty roles require no job. Commit
-`iteration_retrieval`.
+loose gap parquets and the prior cumulative COCO when one exists. Submit each
+enabled query-embedding action, then each enabled `tao-mine-od-images` action.
+Empty and exhausted roles require no job. Commit `iteration_retrieval` with
+each queried role's query parquet and exclusion parquet; the latter preserves
+the exact history/configured exclusion audit even when it is empty.
 
 ## 4. Admit real and clean data
 

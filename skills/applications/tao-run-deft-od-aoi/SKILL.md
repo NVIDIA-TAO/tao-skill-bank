@@ -114,7 +114,11 @@ Run every emitted embedding spec through `tao-generate-image-embeddings`, then
 each enabled mining spec through `tao-mine-od-images`. Defective candidates
 and gap queries use contextual crops; clean candidates use the frozen grid.
 Strict FNs and loose near-miss FPs route to real data. Background-like loose
-FPs route only to the verified-clean role. Empty roles emit no mining action.
+FPs route only to the verified-clean role. Pass the prior cumulative COCO as
+`--previous-coco`; optional role-specific exclusion parquets use
+`--real-exclusions` and `--clean-exclusions`. Empty or fully excluded roles
+emit audited exhaustion evidence and no mining action. If every producer is
+exhausted and synthesis is not pending, the stage records convergence.
 
 ## Admission and cumulative COCO
 
