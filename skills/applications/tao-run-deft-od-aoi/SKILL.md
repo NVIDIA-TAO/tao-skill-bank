@@ -217,9 +217,11 @@ durable workflow history, not a scheduler substitute.
 
 ## Optional synthesis with existing task weights
 
-Enable `synthesis` only when KPI annotations carry `dataset_id`. Dataset IDs
-absent from `synthesis.routes` remain in the normal real-data path. Every FN in
-a configured route must also carry `texture_id`, `defect_class`, and a pixel
+Enable `synthesis` only when every KPI sample retains its real, nonempty
+`dataset_id`; a missing ID is malformed KPI metadata and is never an opt-out.
+`synthesis.routes` is the synthesis allowlist. Dataset IDs absent from it skip
+synthesis but remain in the separate normal real-data DEFT path. Every FN in a
+configured route must also carry `texture_id`, `defect_class`, and a pixel
 `fn_mask_source`, and the route must provide an existing AnomalyGenNext
 checkpoint and matching recipe. After strict gap analysis, normalize exact
 FN/annotation matches:
@@ -236,7 +238,10 @@ then its finalized generation plan through `tao-generate-od-defects`. Commit
 `iteration_synthesis` before training. Re-run admission with the generated
 native COCO and image root; synthetic categories are folded to `defect`, and
 the frozen cumulative fraction cap is applied against admitted real defects.
-Boxes alone never substitute for the required pixel mask.
+Boxes alone never substitute for the required pixel mask. If the request has no
+routed FNs, or preparation reports no mask-eligible FNs, commit that typed skip
+contract as `iteration_synthesis` and continue to training without running AMP
+or fabricating generation/admission success.
 
 ## Missing AnomalyGenNext task weights
 

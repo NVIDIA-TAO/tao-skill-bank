@@ -26,13 +26,16 @@ freezing hashes in the policy.
 
 ## Optional synthesis metadata
 
-Each eligible KPI annotation/image pair must resolve `dataset_id`,
-`texture_id`, `defect_class`, and a real pixel `fn_mask_source`. Metadata
-may appear directly on the record or under `deft_od_aoi`. A box never
-substitutes for the mask.
+Every KPI sample must retain its real nonempty `dataset_id`. Each routed KPI
+annotation/image pair must also resolve `texture_id`, `defect_class`, and a real
+pixel `fn_mask_source`. Metadata may appear directly on the record or under
+`deft_od_aoi`. A box never substitutes for the mask.
 
-`dataset_id` selects a route, and `texture_id+defect_class` must match a
-type declared by that route's recipe and defect specification.
+`synthesis.routes` is an allowlist: a valid ID absent from it skips synthesis
+but still participates in the separate real-data DEFT path. A missing ID is
+malformed metadata, not a synthesis opt-out. For routed FNs,
+`texture_id+defect_class` must match a type declared by that route's recipe and
+defect specification.
 
 ## Cumulative admission
 

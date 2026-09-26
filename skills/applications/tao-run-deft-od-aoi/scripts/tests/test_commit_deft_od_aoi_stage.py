@@ -179,6 +179,52 @@ def test_synthesis_reconciles_generated_and_blocked_counts(tmp_path: Path) -> No
     assert result["next_stage"] == "iteration_training"
 
 
+def test_synthesis_accepts_typed_no_eligible_skip(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", synthesis_enabled=True, next_stage="iteration_synthesis",
+                 current_iteration=1, last_stage="iteration_admission")
+    state.write_text(json.dumps(value))
+    preparation = tmp_path / "input_contract.json"
+    preparation.write_text(json.dumps({
+        "status": "SKIPPED", "reason": "no_eligible_false_negatives",
+        "selection_candidate_fn_count": 2, "eligible_fn_count": 0,
+        "skipped_fn_count": 2,
+        "skipped_fns": [{"fn_id": "fn-1"}, {"fn_id": "fn-2"}],
+        "skip_counts": {"empty_fn_mask": 2},
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_synthesis", 1,
+        [f"synthesis_preparation={preparation}"],
+    )
+
+    assert result["next_stage"] == "iteration_training"
+
+
+def test_synthesis_accepts_typed_no_routed_skip(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", synthesis_enabled=True, next_stage="iteration_synthesis",
+                 current_iteration=1, last_stage="iteration_admission")
+    state.write_text(json.dumps(value))
+    request = tmp_path / "synthesis_request.json"
+    request.write_text(json.dumps({
+        "status": "SKIPPED", "reason": "no_routed_false_negatives", "fn_count": 0,
+        "skipped_unrouted_fn_count": 2,
+        "skipped_unrouted_by_dataset": {"boxes_only": 2},
+        "observed_dataset_ids": ["boxes_only"],
+        "configured_route_keys": ["route"],
+        "message": "Skipped synthesis because every FN is unrouted.",
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_synthesis", 1, [f"synthesis_request={request}"],
+    )
+
+    assert result["next_stage"] == "iteration_training"
+
+
 def test_commit_rejects_out_of_order_stage(tmp_path: Path) -> None:
     state, artifact = _state(tmp_path)
     with pytest.raises(ValueError, match="expected stage candidate_cache"):
