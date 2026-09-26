@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 from PIL import Image
 
@@ -58,6 +59,31 @@ def test_candidate_cache_uses_defect_crops_and_clean_grid(tmp_path: Path) -> Non
     assert all(Path(path).is_file() for path in list(real.filepath) + list(clean.filepath))
 
 
+@pytest.mark.parametrize(
+    ("bbox", "expected"),
+    [
+        ([10, -0.284, 20, 10], (10, 0, 20, 10)),
+        ([-0.284, 10, 20, 20], (0, 10, 20, 20)),
+        ([10, 20, 20, 32.284], (10, 20, 20, 32)),
+        ([20, 10, 32.284, 20], (20, 10, 32, 20)),
+    ],
+)
+def test_gap_box_clips_partial_detector_boxes(
+    bbox: list[float], expected: tuple[int, int, int, int]
+) -> None:
+    assert MODULE._gap_box(bbox, 32, 32, 1.0) == expected
+
+
+def test_gap_box_rejects_fully_outside_detector_box() -> None:
+    with pytest.raises(ValueError, match="gap box clips empty"):
+        MODULE._gap_box([10, -20, 20, -1], 32, 32, 1.0)
+
+
+def test_source_annotation_box_remains_strict() -> None:
+    with pytest.raises(ValueError, match="invalid xywh box"):
+        MODULE._box([-0.284, 10, 20, 10], 32, 32)
+
+
 def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     policy = _policy(tmp_path)
     query_image = tmp_path / "query.png"
@@ -67,7 +93,7 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
                    "bbox": [4, 4, 20, 20], "best_iou": 0.1}]).to_parquet(strict)
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
-                   "bbox": [2, 2, 10, 10], "best_iou": value}
+                   "bbox": [2, -0.284, 10, 10], "best_iou": value}
                   for value in (0.01, 0.2, 0.8)]).to_parquet(loose)
     report = MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
                             tmp_path / "candidates", None)
