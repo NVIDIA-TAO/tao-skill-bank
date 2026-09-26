@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import jsonschema
 import pytest
 import yaml
 
@@ -123,3 +124,22 @@ def test_merge_validates_boxes_and_writes_binary_projection(tmp_path: Path) -> N
     binary = json.loads((tmp_path / "out/pseudo_labels/coco_annotations_od_defect.json").read_text())
     assert binary["categories"] == [{"id": 1, "name": "defect"}]
     assert binary["annotations"][0]["category_id"] == 1
+    info = yaml.safe_load((Path(__file__).parents[2] / "references/skill_info.yaml").read_text())
+    outputs = info["actions"]["generate"]["outputs"]
+    assert outputs["native_coco"]["relative_path"] == "pseudo_labels/coco_annotations.json"
+    assert outputs["binary_coco"]["relative_path"] == (
+        "pseudo_labels/coco_annotations_od_defect.json"
+    )
+    for name in ("native_coco", "binary_coco"):
+        assert (tmp_path / "out" / outputs[name]["relative_path"]).is_file()
+    schema = json.loads((Path(__file__).parents[4]
+                         / "core/tao-artifacts/references/spec_bundle.schema.json").read_text())
+    jsonschema.validate({
+        "network_arch": "tao-generate-od-defects", "action": "generate",
+        "image": "nvcr.io/nvidia/paidf-anomalygen:1.1.0", "mode": "args",
+        "command": "scripts/generate_od_defects.py", "args": [],
+        "declared_inputs": [],
+        "declared_outputs": [{"spec_key": name, **contract}
+                             for name, contract in outputs.items()],
+        "compute_shape": {"gpus": 1, "nodes": 1},
+    }, schema)

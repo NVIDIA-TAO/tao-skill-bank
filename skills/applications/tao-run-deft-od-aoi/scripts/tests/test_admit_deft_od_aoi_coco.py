@@ -94,6 +94,20 @@ def test_admission_folds_capped_synthetic_categories_to_defect(tmp_path: Path) -
     assert {row["category_id"] for row in output["annotations"]} == {1}
 
 
+def test_admission_resolves_binary_coco_from_declared_generation_output(tmp_path: Path) -> None:
+    root = tmp_path / "generation"
+    relative = "pseudo_labels/coco_annotations_od_defect.json"
+    target = root / relative
+    target.parent.mkdir(parents=True)
+    target.write_text('{"images": [], "annotations": [], "categories": []}\n')
+
+    assert MODULE._generation_output(root, "binary_coco") == target.resolve()
+
+    target.unlink()
+    with pytest.raises(FileNotFoundError, match="declared generation output binary_coco"):
+        MODULE._generation_output(root, "binary_coco")
+
+
 def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) -> None:
     policy, candidates, retrieval = _fixture(tmp_path)
     extra = tmp_path / "extra-real.png"

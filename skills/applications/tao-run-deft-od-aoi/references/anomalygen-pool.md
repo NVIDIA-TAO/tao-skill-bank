@@ -69,7 +69,10 @@ AnomalyGenNext training inside an iteration.
 `prepare_deft_od_aoi_synthesis.py` converts exact strict FN/annotation matches
 to a filtering YAML for `tao-prepare-anomalygennext-inputs`. The resulting
 generation plan is passed to `tao-generate-od-defects`. Only its validated
-binary COCO enters admission, under the cumulative synthetic fraction cap.
+logical `binary_coco` output enters admission, under the cumulative synthetic
+fraction cap. Its exact relative path comes from the authoritative action
+contract; the native fine-grained COCO remains separately available as
+`native_coco`.
 Admission removes undersized, extreme-aspect, and full-frame boxes, then
 allocates available capacity proportionally across source `dataset_id` values
 with deterministic selection.
