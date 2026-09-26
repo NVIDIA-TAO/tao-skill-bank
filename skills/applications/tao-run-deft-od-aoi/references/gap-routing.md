@@ -31,6 +31,9 @@ Build the candidate cache once:
 For each iteration, crop strict FNs and near-miss FPs as real queries, and
 background-like loose FPs as clean queries. Embed queries with the identical
 encoder. Invoke `tao-mine-od-images` using the emitted role-specific specs.
+Context crops smaller than 8 pixels on either edge are expanded around the
+requested defect center within image bounds. Only source images narrower than
+8 pixels require zero padding; ordinary crop dimensions remain unchanged.
 
 Retrieval is global within the real or clean role. Provenance metadata does not
 partition the index. Empty query roles emit no action. Admission recomputes

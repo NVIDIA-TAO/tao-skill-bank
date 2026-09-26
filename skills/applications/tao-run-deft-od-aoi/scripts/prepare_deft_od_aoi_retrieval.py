@@ -13,7 +13,10 @@ from typing import Any
 
 import pandas as pd
 import yaml
-from PIL import Image
+from PIL import Image, ImageOps
+
+
+MIN_EMBEDDING_EDGE = 8
 
 
 def _json(path: Path, value: Any) -> None:
@@ -53,10 +56,41 @@ def _gap_box(value: Any, width: int, height: int, scale: float) -> tuple[int, in
     return _box((x1, y1, x2 - x1, y2 - y1), width, height, scale)
 
 
+def _minimum_crop_geometry(
+    box: tuple[int, int, int, int], width: int, height: int,
+    minimum: int = MIN_EMBEDDING_EDGE,
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    """Expand a crop around its center, padding only undersized source axes."""
+    if width < 1 or height < 1 or minimum < 1:
+        raise ValueError("crop image dimensions and minimum edge must be positive")
+
+    def axis(start: int, end: int, limit: int) -> tuple[int, int, int, int]:
+        start, end = max(0, start), min(limit, end)
+        if end <= start:
+            raise ValueError(f"crop clips empty on axis: {(start, end)} of {limit}")
+        if end - start >= minimum:
+            return start, end, 0, 0
+        center = (start + end) / 2
+        if limit >= minimum:
+            expanded_start = min(max(0, int(center - minimum / 2)), limit - minimum)
+            return expanded_start, expanded_start + minimum, 0, 0
+        padding = minimum - limit
+        before = min(padding, max(0, round(minimum / 2 - center)))
+        return 0, limit, before, padding - before
+
+    x1, x2, left, right = axis(box[0], box[2], width)
+    y1, y2, top, bottom = axis(box[1], box[3], height)
+    return (x1, y1, x2, y2), (left, top, right, bottom)
+
+
 def _crop(source: Path, box: tuple[int, int, int, int], output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(source) as image:
-        image.convert("RGB").crop(box).save(output, format="PNG")
+        crop_box, padding = _minimum_crop_geometry(box, image.width, image.height)
+        crop = image.convert("RGB").crop(crop_box)
+        if any(padding):
+            crop = ImageOps.expand(crop, border=padding, fill=0)
+        crop.save(output, format="PNG")
 
 
 def _embedding_spec(policy: dict[str, Any], input_path: Path, output: Path) -> dict[str, Any]:
