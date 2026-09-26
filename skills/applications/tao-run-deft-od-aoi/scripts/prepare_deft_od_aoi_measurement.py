@@ -28,6 +28,9 @@ def _sha(path: Path) -> str:
 
 
 def _bounded_xyxy(value: Any, image: dict[str, Any]) -> tuple[float, float, float, float]:
+    """Validate a COCO xywh box against its image dimensions.
+    Return KITTI xyxy coordinates without clipping or rewriting ground truth.
+    """
     x, y, width, height = map(float, value)
     image_width = float(image.get("width") or 0)
     image_height = float(image.get("height") or 0)
