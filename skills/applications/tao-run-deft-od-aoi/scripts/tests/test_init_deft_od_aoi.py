@@ -56,6 +56,47 @@ def _append_boxless_image(role: dict, name: str) -> None:
     coco.write_text(json.dumps(data))
 
 
+def _set_kpi_dataset_id(config: dict, dataset_id: str, *, nested: bool = False) -> None:
+    coco = Path(config["sources"]["kpi"]["coco"])
+    data = json.loads(coco.read_text())
+    target = data["annotations"][0]
+    if nested:
+        target["deft_od_aoi"] = {"dataset_id": dataset_id}
+    else:
+        target["dataset_id"] = dataset_id
+    coco.write_text(json.dumps(data))
+
+
+def _enable_synthesis(root: Path, config: dict) -> None:
+    pool, dataset, base, checkpoints = (
+        root / "pool", root / "ft_dataset", root / "ft_base", root / "checkpoints"
+    )
+    for path in (pool, dataset, base, checkpoints):
+        path.mkdir()
+    clean = pool / "texture/clean_image/clean.png"
+    clean.parent.mkdir(parents=True)
+    clean.write_bytes(b"clean")
+    defect = root / "defect.jsonl"
+    validation = root / "validation.jsonl"
+    vae = root / "vae.pth"
+    defect.write_text("{}\n")
+    validation.write_text("{}\n")
+    vae.write_bytes(b"vae")
+    config["synthesis"] = {
+        "enabled": True,
+        "pool_dataset_root": str(pool),
+        "defect_spec": str(defect),
+        "routes": {"route": {"finetune": {
+            "dataset_root": str(dataset),
+            "validation_testcase": str(validation),
+            "base_checkpoint": str(base),
+            "vae_path": str(vae),
+            "checkpoint_root": str(checkpoints),
+            "result_handoff": str(root / "future/handoff.json"),
+        }}},
+    }
+
+
 def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     state = MODULE.initialize(_config(tmp_path), tmp_path / "results")
     assert state["mode"] == "rtdetr_real_only"
@@ -289,24 +330,8 @@ def test_initialize_rejects_duplicate_image_ids_with_specific_error(tmp_path: Pa
 def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())
-    pool, dataset, base, checkpoints = (tmp_path / "pool", tmp_path / "ft_dataset",
-                                         tmp_path / "ft_base", tmp_path / "checkpoints")
-    for path in (pool, dataset, base, checkpoints):
-        path.mkdir()
-    clean = pool / "texture_1/clean_image/clean.png"
-    clean.parent.mkdir(parents=True)
-    clean.write_bytes(b"clean-image")
-    (pool / "texture_without_clean_references").mkdir()
-    defect, validation, vae = tmp_path / "defect.jsonl", tmp_path / "validation.jsonl", tmp_path / "vae.pth"
-    defect.write_text("{}\n")
-    validation.write_text("{}\n")
-    vae.write_bytes(b"vae")
-    value["synthesis"] = {"enabled": True, "pool_dataset_root": str(pool),
-                          "defect_spec": str(defect), "routes": {"route": {"finetune": {
-                              "dataset_root": str(dataset), "validation_testcase": str(validation),
-                              "base_checkpoint": str(base), "vae_path": str(vae),
-                              "checkpoint_root": str(checkpoints),
-                              "result_handoff": str(tmp_path / "future/handoff.json")}}}}
+    _set_kpi_dataset_id(value, "route")
+    _enable_synthesis(tmp_path, value)
     config.write_text(yaml.safe_dump(value))
     state = MODULE.initialize(config, tmp_path / "results")
     assert state["synthesis_bootstrap_required"] is True
@@ -342,3 +367,55 @@ def test_initialize_rejects_globally_empty_synthesis_clean_pool(
 
     with pytest.raises(ValueError, match="at least one clean reference image"):
         MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_rejects_missing_kpi_dataset_id_for_synthesis(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    _enable_synthesis(tmp_path, value)
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match=(
+            "annotation_id=1 image_id=1 file_name='kpi.png'.*allowlist")):
+        MODULE.initialize(config, tmp_path / "results")
+    assert not (tmp_path / "results").exists()
+
+
+def test_initialize_accepts_unconfigured_nested_kpi_dataset_id(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    _set_kpi_dataset_id(value, "normal_real_data", nested=True)
+    _enable_synthesis(tmp_path, value)
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    assert state["synthesis_enabled"] is True
+
+
+def test_annotation_dataset_id_overrides_image_metadata(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    coco = Path(value["sources"]["kpi"]["coco"])
+    data = json.loads(coco.read_text())
+    data["images"][0]["dataset_id"] = "route"
+    data["annotations"][0]["dataset_id"] = ""
+    coco.write_text(json.dumps(data))
+    _enable_synthesis(tmp_path, value)
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="nonempty dataset_id"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_synthesis_allows_boxless_kpi_image_without_dataset_id(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    _set_kpi_dataset_id(value, "route")
+    _append_boxless_image(value["sources"]["kpi"], "kpi")
+    _enable_synthesis(tmp_path, value)
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    assert state["roles"]["kpi"]["image_count"] == 2

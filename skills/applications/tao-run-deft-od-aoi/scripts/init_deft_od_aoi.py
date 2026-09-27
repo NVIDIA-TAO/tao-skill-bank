@@ -69,7 +69,21 @@ def _has_synthesis_clean_reference(pool: Path) -> bool:
     )
 
 
-def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
+def _synthesis_metadata_value(
+        image: dict[str, Any], annotation: dict[str, Any], key: str) -> str:
+    """Resolve synthesis metadata with the same image-to-annotation precedence as routing."""
+    value: Any = None
+    for owner, label in ((image, "image"), (annotation, "annotation")):
+        nested = owner.get("deft_od_aoi", {})
+        if not isinstance(nested, dict):
+            raise ValueError(f"KPI {label} deft_od_aoi metadata must be an object")
+        for source in (owner, nested):
+            if key in source:
+                value = source[key]
+    return str(value or "").strip()
+
+
+def _role(name: str, value: dict[str, Any], require_dataset_id: bool = False) -> dict[str, Any]:
     images = Path(str(value.get("images") or "")).expanduser().resolve()
     coco_path = Path(str(value.get("coco") or "")).expanduser().resolve()
     if not images.is_dir() or not coco_path.is_file():
@@ -87,12 +101,30 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
     if len(image_ids) != len(image_rows):
         raise ValueError(f"{name} has duplicate image ids")
     counts = {image_id: 0 for image_id in image_ids}
+    missing_dataset_ids = []
     for annotation in coco.get("annotations", []):
         image_id, category = int(annotation["image_id"]), int(annotation["category_id"])
         if image_id not in counts or category not in category_ids:
             raise ValueError(f"{name} annotation references unknown image/category")
         _validate_bbox(annotation["bbox"], images_by_id[image_id], name)
         counts[image_id] += 1
+        if require_dataset_id and not _synthesis_metadata_value(
+                images_by_id[image_id], annotation, "dataset_id"):
+            image = images_by_id[image_id]
+            missing_dataset_ids.append(
+                f"annotation_id={annotation.get('id')} image_id={image_id} "
+                f"file_name={image.get('file_name')!r}"
+            )
+    if missing_dataset_ids:
+        details = ", ".join(missing_dataset_ids[:5])
+        remainder = len(missing_dataset_ids) - 5
+        if remainder:
+            details += f", and {remainder} more"
+        raise ValueError(
+            "enabled synthesis requires every KPI annotation to resolve a nonempty "
+            f"dataset_id; missing for {details}. synthesis.routes is an allowlist: "
+            "a nonempty unconfigured dataset_id is valid and skips synthesis"
+        )
     paths = [_image_path(images, row) for row in image_rows]
     missing = [path for path in paths if not path.is_file()]
     if missing:
@@ -143,7 +175,12 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     baseline_mode = str(policy.get("baseline_mode") or "")
     if baseline_mode not in {"cold_start", "checkpoint"}:
         raise ValueError("baseline_mode must be cold_start or checkpoint")
-    role_reports = {name: _role(name, policy["sources"][name]) for name in ROLES}
+    synthesis = policy.get("synthesis", {})
+    synthesis_enabled = bool(synthesis.get("enabled"))
+    role_reports = {
+        name: _role(name, policy["sources"][name], synthesis_enabled and name == "kpi")
+        for name in ROLES
+    }
     _validate_kpi_retrieval_metadata(Path(role_reports["kpi"]["coco"]))
     owners: dict[str, str] = {}
     for name, report in role_reports.items():
@@ -159,8 +196,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("background and near-miss IoU thresholds are inconsistent")
     if policy["class_name"] != "defect":
         raise ValueError("DEFT OD AOI has one foreground class named defect")
-    synthesis = policy.get("synthesis", {})
-    if synthesis.get("enabled"):
+    if synthesis_enabled:
         pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
         if not pool.is_dir():
             raise ValueError("enabled synthesis needs pool_dataset_root")
@@ -186,7 +222,6 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     frozen.write_text(yaml.safe_dump(policy, sort_keys=False))
     classmap = output / "inference_classmap.txt"
     classmap.write_text("background\ndefect\n")
-    synthesis_enabled = bool(policy.get("synthesis", {}).get("enabled"))
     bootstrap_required = synthesis_enabled and any(
         not (Path(str(route.get("checkpoint") or "")).is_file()
              and Path(str(route.get("recipe") or "")).is_file())
