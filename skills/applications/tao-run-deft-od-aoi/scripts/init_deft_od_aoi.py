@@ -20,6 +20,7 @@ DEFAULTS = Path(__file__).resolve().parents[1] / "assets" / "default_policy.yaml
 # defective-real mining pool, and ``clean`` is the verified-clean mining pool.
 ROLES = ("kpi", "test", "real", "clean")
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+ROUTED_SYNTHESIS_FIELDS = ("texture_id", "defect_class", "fn_mask_source")
 
 
 def _json(path: Path, value: Any) -> None:
@@ -69,18 +70,17 @@ def _has_synthesis_clean_reference(pool: Path) -> bool:
     )
 
 
-def _synthesis_metadata_value(
-        image: dict[str, Any], annotation: dict[str, Any], key: str) -> str:
+def _synthesis_metadata(image: dict[str, Any], annotation: dict[str, Any]) -> dict[str, Any]:
     """Resolve synthesis metadata with the same image-to-annotation precedence as routing."""
-    value: Any = None
+    metadata = {}
     for owner, label in ((image, "image"), (annotation, "annotation")):
         nested = owner.get("deft_od_aoi", {})
         if not isinstance(nested, dict):
             raise ValueError(f"KPI {label} deft_od_aoi metadata must be an object")
         for source in (owner, nested):
-            if key in source:
-                value = source[key]
-    return str(value or "").strip()
+            metadata.update({key: source[key] for key in
+                             ("dataset_id", *ROUTED_SYNTHESIS_FIELDS) if key in source})
+    return metadata
 
 
 def _role(name: str, value: dict[str, Any], require_dataset_id: bool = False) -> dict[str, Any]:
@@ -108,13 +108,14 @@ def _role(name: str, value: dict[str, Any], require_dataset_id: bool = False) ->
             raise ValueError(f"{name} annotation references unknown image/category")
         _validate_bbox(annotation["bbox"], images_by_id[image_id], name)
         counts[image_id] += 1
-        if require_dataset_id and not _synthesis_metadata_value(
-                images_by_id[image_id], annotation, "dataset_id"):
-            image = images_by_id[image_id]
-            missing_dataset_ids.append(
-                f"annotation_id={annotation.get('id')} image_id={image_id} "
-                f"file_name={image.get('file_name')!r}"
-            )
+        if require_dataset_id:
+            metadata = _synthesis_metadata(images_by_id[image_id], annotation)
+            if not str(metadata.get("dataset_id") or "").strip():
+                image = images_by_id[image_id]
+                missing_dataset_ids.append(
+                    f"annotation_id={annotation.get('id')} image_id={image_id} "
+                    f"file_name={image.get('file_name')!r}"
+                )
     if missing_dataset_ids:
         details = ", ".join(missing_dataset_ids[:5])
         remainder = len(missing_dataset_ids) - 5
@@ -156,6 +157,36 @@ def _validate_kpi_retrieval_metadata(coco_path: Path) -> None:
             raise ValueError(
                 f"KPI image {row['id']} lacks canonical retrieval metadata: {missing}"
             )
+
+
+def _validate_routed_kpi_metadata(policy: dict[str, Any]) -> None:
+    coco = json.loads(Path(policy["sources"]["kpi"]["coco"]).read_text())
+    images = {int(row["id"]): row for row in coco["images"]}
+    routes = policy["synthesis"]["routes"]
+    issues = []
+    for annotation in coco.get("annotations", []):
+        image_id = int(annotation["image_id"])
+        image = images[image_id]
+        metadata = _synthesis_metadata(image, annotation)
+        dataset = str(metadata.get("dataset_id") or "").strip()
+        if not dataset or dataset not in routes:
+            continue
+        identity = (f"annotation_id={annotation.get('id')} image_id={image_id} "
+                    f"file_name={image.get('file_name')!r}")
+        missing = [key for key in ROUTED_SYNTHESIS_FIELDS
+                   if not str(metadata.get(key) or "").strip()]
+        if missing:
+            issues.append(f"{identity} missing={missing}")
+            continue
+        mask = Path(str(metadata["fn_mask_source"])).expanduser().resolve()
+        if not mask.is_file():
+            issues.append(f"{identity} fn_mask_source is not an existing file: {mask}")
+    if issues:
+        details = "; ".join(issues[:5])
+        remainder = len(issues) - 5
+        if remainder:
+            details += f"; and {remainder} more"
+        raise ValueError(f"routed KPI synthesis metadata is incomplete: {details}")
 
 
 def initialize(config_path: Path, output: Path) -> dict[str, Any]:
@@ -214,6 +245,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
                                  ("dataset_root", "validation_testcase", "base_checkpoint",
                                   "vae_path", "checkpoint_root", "result_handoff")):
                 raise ValueError(f"synthesis route {name} needs checkpoint/recipe or finetune inputs")
+        _validate_routed_kpi_metadata(policy)
     output.mkdir(parents=True)
     policy["base_checkpoint"] = str(checkpoint)
     policy["sources"] = {name: {"images": role_reports[name]["images"],
