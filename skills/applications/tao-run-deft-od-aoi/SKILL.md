@@ -252,7 +252,9 @@ scripts/prepare_deft_od_aoi_synthesis.py \
 ```
 
 Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
-then its finalized generation plan through `tao-generate-od-defects`. Commit
+mounting the complete checkpoint root for its `run_amp` action, then pass its
+finalized generation plan through `tao-generate-od-defects` with the same
+checkpoint root mounted at the same canonical path. Commit
 `iteration_synthesis` before training. Re-run admission with the generated
 generation root via `--generation-root`; admission resolves the declared
 logical `binary_coco` output instead of hardcoding its filename. Synthetic

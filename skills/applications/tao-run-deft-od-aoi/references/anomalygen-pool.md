@@ -65,6 +65,10 @@ routes:
 `hf/` and `facebook/dinov2-large/` with its Transformers config and weights.
 The training action mounts this entire directory over the image's
 `/workspace/paidf-anomalygen/checkpoints`; mounting only DINOv2 is insufficient.
+Reuse that same complete root for `tao-prepare-anomalygennext-inputs.run_amp`
+and `tao-generate-od-defects.generate`. Both actions require the canonical
+mount rather than independent SAM2 or Hugging Face cache inputs, and each
+validates its action-specific assets before GPU work.
 
 Run `resolve_deft_od_aoi_synthesis.py` before the candidate cache. A missing
 handoff produces `finetune_requests.json`. Execute each request through

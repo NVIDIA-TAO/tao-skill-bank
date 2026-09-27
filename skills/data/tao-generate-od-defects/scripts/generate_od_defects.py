@@ -46,8 +46,12 @@ def _rows(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def _hf_hub(root: Path) -> Path:
+    return root / "hub" if (root / "hub").is_dir() else root
+
+
 def _validate_offline_hf_cache(root: Path) -> None:
-    hub = root / "hub" if (root / "hub").is_dir() else root
+    hub = _hf_hub(root)
     missing = []
     for repo in OFFLINE_HF_REPOS:
         directory = hub / f"models--{repo.replace('/', '--')}"
@@ -57,6 +61,24 @@ def _validate_offline_hf_cache(root: Path) -> None:
         raise FileNotFoundError(
             "offline Hugging Face cache lacks required repositories: " + ", ".join(missing)
         )
+
+
+def _validate_checkpoint_root(root: Path, repo: Path) -> Path:
+    resolved = root.expanduser().resolve()
+    image_root = (repo / "checkpoints").resolve()
+    if resolved != image_root:
+        raise ValueError(
+            f"checkpoint root must be mounted at {repo}/checkpoints: {resolved}"
+        )
+    hf_home = resolved / "hf"
+    _validate_offline_hf_cache(hf_home)
+    dinov2 = resolved / "facebook" / "dinov2-large"
+    if not (dinov2 / "config.json").is_file():
+        raise FileNotFoundError(f"checkpoint root lacks DINOv2 config: {dinov2}")
+    if not ((dinov2 / "model.safetensors").is_file()
+            or (dinov2 / "pytorch_model.bin").is_file()):
+        raise FileNotFoundError(f"checkpoint root lacks DINOv2 weights: {dinov2}")
+    return hf_home
 
 
 def _validate_base_checkpoint(root: Path) -> None:
@@ -254,7 +276,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--published-root", type=Path)
     parser.add_argument("--num-gpus", type=int, default=1)
-    parser.add_argument("--hf-cache", type=Path)
+    parser.add_argument("--checkpoint-root", type=Path, required=True)
     parser.add_argument("--repo", type=Path, default=Path("/workspace/paidf-anomalygen"))
     args = parser.parse_args()
     if args.output_dir.exists() or args.num_gpus < 1:
@@ -262,13 +284,9 @@ def main() -> int:
     _validate_base_checkpoint(args.base_checkpoint)
     if not args.repo.is_dir():
         raise FileNotFoundError(args.repo)
-    env = os.environ
-    if args.hf_cache:
-        if not args.hf_cache.is_dir():
-            raise FileNotFoundError(args.hf_cache)
-        if os.environ.get("HF_HUB_OFFLINE", "").lower() in {"1", "true", "yes"}:
-            _validate_offline_hf_cache(args.hf_cache)
-        env["HF_HOME"] = str(args.hf_cache.resolve())
+    hf_home = _validate_checkpoint_root(args.checkpoint_root, args.repo)
+    os.environ.update(HF_HOME=str(hf_home), HF_HUB_CACHE=str(_hf_hub(hf_home)),
+                      HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
     selected = groups(args)
     args.output_dir.mkdir(parents=True)
     try:

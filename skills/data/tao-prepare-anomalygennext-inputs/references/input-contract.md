@@ -101,6 +101,12 @@ it verifies the pinned Qwen cache and
 `facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt`; a standalone
 SAM2 file or a checkpoint tree mounted at another path is rejected.
 
+The `run_amp` action also requires the complete AnomalyGenNext checkpoint root
+mounted at `/workspace/paidf-anomalygen/checkpoints`. Before native AMP starts,
+it verifies the pinned Qwen cache and
+`facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt`; a standalone
+SAM2 file or a checkpoint tree mounted at another path is rejected.
+
 `finalize_inputs` retains the configured number of successful neighbors per FN.
 Both aligned mask branches must match the clean image and cover neither zero nor
 all pixels. It copies accepted masks under the prepared root and hashes every
