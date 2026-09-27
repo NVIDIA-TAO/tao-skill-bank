@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,38 @@ from PIL import Image
 
 
 BRANCHES = {"fn_mask", "same_type_sampled_mask"}
+AMP_HF_REPOS = ("Qwen/Qwen3-VL-8B-Instruct",)
+
+
+def _hf_hub(root: Path) -> Path:
+    return root / "hub" if (root / "hub").is_dir() else root
+
+
+def _validate_checkpoint_root(root: Path, repo: Path) -> Path:
+    resolved = root.expanduser().resolve()
+    image_root = (repo / "checkpoints").resolve()
+    if resolved != image_root:
+        raise ValueError(
+            f"checkpoint root must be mounted at {repo}/checkpoints: {resolved}"
+        )
+    hf_home = resolved / "hf"
+    hub = _hf_hub(hf_home)
+    missing = []
+    for name in AMP_HF_REPOS:
+        directory = hub / f"models--{name.replace('/', '--')}"
+        if not (directory / "blobs").is_dir() or not (directory / "snapshots").is_dir():
+            missing.append(name)
+    if missing:
+        raise FileNotFoundError(
+            "checkpoint root lacks required AMP Hugging Face repositories: "
+            + ", ".join(missing)
+        )
+    sam2 = (
+        resolved / "facebook" / "sam2.1-hiera-large" / "sam2.1_hiera_large.pt"
+    )
+    if not sam2.is_file():
+        raise FileNotFoundError(f"checkpoint root lacks SAM2.1 checkpoint: {sam2}")
+    return hf_home
 
 
 def _matrix(values: pd.Series) -> np.ndarray:
@@ -136,30 +169,26 @@ def _publish_paths(amp_dir: Path, runtime_root: Path, published_root: Path) -> N
             path.write_text(value.replace(source, destination), encoding="utf-8")
 
 
-def run(config_path: Path, root: Path, sam2_checkpoint: Path,
-        published_root: Path | None = None) -> dict[str, Any]:
-    if not sam2_checkpoint.is_file():
-        raise FileNotFoundError(f"SAM2.1 checkpoint is missing: {sam2_checkpoint}")
+def run(config_path: Path, root: Path, checkpoint_root: Path,
+        published_root: Path | None = None,
+        repo: Path = Path("/workspace/paidf-anomalygen")) -> dict[str, Any]:
+    hf_home = _validate_checkpoint_root(checkpoint_root, repo)
     frozen = root / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
     if config_path.read_bytes() != frozen.read_bytes():
         raise ValueError("config differs from the frozen preparation snapshot")
     config = yaml.safe_load(frozen.read_text())
     report = plan(root, config)
     amp = config.get("amp") or {}
-    bootstrap = (
-        "import runpy,sys; "
-        "from anomalygen.auto_mask_placement.roi_generation import model; "
-        "model._SAM2_CKPT=sys.argv.pop(1); "
-        "runpy.run_module('anomalygen.scripts.auto_mask_placement.roi_place', "
-        "run_name='__main__')"
-    )
-    command = [sys.executable, "-c", bootstrap, str(sam2_checkpoint.resolve()),
+    command = [sys.executable, "-m", "anomalygen.scripts.auto_mask_placement.roi_place",
                "--input_pair_path", str(root / "amp" / "amp_samples.json"),
                "--defect_desc", str(Path(config["defect_spec"]).resolve()),
                "--output_dir", str(root / "amp"), "--n_seeds", "1",
                "--seed", str(int(amp.get("seed", 43))),
                "--model_id", str(amp.get("model_id", "nvidia/Cosmos3-Nano"))]
-    subprocess.run(command, check=True, stdout=sys.stderr)
+    env = os.environ.copy()
+    env.update(HF_HOME=str(hf_home), HF_HUB_CACHE=str(_hf_hub(hf_home)),
+               HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
+    subprocess.run(command, check=True, stdout=sys.stderr, env=env)
     published_root = (published_root or root).resolve()
     _publish_paths(root / "amp", root, published_root)
     testcase = root / "amp" / "testcase.jsonl"
@@ -174,10 +203,11 @@ def main() -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--prepared-root", required=True)
     parser.add_argument("--published-root", type=Path)
-    parser.add_argument("--sam2-checkpoint", type=Path, required=True)
+    parser.add_argument("--checkpoint-root", type=Path, required=True)
+    parser.add_argument("--repo", type=Path, default=Path("/workspace/paidf-anomalygen"))
     args = parser.parse_args()
     result = run(Path(args.config).resolve(), Path(args.prepared_root).resolve(),
-                 args.sam2_checkpoint.resolve(), args.published_root)
+                 args.checkpoint_root.resolve(), args.published_root, args.repo.resolve())
     print(json.dumps(result, sort_keys=True))
     return 0
 

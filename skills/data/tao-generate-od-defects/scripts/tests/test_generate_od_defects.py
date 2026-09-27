@@ -32,6 +32,19 @@ def _inputs(root: Path) -> argparse.Namespace:
                               recipe=recipe, anomaly_types="", dataset_id="default", datasets=None)
 
 
+def _checkpoint_root(repo: Path) -> Path:
+    root = repo / "checkpoints"
+    for name in MODULE.OFFLINE_HF_REPOS:
+        directory = root / "hf/hub" / f"models--{name.replace('/', '--')}"
+        (directory / "blobs").mkdir(parents=True)
+        (directory / "snapshots").mkdir()
+    dinov2 = root / "facebook/dinov2-large"
+    dinov2.mkdir(parents=True)
+    (dinov2 / "config.json").write_text("{}\n")
+    (dinov2 / "model.safetensors").write_bytes(b"weights")
+    return root
+
+
 def test_native_contract_infers_and_validates_types(tmp_path: Path) -> None:
     selected = MODULE.groups(_inputs(tmp_path))
     assert selected[0]["anomaly_types"] == ["texture+defect"]
@@ -94,6 +107,31 @@ def test_offline_cache_requires_all_pinned_repositories(tmp_path: Path) -> None:
     (tmp_path / "hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots").rmdir()
     with pytest.raises(FileNotFoundError, match="Qwen3-VL-8B-Instruct"):
         MODULE._validate_offline_hf_cache(tmp_path)
+
+
+def test_checkpoint_root_requires_canonical_mount_and_dinov2(tmp_path: Path) -> None:
+    external = _checkpoint_root(tmp_path / "external")
+    with pytest.raises(ValueError, match="must be mounted"):
+        MODULE._validate_checkpoint_root(external, tmp_path / "repo")
+
+    repo = tmp_path / "repo"
+    root = _checkpoint_root(repo)
+    assert MODULE._validate_checkpoint_root(root, repo) == root / "hf"
+    (root / "facebook/dinov2-large/model.safetensors").unlink()
+    with pytest.raises(FileNotFoundError, match="DINOv2 weights"):
+        MODULE._validate_checkpoint_root(root, repo)
+
+
+def test_generate_contract_mounts_complete_checkpoint_root() -> None:
+    contract = yaml.safe_load(
+        (SCRIPT.parents[1] / "references/skill_info.yaml").read_text()
+    )["actions"]["generate"]
+    inputs = contract["inputs"]
+    assert inputs["checkpoint_root"]["container_path"] == (
+        "/workspace/paidf-anomalygen/checkpoints"
+    )
+    assert "hf_cache" not in inputs
+    assert contract["args"]["checkpoint_root"] == "--checkpoint-root {checkpoint_root}"
 
 
 def test_base_checkpoint_requires_parent_of_model_directory(tmp_path: Path) -> None:
