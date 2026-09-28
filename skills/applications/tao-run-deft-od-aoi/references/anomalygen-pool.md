@@ -14,6 +14,11 @@ POOL/
     mask/DEFECT/*
 ```
 
+An enabled synthesis policy must start with at least one supported image under
+some `TEXTURE/clean_image` directory; initialization rejects a globally empty
+reference pool. Individual texture pools may still be absent or empty because
+their routed FNs are handled independently during iteration preparation.
+
 The frozen `defect_spec.jsonl` must define every selected
 `TEXTURE+DEFECT`. Text-routed definitions require
 `roi_prompt_defect_location`. Every KPI FN provides `dataset_id` so the
