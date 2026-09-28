@@ -1,5 +1,5 @@
 ## Description: <br>
-Multi-step video annotation pipeline that turns raw videos into Chain-of-Thought training data — multi-level captions, structured descriptions, and QA pairs (MCQ, binary, open-ended) with reasoning traces, via VLM/LLM distillation. <br>
+Multi-step video annotation pipeline that turns raw videos into Chain-of-Thought training data — curated and routed clips, multi-level captions, structured descriptions, QA pairs (MCQ, binary, open-ended, event verification, causal, temporal) with reasoning traces, and metropolis-v3.0 contextual annotations, via VLM/LLM distillation. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -21,16 +21,14 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Configuration Reference](references/configuration.md) <br>
 - [Domain Adaptation Guide](references/domain_adaptation.md) <br>
-- [Traffic Domain Prompts](references/prompts_traffic.py) <br>
-- [Warehouse Domain Prompts](references/prompts_warehouse.py) <br>
 - [Agent Skills Standard](https://agentskills.io) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Files, Shell commands, Configuration instructions] <br>
-**Output Format:** [JSON (tao-vl-reason-v1.0 envelope) and JSONL intermediate outputs] <br>
+**Output Format:** [JSON (tao-vl-reason-v1.0 task files, metropolis-v3.0 contextual annotations), JSONL intermediate outputs, Markdown/JSON run report] <br>
 **Output Parameters:** [1D] <br>
-**Other Properties Related to Output:** [Per-step subdirectories; Step 4 produces up to 10 task-specific JSON files] <br>
+**Other Properties Related to Output:** [Per-step subdirectories; Step 4a produces one task JSON per task type (11 by default); Step 4b produces per-video contextual JSONs; Step 5 produces a run report] <br>
 
 ## Evaluation Agents Used: <br>
 - Claude Code (`claude-code`) <br>
@@ -70,7 +68,7 @@ Underlying evaluation signals used in this run: <br>
 | Efficiency | 1 | 70% (+42%) | 96% (+68%) |
 
 ## Skill Version(s): <br>
-0.1.0 (source: frontmatter) <br>
+0.2.0 (source: frontmatter) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
