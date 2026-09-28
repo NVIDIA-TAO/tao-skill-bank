@@ -15,7 +15,7 @@ comparable — the mAP trend the loop exists to produce becomes meaningless.
 The encoder is the sharpest case. ``embedding_model_path`` must stay identical
 to the one that produced the source-pool parquet for the whole run; a mismatch
 does not raise, it just returns confidently wrong neighbours. Pre-Flight
-resolves it once (check 9) and this file pins it.
+resolves it once (check 10) and this file pins it.
 
 Refuses to overwrite an existing ``deft_state.json`` without ``--force``, which
 is the guard against clobbering a live run: state and log are the loop's only

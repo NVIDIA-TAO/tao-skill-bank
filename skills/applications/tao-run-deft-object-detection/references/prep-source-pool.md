@@ -18,6 +18,8 @@ mkdir -p "$PREP_DIR"
 
 export CLASSES_YAML="<path to the run's classes.yaml>"
 export POOL_IMAGES="<config.pool_images>"   # the raw images this prep labels
+export CODETR_CHECKPOINT="<config.codetr_checkpoint>"  # the pseudo-labeller's weights
+export CODETR_CLASSMAP="<config.codetr_classmap>"     # its own vocabulary, one per line
 export CODETR_SPEC="${PREP_DIR}/codetr_inference.yaml"
 ```
 
@@ -420,7 +422,7 @@ docker run --rm --name "deft_prep_embed" --gpus all --ipc=host --user "$(id -u):
   embedding image_embeddings -e "$EMBED_SPEC"
 ```
 
-The encoder is whatever Pre-Flight check 9 resolved, and it must be the same one every
+The encoder is whatever Pre-Flight check 10 resolved, and it must be the same one every
 iteration uses: mining compares an iteration's embeddings against this pool parquet, so
 two encoders produce vectors that are not comparable and the failure is silent — mining
 succeeds and returns confidently wrong neighbours.
@@ -459,6 +461,11 @@ prep. Omitting the flag leaves the field unset and `mine` refuses.
 
 Hard-stop before the baseline when any of these hold:
 
+- `$CODETR_CHECKPOINT` is unset or not on disk. Pre-Flight check 7 resolves it — the
+  user's own path, or a verified fetch — so this
+  gate catches a run that skipped Pre-Flight or had the file removed since. It is listed
+  first because it is the cheapest to check and the most expensive to discover late: the
+  Co-DETR pass is the longest stage in the workflow and it is the first thing prep does.
 - Co-DETR is unavailable in the resolved image. Probe **both** forms — the bare `codetr`
   console script *and* `python3 -m nvidia_tao_pytorch.cv.codetr.entrypoint.codetr` (step 1).
   A failing `codetr --help` on its own is not this gate: it fails in every image checked so
