@@ -208,7 +208,7 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             source = Path(str(event["filepath"])).resolve()
             if str(source) not in pockets:
                 raise ValueError(f"gap image is absent from the frozen KPI role: {source}")
-            if "unknown" in pockets[str(source)].values():
+            if role == "real" and "unknown" in pockets[str(source)].values():
                 raise ValueError(f"gap image lacks frozen pocket metadata: {source}")
             width, height = _size(source)
             box = _gap_box(event["bbox"], width, height,

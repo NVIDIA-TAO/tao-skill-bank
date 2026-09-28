@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 from PIL import Image
 
@@ -122,6 +123,66 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     assert real_mining["desired_unique_count"] == 1
     assert clean_mining["desired_unique_count"] == 5
     assert real_mining["candidate_expansion_factor"] == 15
+
+
+def test_queries_route_boxless_background_without_defect_pocket(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    query_image = tmp_path / "boxless.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": query_image.name,
+                    "source_path": str(query_image),
+                    "deft_od_aoi": {"benchmark": "visa", "texture": "pcb1"}}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(strict)
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [4, 4, 12, 12], "best_iou": 0.0}]).to_parquet(loose)
+
+    report = MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    assert report["query_counts"] == {"real": 0, "clean": 1}
+    clean = pd.read_parquet(tmp_path / "queries/clean_queries.parquet")
+    assert clean.reason.tolist() == ["background_fp"]
+    assert clean.defect.tolist() == ["unknown"]
+
+
+def test_queries_reject_real_gap_without_defect_pocket(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    query_image = tmp_path / "defect.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": query_image.name,
+                    "source_path": str(query_image),
+                    "deft_od_aoi": {"benchmark": "visa", "texture": "pcb1"}}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1,
+                         "bbox": [4, 4, 12, 12]}],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [4, 4, 12, 12], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    with pytest.raises(ValueError, match="lacks frozen pocket metadata"):
+        MODULE.queries(
+            policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+        )
 
 
 def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) -> None:
