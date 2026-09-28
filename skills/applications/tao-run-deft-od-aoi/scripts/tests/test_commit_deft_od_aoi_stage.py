@@ -3,6 +3,7 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -68,7 +69,11 @@ def _retrieval(root: Path, sparse: bool = False, exhausted: bool = False) -> lis
 def _iteration_artifacts(root: Path) -> dict[str, list[str]]:
     admission = root / "admission_report.json"
     admission.write_text(json.dumps({"status": "COMPLETE", "iteration": 1,
-                                     "admitted": {"synthetic": 0}}))
+                                     "role_status": {
+                                         "real": {"status": "SELECTED", "selected_count": 1},
+                                     },
+                                     "admitted": {"real": 1, "clean": 0, "synthetic": 0},
+                                     "new_training_images": 1}))
     checkpoint = root / "model_epoch_001.pth"
     checkpoint.write_bytes(b"checkpoint")
     status = root / "train_status.json"
@@ -135,8 +140,13 @@ def _advance_to_synthesis(root: Path, *, retrieval_enabled: bool) -> Path:
     MODULE.commit(state, "iteration_retrieval", 1, retrieval)
     admission = root / "admission_report.json"
     admission.write_text(json.dumps({"status": "COMPLETE", "iteration": 1,
+                                     "role_status": {},
                                      "admitted": {"real": 0, "clean": 0,
-                                                  "synthetic": 0}}))
+                                                  "synthetic": 0},
+                                     "synthetic_admission": {
+                                         "available_room_before_admission": 1,
+                                     },
+                                     "new_training_images": 0}))
     MODULE.commit(state, "iteration_admission", 1, [f"admission_report={admission}"])
     return state
 
@@ -152,6 +162,13 @@ def _budget_skip(root: Path, admitted_real: int) -> tuple[Path, list[str]]:
     admission.write_text(json.dumps({
         "status": "COMPLETE", "iteration": 1,
         "admitted": {"real": admitted_real, "clean": 0, "synthetic": 0},
+        "new_training_images": admitted_real,
+        "role_status": {
+            "real": {
+                "status": "SELECTED" if admitted_real else "NO_MATCHES",
+                "selected_count": admitted_real,
+            },
+        },
     }))
     MODULE.commit(
         state, "iteration_admission", 1, [f"admission_report={admission}"]
@@ -209,6 +226,44 @@ def test_retrieval_commits_all_role_exhaustion_as_convergence(tmp_path: Path) ->
     assert result["completion_reason"] == "mining_exhausted"
 
 
+@pytest.mark.parametrize("invalid", [
+    "missing_file", "corrupt_file", "empty_without_filepath", "rows_without_filepath",
+    "failed_manifest", "query_count_mismatch",
+])
+def test_max_similarity_rejects_invalid_mining_evidence(tmp_path: Path, invalid: str) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_retrieval",
+                 current_iteration=0, last_stage="baseline_gaps")
+    state.write_text(json.dumps(value))
+    artifacts = _retrieval(tmp_path, sparse=True)
+    mined = tmp_path / "real_mined.parquet"
+    message = "lacks filepath"
+    if invalid == "missing_file":
+        mined.unlink()
+        message = "existing-file"
+    elif invalid == "corrupt_file":
+        mined.write_bytes(b"not a parquet file")
+        message = "Parquet|parquet"
+    elif invalid in {"empty_without_filepath", "rows_without_filepath"}:
+        rows = [] if invalid == "empty_without_filepath" else ["/candidate"]
+        pd.DataFrame({"wrong_column": rows}).to_parquet(mined, index=False)
+    elif invalid == "failed_manifest":
+        manifest = tmp_path / "query_manifest.json"
+        report = json.loads(manifest.read_text())
+        report["status"] = "ERROR"
+        manifest.write_text(json.dumps(report))
+        message = "incomplete"
+    else:
+        pd.DataFrame({"filepath": []}).to_parquet(tmp_path / "real_queries.parquet")
+        message = "query count"
+    original_state = state.read_bytes()
+    with pytest.raises(ValueError, match=message):
+        MODULE.commit(state, "iteration_retrieval", 1, artifacts)
+    assert state.read_bytes() == original_state
+    assert not (tmp_path / "loop_log.jsonl").exists()
+
+
 def test_admission_index_uses_shared_shape_contract(tmp_path: Path) -> None:
     valid = tmp_path / "valid.npy"
     np.save(valid, np.zeros((0, MODULE.ADMISSION_INDEX_WIDTH)))
@@ -222,6 +277,70 @@ def test_admission_index_uses_shared_shape_contract(tmp_path: Path) -> None:
         np.save(path, index)
         with pytest.raises(ValueError, match="admission index shape"):
             MODULE._validate_admission_index({"path": path})
+
+
+@pytest.mark.parametrize(
+    ("synthesis_enabled", "expected_status", "expected_stage"),
+    [(True, "RUNNING", "iteration_synthesis"), (False, "COMPLETE", None)],
+)
+def test_no_matches_routes_to_synthesis_or_converges(
+        tmp_path: Path, synthesis_enabled: bool,
+        expected_status: str, expected_stage: str | None) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_admission",
+                 current_iteration=1, last_stage="iteration_retrieval",
+                 synthesis_enabled=synthesis_enabled)
+    state.write_text(json.dumps(value))
+    report = tmp_path / "admission_report.json"
+    report.write_text(json.dumps({
+        "status": "COMPLETE", "iteration": 1,
+        "role_status": {
+            "real": {"status": "NO_MATCHES", "selected_count": 0},
+            "clean": {"status": "NO_MATCHES", "selected_count": 0},
+        },
+        "admitted": {"real": 0, "clean": 0, "synthetic": 0},
+        "new_training_images": 0,
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_admission", 1, [f"admission_report={report}"]
+    )
+
+    assert result["status"] == expected_status
+    assert result["next_stage"] == expected_stage
+    if not synthesis_enabled:
+        assert result["completion_reason"] == "retrieval_no_matches"
+
+
+def test_main_prints_completion_reason(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_admission",
+                 current_iteration=1, last_stage="iteration_retrieval",
+                 synthesis_enabled=False)
+    state.write_text(json.dumps(value))
+    report = tmp_path / "admission_report.json"
+    report.write_text(json.dumps({
+        "status": "COMPLETE", "iteration": 1,
+        "role_status": {
+            "real": {"status": "NO_MATCHES", "selected_count": 0},
+        },
+        "admitted": {"real": 0, "clean": 0, "synthetic": 0},
+        "new_training_images": 0,
+    }))
+    monkeypatch.setattr(sys, "argv", [
+        str(SCRIPT), "--state", str(state), "--stage", "iteration_admission",
+        "--iteration", "1", "--artifact", f"admission_report={report}",
+    ])
+
+    assert MODULE.main() == 0
+
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "COMPLETE", "next_stage": None,
+        "completion_reason": "retrieval_no_matches",
+    }
 
 
 def test_measurement_rejects_incomplete_inference(tmp_path: Path) -> None:
@@ -280,7 +399,13 @@ def test_synthesis_reconciles_generated_and_blocked_counts(tmp_path: Path) -> No
     }))
     admission = tmp_path / "admission_report.json"
     admission.write_text(json.dumps({"status": "COMPLETE", "iteration": 1,
-                                     "admitted": {"synthetic": 2}}))
+                                     "role_status": {
+                                         "real": {"status": "NO_MATCHES",
+                                                  "selected_count": 0},
+                                     },
+                                     "admitted": {"real": 0, "clean": 0,
+                                                  "synthetic": 2},
+                                     "new_training_images": 2}))
     result = MODULE.commit(state, "iteration_synthesis", 1,
                            [f"generation_report={generation}",
                             f"admission_report={admission}"])

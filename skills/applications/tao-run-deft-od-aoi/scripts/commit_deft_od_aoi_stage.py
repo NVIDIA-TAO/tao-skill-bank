@@ -101,6 +101,9 @@ def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
         if Path(str(report.get("admission_index"))).resolve() != Path(
                 artifacts["admission_index"]["path"]).resolve():
             raise ValueError("round-robin selection report has a mismatched admission index")
+        selection_role_status = report.get("role_status")
+        if not isinstance(selection_role_status, dict):
+            raise ValueError("round-robin selection report has no role outcomes")
     for role, count in counts.items():
         evidence = role_status.get(role) or {}
         if int(evidence.get("query_count", -1)) != count:
@@ -125,12 +128,19 @@ def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
         if role in enabled and len(pd.read_parquet(
                 artifacts[f"{role}_query_embeddings"]["path"])) != count:
             raise ValueError(f"{role} embedding count disagrees with its manifest")
-        if role in enabled:
-            mined = pd.read_parquet(artifacts[f"{role}_mined"]["path"])
-            if mined.empty:
-                raise ValueError(f"{role} mining produced no selected candidates")
-            if selected_counts is not None and selected_counts.get(role) != len(mined):
-                raise ValueError(f"{role} selection count disagrees with its report")
+        if role not in enabled:
+            continue
+        mined = pd.read_parquet(artifacts[f"{role}_mined"]["path"])
+        if selected_counts is not None and selected_counts.get(role) != len(mined):
+            raise ValueError(f"{role} selection count disagrees with its report")
+        if selected_counts is not None:
+            evidence = selection_role_status.get(role) or {}
+            expected = "SELECTED" if len(mined) else "NO_MATCHES"
+            if (evidence.get("status") != expected
+                    or evidence.get("selected_count") != len(mined)):
+                raise ValueError(f"{role} selection outcome disagrees with its artifact")
+        elif "filepath" not in mined:
+            raise ValueError(f"{role} mining output lacks filepath")
     if bool(manifest.get("converged")) != (not enabled and not manifest.get("synthesis_pending")):
         raise ValueError("retrieval convergence evidence is inconsistent")
     return manifest
@@ -155,6 +165,22 @@ def _validate_admission(iteration: int,
         count = admitted.get(role, 0)
         if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise ValueError("admission report has invalid admitted counts")
+    outcomes = report.get("role_status")
+    valid_outcomes = isinstance(outcomes, dict)
+    for value in outcomes.values() if valid_outcomes else []:
+        count = value.get("selected_count") if isinstance(value, dict) else None
+        valid_outcomes = (
+            isinstance(count, int) and not isinstance(count, bool) and count >= 0
+            and value.get("status") == ("SELECTED" if count else "NO_MATCHES")
+        )
+        if not valid_outcomes:
+            break
+    if not valid_outcomes:
+        raise ValueError("admission report has invalid role outcomes")
+    admitted = report.get("admitted") or {}
+    expected_new = sum(int(admitted.get(role, -1)) for role in ("real", "clean", "synthetic"))
+    if expected_new < 0 or report.get("new_training_images") != expected_new:
+        raise ValueError("admission report new-image count does not reconcile")
     return report
 
 
@@ -441,6 +467,15 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         state["completion_reason"] = "all_producers_exhausted"
     if stage == "iteration_admission" and state.get("synthesis_enabled"):
         next_stage = "iteration_synthesis"
+    elif stage in {"iteration_admission", "iteration_synthesis"} and admission and not int(
+            admission["new_training_images"]):
+        next_stage, status = None, "COMPLETE"
+        outcomes = list(admission["role_status"].values())
+        state["completion_reason"] = (
+            "retrieval_no_matches"
+            if outcomes and all(row["status"] == "NO_MATCHES" for row in outcomes)
+            else "retrieval_no_new_data"
+        )
     if synthesis_skip_reason:
         admitted = synthesis["admitted"]
         if not sum(int(admitted.get(role, 0)) for role in ("real", "clean", "synthetic")):
@@ -475,7 +510,10 @@ def main() -> int:
     parser.add_argument("--artifact", action="append", default=[])
     args = parser.parse_args()
     result = commit(args.state.resolve(), args.stage, args.iteration, args.artifact)
-    print(json.dumps({"status": result["status"], "next_stage": result["next_stage"]}))
+    summary = {"status": result["status"], "next_stage": result["next_stage"]}
+    if result.get("completion_reason"):
+        summary["completion_reason"] = result["completion_reason"]
+    print(json.dumps(summary))
     return 0
 
 

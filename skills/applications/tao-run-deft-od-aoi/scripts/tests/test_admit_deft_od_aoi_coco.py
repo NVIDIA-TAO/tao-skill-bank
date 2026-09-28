@@ -26,6 +26,12 @@ SELECTION_SPEC = importlib.util.spec_from_file_location(
 SELECTION_MODULE = importlib.util.module_from_spec(SELECTION_SPEC)
 assert SELECTION_SPEC.loader
 SELECTION_SPEC.loader.exec_module(SELECTION_MODULE)
+COMMIT_SPEC = importlib.util.spec_from_file_location(
+    "commit_deft_od_aoi_stage_test", SCRIPT.parent / "commit_deft_od_aoi_stage.py"
+)
+COMMIT_MODULE = importlib.util.module_from_spec(COMMIT_SPEC)
+assert COMMIT_SPEC.loader
+COMMIT_SPEC.loader.exec_module(COMMIT_MODULE)
 
 
 def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
@@ -139,6 +145,21 @@ def test_clean_admission_uses_cumulative_real_capacity_after_real_mining_exhaust
                                  "synthetic_defect": 0}
 
 
+def test_real_only_policy_without_synthesis_reports_zero_capacity(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value.pop("synthesis")
+    policy.write_text(yaml.safe_dump(value))
+
+    report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+
+    assert report["admitted"] == {"real": 1, "clean": 1, "synthetic": 0}
+    assert report["synthetic_admission"]["fraction_basis"] == "disabled"
+    assert report["synthetic_admission"]["cumulative_synthetic_limit"] == 0
+    assert report["synthetic_admission"]["available_room_before_admission"] == 0
+    assert report["warnings"] == []
+
+
 def test_round_robin_admission_consumes_materialized_selection(tmp_path: Path) -> None:
     policy, candidates, retrieval = _fixture(tmp_path)
     value = yaml.safe_load(policy.read_text())
@@ -181,10 +202,98 @@ def test_round_robin_admission_consumes_materialized_selection(tmp_path: Path) -
     assert report["selection_admission_counters"]["admitted"] == 2
 
 
-def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: Path) -> None:
-    policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
-    with pytest.raises(ValueError, match="mining admitted no source images"):
-        MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+def test_empty_round_robin_selection_converges_after_admission(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"].update({
+        "selection": {"strategy": "round_robin_similarity"},
+        "minimum_similarity": 1.1,
+        "candidate_overfetch": 2,
+        "audit_top_k_per_query": 20,
+    })
+    value["routing"].update({
+        "real_mine_factor_min": 1,
+        "near_miss_real_factor": 2,
+        "near_miss_real_cap_per_pocket": 20,
+        "clean_factor": 2,
+    })
+    policy.write_text(yaml.safe_dump(value))
+    manifest = json.loads((retrieval / "query_manifest.json").read_text())
+    manifest["selection_strategy"] = "round_robin_similarity"
+    manifest["role_status"] = {
+        role: {
+            "status": "READY", "query_count": 1, "candidate_count": 1,
+            "excluded_count": 0, "remaining_candidate_count": 1,
+        }
+        for role in ("real", "clean")
+    }
+    manifest["converged"] = False
+    manifest["synthesis_pending"] = False
+    (retrieval / "query_manifest.json").write_text(json.dumps(manifest))
+    for role in ("real", "clean"):
+        pd.DataFrame({"filepath": pd.Series(dtype="str")}).to_parquet(
+            retrieval / f"exclude_{role}_candidates.parquet", index=False
+        )
+        candidate_path = candidates / f"{role}_candidate_embeddings.parquet"
+        frame = pd.read_parquet(candidate_path)
+        frame["candidate_id"] = f"{role}-candidate"
+        frame.to_parquet(candidate_path, index=False)
+        embeddings = retrieval / f"{role}_query_embeddings.parquet"
+        pd.read_parquet(embeddings)[["filepath"]].to_parquet(
+            retrieval / f"{role}_queries.parquet", index=False
+        )
+    real_queries = pd.read_parquet(retrieval / "real_query_embeddings.parquet")
+    real_queries = real_queries.assign(
+        query_id="real-query", reason="fn", dataset_id="line-a", texture_id="board",
+        defect_class="bridge", real_factor=1,
+    )
+    real_queries.to_parquet(retrieval / "real_query_embeddings.parquet", index=False)
+    clean_queries = pd.read_parquet(retrieval / "clean_query_embeddings.parquet")
+    clean_queries = clean_queries.assign(query_id="clean-query", reason="background_fp")
+    clean_queries.to_parquet(retrieval / "clean_query_embeddings.parquet", index=False)
+    for role in ("real", "clean"):
+        (retrieval / f"mine_{role}/final_unique_files.parquet").unlink()
+
+    selection = SELECTION_MODULE.materialize(policy, candidates, retrieval)
+    assert selection["selected_counts"] == {"real": 0, "clean": 0}
+    artifacts = [
+        f"query_manifest={retrieval / 'query_manifest.json'}",
+        f"selection_report={retrieval / 'round_robin_selection_report.json'}",
+        f"admission_index={retrieval / 'round_robin_admission_index.npy'}",
+    ]
+    for role in ("real", "clean"):
+        exclusions = retrieval / f"exclude_{role}_candidates.parquet"
+        artifacts.extend((
+            f"{role}_queries={retrieval / f'{role}_queries.parquet'}",
+            f"{role}_exclusions={exclusions}",
+            f"{role}_query_embeddings={retrieval / f'{role}_query_embeddings.parquet'}",
+            f"{role}_mined={retrieval / f'mine_{role}/final_unique_files.parquet'}",
+        ))
+    state = tmp_path / "deft_state.json"
+    state.write_text(json.dumps({
+        "status": "RUNNING", "next_stage": "iteration_retrieval",
+        "current_iteration": 0, "last_stage": "baseline_gaps",
+        "max_iterations": 2, "synthesis_enabled": False,
+    }))
+    result = COMMIT_MODULE.commit(state, "iteration_retrieval", 1, artifacts)
+    assert result["next_stage"] == "iteration_admission"
+
+    output = tmp_path / "empty-admission"
+    report = MODULE.admit(policy, candidates, retrieval, output, None, "copy")
+    assert report["role_status"] == {
+        role: {"status": "NO_MATCHES", "selected_count": 0}
+        for role in ("real", "clean")
+    }
+    assert report["new_training_images"] == 0
+    result = COMMIT_MODULE.commit(state, "iteration_admission", 1, [
+        f"admission_report={output / 'admission_report.json'}",
+        f"admission_index={output / 'admission_index.npy'}",
+    ])
+
+    assert result["status"] == "COMPLETE"
+    assert result["next_stage"] is None
+    assert result["completion_reason"] == "retrieval_no_matches"
+    assert all(event["stage"] != "iteration_training" for event in result["events"])
 
 
 def test_admission_reports_parent_shortfall_without_failing(tmp_path: Path) -> None:
@@ -243,6 +352,152 @@ def test_admission_uses_overfetch_to_replace_a_previously_used_parent(tmp_path: 
     assert preview["roles"]["real"]["branches"]["fn"]["unique_parents"] == 2
     assert preview["roles"]["real"]["branches"]["fn"]["novel_parents"] == 1
     assert preview["roles"]["real"]["per_dataset"] == {"canonical-dataset-b": 1}
+
+
+@pytest.mark.parametrize("synthesis_enabled", [False, True])
+def test_empty_max_similarity_mining_routes_through_admission(
+        tmp_path: Path, synthesis_enabled: bool) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value["synthesis"]["enabled"] = synthesis_enabled
+    policy.write_text(yaml.safe_dump(value))
+    manifest = retrieval / "query_manifest.json"
+    evidence = json.loads(manifest.read_text())
+    evidence["selection_strategy"] = "max_similarity"
+    evidence["role_status"] = {
+        role: {
+            "status": "READY", "query_count": 1, "candidate_count": 1,
+            "excluded_count": 0, "remaining_candidate_count": 1,
+        }
+        for role in ("real", "clean")
+    }
+    evidence["converged"] = False
+    evidence["synthesis_pending"] = synthesis_enabled
+    manifest.write_text(json.dumps(evidence))
+    artifacts = [f"query_manifest={manifest}"]
+    for role in ("real", "clean"):
+        queries = retrieval / f"{role}_queries.parquet"
+        embeddings = retrieval / f"{role}_query_embeddings.parquet"
+        pd.read_parquet(embeddings)[["filepath"]].to_parquet(queries, index=False)
+        mined = retrieval / f"mine_{role}/final_unique_files.parquet"
+        pd.DataFrame({"filepath": pd.Series(dtype="str")}).to_parquet(mined, index=False)
+        exclusions = retrieval / f"{role}_exclusions.parquet"
+        pd.DataFrame({"filepath": pd.Series(dtype="str")}).to_parquet(
+            exclusions, index=False
+        )
+        artifacts.extend((f"{role}_queries={queries}",
+                          f"{role}_exclusions={exclusions}",
+                          f"{role}_query_embeddings={embeddings}", f"{role}_mined={mined}"))
+    state = tmp_path / "deft_state.json"
+    state.write_text(json.dumps({
+        "status": "RUNNING", "next_stage": "iteration_retrieval",
+        "current_iteration": 0, "last_stage": "baseline_gaps",
+        "max_iterations": 2, "synthesis_enabled": synthesis_enabled,
+    }))
+
+    result = COMMIT_MODULE.commit(state, "iteration_retrieval", 1, artifacts)
+    assert result["next_stage"] == "iteration_admission"
+    output = tmp_path / "admission"
+    report = MODULE.admit(policy, candidates, retrieval, output, None, "copy")
+    assert report["new_training_images"] == 0
+    assert report["role_status"] == {
+        role: {"status": "NO_MATCHES", "selected_count": 0} for role in ("real", "clean")
+    }
+    result = COMMIT_MODULE.commit(
+        state, "iteration_admission", 1, [f"admission_report={output / 'admission_report.json'}"]
+    )
+    if synthesis_enabled:
+        assert result["status"] == "RUNNING"
+        assert result["next_stage"] == "iteration_synthesis"
+        generated = tmp_path / "generated.json"
+        generated.write_text(json.dumps({
+            "images": [], "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+        }))
+        post_synthesis = tmp_path / "post_synthesis"
+        MODULE.admit(policy, candidates, retrieval, post_synthesis, None, "copy",
+                     generated, tmp_path)
+        generation_report = tmp_path / "generation_report.json"
+        generation_report.write_text(json.dumps({
+            "status": "COMPLETE", "generated": 0,
+            "groups": [{"requested": 1, "generated": 0, "guardrail_blocked": 1}],
+        }))
+        result = COMMIT_MODULE.commit(state, "iteration_synthesis", 1, [
+            f"generation_report={generation_report}",
+            f"admission_report={post_synthesis / 'admission_report.json'}",
+        ])
+    assert result["status"] == "COMPLETE"
+    assert result["next_stage"] is None
+    assert result["completion_reason"] == "retrieval_no_matches"
+    assert all(event["stage"] != "iteration_training" for event in result["events"])
+
+
+def test_max_similarity_rejects_empty_mining_without_filepath(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    for role in ("real", "clean"):
+        pd.DataFrame({"wrong_column": []}).to_parquet(
+            retrieval / f"mine_{role}/final_unique_files.parquet", index=False
+        )
+    with pytest.raises(ValueError, match="lacks filepath"):
+        MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+
+
+def test_max_similarity_records_no_matches_without_empty_pool_error(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
+    report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+
+    assert report["role_status"] == {
+        "real": {"status": "NO_MATCHES", "selected_count": 0},
+        "clean": {"status": "NO_MATCHES", "selected_count": 0},
+    }
+    assert report["new_training_images"] == 0
+    assert report["total_images"] == 0
+
+
+def test_max_similarity_no_matches_does_not_count_retained_data_as_new(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({
+        "images": [{
+            "id": 1, "file_name": "real.png", "source_path": str(tmp_path / "real.png"),
+            "width": 16, "height": 16, "deft_kind": "real_defect",
+        }],
+        "annotations": [{
+            "id": 1, "image_id": 1, "category_id": 1, "bbox": [1, 1, 4, 4],
+        }],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+
+    report = MODULE.admit(
+        policy, candidates, retrieval, tmp_path / "out", previous, "copy"
+    )
+
+    assert report["retained_previous_images"] == 1
+    assert report["total_images"] == 1
+    assert report["new_training_images"] == 0
+
+
+def test_no_real_data_warns_before_synthesis_generation(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
+    value = yaml.safe_load(policy.read_text())
+    value["synthesis"]["enabled"] = True
+    value["synthesis"]["cumulative_fraction_of_real_defects"] = 0.25
+    policy.write_text(yaml.safe_dump(value))
+
+    report = MODULE.admit(
+        policy, candidates, retrieval, tmp_path / "out", None, "copy"
+    )
+
+    assert report["warnings"] == [{
+        "code": "SYNTHETIC_ADMISSION_CAP_ZERO",
+        "message": (
+            "synthetic admission currently has zero room; generation may complete "
+            "without admitting any synthetic images"
+        ),
+        "cumulative_real_images": 0,
+        "configured_fraction": 0.25,
+        "cumulative_synthetic_limit": 0,
+        "synthetic_images_before_admission": 0,
+    }]
 
 
 def test_admission_folds_capped_synthetic_categories_to_defect(tmp_path: Path) -> None:
@@ -320,9 +575,23 @@ def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) ->
     assert admission["quality_filter"]["rejected_annotations_small"] == 1
     assert admission["requested_new"] == 4
     assert admission["admitted_new"] == 2
+    assert admission["excluded_by_cap"] == 2
+    assert admission["cumulative_real_images"] == 2
+    assert admission["cumulative_synthetic_limit"] == 2
     assert admission["admitted_by_stratum"] == {"line-a": 1, "line-b": 1}
     preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
     assert preview["mining_admission"] == "skipped" and preview["roles"] == {}
+    assert report["warnings"] == [{
+        "code": "SYNTHETIC_ADMISSION_CAPPED",
+        "message": (
+            "2 eligible generated synthetic images were excluded by "
+            "the configured cumulative synthetic-admission cap"
+        ),
+        "cumulative_real_images": 2,
+        "configured_fraction": 1.0,
+        "cumulative_synthetic_limit": 2,
+        "synthetic_images_before_admission": 0,
+    }]
 
 
 def test_synthetic_inputs_do_not_implicitly_disable_mining(tmp_path: Path) -> None:
