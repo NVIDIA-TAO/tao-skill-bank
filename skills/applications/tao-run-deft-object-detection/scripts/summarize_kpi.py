@@ -23,6 +23,11 @@ and every AP is reported against its class. Without it, ``--expect-classes`` is 
 only guard -- a row that is not a target class would silently shift the mean, so a
 count that disagrees is an error rather than a wrong number.
 
+A class scored in more than one KPI sequence has no single AP, so ``per_class`` is
+withheld (null, with ``per_class_withheld`` saying why) rather than keyed to whichever
+sequence came last. ``per_class_ap``, ``class_names`` and ``sequence_names`` keep every
+row, and ``class_count`` counts distinct classes where ``row_count`` counts rows.
+
 Inputs:  --kpi-csv, --expect-classes, --out
 Output:  the mAP on stdout; kpi_summary.json beside the CSV
 
@@ -101,13 +106,26 @@ def main() -> int:
                 f"is_internal false, or pass the row count this CSV should have")
 
         map_value = sum(aps) / len(aps)
+
+        # A class scored in more than one KPI sequence has one AP per sequence and no
+        # single AP of its own. Keyed by class, the rows would collapse to whichever
+        # came last and the file would state that one sequence's number as the class's
+        # AP, so per_class is withheld instead; per_class_ap, class_names and
+        # sequence_names keep every row. The mean is over rows either way.
+        repeated = (sorted({c for c in classes if classes.count(c) > 1})
+                    if labelled else [])
         summary = {
             "kpi_csv": str(csv_path),
             "map_value": map_value,
-            "class_count": len(aps),
+            "row_count": len(aps),
+            "class_count": len(set(classes)) if labelled else len(aps),
             "per_class_ap": aps,
             "class_names": classes if labelled else None,
-            "per_class": (dict(zip(classes, aps)) if labelled else None),
+            "per_class": (dict(zip(classes, aps)) if labelled and not repeated else None),
+            "per_class_withheld": (
+                f"{', '.join(repeated)} scored in more than one KPI sequence, so no single "
+                f"AP belongs to {'it' if len(repeated) == 1 else 'them'}; per_class_ap, "
+                f"class_names and sequence_names keep every row" if repeated else None),
             "class_names_source": ("kpi_calc.csv" if labelled else
                                    "absent - image predates tao-data-services#31; "
                                    "read them from kpi_analyze.log in row order"),
@@ -116,10 +134,16 @@ def main() -> int:
         out = Path(args.out).expanduser().resolve() if args.out else csv_path.parent / "kpi_summary.json"
         out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
-        print(f"classes:  {len(aps)}")
+        print(f"classes:  {summary['class_count']}")
         if labelled:
-            for name, value in zip(classes, aps):
-                print(f"  {name}: {value:.4f}")
+            sequences = summary["sequence_names"]
+            for name, value, sequence in zip(classes, aps, sequences):
+                # Name the sequence wherever a class repeats, so the lines read as
+                # distinct measurements rather than one class stated twice.
+                where = f" [{sequence}]" if name in repeated else ""
+                print(f"  {name}{where}: {value:.4f}")
+            if repeated:
+                print(f"  (per_class withheld: {summary['per_class_withheld']})")
         else:
             print(f"per-class AP: {[round(a, 4) for a in aps]}")
             print("  (no class_name column: this image predates tao-data-services#31, so "

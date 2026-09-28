@@ -3081,6 +3081,25 @@ dup_doc = rr.compose(root, {"config": {}, "iterations": {"baseline": {
 check("a class scored twice gets no single AP through kpi_summary.json either",
       "| baseline | 0.5000 |" in dup_doc and "0.1000" not in dup_doc, dup_doc)
 
+# The summary file itself must not state one sequence's AP as the class's: anything
+# else that reads it would be misled the same way the report was.
+dup_sum = json.loads((dup / "kpi_summary.json").read_text())
+check("summarize_kpi withholds per_class when a class repeats",
+      dup_sum.get("per_class") is None and "car" in (dup_sum.get("per_class_withheld") or ""),
+      dup_sum)
+check("summarize_kpi keeps every row and counts classes, not rows",
+      dup_sum.get("per_class_ap") == [0.9, 0.1] and dup_sum.get("class_count") == 1
+      and dup_sum.get("row_count") == 2, dup_sum)
+one = root / "onesum/kpi"
+one.mkdir(parents=True)
+(one / "kpi_calc.csv").write_text("Sequence Name,class_name,AP\nkpi,car,0.9\nkpi,person,0.6\n")
+subprocess.run([sys.executable, f"{sys.argv[1]}/summarize_kpi.py",
+                "--kpi-csv", str(one / "kpi_calc.csv")], capture_output=True, check=True)
+one_sum = json.loads((one / "kpi_summary.json").read_text())
+check("summarize_kpi still resolves per_class when every class is scored once",
+      one_sum.get("per_class") == {"car": 0.9, "person": 0.6}
+      and one_sum.get("per_class_withheld") is None, one_sum)
+
 # Staging numbers come only from a committed stage. A report at the default path with
 # no stage commit -- a rejected commit, or an earlier run in the same results dir --
 # must not appear as this run's.
