@@ -17,6 +17,13 @@ SPEC = importlib.util.spec_from_file_location("admit_deft_od_aoi_coco", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
+SELECTION_SCRIPT = SCRIPT.parent / "deft_od_aoi_round_robin_selection.py"
+SELECTION_SPEC = importlib.util.spec_from_file_location(
+    "deft_od_aoi_round_robin_selection_test", SELECTION_SCRIPT
+)
+SELECTION_MODULE = importlib.util.module_from_spec(SELECTION_SPEC)
+assert SELECTION_SPEC.loader
+SELECTION_SPEC.loader.exec_module(SELECTION_MODULE)
 
 
 def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
@@ -59,7 +66,9 @@ def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
                                                     "maximum_box_aspect": 25.0},
                                       "synthesis": {"cumulative_fraction_of_real_defects": 1.0}}))
     (retrieval_root / "query_manifest.json").write_text(
-        json.dumps({"iteration": 1, "enabled_roles": ["real", "clean"],
+        json.dumps({"status": "COMPLETE", "iteration": 1,
+                    "query_counts": {"real": 1, "clean": 1},
+                    "enabled_roles": ["real", "clean"],
                     "admission_targets": {"real": {"fn": 1, "near_miss_fp": 0},
                                           "clean": {"background_fp": 1}},
                     "requested_crop_counts": {"real": 15, "clean": 15}})
@@ -170,7 +179,7 @@ def test_admission_reports_requested_deduplicated_and_capped_role_counts(
     }
 
 
-def test_round_robin_admission_bypasses_mining_outputs(tmp_path: Path) -> None:
+def test_round_robin_admission_consumes_materialized_selection(tmp_path: Path) -> None:
     policy, candidates, retrieval = _fixture(tmp_path)
     value = yaml.safe_load(policy.read_text())
     value["retrieval"].update({
@@ -179,7 +188,7 @@ def test_round_robin_admission_bypasses_mining_outputs(tmp_path: Path) -> None:
     })
     value["routing"].update({
         "real_mine_factor_min": 1, "near_miss_real_factor": 2,
-        "near_miss_real_cap": 20, "clean_factor": 2,
+        "near_miss_real_cap_per_pocket": 20, "clean_factor": 2,
     })
     policy.write_text(yaml.safe_dump(value))
     for role in ("real", "clean"):
@@ -196,6 +205,9 @@ def test_round_robin_admission_bypasses_mining_outputs(tmp_path: Path) -> None:
     clean_queries = pd.read_parquet(retrieval / "clean_query_embeddings.parquet")
     clean_queries = clean_queries.assign(query_id="clean-query", reason="background_fp")
     clean_queries.to_parquet(retrieval / "clean_query_embeddings.parquet", index=False)
+    for role in ("real", "clean"):
+        (retrieval / f"mine_{role}/final_unique_files.parquet").unlink()
+    selection = SELECTION_MODULE.materialize(policy, candidates, retrieval)
 
     report = MODULE.admit(
         policy, candidates, retrieval, tmp_path / "out", None, "copy"
@@ -204,6 +216,11 @@ def test_round_robin_admission_bypasses_mining_outputs(tmp_path: Path) -> None:
     assert report["selection_strategy"] == "round_robin_similarity"
     assert report["admitted"] == {"real": 1, "clean": 1, "synthetic": 0}
     assert [row["admitted"] for row in report["selection_audit"]["branches"]] == [1, 1]
+    assert selection["selected_counts"] == {"real": 1, "clean": 1}
+    assert report["retrieval_admission"] == {
+        "real": {"requested": 1, "deduplicated": 1, "capped": 1},
+        "clean": {"requested": 1, "deduplicated": 1, "capped": 1},
+    }
 
 
 def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: Path) -> None:

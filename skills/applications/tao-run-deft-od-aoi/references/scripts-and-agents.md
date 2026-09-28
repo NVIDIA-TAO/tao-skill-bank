@@ -10,6 +10,7 @@ validate contracts; model and data skills own their container actions.
 | `prepare_deft_od_aoi_sources.py` | Canonicalize customer shards, delegate role merging to Data Services `annotations merge`, validate KPI/test/real/clean roles, and emit `sources.json`. |
 | `init_deft_od_aoi.py` | Validate normalized roles, freeze the policy, and initialize durable state. |
 | `prepare_deft_od_aoi_retrieval.py` | Build candidate crops/specs or per-iteration gap-query/mining specs. |
+| `deft_od_aoi_round_robin_selection.py` | Materialize deterministic per-query selections into the standard retrieval-stage artifacts. |
 | `admit_deft_od_aoi_coco.py` | Admit unique real/clean/synthetic sources into cumulative binary COCO. |
 | `prepare_deft_od_aoi_measurement.py` | Emit KPI/test RT-DETR inference and loose/strict gap specs. |
 | `prepare_deft_od_aoi_training.py` | Emit direct main training or deterministic probe specs. |
@@ -25,7 +26,8 @@ validate contracts; model and data skills own their container actions.
 | RT-DETR inference and training | `tao-train-rtdetr` |
 | Loose and strict OD gap analysis | `tao-analyze-gaps-od-map` |
 | Candidate and query embedding | `tao-generate-image-embeddings` |
-| Unique-image mining | `tao-mine-od-images` |
+| Global unique-image mining (`max_similarity`) | `tao-mine-od-images` |
+| Per-query selection (`round_robin_similarity`) | Application-owned deterministic selector |
 | AnomalyGenNext preparation and AMP | `tao-prepare-anomalygennext-inputs` |
 | Missing task-weight training | `tao-finetune-anomalygennext` |
 | Synthetic OD generation | `tao-generate-od-defects` |

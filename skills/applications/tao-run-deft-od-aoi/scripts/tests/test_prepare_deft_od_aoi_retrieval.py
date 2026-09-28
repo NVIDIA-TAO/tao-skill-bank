@@ -89,6 +89,7 @@ def _policy(root: Path, profile: str = "tight_context",
                                                   "real_mine_factor_max": 6,
                                                   "near_miss_real_factor": 2,
                                                   "near_miss_real_cap_per_pocket": 20,
+                                                  "round_robin_real_factor_default": 3,
                                                   "clean_factor": 2}}))
     return policy
 
@@ -938,6 +939,53 @@ def test_round_robin_selection_is_independent_of_preprocessing(
     ]
     assert Image.open(frame.iloc[0].filepath).size == expected_size
     assert not (tmp_path / "queries/mine_real.yaml").exists()
+
+
+def test_round_robin_defaults_to_three_real_candidates_per_strict_fn(
+        tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "square_context", "round_robin_similarity")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 7, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "line-a",
+                    "texture_id": "board", "defect_class": "bridge"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [8, 8, 16, 12], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
+    assert frame.real_factor.tolist() == [3]
+
+
+def test_max_similarity_keeps_one_x_real_factor_default(tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "square_context", "max_similarity")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [8, 8, 16, 12], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    mining = yaml.safe_load((tmp_path / "queries/mine_real.yaml").read_text())
+    assert mining["desired_unique_count"] == 1
 
 
 def test_unknown_preprocessing_profile_is_rejected(tmp_path: Path) -> None:

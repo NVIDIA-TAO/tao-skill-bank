@@ -75,6 +75,16 @@ def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
     role_status = manifest.get("role_status")
     if not isinstance(role_status, dict) or set(role_status) != {"real", "clean"}:
         raise ValueError("retrieval manifest lacks per-role exhaustion evidence")
+    selected_counts = None
+    if manifest.get("selection_strategy") == "round_robin_similarity":
+        report = _read_json(artifacts, "selection_report")
+        if (report.get("status") != "COMPLETE"
+                or int(report.get("iteration", -1)) != iteration
+                or report.get("selection_strategy") != "round_robin_similarity"):
+            raise ValueError("round-robin selection report is incomplete or mismatched")
+        selected_counts = report.get("selected_counts")
+        if not isinstance(selected_counts, dict):
+            raise ValueError("round-robin selection report has no selected counts")
     for role, count in counts.items():
         evidence = role_status.get(role) or {}
         if int(evidence.get("query_count", -1)) != count:
@@ -99,8 +109,12 @@ def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
         if role in enabled and len(pd.read_parquet(
                 artifacts[f"{role}_query_embeddings"]["path"])) != count:
             raise ValueError(f"{role} embedding count disagrees with its manifest")
-        if role in enabled and pd.read_parquet(artifacts[f"{role}_mined"]["path"]).empty:
-            raise ValueError(f"{role} mining produced no selected candidates")
+        if role in enabled:
+            mined = pd.read_parquet(artifacts[f"{role}_mined"]["path"])
+            if mined.empty:
+                raise ValueError(f"{role} mining produced no selected candidates")
+            if selected_counts is not None and selected_counts.get(role) != len(mined):
+                raise ValueError(f"{role} selection count disagrees with its report")
     if bool(manifest.get("converged")) != (not enabled and not manifest.get("synthesis_pending")):
         raise ValueError("retrieval convergence evidence is inconsistent")
     return manifest

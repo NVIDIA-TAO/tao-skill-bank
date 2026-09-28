@@ -5,11 +5,15 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import math
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import yaml
 
 
 def _vectors(values: pd.Series) -> np.ndarray:
@@ -25,7 +29,9 @@ def _vectors(values: pd.Series) -> np.ndarray:
 
 def round_robin_rank(candidates: pd.DataFrame, queries: pd.DataFrame, *,
                      excluded: set[str], minimum: float, quota: int,
-                     overfetch: int, audit_top_k: int) -> list[dict[str, Any]]:
+                     overfetch: int, audit_top_k: int,
+                     excluded_candidates: set[str] | None = None
+                     ) -> list[dict[str, Any]]:
     """Mirror the bounded per-query ranking used by historical commit 7ebdfbb."""
     if quota <= 0 or queries.empty or candidates.empty:
         return []
@@ -39,6 +45,14 @@ def round_robin_rank(candidates: pd.DataFrame, queries: pd.DataFrame, *,
     eligible = candidates[
         ~candidates.source_filepath.astype(str).isin(excluded)
     ].reset_index(drop=True)
+    if excluded_candidates:
+        if "filepath" not in eligible:
+            raise ValueError("candidate exclusions require candidate filepath values")
+        eligible = eligible[
+            ~eligible.filepath.astype(str).map(
+                lambda value: str(Path(value).expanduser().resolve())
+            ).isin(excluded_candidates)
+        ].reset_index(drop=True)
     if eligible.empty:
         return []
     candidate_vectors = _vectors(eligible.embedding)
@@ -91,7 +105,8 @@ def round_robin_rank(candidates: pd.DataFrame, queries: pd.DataFrame, *,
 
 def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame],
            policy: dict[str, Any], excluded: dict[str, set[str]],
-           prior_real: int = 0, prior_clean: int = 0
+           prior_real: int = 0, prior_clean: int = 0,
+           excluded_candidates: dict[str, set[str]] | None = None,
            ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     retrieval, routing = policy["retrieval"], policy["routing"]
     output: dict[str, list[dict[str, Any]]] = {"real": [], "clean": []}
@@ -125,13 +140,14 @@ def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame]
             else:
                 quota = min(
                     int(routing["near_miss_real_factor"]) * len(rows),
-                    int(routing["near_miss_real_cap"]),
+                    int(routing["near_miss_real_cap_per_pocket"]),
                 )
             ranked = round_robin_rank(
                 candidates["real"], rows, excluded=used_real,
                 minimum=float(retrieval["minimum_similarity"]), quota=quota,
                 overfetch=int(retrieval["candidate_overfetch"]),
                 audit_top_k=int(retrieval["audit_top_k_per_query"]),
+                excluded_candidates=(excluded_candidates or {}).get("real", set()),
             )
             chosen = ranked[:quota]
             output["real"].extend(chosen)
@@ -154,6 +170,7 @@ def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame]
             minimum=float(retrieval["minimum_similarity"]), quota=quota,
             overfetch=int(retrieval["candidate_overfetch"]),
             audit_top_k=int(retrieval["audit_top_k_per_query"]),
+            excluded_candidates=(excluded_candidates or {}).get("clean", set()),
         )
         output["clean"] = ranked[:quota]
         audit["branches"].append({
@@ -163,3 +180,126 @@ def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame]
             "shortfall": quota - len(output["clean"]),
         })
     return output, audit
+
+
+def _previous(document: dict[str, Any], root: Path | None
+              ) -> tuple[dict[str, set[str]], dict[str, int]]:
+    excluded = {"real": set(), "clean": set()}
+    counts = {"real": 0, "clean": 0}
+    roles = {"real_defect": "real", "clean_negative": "clean"}
+    for image in document.get("images", []):
+        role = roles.get(str(image.get("deft_kind")))
+        if not role:
+            continue
+        raw = image.get("source_path")
+        path = Path(str(raw or image["file_name"]))
+        if not path.is_absolute() and root:
+            path = root / "images" / path.name
+        excluded[role].add(str(path.resolve()))
+        counts[role] += 1
+    return excluded, counts
+
+
+def _candidate_exclusions(role: str, retrieval_root: Path,
+                          candidates: pd.DataFrame, manifest: dict[str, Any]) -> set[str]:
+    path = retrieval_root / f"exclude_{role}_candidates.parquet"
+    evidence = (manifest.get("role_status") or {}).get(role)
+    if evidence:
+        declared = evidence.get("exclusion_manifest")
+        if declared and Path(str(declared)).resolve() != path.resolve():
+            raise ValueError(f"{role} exclusion manifest path is not canonical")
+        if not path.is_file():
+            raise FileNotFoundError(f"{role} exclusion manifest is missing: {path}")
+    elif not path.is_file():
+        return set()
+    frame = pd.read_parquet(path)
+    if "filepath" not in frame:
+        raise ValueError(f"{role} exclusion manifest lacks filepath")
+    values = [str(Path(value).expanduser().resolve()) for value in frame.filepath.astype(str)]
+    if len(values) != len(set(values)):
+        raise ValueError(f"{role} exclusion manifest contains duplicate filepaths")
+    if "filepath" not in candidates:
+        raise ValueError(f"{role} candidates lack filepath")
+    known = {
+        str(Path(value).expanduser().resolve())
+        for value in candidates.filepath.astype(str)
+    }
+    unmatched = set(values) - known
+    if unmatched:
+        raise ValueError(f"{role} exclusion manifest contains unknown candidates")
+    if evidence and int(evidence.get("excluded_count", -1)) != len(values):
+        raise ValueError(f"{role} exclusion count disagrees with its manifest")
+    return set(values)
+
+
+def materialize(policy_path: Path, candidate_root: Path, retrieval_root: Path,
+                previous_path: Path | None = None) -> dict[str, Any]:
+    """Write round-robin selections to the standard retrieval-stage artifacts."""
+    policy = yaml.safe_load(policy_path.read_text())
+    strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get("strategy")
+    if strategy != "round_robin_similarity":
+        raise ValueError("round-robin materialization requires round_robin_similarity")
+    manifest_path = retrieval_root / "query_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get("status") != "COMPLETE":
+        raise ValueError("query manifest is incomplete")
+    enabled = list(manifest.get("enabled_roles") or [])
+    if any(role not in {"real", "clean"} for role in enabled):
+        raise ValueError("query manifest contains an unsupported role")
+    previous = {} if previous_path is None else json.loads(previous_path.read_text())
+    excluded, counts = _previous(previous, previous_path.parent if previous_path else None)
+    candidates = {
+        role: pd.read_parquet(candidate_root / f"{role}_candidate_embeddings.parquet")
+        for role in enabled
+    }
+    queries = {
+        role: pd.read_parquet(retrieval_root / f"{role}_query_embeddings.parquet")
+        for role in enabled
+    }
+    candidate_exclusions = {
+        role: _candidate_exclusions(role, retrieval_root, candidates[role], manifest)
+        for role in enabled
+    }
+    selected, audit = select(
+        candidates, queries, policy, excluded, counts["real"], counts["clean"],
+        candidate_exclusions,
+    )
+    outputs = {
+        role: retrieval_root / f"mine_{role}" / "final_unique_files.parquet"
+        for role in enabled
+    }
+    report_path = retrieval_root / "round_robin_selection_report.json"
+    existing = [path for path in (*outputs.values(), report_path) if path.exists()]
+    if existing:
+        raise FileExistsError(existing[0])
+    for role, path in outputs.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(selected.get(role, [])).to_parquet(path, index=False)
+    report = {
+        "status": "COMPLETE", "iteration": int(manifest["iteration"]),
+        "selection_strategy": strategy,
+        "selected_counts": {role: len(selected.get(role, [])) for role in enabled},
+        "outputs": {role: str(path) for role, path in outputs.items()},
+        "audit": audit,
+    }
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    return report
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--policy", type=Path, required=True)
+    parser.add_argument("--candidate-root", type=Path, required=True)
+    parser.add_argument("--retrieval-root", type=Path, required=True)
+    parser.add_argument("--previous-coco", type=Path)
+    args = parser.parse_args()
+    result = materialize(
+        args.policy.resolve(), args.candidate_root.resolve(), args.retrieval_root.resolve(),
+        args.previous_coco.resolve() if args.previous_coco else None,
+    )
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
