@@ -60,13 +60,24 @@ retrieval may then continue within its cumulative real-relative cap. When no
 retrieval role is ready and synthesis cannot add data, commit convergence
 without admission, training, or another unchanged iteration.
 
+Both selection strategies accept valid empty mined artifacts. Max-similarity requires the
+`filepath` column even when there are no rows; admission then records
+`NO_MATCHES`. Round-robin additionally reconciles the empty selection against
+its report's `NO_MATCHES` outcome and zero selected count. Missing or unreadable
+artifacts and invalid completion evidence remain errors, not convergence.
+Candidates below `minimum_similarity` can produce no matches without pool
+exhaustion.
+
 ## 4. Admit real and clean data
 
 Run `admit_deft_od_aoi_coco.py`. For iteration 2 and later, pass the prior
 iteration's cumulative `train.json`. Gate on the new binary COCO,
 `admitted_sources.parquet`, `admission_report.json`, and round-robin's copied
-`admission_index.npy`. Commit
-`iteration_admission`.
+`admission_index.npy`. Commit `iteration_admission`. Admission records the same
+`SELECTED`/`NO_MATCHES`
+per-role outcome for either selection strategy. If no new image is admitted,
+the commit routes to synthesis when enabled; otherwise it converges with
+`retrieval_no_matches` instead of training an unchanged dataset.
 
 ## 5. Optional synthesis
 

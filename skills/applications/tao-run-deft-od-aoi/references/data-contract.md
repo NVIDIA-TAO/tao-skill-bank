@@ -69,6 +69,16 @@ AnomalyGen clean-reference images come from the synthesis pool and are not the
 DEFT `clean` retrieval role. Missing references skip only affected synthesis
 FNs; they do not disable real-defect or clean-negative retrieval.
 
+## Artifact-scoped role states
+
+`role_status` is scoped to the artifact that contains it; it is not one shared
+status enum. In `query_manifest.json`, it describes retrieval-producer
+availability (`READY`, `EXHAUSTED`, or `NO_QUERIES`) and may carry exclusion
+counts. In round-robin selection and admission reports, it describes
+post-selection outcomes (`SELECTED` or `NO_MATCHES`) and carries
+`selected_count`. Consumers must interpret the field using the containing
+artifact's contract rather than mixing the two state machines.
+
 Initialization rejects routed boxed annotations with missing route metadata or
 a nonexistent `fn_mask_source`. It deliberately does not inspect mask contents;
 synthesis preparation owns per-FN mask eligibility.
@@ -84,13 +94,15 @@ the generated binary COCO and its image root. On the second, synthesis-only
 admission pass, also pass `--synthetic-only` with the same-iteration real
 admission `train.json` as `--previous-coco`; the preview records
 `mining_admission: skipped`. Without that explicit flag, mining admission still
-runs. Synthetic admission is capped so that synthetic defects occupy at most
-`synthesis.cumulative_fraction_of_total_defects` of the combined real and
-synthetic defect pool. The legacy `cumulative_fraction_of_real_defects` key
-remains readable with its original synthetic-to-real meaning. Existing records
-remain unchanged. Admission also emits `admission_preview.json`. When overfetched crops
-do not contain enough novel parent images for a branch target, it admits the
-available parents and records the shortfall instead of failing the iteration.
+runs. Synthetic admission is capped by
+`synthesis.cumulative_fraction_of_total_defects` so that synthetic defects
+occupy at most that fraction of the combined real and synthetic defect pool.
+Existing records remain unchanged. The legacy
+`cumulative_fraction_of_real_defects` key remains readable with its original
+synthetic-to-real meaning. Admission also emits `admission_preview.json`. When
+overfetched crops do not contain enough novel parent images for a branch target,
+it admits the available parents and records the shortfall instead of failing the
+iteration.
 Real retrieval may become exhausted while clean retrieval continues until the
 existing cumulative real count's clean allowance is full.
 `admission_report.json.retrieval_admission` records requested parent-image
@@ -99,3 +111,14 @@ counts after policy caps for both real and clean retrieval. For real retrieval,
 the deduplicated count also excludes parents selected for an earlier reason in
 the same iteration. This makes source deduplication and clean cumulative-cap
 truncation visible without recording the excluded filenames.
+
+Generation currently completes before this admission cap is applied. The
+first admission report emits `SYNTHETIC_ADMISSION_CAP_ZERO` before generation
+when synthesis is enabled but the current fractional allowance has no room.
+After generation, it emits `SYNTHETIC_ADMISSION_CAPPED` when otherwise-eligible
+generated images are excluded. The warnings include the configured fraction,
+real count, and synthetic ceiling. If a run is expected to admit fewer real
+images but needs a larger synthetic share, increase the fraction before
+freezing its policy and review the resulting dataset balance. Because the cap
+is multiplicative, increasing the fraction cannot admit synthetic images when
+the cumulative real count is zero.

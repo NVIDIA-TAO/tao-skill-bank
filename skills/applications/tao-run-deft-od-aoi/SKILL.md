@@ -306,6 +306,14 @@ the frozen cumulative fraction cap is applied against admitted real defects.
 For this second pass, provide the same-iteration real admission as
 `--previous-coco` and set `--synthetic-only`; synthetic inputs do not
 implicitly turn off mining admission.
+Generation precedes this cap check, so inspect `admission_report.json` for a
+`SYNTHETIC_ADMISSION_CAP_ZERO` warning before generation and a
+`SYNTHETIC_ADMISSION_CAPPED` warning after eligible generated images are
+excluded. For runs expected to have fewer nonzero real admissions, raise
+`synthesis.cumulative_fraction_of_total_defects` before freezing the policy if a
+larger synthetic share is intended. A zero cumulative real count still permits
+zero synthetic admissions.
+
 Boxes alone never substitute for the required pixel mask. If the request has no
 routed FNs, or preparation reports no mask-eligible FNs, commit that typed skip
 contract as `iteration_synthesis` and continue to training without running AMP
