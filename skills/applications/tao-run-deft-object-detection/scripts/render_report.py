@@ -52,18 +52,22 @@ from deft_stages import iter_number, read_log, read_state  # noqa: E402
 
 REPORT_NAME = "DEFT_Loop_Report.md"
 
-# `val_mAP = 0.82`, `val_mAP50: 0.8266`, `val mAP 0.77`, `validation mAP50=0.8` -- and
-# the bare name, so a summary that mentions the metric without a number does not
-# leave the word behind.
+# Training validation *metrics* only: `val_mAP = 0.82`, `val_mAP50: 0.8266`,
+# `val mAP 0.77`, `validation mAP50=0.8`, `val_loss 0.31`, `val_acc`. The metric name
+# is spelled out and must end at a word boundary, because a bare `val_` prefix also
+# names things the report must keep -- the prep stage's `val_coco.json`, a
+# `val_split`, `val_images=500` -- and stripping those would corrupt the summary.
+# The bare metric name goes too, so a mention without a number leaves nothing behind.
 _VAL_METRIC_RE = re.compile(
-    r"\b(?:val_[A-Za-z0-9_]*|val(?:idation)?\s+mAP[A-Za-z0-9_]*)"
+    r"\bval(?:idation)?[_ ]?"
+    r"(?:m?AP\d*(?:_[A-Za-z0-9]+)*|loss(?:_[A-Za-z0-9]+)*|acc(?:uracy)?)\b"
     r"(\s*[:=]?\s*[-+]?\d+(?:\.\d+)?)?",
     re.IGNORECASE)
 # Separators orphaned by the removal above: a leading/trailing comma inside a
 # parenthesis, doubled commas, a dangling trailing separator.
 _EMPTY_GROUP_RE = re.compile(r"\(\s*[,;]?\s*\)")
 _DOUBLE_SEP_RE = re.compile(r"([,;])(\s*[,;])+")
-_TRAILING_SEP_RE = re.compile(r"[\s,;]+$")
+_TRAILING_SEP_RE = re.compile(r"[\s,;:]+$")
 
 # `| kpi_v3_with_labels | bicycle | 1688 | ... |` — the per-class table kpi_analyze
 # prints. Used only to recover class names for a CSV written before
@@ -195,7 +199,14 @@ def _class_names_from_log(path: Path) -> list[str]:
         if not match:
             continue
         cells = [cell.strip() for cell in match.group("cells").split("|")]
-        if len(cells) < 3 or not cells[1] or cells[1].lower() in {"class", "sequence"}:
+        if len(cells) < 3 or not cells[1]:
+            continue
+        # The header row, however its class column is spelled (`Class`, `class_name`,
+        # `Class Name`). Keyed on the first cell as well, because a header named
+        # something else would otherwise be taken for a class and fail the row-count
+        # check, turning a recoverable breakdown into "unavailable".
+        if (cells[0].lower().startswith("sequence")
+                or cells[1].lower().replace("_", " ") in {"class", "class name", "sequence"}):
             continue
         if set(cells[1]) <= {"-", "+"}:  # the table's rule lines
             continue

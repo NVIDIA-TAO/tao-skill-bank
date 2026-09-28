@@ -2968,6 +2968,21 @@ assert_rc 1 "[G32] --require-terminal refuses a run that has not committed loop_
 assert_eq "$before" "$(cat "$G32_RUN/DEFT_Loop_Report.md")" \
   "[G32] a refused end-of-loop render leaves the existing report as it was"
 
+# The status paths are covered through compose() below; this checks the hook actually
+# produces one on a real terminal commit. loop_stop here, with iter1 unfinished, is a
+# stop short of the run's one iteration, so the status must say STOPPED and why.
+commit "$G32_RUN" iter1 loop_stop --summary "stopped by hand" --duration-sec 1
+assert_rc 0 "[G32] loop_stop commits"
+g32_status=$(grep -m1 '^\*\*Status:\*\*' "$G32_RUN/DEFT_Loop_Report.md")
+case "$g32_status" in
+  "**Status:** STOPPED (INCOMPLETE) ("*"only 0 of 1 iterations"*")")
+    ok "[G32] the terminal commit re-renders a STOPPED status carrying its reason" ;;
+  *) notok "[G32] the terminal commit re-renders a STOPPED status carrying its reason" \
+       "got: $g32_status" ;;
+esac
+run "$PY" "$SCRIPTS_DIR/render_report.py" --results-dir "$G32_RUN" --require-terminal
+assert_rc 0 "[G32] --require-terminal renders once loop_stop is committed"
+
 # How individual inputs render. compose() is driven directly with a hand-built state,
 # because each case is about one input, and a real run cannot produce most of them.
 # One line per case: "ok <label>" or "not ok <label> :: <detail>".
@@ -3043,6 +3058,20 @@ check("pipes in cells are escaped",
 check("an unrecorded duration is not printed as 0s", "| 0s |" not in doc, doc)
 check("max_iterations falls back to the config when the audit carries None",
       "**Iterations completed:** 1 / 4" in doc, doc)
+
+# Only metric names are stripped. A bare `val_` prefix also names things the report
+# must keep -- this skill's own val_coco.json among them.
+for kept in ["prep: carved val_split of 512; wrote val_coco.json", "wrote val_images=500 to prep/"]:
+    got = rr.strip_val_metrics(kept)
+    check(f"a val_ name that is not a metric is kept: {kept[:28]}", got == kept, got)
+got = rr.strip_val_metrics("trained: val_mAP_50_95 0.41, 2 epochs")
+check("a multi-part metric name is stripped whole", got == "trained: 2 epochs", got)
+
+# The log's header row is not a class, however its class column is spelled.
+hdr = root / "hdr.log"
+hdr.write_text("| Sequence Name | class_name | AP |\n| s | car | 0.8 |\n| s | person | 0.6 |\n")
+got = rr._class_names_from_log(hdr)
+check("a class_name header row is not read as a class", got == ["car", "person"], got)
 
 # The status line carries the completion reason wherever the word alone misleads.
 def status_of(report, state_reason=None):
