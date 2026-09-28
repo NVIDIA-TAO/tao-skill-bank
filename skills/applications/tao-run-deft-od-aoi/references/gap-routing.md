@@ -22,7 +22,20 @@ owns the loose and strict operating points.
 
 ## SigLIP retrieval
 
-Build the candidate cache once:
+Build the candidate cache once. `retrieval.preprocessing.profile` independently
+selects the embedding input geometry:
+
+- `square_context` (default) reproduces the historical behavior: expand the
+  longer defect-box edge by the context scale, mean-pad to a square at image
+  boundaries, then bicubic-resize defect, query, and clean-grid crops to
+  `retrieval.output_size` (default `224`); this setting is read and validated
+  only for this profile;
+- `tight_context` preserves the newer behavior: expand both box dimensions by
+  the context scale, clip the resulting aspect-ratio-preserving rectangle to
+  the image, and keep each crop's native dimensions. `retrieval.output_size`
+  has no effect on this profile.
+
+For either profile:
 
 - each real annotation produces a 1.5× contextual crop;
 - each verified-clean image produces the whole image and a 2×2 grid;

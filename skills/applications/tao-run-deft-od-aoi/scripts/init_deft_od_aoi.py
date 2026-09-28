@@ -233,6 +233,16 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("background and near-miss IoU thresholds are inconsistent")
     if policy["class_name"] != "defect":
         raise ValueError("DEFT OD AOI has one foreground class named defect")
+    profile = str(((policy.get("retrieval") or {}).get("preprocessing") or {}).get(
+        "profile", ""
+    ))
+    if profile not in {"tight_context", "square_context"}:
+        raise ValueError(
+            "retrieval.preprocessing.profile must be tight_context or square_context"
+        )
+    if (profile == "square_context"
+            and int(policy["retrieval"].get("output_size", 0)) < 1):
+        raise ValueError("retrieval.output_size must be positive")
     if synthesis_enabled:
         pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
         if not pool.is_dir():

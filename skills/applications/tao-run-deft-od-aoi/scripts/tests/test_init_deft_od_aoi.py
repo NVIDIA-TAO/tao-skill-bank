@@ -123,6 +123,46 @@ def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     assert Path(state["policy"]).is_file()
     assert Path(state["classmap"]).read_text() == "background\ndefect\n"
     assert state["roles"]["clean"]["annotation_count"] == 0
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+    assert policy["retrieval"]["preprocessing"]["profile"] == "square_context"
+    assert policy["retrieval"]["output_size"] == 224
+
+
+def test_initialize_accepts_tight_context_preprocessing(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {
+        "preprocessing": {"profile": "tight_context"},
+        "output_size": "unused-by-tight-context",
+    }
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+    assert policy["retrieval"]["preprocessing"]["profile"] == "tight_context"
+
+
+def test_initialize_rejects_invalid_square_output_size(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {
+        "preprocessing": {"profile": "square_context"}, "output_size": 0,
+    }
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="output_size must be positive"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_rejects_unknown_preprocessing_profile(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {"preprocessing": {"profile": "historical_parity"}}
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="tight_context or square_context"):
+        MODULE.initialize(config, tmp_path / "results")
 
 
 def test_initialize_accepts_explicit_checkpoint_baseline(tmp_path: Path) -> None:

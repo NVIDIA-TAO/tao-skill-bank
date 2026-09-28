@@ -33,7 +33,10 @@ defaults are:
 - match IoU `0.5`;
 - background-like FP boundary below `0.05`;
 - SigLIP `google/siglip-base-patch16-224`;
+- square-context preprocessing, with `tight_context` available for the
+  aspect-ratio-preserving crop behavior;
 - defect context scale `1.5`;
+- square-context output size `224`;
 - clean grids `[1, 2]`;
 - initial minimum similarity `-1.0`;
 - real mining factor range `1..6`;
