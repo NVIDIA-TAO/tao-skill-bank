@@ -62,17 +62,26 @@ ranked:
 - `max_similarity` retains global selection by each candidate's maximum cosine
   similarity to any query.
 
-Round-robin selection bypasses the global mining action and reads the complete
-candidate and query embedding tables during admission. Prior sources,
-duplicate parents, and candidates below `minimum_similarity` are excluded.
-Each strict query uses its gap-row `real_factor`, then the explicit
-`--real-factor`, then `routing.real_mine_factor_min`; all strict queries in one
-pocket must agree. Annotated KPI images must provide the canonical
-`dataset_id`, `texture_id`, and `defect_class` fields.
+Round-robin selection bypasses the global mining action but runs as an explicit
+retrieval step before the stage commit. It reads the complete candidate and
+query embedding tables and materializes the same role-specific
+`mine_<role>/final_unique_files.parquet` contract as max-similarity. Admission
+consumes those committed selections instead of recomputing them. Prior sources,
+exact candidate filepaths in `exclude_<role>_candidates.parquet`, duplicate
+parents, and candidates below `minimum_similarity` are excluded.
+Each near-miss pocket requests `near_miss_real_factor` candidates per query,
+bounded by the single canonical `near_miss_real_cap_per_pocket` setting.
+Each strict round-robin query uses its gap-row `real_factor`, then the explicit
+`--real-factor`, then `routing.round_robin_real_factor_default` (`3` by
+default); all strict queries in one pocket must agree. Max-similarity retains
+the `routing.real_mine_factor_min` fallback (`1` by default). Annotated KPI
+images must provide the canonical `dataset_id`, `texture_id`, and
+`defect_class` fields.
 
 For each iteration, crop strict FNs and near-miss FPs as real queries, and
 background-like loose FPs as clean queries. Embed queries with the identical
-encoder. Invoke `tao-mine-od-images` using the emitted role-specific specs.
+encoder. Invoke `tao-mine-od-images` for max-similarity or
+`deft_od_aoi_round_robin_selection.py` for round-robin.
 Context crops smaller than 8 pixels on either edge are expanded around the
 requested defect center within image bounds. Only source images narrower than
 8 pixels require mean-color padding; ordinary crop dimensions remain unchanged.

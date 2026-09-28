@@ -19,8 +19,6 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from deft_od_aoi_round_robin_selection import select as select_round_robin
-
 
 GENERATION_SKILL_INFO = (
     Path(__file__).resolve().parents[3]
@@ -103,6 +101,17 @@ def _selected(role: str, reason: str, desired: int, excluded: set[str],
              "shortfall_parents": max(0, desired - len(selected)),
              "quota_met": len(selected) >= desired}
     return selected.to_dict("records"), stats
+
+
+def _round_robin_selected(role: str, retrieval_root: Path) -> list[dict[str, Any]]:
+    mined = retrieval_root / f"mine_{role}" / "final_unique_files.parquet"
+    if not mined.is_file():
+        raise FileNotFoundError(f"enabled {role} selection output is missing: {mined}")
+    chosen = pd.read_parquet(mined)
+    required = {"filepath", "source_filepath", "similarity", "query_id"}
+    if chosen.empty or not required.issubset(chosen):
+        raise ValueError(f"enabled {role} round-robin selection output is invalid")
+    return chosen.drop_duplicates("source_filepath").to_dict("records")
 
 
 def _source_index(policy: dict[str, Any], role: str) -> dict[str, dict[str, Any]]:
@@ -256,24 +265,17 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     }
     minimum = float(policy["retrieval"]["minimum_similarity"])
     if strategy == "round_robin_similarity":
-        excluded = {
-            "real": {str(Path(str(row.get("source_path") or row["file_name"])).resolve())
-                     for row in previous.get("images", [])
-                     if row.get("deft_kind") == "real_defect"},
-            "clean": {str(Path(str(row.get("source_path") or row["file_name"])).resolve())
-                      for row in previous.get("images", [])
-                      if row.get("deft_kind") == "clean_negative"},
-        }
-        selected, selection_audit = select_round_robin(
-            {role: pd.read_parquet(
-                candidate_root / f"{role}_candidate_embeddings.parquet"
-            ) for role in enabled},
-            {role: pd.read_parquet(
-                retrieval_root / f"{role}_query_embeddings.parquet"
-            ) for role in enabled},
-            policy, excluded, by_kind["real_defect"], by_kind["clean_negative"],
+        selection_report = json.loads(
+            (retrieval_root / "round_robin_selection_report.json").read_text()
         )
-        additions = {role: selected.get(role, []) for role in enabled}
+        if (selection_report.get("status") != "COMPLETE"
+                or int(selection_report.get("iteration", -1)) != int(manifest["iteration"])
+                or selection_report.get("selection_strategy") != strategy):
+            raise ValueError("round-robin selection report is incomplete or mismatched")
+        selection_audit = selection_report.get("audit")
+        additions = {
+            role: _round_robin_selected(role, retrieval_root) for role in enabled
+        }
     else:
         if "real" in enabled:
             excluded = set(existing_sources)
