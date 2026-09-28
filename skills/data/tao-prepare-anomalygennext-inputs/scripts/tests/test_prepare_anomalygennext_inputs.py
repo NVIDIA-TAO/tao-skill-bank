@@ -166,7 +166,7 @@ def test_prepare_types_all_missing_clean_references_as_skipped(
     report = MODULE.prepare(config, output)
 
     assert report["status"] == "SKIPPED"
-    assert report["reason"] == "no_clean_reference_images"
+    assert report["reason"] == "no_eligible_false_negatives"
     assert report["eligible_fn_count"] == 0 and report["skipped_fn_count"] == 2
     assert report["skip_counts"] == {"no_clean_reference_images": 2}
     assert {row["reason"] for row in report["skipped_fns"]} == {

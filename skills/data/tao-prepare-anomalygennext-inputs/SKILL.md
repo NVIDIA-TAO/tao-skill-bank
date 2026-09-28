@@ -70,10 +70,11 @@ FNs are absent from every query, embedding, mask, and AMP input. Donor masks are
 tried in deterministic order until one valid same-type donor is found.
 
 If no FN survives, preparation emits only a `SKIPPED` `input_contract.json`
-with reason `no_clean_reference_images` when every selected FN lacks a clean
-reference, otherwise `no_eligible_false_negatives`. Do not run embeddings or
-AMP for that typed no-op, and do not represent it as generation success. A
-partial skip emits warning evidence while specs contain only eligible FNs.
+with reason `no_eligible_false_negatives`. Detailed `skip_counts`, per-FN
+records, and warning evidence distinguish missing clean references from mask
+eligibility failures. Do not run embeddings or AMP for that typed no-op, and do
+not represent it as generation success. A partial skip emits warning evidence
+while specs contain only eligible FNs.
 
 Run both emitted specs through `tao-generate-image-embeddings`, preserving the
 same encoder. Place their outputs under `embeddings/` as named by the specs,

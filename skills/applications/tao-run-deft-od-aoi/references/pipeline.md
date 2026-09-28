@@ -65,8 +65,9 @@ When the request has no routed FNs, commit `synthesis_request.json` as the
 `synthesis_request` artifact. When mask preparation has no eligible FNs, commit
 its `input_contract.json` as `synthesis_preparation`. These typed skips advance
 to training without embedding, AMP, generation, or synthetic re-admission.
-`no_clean_reference_images` is also an accepted preparation skip and never
-disables real/clean retrieval. If the committed retrieval manifest has no
+Preparation uses top-level reason `no_eligible_false_negatives`; detailed
+`skip_counts` and per-FN records retain `no_clean_reference_images` without
+disabling real/clean retrieval. If the committed retrieval manifest has no
 enabled producer either, the synthesis commit records convergence instead of
 starting training or an identical next iteration.
 

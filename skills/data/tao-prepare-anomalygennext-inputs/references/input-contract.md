@@ -36,8 +36,9 @@ The same frozen encoder identity is written to both embedding specs. The next
 action must use those specs unchanged so clean and FN vectors remain comparable.
 `input_contract.json` records eligible IDs, skipped IDs, and skip reasons. An
 all-ineligible selection is a typed `SKIPPED` result and emits no embedding or
-AMP inputs. If every selected FN lacks clean references, its top-level reason
-is also `no_clean_reference_images`, and warning evidence records the count.
+AMP inputs with top-level reason `no_eligible_false_negatives`. Detailed
+`skip_counts`, per-FN reason `no_clean_reference_images`, and warning evidence
+record clean-reference failures without creating a separate stage-level reason.
 
 `run_amp` joins the unique source-image embedding back to every box-level FN,
 ranks clean images within the normalized texture pool, and creates two AMP

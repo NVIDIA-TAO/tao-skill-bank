@@ -86,4 +86,6 @@ Clean reference images are a synthesis-only input, distinct from the DEFT clean
 retrieval role. A missing or empty reference directory marks only its routed FNs
 with `no_clean_reference_images`; other eligible types and real-data mining
 continue. When all routed FNs have that reason, the input contract is typed
-`SKIPPED`, carries warning evidence, and emits no embedding or AMP work.
+`SKIPPED` with preparation-level reason `no_eligible_false_negatives`, carries
+the specific per-FN reason and warning evidence, and emits no embedding or AMP
+work.

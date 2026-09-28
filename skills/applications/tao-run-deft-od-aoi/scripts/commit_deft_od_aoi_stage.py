@@ -102,9 +102,7 @@ def _validate_synthesis(iteration: int,
         report = _read_json(artifacts, name)
         if set(artifacts) != {name}:
             raise ValueError("a skipped synthesis stage accepts only its skip contract")
-        accepted_reasons = ({reason, "no_clean_reference_images"}
-                            if name == "synthesis_preparation" else {reason})
-        if report.get("status") != "SKIPPED" or report.get("reason") not in accepted_reasons:
+        if report.get("status") != "SKIPPED" or report.get("reason") != reason:
             raise ValueError(f"{name} is not a recognized synthesis skip contract")
         if name == "synthesis_request":
             by_dataset = report.get("skipped_unrouted_by_dataset")
@@ -126,15 +124,19 @@ def _validate_synthesis(iteration: int,
                     or not isinstance(skip_counts, dict)
                     or sum(map(int, skip_counts.values())) != skipped):
                 raise ValueError("skipped synthesis preparation has invalid FN counts")
-            if report.get("reason") == "no_clean_reference_images":
+            clean_reference_skips = int(skip_counts.get("no_clean_reference_images", 0))
+            if clean_reference_skips:
                 warnings = report.get("warnings")
-                if (skip_counts != {"no_clean_reference_images": skipped}
-                        or any(not isinstance(row, dict)
-                               or row.get("reason") != "no_clean_reference_images"
-                               for row in skipped_fns)
+                clean_reference_rows = [
+                    row for row in skipped_fns
+                    if isinstance(row, dict)
+                    and row.get("reason") == "no_clean_reference_images"
+                ]
+                if (len(clean_reference_rows) != clean_reference_skips
                         or not isinstance(warnings, list)
                         or not any(warning.get("code") == "no_clean_reference_images"
-                                   and int(warning.get("fn_count", -1)) == skipped
+                                   and int(warning.get("fn_count", -1))
+                                   == clean_reference_skips
                                    and str(warning.get("message") or "").strip()
                                    for warning in warnings if isinstance(warning, dict))):
                     raise ValueError("no-clean-reference skip lacks typed warning evidence")

@@ -305,11 +305,8 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
         "message": (f"Skipped {clean_reference_skips} routed false negatives because their "
                     "AnomalyGen clean-reference pools contain no images"),
     }] if clean_reference_skips else [])
-    skip_reason = ("no_clean_reference_images"
-                   if not prepared_rows and set(skip_counts) == {"no_clean_reference_images"}
-                   else "no_eligible_false_negatives")
     contract = {"status": "COMPLETE" if prepared_rows else "SKIPPED",
-                "reason": "" if prepared_rows else skip_reason,
+                "reason": "" if prepared_rows else "no_eligible_false_negatives",
                 "source_tag": config.get("source_tag", "user_provided"),
                 "selection_candidate_fn_count": len(selected),
                 "selected_fn_count": len(prepared_rows),

@@ -244,8 +244,10 @@ contract as `iteration_synthesis` and continue to training without running AMP
 or fabricating generation/admission success. Missing or empty AnomalyGen clean
 reference pools likewise skip only affected FN/types with
 `no_clean_reference_images`; eligible types and real/clean retrieval continue.
-If every producer is unavailable, the typed skip commits convergence instead
-of training on an unchanged iteration.
+If no FN remains eligible, the preparation-level reason is
+`no_eligible_false_negatives` while per-FN evidence retains the specific cause.
+If every producer is unavailable, the typed skip commits convergence instead of
+training on an unchanged iteration.
 
 ## Missing AnomalyGenNext task weights
 

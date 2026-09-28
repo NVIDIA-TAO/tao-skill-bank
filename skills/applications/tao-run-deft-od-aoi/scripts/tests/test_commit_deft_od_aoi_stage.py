@@ -252,7 +252,7 @@ def test_no_clean_reference_skip_allows_retrieval_result_to_train(tmp_path: Path
     state = _advance_to_synthesis(tmp_path, retrieval_enabled=True)
     preparation = tmp_path / "input_contract.json"
     preparation.write_text(json.dumps({
-        "status": "SKIPPED", "reason": "no_clean_reference_images",
+        "status": "SKIPPED", "reason": "no_eligible_false_negatives",
         "selection_candidate_fn_count": 2, "eligible_fn_count": 0,
         "skipped_fn_count": 2,
         "skipped_fns": [{"fn_id": "fn-1", "reason": "no_clean_reference_images"},
@@ -276,7 +276,7 @@ def test_no_clean_reference_skip_converges_when_retrieval_has_no_output(
     state = _advance_to_synthesis(tmp_path, retrieval_enabled=False)
     preparation = tmp_path / "input_contract.json"
     preparation.write_text(json.dumps({
-        "status": "SKIPPED", "reason": "no_clean_reference_images",
+        "status": "SKIPPED", "reason": "no_eligible_false_negatives",
         "selection_candidate_fn_count": 1, "eligible_fn_count": 0,
         "skipped_fn_count": 1,
         "skipped_fns": [{"fn_id": "fn-1", "reason": "no_clean_reference_images"}],
@@ -292,6 +292,31 @@ def test_no_clean_reference_skip_converges_when_retrieval_has_no_output(
 
     assert result["status"] == "COMPLETE" and result["next_stage"] is None
     assert result["completion_reason"] == "all_producers_exhausted"
+
+
+def test_no_eligible_skip_accepts_mixed_detailed_reasons(tmp_path: Path) -> None:
+    state = _advance_to_synthesis(tmp_path, retrieval_enabled=True)
+    preparation = tmp_path / "input_contract.json"
+    preparation.write_text(json.dumps({
+        "status": "SKIPPED", "reason": "no_eligible_false_negatives",
+        "selection_candidate_fn_count": 2, "eligible_fn_count": 0,
+        "skipped_fn_count": 2,
+        "skipped_fns": [
+            {"fn_id": "fn-1", "reason": "no_clean_reference_images"},
+            {"fn_id": "fn-2", "reason": "empty_fn_mask"},
+        ],
+        "skip_counts": {"empty_fn_mask": 1, "no_clean_reference_images": 1},
+        "warnings": [{"code": "no_clean_reference_images", "fn_count": 1,
+                      "message": "One synthesis clean reference is unavailable."}],
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_synthesis", 1,
+        [f"synthesis_preparation={preparation}"],
+    )
+
+    assert result["status"] == "RUNNING"
+    assert result["next_stage"] == "iteration_training"
 
 
 def test_commit_rejects_out_of_order_stage(tmp_path: Path) -> None:
