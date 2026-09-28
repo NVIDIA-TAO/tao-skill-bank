@@ -81,3 +81,9 @@ total skipped count, per-dataset skipped counts, and a human-readable summary.
 If every routed FN fails mask eligibility, the preparation leaf emits a typed
 `SKIPPED` `input_contract.json` with per-FN reasons. Either contract completes
 the optional synthesis stage without AMP, generation, or synthetic re-admission.
+
+Clean reference images are a synthesis-only input, distinct from the DEFT clean
+retrieval role. A missing or empty reference directory marks only its routed FNs
+with `no_clean_reference_images`; other eligible types and real-data mining
+continue. When all routed FNs have that reason, the input contract is typed
+`SKIPPED`, carries warning evidence, and emits no embedding or AMP work.

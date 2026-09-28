@@ -152,6 +152,67 @@ def test_prepare_skips_one_invalid_fn_and_amp_plans_only_the_valid_fn(tmp_path: 
     assert set(candidates.fn_id) == {eligible_id}
 
 
+@pytest.mark.parametrize("missing_directory", (False, True))
+def test_prepare_types_all_missing_clean_references_as_skipped(
+        tmp_path: Path, missing_directory: bool) -> None:
+    config, _ = fixture(tmp_path)
+    clean_dir = tmp_path / "pool/texture_1/clean_image"
+    for path in clean_dir.iterdir():
+        path.unlink()
+    if missing_directory:
+        clean_dir.rmdir()
+
+    output = tmp_path / "output"
+    report = MODULE.prepare(config, output)
+
+    assert report["status"] == "SKIPPED"
+    assert report["reason"] == "no_clean_reference_images"
+    assert report["eligible_fn_count"] == 0 and report["skipped_fn_count"] == 2
+    assert report["skip_counts"] == {"no_clean_reference_images": 2}
+    assert {row["reason"] for row in report["skipped_fns"]} == {
+        "no_clean_reference_images"}
+    assert report["warnings"] == [{
+        "code": "no_clean_reference_images", "fn_count": 2,
+        "message": ("Skipped 2 routed false negatives because their AnomalyGen "
+                    "clean-reference pools contain no images"),
+    }]
+    assert (output / "prepared_anomalygennext_inputs/input_contract.json").is_file()
+    assert not list((output / "specs").glob("*_embeddings.yaml"))
+    assert not (output / "manifests/selected_fn_queries.parquet").exists()
+
+
+def test_prepare_skips_missing_clean_type_while_eligible_type_continues(
+        tmp_path: Path) -> None:
+    config, gaps_path = fixture(tmp_path)
+    gaps = pd.read_parquet(gaps_path)
+    gaps.loc[1, ["texture_id", "defect_class", "anomaly_type"]] = [
+        "texture_2", "dent", "texture_2+dent"
+    ]
+    gaps.to_parquet(gaps_path, index=False)
+    donor = tmp_path / "pool/texture_2/mask/dent/donor.png"
+    mask(donor)
+    value = yaml.safe_load(config.read_text())
+    recipe = Path(value["datasets"]["example"]["recipe"])
+    recipe.write_text(yaml.safe_dump({"anomaly_types": [["texture_1", "crack"],
+                                                         ["texture_2", "dent"]]}))
+    defect_spec = Path(value["defect_spec"])
+    with defect_spec.open("a") as stream:
+        stream.write(json.dumps({"defect_type": "texture_2+dent",
+                                 "spatial_dependency": "free"}) + "\n")
+
+    output = tmp_path / "output"
+    report = MODULE.prepare(config, output)
+
+    assert report["status"] == "COMPLETE"
+    assert report["eligible_fn_count"] == 1 and report["skipped_fn_count"] == 1
+    assert report["skip_counts"] == {"no_clean_reference_images": 1}
+    assert report["warnings"][0]["code"] == "no_clean_reference_images"
+    queries = pd.read_parquet(output / "manifests/selected_fn_queries.parquet")
+    assert list(queries.anomaly_type) == ["texture_1+crack"]
+    assert (output / "specs/clean_embeddings.yaml").is_file()
+    assert (output / "specs/fn_embeddings.yaml").is_file()
+
+
 @pytest.mark.parametrize(
     ("kind", "reason"),
     [

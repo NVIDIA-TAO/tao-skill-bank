@@ -15,6 +15,11 @@ masks must satisfy the same mask-content gates; deterministic selection falls
 through to later same-type donors when an earlier donor is invalid. The source
 pool is never changed.
 
+The clean-reference directory for each normalized texture must contain at least
+one supported image. Missing and empty directories produce the stable per-FN
+reason `no_clean_reference_images`. Those FNs are absent from query, embedding,
+mask, and AMP inputs; eligible FNs for other types continue independently.
+
 The YAML `datasets` mapping assigns each `dataset_id` an existing checkpoint
 and recipe. This action verifies that both files exist and that the recipe's
 `anomaly_types` contains the normalized `TEXTURE+TYPE`. A later synthesis
@@ -31,7 +36,8 @@ The same frozen encoder identity is written to both embedding specs. The next
 action must use those specs unchanged so clean and FN vectors remain comparable.
 `input_contract.json` records eligible IDs, skipped IDs, and skip reasons. An
 all-ineligible selection is a typed `SKIPPED` result and emits no embedding or
-AMP inputs.
+AMP inputs. If every selected FN lacks clean references, its top-level reason
+is also `no_clean_reference_images`, and warning evidence records the count.
 
 `run_amp` joins the unique source-image embedding back to every box-level FN,
 ranks clean images within the normalized texture pool, and creates two AMP

@@ -37,6 +37,10 @@ malformed metadata, not a synthesis opt-out. For routed FNs,
 `texture_id+defect_class` must match a type declared by that route's recipe and
 defect specification.
 
+AnomalyGen clean-reference images come from the synthesis pool and are not the
+DEFT `clean` retrieval role. Missing references skip only affected synthesis
+FNs; they do not disable real-defect or clean-negative retrieval.
+
 ## Cumulative admission
 
 `admit_deft_od_aoi_coco.py` recomputes similarity from the frozen embeddings,

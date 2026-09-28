@@ -10,6 +10,7 @@ import hashlib
 import json
 import random
 import shutil
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -214,9 +215,7 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
         sampled_dir = pool_root / texture / "mask" / defect
         if anomaly not in specs or anomaly not in recipe_types[dataset]:
             continue
-        if not image.is_file() or not clean_dir.is_dir():
-            continue
-        if not _images(clean_dir):
+        if not image.is_file():
             continue
         bbox_json = json.dumps(np.asarray(row["bbox"]).reshape(-1).tolist(), separators=(",", ":"))
         normalized.append({**row, "filepath": str(image), "fn_mask_source": str(mask),
@@ -239,6 +238,13 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
     seed = int(config["selection"].get("mask_sample_seed", 42))
     for order, row in selected.iterrows():
         fn_id, anomaly = str(row.fn_id), str(row.anomaly_type)
+        clean_images = _images(Path(row.clean_dir))
+        if not clean_images:
+            skipped_rows.append({"fn_id": fn_id, "dataset_id": str(row.dataset_id),
+                                 "image_id": str(row.image_id),
+                                 "reason": "no_clean_reference_images",
+                                 "detail": f"no clean reference images under {row.clean_dir}"})
+            continue
         mask_dir = masks_root / fn_id
         isolated = mask_dir / f"{fn_id}__fn_mask.png"
         try:
@@ -284,7 +290,7 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
         query_rows.append({"filepath": row.filepath, "fn_id": fn_id, "query_order": order,
                            "dataset_id": row.dataset_id, "pool_key": row.texture_id,
                            "anomaly_type": anomaly, "od_category": row["class"]})
-        for clean in _images(Path(row.clean_dir)):
+        for clean in clean_images:
             key = (str(clean), anomaly)
             if key not in clean_seen:
                 clean_seen.add(key)
@@ -292,8 +298,18 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
                                    "pool_key": row.texture_id,
                                    "anomaly_type_eligibility": anomaly})
     skip_counts = dict(sorted(Counter(row["reason"] for row in skipped_rows).items()))
+    clean_reference_skips = skip_counts.get("no_clean_reference_images", 0)
+    warnings = ([{
+        "code": "no_clean_reference_images",
+        "fn_count": clean_reference_skips,
+        "message": (f"Skipped {clean_reference_skips} routed false negatives because their "
+                    "AnomalyGen clean-reference pools contain no images"),
+    }] if clean_reference_skips else [])
+    skip_reason = ("no_clean_reference_images"
+                   if not prepared_rows and set(skip_counts) == {"no_clean_reference_images"}
+                   else "no_eligible_false_negatives")
     contract = {"status": "COMPLETE" if prepared_rows else "SKIPPED",
-                "reason": "" if prepared_rows else "no_eligible_false_negatives",
+                "reason": "" if prepared_rows else skip_reason,
                 "source_tag": config.get("source_tag", "user_provided"),
                 "selection_candidate_fn_count": len(selected),
                 "selected_fn_count": len(prepared_rows),
@@ -301,7 +317,8 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
                 "eligible_fn_ids": [str(row["fn_id"]) for row in prepared_rows],
                 "skipped_fn_count": len(skipped_rows), "skip_counts": skip_counts,
                 "skipped_fns": skipped_rows, "clean_image_count": len(clean_rows),
-                "source_mask_count": len(mask_rows), "training_pool_mutated": False}
+                "source_mask_count": len(mask_rows), "warnings": warnings,
+                "training_pool_mutated": False}
     if not prepared_rows:
         _write_json(root / "input_contract.json", contract)
         return contract
@@ -332,7 +349,10 @@ def main() -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
-    print(json.dumps(prepare(Path(args.config).resolve(), Path(args.output_dir).resolve()), sort_keys=True))
+    contract = prepare(Path(args.config).resolve(), Path(args.output_dir).resolve())
+    for warning in contract.get("warnings", []):
+        print(f"WARNING: {warning['message']}", file=sys.stderr)
+    print(json.dumps(contract, sort_keys=True))
     return 0
 
 

@@ -20,10 +20,13 @@ actions:
         type: folder
       clean_embedding_spec:
         type: file
+        optional: true
       fn_embedding_spec:
         type: file
+        optional: true
       selected_fn_queries:
         type: file
+        optional: true
       input_contract:
         type: file
     upload_excludes:

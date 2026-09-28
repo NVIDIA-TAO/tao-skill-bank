@@ -37,6 +37,10 @@ Identity is explicit: `anomaly_type` must equal
 directory-layout inference. A caller adapting an unfamiliar dataset must
 normalize these fields before this boundary.
 
+Clean references are resolved independently for each routed FN/type. A missing
+directory or a directory with no supported images skips only affected FNs with
+reason `no_clean_reference_images`; it does not disable other types.
+
 Each selected dataset maps to an existing fine-tuned checkpoint and recipe.
 The recipe must declare the exact anomaly type, and `defect_spec.jsonl` must
 contain its placement definition. Text-routed definitions require a nonempty
@@ -66,8 +70,10 @@ FNs are absent from every query, embedding, mask, and AMP input. Donor masks are
 tried in deterministic order until one valid same-type donor is found.
 
 If no FN survives, preparation emits only a `SKIPPED` `input_contract.json`
-with reason `no_eligible_false_negatives`. Do not run embeddings or AMP for
-that typed no-op, and do not represent it as generation success.
+with reason `no_clean_reference_images` when every selected FN lacks a clean
+reference, otherwise `no_eligible_false_negatives`. Do not run embeddings or
+AMP for that typed no-op, and do not represent it as generation success. A
+partial skip emits warning evidence while specs contain only eligible FNs.
 
 Run both emitted specs through `tao-generate-image-embeddings`, preserving the
 same encoder. Place their outputs under `embeddings/` as named by the specs,

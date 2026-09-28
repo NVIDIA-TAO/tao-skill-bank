@@ -90,7 +90,8 @@ def _validate_admission(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
         raise ValueError("admission report is incomplete or for another iteration")
 
 
-def _validate_synthesis(iteration: int, artifacts: dict[str, dict[str, Any]]) -> None:
+def _validate_synthesis(iteration: int,
+                        artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     skip_contracts = {
         "synthesis_request": "no_routed_false_negatives",
         "synthesis_preparation": "no_eligible_false_negatives",
@@ -101,7 +102,9 @@ def _validate_synthesis(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
         report = _read_json(artifacts, name)
         if set(artifacts) != {name}:
             raise ValueError("a skipped synthesis stage accepts only its skip contract")
-        if report.get("status") != "SKIPPED" or report.get("reason") != reason:
+        accepted_reasons = ({reason, "no_clean_reference_images"}
+                            if name == "synthesis_preparation" else {reason})
+        if report.get("status") != "SKIPPED" or report.get("reason") not in accepted_reasons:
             raise ValueError(f"{name} is not a recognized synthesis skip contract")
         if name == "synthesis_request":
             by_dataset = report.get("skipped_unrouted_by_dataset")
@@ -123,7 +126,19 @@ def _validate_synthesis(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
                     or not isinstance(skip_counts, dict)
                     or sum(map(int, skip_counts.values())) != skipped):
                 raise ValueError("skipped synthesis preparation has invalid FN counts")
-        return
+            if report.get("reason") == "no_clean_reference_images":
+                warnings = report.get("warnings")
+                if (skip_counts != {"no_clean_reference_images": skipped}
+                        or any(not isinstance(row, dict)
+                               or row.get("reason") != "no_clean_reference_images"
+                               for row in skipped_fns)
+                        or not isinstance(warnings, list)
+                        or not any(warning.get("code") == "no_clean_reference_images"
+                                   and int(warning.get("fn_count", -1)) == skipped
+                                   and str(warning.get("message") or "").strip()
+                                   for warning in warnings if isinstance(warning, dict))):
+                    raise ValueError("no-clean-reference skip lacks typed warning evidence")
+        return report
     generation = _read_json(artifacts, "generation_report")
     admission = _read_json(artifacts, "admission_report")
     if generation.get("status") != "COMPLETE":
@@ -149,6 +164,25 @@ def _validate_synthesis(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
     admitted = int((admission.get("admitted") or {}).get("synthetic", -1))
     if admitted < 0 or admitted > generated:
         raise ValueError("synthetic admission count exceeds generated images")
+    return generation
+
+
+def _retrieval_had_output(state: dict[str, Any], iteration: int) -> bool | None:
+    for event in reversed(state.get("events", [])):
+        if event.get("stage") != "iteration_retrieval" or event.get("iteration") != iteration:
+            continue
+        artifact = (event.get("artifacts") or {}).get("query_manifest")
+        if not artifact:
+            raise ValueError("synthesis cannot verify retrieval availability")
+        path = Path(str(artifact.get("path") or ""))
+        if not path.is_file() or _sha(path) != artifact.get("sha256"):
+            raise ValueError("committed retrieval manifest failed integrity validation")
+        manifest = json.loads(path.read_text())
+        enabled = manifest.get("enabled_roles")
+        if not isinstance(enabled, list):
+            raise ValueError("committed retrieval manifest lacks enabled roles")
+        return bool(enabled)
+    return None
 
 
 def _validate_training(artifacts: dict[str, dict[str, Any]]) -> None:
@@ -261,12 +295,13 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         artifacts[name] = {"path": str(path), "sha256": _sha(path), "bytes": path.stat().st_size}
     if not artifacts:
         raise ValueError("at least one completion artifact is required")
+    synthesis = None
     if stage == "iteration_retrieval":
         _validate_retrieval(iteration, artifacts)
     elif stage == "iteration_admission":
         _validate_admission(iteration, artifacts)
     elif stage == "iteration_synthesis":
-        _validate_synthesis(iteration, artifacts)
+        synthesis = _validate_synthesis(iteration, artifacts)
     elif stage == "iteration_training":
         _validate_training(artifacts)
     elif stage == "iteration_measurement":
@@ -274,6 +309,11 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
     elif stage == "iteration_gaps":
         _validate_gaps(artifacts)
     next_stage, status = NEXT.get(stage), "RUNNING"
+    if (stage == "iteration_synthesis" and synthesis
+            and synthesis.get("status") == "SKIPPED"
+            and _retrieval_had_output(state, iteration) is False):
+        next_stage, status = None, "COMPLETE"
+        state["completion_reason"] = "all_producers_exhausted"
     if stage == "iteration_admission" and state.get("synthesis_enabled"):
         next_stage = "iteration_synthesis"
     if stage == "iteration_gaps":
