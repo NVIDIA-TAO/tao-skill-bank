@@ -48,7 +48,7 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
 1. **[SKILL — `tao-analyze-gaps-od-map`] `gap_analysis`.**
    Input: `state["iterations"][<prev_phase>]["inference_labels_dir"]` plus the KPI ground-truth label directory.
    Output: `weak_images.parquet` (with a `filepath` column), `box_gaps.parquet`, `image_metrics.parquet`, `gap_report.json`.
-   Set `default_ap50_threshold: 0.0` and list every class explicitly in `weak_thresholds` — see the overlay for why. See `references/tao-analyze-gaps-od-map.md`.
+   Set `default_ap50_threshold: 0.0` and list every target class explicitly in `weak_thresholds`, which `scripts/prepare_thresholds_for_gap_analysis.py` writes from `config.ap50_thresholds`. See `references/tao-analyze-gaps-od-map.md`.
 
    Every `ok` `gap_analysis` commit must carry `--weak-image-count <rows in weak_images.parquet>`; it is rejected without one.
 
