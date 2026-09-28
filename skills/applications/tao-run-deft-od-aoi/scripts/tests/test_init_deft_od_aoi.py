@@ -145,6 +145,33 @@ def test_initialize_accepts_empty_retrieval_role_with_capability_evidence(
     assert state["warnings"][0]["code"] == "empty_retrieval_source_role"
 
 
+@pytest.mark.parametrize("role", ("kpi", "test"))
+def test_initialize_rejects_empty_heldout_role_with_specific_error(
+        tmp_path: Path, role: str) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    coco = Path(value["sources"][role]["coco"])
+    data = json.loads(coco.read_text())
+    data["images"] = []
+    data["annotations"] = []
+    coco.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match=rf"{role} has no images"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_rejects_duplicate_image_ids_with_specific_error(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    coco = Path(value["sources"]["real"]["coco"])
+    data = json.loads(coco.read_text())
+    data["images"].append(dict(data["images"][0]))
+    coco.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="real has duplicate image ids"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
 def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())

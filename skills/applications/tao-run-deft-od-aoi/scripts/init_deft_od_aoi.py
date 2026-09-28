@@ -59,9 +59,11 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
     category_ids = {int(row["id"]) for row in categories}
     image_rows = coco.get("images", [])
     image_ids = {int(row["id"]) for row in image_rows}
-    if ((not image_rows and name not in {"real", "clean"})
-            or len(image_ids) != len(image_rows)):
-        raise ValueError(f"{name} has no images or duplicate image ids")
+    if not image_rows:
+        if name not in {"real", "clean"}:
+            raise ValueError(f"{name} has no images")
+    if len(image_ids) != len(image_rows):
+        raise ValueError(f"{name} has duplicate image ids")
     counts = {image_id: 0 for image_id in image_ids}
     for annotation in coco.get("annotations", []):
         image_id, category = int(annotation["image_id"]), int(annotation["category_id"])
