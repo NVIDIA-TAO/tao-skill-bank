@@ -25,8 +25,11 @@ Create `dataset_sources.json` with one or more COCO inputs per role:
 Paths may be absolute or relative to the manifest. `coco` accepts one path or
 a list. Benchmark and test inputs may contain boxed and boxless images. The
 preparer maps user-facing `benchmark` to the downstream internal `kpi` role.
-Every mining image must have a box, while every explicit clean COCO must have
-zero annotations.
+`mining` and `clean` may be empty arrays when that retrieval producer is not
+available. Every nonempty mining image must have a box, while every explicit
+nonempty clean COCO must have zero annotations. Empty roles are materialized as
+canonical zero-image COCO documents and reported through typed capability and
+warning evidence; they do not disable the other role or optional synthesis.
 The preparer maps all input categories to the one `defect` category and rejects
 cross-role image overlap.
 
@@ -71,6 +74,8 @@ contracts and resolves every referenced image during initialization.
 - Map all foreground categories to one category named `defect`.
 - Keep boxless images only in explicitly verified clean or held-out roles.
 - Keep clean images as COCO image rows with zero annotations.
+- Preserve an intentionally empty real or clean role as a zero-image canonical
+  COCO and mark only that retrieval capability unavailable.
 - Never place one resolved image identity in more than one role.
 - Preserve provenance metadata needed for audit.
 - For synthesis, preserve exact `dataset_id`, `texture_id`, `defect_class`,

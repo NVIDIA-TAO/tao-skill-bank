@@ -70,8 +70,10 @@ scripts/init_deft_od_aoi.py \
 Never reinitialize an existing result. The validator requires disjoint KPI,
 test, defective-real, and verified-clean roles; every COCO must declare only
 `defect`. KPI and test may mix boxed and boxless images because they never enter
-training. Every defective-real image needs at least one box, while clean images
-remain explicit zero-annotation COCO entries.
+training. A nonempty defective-real role needs at least one box on every image,
+while nonempty clean images remain explicit zero-annotation COCO entries. An
+empty real or clean role is accepted as an unavailable retrieval capability,
+with a startup warning; it does not affect the other retrieval role or synthesis.
 
 ## Loop boundary
 
@@ -110,7 +112,9 @@ scripts/prepare_deft_od_aoi_retrieval.py queries \
   --output-dir "$ITER/retrieval"
 ```
 
-Run every emitted embedding spec through `tao-generate-image-embeddings`, then
+The candidate manifest records a zero count and emits no candidate parquet or
+embedding spec for an empty source role. Run every emitted embedding spec
+through `tao-generate-image-embeddings`, then
 each enabled mining spec through `tao-mine-od-images`. Defective candidates
 and gap queries use contextual crops; clean candidates use the frozen grid.
 Strict FNs and loose near-miss FPs route to real data. Background-like loose

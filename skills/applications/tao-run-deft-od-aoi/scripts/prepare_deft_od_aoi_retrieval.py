@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -89,12 +90,28 @@ def _history_sources(path: Path | None) -> set[str]:
     }
 
 
+def _candidate_counts(root: Path) -> dict[str, int]:
+    path = root / "candidate_manifest.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"candidate manifest is missing: {path}")
+    value = json.loads(path.read_text())
+    counts = value.get("counts")
+    if (value.get("status") != "COMPLETE" or not isinstance(counts, dict)
+            or set(counts) != {"real", "clean"}):
+        raise ValueError("candidate manifest lacks complete real/clean counts")
+    if any(isinstance(count, bool) or not isinstance(count, int) or count < 0
+           for count in counts.values()):
+        raise ValueError("candidate manifest counts must be nonnegative integers")
+    return counts
+
+
 def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
     output.mkdir(parents=True)
     result: dict[str, int] = {}
+    role_status: dict[str, dict[str, Any]] = {}
     for role in ("real", "clean"):
         source = policy["sources"][role]
         images = Path(source["images"])
@@ -134,15 +151,24 @@ def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
                                          "candidate_id": crop_id, "source_bbox": None})
         frame = pd.DataFrame(rows)
         if frame.empty:
-            raise ValueError(f"{role} produced no candidate crops")
+            result[role] = 0
+            role_status[role] = {"status": "EXHAUSTED", "candidate_count": 0,
+                                 "reason": "empty_source_role"}
+            continue
         parquet = output / f"{role}_candidates.parquet"
         frame.to_parquet(parquet, index=False)
         spec = _embedding_spec(policy, parquet, output / f"{role}_candidate_embeddings.parquet")
         (output / f"embed_{role}_candidates.yaml").write_text(yaml.safe_dump(spec, sort_keys=False))
         result[role] = len(frame)
-    _json(output / "candidate_manifest.json", {"status": "COMPLETE", "counts": result,
-                                                "encoder": policy["retrieval"]})
-    return result
+        role_status[role] = {"status": "READY", "candidate_count": len(frame),
+                             "reason": None}
+    warnings = [{"code": "empty_retrieval_candidate_role", "role": role,
+                 "message": f"{role} retrieval has zero candidates; embedding and mining are disabled"}
+                for role, evidence in role_status.items() if evidence["status"] == "EXHAUSTED"]
+    report = {"status": "COMPLETE", "counts": result, "role_status": role_status,
+              "warnings": warnings, "encoder": policy["retrieval"]}
+    _json(output / "candidate_manifest.json", report)
+    return report
 
 
 def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: int,
@@ -169,8 +195,9 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             events.append(("real", "near_miss_fp", row))
     output.mkdir(parents=True)
     history = _history_sources(previous_coco)
+    candidate_counts = _candidate_counts(candidate_root)
     configured_exclusions = exclusion_paths or {}
-    counts, frames, role_status = {}, {}, {}
+    counts, frames, role_status, warnings = {}, {}, {}, []
     for role in ("real", "clean"):
         rows = []
         for index, (_, reason, event) in enumerate(item for item in events if item[0] == role):
@@ -187,11 +214,27 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         counts[role], frames[role] = len(rows), pd.DataFrame(rows)
         if not rows:
             role_status[role] = {"status": "NO_QUERIES", "query_count": 0,
-                                 "candidate_count": 0, "excluded_count": 0,
-                                 "remaining_candidate_count": 0}
+                                 "candidate_count": candidate_counts[role],
+                                 "excluded_count": 0,
+                                 "remaining_candidate_count": candidate_counts[role]}
             continue
         parquet = output / f"{role}_queries.parquet"
         frames[role].to_parquet(parquet, index=False)
+        if candidate_counts[role] == 0:
+            exclusion_file = output / f"exclude_{role}_candidates.parquet"
+            pd.DataFrame(columns=["filepath"]).to_parquet(exclusion_file, index=False)
+            role_status[role] = {
+                "status": "EXHAUSTED", "reason": "zero_candidate_count",
+                "query_count": len(rows), "candidate_count": 0, "excluded_count": 0,
+                "remaining_candidate_count": 0,
+                "exclusion_manifest": str(exclusion_file.resolve()),
+                "history_source_count": 0, "explicit_exclusion_count": 0,
+            }
+            warnings.append({
+                "code": "retrieval_role_has_no_candidates", "role": role,
+                "message": f"{role} queries were routed to an empty candidate role; mining is skipped",
+            })
+            continue
         candidate_path = candidate_root / f"{role}_candidates.parquet"
         if not candidate_path.is_file():
             raise FileNotFoundError(f"{role} candidate manifest is missing: {candidate_path}")
@@ -207,6 +250,8 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         candidate_sources = {
             str(Path(value).expanduser().resolve()) for value in candidates.source_filepath.astype(str)
         }
+        if len(candidate_files) != candidate_counts[role]:
+            raise ValueError(f"{role} candidate parquet disagrees with candidate manifest")
         explicit = set()
         if role in configured_exclusions:
             explicit = _path_values(configured_exclusions[role], role)
@@ -260,7 +305,7 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
     report = {"status": "COMPLETE", "iteration": iteration, "query_counts": counts,
               "enabled_roles": enabled, "role_status": role_status,
               "converged": not enabled and not synthesis_pending,
-              "synthesis_pending": synthesis_pending}
+              "synthesis_pending": synthesis_pending, "warnings": warnings}
     _json(output / "query_manifest.json", report)
     return report
 
@@ -291,6 +336,8 @@ def main() -> int:
                            {role: getattr(args, f"{role}_exclusions").resolve()
                             for role in ("real", "clean")
                             if getattr(args, f"{role}_exclusions", None)}))
+    for warning in result.get("warnings", []):
+        print(f"WARNING: {warning['message']}", file=sys.stderr)
     print(json.dumps(result, sort_keys=True))
     return 0
 

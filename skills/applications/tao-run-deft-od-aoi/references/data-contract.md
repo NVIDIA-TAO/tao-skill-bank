@@ -11,8 +11,8 @@ The application consumes four normalized COCO roles:
 |---|---:|---:|---|
 | KPI | labeled or empty | never | gap queries and checkpoint selection |
 | Test | labeled or empty | never | report-only measurement |
-| Real | at least one per image | after retrieval and admission | positive mining |
-| Clean | exactly zero per image | after retrieval and admission | negative mining |
+| Real | at least one per image when nonempty | after retrieval and admission | positive mining |
+| Clean | exactly zero per image when nonempty | after retrieval and admission | negative mining |
 
 Every COCO document declares exactly one foreground category named `defect`.
 Background is implicit. Clean images remain explicit `images` rows with zero
@@ -23,6 +23,11 @@ Each image resolves through `source_path` when present, otherwise
 test, real, and clean roles. The initializer verifies paths, IDs, boxes,
 category names, role-specific annotation counts, and cross-role overlap before
 freezing hashes in the policy.
+
+Real and clean roles may start with zero images. Initialization emits a warning
+and a typed `UNAVAILABLE` retrieval capability for each empty role, while all
+nonempty roles retain the same strict validation. The clean retrieval role is
+independent from the AnomalyGenNext synthesis reference pool.
 
 ## Optional synthesis metadata
 

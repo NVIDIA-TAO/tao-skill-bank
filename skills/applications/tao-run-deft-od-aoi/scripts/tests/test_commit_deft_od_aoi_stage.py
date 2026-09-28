@@ -25,14 +25,15 @@ def _state(root: Path) -> tuple[Path, Path]:
     return state, artifact
 
 
-def _retrieval(root: Path, sparse: bool = False, exhausted: bool = False) -> list[str]:
+def _retrieval(root: Path, sparse: bool = False, exhausted: bool = False,
+               zero_candidates: bool = False) -> list[str]:
     manifest = root / "query_manifest.json"
     counts = {"real": 1} if sparse else {"real": 1, "clean": 1}
     enabled = [] if exhausted else list(counts)
     role_status = {
         role: ({"status": "EXHAUSTED" if exhausted else "READY",
-                "query_count": count, "candidate_count": 1,
-                "excluded_count": 1 if exhausted else 0,
+                "query_count": count, "candidate_count": 0 if zero_candidates else 1,
+                "excluded_count": 1 if exhausted and not zero_candidates else 0,
                 "remaining_candidate_count": 0 if exhausted else 1}
                if count else {"status": "NO_QUERIES", "query_count": 0,
                               "candidate_count": 0, "excluded_count": 0,
@@ -51,7 +52,8 @@ def _retrieval(root: Path, sparse: bool = False, exhausted: bool = False) -> lis
         embeddings = root / f"{role}_query_embeddings.parquet"
         mined = root / f"{role}_mined.parquet"
         pd.DataFrame({"filepath": [f"/{role}-query"] * count}).to_parquet(queries)
-        pd.DataFrame({"filepath": ([f"/{role}-candidate"] if exhausted else [])}).to_parquet(
+        pd.DataFrame({"filepath": ([f"/{role}-candidate"]
+                                   if exhausted and not zero_candidates else [])}).to_parquet(
             exclusions, index=False
         )
         artifacts.extend((f"{role}_queries={queries}", f"{role}_exclusions={exclusions}"))
@@ -143,6 +145,21 @@ def test_retrieval_commits_all_role_exhaustion_as_convergence(tmp_path: Path) ->
 
     result = MODULE.commit(state, "iteration_retrieval", 1,
                            _retrieval(tmp_path, exhausted=True))
+
+    assert result["status"] == "COMPLETE" and result["next_stage"] is None
+    assert result["completion_reason"] == "mining_exhausted"
+
+
+def test_retrieval_commits_initially_empty_roles_as_convergence(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_retrieval",
+                 current_iteration=0, last_stage="baseline_gaps")
+    state.write_text(json.dumps(value))
+
+    result = MODULE.commit(
+        state, "iteration_retrieval", 1,
+        _retrieval(tmp_path, exhausted=True, zero_candidates=True))
 
     assert result["status"] == "COMPLETE" and result["next_stage"] is None
     assert result["completion_reason"] == "mining_exhausted"

@@ -23,10 +23,11 @@ request before building the candidate cache.
 
 ## 1. Build candidate embeddings
 
-Run `prepare_deft_od_aoi_retrieval.py candidates`. Submit the emitted real
-and clean embedding specs through `tao-generate-image-embeddings`. The
-completed outputs are immutable and reused by every iteration. Commit the
-`candidate_cache` stage.
+Run `prepare_deft_od_aoi_retrieval.py candidates`. Submit only the emitted real
+and clean embedding specs through `tao-generate-image-embeddings`. An initially
+empty role records count zero and emits neither a candidate parquet nor an
+embedding spec. The completed outputs are immutable and reused by every
+iteration. Commit the `candidate_cache` stage.
 
 ## 2. Baseline measurement and gaps
 
@@ -47,6 +48,10 @@ enabled query-embedding action, then each enabled `tao-mine-od-images` action.
 Empty and exhausted roles require no job. Commit `iteration_retrieval` with
 each queried role's query parquet and exclusion parquet; the latter preserves
 the exact history/configured exclusion audit even when it is empty.
+Queries routed to an initially empty role are typed `EXHAUSTED` with all three
+candidate audit counts at zero, while another `READY` role continues. When no
+retrieval role is ready and synthesis cannot add data, commit convergence
+without admission, training, or another unchanged iteration.
 
 ## 4. Admit real and clean data
 

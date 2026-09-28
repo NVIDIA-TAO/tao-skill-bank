@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,8 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
     category_ids = {int(row["id"]) for row in categories}
     image_rows = coco.get("images", [])
     image_ids = {int(row["id"]) for row in image_rows}
-    if not image_rows or len(image_ids) != len(image_rows):
+    if ((not image_rows and name not in {"real", "clean"})
+            or len(image_ids) != len(image_rows)):
         raise ValueError(f"{name} has no images or duplicate image ids")
     counts = {image_id: 0 for image_id in image_ids}
     for annotation in coco.get("annotations", []):
@@ -144,6 +146,18 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
              and Path(str(route.get("recipe") or "")).is_file())
         for route in policy.get("synthesis", {}).get("routes", {}).values()
     )
+    retrieval_capabilities = {
+        role: {"status": "AVAILABLE" if role_reports[role]["image_count"] else "UNAVAILABLE",
+               "reason": None if role_reports[role]["image_count"] else "empty_source_role",
+               "source_image_count": role_reports[role]["image_count"]}
+        for role in ("real", "clean")
+    }
+    warnings = [{
+        "code": "empty_retrieval_source_role",
+        "role": role,
+        "message": f"{role} retrieval source role is empty; that producer starts exhausted",
+    } for role, evidence in retrieval_capabilities.items()
+        if evidence["status"] == "UNAVAILABLE"]
     state = {"schema_version": 1, "status": "READY",
              "mode": "rtdetr_with_synthesis" if synthesis_enabled else "rtdetr_real_only",
              "baseline_mode": baseline_mode,
@@ -154,7 +168,9 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
              "max_iterations": policy["max_iterations"], "platform": policy["platform"],
              "base_checkpoint": str(checkpoint), "policy": str(frozen.resolve()),
              "policy_sha256": _sha(frozen), "classmap": str(classmap.resolve()),
-             "roles": role_reports, "iterations": {}}
+             "roles": role_reports,
+             "capabilities": {"retrieval": retrieval_capabilities},
+             "warnings": warnings, "iterations": {}}
     _json(output / "deft_state.json", state)
     return state
 
@@ -164,7 +180,10 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(initialize(args.config.resolve(), args.output_dir.resolve()), sort_keys=True))
+    state = initialize(args.config.resolve(), args.output_dir.resolve())
+    for warning in state.get("warnings", []):
+        print(f"WARNING: {warning['message']}", file=sys.stderr)
+    print(json.dumps(state, sort_keys=True))
     return 0
 
 

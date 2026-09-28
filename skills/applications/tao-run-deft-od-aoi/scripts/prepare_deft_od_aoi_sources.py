@@ -40,9 +40,11 @@ def _entries(manifest: dict[str, Any], name: str) -> list[dict[str, Any]]:
     if not isinstance(inputs, dict):
         raise ValueError("inputs must be an object")
     entries = inputs.get(name)
-    if not isinstance(entries, list) or not entries or not all(
-            isinstance(entry, dict) for entry in entries):
-        raise ValueError(f"inputs.{name} must be a non-empty array of objects")
+    allow_empty = name in {"mining", "clean"}
+    if (not isinstance(entries, list) or (not entries and not allow_empty)
+            or not all(isinstance(entry, dict) for entry in entries)):
+        qualifier = "an array" if allow_empty else "a non-empty array"
+        raise ValueError(f"inputs.{name} must be {qualifier} of objects")
     return entries
 
 
@@ -122,7 +124,8 @@ def prepare(manifest_path: Path) -> tuple[dict[str, list[dict[str, Any]]], dict[
                 source = _coco(coco_path)
                 image_rows = source["images"]
                 image_ids = [row.get("id") for row in image_rows]
-                if not image_rows or len(image_ids) != len(set(image_ids)):
+                if ((not image_rows and role not in {"real", "clean"})
+                        or len(image_ids) != len(set(image_ids))):
                     raise ValueError(f"COCO {coco_path} has no images or duplicate image ids")
                 by_image: defaultdict[Any, list[dict[str, Any]]] = defaultdict(list)
                 known_images = set(image_ids)
@@ -162,13 +165,26 @@ def prepare(manifest_path: Path) -> tuple[dict[str, list[dict[str, Any]]], dict[
                                        "coco": str(coco_path),
                                        "images": len(image_rows),
                                        "annotations": len(source["annotations"])})
+    role_counts = {name: {
+        "images": sum(len(shard["images"]) for shard in shards),
+        "annotations": sum(len(shard["annotations"]) for shard in shards),
+    } for name, shards in documents.items()}
+    warnings = [{
+        "code": "empty_retrieval_source_role",
+        "role": role,
+        "message": f"{role} retrieval source role is empty; that producer starts exhausted",
+    } for role in ("real", "clean") if role_counts[role]["images"] == 0]
     report = {
         "status": "VALID",
         "manifest": str(manifest_path),
-        "roles": {name: {
-            "images": sum(len(shard["images"]) for shard in shards),
-            "annotations": sum(len(shard["annotations"]) for shard in shards),
-        } for name, shards in documents.items()},
+        "roles": role_counts,
+        "capabilities": {"retrieval": {
+            role: {"status": "AVAILABLE" if role_counts[role]["images"] else "UNAVAILABLE",
+                   "reason": None if role_counts[role]["images"] else "empty_source_role",
+                   "source_image_count": role_counts[role]["images"]}
+            for role in ("real", "clean")
+        }},
+        "warnings": warnings,
         "sources": source_reports,
         "overlaps": {},
     }
@@ -255,13 +271,20 @@ def materialize(manifest_path: Path, documents: dict[str, list[dict[str, Any]]],
             shard_path = merge_inputs / f"{role}-{index:04d}.json"
             shard_path.write_text(json.dumps(materialized, indent=2) + "\n")
             inputs.append(shard_path)
-        merged = merge_action(inputs, output / "merge_actions" / role)
         coco = output / f"{role}.json"
-        shutil.copyfile(merged, coco)
+        if report["roles"][role]["images"]:
+            merged = merge_action(inputs, output / "merge_actions" / role)
+            shutil.copyfile(merged, coco)
+            merge_evidence[role] = {"status": "COMPLETE",
+                                    "inputs": [str(path.resolve()) for path in inputs],
+                                    "output": str(merged.resolve())}
+        else:
+            coco.write_text(json.dumps({"images": [], "annotations": [],
+                                        "categories": CATEGORY}, indent=2) + "\n")
+            merge_evidence[role] = {"status": "SKIPPED", "reason": "empty_source_role",
+                                    "inputs": [], "output": str(coco.resolve())}
         _validate_merged(role, _read_object(coco), report["roles"][role])
         sources[role] = {"images": str(images.resolve()), "coco": str(coco.resolve())}
-        merge_evidence[role] = {"inputs": [str(path.resolve()) for path in inputs],
-                                "output": str(merged.resolve())}
     report = {**report, "merger": {"command": "annotations merge",
                                      "roles": merge_evidence}}
     handoff = {"schema_version": 1, "sources": sources,
@@ -285,6 +308,8 @@ def main() -> int:
         result = (report if args.check_only else materialize(
             manifest, documents, report, args.output_dir.expanduser().resolve(), args.link_mode
         ))
+        for warning in report.get("warnings", []):
+            print(f"WARNING: {warning['message']}", file=sys.stderr)
         print(json.dumps(result, sort_keys=True))
         return 0
     except Exception as error:  # noqa: BLE001 - CLI reports contract failures without a traceback.

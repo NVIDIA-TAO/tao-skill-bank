@@ -50,13 +50,37 @@ def _policy(root: Path) -> Path:
     return policy
 
 
+def _empty_role(policy: Path, role: str) -> None:
+    value = yaml.safe_load(policy.read_text())
+    coco = Path(value["sources"][role]["coco"])
+    document = json.loads(coco.read_text())
+    document["images"] = []
+    document["annotations"] = []
+    coco.write_text(json.dumps(document))
+
+
 def test_candidate_cache_uses_defect_crops_and_clean_grid(tmp_path: Path) -> None:
     report = MODULE.candidates(_policy(tmp_path), tmp_path / "candidates")
-    assert report == {"real": 1, "clean": 5}
+    assert report["counts"] == {"real": 1, "clean": 5}
     real = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
     clean = pd.read_parquet(tmp_path / "candidates/clean_candidates.parquet")
     assert real.source_filepath.nunique() == clean.source_filepath.nunique() == 1
     assert all(Path(path).is_file() for path in list(real.filepath) + list(clean.filepath))
+
+
+@pytest.mark.parametrize("empty_role", ("real", "clean"))
+def test_candidate_cache_records_empty_role_without_embedding_spec(
+        tmp_path: Path, empty_role: str) -> None:
+    policy = _policy(tmp_path)
+    _empty_role(policy, empty_role)
+
+    report = MODULE.candidates(policy, tmp_path / "candidates")
+
+    assert report["counts"][empty_role] == 0
+    assert report["role_status"][empty_role] == {
+        "status": "EXHAUSTED", "candidate_count": 0, "reason": "empty_source_role"}
+    assert not (tmp_path / f"candidates/{empty_role}_candidates.parquet").exists()
+    assert not (tmp_path / f"candidates/embed_{empty_role}_candidates.yaml").exists()
 
 
 def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
@@ -80,6 +104,63 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     clean_mining = yaml.safe_load((tmp_path / "queries/mine_clean.yaml").read_text())
     assert real_mining["desired_unique_count"] == 1
     assert clean_mining["desired_unique_count"] == 2
+
+
+@pytest.mark.parametrize("empty_role", ("real", "clean"))
+def test_queries_skip_empty_role_while_other_role_continues(
+        tmp_path: Path, empty_role: str) -> None:
+    policy = _policy(tmp_path)
+    _empty_role(policy, empty_role)
+    MODULE.candidates(policy, tmp_path / "candidates")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.01}]).to_parquet(loose)
+
+    report = MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
+                            tmp_path / "candidates", None)
+
+    continuing_role = "clean" if empty_role == "real" else "real"
+    assert report["enabled_roles"] == [continuing_role]
+    assert report["role_status"][empty_role]["status"] == "EXHAUSTED"
+    assert {key: report["role_status"][empty_role][key] for key in
+            ("candidate_count", "excluded_count", "remaining_candidate_count")} == {
+                "candidate_count": 0, "excluded_count": 0, "remaining_candidate_count": 0}
+    assert report["role_status"][continuing_role]["status"] == "READY"
+    assert not (tmp_path / f"queries/embed_{empty_role}_queries.yaml").exists()
+    assert not (tmp_path / f"queries/mine_{empty_role}.yaml").exists()
+    assert (tmp_path / f"queries/mine_{continuing_role}.yaml").is_file()
+
+
+def test_initially_empty_roles_converge_when_synthesis_cannot_add_data(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    for role in ("real", "clean"):
+        _empty_role(policy, role)
+    MODULE.candidates(policy, tmp_path / "candidates")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.01}]).to_parquet(loose)
+
+    report = MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
+                            tmp_path / "candidates", None)
+
+    assert report["enabled_roles"] == []
+    assert report["converged"] is True and report["synthesis_pending"] is False
+    assert all(evidence["status"] == "EXHAUSTED"
+               for evidence in report["role_status"].values())
+    assert not list((tmp_path / "queries").glob("embed_*_queries.yaml"))
+    assert not list((tmp_path / "queries").glob("mine_*.yaml"))
+
+
 def test_exhausted_role_is_skipped_while_other_role_continues(tmp_path: Path) -> None:
     policy = _policy(tmp_path)
     MODULE.candidates(policy, tmp_path / "candidates")
@@ -178,6 +259,6 @@ def test_queries_reject_missing_candidate_manifest(tmp_path: Path) -> None:
                    "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
     pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
 
-    with pytest.raises(FileNotFoundError, match="real candidate manifest"):
+    with pytest.raises(FileNotFoundError, match="candidate manifest"):
         MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
                        tmp_path / "missing-candidates", None)
