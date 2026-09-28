@@ -61,7 +61,10 @@ REPORT_NAME = "DEFT_Loop_Report.md"
 _VAL_METRIC_RE = re.compile(
     r"\bval(?:idation)?[_ ]?"
     r"(?:m?AP\d*(?:_[A-Za-z0-9]+)*|loss(?:_[A-Za-z0-9]+)*|acc(?:uracy)?)\b"
-    r"(\s*[:=]?\s*[-+]?\d+(?:\.\d+)?)?",
+    # Its value, however it is joined and written: `= 0.82`, `: 0.82`, ` of 0.82`,
+    # ` is 0.82`, `3.1e-02`, `91.5%`. Anything left behind would be an unlabelled
+    # number -- the agreement score the report exists to keep out.
+    r"(\s*(?:[:=]|\b(?:of|is|at|was)\b)?\s*[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?%?)?",
     re.IGNORECASE)
 # Separators orphaned by the removal above: a leading/trailing comma inside a
 # parenthesis, doubled commas, a dangling trailing separator.
@@ -215,7 +218,9 @@ def _class_names_from_log(path: Path) -> list[str]:
     return names
 
 
-def _kpi_from_csv(csv_path: Path, log_path: Path | None) -> tuple[float | None, dict[str, float] | None]:
+def _kpi_from_csv(csv_path: Path, log_path: Path | None
+                  ) -> tuple[float | None, dict[str, float] | None, str | None]:
+    """(mAP, per-class AP, why the breakdown is missing) from kpi_calc.csv."""
     try:
         with csv_path.open(encoding="utf-8") as handle:
             # A row with more fields than the header carries the surplus as a list
@@ -223,9 +228,9 @@ def _kpi_from_csv(csv_path: Path, log_path: Path | None) -> tuple[float | None, 
             rows = [r for r in csv.DictReader(handle)
                     if any(isinstance(v, str) and v.strip() for v in r.values())]
     except (OSError, ValueError, csv.Error):  # ValueError covers UnicodeDecodeError
-        return None, None
+        return None, None, "its kpi_calc.csv could not be read"
     if not rows or "AP" not in rows[0]:
-        return None, None
+        return None, None, "its kpi_calc.csv has no AP column"
 
     labelled = "class_name" in rows[0]
     if labelled:
@@ -233,20 +238,28 @@ def _kpi_from_csv(csv_path: Path, log_path: Path | None) -> tuple[float | None, 
     aps = [_num(r.get("AP")) for r in rows]
     aps = [ap for ap in aps if ap is not None]
     if not aps:
-        return None, None
+        return None, None, "its kpi_calc.csv has no numeric AP"
     map_value = sum(aps) / len(aps)
 
     if labelled:
         names = [str(r.get("class_name", "")).strip() for r in rows]
+    elif log_path:
+        names = _class_names_from_log(log_path)
     else:
-        names = _class_names_from_log(log_path) if log_path else []
-    # Row order is not a class order. Without names from the column or the log,
-    # the mean is still exact but the breakdown would be a guess. A repeated name
-    # -- one class scored in two KPI sequences -- would collapse to whichever row
-    # came last, so that is refused too rather than rendered as one class's AP.
-    if len(names) != len(aps) or len(set(names)) != len(names):
-        return map_value, None
-    return map_value, dict(zip(names, aps))
+        return map_value, None, ("its kpi_calc.csv has no class_name column and no "
+                                 "kpi_analyze.log was committed, and row order is not a "
+                                 "class order")
+    # A repeated name -- one class scored in two KPI sequences -- would collapse to
+    # whichever row came last, so it is refused rather than rendered as one AP.
+    if len(set(names)) != len(names):
+        return map_value, None, ("a class is scored in more than one KPI sequence, so "
+                                 "no single AP belongs to it")
+    # Row order is not a class order. Without a name per row, the mean is still exact
+    # but the breakdown would be a guess.
+    if len(names) != len(aps):
+        return map_value, None, (f"its kpi_analyze.log names {len(names)} class(es) for "
+                                 f"{len(aps)} CSV row(s), so rows cannot be matched to classes")
+    return map_value, dict(zip(names, aps)), None
 
 
 def _kpi_for_phase(state: dict[str, Any], phase: str) -> dict[str, Any]:
@@ -260,24 +273,36 @@ def _kpi_for_phase(state: dict[str, Any], phase: str) -> dict[str, Any]:
     entry = _entry(state, phase)
     map_value = _num(entry.get("map_value"))
     per_class: dict[str, float] | None = None
+    why = None  # why a breakdown is missing, so the report can say the true cause
 
     csv_path = entry.get("kpi_csv")
-    if csv_path:
-        summary = _load_json_object(Path(csv_path).parent / "kpi_summary.json")
-        if map_value is None:
-            map_value = _num(summary.get("map_value"))
-        resolved = summary.get("per_class")
-        if isinstance(resolved, dict) and resolved:
-            cleaned = {str(k): _num(v) for k, v in resolved.items()}
-            if all(v is not None for v in cleaned.values()):
-                per_class = cleaned  # type: ignore[assignment]
-        if map_value is None or per_class is None:
-            log_path = entry.get("kpi_log")
-            csv_map, csv_classes = _kpi_from_csv(
-                Path(csv_path), Path(log_path) if log_path else None)
-            map_value = map_value if map_value is not None else csv_map
-            per_class = per_class or csv_classes
-    return {"map": map_value, "per_class": per_class}
+    if not csv_path:
+        return {"map": map_value, "per_class": None,
+                "why": "no kpi_calc.csv was committed for it"}
+
+    summary = _load_json_object(Path(csv_path).parent / "kpi_summary.json")
+    if map_value is None:
+        map_value = _num(summary.get("map_value"))
+    # summarize_kpi.py builds per_class with dict(zip(...)), so a class scored in two
+    # sequences collapses to whichever row came last. Its class_names list keeps
+    # every row, so the collision is visible there even though the dict hides it.
+    names = summary.get("class_names")
+    if isinstance(names, list) and len(set(names)) != len(names):
+        return {"map": map_value, "per_class": None,
+                "why": "a class is scored in more than one KPI sequence, so no single "
+                       "AP belongs to it"}
+    resolved = summary.get("per_class")
+    if isinstance(resolved, dict) and resolved:
+        cleaned = {str(k): _num(v) for k, v in resolved.items()}
+        if all(v is not None for v in cleaned.values()):
+            per_class = cleaned  # type: ignore[assignment]
+    if map_value is None or per_class is None:
+        log_path = entry.get("kpi_log")
+        csv_map, csv_classes, why = _kpi_from_csv(
+            Path(csv_path), Path(log_path) if log_path else None)
+        map_value = map_value if map_value is not None else csv_map
+        per_class = per_class or csv_classes
+    return {"map": map_value, "per_class": per_class, "why": None if per_class else why}
 
 
 def _kpi_section(state: dict[str, Any]) -> tuple[list[str], dict[str, dict[str, Any]]]:
@@ -305,11 +330,14 @@ def _kpi_section(state: dict[str, Any]) -> tuple[list[str], dict[str, dict[str, 
     header = ["Phase", "mAP"] + [f"AP50 {_cell(c)}" for c in classes]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "---|" * len(header))
-    missing_breakdown: list[str] = []
+    # Noted even when no phase has a breakdown -- that is when the table has no
+    # per-class columns at all, and a reader most needs to know why.
+    missing_breakdown: list[tuple[str, str]] = []
     for phase, kpi in scored.items():
         row = [_cell(phase), _fmt(kpi["map"])]
-        if kpi["per_class"] is None and classes:
-            missing_breakdown.append(phase)
+        if kpi["per_class"] is None:
+            missing_breakdown.append((phase, kpi.get("why") or "its rows could not be "
+                                      "attributed to classes"))
         for name in classes:
             row.append(_fmt((kpi["per_class"] or {}).get(name)))
         lines.append("| " + " | ".join(row) + " |")
@@ -333,13 +361,11 @@ def _kpi_section(state: dict[str, Any]) -> tuple[list[str], dict[str, dict[str, 
         if against:
             sentence += " Moved against the mean: " + ", ".join(against) + "."
         lines.extend([sentence, ""])
+    # Each phase's own reason, since phases can lack a breakdown for different ones.
+    for phase, why in missing_breakdown:
+        lines.append(f"Per-class breakdown unavailable for {phase}: {why}.")
     if missing_breakdown:
-        lines.extend([
-            "Per-class breakdown unavailable for " + ", ".join(missing_breakdown)
-            + ": the CSV carries no `class_name` column and no `kpi_analyze.log` was "
-              "committed, and row order is not a class order.",
-            "",
-        ])
+        lines.append("")
     return lines, scored
 
 
@@ -368,21 +394,20 @@ def _train_sources(entry: dict[str, Any]) -> int | None:
     return len(sources) if isinstance(sources, list) else None
 
 
-def _staging_report(results_dir: Path, state: dict[str, Any], phase: str) -> dict[str, Any]:
-    entry = _entry(state, phase)
-    # `--report-json` is written beside the staged annotations but is not itself a
-    # committed artifact, so derive it from one that is before falling back to the
-    # documented location.
-    odvg = entry.get("odvg_jsonl")
-    candidates = []
-    if odvg:
-        candidates.append(Path(odvg).parent.parent / "staging_report.json")
-    candidates.append(results_dir / phase / "tmm" / "staging_report.json")
-    for candidate in candidates:
-        loaded = _load_json_object(candidate)
-        if loaded:
-            return loaded
-    return {}
+def _staging_report(state: dict[str, Any], phase: str) -> dict[str, Any]:
+    """The staging report of a `stage` commit, or {} when the phase has none.
+
+    `--report-json` is written beside the staged annotations but is not itself a
+    committed artifact, so it is found through one that is: the committed ODVG file.
+    Only through it. A report found by its default path alone may belong to a stage
+    whose commit was rejected or never made, or to an earlier run in the same results
+    dir -- `init --force` archives state and log, not iteration directories -- and
+    the report would present those numbers as this run's.
+    """
+    odvg = _entry(state, phase).get("odvg_jsonl")
+    if not odvg:
+        return {}
+    return _load_json_object(Path(odvg).parent.parent / "staging_report.json")
 
 
 def _staging_gap(row: dict[str, Any]) -> int | None:
@@ -397,14 +422,14 @@ def _staging_gap(row: dict[str, Any]) -> int | None:
     return int(mined - staged)
 
 
-def _growth_section(results_dir: Path, state: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+def _growth_section(state: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
     for phase in _scored_phases(state):
         if iter_number(phase) is None:
             continue
         entry = _entry(state, phase)
         mining = _load_json_object(entry.get("mining_summary_json"))
-        staging = _staging_report(results_dir, state, phase)
+        staging = _staging_report(state, phase)
         missing_images = staging.get("missing_images")
         missing_annotations = staging.get("missing_annotations")
         rows.append({
@@ -589,7 +614,7 @@ def _status(report: dict[str, Any], state: dict[str, Any]) -> str:
 def compose(results_dir: Path, state: dict[str, Any], events: list[dict[str, Any]],
             report: dict[str, Any], generated: str) -> str:
     kpi_lines, scored = _kpi_section(state)
-    growth_lines, rows = _growth_section(results_dir, state)
+    growth_lines, rows = _growth_section(state)
     config = state.get("config")
     config = config if isinstance(config, dict) else {}
     completed = report.get("iterations_completed")

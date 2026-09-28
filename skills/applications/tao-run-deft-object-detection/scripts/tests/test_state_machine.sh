@@ -2983,6 +2983,20 @@ esac
 run "$PY" "$SCRIPTS_DIR/render_report.py" --results-dir "$G32_RUN" --require-terminal
 assert_rc 0 "[G32] --require-terminal renders once loop_stop is committed"
 
+# Re-initialising over a finished run archives its report with its state and log.
+# The fresh render would otherwise overwrite it, and it cannot be rebuilt from the
+# archived pair.
+cp "$G32_RUN/DEFT_Loop_Report.md" "$G32/final_report.md"
+init_run "$G32" "$G32_RUN" 1 --force
+assert_rc 0 "[G32] init --force re-initialises the finished run"
+g32_bak=$(ls "$G32_RUN"/DEFT_Loop_Report.md.bak.* 2>/dev/null | head -1)
+[ -n "$g32_bak" ] && cmp -s "$g32_bak" "$G32/final_report.md" \
+  && ok "[G32] the previous run's report is archived, byte for byte" \
+  || notok "[G32] the previous run's report is archived, byte for byte" "bak: ${g32_bak:-none}"
+grep -q 'IN PROGRESS' "$G32_RUN/DEFT_Loop_Report.md" \
+  && ok "[G32] and a fresh report replaces it" \
+  || notok "[G32] and a fresh report replaces it"
+
 # How individual inputs render. compose() is driven directly with a hand-built state,
 # because each case is about one input, and a real run cannot produce most of them.
 # One line per case: "ok <label>" or "not ok <label> :: <detail>".
@@ -3050,6 +3064,44 @@ check("the gap names both causes",
       "1 missing from the pool" in doc and "2 with no annotation in the pool" in doc, doc)
 check("a class scored twice gets no single AP",
       "| baseline | 0.5000 |" in doc and "0.9000" not in doc and "0.1000" not in doc, doc)
+check("the missing breakdown names its real cause",
+      "Per-class breakdown unavailable for baseline: a class is scored in more than one"
+      in doc, doc)
+
+# The same collision through kpi_summary.json, the path a real run takes:
+# summarize_kpi.py always writes one, and its per_class dict keeps only the last row.
+import subprocess
+dup = root / "dupsum/baseline/kpi"
+dup.mkdir(parents=True)
+(dup / "kpi_calc.csv").write_text("Sequence Name,class_name,AP\ns1,car,0.9\ns2,car,0.1\n")
+subprocess.run([sys.executable, f"{sys.argv[1]}/summarize_kpi.py",
+                "--kpi-csv", str(dup / "kpi_calc.csv")], capture_output=True, check=True)
+dup_doc = rr.compose(root, {"config": {}, "iterations": {"baseline": {
+    "kpi_csv": str(dup / "kpi_calc.csv"), "map_value": 0.5}}}, [], REPORT, "t")
+check("a class scored twice gets no single AP through kpi_summary.json either",
+      "| baseline | 0.5000 |" in dup_doc and "0.1000" not in dup_doc, dup_doc)
+
+# Staging numbers come only from a committed stage. A report at the default path with
+# no stage commit -- a rejected commit, or an earlier run in the same results dir --
+# must not appear as this run's.
+(root / "stale/iter1/tmm").mkdir(parents=True)
+(root / "stale/iter1/tmm/staging_report.json").write_text(
+    json.dumps({"mined_unique": 99, "annotations_written": 50}))
+stale_doc = rr.compose(root / "stale", {"config": {}, "iterations": {
+    "iter1": {"weak_image_count": 7}}}, [], REPORT, "t")
+check("an uncommitted staging report is not read",
+      "| iter1 | 7 | — | — | — | — |" in stale_doc, stale_doc)
+
+# A phase that committed no CSV says so, rather than blaming a missing column.
+nocsv_doc = rr.compose(root, {"config": {}, "iterations": {"baseline": {"map_value": 0.4}}},
+                       [], REPORT, "t")
+check("a phase with no committed CSV says that is why",
+      "unavailable for baseline: no kpi_calc.csv was committed" in nocsv_doc, nocsv_doc)
+
+# A metric's value leaves no piece behind, however it is joined or written.
+got = rr.strip_val_metrics("trained iter1: 2 epochs, val_mAP50 of 0.82; val_loss=3.1e-02")
+check("a value joined by a word or in scientific notation goes with its metric",
+      got == "trained iter1: 2 epochs", got)
 check("the committed --map-value wins over a disagreeing summary",
       "| iter1 | 0.7000 |" in doc and "0.9900" not in doc, doc)
 check("a val mAP spelled with a space is dropped too", "0.91" not in doc, doc)

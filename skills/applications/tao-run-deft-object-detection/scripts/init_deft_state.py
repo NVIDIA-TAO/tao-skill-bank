@@ -45,7 +45,7 @@ from deft_stages import (  # noqa: E402
     write_log_atomic,
     write_state_atomic,
 )
-from render_report import render as render_loop_report  # noqa: E402
+from render_report import REPORT_NAME, render as render_loop_report  # noqa: E402
 
 ALLOCATION_POLICIES = ("global", "class_stratified")
 # The encoder families the embedding stage accepts. Kept in step with
@@ -634,13 +634,20 @@ def main() -> int:
             raise FileExistsError(
                 f"refusing to clobber an existing run: {', '.join(p.name for p in live)} already "
                 f"present in {results_dir}. Resume it with audit_deft_run.py, or pass --force to "
-                "reinitialize (the current state and log are archived as *.bak.<UTC stamp>).")
+                "reinitialize (the current state, log and report are archived as *.bak.<UTC stamp>).")
 
         now = datetime.datetime.now(datetime.timezone.utc)
         stamp = now.strftime("%Y%m%dT%H%M%SZ")
         results_dir.mkdir(parents=True, exist_ok=True)
 
         archived = [p for p in (_archive(f, stamp) for f in live) if p is not None]
+        # The previous run's report goes with its state and log. The render below
+        # writes a fresh one in its place, and the old report cannot be rebuilt from
+        # the archived pair -- render_report.py reads the live files.
+        if live:
+            report = _archive(results_dir / REPORT_NAME, stamp)
+            if report is not None:
+                archived.append(report)
         # A leftover commit journal describes the run being archived, not this one.
         (results_dir / COMMIT_JOURNAL_NAME).unlink(missing_ok=True)
         # Empty log first: a crash between the two writes leaves no state, so init is
