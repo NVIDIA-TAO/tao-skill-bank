@@ -25,7 +25,7 @@ request before building the candidate cache.
 
 Run `prepare_deft_od_aoi_retrieval.py candidates`. Submit only the emitted real
 and clean embedding specs through `tao-generate-image-embeddings`. An initially
-empty role records count zero and emits neither a candidate parquet nor an
+empty clean role records count zero and emits neither a candidate parquet nor an
 embedding spec. The completed outputs are immutable and reused by every
 iteration. Commit the `candidate_cache` stage.
 
@@ -48,8 +48,10 @@ enabled query-embedding action, then each enabled `tao-mine-od-images` action.
 Empty and exhausted roles require no job. Commit `iteration_retrieval` with
 each queried role's query parquet and exclusion parquet; the latter preserves
 the exact history/configured exclusion audit even when it is empty.
-Queries routed to an initially empty role are typed `EXHAUSTED` with all three
-candidate audit counts at zero, while another `READY` role continues. When no
+Queries routed to an initially empty clean role are typed `EXHAUSTED` with all
+three candidate audit counts at zero, while real retrieval continues. A real
+role may become exhausted only after its nonempty pool has been consumed; clean
+retrieval may then continue within its cumulative real-relative cap. When no
 retrieval role is ready and synthesis cannot add data, commit convergence
 without admission, training, or another unchanged iteration.
 

@@ -40,7 +40,7 @@ def _entries(manifest: dict[str, Any], name: str) -> list[dict[str, Any]]:
     if not isinstance(inputs, dict):
         raise ValueError("inputs must be an object")
     entries = inputs.get(name)
-    allow_empty = name in {"mining", "clean"}
+    allow_empty = name == "clean"
     if (not isinstance(entries, list) or (not entries and not allow_empty)
             or not all(isinstance(entry, dict) for entry in entries)):
         qualifier = "an array" if allow_empty else "a non-empty array"
@@ -124,7 +124,7 @@ def prepare(manifest_path: Path) -> tuple[dict[str, list[dict[str, Any]]], dict[
                 source = _coco(coco_path)
                 image_rows = source["images"]
                 image_ids = [row.get("id") for row in image_rows]
-                if ((not image_rows and role not in {"real", "clean"})
+                if ((not image_rows and role != "clean")
                         or len(image_ids) != len(set(image_ids))):
                     raise ValueError(f"COCO {coco_path} has no images or duplicate image ids")
                 by_image: defaultdict[Any, list[dict[str, Any]]] = defaultdict(list)
@@ -173,7 +173,7 @@ def prepare(manifest_path: Path) -> tuple[dict[str, list[dict[str, Any]]], dict[
         "code": "empty_retrieval_source_role",
         "role": role,
         "message": f"{role} retrieval source role is empty; that producer starts exhausted",
-    } for role in ("real", "clean") if role_counts[role]["images"] == 0]
+    } for role in ("clean",) if role_counts[role]["images"] == 0]
     report = {
         "status": "VALID",
         "manifest": str(manifest_path),

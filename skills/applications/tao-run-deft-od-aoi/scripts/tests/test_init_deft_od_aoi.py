@@ -126,11 +126,10 @@ def test_initialize_rejects_boxless_defective_real_role(tmp_path: Path) -> None:
         MODULE.initialize(config, tmp_path / "results")
 
 
-@pytest.mark.parametrize("role", ("real", "clean"))
-def test_initialize_accepts_empty_retrieval_role_with_capability_evidence(
-        tmp_path: Path, role: str) -> None:
+def test_initialize_accepts_empty_clean_role_with_capability_evidence(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())
+    role = "clean"
     coco = Path(value["sources"][role]["coco"])
     data = json.loads(coco.read_text())
     data["images"] = []
@@ -143,6 +142,19 @@ def test_initialize_accepts_empty_retrieval_role_with_capability_evidence(
     assert state["capabilities"]["retrieval"][role] == {
         "status": "UNAVAILABLE", "reason": "empty_source_role", "source_image_count": 0}
     assert state["warnings"][0]["code"] == "empty_retrieval_source_role"
+
+
+def test_initialize_rejects_empty_real_role(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    coco = Path(value["sources"]["real"]["coco"])
+    data = json.loads(coco.read_text())
+    data["images"] = []
+    data["annotations"] = []
+    coco.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="real has no images"):
+        MODULE.initialize(config, tmp_path / "results")
 
 
 @pytest.mark.parametrize("role", ("kpi", "test"))

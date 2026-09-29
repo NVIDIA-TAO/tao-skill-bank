@@ -110,16 +110,15 @@ def test_prepares_binary_roles_and_customer_handoff(tmp_path: Path) -> None:
     assert state["roles"]["clean"]["annotation_count"] == 0
 
 
-@pytest.mark.parametrize(("input_name", "role"), (("mining", "real"), ("clean", "clean")))
-def test_empty_retrieval_role_is_typed_and_materialized(
-        tmp_path: Path, input_name: str, role: str) -> None:
+def test_empty_clean_role_is_typed_and_materialized(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path)
     value = json.loads(manifest.read_text())
-    value["inputs"][input_name] = []
+    value["inputs"]["clean"] = []
     manifest.write_text(json.dumps(value))
 
     documents, report = MODULE.prepare(manifest)
 
+    role = "clean"
     assert documents[role] == []
     assert report["roles"][role] == {"images": 0, "annotations": 0}
     assert report["capabilities"]["retrieval"][role] == {
@@ -145,6 +144,29 @@ def test_empty_retrieval_role_is_typed_and_materialized(
     assert state["roles"][role]["image_count"] == 0
     assert state["capabilities"]["retrieval"][role]["status"] == "UNAVAILABLE"
     assert any(warning["role"] == role for warning in state["warnings"])
+
+
+def test_rejects_empty_mining_role(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    value = json.loads(manifest.read_text())
+    value["inputs"]["mining"] = []
+    manifest.write_text(json.dumps(value))
+
+    with pytest.raises(ValueError, match=r"inputs\.mining must be a non-empty array"):
+        MODULE.prepare(manifest)
+
+
+def test_rejects_empty_mining_coco(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    value = json.loads(manifest.read_text())
+    coco = Path(value["inputs"]["mining"][0]["coco"])
+    document = json.loads(coco.read_text())
+    document["images"] = []
+    document["annotations"] = []
+    coco.write_text(json.dumps(document))
+
+    with pytest.raises(ValueError, match="has no images"):
+        MODULE.prepare(manifest)
 
 
 def test_rejects_internal_kpi_name_at_user_manifest_boundary(tmp_path: Path) -> None:

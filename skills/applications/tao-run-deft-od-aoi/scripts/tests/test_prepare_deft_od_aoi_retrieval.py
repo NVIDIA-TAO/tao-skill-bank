@@ -68,10 +68,10 @@ def test_candidate_cache_uses_defect_crops_and_clean_grid(tmp_path: Path) -> Non
     assert all(Path(path).is_file() for path in list(real.filepath) + list(clean.filepath))
 
 
-@pytest.mark.parametrize("empty_role", ("real", "clean"))
-def test_candidate_cache_records_empty_role_without_embedding_spec(
-        tmp_path: Path, empty_role: str) -> None:
+def test_candidate_cache_records_empty_clean_role_without_embedding_spec(
+        tmp_path: Path) -> None:
     policy = _policy(tmp_path)
+    empty_role = "clean"
     _empty_role(policy, empty_role)
 
     report = MODULE.candidates(policy, tmp_path / "candidates")
@@ -106,10 +106,9 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     assert clean_mining["desired_unique_count"] == 2
 
 
-@pytest.mark.parametrize("empty_role", ("real", "clean"))
-def test_queries_skip_empty_role_while_other_role_continues(
-        tmp_path: Path, empty_role: str) -> None:
+def test_queries_skip_empty_clean_role_while_real_continues(tmp_path: Path) -> None:
     policy = _policy(tmp_path)
+    empty_role = "clean"
     _empty_role(policy, empty_role)
     MODULE.candidates(policy, tmp_path / "candidates")
     query_image = tmp_path / "query.png"
@@ -124,7 +123,7 @@ def test_queries_skip_empty_role_while_other_role_continues(
     report = MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
                             tmp_path / "candidates", None)
 
-    continuing_role = "clean" if empty_role == "real" else "real"
+    continuing_role = "real"
     assert report["enabled_roles"] == [continuing_role]
     assert report["role_status"][empty_role]["status"] == "EXHAUSTED"
     assert {key: report["role_status"][empty_role][key] for key in
@@ -134,31 +133,6 @@ def test_queries_skip_empty_role_while_other_role_continues(
     assert not (tmp_path / f"queries/embed_{empty_role}_queries.yaml").exists()
     assert not (tmp_path / f"queries/mine_{empty_role}.yaml").exists()
     assert (tmp_path / f"queries/mine_{continuing_role}.yaml").is_file()
-
-
-def test_initially_empty_roles_converge_when_synthesis_cannot_add_data(tmp_path: Path) -> None:
-    policy = _policy(tmp_path)
-    for role in ("real", "clean"):
-        _empty_role(policy, role)
-    MODULE.candidates(policy, tmp_path / "candidates")
-    query_image = tmp_path / "query.png"
-    _image(query_image)
-    strict = tmp_path / "strict.parquet"
-    loose = tmp_path / "loose.parquet"
-    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
-                   "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
-    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
-                   "bbox": [4, 4, 20, 20], "best_iou": 0.01}]).to_parquet(loose)
-
-    report = MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
-                            tmp_path / "candidates", None)
-
-    assert report["enabled_roles"] == []
-    assert report["converged"] is True and report["synthesis_pending"] is False
-    assert all(evidence["status"] == "EXHAUSTED"
-               for evidence in report["role_status"].values())
-    assert not list((tmp_path / "queries").glob("embed_*_queries.yaml"))
-    assert not list((tmp_path / "queries").glob("mine_*.yaml"))
 
 
 def test_exhausted_role_is_skipped_while_other_role_continues(tmp_path: Path) -> None:
