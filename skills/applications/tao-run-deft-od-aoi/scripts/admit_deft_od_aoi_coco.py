@@ -437,6 +437,10 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                   selection_report.get("admission_counters")
                   if strategy == "round_robin_similarity" else None
               ),
+              "admission_index": (
+                  str(output / "admission_index.npy")
+                  if strategy == "round_robin_similarity" else None
+              ),
               "retained_previous_images": len(previous.get("images", [])),
               "admitted": {"real": len(additions.get("real", [])),
                            "clean": len(additions.get("clean", [])),

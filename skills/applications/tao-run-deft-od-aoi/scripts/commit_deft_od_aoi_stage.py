@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 
@@ -64,6 +65,12 @@ def _nonzero_counts(value: Any) -> dict[str, int]:
     return result
 
 
+def _validate_admission_index(artifact: dict[str, Any]) -> None:
+    index = np.load(artifact["path"], mmap_mode="r")
+    if index.ndim != 2 or index.shape[1] != 292:
+        raise ValueError(f"invalid round-robin admission index shape {index.shape}")
+
+
 def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     manifest = _read_json(artifacts, "query_manifest")
     if manifest.get("status") != "COMPLETE" or int(manifest.get("iteration", -1)) != iteration:
@@ -85,6 +92,12 @@ def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
         selected_counts = report.get("selected_counts")
         if not isinstance(selected_counts, dict):
             raise ValueError("round-robin selection report has no selected counts")
+        if "admission_index" not in artifacts:
+            raise ValueError("round-robin retrieval requires artifact admission_index")
+        _validate_admission_index(artifacts["admission_index"])
+        if Path(str(report.get("admission_index"))).resolve() != Path(
+                artifacts["admission_index"]["path"]).resolve():
+            raise ValueError("round-robin selection report has a mismatched admission index")
     for role, count in counts.items():
         evidence = role_status.get(role) or {}
         if int(evidence.get("query_count", -1)) != count:
@@ -124,6 +137,13 @@ def _validate_admission(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
     report = _read_json(artifacts, "admission_report")
     if report.get("status") != "COMPLETE" or int(report.get("iteration", -1)) != iteration:
         raise ValueError("admission report is incomplete or for another iteration")
+    if report.get("selection_strategy") == "round_robin_similarity":
+        if "admission_index" not in artifacts:
+            raise ValueError("round-robin admission requires artifact admission_index")
+        _validate_admission_index(artifacts["admission_index"])
+        if Path(str(report.get("admission_index"))).resolve() != Path(
+                artifacts["admission_index"]["path"]).resolve():
+            raise ValueError("round-robin admission report has a mismatched admission index")
 
 
 def _validate_synthesis(iteration: int,
