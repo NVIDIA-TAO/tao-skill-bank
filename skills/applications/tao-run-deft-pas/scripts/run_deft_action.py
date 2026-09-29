@@ -330,7 +330,7 @@ def _request(
         "spec_bundle": bundle,
         "mounts": _mounts(context),
         "environment": {
-            "HOME": "/tmp",
+            "HOME": "/tmp",  # nosec B108 - container HOME inside ephemeral job sandbox
             "PYTHONPATH": "/patches",
             "HF_HOME": "/cache/huggingface",
             "XDG_CACHE_HOME": "/cache",

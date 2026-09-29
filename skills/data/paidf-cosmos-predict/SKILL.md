@@ -5,16 +5,17 @@ description: >-
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit, a reachable OpenAI-compatible VLM captioning endpoint, and access to the PAIDF augmentation image.
 metadata:
+  tags:
+  - paidf
+  - cosmos-predict
+  - video
+  - vlm-captioning
+  - deft
+  - data-generation
   author: NVIDIA Corporation
   version: "0.1.0"
 allowed-tools: Read Bash Write
-tags:
-- paidf
-- cosmos-predict
-- video
-- vlm-captioning
-- deft
-- data-generation
+
 ---
 
 # PAIDF Cosmos Predict Generation

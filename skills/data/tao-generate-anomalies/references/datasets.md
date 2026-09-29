@@ -107,7 +107,7 @@ and can be fetched in the same script invocation.
 
 Roboflow does not support unauthenticated programmatic download.
 
-Follow the instructions in [`datasets/UC3_dataset_download_instructions.pdf`](UC3_dataset_download_instructions.pdf) to download the zip from
+Follow the instructions in `datasets/UC3_dataset_download_instructions.pdf` (ships with the dataset) to download the zip from
 `https://universe.roboflow.com/vu-thi-thu-huyen/mobile-screen`.
 
 ### Step 2 — Run the preparation script

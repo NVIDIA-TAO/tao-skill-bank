@@ -3,6 +3,9 @@ name: tao-generate-anomalies
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit and a CUDA GPU. Pulls the `metropolis_sdg.paidf_anomalygen` image declared in `versions.yaml` at the skill bank root.
 metadata:
+  tags:
+  - tao
+  - data
   author: NVIDIA Corporation
   version: "1.0.1"
 allowed-tools: Read Bash
@@ -15,9 +18,7 @@ description: >-
   AnomalyGen", "generate anomaly images", "run PAIDF SDG", "evaluate SDG output
   quality", "run per-sample search", or run any part of the AnomalyGen pipeline,
   even if they only mention one phase.
-tags:
-- tao
-- data
+
 ---
 
 # TAO Generate Anomalies

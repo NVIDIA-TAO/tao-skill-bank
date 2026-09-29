@@ -649,13 +649,13 @@ def normalize_clip_pretrained_checkpoint(
     import torch
 
     try:
-        checkpoint = torch.load(
+        checkpoint = torch.load(  # nosec B614 - local checkpoint produced by this pipeline
             source_path,
             map_location="cpu",
             weights_only=False,
         )
     except TypeError:
-        checkpoint = torch.load(source_path, map_location="cpu")
+        checkpoint = torch.load(source_path, map_location="cpu")  # nosec B614 - local checkpoint produced by this pipeline
     if isinstance(checkpoint, dict) and isinstance(checkpoint.get("state_dict"), dict):
         state_dict = checkpoint["state_dict"]
     elif isinstance(checkpoint, dict):

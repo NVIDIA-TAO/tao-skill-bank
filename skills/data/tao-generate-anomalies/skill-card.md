@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need to fine-tune NVIDIA Cosmos-based models on anomaly datasets and generate synthetic defect images for industrial inspection use cases. <br>
+Developers and engineers who need to fine-tune generative models on custom anomaly datasets, produce synthetic anomaly images at scale, and evaluate output quality for visual inspection and manufacturing defect-detection workflows. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -27,21 +27,21 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [TAO Skill Bank Repository](https://github.com/NVIDIA-TAO/tao-skill-bank) <br>
 - [Agent Skills Open Standard](https://agentskills.io) <br>
-- [references/finetune.md](references/finetune.md) <br>
-- [references/inference.md](references/inference.md) <br>
-- [references/setup.md](references/setup.md) <br>
-- [references/datasets.md](references/datasets.md) <br>
-- [references/docker.md](references/docker.md) <br>
-- [references/eval.md](references/eval.md) <br>
-- [references/output-layout.md](references/output-layout.md) <br>
-- [references/error-handling.md](references/error-handling.md) <br>
+- [Setup (HF_TOKEN, checkpoints, prerequisites)](references/setup.md) <br>
+- [Fine-tuning guide](references/finetune.md) <br>
+- [Inference guide (Phases 2–7)](references/inference.md) <br>
+- [Docker launch and permissions](references/docker.md) <br>
+- [Datasets](references/datasets.md) <br>
+- [Output layout and verification checklist](references/output-layout.md) <br>
+- [Error handling](references/error-handling.md) <br>
+- [Evaluation scoring reference](references/eval.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Configuration instructions] <br>
+**Output Type(s):** [Shell commands, Files, Analysis] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
-**Other Properties Related to Output:** [None] <br>
+**Other Properties Related to Output:** [Generates synthetic anomaly images, per-sample CSVs, evaluation logs, and search-summary reports under results/<name>/] <br>
 
 ## Evaluation Agents Used: <br>
 - Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) <br>
@@ -50,36 +50,36 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-1 evaluation task (1 positive) across 3 attempts per task in isolated sandbox pods. Dataset digest: sha256:f16074998b03223a85c3a4a806ad96050ff9fba4c9d9125dd3ab7b9e54d2c850. <br>
+Evaluated against 1 task (1 positive) in an isolated k8s-sandbox environment with 3 attempts per task. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
 - Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Checks final-answer correctness against the reference answer. <br>
-- Discoverability: Checks whether the expected skill was selected and the workflow executed. <br>
-- Effectiveness: Checks goal completion (50%) and expected workflow behavior adherence (50%). <br>
-- Efficiency: Checks tool-call productivity (50%) and token efficiency (50%). <br>
+- Correctness: Final-answer correctness against the reference answer. <br>
+- Discoverability: Whether the expected skill was selected and decoys were avoided. <br>
+- Effectiveness: Equal-weight mean of goal completion (goal_accuracy) and expected workflow adherence (behavior_check). <br>
+- Efficiency: 50% tool-call productivity and 50% token efficiency. <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Verifies no unsafe operations, secret leakage, or unauthorized access. <br>
-- `accuracy`: Verifies final-answer correctness against the reference answer. <br>
-- `skill_execution`: Verifies the expected skill was selected and decoys were avoided. <br>
-- `goal_accuracy`: Verifies whether the user's goal was achieved. <br>
-- `behavior_check`: Verifies whether the expected workflow behavior was followed. <br>
-- `skill_efficiency`: Verifies tool-call productivity. <br>
-- `token_efficiency`: Verifies actual uncached prompt plus completion usage. <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `accuracy`: Final-answer correctness against the reference answer. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys avoided, and the workflow executed. <br>
+- `goal_accuracy`: Whether the user's goal was achieved. <br>
+- `behavior_check`: Whether the expected workflow behavior was followed. <br>
+- `skill_efficiency`: Tool-call productivity (routing scored under Discoverability). <br>
+- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 94.1% | 79.7% |
-| Security | 100.0% → 100.0% (±0.0 pts) | 100.0% → 100.0% (±0.0 pts) |
-| Correctness | 0.0% → 100.0% (+100.0 pts) | 20.0% → 100.0% (+80.0 pts) |
+| Overall | 99.1% | 79.7% |
+| Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
+| Correctness | 0.0% → 100.0% (+100.0 points) | 60.0% → 100.0% (+40.0 points) |
 | Discoverability | 100.0% | 0.0% |
-| Effectiveness | 16.7% → 100.0% (+83.3 pts) | 32.5% → 100.0% (+67.5 pts) |
-| Efficiency | 70.6% | 99.7% → 98.4% (-1.3 pts) |
+| Effectiveness | 16.7% → 100.0% (+83.3 points) | 48.3% → 100.0% (+51.7 points) |
+| Efficiency | 95.6% | 99.7% → 98.4% (-1.3 points) |
 
 ## Skill Version(s): <br>
 1.0.1 (source: frontmatter) <br>
