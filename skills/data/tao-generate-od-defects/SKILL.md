@@ -48,25 +48,32 @@ scripts/generate_od_defects.py \
   --checkpoint-root /workspace/paidf-anomalygen/checkpoints \
   --output-dir /temporary/generation \
   --published-root /persistent/generation \
+  --no-guardrail \
   --num-gpus 1
 ```
 
 When execution uses temporary storage, `--published-root` records the
 persistent locations that will contain the saved results.
 
-The action deliberately exposes no switch that disables the image's default
-guardrail path. The checkpoint root is mounted over the image's canonical
-`/workspace/paidf-anomalygen/checkpoints` tree and validated before GPU work
-for the pinned tokenizer, guardrail, and DINOv2 assets. The selected platform
-must honor the declared `checkpoint_root.container_path`; the generation leaf
-rejects a different mount point. Generation is forced offline after that
-validation. The base-checkpoint argument remains separate:
-it is the parent containing `checkpoint.json` and the `model/` checkpoint
-directory.
+Guardrails are enabled by default. The wrapper passes its explicit
+`--guardrail` or `--no-guardrail` selection through to the native generator.
+`--no-guardrail` disables text screening, image content-safety screening, and
+face blurring together. The checkpoint root is mounted over the image's
+canonical `/workspace/paidf-anomalygen/checkpoints` tree and validated before
+GPU work. The Nano tokenizer, Edge processor, and DINOv2 assets are always
+required; guardrail-enabled runs additionally require the Qwen3Guard and Cosmos
+Guardrail repositories. Generation is forced offline after validation. The
+selected platform must honor the declared `checkpoint_root.container_path`;
+the generation leaf rejects a different mount point. The base-checkpoint
+argument remains separate: it is the parent containing
+`checkpoint.json` and the `model/` checkpoint directory.
 
 ## Completion
 
 For each dataset, `generated + guardrail_blocked` must equal requested rows.
+With `--no-guardrail`, `generated` must equal requested rows and
+`guardrail_blocked` remains zero. The validation summary records the selected
+guardrail mode.
 The pseudo-label count must match generated images, each image needs an
 annotation, categories must be declared anomaly types, and every COCO bbox must
 be positive and inside its image. The action emits:

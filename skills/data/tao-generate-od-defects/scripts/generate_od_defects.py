@@ -21,12 +21,15 @@ import yaml
 
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-OFFLINE_HF_REPOS = (
+CORE_OFFLINE_HF_REPOS = (
     "Qwen/Qwen3-VL-8B-Instruct",
-    "Qwen/Qwen3Guard-Gen-0.6B",
-    "nvidia/Cosmos-Guardrail1",
     "nvidia/Cosmos3-Edge",
 )
+GUARDRAIL_OFFLINE_HF_REPOS = (
+    "Qwen/Qwen3Guard-Gen-0.6B",
+    "nvidia/Cosmos-Guardrail1",
+)
+OFFLINE_HF_REPOS = CORE_OFFLINE_HF_REPOS + GUARDRAIL_OFFLINE_HF_REPOS
 
 
 def _json(path: Path, value: Any) -> None:
@@ -50,10 +53,13 @@ def _hf_hub(root: Path) -> Path:
     return root / "hub" if (root / "hub").is_dir() else root
 
 
-def _validate_offline_hf_cache(root: Path) -> None:
+def _validate_offline_hf_cache(root: Path, *, guardrail_enabled: bool = True) -> None:
     hub = _hf_hub(root)
     missing = []
-    for repo in OFFLINE_HF_REPOS:
+    repositories = CORE_OFFLINE_HF_REPOS + (
+        GUARDRAIL_OFFLINE_HF_REPOS if guardrail_enabled else ()
+    )
+    for repo in repositories:
         directory = hub / f"models--{repo.replace('/', '--')}"
         if not (directory / "blobs").is_dir() or not (directory / "snapshots").is_dir():
             missing.append(repo)
@@ -63,7 +69,9 @@ def _validate_offline_hf_cache(root: Path) -> None:
         )
 
 
-def _validate_checkpoint_root(root: Path, repo: Path) -> Path:
+def _validate_checkpoint_root(
+    root: Path, repo: Path, *, guardrail_enabled: bool = True
+) -> Path:
     resolved = root.expanduser().resolve()
     image_root = (repo / "checkpoints").resolve()
     if resolved != image_root:
@@ -71,7 +79,7 @@ def _validate_checkpoint_root(root: Path, repo: Path) -> Path:
             f"checkpoint root must be mounted at {repo}/checkpoints: {resolved}"
         )
     hf_home = resolved / "hf"
-    _validate_offline_hf_cache(hf_home)
+    _validate_offline_hf_cache(hf_home, guardrail_enabled=guardrail_enabled)
     dinov2 = resolved / "facebook" / "dinov2-large"
     if not (dinov2 / "config.json").is_file():
         raise FileNotFoundError(f"checkpoint root lacks DINOv2 config: {dinov2}")
@@ -184,7 +192,8 @@ def _run_group(group: dict[str, Any], output: Path, args: argparse.Namespace) ->
                str(args.repo / "anomalygen/scripts/texture/generate.py"),
                "--checkpoint", group["checkpoint"], "--recipe", group["recipe"],
                "--base_checkpoint", str(args.base_checkpoint),
-               "--input_data_path", group["testcase"], "--output_dir", str(raw)]
+               "--input_data_path", group["testcase"], "--output_dir", str(raw),
+               "--guardrail" if args.guardrail else "--no-guardrail"]
     subprocess.run(command, check=True, stdout=sys.stderr)
     subprocess.run([sys.executable, str(args.repo / "anomalygen/scripts/texture/pseudo_label.py"),
                     "--gen_root", str(raw), "--output_dir", str(labels), "--no_caption"],
@@ -200,7 +209,7 @@ def _run_group(group: dict[str, Any], output: Path, args: argparse.Namespace) ->
             "image_root": raw / "reconstructed_image"}
 
 
-def _merge(results: list[dict[str, Any]], output: Path) -> dict[str, Any]:
+def _merge(results: list[dict[str, Any]], output: Path, *, guardrail_enabled: bool) -> dict[str, Any]:
     images, annotations, category_ids, status = [], [], {}, []
     next_image = next_annotation = 1
     for result in results:
@@ -248,7 +257,8 @@ def _merge(results: list[dict[str, Any]], output: Path) -> dict[str, Any]:
     _json(labels / "coco_annotations.json", native)
     _json(labels / "coco_annotations_od_defect.json", binary)
     report = {"status": "COMPLETE", "groups": status, "generated": len(images),
-              "annotations": len(annotations), "training_pool_mutated": False}
+              "annotations": len(annotations), "guardrail_enabled": guardrail_enabled,
+              "training_pool_mutated": False}
     _json(output / "validation_summary.json", report)
     return report
 
@@ -277,6 +287,10 @@ def main() -> int:
     parser.add_argument("--published-root", type=Path)
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--checkpoint-root", type=Path, required=True)
+    parser.add_argument(
+        "--guardrail", action=argparse.BooleanOptionalAction, default=True,
+        help="enable the native text and image guardrail path (default: enabled)",
+    )
     parser.add_argument("--repo", type=Path, default=Path("/workspace/paidf-anomalygen"))
     args = parser.parse_args()
     if args.output_dir.exists() or args.num_gpus < 1:
@@ -284,14 +298,17 @@ def main() -> int:
     _validate_base_checkpoint(args.base_checkpoint)
     if not args.repo.is_dir():
         raise FileNotFoundError(args.repo)
-    hf_home = _validate_checkpoint_root(args.checkpoint_root, args.repo)
+    hf_home = _validate_checkpoint_root(
+        args.checkpoint_root, args.repo, guardrail_enabled=args.guardrail
+    )
     os.environ.update(HF_HOME=str(hf_home), HF_HUB_CACHE=str(_hf_hub(hf_home)),
                       HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
     selected = groups(args)
     args.output_dir.mkdir(parents=True)
     try:
         report = _merge([_run_group(group, args.output_dir / group["dataset_id"], args)
-                         for group in selected], args.output_dir)
+                         for group in selected], args.output_dir,
+                        guardrail_enabled=args.guardrail)
         _publish_paths(args.output_dir, args.published_root or args.output_dir)
         _json(args.output_dir / "status.json", {"status": "COMPLETE"})
     except Exception as exc:

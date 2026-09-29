@@ -59,8 +59,10 @@ def test_contract_rejects_type_absent_from_recipe(tmp_path: Path) -> None:
         MODULE.groups(args)
 
 
+@pytest.mark.parametrize("guardrail_enabled", [True, False])
 def test_native_logs_are_kept_off_machine_readable_stdout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    guardrail_enabled: bool,
 ) -> None:
     calls = []
 
@@ -80,10 +82,14 @@ def test_native_logs_are_kept_off_machine_readable_stdout(
         "testcase": "testcase.jsonl", "anomaly_types": ["texture+defect"],
         "requested_rows": 0,
     }
-    args = argparse.Namespace(repo=tmp_path, num_gpus=1, base_checkpoint=tmp_path)
+    args = argparse.Namespace(repo=tmp_path, num_gpus=1, base_checkpoint=tmp_path,
+                              guardrail=guardrail_enabled)
     result = MODULE._run_group(group, tmp_path / "out", args)
 
     assert len(calls) == 2
+    expected = "--guardrail" if guardrail_enabled else "--no-guardrail"
+    assert expected in calls[0]
+    assert "--guardrail" not in calls[1] and "--no-guardrail" not in calls[1]
     assert result["generated"] == result["blocked"] == 0
 
 
@@ -100,14 +106,29 @@ def test_generation_metadata_uses_persistent_output_paths(tmp_path: Path) -> Non
 
 
 def test_offline_cache_requires_all_pinned_repositories(tmp_path: Path) -> None:
-    for repo in MODULE.OFFLINE_HF_REPOS:
+    assert set(MODULE.CORE_OFFLINE_HF_REPOS) == {
+        "Qwen/Qwen3-VL-8B-Instruct",
+        "nvidia/Cosmos3-Edge",
+    }
+    assert set(MODULE.GUARDRAIL_OFFLINE_HF_REPOS) == {
+        "Qwen/Qwen3Guard-Gen-0.6B",
+        "nvidia/Cosmos-Guardrail1",
+    }
+    for repo in MODULE.CORE_OFFLINE_HF_REPOS:
         directory = tmp_path / "hub" / f"models--{repo.replace('/', '--')}"
         (directory / "blobs").mkdir(parents=True)
         (directory / "snapshots").mkdir()
-    MODULE._validate_offline_hf_cache(tmp_path)
+    MODULE._validate_offline_hf_cache(tmp_path, guardrail_enabled=False)
+    with pytest.raises(FileNotFoundError, match="Qwen3Guard-Gen-0.6B"):
+        MODULE._validate_offline_hf_cache(tmp_path, guardrail_enabled=True)
+    for repo in MODULE.GUARDRAIL_OFFLINE_HF_REPOS:
+        directory = tmp_path / "hub" / f"models--{repo.replace('/', '--')}"
+        (directory / "blobs").mkdir(parents=True)
+        (directory / "snapshots").mkdir()
+    MODULE._validate_offline_hf_cache(tmp_path, guardrail_enabled=True)
     (tmp_path / "hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots").rmdir()
     with pytest.raises(FileNotFoundError, match="Qwen3-VL-8B-Instruct"):
-        MODULE._validate_offline_hf_cache(tmp_path)
+        MODULE._validate_offline_hf_cache(tmp_path, guardrail_enabled=False)
 
 
 def test_checkpoint_root_requires_canonical_mount_and_dinov2(tmp_path: Path) -> None:
@@ -157,8 +178,9 @@ def test_merge_validates_boxes_and_writes_binary_projection(tmp_path: Path) -> N
                        "annotations": [{"id": 9, "image_id": 7, "category_id": 4,
                                         "bbox": [1, 2, 5, 6], "area": 30}],
                        "categories": [{"id": 4, "name": "texture+defect"}]}}
-    report = MODULE._merge([result], tmp_path / "out")
+    report = MODULE._merge([result], tmp_path / "out", guardrail_enabled=True)
     assert report["status"] == "COMPLETE" and report["training_pool_mutated"] is False
+    assert report["guardrail_enabled"] is True
     binary = json.loads((tmp_path / "out/pseudo_labels/coco_annotations_od_defect.json").read_text())
     assert binary["categories"] == [{"id": 1, "name": "defect"}]
     assert binary["annotations"][0]["category_id"] == 1
