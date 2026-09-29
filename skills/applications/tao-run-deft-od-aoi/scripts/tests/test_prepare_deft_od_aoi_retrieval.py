@@ -114,3 +114,4 @@ def test_tiny_gap_crops_are_embedding_safe_at_boundaries(tmp_path: Path) -> None
     crops = list((tmp_path / "queries/crops").rglob("*.png"))
     assert len(crops) == 2
     assert all(Image.open(path).size == (8, 8) for path in crops)
+    assert all(Image.open(path).getextrema() == ((80, 80),) * 3 for path in crops)

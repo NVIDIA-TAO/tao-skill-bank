@@ -13,7 +13,7 @@ from typing import Any
 
 import pandas as pd
 import yaml
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageStat
 
 
 MIN_EMBEDDING_EDGE = 8
@@ -89,7 +89,8 @@ def _crop(source: Path, box: tuple[int, int, int, int], output: Path) -> None:
         crop_box, padding = _minimum_crop_geometry(box, image.width, image.height)
         crop = image.convert("RGB").crop(crop_box)
         if any(padding):
-            crop = ImageOps.expand(crop, border=padding, fill=0)
+            mean = tuple(int(round(value)) for value in ImageStat.Stat(crop).mean[:3])
+            crop = ImageOps.expand(crop, border=padding, fill=mean)
         crop.save(output, format="PNG")
 
 
