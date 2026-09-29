@@ -46,21 +46,29 @@ scripts/generate_od_defects.py \
   --base-checkpoint /models/Cosmos3-Nano \
   --output-dir /temporary/generation \
   --published-root /persistent/generation \
+  --no-guardrail \
   --num-gpus 1
 ```
 
 When execution uses temporary storage, `--published-root` records the
 persistent locations that will contain the saved results.
 
-The action deliberately exposes no switch that disables the image's default
-guardrail path. An optional Hugging Face cache can provide the tokenizer and
-guardrail assets for offline execution. Offline mode validates the required
-pinned repositories before generation starts. The base-checkpoint argument is
-the parent containing `checkpoint.json` and the `model/` checkpoint directory.
+Guardrails are enabled by default. The wrapper passes its explicit
+`--guardrail` or `--no-guardrail` selection through to the native generator.
+`--no-guardrail` disables text screening, image content-safety screening, and
+face blurring together. An optional Hugging Face cache can provide the Nano
+tokenizer and Edge processor assets for offline execution. When guardrails are
+enabled, offline validation additionally requires the Qwen3Guard and Cosmos
+Guardrail repositories; those two repositories are not required with
+`--no-guardrail`. The base-checkpoint argument is the parent containing
+`checkpoint.json` and the `model/` checkpoint directory.
 
 ## Completion
 
 For each dataset, `generated + guardrail_blocked` must equal requested rows.
+With `--no-guardrail`, `generated` must equal requested rows and
+`guardrail_blocked` remains zero. The validation summary records the selected
+guardrail mode.
 The pseudo-label count must match generated images, each image needs an
 annotation, categories must be declared anomaly types, and every COCO bbox must
 be positive and inside its image. The action emits:

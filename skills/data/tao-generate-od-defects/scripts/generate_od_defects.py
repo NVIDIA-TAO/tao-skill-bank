@@ -21,11 +21,13 @@ import yaml
 
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-OFFLINE_HF_REPOS = (
+CORE_OFFLINE_HF_REPOS = (
     "Qwen/Qwen3-VL-8B-Instruct",
+    "nvidia/Cosmos3-Edge",
+)
+GUARDRAIL_OFFLINE_HF_REPOS = (
     "Qwen/Qwen3Guard-Gen-0.6B",
     "nvidia/Cosmos-Guardrail1",
-    "nvidia/Cosmos3-Edge",
 )
 
 
@@ -46,10 +48,11 @@ def _rows(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
-def _validate_offline_hf_cache(root: Path) -> None:
+def _validate_offline_hf_cache(root: Path, *, guardrail_enabled: bool) -> None:
     hub = root / "hub" if (root / "hub").is_dir() else root
     missing = []
-    for repo in OFFLINE_HF_REPOS:
+    repositories = CORE_OFFLINE_HF_REPOS + (GUARDRAIL_OFFLINE_HF_REPOS if guardrail_enabled else ())
+    for repo in repositories:
         directory = hub / f"models--{repo.replace('/', '--')}"
         if not (directory / "blobs").is_dir() or not (directory / "snapshots").is_dir():
             missing.append(repo)
@@ -162,7 +165,8 @@ def _run_group(group: dict[str, Any], output: Path, args: argparse.Namespace) ->
                str(args.repo / "anomalygen/scripts/texture/generate.py"),
                "--checkpoint", group["checkpoint"], "--recipe", group["recipe"],
                "--base_checkpoint", str(args.base_checkpoint),
-               "--input_data_path", group["testcase"], "--output_dir", str(raw)]
+               "--input_data_path", group["testcase"], "--output_dir", str(raw),
+               "--guardrail" if args.guardrail else "--no-guardrail"]
     subprocess.run(command, check=True, stdout=sys.stderr)
     subprocess.run([sys.executable, str(args.repo / "anomalygen/scripts/texture/pseudo_label.py"),
                     "--gen_root", str(raw), "--output_dir", str(labels), "--no_caption"],
@@ -178,7 +182,7 @@ def _run_group(group: dict[str, Any], output: Path, args: argparse.Namespace) ->
             "image_root": raw / "reconstructed_image"}
 
 
-def _merge(results: list[dict[str, Any]], output: Path) -> dict[str, Any]:
+def _merge(results: list[dict[str, Any]], output: Path, *, guardrail_enabled: bool) -> dict[str, Any]:
     images, annotations, category_ids, status = [], [], {}, []
     next_image = next_annotation = 1
     for result in results:
@@ -226,7 +230,8 @@ def _merge(results: list[dict[str, Any]], output: Path) -> dict[str, Any]:
     _json(labels / "coco_annotations.json", native)
     _json(labels / "coco_annotations_od_defect.json", binary)
     report = {"status": "COMPLETE", "groups": status, "generated": len(images),
-              "annotations": len(annotations), "training_pool_mutated": False}
+              "annotations": len(annotations), "guardrail_enabled": guardrail_enabled,
+              "training_pool_mutated": False}
     _json(output / "validation_summary.json", report)
     return report
 
@@ -254,6 +259,10 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--published-root", type=Path)
     parser.add_argument("--num-gpus", type=int, default=1)
+    parser.add_argument(
+        "--guardrail", action=argparse.BooleanOptionalAction, default=True,
+        help="enable the native text and image guardrail path (default: enabled)",
+    )
     parser.add_argument("--hf-cache", type=Path)
     parser.add_argument("--repo", type=Path, default=Path("/workspace/paidf-anomalygen"))
     args = parser.parse_args()
@@ -267,13 +276,14 @@ def main() -> int:
         if not args.hf_cache.is_dir():
             raise FileNotFoundError(args.hf_cache)
         if os.environ.get("HF_HUB_OFFLINE", "").lower() in {"1", "true", "yes"}:
-            _validate_offline_hf_cache(args.hf_cache)
+            _validate_offline_hf_cache(args.hf_cache, guardrail_enabled=args.guardrail)
         env["HF_HOME"] = str(args.hf_cache.resolve())
     selected = groups(args)
     args.output_dir.mkdir(parents=True)
     try:
         report = _merge([_run_group(group, args.output_dir / group["dataset_id"], args)
-                         for group in selected], args.output_dir)
+                         for group in selected], args.output_dir,
+                        guardrail_enabled=args.guardrail)
         _publish_paths(args.output_dir, args.published_root or args.output_dir)
         _json(args.output_dir / "status.json", {"status": "COMPLETE"})
     except Exception as exc:
