@@ -34,6 +34,32 @@ This model is AutoML-enabled at the model layer. Before handling any train-stage
 
 The packaged CLIP train schema enables `train.optim.vision_lr` and `train.optim.text_lr` as default AutoML search parameters. For smoke tests, keep the search small by using the Bayesian algorithm with two recommendations and narrow LR ranges.
 
+### PAS fine-tuning method integration
+
+For every new PAS DEFT run, ask one mutually exclusive question
+when the user has not already chosen a method:
+
+```text
+Fine-tuning method: LoRA (default) or full-parameter SFT?
+```
+
+This LoRA-default contract is scoped to PAS. Standalone CLIP training keeps
+its packaged SFT image and template behavior; it does not default to LoRA.
+Do not transfer PAS image capabilities or this selection table to standalone
+CLIP.
+
+| PAS method | Enable | Disable | PAS image support |
+|---|---|---|---|
+| full-parameter SFT | set both encoder freeze flags to `false` and `peft.enabled: false` | select LoRA | supported |
+| LoRA (default selection) | set `peft.enabled: true`, `peft.method: lora`, and nested `vision`/`text` adapter blocks | set `peft.enabled: false` and use SFT settings | supported for SigLIP2; use targets `q_proj`, `k_proj`, `v_proj`, `out_proj` |
+
+An image capability probe is a launch-gated `docker run`, so include it in the
+approval summary before executing it. Documentation, an image tag, or an
+unrecognized Hydra override is not proof of LoRA support. If the probe does
+not expose a complete adapter contract (enable flag/config, target modules,
+rank, alpha, dropout, checkpoint behavior), report LoRA as unsupported for
+that image and stop before materializing a run.
+
 Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows stay in this model skill. The per-run `automl_policy` override does not change model metadata.
 
 ## Instructions
