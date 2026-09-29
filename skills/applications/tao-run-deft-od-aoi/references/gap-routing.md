@@ -71,8 +71,11 @@ exact candidate filepaths in `exclude_<role>_candidates.parquet`, duplicate
 parents, and candidates below `minimum_similarity` are excluded.
 Each pocket reranks with admitted parents excluded through the frozen
 `round_robin_refill_overfetch` depths, screens invalid boxes and visual
-duplicates against the cumulative admission index, and fails rather than
-publishing a positive-quota shortfall. Query rounds use the stable gap-derived
+duplicates against the cumulative admission index, admits every available
+novel parent, and records any positive-quota shortfall without failing the
+iteration. The following retrieval round then reports a fully consumed role as
+`EXHAUSTED`; if every producer is exhausted, the loop converges normally.
+Query rounds use the stable gap-derived
 `routing_order_key`, not transient hashed query identifiers.
 Each near-miss pocket requests `near_miss_real_factor` candidates per query,
 bounded by the single canonical `near_miss_real_cap_per_pocket` setting.
