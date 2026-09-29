@@ -76,11 +76,14 @@ For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and Tens
 - **Formats:** custom image/caption folders or WebDataset shards
 - **Monitoring metric:** val/t2i_mAP
 
-The train action emits `val/t2i_mAP`, which is the AutoML selection objective.
-The standalone evaluate action reports the corresponding held-out metric as
-`test/t2i_mAP`; use that name for checkpoint evaluation and compare its value
-with the selected training validation metric rather than expecting a `val/`
-key from the evaluate action.
+Ordinary retrieval training logs `val/t2i_mAP`. With
+`dataset.val.metadata_match_eval: true`, it logs
+`val/pas/{easy,medium,hard,overall}_{mAP,rank1,rank5}` instead.
+
+For a like-for-like PAS evaluation, set
+`evaluate.pas_ground_truth_mode: scalar_attributes` and read
+`nvidia_pas_metadata_metrics_weighted_aggregate.csv`. PAS evaluation writes
+CSVs; it does not emit a `test/t2i_mAP` scalar.
 
 ### Supported Models
 
