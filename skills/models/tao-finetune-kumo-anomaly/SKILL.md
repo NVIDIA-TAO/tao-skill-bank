@@ -1,13 +1,13 @@
 ---
-name: tao-finetune-nv-tesseract-ad-diffusion
+name: tao-finetune-kumo-anomaly
 description: >-
-  NV-Tesseract AD Diffusion — diffusion-based anomaly detection and fine-tuning
-  for multivariate time series. Use when the user asks to "fine-tune NV-Tesseract",
-  "run AD diffusion inference", "detect anomalies with diffusion", "time series
-  anomaly detection", "finetune ad-diffusion", "use perform_anomaly_analysis_with_diffusion",
-  "automl ad-diffusion", "hyperparameter search ad-diffusion", "hyperparameter optimization"
+  Kumo-Anomaly — diffusion-based anomaly detection and fine-tuning
+  for multivariate time series. Use when the user asks to "fine-tune Kumo-Anomaly",
+  "run Kumo-Anomaly inference", "detect anomalies with diffusion", "time series
+  anomaly detection", "finetune Kumo-Anomaly", "use perform_anomaly_analysis_with_diffusion",
+  "automl Kumo-Anomaly", "hyperparameter search Kumo-Anomaly", "hyperparameter optimization"
   or mentions "curriculum_medium.yaml", "final_model.pth",
-  "nv-tesseract-ad-diffusion", "ad_diffusion", or "TSDiffuser_Generic".
+  "kumo-anomaly", "sdk/anomaly_analysis", or "TSDiffuser_Generic".
 license: Apache-2.0
 compatibility: Requires Python 3.12+ and uv. CUDA GPU recommended; CPU-only supported.
 metadata:
@@ -21,23 +21,23 @@ tags:
   - finetune
   - inference
   - automl
-  - nv-tesseract
+  - kumo-anomaly
 ---
 
-# NV-Tesseract AD Diffusion
+# Kumo-Anomaly
 
 Diffusion-based anomaly detection and fine-tuning for multivariate time series. The model
 reconstructs randomly masked segments and scores each timestep by MAE between reconstruction
 and original signal; adaptive thresholding (SCS or MACS) converts scores to binary labels.
 
-**Source code:** https://github.com/NVIDIA/NV-Tesseract
-**Pretrained weights:** https://huggingface.co/nvidia/nv-tesseract-ad-diffusion
+**Source code:** https://github.com/NVIDIA/Kumo-TS
+**Pretrained weights:** https://huggingface.co/nvidia/Kumo-Anomaly
 
 > **For the most up-to-date usage information**, refer to the README files in
-> the NV-Tesseract repository:
+> the Kumo-TS repository:
 >
-> - **[`ad_diffusion/README.md`](https://github.com/NVIDIA/NV-Tesseract/blob/main/ad_diffusion/README.md)** — full SDK reference, model architecture, and API docs
-> - **[`ad_diffusion/examples/datasets/README.md`](https://github.com/NVIDIA/NV-Tesseract/blob/main/ad_diffusion/examples/datasets/README.md)** — dataset format, synthetic data generation, and CSV conventions
+> - **[`Kumo-Anomaly/README.md`](https://github.com/NVIDIA/Kumo-TS/blob/main/Kumo-Anomaly/README.md)** — full SDK reference, model architecture, and API docs
+> - **[`Kumo-Anomaly/examples/datasets/README.md`](https://github.com/NVIDIA/Kumo-TS/blob/main/Kumo-Anomaly/examples/datasets/README.md)** — dataset format, synthetic data generation, and CSV conventions
 
 ## External dependencies
 
@@ -50,14 +50,14 @@ and original signal; adaptive thresholding (SCS or MACS) converts scores to bina
 
 ## Credentials
 
-`nvidia/nv-tesseract-ad-diffusion` is a public repo — no token required for downloading weights.
+`nvidia/Kumo-Anomaly` is a public repo — no token required for downloading weights.
 If you ever hit a `401`/`403` (gated access or private fork) or a `504` on first download, see the Known pitfalls section.
 
 ## Quick start
 
 ```bash
-git clone --branch main --single-branch https://github.com/NVIDIA/NV-Tesseract
-cd NV-Tesseract/ad_diffusion
+git clone --branch main --single-branch https://github.com/NVIDIA/Kumo-TS Kumo-TS
+cd Kumo-TS/Kumo-Anomaly
 uv sync                              # install dependencies (one-time)
 
 # Inference — synthetic data, auto-downloads weights from HF on first run
@@ -89,7 +89,7 @@ and returns the original DataFrame with `Anomaly` (0/1) and `MAE` columns append
 
 ```python
 import sys, pandas as pd
-sys.path.append("/path/to/NV-Tesseract/ad_diffusion")  # clone NV-Tesseract with --branch main
+sys.path.append("/path/to/Kumo-TS/Kumo-Anomaly")  # clone Kumo-TS with --branch main
 from sdk.anomaly_analysis import perform_anomaly_analysis_with_diffusion
 
 df = pd.read_csv("your_data.csv")
@@ -101,13 +101,56 @@ results = perform_anomaly_analysis_with_diffusion(
     df=df,
     threshold_strategy="scs",       # "scs" (fast) or "macs" (adaptive)
     model_path=None,                 # None → auto-download final_model.pth from HF
-    config_path=None,                # None → auto-download curriculum_medium.yaml from HF
+    model_config_path=None,          # None → auto-download curriculum_medium.yaml from HF
     nsample=15,                      # diffusion samples per window; ↑ accuracy, ↑ latency
     preprocess_model_dir=None,       # optional preprocessing model directory
 )
 # results columns: Anomaly (0/1), MAE (float), plus all original columns
 print(results[["Anomaly", "MAE"]].describe())
 ```
+
+### Reporting (`sdk_config`)
+
+`perform_anomaly_analysis_with_diffusion` takes an optional `sdk_config` keyword —
+an `ADDiffusionConfig`, a path to a YAML file, or `None` for defaults. It scopes
+report-generation knobs only; inference-behavior args (`threshold_strategy`,
+`nsample`, `model_path`, `model_config_path`) stay as direct function arguments.
+
+```python
+from sdk.anomaly_analysis import ADDiffusionConfig, perform_anomaly_analysis_with_diffusion
+
+results = perform_anomaly_analysis_with_diffusion(
+    df=df,
+    threshold_strategy="scs",
+    sdk_config=ADDiffusionConfig(
+        report_path="artifacts/anomaly_report.pdf",
+        report_title="Anomaly Detection Report",
+    ),
+)
+```
+
+Or pass a YAML path instead of the dataclass — `load_sdk_config` accepts a flat
+mapping or one nested under a top-level `sdk:` key (so the file can carry other
+sections alongside it), and rejects unknown keys:
+
+```yaml
+sdk:
+  report_path: artifacts/anomaly_report.pdf
+  report_title: Anomaly Detection Report
+```
+
+```python
+results = perform_anomaly_analysis_with_diffusion(
+    df=df,
+    threshold_strategy="scs",
+    sdk_config="sdk_config.yaml",
+)
+```
+
+`ADDiffusionConfig` fields: `report_path` (str/Path, default `None` — set to
+enable the PDF report), `timestamp_column` (str, `None`), `ground_truth_column`
+(str, `None`), `report_title` (str, `"Kumo-Anomaly Report"`), `report_max_pages`
+(int, `10`).
 
 ### Inference CLI reference
 
@@ -145,7 +188,7 @@ uv run python examples/finetune_example.py \
 | `--drop-cols` | — | Comma-separated extra columns to drop |
 | `--pretrained-model` | `final_model.pth` | Warm-start checkpoint (auto-downloaded if missing) |
 | `--config` | `curriculum_medium.yaml` | Model config YAML |
-| `--repo-id` | `nvidia/nv-tesseract-ad-diffusion` | HuggingFace repo for auto-download |
+| `--repo-id` | `nvidia/Kumo-Anomaly` | HuggingFace repo for auto-download |
 | `--no-download` | false | Fail if pretrained weights are not local |
 | `--epochs` | `10` | Training epochs |
 | `--batch-size` | `16` | Per-GPU batch size |
@@ -169,7 +212,7 @@ results = perform_anomaly_analysis_with_diffusion(
     df=df,
     threshold_strategy="scs",
     model_path="artifacts/finetune_my_data/best_finetuned_model.pth",
-    config_path="artifacts/finetune_my_data/finetune_config.yaml",
+    model_config_path="artifacts/finetune_my_data/finetune_config.yaml",
     nsample=15,
 )
 ```
@@ -190,6 +233,11 @@ Read `references/automl.md` when the user asks for AutoML/HPO setup, tunable par
 | Feature count > `target_dim` | PCA reduction to `target_dim`; needs ≥ `target_dim` rows |
 | Feature count < `target_dim` | Zero-padded to `target_dim` |
 
+`target_dim` **18** is the config-file default, not a hard constant — when fine-tuning warm-starts
+from a published checkpoint (`--pretrained-model`), the checkpoint's embedded config overrides it
+(the published `final_model.pth` was trained at `target_dim=40`). Check the checkpoint's config
+rather than assuming 18 when reasoning about PCA/padding behavior for warm-started fine-tuning.
+
 ```
 timestamp,sensor_1,sensor_2,sensor_3
 2024-01-01 00:00:00,0.42,1.10,-0.33
@@ -207,7 +255,7 @@ or drop by name before calling. Fine-tuning handles this via `--timestamp-col`,
 
 ```
 examples/datasets/
-└── anomaly_results.csv      # original columns + Anomaly (0/1) + MAE
+└── kumo-anomaly-results.csv # original columns + Anomaly (0/1) + MAE
 ```
 
 **Fine-tuning** (`--output-dir artifacts/finetune_my_data`):
@@ -253,5 +301,5 @@ artifacts/finetune_my_data/
 | `ValueError: Need at least N rows` (finetune) | Split shorter than `window_length` | Ensure each train/val split has ≥ 100 rows |
 | `RuntimeError: CUDA out of memory` | Batch too large | Reduce `--batch-size` or `nsample` |
 | All MAE scores identical | Constant-value columns | Drop zero-variance columns before calling API |
-| `ModuleNotFoundError: sdk` | Wrong working directory | `cd ad_diffusion/` before `uv run`, or add it to `sys.path` |
+| `ModuleNotFoundError: sdk` | Wrong working directory | `cd Kumo-Anomaly/` before `uv run`, or add it to `sys.path` |
 | Slow inference on CPU | Many diffusion windows | Reduce `nsample` to 5–10 for smoke tests |

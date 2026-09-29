@@ -202,7 +202,7 @@
         "num_epochs": {
           "automl_enabled": false,
           "default": 10,
-          "description": "Compatibility epoch count consumed by AutoMLRunner checkpoint retention. Keep equal to train.epochs for NV-Tesseract scripts.",
+          "description": "Compatibility epoch count consumed by AutoMLRunner checkpoint retention. Keep equal to train.epochs for Kumo-Anomaly scripts.",
           "maximum": 200,
           "minimum": 1,
           "title": "AutoML runner epoch count",
@@ -285,10 +285,10 @@
   "type": "object",
   "x_tao_schema": {
     "action": "train",
-    "model": "tao-finetune-nv-tesseract-ad-diffusion",
-    "network_arch": "nv_tesseract_ad_diffusion",
+    "model": "tao-finetune-kumo-anomaly",
+    "network_arch": "kumo_anomaly",
     "schema_action": "train",
     "schema_version": 1,
-    "source": "hand-authored for NV-Tesseract AD Diffusion finetune_example.py CLI"
+    "source": "hand-authored for Kumo-Anomaly finetune_example.py CLI"
   }
 }
