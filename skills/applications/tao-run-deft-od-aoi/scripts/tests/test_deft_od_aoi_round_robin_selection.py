@@ -286,12 +286,14 @@ def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -
         MODULE.materialize(policy, candidate_root, retrieval_root)
 
 
-def test_select_hard_fails_quota_shortfall() -> None:
+@pytest.mark.parametrize("reason", ("fn", "near_miss_fp"))
+def test_select_admits_available_defect_candidate_on_pocket_shortfall(
+        reason: str) -> None:
     candidates = pd.DataFrame([{
         "candidate_id": "only", "source_filepath": "/only", "embedding": [1, 0],
     }])
     queries = pd.DataFrame([{
-        "query_id": "strict", "reason": "fn", "benchmark": "b",
+        "query_id": "defect", "reason": reason, "benchmark": "b",
         "texture": "t", "defect_type": "d", "real_factor": 2,
         "embedding": [1, 0],
     }])
@@ -303,11 +305,23 @@ def test_select_hard_fails_quota_shortfall() -> None:
                     "clean_cumulative_cap_per_real": 1.0},
     }
 
-    with pytest.raises(RuntimeError, match="quota shortfall"):
-        MODULE.select(
-            {"real": candidates}, {"real": queries}, policy,
-            {"real": set(), "clean": set()},
-        )
+    selected, audit = MODULE.select(
+        {"real": candidates}, {"real": queries}, policy,
+        {"real": set(), "clean": set()},
+    )
+
+    assert [row["candidate_id"] for row in selected["real"]] == ["only"]
+    assert audit["branches"] == [{
+        "role": "real", "reason": reason, "pocket": ["b", "t", "d"],
+        "queries": 1, "requested": 2, "ranked": 1, "admitted": 1,
+        "shortfall": 1,
+        "attempts": [
+            {"overfetch": 1, "ranked": 1, "fresh": 1, "newly_admitted": 1,
+             "cumulative_admitted": 1, "exhaustive": False},
+            {"overfetch": 10, "ranked": 0, "fresh": 0, "newly_admitted": 0,
+             "cumulative_admitted": 1, "exhaustive": True},
+        ],
+    }]
 
 
 def test_materialize_rejects_unknown_candidate_exclusion(tmp_path: Path) -> None:

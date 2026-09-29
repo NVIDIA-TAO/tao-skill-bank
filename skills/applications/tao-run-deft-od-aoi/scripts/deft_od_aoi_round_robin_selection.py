@@ -241,9 +241,6 @@ def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame]
             "role": "clean", "reason": "background_fp", "pocket": None,
             "queries": len(clean), **branch_audit,
         })
-    shortfalls = [row for row in audit["branches"] if row["shortfall"]]
-    if shortfalls:
-        raise RuntimeError(f"round-robin quota shortfall: {shortfalls}")
     return output, audit
 
 
