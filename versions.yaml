@@ -29,17 +29,10 @@
 
 images:
   tao_toolkit:
-<<<<<<< HEAD
     pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-76-multiarch
     deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.3.0-rc-74-multiarch
     data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-74-multiarch
-    deft_pas_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-53-multiarch
-=======
-    pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.2.0-rc-36-multiarch
-    deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.2.0-rc-37-multiarch
-    data_services:      nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services
     deft_pas_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.0.1-20260922T185808Z-a6a5e75
->>>>>>> cd1a030 ([TAO-0000][Feature] add LoRA-first PAS fine-tuning intake (#278))
     deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
     cosmos_framework:   nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-framework

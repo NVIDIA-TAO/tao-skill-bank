@@ -12,11 +12,11 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_default_branch_publishes_7_2_images_and_new_plugin_version():
+def test_release_branch_publishes_7_3_images_and_new_plugin_version():
     versions = yaml.safe_load((REPO_ROOT / "versions.yaml").read_text())
     images = versions["images"]["tao_toolkit"]
-    assert "7.2.0" in images["pyt"]
-    assert "7.2.0" in images["data_services"]
+    assert "7.3.0" in images["pyt"]
+    assert "7.3.0" in images["data_services"]
 
     manifests = [
         json.loads((REPO_ROOT / ".claude-plugin/plugin.json").read_text()),
