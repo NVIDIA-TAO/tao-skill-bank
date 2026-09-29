@@ -140,7 +140,8 @@ admission remains the authoritative source-level deduplication gate. Both
 strategies must produce an
 enabled role's `mine_<role>/final_unique_files.parquet` before committing
 `iteration_retrieval`; round-robin also commits
-`round_robin_selection_report.json` as `selection_report`. Defective candidates
+`round_robin_selection_report.json` as `selection_report` and
+`round_robin_admission_index.npy` as `admission_index`. Defective candidates
 and gap queries use the independently selected
 `retrieval.preprocessing.profile`:
 the default `square_context` mean-pads and resizes to 224×224, while
@@ -175,7 +176,8 @@ scripts/admit_deft_od_aoi_coco.py \
 Omit `--previous-coco` only for iteration 1. For `max_similarity`, the helper
 recomputes maximum cosine similarity from the frozen candidate/query
 embeddings. For `round_robin_similarity`, it consumes the committed per-query
-selection and audit report without rerunning selection. Both paths apply the
+selection, screened boxes, audit report, and admission index without rerunning
+selection, then publishes `admission_index.npy` for the next iteration. Both paths apply the
 minimum similarity upstream, deduplicate crop hits to source images, exclude
 prior sources, and cap cumulative clean negatives against cumulative real defects.
 It retains every prior image and box and emits one binary COCO with explicit

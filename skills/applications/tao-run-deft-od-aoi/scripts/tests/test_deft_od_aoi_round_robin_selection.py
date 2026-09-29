@@ -258,6 +258,9 @@ def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -
         "selection_report": {
             "path": retrieval_root / "round_robin_selection_report.json"
         },
+        "admission_index": {
+            "path": retrieval_root / "round_robin_admission_index.npy"
+        },
     }
     for role in query_counts:
         artifacts[f"{role}_queries"] = {"path": retrieval_root / f"{role}_queries.parquet"}
