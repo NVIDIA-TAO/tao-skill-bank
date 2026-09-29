@@ -209,7 +209,7 @@ Use `evaluate.trt_engine` for TensorRT evaluation and `inference.trt_engine` for
 - **model.image_size**: Training transform image resolution. Keep it aligned with the selected fixed-resolution backbone.
 - **train.num_epochs**: CLIP fine-tuning often converges quickly. Start with 10-20 epochs for domain adaptation, then increase only if validation loss is still improving.
 - **train.optim.vision_lr / train.optim.text_lr**: Learning rates for the two encoders. CLIP is sensitive to high learning rates; reduce both if loss is unstable.
-- **model.freeze_vision_encoder / model.freeze_text_encoder**: Defaults are false. Freezing one encoder can help when the dataset is small or only one modality needs adaptation.
+- **model.freeze_vision_encoder / model.freeze_text_encoder**: Default to false. With PEFT enabled, `peft.<tower>.mode` overrides these flags; see the 7.3 LoRA migration reference above.
 - **train.loss_type**: `siglip` is recommended for SigLIP2 and Radio-CLIP. Use `clip` for CLIP-style softmax loss.
 - **export.encoder_type**: `combined` exports one ONNX graph. `separate` exports independent vision and text graphs.
 - **gen_trt_engine.tensorrt.data_type**: TensorRT deployment supports `fp16` and `fp32`.
