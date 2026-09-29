@@ -81,6 +81,9 @@ Walk through these in order before any run.
 - Directory (`data.video_root`, walked recursively) and/or JSONL (`data.input_jsonl_files`, `{"video_path": "..."}` per line; `video` key also accepted).
 - Folder names starting with `anomal` / `normal` act as a routing floor (see `workflow.use_folder_floor`). For unlabelled pools, set `use_folder_floor: false`.
 - If the user already has trusted per-video labels, set `data.routing_manifest` and skip the classifier.
+- **Picking a resolution-diverse pilot set with no local ffprobe/cv2/mediainfo:** run a read-only probe inside the image itself before staging the pilot —
+  `docker run --rm --gpus all -v <video_dir>:/data:ro --entrypoint bash <image> -c 'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 /data/<file>'`
+  over a sample of filenames, then bucket by `min(width,height)` against `workflow.low_quality_min_dim` (480 by default) to hand-pick clips spanning the lo-q and hi-q lanes instead of guessing from file size. `--gpus all` is required even just to probe an H.264 `.mp4` in this image family — see the `ffprobe` row in [references/configuration.md](references/configuration.md#error-patterns).
 
 ### 2. Domain — drives `prompts_module`
 
@@ -168,7 +171,16 @@ Full field reference, spec guide, and error patterns: [references/configuration.
 2. Check `step_0a_filter/filter_results.jsonl` row count against the "Filtering N videos" log line — filter errors silently drop videos.
 3. Read a few `step_1a_caption/captions.jsonl` entries by eye — accurate, right detail, not refusals?
 4. Read `step_2_description/descriptions.jsonl` (`final_verdict`, `incident_count`) and `step_3_qa/qa_output.jsonl`.
-5. Read `step_5_report/RESULTS_SUMMARY.md` for stage-by-stage attrition.
+5. Read `step_5_report/RESULTS_SUMMARY.md` for stage-by-stage attrition **counts**. It does not say *why* a given video dropped — for that, check the field noted below for the stage where the count fell:
+
+   | Stage | File | Field with the reason |
+   |---|---|---|
+   | 0a filter | `step_0a_filter/filter_results.jsonl` | `is_valid` + `raw_response` (the VLM's own verdict text, e.g. `"No"`) |
+   | 0b classify | `step_0b_classify/classification.jsonl` | per-video error/exception field, if the row is missing entirely check the log around "Step 0b" |
+   | 1a/1b/1c caption | run log around "Step 1a/1b/1c" | truncation-at-`max_tokens` rejections (see Error Patterns: "Long videos dropped") |
+   | 2a description | `step_2_description/descriptions.jsonl` | missing rows vs the staged video count; `final_verdict` for lane mismatches |
+   | 3 qa / 4a parse | run log line `Step 4: ... parsed ok / parse fail / skipped` | the jsonl itself has no explicit failure flag — the parse counts in this log line are authoritative |
+
 6. Iterate on prompts (captions first), re-run, then scale to the full set.
 
 Visual review (optional, from the pipeline repo root): `streamlit run nvidia_tao_ds/auto_label/video_reasoning_annotation/app_stage_review.py` (per-stage) and `app_qa_review.py` (step 4 tasks).
