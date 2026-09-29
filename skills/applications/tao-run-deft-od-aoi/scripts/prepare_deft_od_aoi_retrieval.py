@@ -440,15 +440,17 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         if not required.issubset(frame.columns):
             raise ValueError(f"{label} gaps lack {sorted(required - set(frame.columns))}")
     events = []
-    for row in strict[strict.gap_type.astype(str).str.upper().eq("FN")].to_dict("records"):
-        events.append(("real", "fn", row))
+    for gap_index, row in strict[
+            strict.gap_type.astype(str).str.upper().eq("FN")].iterrows():
+        events.append(("real", "fn", "strict", gap_index, row.to_dict()))
     gap = policy["gap"]
-    for row in loose[loose.gap_type.astype(str).str.upper().eq("FP")].to_dict("records"):
+    for gap_index, row in loose[
+            loose.gap_type.astype(str).str.upper().eq("FP")].iterrows():
         iou = float(row["best_iou"])
         if iou < gap["background_iou_upper"]:
-            events.append(("clean", "background_fp", row))
+            events.append(("clean", "background_fp", "loose", gap_index, row.to_dict()))
         elif iou < gap["near_miss_iou_upper"]:
-            events.append(("real", "near_miss_fp", row))
+            events.append(("real", "near_miss_fp", "loose", gap_index, row.to_dict()))
     output.mkdir(parents=True)
     pockets = _kpi_pockets(policy)
     history = _history_sources(previous_coco)
@@ -460,7 +462,8 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
     warnings = []
     for role in ("real", "clean"):
         rows = []
-        for index, (_, reason, event) in enumerate(item for item in events if item[0] == role):
+        for index, (_, reason, gap_pass, gap_index, event) in enumerate(
+                item for item in events if item[0] == role):
             source = Path(str(event["filepath"])).resolve()
             if str(source) not in pockets:
                 raise ValueError(f"gap image is absent from the frozen KPI role: {source}")
@@ -484,7 +487,10 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             row = {"filepath": str(crop), "query_id": query_id, "role": role,
                    "reason": reason, "source_filepath": str(source),
                    "source_bbox": event["bbox"], "best_iou": float(event["best_iou"]),
-                   **pockets[str(source)]}
+                   "routing_order_key": (
+                       f"{gap_pass}:{gap_index}:"
+                       f"{'strict_fn' if reason == 'fn' else reason}"
+                   ), **pockets[str(source)]}
             if strategy == "round_robin_similarity" and role == "real":
                 if reason == "fn":
                     factor_value = event.get("real_factor")

@@ -28,6 +28,7 @@ retrieval:
   output_size: 224
   minimum_similarity: -1.0
   candidate_overfetch: 15
+  round_robin_refill_overfetch: [5, 15, 50, 200, 100000]
   audit_top_k_per_query: 20
 routing:
   real_mine_factor_min: 1

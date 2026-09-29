@@ -5,9 +5,11 @@ import importlib.util
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from PIL import Image
 
 
 SCRIPT = Path(__file__).parents[1] / "deft_od_aoi_round_robin_selection.py"
@@ -73,6 +75,41 @@ def test_rank_preserves_rounds_ties_exclusions_threshold_and_parent_dedup() -> N
     assert len({row["source_filepath"] for row in selected}) == len(selected)
 
 
+def test_canonical_query_order_uses_frozen_gap_keys() -> None:
+    queries = pd.DataFrame([
+        {"query_id": "hashed-a", "routing_order_key": "strict:2:strict_fn"},
+        {"query_id": "hashed-b", "routing_order_key": "strict:10:strict_fn"},
+    ])
+
+    ordered = MODULE._canonical_queries(queries)
+
+    assert ordered.query_id.tolist() == ["hashed-b", "hashed-a"]
+
+
+def test_refill_reranks_after_each_admitted_parent() -> None:
+    candidates = pd.DataFrame([
+        {"candidate_id": f"same-{index}", "source_filepath": "/same",
+         "embedding": [1.0, index / 1000]}
+        for index in range(15)
+    ] + [
+        {"candidate_id": "second", "source_filepath": "/second",
+         "embedding": [0.7, 0.7]},
+        {"candidate_id": "third", "source_filepath": "/third",
+         "embedding": [0.6, 0.8]},
+    ])
+    queries = pd.DataFrame([{"query_id": "q", "embedding": [1.0, 0.0]}])
+    used: set[str] = set()
+
+    selected, audit = MODULE._refill(
+        candidates, queries, quota=2, used=used, minimum=-1,
+        overfetches=[1, 100], audit_top_k=1, excluded_candidates=set(),
+        admission=None, clean=False, record=None,
+    )
+
+    assert [row["source_filepath"] for row in selected] == ["/same", "/second"]
+    assert [row["cumulative_admitted"] for row in audit["attempts"]] == [1, 2]
+
+
 def test_select_isolates_pockets_and_caps_clean() -> None:
     real_candidates = pd.DataFrame([
         {"candidate_id": f"r-{index}", "source_filepath": f"/real/{index}",
@@ -124,8 +161,31 @@ def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -
     candidate_root, retrieval_root = tmp_path / "candidates", tmp_path / "retrieval"
     candidate_root.mkdir()
     retrieval_root.mkdir()
+    source_paths = {
+        "real": [tmp_path / "real-source.png", tmp_path / "real-fallback-source.png"],
+        "clean": [tmp_path / "clean-source.png"],
+    }
+    sources = {}
+    for role, paths in source_paths.items():
+        for path in paths:
+            Image.fromarray(np.full((32, 32), 80, dtype=np.uint8)).save(path)
+        coco = tmp_path / f"{role}.json"
+        coco.write_text(json.dumps({
+            "images": [
+                {"id": index, "file_name": path.name, "source_path": str(path)}
+                for index, path in enumerate(paths, 1)
+            ],
+            "annotations": ([
+                {"id": index, "image_id": index, "category_id": 1,
+                 "bbox": [4, 4, 12, 12]}
+                for index in range(1, len(paths) + 1)
+            ] if role == "real" else []),
+            "categories": [{"id": 1, "name": "defect"}],
+        }))
+        sources[role] = {"images": str(tmp_path), "coco": str(coco)}
     policy = tmp_path / "policy.yaml"
     policy.write_text(yaml.safe_dump({
+        "sources": sources,
         "retrieval": {
             "selection": {"strategy": "round_robin_similarity"},
             "minimum_similarity": 0.0,
@@ -137,6 +197,7 @@ def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -
             "near_miss_real_cap_per_pocket": 20, "clean_factor": 1,
             "clean_cumulative_cap_per_real": 1.0,
         },
+        "admission": {"minimum_box_area_px": 64, "maximum_box_aspect": 25.0},
     }))
     query_counts = {"real": 1, "clean": 1}
     (retrieval_root / "query_manifest.json").write_text(json.dumps({
@@ -155,13 +216,13 @@ def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -
     for role in query_counts:
         candidates = [{
             "filepath": f"/{role}-candidate.png", "candidate_id": f"{role}-candidate",
-            "source_filepath": f"/{role}-source.png", "source_image_id": 1,
+            "source_filepath": str(source_paths[role][0]), "source_image_id": 1,
             "embedding": [1.0, 0.0],
         }]
         if role == "real":
             candidates.append({
                 "filepath": "/real-fallback.png", "candidate_id": "real-fallback",
-                "source_filepath": "/real-fallback-source.png", "source_image_id": 2,
+                "source_filepath": str(source_paths[role][1]), "source_image_id": 2,
                 "embedding": [0.8, 0.6],
             })
         pd.DataFrame(candidates).to_parquet(
@@ -203,12 +264,38 @@ def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -
 
     COMMIT_MODULE._validate_retrieval(1, artifacts)
     assert report["selected_counts"] == {"real": 1, "clean": 1}
+    assert Path(report["admission_index"]).is_file()
+    assert report["admission_counters"]["admitted"] == 2
     selected_real = pd.read_parquet(
         retrieval_root / "mine_real/final_unique_files.parquet"
     )
     assert selected_real.filepath.tolist() == ["/real-fallback.png"]
     with pytest.raises(FileExistsError):
         MODULE.materialize(policy, candidate_root, retrieval_root)
+
+
+def test_select_hard_fails_quota_shortfall() -> None:
+    candidates = pd.DataFrame([{
+        "candidate_id": "only", "source_filepath": "/only", "embedding": [1, 0],
+    }])
+    queries = pd.DataFrame([{
+        "query_id": "strict", "reason": "fn", "benchmark": "b",
+        "texture": "t", "defect_type": "d", "real_factor": 2,
+        "embedding": [1, 0],
+    }])
+    policy = {
+        "retrieval": {"minimum_similarity": -1, "audit_top_k_per_query": 1,
+                      "round_robin_refill_overfetch": [1, 10]},
+        "routing": {"real_mine_factor_min": 1, "near_miss_real_factor": 2,
+                    "near_miss_real_cap_per_pocket": 20, "clean_factor": 1,
+                    "clean_cumulative_cap_per_real": 1.0},
+    }
+
+    with pytest.raises(RuntimeError, match="quota shortfall"):
+        MODULE.select(
+            {"real": candidates}, {"real": queries}, policy,
+            {"real": set(), "clean": set()},
+        )
 
 
 def test_materialize_rejects_unknown_candidate_exclusion(tmp_path: Path) -> None:

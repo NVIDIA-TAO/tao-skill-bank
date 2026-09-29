@@ -969,6 +969,7 @@ def test_round_robin_defaults_to_three_real_candidates_per_strict_fn(
 
     frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
     assert frame.real_factor.tolist() == [3]
+    assert frame.routing_order_key.tolist() == ["strict:0:strict_fn"]
 
 
 def test_max_similarity_keeps_one_x_real_factor_default(tmp_path: Path) -> None:
