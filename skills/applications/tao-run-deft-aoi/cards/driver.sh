@@ -42,6 +42,7 @@ SYSPROMPT="You are a precise task executor operating in a bash environment on a 
 
 MODEL=${MODEL:-nim/nvidia/qwen/qwen3.6-35b-a3b:off}
 export WS TRAIN_IMG DS_IMG SKILL_ROOT DPY
+[ -n "${NVIDIA_INFERENCE_BASE_URL:-}" ] && export NVIDIA_INFERENCE_BASE_URL
 export PI_KIT_WS="$WS"
 # 120 clears every legitimately-completed session measured in the study
 # (heaviest DEFT stage: 117 calls) while still killing 300-700-call wedges.

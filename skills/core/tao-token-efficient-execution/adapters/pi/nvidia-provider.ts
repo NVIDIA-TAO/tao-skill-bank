@@ -11,7 +11,13 @@
  * The API key is NEVER stored in this repo: it resolves from the
  * NVIDIA_INFERENCE_API_KEY environment variable at request time.
  *
- * Endpoint facts (verified 2026-07-22 via curl):
+ * The endpoint defaults to https://inference-api.nvidia.com/v1; set
+ * NVIDIA_INFERENCE_BASE_URL (read once at extension load) to point at any
+ * other OpenAI-compatible endpoint that serves the model ids below — e.g. a
+ * self-hosted NIM or vLLM gateway. Include the /v1 suffix, not
+ * /chat/completions.
+ *
+ * Endpoint facts for the default endpoint (verified 2026-07-22 via curl):
  *  - /v1/chat/completions, Bearer auth, model field must be the full
  *    "nvidia/nvidia/Nemotron-3-Nano-30B-A3B" string
  *  - tool calling works (finish_reason "tool_calls")
@@ -22,6 +28,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const NIM_MODEL_PREFIX = "nvidia/";   // covers nvidia/nvidia/* and nvidia/qwen/*
+const DEFAULT_BASE_URL = "https://inference-api.nvidia.com/v1";
+const BASE_URL = (process.env.NVIDIA_INFERENCE_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, "");
 
 export default function (pi: ExtensionAPI) {
 	// Greedy decoding for executor work: at default sampling the nano model
@@ -38,7 +46,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerProvider("nim", {
 		name: "NVIDIA Inference API",
-		baseUrl: "https://inference-api.nvidia.com/v1",
+		baseUrl: BASE_URL,
 		apiKey: "$NVIDIA_INFERENCE_API_KEY",
 		api: "openai-completions",
 		models: [

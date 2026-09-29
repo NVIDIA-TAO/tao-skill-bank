@@ -39,6 +39,7 @@ SYSPROMPT="You are a precise task executor operating in a bash environment on a 
 
 MODEL=${MODEL:-nim/nvidia/qwen/qwen3.6-35b-a3b:off}
 export WS SB VENV TRAIN_IMG
+[ -n "${NVIDIA_INFERENCE_BASE_URL:-}" ] && export NVIDIA_INFERENCE_BASE_URL
 export PI_KIT_WS="$WS"
 export PI_KIT_RUN_PREFIX="automl2_"
 # 120 clears every legitimately-completed session measured in the study
