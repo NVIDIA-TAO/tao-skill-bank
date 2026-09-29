@@ -6,9 +6,11 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from PIL import Image
 
 
 SCRIPT = Path(__file__).parents[1] / "admit_deft_od_aoi_coco.py"
@@ -33,7 +35,7 @@ def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
     sources = {}
     for role in ("real", "clean"):
         image = root / f"{role}.png"
-        image.write_bytes(role.encode())
+        Image.fromarray(np.full((16, 16), 80, dtype=np.uint8)).save(image)
         annotations = ([{"id": 5, "image_id": 1, "category_id": 1,
                          "bbox": [1, 1, 4, 4], "area": 16}] if role == "real" else [])
         coco = root / f"{role}.json"
@@ -221,6 +223,8 @@ def test_round_robin_admission_consumes_materialized_selection(tmp_path: Path) -
         "real": {"requested": 1, "deduplicated": 1, "capped": 1},
         "clean": {"requested": 1, "deduplicated": 1, "capped": 1},
     }
+    assert (tmp_path / "out/admission_index.npy").is_file()
+    assert report["selection_admission_counters"]["admitted"] == 2
 
 
 def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: Path) -> None:

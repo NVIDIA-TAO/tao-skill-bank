@@ -257,6 +257,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
         "strategy", "round_robin_similarity"
     )
     selection_audit = None
+    selection_index = None
     targets = manifest.get("admission_targets") or {}
     additions: dict[str, list[dict[str, Any]]] = {role: [] for role in enabled}
     preview: dict[str, Any] = {
@@ -277,6 +278,10 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                 or selection_report.get("selection_strategy") != strategy):
             raise ValueError("round-robin selection report is incomplete or mismatched")
         selection_audit = selection_report.get("audit")
+        selection_index = retrieval_root / "round_robin_admission_index.npy"
+        if (selection_report.get("admission_index") != str(selection_index)
+                or not selection_index.is_file()):
+            raise ValueError("round-robin admission index is missing or mismatched")
         additions = {
             role: _round_robin_selected(role, retrieval_root) for role in enabled
         }
@@ -389,7 +394,15 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             if str(source) not in index:
                 raise ValueError(f"selected {role} source is absent from its frozen COCO: {source}")
             row = index[str(source)]
-            append(source, row["image"], row["annotations"], kind, float(selected["similarity"]))
+            source_annotations = row["annotations"]
+            if role == "real" and selected.get("admission_boxes") is not None:
+                source_annotations = [
+                    {"bbox": [float(value) for value in box],
+                     "area": float(box[2] * box[3]), "iscrowd": 0}
+                    for box in selected["admission_boxes"]
+                ]
+            append(source, row["image"], source_annotations, kind,
+                   float(selected["similarity"]))
             admitted_rows.append({"source_filepath": str(source), "kind": kind,
                                   "similarity": float(selected["similarity"])})
     synthetic_admitted = 0
@@ -434,9 +447,15 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     pd.DataFrame(admitted_rows, columns=["source_filepath", "kind", "similarity"]).to_parquet(
         output / "admitted_sources.parquet", index=False
     )
+    if selection_index is not None:
+        shutil.copy2(selection_index, output / "admission_index.npy")
     report = {"status": "COMPLETE", "iteration": int(manifest["iteration"]),
               "selection_strategy": strategy,
               "selection_audit": selection_audit,
+              "selection_admission_counters": (
+                  selection_report.get("admission_counters")
+                  if strategy == "round_robin_similarity" else None
+              ),
               "retained_previous_images": len(previous.get("images", [])),
               "admitted": {"real": len(additions.get("real", [])),
                            "clean": len(additions.get("clean", [])),

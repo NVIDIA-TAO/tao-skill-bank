@@ -8,12 +8,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deft_od_aoi_round_robin_admission import RoundRobinAdmission
 
 
 def _vectors(values: pd.Series) -> np.ndarray:
@@ -103,10 +107,63 @@ def round_robin_rank(candidates: pd.DataFrame, queries: pd.DataFrame, *,
     return output
 
 
+def _canonical_queries(queries: pd.DataFrame) -> pd.DataFrame:
+    """Use the frozen gap ordinal rather than transient hashed query IDs."""
+    if queries.empty:
+        return queries
+    ordered = queries.copy()
+    if "routing_order_key" in ordered:
+        ordered["_routing_order_key"] = ordered.routing_order_key.astype(str)
+    else:
+        ordered["_routing_order_key"] = [str(index) for index in range(len(ordered))]
+    return ordered.sort_values("_routing_order_key", kind="stable").drop(
+        columns="_routing_order_key"
+    )
+
+
+def _refill(candidates: pd.DataFrame, queries: pd.DataFrame, *, quota: int,
+            used: set[str], minimum: float, overfetches: list[int], audit_top_k: int,
+            excluded_candidates: set[str], admission: RoundRobinAdmission | None,
+            clean: bool, record: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    attempted: set[str] = set()
+    attempts = []
+    for overfetch in overfetches:
+        ranked = round_robin_rank(
+            candidates, queries, excluded=used, minimum=minimum, quota=quota,
+            overfetch=overfetch, audit_top_k=audit_top_k,
+            excluded_candidates=excluded_candidates,
+        )
+        fresh = [
+            row for row in ranked if str(row["candidate_id"]) not in attempted
+        ]
+        attempted.update(str(row["candidate_id"]) for row in fresh)
+        remaining = quota - len(selected)
+        admitted = (
+            admission.admit(fresh, remaining, clean, record)
+            if admission is not None else fresh[:remaining]
+        )
+        selected.extend(admitted)
+        used.update(str(row["source_filepath"]) for row in admitted)
+        attempts.append({
+            "overfetch": overfetch, "ranked": len(ranked), "fresh": len(fresh),
+            "newly_admitted": len(admitted), "cumulative_admitted": len(selected),
+            "exhaustive": overfetch == overfetches[-1],
+        })
+        if len(selected) == quota:
+            break
+    return selected, {
+        "requested": quota, "ranked": sum(row["fresh"] for row in attempts),
+        "admitted": len(selected), "shortfall": quota - len(selected),
+        "attempts": attempts,
+    }
+
+
 def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame],
            policy: dict[str, Any], excluded: dict[str, set[str]],
            prior_real: int = 0, prior_clean: int = 0,
            excluded_candidates: dict[str, set[str]] | None = None,
+           admission: RoundRobinAdmission | None = None, record: Any = None,
            ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     retrieval, routing = policy["retrieval"], policy["routing"]
     output: dict[str, list[dict[str, Any]]] = {"real": [], "clean": []}
@@ -124,10 +181,16 @@ def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame]
             )
         return values  # type: ignore[return-value]
 
+    overfetches = [int(value) for value in retrieval.get(
+        "round_robin_refill_overfetch", (5, 15, 50, 200, 100000)
+    )]
+    if not overfetches or any(value < 1 for value in overfetches):
+        raise ValueError("round_robin_refill_overfetch must contain positive integers")
     real = queries.get("real", pd.DataFrame())
     for reason in ("fn", "near_miss_fp"):
         branch = real[real.reason.astype(str).eq(reason)] if not real.empty else real
-        groups = branch.groupby(branch.apply(pocket, axis=1), sort=False) if not branch.empty else []
+        branch = _canonical_queries(branch)
+        groups = branch.groupby(branch.apply(pocket, axis=1), sort=True) if not branch.empty else []
         for pocket_key, rows in groups:
             if reason == "fn":
                 factors = {int(value) for value in rows.get(
@@ -142,22 +205,21 @@ def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame]
                     int(routing["near_miss_real_factor"]) * len(rows),
                     int(routing["near_miss_real_cap_per_pocket"]),
                 )
-            ranked = round_robin_rank(
-                candidates["real"], rows, excluded=used_real,
-                minimum=float(retrieval["minimum_similarity"]), quota=quota,
-                overfetch=int(retrieval["candidate_overfetch"]),
+            chosen, branch_audit = _refill(
+                candidates["real"], rows, quota=quota, used=used_real,
+                minimum=float(retrieval["minimum_similarity"]),
+                overfetches=overfetches,
                 audit_top_k=int(retrieval["audit_top_k_per_query"]),
                 excluded_candidates=(excluded_candidates or {}).get("real", set()),
+                admission=admission, clean=False,
+                record=(lambda path: record("real", path)) if record else None,
             )
-            chosen = ranked[:quota]
             output["real"].extend(chosen)
-            used_real.update(str(row["source_filepath"]) for row in chosen)
             audit["branches"].append({
                 "role": "real", "reason": reason, "pocket": list(pocket_key),
-                "queries": len(rows), "requested": quota, "ranked": len(ranked),
-                "admitted": len(chosen), "shortfall": quota - len(chosen),
+                "queries": len(rows), **branch_audit,
             })
-    clean = queries.get("clean", pd.DataFrame())
+    clean = _canonical_queries(queries.get("clean", pd.DataFrame()))
     if not clean.empty:
         clean_room = max(
             0,
@@ -165,20 +227,23 @@ def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame]
                 * float(routing["clean_cumulative_cap_per_real"])) - prior_clean,
         )
         quota = min(int(routing["clean_factor"]) * len(clean), clean_room)
-        ranked = round_robin_rank(
-            candidates["clean"], clean, excluded=set(excluded["clean"]),
-            minimum=float(retrieval["minimum_similarity"]), quota=quota,
-            overfetch=int(retrieval["candidate_overfetch"]),
+        used_clean = set(excluded["clean"])
+        output["clean"], branch_audit = _refill(
+            candidates["clean"], clean, quota=quota, used=used_clean,
+            minimum=float(retrieval["minimum_similarity"]),
+            overfetches=overfetches,
             audit_top_k=int(retrieval["audit_top_k_per_query"]),
             excluded_candidates=(excluded_candidates or {}).get("clean", set()),
+            admission=admission, clean=True,
+            record=(lambda path: record("clean", path)) if record else None,
         )
-        output["clean"] = ranked[:quota]
         audit["branches"].append({
             "role": "clean", "reason": "background_fp", "pocket": None,
-            "queries": len(clean), "requested": quota,
-            "ranked": len(ranked), "admitted": len(output["clean"]),
-            "shortfall": quota - len(output["clean"]),
+            "queries": len(clean), **branch_audit,
         })
+    shortfalls = [row for row in audit["branches"] if row["shortfall"]]
+    if shortfalls:
+        raise RuntimeError(f"round-robin quota shortfall: {shortfalls}")
     return output, audit
 
 
@@ -232,6 +297,25 @@ def _candidate_exclusions(role: str, retrieval_root: Path,
     return set(values)
 
 
+def _source_records(policy: dict[str, Any], role: str) -> dict[str, dict[str, Any]]:
+    source = policy["sources"][role]
+    images = Path(source["images"])
+    document = json.loads(Path(source["coco"]).read_text())
+    annotations: dict[int, list[dict[str, Any]]] = {}
+    for row in document.get("annotations", []):
+        annotations.setdefault(int(row["image_id"]), []).append(row)
+    records = {}
+    for image in document["images"]:
+        path = (
+            Path(str(image["source_path"])) if image.get("source_path")
+            else images / str(image["file_name"])
+        ).resolve()
+        records[str(path)] = {
+            "boxes": [row["bbox"] for row in annotations.get(int(image["id"]), [])]
+        }
+    return records
+
+
 def materialize(policy_path: Path, candidate_root: Path, retrieval_root: Path,
                 previous_path: Path | None = None) -> dict[str, Any]:
     """Write round-robin selections to the standard retrieval-stage artifacts."""
@@ -260,26 +344,44 @@ def materialize(policy_path: Path, candidate_root: Path, retrieval_root: Path,
         role: _candidate_exclusions(role, retrieval_root, candidates[role], manifest)
         for role in enabled
     }
+    records = {role: _source_records(policy, role) for role in enabled}
+    previous_index = (
+        previous_path.parent / "admission_index.npy" if previous_path else None
+    )
+    admission = RoundRobinAdmission(policy, previous_index)
+
+    def record(role: str, path: str) -> dict[str, Any]:
+        key = str(Path(path).resolve())
+        if key not in records[role]:
+            raise ValueError(f"{role} candidate source is absent from its frozen COCO: {key}")
+        return records[role][key]
+
     selected, audit = select(
         candidates, queries, policy, excluded, counts["real"], counts["clean"],
-        candidate_exclusions,
+        candidate_exclusions, admission, record,
     )
     outputs = {
         role: retrieval_root / f"mine_{role}" / "final_unique_files.parquet"
         for role in enabled
     }
     report_path = retrieval_root / "round_robin_selection_report.json"
-    existing = [path for path in (*outputs.values(), report_path) if path.exists()]
+    index_path = retrieval_root / "round_robin_admission_index.npy"
+    existing = [
+        path for path in (*outputs.values(), report_path, index_path) if path.exists()
+    ]
     if existing:
         raise FileExistsError(existing[0])
     for role, path in outputs.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(selected.get(role, [])).to_parquet(path, index=False)
+    admission.save(index_path)
     report = {
         "status": "COMPLETE", "iteration": int(manifest["iteration"]),
         "selection_strategy": strategy,
         "selected_counts": {role: len(selected.get(role, [])) for role in enabled},
         "outputs": {role: str(path) for role, path in outputs.items()},
+        "admission_index": str(index_path),
+        "admission_counters": dict(sorted(admission.report.items())),
         "audit": audit,
     }
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
