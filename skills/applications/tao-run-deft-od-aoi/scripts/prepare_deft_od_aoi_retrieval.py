@@ -238,7 +238,7 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             near = pd.DataFrame(row for row in rows if row["reason"] == "near_miss_fp")
             near_target = (0 if near.empty else sum(
                 min(len(group) * int(routing["near_miss_real_factor"]),
-                    int(routing["near_miss_real_cap"]))
+                    int(routing["near_miss_real_cap_per_pocket"]))
                 for _, group in near.groupby("pocket")
             ))
             targets[role] = {"fn": strict_count * factor, "near_miss_fp": near_target}

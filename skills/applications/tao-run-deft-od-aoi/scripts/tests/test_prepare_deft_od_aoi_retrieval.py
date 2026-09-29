@@ -55,7 +55,7 @@ def _policy(root: Path) -> Path:
                                       "routing": {"real_mine_factor_min": 1,
                                                   "real_mine_factor_max": 6,
                                                   "near_miss_real_factor": 2,
-                                                  "near_miss_real_cap": 20,
+                                                  "near_miss_real_cap_per_pocket": 20,
                                                   "clean_factor": 2}}))
     return policy
 
