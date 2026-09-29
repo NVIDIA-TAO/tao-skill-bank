@@ -12,11 +12,11 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_default_branch_publishes_7_2_images_and_new_plugin_version():
+def test_release_branch_publishes_7_3_images_and_new_plugin_version():
     versions = yaml.safe_load((REPO_ROOT / "versions.yaml").read_text())
     images = versions["images"]["tao_toolkit"]
-    assert "7.2.0" in images["pyt"]
-    assert "7.2.0" in images["data_services"]
+    assert "7.3.0" in images["pyt"]
+    assert "7.3.0" in images["data_services"]
 
     manifests = [
         json.loads((REPO_ROOT / ".claude-plugin/plugin.json").read_text()),
@@ -51,16 +51,15 @@ def test_default_marketplace_exposes_the_canonical_codex_plugin_name():
     assert "tao-skills" in names
 
 
-def test_pas_stamped_pins_match_published_versions():
+def test_pas_resolves_published_versions_without_embedding_image_uris():
     versions = yaml.safe_load((REPO_ROOT / "versions.yaml").read_text())
     images = versions["images"]["tao_toolkit"]
-    scripts = REPO_ROOT / "skills/applications/tao-run-deft-pas/scripts"
-    for path in (
-        scripts / "prepare_deft_config.py",
-        scripts / "init_deft_state.py",
-        scripts / "audit_deft_run.py",
-        scripts / "run_deft_container.py",
-    ):
+    skill = REPO_ROOT / "skills/applications/tao-run-deft-pas"
+    preflight = (skill / "references/preflight.md").read_text()
+
+    assert "images.tao_toolkit.deft_pas_pyt" in preflight
+    assert "images.tao_toolkit.deft_pas_data_services" in preflight
+    for path in (*skill.rglob("*.py"), *skill.rglob("*.md")):
         text = path.read_text()
-        assert images["deft_pas_pyt"] in text
-        assert images["deft_pas_data_services"] in text
+        assert images["deft_pas_pyt"] not in text
+        assert images["deft_pas_data_services"] not in text
