@@ -38,6 +38,14 @@ routing:
   clean_factor: 2
   clean_cumulative_cap_per_real: 1.0
 admission:
+  duplicate_global_cosine: 0.995
+  duplicate_defect_cosine: 0.985
+  duplicate_position_delta: 0.04
+  clean_duplicate_global_cosine: 0.999
+  clean_cluster_cosine: 0.97
+  clean_cluster_minimum_cap: 2
+  clean_cluster_quota_divisor: 4
+  duplicate_gt_iou: 0.9
   minimum_box_area_px: 64
   maximum_box_aspect: 25.0
 training:
