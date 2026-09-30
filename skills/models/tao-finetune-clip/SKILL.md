@@ -76,16 +76,18 @@ For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and Tens
 
 - **Dataset type:** image_text
 - **Formats:** custom image/caption folders or WebDataset shards
-- **Monitoring metric:** val/t2i_mAP
+- **Monitoring metric:** `val/t2i_mAP` for ordinary retrieval training; see the TAO 7.3 PAS metrics below.
 
-Ordinary retrieval training logs `val/t2i_mAP`. With
-`dataset.val.metadata_match_eval: true`, it logs
+Ordinary retrieval training logs `val/t2i_mAP`.
+
+### TAO 7.3 PAS metadata matching metrics
+
+When `dataset.val.metadata_match_eval: true`, training logs
 `val/pas/{easy,medium,hard,overall}_{mAP,rank1,rank5}` instead.
-
-For a like-for-like PAS evaluation, set
+For a like-for-like standalone evaluation, set
 `evaluate.pas_ground_truth_mode: scalar_attributes` and read
-`nvidia_pas_metadata_metrics_weighted_aggregate.csv`. PAS evaluation writes
-CSVs; it does not emit a `test/t2i_mAP` scalar.
+`nvidia_pas_metadata_metrics_weighted_aggregate.csv`. Standalone PAS evaluation
+writes CSVs; it does not emit a `test/t2i_mAP` scalar.
 
 ### Supported Models
 
