@@ -121,6 +121,16 @@ for the selected backbone: SigLIP2 uses `q_proj`, `k_proj`, `v_proj`,
 the SigLIP2 list, so override it for RADIO or OpenCLIP. The default OpenCLIP
 backbone is not excluded by this config contract.
 
+For each LoRA tower, use an integer `rank >= 1`, an integer `alpha >= 1`,
+and finite `0 <= dropout < 1`. Defaults are rank 8, alpha 16, and dropout
+0.05. `num_last_blocks` must be an integer from 0 through the number of
+transformer blocks in that tower; 0 selects all blocks. Check these bounds
+when preparing specs and AutoML search spaces. Rank 0 makes alpha/rank
+undefined, while alpha 0 or dropout 1 disables the adapter's contribution.
+Do not use those values to freeze a tower; use `mode: frozen` under the
+newer contract. See `references/error-patterns.md` for failures from older
+runtimes that do not enforce the numeric bounds.
+
 LoRA trains a small adapter parameter set, but the documented training
 checkpoint remains a full CLIP checkpoint; do not budget storage as though it
 were an adapter-only file. `regularization.enabled` defaults to `false`.

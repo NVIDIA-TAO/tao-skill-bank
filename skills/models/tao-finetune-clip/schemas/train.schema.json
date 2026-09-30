@@ -560,8 +560,9 @@
             },
             "dropout": {
               "default": 0.05,
-              "description": "Dropout applied to LoRA input.",
-              "maximum": 1.0,
+              "description": "Finite dropout applied to LoRA input; 0 <= dropout < 1. A value of 1 disables the adapter contribution.",
+              "exclusiveMaximum": 1.0,
+              "maximum": 0.9999999999999999,
               "minimum": 0.0,
               "type": "float"
             },
@@ -620,8 +621,9 @@
             },
             "dropout": {
               "default": 0.05,
-              "description": "Dropout applied to LoRA input.",
-              "maximum": 1.0,
+              "description": "Finite dropout applied to LoRA input; 0 <= dropout < 1. A value of 1 disables the adapter contribution.",
+              "exclusiveMaximum": 1.0,
+              "maximum": 0.9999999999999999,
               "minimum": 0.0,
               "type": "float"
             },

@@ -1,5 +1,15 @@
 # CLIP Error Patterns
 
+**Invalid LoRA numeric settings**: Check both `peft.vision` and `peft.text`
+before running: `rank` and `alpha` must be integers at least 1, and `dropout`
+must be finite and satisfy `0 <= dropout < 1`. `num_last_blocks` must be
+between 0 (all blocks) and the tower's block count. Older runtimes may report
+a bare `ZeroDivisionError` for rank 0, accept alpha 0 or dropout 1 while
+silently disabling the adapter contribution, or defer invalid dropout to
+PyTorch's dropout error. Correct the named tower settings; the standard
+defaults are rank 8, alpha 16, dropout 0.05, and num_last_blocks 3. Under the
+newer tower contract, select `mode: frozen` to freeze a tower.
+
 **PEFT tower `enabled` ConfigKeyError after upgrading to 7.3**: If OmegaConf
 reports `Key 'enabled' not in 'CLIPLoRATargetConfig'` at
 `peft.vision.enabled` or `peft.text.enabled`, migrate each tower independently:
