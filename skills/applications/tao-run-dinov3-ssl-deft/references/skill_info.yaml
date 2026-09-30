@@ -2,6 +2,12 @@ name: tao-run-dinov3-ssl-deft
 # The DS image owns the controller and already includes TAO PyTorch/Core.
 container_image: tao_toolkit.data_services
 # Agent-facing mount checklist read by SKILL.md step 4, not parsed by DS.
+# Preparation uses the installed DS image_embeddings producer (fixed CLIP/SigLIP),
+# register-store --source-payload-contract, then write-target-contract.
+# Mount the immutable model AND processor snapshot during preparation.
+# Registered seals are mount-bound; re-register after copying/remounting shards
+# or select data.source_store_validation: full_sha256.
+# Target digests recorded by the writer are lineage, not a consumer equality check.
 path_contract:
   input_mode: pre_mounted_shared_filesystem
   required_input_fields:
