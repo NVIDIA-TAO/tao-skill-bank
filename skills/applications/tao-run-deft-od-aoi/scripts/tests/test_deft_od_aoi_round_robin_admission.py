@@ -38,6 +38,16 @@ def _image(path: Path, invert: bool = False) -> None:
     Image.fromarray(array).save(path)
 
 
+def test_signature_matches_admission_index_width(tmp_path: Path) -> None:
+    image = tmp_path / "source.png"
+    _image(image)
+
+    signature = MODULE._signature(str(image), [[4, 4, 10, 10]])
+
+    assert signature is not None
+    assert signature.shape == (MODULE.ADMISSION_INDEX_WIDTH,)
+
+
 def test_real_admission_screens_boxes_and_records_survivors(tmp_path: Path) -> None:
     image = tmp_path / "source.png"
     _image(image)
