@@ -136,6 +136,46 @@ tao-pytorch commit has the config but lacks the injection and regularization
 implementation, so it cannot validate an end-to-end LoRA run. Newer source
 may expose a different tower contract; use the schema of the actual image.
 
+#### Migrating PEFT specs from 7.2 to 7.3
+
+The 7.3 tower contract replaces each tower's `enabled` boolean with `mode`.
+Apply the following mapping independently to `vision` and `text`:
+
+| 7.2 tower setting | 7.3 tower setting |
+|---|---|
+| `peft.<tower>.enabled: true` | `peft.<tower>.mode: lora` |
+| `peft.<tower>.enabled: false` | `peft.<tower>.mode: frozen` |
+
+Remove the old tower `enabled` keys; keep the top-level `peft.enabled` and
+`peft.method` keys. A tower's `mode` defaults to `frozen`, and `full` is an
+additional option for training all its parameters. Existing `target_modules`,
+`num_last_blocks`, `rank`, `alpha`, and `dropout` settings remain under their
+respective towers.
+
+The new `peft.train_logit_calibration` flag defaults to `true`, allowing
+`logit_scale` and optional `logit_bias` to train while PEFT is enabled. Set it
+to `false` to freeze those parameters. A migrated spec fragment for LoRA on
+both SigLIP2 towers is:
+
+```yaml
+peft:
+  enabled: true
+  method: lora
+  train_logit_calibration: true
+  vision:
+    mode: lora
+  text:
+    mode: lora
+```
+
+`ConfigKeyError: Key 'enabled' not in 'CLIPLoRATargetConfig'` with
+`full_key: peft.vision.enabled` or `peft.text.enabled` means the runtime
+expects this newer contract. Update both tower blocks before retrying; the
+error occurs during config merge, before model construction. See
+`references/error-patterns.md`. Apply this migration when selecting a runtime
+with the 7.3 contract; the packaged templates and schema retain the older
+boolean surface while the skill's image pin remains on 7.2.
+
 #### Encoder freeze flags and PEFT precedence
 
 In the tower `mode` contract used by the 7.3.0-rc-76 image and

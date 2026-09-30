@@ -1,5 +1,15 @@
 # CLIP Error Patterns
 
+**PEFT tower `enabled` ConfigKeyError after upgrading to 7.3**: If OmegaConf
+reports `Key 'enabled' not in 'CLIPLoRATargetConfig'` at
+`peft.vision.enabled` or `peft.text.enabled`, migrate each tower independently:
+`enabled: true` becomes `mode: lora`, and `enabled: false` becomes
+`mode: frozen`. Remove the old tower keys, preserving top-level
+`peft.enabled` and `peft.method` and the tower's adapter settings. The new
+`peft.train_logit_calibration` defaults to `true`; set it to `false` to freeze
+logit calibration parameters. This error occurs before model construction;
+see the migration example in `SKILL.md`.
+
 **CUDA out of memory**: Reduce `dataset.train.batch_size`, `dataset.val.batch_size`, or the TensorRT opt/max batch sizes. For export/deploy, check `export.input_height` and `export.input_width` against the selected fixed-resolution backbone.
 
 **NaN loss**: Learning rate is too high for fine-tuning. Reduce `train.optim.vision_lr` and `train.optim.text_lr`, increase `train.optim.warmup_steps`, and verify that captions are valid non-empty text.
