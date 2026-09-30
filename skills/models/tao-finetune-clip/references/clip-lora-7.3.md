@@ -25,4 +25,8 @@ peft:
     mode: frozen
 ```
 
-The packaged train templates and schema remain 7.2-shaped, and this skill pins a 7.2 PyTorch image. Do not pass their `peft.<tower>.enabled` fields to a 7.3 image. Use a 7.3-shaped spec and a confirmed 7.3 runtime for a 7.3 LoRA run.
+This mapping applies to a TAO 7.3 image that implements per-tower modes.
+Check the selected image before building the spec: an older template with
+per-tower `enabled` keys is not a valid 7.3 LoRA spec. Use a supported SigLIP2
+or RADIO backbone for LoRA mode. TAO 7.3 OpenCLIP towers do not support LoRA;
+choose `mode: full` or `mode: frozen` for them.
