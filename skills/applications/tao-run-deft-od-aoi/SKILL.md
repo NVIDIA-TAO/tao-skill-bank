@@ -29,8 +29,7 @@ Read only the references needed for the current stage:
 - orchestration: `references/pipeline.md` and
   `references/scripts-and-agents.md`;
 - gaps and retrieval: `references/gap-routing.md` and
-  `references/tao-analyze-gaps-od-map.md`; use
-  `references/retrieval-regression.md` for regression and acceptance runs;
+  `references/tao-analyze-gaps-od-map.md`;
 - training and selection: `references/training-policy.md`;
 - optional synthesis: `references/anomalygen-pool.md`.
 
