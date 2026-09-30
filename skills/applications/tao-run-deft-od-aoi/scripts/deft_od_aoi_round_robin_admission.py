@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
@@ -14,9 +15,13 @@ from typing import Any, Callable
 import numpy as np
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deft_od_aoi_round_robin_contract import (
+    ADMISSION_INDEX_WIDTH,
+    DCT_KEEP,
+    DCT_SIZE,
+)
 
-DCT_SIZE = 32
-DCT_KEEP = 12
 _POSITIONS = np.arange(DCT_SIZE)
 _BASIS = np.cos(
     np.pi * (2 * _POSITIONS[None, :] + 1) * _POSITIONS[:, None] / (2 * DCT_SIZE)
@@ -137,13 +142,14 @@ class RoundRobinAdmission:
         self.policy = {**_DEFAULT_POLICY, **(policy.get("admission") or {})}
         self.pending: list[np.ndarray] = []
         self.report: Counter[str] = Counter()
-        width = 2 * DCT_KEEP * DCT_KEEP + 4
         if previous_index is not None and not previous_index.is_file():
             raise FileNotFoundError(f"previous admission index is missing: {previous_index}")
         self.index = (
-            np.load(previous_index) if previous_index else np.zeros((0, width))
+            np.load(previous_index)
+            if previous_index
+            else np.zeros((0, ADMISSION_INDEX_WIDTH))
         )
-        if self.index.ndim != 2 or self.index.shape[1] != width:
+        if self.index.ndim != 2 or self.index.shape[1] != ADMISSION_INDEX_WIDTH:
             raise ValueError(f"invalid admission index shape {self.index.shape}")
 
     def _pool(self) -> np.ndarray:

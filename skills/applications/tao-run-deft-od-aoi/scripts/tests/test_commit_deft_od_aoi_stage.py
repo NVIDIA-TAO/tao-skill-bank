@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -177,6 +178,21 @@ def test_retrieval_commits_all_role_exhaustion_as_convergence(tmp_path: Path) ->
 
     assert result["status"] == "COMPLETE" and result["next_stage"] is None
     assert result["completion_reason"] == "mining_exhausted"
+
+
+def test_admission_index_uses_shared_shape_contract(tmp_path: Path) -> None:
+    valid = tmp_path / "valid.npy"
+    np.save(valid, np.zeros((0, MODULE.ADMISSION_INDEX_WIDTH)))
+    MODULE._validate_admission_index({"path": valid})
+
+    for name, index in (
+        ("one-dimensional", np.zeros(MODULE.ADMISSION_INDEX_WIDTH)),
+        ("wrong-width", np.zeros((1, MODULE.ADMISSION_INDEX_WIDTH - 1))),
+    ):
+        path = tmp_path / f"{name}.npy"
+        np.save(path, index)
+        with pytest.raises(ValueError, match="admission index shape"):
+            MODULE._validate_admission_index({"path": path})
 
 
 def test_measurement_rejects_incomplete_inference(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deft_od_aoi_round_robin_contract import ADMISSION_INDEX_WIDTH
 
 NEXT = {"synthesis_bootstrap": "candidate_cache", "candidate_cache": "baseline_measurement",
         "baseline_measurement": "baseline_gaps",
@@ -67,7 +70,7 @@ def _nonzero_counts(value: Any) -> dict[str, int]:
 
 def _validate_admission_index(artifact: dict[str, Any]) -> None:
     index = np.load(artifact["path"], mmap_mode="r")
-    if index.ndim != 2 or index.shape[1] != 292:
+    if index.ndim != 2 or index.shape[1] != ADMISSION_INDEX_WIDTH:
         raise ValueError(f"invalid round-robin admission index shape {index.shape}")
 
 
