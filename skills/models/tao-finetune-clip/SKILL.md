@@ -90,6 +90,36 @@ key from the evaluate action.
 
 Radio-CLIP requires `model.adaptor_name` to be set to `siglip` or `clip`.
 
+### LoRA and preservation regularization
+
+The training spec has top-level `peft` and `regularization` blocks. The
+`CLIPExperimentConfig` contract in tao-pytorch at `556085a` uses
+`peft.enabled: true`, `peft.method: lora`, and separate
+`peft.vision.enabled` / `peft.text.enabled` booleans. Enable at least one
+tower for LoRA. Both tower flags default to `false`, as does `peft.enabled`;
+leaving them at their defaults preserves full fine-tuning. Each enabled tower
+has `target_modules`, `num_last_blocks` (3; 0 means all blocks), `rank` (8),
+`alpha` (16; scale is alpha/rank), and `dropout` (0.05). Set target modules
+for the selected backbone: SigLIP2 uses `q_proj`, `k_proj`, `v_proj`,
+`out_proj`; RADIO and OpenCLIP use `qkv`, `proj`. The default target list is
+the SigLIP2 list, so override it for RADIO or OpenCLIP. The default OpenCLIP
+backbone is not excluded by this config contract.
+
+LoRA trains a small adapter parameter set, but the documented training
+checkpoint remains a full CLIP checkpoint; do not budget storage as though it
+were an adapter-only file. `regularization.enabled` defaults to `false`.
+Enabling it creates a frozen teacher copy of the full model and adds
+embedding MSE (weight 0.05), cosine (0.05), and image-text similarity
+preservation (0.10) losses. Budget memory for that second model copy.
+
+The skill's pinned 7.2 image predates this documented tao-pytorch config,
+and a config field alone does not establish that LoRA injection works in an
+image. Verify the selected image exposes these exact fields and the injection
+path before launching LoRA; keep PEFT disabled if it does not. The cited
+tao-pytorch commit has the config but lacks the injection and regularization
+implementation, so it cannot validate an end-to-end LoRA run. Newer source
+may expose a different tower contract; use the schema of the actual image.
+
 ### Per-Action Dataset Requirements
 
 | Action | Spec Key | Source | Files | List? |
