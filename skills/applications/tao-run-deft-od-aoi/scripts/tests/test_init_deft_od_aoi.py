@@ -444,6 +444,35 @@ def test_initialize_accepts_unconfigured_nested_kpi_dataset_id(tmp_path: Path) -
     assert state["synthesis_enabled"] is True
 
 
+def test_initialize_accepts_mixed_routed_and_unrouted_kpi_metadata(
+        tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    _set_valid_routed_metadata(tmp_path, value)
+    kpi_images = Path(value["sources"]["kpi"]["images"])
+    unrouted_image = kpi_images / "unrouted.png"
+    unrouted_image.write_bytes(b"unrouted-image")
+    kpi_coco = Path(value["sources"]["kpi"]["coco"])
+    data = json.loads(kpi_coco.read_text())
+    data["images"].append({"id": 2, "file_name": unrouted_image.name})
+    data["annotations"].append({
+        "id": 2,
+        "image_id": 2,
+        "category_id": 1,
+        "bbox": [1, 1, 4, 4],
+        "area": 16,
+        "deft_od_aoi": {"dataset_id": "normal_real_data"},
+    })
+    kpi_coco.write_text(json.dumps(data))
+    _enable_synthesis(tmp_path, value)
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    assert state["synthesis_enabled"] is True
+    assert state["roles"]["kpi"]["annotation_count"] == 2
+
+
 def test_annotation_dataset_id_overrides_image_metadata(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())
