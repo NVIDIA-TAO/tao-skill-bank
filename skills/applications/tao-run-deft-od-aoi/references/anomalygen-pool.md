@@ -106,3 +106,24 @@ continue. When all routed FNs have that reason, the input contract is typed
 `SKIPPED` with preparation-level reason `no_eligible_false_negatives`, carries
 the specific per-FN reason and warning evidence, and emits no embedding or AMP
 work.
+
+## Runtime-generated FN selection
+
+The default passes every eligible FN to filtering. To bound work, the
+application can generate a plan deterministically after real admission:
+
+```yaml
+synthesis:
+  cumulative_fraction_of_total_defects: 0.25
+  fn_selection:
+    mode: generated_per_type_plan
+    images_per_fn: 2
+```
+
+Pass the admitted real COCO with `--real-coco`. The planner solves
+`synthetic / (real + synthetic) = fraction`, subtracts previously admitted
+synthetic images, and distributes the remaining whole-FN budget across anomaly
+types in proportion to eligible FN counts with deterministic remainder ties.
+It writes `synthetic_plan.json`, binds its SHA-256 into the request, and records
+the complete budget calculation. If no budget remains, preparation emits a
+typed `SKIPPED/no_synthetic_budget` result.

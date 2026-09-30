@@ -75,6 +75,8 @@ training:
   extension_epochs: 12
 synthesis:
   enabled: false
+  fn_selection:
+    mode: all_eligible
   pool_dataset_root: null
   defect_spec: null
   routes: {}

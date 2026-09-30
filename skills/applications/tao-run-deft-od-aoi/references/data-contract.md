@@ -84,9 +84,11 @@ the generated binary COCO and its image root. On the second, synthesis-only
 admission pass, also pass `--synthetic-only` with the same-iteration real
 admission `train.json` as `--previous-coco`; the preview records
 `mining_admission: skipped`. Without that explicit flag, mining admission still
-runs. Synthetic admission is capped by
-`synthesis.cumulative_fraction_of_real_defects`. Existing records remain
-unchanged. Admission also emits `admission_preview.json`. When overfetched crops
+runs. Synthetic admission is capped so that synthetic defects occupy at most
+`synthesis.cumulative_fraction_of_total_defects` of the combined real and
+synthetic defect pool. The legacy `cumulative_fraction_of_real_defects` key
+remains readable with its original synthetic-to-real meaning. Existing records
+remain unchanged. Admission also emits `admission_preview.json`. When overfetched crops
 do not contain enough novel parent images for a branch target, it admits the
 available parents and records the shortfall instead of failing the iteration.
 Real retrieval may become exhausted while clean retrieval continues until the

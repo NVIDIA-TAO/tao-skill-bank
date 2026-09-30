@@ -275,8 +275,16 @@ FN/annotation matches:
 scripts/prepare_deft_od_aoi_synthesis.py \
   --policy "$RESULTS/deft_od_aoi_policy.yaml" \
   --strict-gaps "$MEASURE/gap_strict/box_gaps.parquet" \
-  --output-dir "$ITER/synthesis_request"
+  --iteration 1 --output-dir "$ITER/synthesis_request"
 ```
+
+The default `synthesis.fn_selection.mode: all_eligible` preserves every routed
+FN. To bound work at runtime, `generated_per_type_plan` accepts `images_per_fn`
+and requires the current admitted real COCO via `--real-coco`. It derives a
+deterministic per-type plan from `cumulative_fraction_of_total_defects`, writes
+and hashes the plan, and records the full allocation calculation. A fraction of
+`0.25` means synthetic images are 25% of the combined real-plus-synthetic defect
+pool.
 
 Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
 mounting the complete checkpoint root for its `run_amp` action, then pass its
