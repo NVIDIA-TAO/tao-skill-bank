@@ -312,6 +312,7 @@ def test_no_matches_routes_to_synthesis_or_converges(
         },
         "admitted": {"real": 0, "clean": 0, "synthetic": 0},
         "new_training_images": 0,
+        "synthetic_admission": {"available_room_before_admission": 1},
     }))
 
     result = MODULE.commit(
@@ -554,7 +555,10 @@ def test_synthesis_budget_skip_trains_only_with_new_admission(
     assert result["status"] == expected_status
     assert result["next_stage"] == expected_stage
     decision = result["events"][-1]["synthesis_decision"]
-    assert decision == {"status": "SKIPPED", "reason": "no_synthetic_budget"}
+    assert decision == {
+        "status": "SKIPPED", "reason": "no_synthetic_budget",
+        "available_room_before_admission": 1,
+    }
     assert set(result["events"][-1]["artifacts"]) == {
         "synthesis_request", "admission_report",
     }
