@@ -1,5 +1,4 @@
 {
-  "source_commit": "7ebdfbb",
   "policy": {"retrieval": {"minimum_similarity": -1.0, "candidate_overfetch": 2}},
   "ledger": ["/pool/excluded.png"],
   "source_metadata": {

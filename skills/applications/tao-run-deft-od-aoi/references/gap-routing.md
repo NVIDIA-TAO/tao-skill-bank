@@ -25,7 +25,7 @@ owns the loose and strict operating points.
 Build the candidate cache once. `retrieval.preprocessing.profile` independently
 selects the embedding input geometry:
 
-- `square_context` (default) reproduces the historical behavior: expand the
+- `square_context` (default) expands the
   longer defect-box edge by the context scale, mean-pad to a square at image
   boundaries, mean-pad non-square clean-grid cells, then bicubic-resize defect,
   query, and clean-grid crops to

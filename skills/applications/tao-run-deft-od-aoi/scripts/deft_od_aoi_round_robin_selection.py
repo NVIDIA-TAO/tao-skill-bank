@@ -36,7 +36,7 @@ def round_robin_rank(candidates: pd.DataFrame, queries: pd.DataFrame, *,
                      overfetch: int, audit_top_k: int,
                      excluded_candidates: set[str] | None = None
                      ) -> list[dict[str, Any]]:
-    """Mirror the bounded per-query ranking used by historical commit 7ebdfbb."""
+    """Build a bounded deterministic ranking independently for each query."""
     if quota <= 0 or queries.empty or candidates.empty:
         return []
     required = {"candidate_id", "source_filepath", "embedding"}
