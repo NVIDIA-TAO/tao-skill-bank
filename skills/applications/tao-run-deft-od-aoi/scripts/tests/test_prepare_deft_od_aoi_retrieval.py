@@ -176,7 +176,7 @@ def test_legacy_candidate_manifest_without_profile_is_tight_context(tmp_path: Pa
     )
 
 
-def test_square_context_reproduces_historical_fixed_size_crops(tmp_path: Path) -> None:
+def test_square_context_produces_fixed_size_crops(tmp_path: Path) -> None:
     report = MODULE.candidates(
         _policy(tmp_path, "square_context"), tmp_path / "candidates"
     )
@@ -229,7 +229,7 @@ def test_square_context_applies_exif_orientation_before_cropping(tmp_path: Path)
     assert np.array_equal(np.asarray(Image.open(output)), np.asarray(expected))
 
 
-def test_square_context_preserves_historical_string_id_order(tmp_path: Path) -> None:
+def test_square_context_preserves_deterministic_string_id_order(tmp_path: Path) -> None:
     policy = _policy(tmp_path, "square_context")
     value = yaml.safe_load(policy.read_text())
     for role in ("real", "clean"):

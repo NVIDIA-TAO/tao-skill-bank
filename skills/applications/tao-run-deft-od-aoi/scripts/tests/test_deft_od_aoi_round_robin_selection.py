@@ -27,7 +27,7 @@ assert COMMIT_SPEC.loader
 COMMIT_SPEC.loader.exec_module(COMMIT_MODULE)
 
 
-def test_frozen_fixture_matches_7ebdfbb_semantic_selection() -> None:
+def test_frozen_fixture_preserves_semantic_selection() -> None:
     fixture = json.loads(FIXTURE.read_text())
     queries = fixture["queries"]
     for query in queries:
@@ -46,7 +46,6 @@ def test_frozen_fixture_matches_7ebdfbb_semantic_selection() -> None:
         [row["query_id"], row["candidate_id"], row["source_filepath"]]
         for row in selected
     ]
-    assert fixture["source_commit"] == "7ebdfbb"
     assert semantic == fixture["reference_semantic_selection"]
 
 

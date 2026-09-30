@@ -166,7 +166,7 @@ def test_initialize_rejects_invalid_square_output_size(tmp_path: Path) -> None:
 def test_initialize_rejects_unknown_preprocessing_profile(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())
-    value["retrieval"] = {"preprocessing": {"profile": "historical_parity"}}
+    value["retrieval"] = {"preprocessing": {"profile": "unsupported_profile"}}
     config.write_text(yaml.safe_dump(value))
 
     with pytest.raises(ValueError, match="tight_context or square_context"):
