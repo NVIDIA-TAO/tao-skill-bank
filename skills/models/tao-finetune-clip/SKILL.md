@@ -136,6 +136,34 @@ tao-pytorch commit has the config but lacks the injection and regularization
 implementation, so it cannot validate an end-to-end LoRA run. Newer source
 may expose a different tower contract; use the schema of the actual image.
 
+#### Encoder freeze flags and PEFT precedence
+
+In the tower `mode` contract used by the 7.3.0-rc-76 image and
+tao-pytorch at `a6a5e75`, `peft.enabled: true` makes
+`peft.vision.mode` and `peft.text.mode` control encoder trainability.
+PEFT first freezes all model parameters, then applies each tower's mode:
+
+| Tower mode | Result when PEFT is enabled |
+|---|---|
+| `frozen` | All parameters in that encoder remain frozen. |
+| `full` | All parameters in that encoder become trainable. |
+| `lora` | Injected adapter parameters are trainable; backbone parameters remain frozen. |
+
+These modes override the earlier `model.freeze_vision_encoder` and
+`model.freeze_text_encoder` settings in both directions. For example,
+`model.freeze_vision_encoder: true` with `peft.vision.mode: full` trains the
+vision encoder; `model.freeze_text_encoder: false` with
+`peft.text.mode: frozen` freezes the text encoder. With `peft.enabled: false`,
+the model freeze flags apply normally. Logit calibration parameters are
+controlled separately by `peft.train_logit_calibration` in this contract.
+
+Use tower modes as the source of trainability when PEFT is enabled, remove
+conflicting model freeze flags, and verify the per-tower trainable-parameter
+counts in the launch logs. The cited runtime silently applies PEFT precedence;
+do not rely on it to warn about conflicts. These `mode` fields belong to the
+newer contract and must not be mixed with the older per-tower `enabled`
+booleans above; the packaged templates describe that older config surface.
+
 ### Per-Action Dataset Requirements
 
 | Action | Spec Key | Source | Files | List? |
@@ -255,7 +283,7 @@ Use `evaluate.trt_engine` for TensorRT evaluation and `inference.trt_engine` for
 - **model.image_size**: Training transform image resolution. Keep it aligned with the selected fixed-resolution backbone.
 - **train.num_epochs**: CLIP fine-tuning often converges quickly. Start with 10-20 epochs for domain adaptation, then increase only if validation loss is still improving.
 - **train.optim.vision_lr / train.optim.text_lr**: Learning rates for the two encoders. CLIP is sensitive to high learning rates; reduce both if loss is unstable.
-- **model.freeze_vision_encoder / model.freeze_text_encoder**: Defaults are false. Freezing one encoder can help when the dataset is small or only one modality needs adaptation.
+- **model.freeze_vision_encoder / model.freeze_text_encoder**: Defaults are false. These flags control encoder freezing when `peft.enabled: false`. With PEFT enabled under the tower `mode` contract, `peft.vision.mode` / `peft.text.mode` override them, even if they disagree: `full` trains the encoder, `frozen` freezes it, and `lora` trains adapters. See the PEFT precedence section above and remove conflicting freeze flags.
 - **train.loss_type**: `siglip` is recommended for SigLIP2 and Radio-CLIP. Use `clip` for CLIP-style softmax loss.
 - **export.encoder_type**: `combined` exports one ONNX graph. `separate` exports independent vision and text graphs.
 - **gen_trt_engine.tensorrt.data_type**: TensorRT deployment supports `fp16` and `fp32`.
