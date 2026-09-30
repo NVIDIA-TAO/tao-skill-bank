@@ -252,7 +252,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     if synthetic_only and (previous_path is None or synthetic_coco is None):
         raise ValueError("--synthetic-only requires --previous-coco and synthetic inputs")
     enabled = set() if synthetic_only else set(manifest["enabled_roles"])
-    source_indexes = {role: _source_index(policy, role) for role in enabled}
+    indexes = {role: _source_index(policy, role) for role in enabled}
     strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get(
         "strategy", "round_robin_similarity"
     )
@@ -325,13 +325,13 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             }
     for role, rows in additions.items():
         missing = [str(Path(row["source_filepath"]).resolve()) for row in rows
-                   if str(Path(row["source_filepath"]).resolve()) not in source_indexes[role]]
+                   if str(Path(row["source_filepath"]).resolve()) not in indexes[role]]
         if missing:
             raise ValueError(
                 f"selected {role} source is absent from its frozen COCO: {missing[0]}"
             )
         counts = collections.Counter(
-            source_indexes[role][str(Path(row["source_filepath"]).resolve())]["dataset_id"]
+            indexes[role][str(Path(row["source_filepath"]).resolve())]["dataset_id"]
             for row in rows
         )
         preview["roles"].setdefault(role, {})["per_dataset"] = dict(sorted(counts.items()))
@@ -369,7 +369,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                str(image["deft_kind"]), image.get("retrieval_similarity"))
     admitted_rows = []
     for role, kind in (("real", "real_defect"), ("clean", "clean_negative")):
-        index = source_indexes.get(role, {})
+        index = indexes.get(role, {})
         for selected in additions.get(role, []):
             source = Path(str(selected["source_filepath"])).resolve()
             if str(source) not in index:
