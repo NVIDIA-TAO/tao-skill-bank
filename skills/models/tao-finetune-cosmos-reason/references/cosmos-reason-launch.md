@@ -108,8 +108,8 @@ For dense Cosmos-RL SFT (`train.train_policy.type="sft"` with
 cumulative visible GPU memory. For PEFT (`training_mode=peft`), require at
 least 72 GB instead: pass `--gpu-min-total-memory-gb 72` in the preflight
 commands above and keep every other check in this section. The PEFT floor was
-measured for the image-pair LoRA profile (rank 16, batch 4 per replica); video
-inputs, higher rank, or a larger batch need more. Do not impose a
+measured for the LoRA profile (rank 16, batch 4 per replica); a higher rank or
+a larger batch needs more. Do not impose a
 fixed device count or per-device
 capacity: set `policy.parallelism.dp_shard_size` and the platform GPU request to
 the actual visible GPU count, and set `policy.parallelism.dp_replicate_size=1`

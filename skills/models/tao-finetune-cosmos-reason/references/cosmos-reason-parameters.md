@@ -167,8 +167,8 @@ count and do not require a fixed policy/rollout topology for SFT. Run
 `scripts/check_tao_launch_preflight.py --gpu-min-total-memory-gb 256 --gpu-arch-allowlist cosmos_rl=sm_80,sm_90,sm_100,sm_103,sm_103a,sm_120`
 before launching. For PEFT, run the same command with
 `--gpu-min-total-memory-gb 72`; every other gate still applies. The PEFT floor
-was measured for the image-pair LoRA profile (rank 16, batch 4 per replica);
-video inputs, higher rank, or a larger batch need more. If the target
+was measured for the LoRA profile (rank 16, batch 4 per replica); a higher
+rank or a larger batch needs more. If the target
 architecture is known but cannot be detected
 from the launch host, pass `--gpu-arch sm_XX` explicitly. Architecture-specific
 suffixes such as `a` and `f` match the same base SM family. `sm_121` is not
