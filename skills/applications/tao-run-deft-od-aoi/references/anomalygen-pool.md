@@ -105,8 +105,7 @@ work.
 
 ## Runtime-generated FN selection
 
-The default passes every eligible FN to filtering. To bound work, the
-application can generate a plan deterministically after real admission:
+The default generates a bounded plan deterministically after real admission:
 
 ```yaml
 synthesis:
@@ -120,6 +119,26 @@ Pass the admitted real COCO with `--real-coco`. The planner solves
 `synthetic / (real + synthetic) = fraction`, subtracts previously admitted
 synthetic images, and distributes the remaining whole-FN budget across anomaly
 types in proportion to eligible FN counts with deterministic remainder ties.
+`images_per_fn` must describe the expected finalized generation yield for one
+selected FN:
+
+```text
+retained neighbors per FN × mask branches per neighbor × images per branch
+```
+
+The accepted configuration uses one retained neighbor, two mask branches, and
+one generated image per branch, so the value is `1 × 2 × 1 = 2`. The retrieval
+`candidate_topn` may be larger (for example, three) because it supplies fallback
+neighbors before AMP finalization; it does not increase the expected yield once
+`max_neighbors_per_fn` retains only one neighbor. If those retention, branch, or
+generation settings change, update `images_per_fn` with them or the planner will
+misstate the image budget and may generate work that admission later discards.
+
+Set `synthesis.fn_selection.mode: all_eligible` explicitly only when every
+routed FN should proceed without pre-generation budgeting. That compatibility
+mode does not require `--real-coco`, but the cumulative admission cap still
+applies after generation.
+
 It writes `synthetic_plan.json`, binds its SHA-256 into the request, and records
 the complete budget calculation. If no budget remains, preparation emits a
 typed `SKIPPED/no_synthetic_budget` result.

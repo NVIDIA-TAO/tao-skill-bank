@@ -64,9 +64,10 @@ iteration's cumulative `train.json`. Gate on the new binary COCO,
 
 ## 5. Optional synthesis
 
-Run `prepare_deft_od_aoi_synthesis.py` against strict FN gaps. Pass the
-filtering YAML through `tao-prepare-anomalygennext-inputs`, complete its
-embedding and AMP actions, then invoke `tao-generate-od-defects`.
+Run `prepare_deft_od_aoi_synthesis.py` against strict FN gaps with the current
+iteration and admitted real COCO. The default generated plan bounds work before
+passing the filtering YAML through `tao-prepare-anomalygennext-inputs`; complete
+its embedding and AMP actions, then invoke `tao-generate-od-defects`.
 
 Re-run admission with the generated binary COCO and image root, the
 same-iteration real admission `train.json` as `--previous-coco`, and
