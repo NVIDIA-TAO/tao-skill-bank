@@ -764,6 +764,12 @@ def test_square_context_applies_to_queries_independently_of_routing(tmp_path: Pa
     assert Image.open(frame.iloc[0].filepath).size == (224, 224)
 
 
+def test_square_context_gap_boxes_use_bounded_pixel_geometry() -> None:
+    assert MODULE._gap_xywh([-2, -1, 5, 6], 4, 4) == [0, 0, 4, 4]
+    with pytest.raises(ValueError, match="gap box clips empty"):
+        MODULE._gap_xywh([6, 1, 7, 2], 4, 4)
+
+
 def test_unknown_preprocessing_profile_is_rejected(tmp_path: Path) -> None:
     policy = _policy(tmp_path, "unknown")
     try:

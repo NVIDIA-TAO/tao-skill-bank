@@ -181,10 +181,8 @@ def _square_grid_crops(source: Path, grids: list[int], output: Path,
     return rows
 
 
-def _gap_xywh(value: Any) -> list[float]:
-    x1, y1, x2, y2 = map(float, value)
-    if x2 <= x1 or y2 <= y1:
-        raise ValueError(f"invalid xyxy gap box: {value}")
+def _gap_xywh(value: Any, width: int, height: int) -> list[float]:
+    x1, y1, x2, y2 = _gap_box(value, width, height, 1.0)
     return [x1, y1, x2 - x1, y2 - y1]
 
 
@@ -413,7 +411,9 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
                 raise ValueError(f"gap image lacks frozen pocket metadata: {source}")
             width, height = _size(source)
             if profile == "square_context":
-                box = _gap_xywh(event["bbox"])
+                with Image.open(source) as image:
+                    width, height = ImageOps.exif_transpose(image).size
+                box = _gap_xywh(event["bbox"], width, height)
             else:
                 box = _gap_box(event["bbox"], width, height,
                                float(policy["retrieval"]["defect_context_scale"]))
