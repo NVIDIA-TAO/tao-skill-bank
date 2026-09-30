@@ -60,8 +60,6 @@ not expose a complete adapter contract (enable flag/config, target modules,
 rank, alpha, dropout, checkpoint behavior), report LoRA as unsupported for
 that image and stop before materializing a run.
 
-The train schema also exposes PEFT/LoRA parameters for an explicitly configured AutoML search. They are marked `automl_enabled: false` so the default LR search stays unchanged. To search them, pass the selected paths in `automl_hyperparameters` and set `override_automl_disabled_params: true`; keep `peft.enabled: true` and the chosen tower `enabled` fields fixed while searching rank, alpha, dropout, or block count. Check that the selected runtime image implements these fields before launching: this skill currently pins a 7.2 image, while the documented PEFT config comes from tao-pytorch `556085a` and has not been validated end to end against that image.
-
 Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows stay in this model skill. The per-run `automl_policy` override does not change model metadata.
 
 ## Instructions
@@ -97,17 +95,12 @@ writes CSVs; it does not emit a `test/t2i_mAP` scalar.
 
 Radio-CLIP requires `model.adaptor_name` to be set to `siglip` or `clip`.
 
-### LoRA Fine-Tuning
+### TAO 7.3 PEFT configuration
 
-LoRA is configured by top-level `peft` and `regularization` blocks in the train spec, alongside `model`, `dataset`, and `train`. See `references/spec_template_train.yaml` for the complete default shape. Set `peft.enabled: true` and enable `peft.vision.enabled`, `peft.text.enabled`, or both; all three flags default to `false`. `peft.method` currently accepts only `lora`. The selected towers receive adapters while other backbone weights remain frozen. With PEFT disabled, ordinary full fine-tuning behavior applies.
-
-Each tower has `target_modules` (default `['q_proj', 'k_proj', 'v_proj', 'out_proj']`), `num_last_blocks` (default 3; 0 selects all blocks), `rank` (8), `alpha` (16; effective scale is alpha/rank), and `dropout` (0.05). For SigLIP2, use `q_proj`, `k_proj`, `v_proj`, and `out_proj`; for RADIO, use `qkv` and `proj`. Match the module names in the selected backbone before launch, since a target with no matching modules cannot adapt that tower.
-
-LoRA checkpoints contain the model weights plus adapter state, so plan checkpoint storage for a full model rather than only the small adapter parameters. `regularization.enabled` defaults to `false`; when enabled, preservation losses use a second, frozen full model copy, increasing VRAM use. Its nonnegative weights default to `embedding_mse_weight: 0.05`, `cosine_weight: 0.05`, and `similarity_weight: 0.10`. Reduce batch size or disable regularization if that extra copy exceeds GPU memory.
-
-These fields are present in the tracked tao-pytorch config at `556085a`, but the injection and preservation runtime was absent at that revision. The pinned 7.2 image has no verified LoRA execution contract here. Check the actual image's config and runtime before promising LoRA training, checkpoint loading, or export; a newer tao-pytorch revision uses a different per-tower `mode` contract.
-
-For TAO 7.3, read [references/clip-lora-7.3.md](references/clip-lora-7.3.md) before constructing a LoRA spec. The packaged templates and pinned PyTorch image remain 7.2-shaped.
+For TAO 7.3 tower modes and migration from 7.2 tower `enabled` keys, read
+[references/clip-lora-7.3.md](references/clip-lora-7.3.md). The PAS LoRA
+selection above applies to PAS DEFT; check the selected image before using
+PEFT settings for standalone CLIP training.
 
 ### Per-Action Dataset Requirements
 
@@ -228,7 +221,7 @@ Use `evaluate.trt_engine` for TensorRT evaluation and `inference.trt_engine` for
 - **model.image_size**: Training transform image resolution. Keep it aligned with the selected fixed-resolution backbone.
 - **train.num_epochs**: CLIP fine-tuning often converges quickly. Start with 10-20 epochs for domain adaptation, then increase only if validation loss is still improving.
 - **train.optim.vision_lr / train.optim.text_lr**: Learning rates for the two encoders. CLIP is sensitive to high learning rates; reduce both if loss is unstable.
-- **model.freeze_vision_encoder / model.freeze_text_encoder**: Default to false. With PEFT enabled, `peft.<tower>.mode` overrides these flags; see the 7.3 LoRA migration reference above.
+- **model.freeze_vision_encoder / model.freeze_text_encoder**: Both default to false and control tower freezing when PEFT is disabled. In TAO 7.3 with `peft.enabled: true`, each `peft.<tower>.mode` determines trainability: `frozen` freezes the tower, `full` trains it, and `lora` trains adapters. The mode takes precedence over a conflicting freeze flag. Set the flags and modes consistently; see the 7.3 migration reference above.
 - **train.loss_type**: `siglip` is recommended for SigLIP2 and Radio-CLIP. Use `clip` for CLIP-style softmax loss.
 - **export.encoder_type**: `combined` exports one ONNX graph. `separate` exports independent vision and text graphs.
 - **gen_trt_engine.tensorrt.data_type**: TensorRT deployment supports `fp16` and `fp32`.
