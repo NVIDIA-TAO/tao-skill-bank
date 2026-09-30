@@ -45,6 +45,7 @@ def test_synthesis_normalizes_exact_kpi_false_negative(tmp_path: Path) -> None:
                                       "retrieval": {"model": "SigLIP", "model_path": "siglip",
                                                     "candidate_overfetch": 15},
                                       "synthesis": {"enabled": True,
+                                                    "fn_selection": {"mode": "all_eligible"},
                                                     "pool_dataset_root": str(pool),
                                                     "defect_spec": str(defect_spec),
                                                     "routes": {"route": {"checkpoint": str(checkpoint),
@@ -93,6 +94,7 @@ def test_synthesis_resolves_gap_filename_stem_to_coco_id(tmp_path: Path) -> None
         "retrieval": {"model": "SigLIP", "model_path": "siglip",
                       "candidate_overfetch": 15},
         "synthesis": {"enabled": True, "pool_dataset_root": str(pool),
+                      "fn_selection": {"mode": "all_eligible"},
                       "defect_spec": str(defect_spec),
                       "routes": {"route": {"checkpoint": str(checkpoint),
                                              "recipe": str(recipe)}},
@@ -142,6 +144,7 @@ def test_synthesis_accepts_hardlinked_normalized_kpi_view(tmp_path: Path) -> Non
         "retrieval": {"model": "SigLIP", "model_path": "siglip",
                       "candidate_overfetch": 15},
         "synthesis": {"enabled": True, "pool_dataset_root": str(pool),
+                      "fn_selection": {"mode": "all_eligible"},
                       "defect_spec": str(defect_spec),
                       "routes": {"route": {"checkpoint": str(checkpoint),
                                              "recipe": str(recipe)}},
@@ -208,6 +211,7 @@ def test_synthesis_skips_unrouted_dataset_without_weakening_routed_masks(
         "retrieval": {"model": "SigLIP", "model_path": "siglip",
                       "candidate_overfetch": 15},
         "synthesis": {"enabled": True, "pool_dataset_root": str(pool),
+                      "fn_selection": {"mode": "all_eligible"},
                       "defect_spec": str(defect_spec),
                       "routes": {"route": {"checkpoint": str(checkpoint),
                                              "recipe": str(recipe)}},
@@ -337,8 +341,7 @@ def test_runtime_generated_plan_selects_deterministically_and_is_reported(
                       "max_neighbors_per_fn": 1, "min_similarity": 0.9,
                       "amp_model_id": "nvidia/Cosmos3-Nano",
                       "cumulative_fraction_of_total_defects": 0.25,
-                      "fn_selection": {"mode": "generated_per_type_plan",
-                                       "images_per_fn": 2}},
+                      },
     }))
     strict = tmp_path / "strict.parquet"
     pd.DataFrame(gaps).to_parquet(strict)
@@ -364,3 +367,16 @@ def test_runtime_generated_plan_selects_deterministically_and_is_reported(
 def test_selection_contract_rejects_unknown_modes() -> None:
     with pytest.raises(ValueError, match="unsupported synthesis.fn_selection.mode"):
         MODULE._selection_contract({"fn_selection": {"mode": "external_plan"}}, 1)
+
+
+def test_default_policy_uses_generated_per_type_plan() -> None:
+    policy = yaml.safe_load(
+        (Path(__file__).parents[2] / "assets" / "default_policy.yaml").read_text()
+    )
+
+    assert policy["synthesis"]["fn_selection"] == {
+        "mode": "generated_per_type_plan", "images_per_fn": 2,
+    }
+    assert policy["synthesis"]["max_neighbors_per_fn"] == 1
+    assert policy["synthesis"]["cumulative_fraction_of_total_defects"] == 0.25
+    assert "cumulative_fraction_of_real_defects" not in policy["synthesis"]

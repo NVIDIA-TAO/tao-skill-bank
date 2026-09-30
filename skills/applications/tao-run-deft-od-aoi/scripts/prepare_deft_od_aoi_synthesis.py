@@ -31,8 +31,10 @@ def _sha256(path: Path) -> str:
 def _selection_contract(
     synthesis: dict[str, Any], iteration: int | None
 ) -> tuple[str, dict[str, int] | None, dict[str, Any] | None]:
-    selection = synthesis.get("fn_selection") or {"mode": "all_eligible"}
-    mode = str(selection.get("mode") or "all_eligible")
+    selection = synthesis.get("fn_selection") or {
+        "mode": "generated_per_type_plan", "images_per_fn": 2,
+    }
+    mode = str(selection.get("mode") or "generated_per_type_plan")
     if mode == "all_eligible":
         return mode, None, None
     if mode == "generated_per_type_plan":
@@ -52,12 +54,17 @@ def _generated_plan(
     by_kind = Counter(str(row.get("deft_kind") or "") for row in document.get("images", []))
     real_count = by_kind["real_defect"]
     prior_synthetic = by_kind["synthetic_defect"]
+    if "cumulative_fraction_of_total_defects" not in synthesis:
+        raise ValueError(
+            "generated_per_type_plan requires "
+            "synthesis.cumulative_fraction_of_total_defects"
+        )
     fraction = float(synthesis["cumulative_fraction_of_total_defects"])
     if not math.isfinite(fraction) or not 0 <= fraction < 1:
         raise ValueError(
             "synthesis.cumulative_fraction_of_total_defects must be in [0, 1)"
         )
-    selection = synthesis["fn_selection"]
+    selection = synthesis.get("fn_selection") or {"images_per_fn": 2}
     images_per_fn = selection.get("images_per_fn", 2)
     if (isinstance(images_per_fn, bool) or not isinstance(images_per_fn, int)
             or images_per_fn < 1):
