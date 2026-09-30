@@ -98,13 +98,13 @@ iteration.
 Real retrieval may become exhausted while clean retrieval continues until the
 existing cumulative real count's clean allowance is full.
 
-Generation currently completes before this admission cap is applied. The
-first admission report emits `SYNTHETIC_ADMISSION_CAP_ZERO` before generation
-when synthesis is enabled but the current fractional allowance has no room.
-After generation, it emits `SYNTHETIC_ADMISSION_CAPPED` when otherwise-eligible
-generated images are excluded. The warnings include the configured fraction,
-real count, and synthetic ceiling. If a run is expected to admit fewer real
-images but needs a larger synthetic share, increase the fraction before
-freezing its policy and review the resulting dataset balance. Because the cap
-is multiplicative, increasing the fraction cannot admit synthetic images when
-the cumulative real count is zero.
+The initial admission report calculates remaining capacity after admitting
+real/clean images, and emits `SYNTHETIC_ADMISSION_CAP_ZERO` when it is zero.
+The stage controller then records a budget skip instead of requesting
+iteration synthesis. Missing or invalid capacity evidence is an error.
+Positive capacity permits synthesis, but post-generation admission still
+enforces quality and cumulative limits; `SYNTHETIC_ADMISSION_CAPPED` reports
+otherwise-eligible generated images excluded by the cap. Training is allowed
+only when the iteration adds images. Cap formulas and whole-FN allocation
+are unchanged; a zero cumulative real count still permits no synthetic
+admissions.

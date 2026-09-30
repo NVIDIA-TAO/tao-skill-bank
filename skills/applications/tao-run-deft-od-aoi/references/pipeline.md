@@ -75,13 +75,21 @@ iteration's cumulative `train.json`. Gate on the new binary COCO,
 `admitted_sources.parquet`, `admission_report.json`, and round-robin's copied
 `admission_index.npy`. Commit `iteration_admission`. Admission records the same
 `SELECTED`/`NO_MATCHES`
-per-role outcome for either selection strategy. If no new image is admitted,
-the commit routes to synthesis when enabled; otherwise it converges with
-`retrieval_no_matches` instead of training an unchanged dataset.
+per-role outcome for either selection strategy. When synthesis is enabled,
+the controller requires a nonnegative integer
+`synthetic_admission.available_room_before_admission`. Positive capacity
+routes to synthesis, including unused allowance from prior real admissions.
+Zero capacity records `synthesis_decision: {status: SKIPPED, reason:
+no_synthetic_budget, available_room_before_admission: 0}` in the admission
+event and bypasses synthesis. Continue to training only if
+`new_training_images` is positive; otherwise converge with
+`retrieval_no_matches` or `retrieval_no_new_data`. Never infer zero capacity
+from missing evidence or merely from zero new real images.
 
 ## 5. Optional synthesis
 
-Run `prepare_deft_od_aoi_synthesis.py` against strict FN gaps with the current
+Only when the committed next stage is `iteration_synthesis`, run
+`prepare_deft_od_aoi_synthesis.py` against strict FN gaps with the current
 iteration and admitted real COCO. The default generated plan bounds work before
 passing the filtering YAML through `tao-prepare-anomalygennext-inputs`; complete
 its embedding and AMP actions, then invoke `tao-generate-od-defects`.
@@ -92,6 +100,19 @@ same-iteration real admission `train.json` as `--previous-coco`, and
 supplying synthetic and previous COCO inputs alone does not disable mining.
 Commit `iteration_synthesis`. Never synthesize from a box without its exact
 mask.
+If post-generation admission adds nothing, the controller also verifies the
+committed initial admission report: real/clean images added earlier in this
+iteration still justify training. Retained images from older iterations do not.
+
+When combined with bounded planning, a positive image allowance can still be
+too small for one whole FN. Its existing `synthesis_request.json` may report
+`SKIPPED / no_synthetic_budget`. Commit it as `synthesis_request` together
+with the unchanged, previously committed `admission_report` (and
+`admission_index` for round-robin). The controller verifies the report hash,
+remaining image budget, and zero whole-FN allocation; no `generation_report`
+is required or allowed for this skip. Training still requires positive
+`new_training_images` from admission. Whole-FN allocation is unchanged.
+
 When the request has no routed FNs, commit `synthesis_request.json` as the
 `synthesis_request` artifact. When mask preparation has no eligible FNs, commit
 its `input_contract.json` as `synthesis_preparation`. These typed skips advance

@@ -354,9 +354,9 @@ def test_admission_uses_overfetch_to_replace_a_previously_used_parent(tmp_path: 
     assert preview["roles"]["real"]["per_dataset"] == {"canonical-dataset-b": 1}
 
 
-@pytest.mark.parametrize("synthesis_enabled", [False, True])
+@pytest.mark.parametrize(("synthesis_enabled", "prior_real"), [(False, 0), (True, 0), (True, 1)])
 def test_empty_max_similarity_mining_routes_through_admission(
-        tmp_path: Path, synthesis_enabled: bool) -> None:
+        tmp_path: Path, synthesis_enabled: bool, prior_real: int) -> None:
     policy, candidates, retrieval = _fixture(tmp_path)
     value = yaml.safe_load(policy.read_text())
     value["synthesis"]["enabled"] = synthesis_enabled
@@ -398,7 +398,13 @@ def test_empty_max_similarity_mining_routes_through_admission(
     result = COMMIT_MODULE.commit(state, "iteration_retrieval", 1, artifacts)
     assert result["next_stage"] == "iteration_admission"
     output = tmp_path / "admission"
-    report = MODULE.admit(policy, candidates, retrieval, output, None, "copy")
+    previous = None
+    if prior_real:
+        previous = tmp_path / "previous.json"
+        document = json.loads((tmp_path / "real.json").read_text())
+        document["images"][0]["deft_kind"] = "real_defect"
+        previous.write_text(json.dumps(document))
+    report = MODULE.admit(policy, candidates, retrieval, output, previous, "copy")
     assert report["new_training_images"] == 0
     assert report["role_status"] == {
         role: {"status": "NO_MATCHES", "selected_count": 0} for role in ("real", "clean")
@@ -406,7 +412,7 @@ def test_empty_max_similarity_mining_routes_through_admission(
     result = COMMIT_MODULE.commit(
         state, "iteration_admission", 1, [f"admission_report={output / 'admission_report.json'}"]
     )
-    if synthesis_enabled:
+    if synthesis_enabled and prior_real:
         assert result["status"] == "RUNNING"
         assert result["next_stage"] == "iteration_synthesis"
         generated = tmp_path / "generated.json"
@@ -414,7 +420,7 @@ def test_empty_max_similarity_mining_routes_through_admission(
             "images": [], "annotations": [], "categories": [{"id": 1, "name": "defect"}],
         }))
         post_synthesis = tmp_path / "post_synthesis"
-        MODULE.admit(policy, candidates, retrieval, post_synthesis, None, "copy",
+        MODULE.admit(policy, candidates, retrieval, post_synthesis, previous, "copy",
                      generated, tmp_path)
         generation_report = tmp_path / "generation_report.json"
         generation_report.write_text(json.dumps({
@@ -439,6 +445,46 @@ def test_max_similarity_rejects_empty_mining_without_filepath(tmp_path: Path) ->
         )
     with pytest.raises(ValueError, match="lacks filepath"):
         MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+
+
+@pytest.mark.parametrize(("prior_real", "prior_synthetic", "new_real", "room"), [
+    (1, 1, False, 0), (1, 0, False, 1), (0, 0, True, 1), (0, 0, False, 0),
+])
+def test_capacity_gate_uses_actual_cumulative_admission(
+        tmp_path: Path, prior_real: int, prior_synthetic: int, new_real: bool, room: int) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value["synthesis"]["enabled"] = True
+    policy.write_text(yaml.safe_dump(value))
+    for role in ("real", "clean"):
+        if role == "clean" or not new_real:
+            pd.DataFrame({"filepath": []}).to_parquet(
+                retrieval / f"mine_{role}/final_unique_files.parquet", index=False
+            )
+    images = []
+    for kind, count in (("real_defect", prior_real), ("synthetic_defect", prior_synthetic)):
+        if count:
+            source = tmp_path / f"previous-{kind}.png"
+            Image.new("RGB", (16, 16)).save(source)
+            images.append({"id": len(images) + 1, "file_name": source.name,
+                           "source_path": str(source), "deft_kind": kind})
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({
+        "images": images, "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    output = tmp_path / "admitted"
+    report = MODULE.admit(policy, candidates, retrieval, output, previous, "copy")
+    assert report["synthetic_admission"]["available_room_before_admission"] == room
+    assert report["new_training_images"] == int(new_real)
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({
+        "status": "RUNNING", "next_stage": "iteration_admission",
+        "current_iteration": 1, "synthesis_enabled": True,
+    }))
+    result = COMMIT_MODULE.commit(
+        state, "iteration_admission", 1, [f"admission_report={output / 'admission_report.json'}"]
+    )
+    assert result["next_stage"] == ("iteration_synthesis" if room else None)
 
 
 def test_max_similarity_records_no_matches_without_empty_pool_error(tmp_path: Path) -> None:

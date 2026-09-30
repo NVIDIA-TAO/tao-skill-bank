@@ -184,12 +184,34 @@ def _validate_admission(iteration: int,
     return report
 
 
+def _synthetic_room(admission: dict[str, Any]) -> int:
+    evidence = admission.get("synthetic_admission")
+    room = evidence.get("available_room_before_admission") if isinstance(evidence, dict) else None
+    if isinstance(room, bool) or not isinstance(room, int) or room < 0:
+        raise ValueError("admission report lacks valid synthetic capacity")
+    return room
+
+
+def _committed_admission(state: dict[str, Any], iteration: int) -> dict[str, Any]:
+    previous = next((event for event in reversed(state.get("events", []))
+                     if event.get("stage") == "iteration_admission"
+                     and event.get("iteration") == iteration), {})
+    artifacts = previous.get("artifacts") or {}
+    if "admission_report" not in artifacts:
+        raise ValueError("synthesis requires committed initial admission evidence")
+    for artifact in artifacts.values():
+        path = Path(artifact["path"])
+        if not path.is_file() or _sha(path) != artifact["sha256"]:
+            raise ValueError("committed initial admission evidence changed")
+    return _validate_admission(iteration, artifacts)
+
+
 def _validate_budget_skip(state: dict[str, Any], iteration: int,
                           artifacts: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], str]:
-    if set(artifacts) != {"synthesis_request", "admission_report"}:
-        raise ValueError("a budget skip requires only its request and admission report")
     request = _read_json(artifacts, "synthesis_request")
     admission = _validate_admission(iteration, artifacts)
+    if set(artifacts) - {"synthesis_request", "admission_report", "admission_index"}:
+        raise ValueError("a budget skip must not include generation artifacts")
     previous = next((event for event in reversed(state.get("events", []))
                      if event.get("stage") == "iteration_admission"
                      and event.get("iteration") == iteration), {})
@@ -217,6 +239,7 @@ def _validate_budget_skip(state: dict[str, Any], iteration: int,
     if (request.get("fn_count") != 0
             or request.get("eligible_fn_count") != planning["eligible_fn_count"]
             or planning["eligible_fn_count"] < 1
+            or planning["new_image_budget"] != _synthetic_room(admission)
             or not planning["new_image_budget"] < planning["images_per_fn"]
             or planning["selected_fn_count"] != 0
             or planning["planned_images"] != 0
@@ -457,6 +480,7 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
     elif stage == "iteration_gaps":
         _validate_gaps(artifacts)
     next_stage, status = NEXT.get(stage), "RUNNING"
+    synthesis_decision = None
     if stage == "iteration_retrieval" and retrieval and retrieval.get("converged"):
         next_stage, status = None, "COMPLETE"
         state["completion_reason"] = "mining_exhausted"
@@ -466,9 +490,20 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         next_stage, status = None, "COMPLETE"
         state["completion_reason"] = "all_producers_exhausted"
     if stage == "iteration_admission" and state.get("synthesis_enabled"):
-        next_stage = "iteration_synthesis"
-    elif stage in {"iteration_admission", "iteration_synthesis"} and admission and not int(
-            admission["new_training_images"]):
+        room = _synthetic_room(admission)
+        if room:
+            next_stage = "iteration_synthesis"
+        else:
+            synthesis_decision = {"status": "SKIPPED", "reason": "no_synthetic_budget",
+                                  "available_room_before_admission": room}
+    if synthesis_skip_reason:
+        synthesis_decision = {"status": "SKIPPED", "reason": synthesis_skip_reason,
+                              "available_room_before_admission": _synthetic_room(admission)}
+    if stage == "iteration_synthesis" and admission and not admission["new_training_images"]:
+        admission = _committed_admission(state, iteration)
+    if (next_stage != "iteration_synthesis"
+            and stage in {"iteration_admission", "iteration_synthesis"} and admission and not int(
+                admission["new_training_images"])):
         next_stage, status = None, "COMPLETE"
         outcomes = list(admission["role_status"].values())
         state["completion_reason"] = (
@@ -476,11 +511,6 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
             if outcomes and all(row["status"] == "NO_MATCHES" for row in outcomes)
             else "retrieval_no_new_data"
         )
-    if synthesis_skip_reason:
-        admitted = synthesis["admitted"]
-        if not sum(int(admitted.get(role, 0)) for role in ("real", "clean", "synthetic")):
-            next_stage, status = None, "COMPLETE"
-            state["completion_reason"] = "no_new_training_images"
     if stage == "iteration_gaps":
         if iteration >= int(state["max_iterations"]):
             next_stage, status = None, "COMPLETE"
@@ -490,9 +520,8 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
                  next_stage=next_stage)
     event = {"stage": stage, "iteration": iteration, "artifacts": artifacts,
              "committed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    if synthesis_skip_reason:
-        event["synthesis_decision"] = {"status": "SKIPPED",
-                                       "reason": synthesis_skip_reason}
+    if synthesis_decision:
+        event["synthesis_decision"] = synthesis_decision
     state.setdefault("events", []).append(event)
     temporary = state_path.with_suffix(state_path.suffix + ".tmp")
     temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
