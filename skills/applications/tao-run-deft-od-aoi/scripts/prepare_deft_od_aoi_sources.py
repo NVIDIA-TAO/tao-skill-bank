@@ -268,6 +268,7 @@ def materialize(manifest_path: Path, documents: dict[str, list[dict[str, Any]]],
                     target.symlink_to(source)
                 else:
                     shutil.copy2(source, target)
+                # The normalized target is canonical in both materialization modes.
                 row["original_source_path"] = str(source)
                 row["source_path"] = str(target.absolute())
             shard_path = merge_inputs / f"{role}-{index:04d}.json"

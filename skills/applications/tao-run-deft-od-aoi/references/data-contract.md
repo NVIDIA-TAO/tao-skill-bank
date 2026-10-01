@@ -29,6 +29,10 @@ freezing hashes in the policy.
 
 ## Canonical KPI metadata
 
+When synthesis is enabled, the resolved KPI image path and the matching
+strict-gap `filepath` must resolve to the same underlying file. Using the same
+path works, as does a symbolic link to that file.
+
 Every annotated KPI image must carry the exact fields `dataset_id`,
 `texture_id`, and `defect_class`, either directly on its image record or under
 `deft_od_aoi`. `dataset_id` is the synthesis route/dataset identity;

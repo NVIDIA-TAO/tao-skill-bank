@@ -40,3 +40,32 @@ category id 1 named `defect`.
 
 The leaf never admits generated images into a detector training pool. That
 decision belongs to the calling application.
+
+## Image-safety reporting
+
+The native guardrail path includes three separate components: text screening,
+image content-safety screening, and face-blur post-processing. The observed
+image-safety state applies only to image content-safety enforcement; it does not
+imply that text screening or face blurring was active. Report component states
+independently when the runtime exposes them.
+
+A workflow that records the observed image-safety state must use one of these
+values:
+
+| Value | Meaning |
+|---|---|
+| `enforcing` | The runtime positively confirmed that image-safety enforcement was active. |
+| `not_enforcing` | The runtime positively confirmed that image-safety enforcement was inactive. |
+| `unknown` | The wrapper could not determine whether enforcement was active. |
+
+These values describe an observed result, not a requested mode. Treat
+`not_enforcing` and `unknown` as unscreened; neither is equivalent to
+`enforcing`. A zero `guardrail_blocked` count does not prove that enforcement
+ran. This run-level observation is distinct from per-image guardrail results.
+
+## Quality metrics
+
+When native evaluation is enabled, interpret FID and `nn_score` according to
+the [AnomalyGenNext evaluation reference](../../tao-generate-anomalies/references/eval.md).
+They are diagnostic signals with sample-count and visual-plausibility
+limitations, not standalone acceptance evidence.

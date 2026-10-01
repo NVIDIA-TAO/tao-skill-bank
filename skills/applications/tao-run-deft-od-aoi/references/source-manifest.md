@@ -61,9 +61,12 @@ scripts/prepare_deft_od_aoi_sources.py \
   --output-dir /new/results/normalized --link-mode symlink
 ```
 
-Use `--link-mode copy` when the normalized directory must own portable image
-copies. `--check-only` needs no container; materialization runs in the pinned
-TAO Data Services image. It retains canonical per-source files under
+Use `--link-mode copy` to create a self-contained, portable normalized dataset.
+Use the default symbolic-link mode when the normalized view should continue to
+reference the original files without duplicating image data, which saves disk
+space; the original files must remain available. `--check-only` needs no
+container; materialization runs in the pinned TAO Data Services image. It
+retains canonical per-source files under
 `merge_inputs/`, invokes the existing `annotations merge` action once per role,
 and post-validates each merged COCO. Existing output directories are never
 overwritten. The output includes the frozen input manifest, merge evidence,
