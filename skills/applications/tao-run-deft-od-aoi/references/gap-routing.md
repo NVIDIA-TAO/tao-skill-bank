@@ -69,12 +69,14 @@ query embedding tables and materializes the same role-specific
 consumes those committed selections instead of recomputing them. Prior sources,
 exact candidate filepaths in `exclude_<role>_candidates.parquet`, duplicate
 parents, and candidates below `minimum_similarity` are excluded.
+The exclusion parquet is an optional reserved extension point: when present it
+must use canonical candidate paths and its declared count must match.
 Each pocket reranks with admitted parents excluded through the frozen
 `round_robin_refill_overfetch` depths, screens invalid boxes and visual
 duplicates against the cumulative admission index, admits every available
 novel parent, and records any positive-quota shortfall without failing the
-iteration. The following retrieval round then reports a fully consumed role as
-`EXHAUSTED`; if every producer is exhausted, the loop converges normally.
+iteration. The following retrieval round handles convergence when no candidates
+remain.
 Query rounds use the stable gap-derived
 `routing_order_key`, not transient hashed query identifiers.
 Each near-miss pocket requests `near_miss_real_factor` candidates per query,

@@ -82,7 +82,25 @@ def test_canonical_query_order_uses_frozen_gap_keys() -> None:
 
     ordered = MODULE._canonical_queries(queries)
 
-    assert ordered.query_id.tolist() == ["hashed-b", "hashed-a"]
+    assert ordered.query_id.tolist() == ["hashed-a", "hashed-b"]
+
+
+def test_rank_tie_at_truncation_boundary_keeps_lower_candidate_index() -> None:
+    candidates = pd.DataFrame([
+        {"candidate_id": f"c-{index}", "source_filepath": f"/{index}",
+         "embedding": [1.0, 0.0]}
+        for index in range(15)
+    ])
+    queries = pd.DataFrame([{"query_id": "q", "embedding": [1.0, 0.0]}])
+
+    selected = MODULE.round_robin_rank(
+        candidates, queries, excluded=set(), minimum=0.0,
+        quota=1, overfetch=1, audit_top_k=1,
+    )
+
+    assert [row["candidate_id"] for row in selected] == [
+        f"c-{index}" for index in range(11)
+    ]
 
 
 def test_refill_reranks_after_each_admitted_parent() -> None:
@@ -177,6 +195,89 @@ def test_select_rejects_legacy_only_pocket_metadata() -> None:
         )
 
 
+def test_select_shares_parent_exclusions_across_pockets() -> None:
+    candidates = pd.DataFrame([
+        {"candidate_id": "shared", "source_filepath": "/shared", "embedding": [1.0, 0.0]},
+        {"candidate_id": "fallback", "source_filepath": "/fallback", "embedding": [0.9, 0.1]},
+    ])
+    queries = pd.DataFrame([
+        {"query_id": "a", "reason": "fn", "dataset_id": "a", "texture_id": "t",
+         "defect_class": "d", "real_factor": 1, "embedding": [1.0, 0.0]},
+        {"query_id": "b", "reason": "fn", "dataset_id": "b", "texture_id": "t",
+         "defect_class": "d", "real_factor": 1, "embedding": [1.0, 0.0]},
+    ])
+    policy = {
+        "retrieval": {"minimum_similarity": 0.0, "audit_top_k_per_query": 20,
+                      "round_robin_refill_overfetch": [1]},
+        "routing": {"real_mine_factor_min": 1, "near_miss_real_factor": 2,
+                    "near_miss_real_cap_per_pocket": 2, "clean_factor": 1,
+                    "clean_cumulative_cap_per_real": 1.0},
+    }
+
+    selected, audit = MODULE.select(
+        {"real": candidates}, {"real": queries}, policy,
+        {"real": set(), "clean": set()},
+    )
+
+    assert [row["source_filepath"] for row in selected["real"]] == ["/shared", "/fallback"]
+    assert [row["shortfall"] for row in audit["branches"]] == [0, 0]
+
+
+def test_select_does_not_reallocate_a_poor_pockets_shortfall() -> None:
+    candidates = pd.DataFrame([
+        {"candidate_id": "rich", "source_filepath": "/rich", "embedding": [1.0, 0.0]},
+    ])
+    queries = pd.DataFrame([
+        {"query_id": "rich", "reason": "fn", "dataset_id": "a", "texture_id": "t",
+         "defect_class": "d", "real_factor": 1, "embedding": [1.0, 0.0]},
+        {"query_id": "poor", "reason": "fn", "dataset_id": "b", "texture_id": "t",
+         "defect_class": "d", "real_factor": 1, "embedding": [0.0, 1.0]},
+    ])
+    policy = {
+        "retrieval": {"minimum_similarity": 0.9, "audit_top_k_per_query": 20,
+                      "round_robin_refill_overfetch": [1]},
+        "routing": {"real_mine_factor_min": 1, "near_miss_real_factor": 2,
+                    "near_miss_real_cap_per_pocket": 2, "clean_factor": 1,
+                    "clean_cumulative_cap_per_real": 1.0},
+    }
+
+    selected, audit = MODULE.select(
+        {"real": candidates}, {"real": queries}, policy,
+        {"real": set(), "clean": set()},
+    )
+
+    assert [row["source_filepath"] for row in selected["real"]] == ["/rich"]
+    assert [row["shortfall"] for row in audit["branches"]] == [0, 1]
+
+
+def test_select_near_miss_cap_binds_per_pocket() -> None:
+    candidates = pd.DataFrame([
+        {"candidate_id": f"c-{index}", "source_filepath": f"/{index}",
+         "embedding": [1.0, 0.0]}
+        for index in range(5)
+    ])
+    queries = pd.DataFrame([
+        {"query_id": f"q-{index}", "reason": "near_miss_fp", "dataset_id": "a",
+         "texture_id": "t", "defect_class": "d", "embedding": [1.0, 0.0]}
+        for index in range(2)
+    ])
+    policy = {
+        "retrieval": {"minimum_similarity": 0.0, "audit_top_k_per_query": 20,
+                      "round_robin_refill_overfetch": [1]},
+        "routing": {"real_mine_factor_min": 1, "near_miss_real_factor": 5,
+                    "near_miss_real_cap_per_pocket": 2, "clean_factor": 1,
+                    "clean_cumulative_cap_per_real": 1.0},
+    }
+
+    selected, audit = MODULE.select(
+        {"real": candidates}, {"real": queries}, policy,
+        {"real": set(), "clean": set()},
+    )
+
+    assert len(selected["real"]) == 2
+    assert audit["branches"][0]["requested"] == 2
+
+
 def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -> None:
     candidate_root, retrieval_root = tmp_path / "candidates", tmp_path / "retrieval"
     candidate_root.mkdir()
@@ -225,13 +326,19 @@ def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -
         "enabled_roles": list(query_counts),
         "selection_strategy": "round_robin_similarity",
         "role_status": {
-            "real": {"excluded_count": 1, "exclusion_manifest": str(
+            "real": {"status": "READY", "query_count": 1,
+                     "candidate_count": 2, "excluded_count": 1,
+                     "remaining_candidate_count": 1, "exclusion_manifest": str(
                 retrieval_root / "exclude_real_candidates.parquet"
             )},
-            "clean": {"excluded_count": 0, "exclusion_manifest": str(
+            "clean": {"status": "READY", "query_count": 1,
+                      "candidate_count": 1, "excluded_count": 0,
+                      "remaining_candidate_count": 1, "exclusion_manifest": str(
                 retrieval_root / "exclude_clean_candidates.parquet"
             )},
         },
+        "converged": False,
+        "synthesis_pending": False,
     }))
     for role in query_counts:
         candidates = [{
@@ -280,6 +387,9 @@ def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -
         artifacts[f"{role}_queries"] = {"path": retrieval_root / f"{role}_queries.parquet"}
         artifacts[f"{role}_query_embeddings"] = {
             "path": retrieval_root / f"{role}_query_embeddings.parquet"
+        }
+        artifacts[f"{role}_exclusions"] = {
+            "path": retrieval_root / f"exclude_{role}_candidates.parquet"
         }
         artifacts[f"{role}_mined"] = {
             "path": retrieval_root / f"mine_{role}/final_unique_files.parquet"

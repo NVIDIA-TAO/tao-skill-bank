@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from PIL import Image
 
 
@@ -96,3 +97,56 @@ def test_admission_rejects_missing_previous_index(tmp_path: Path) -> None:
         assert str(missing) in str(error)
     else:
         raise AssertionError("missing previous admission index was accepted")
+
+
+def test_clean_cluster_cap_persists_across_refill_attempts(tmp_path: Path) -> None:
+    selection_script = SCRIPT.parent / "deft_od_aoi_round_robin_selection.py"
+    selection_spec = importlib.util.spec_from_file_location(
+        "round_robin_selection_for_admission_test", selection_script
+    )
+    selection = importlib.util.module_from_spec(selection_spec)
+    assert selection_spec.loader
+    selection_spec.loader.exec_module(selection)
+    paths = []
+    for index in range(15):
+        path = tmp_path / f"clean-{index}.png"
+        _image(path)
+        paths.append(path)
+    candidates = pd.DataFrame([
+        {"candidate_id": f"c-{index}", "source_filepath": str(path),
+         "embedding": [1.0, 0.0]}
+        for index, path in enumerate(paths)
+    ])
+    queries = pd.DataFrame([{"query_id": "q", "embedding": [1.0, 0.0]}])
+    policy = _policy()
+    policy["admission"].update({
+        "clean_duplicate_global_cosine": 2.0,
+        "clean_cluster_cosine": 0.9,
+        "clean_cluster_minimum_cap": 1,
+        "clean_cluster_quota_divisor": 100,
+    })
+    admission = MODULE.RoundRobinAdmission(policy, None)
+
+    selected, _ = selection._refill(
+        candidates, queries, quota=3, used=set(), minimum=0.0,
+        overfetches=[1, 10], audit_top_k=1, excluded_candidates=set(),
+        admission=admission, clean=True, record=lambda _: {"boxes": []},
+    )
+
+    assert len(selected) == 1
+    assert admission.report["rejected_cluster_cap"] == 14
+
+
+def test_clean_admission_rejects_unreadable_image(tmp_path: Path) -> None:
+    unreadable = tmp_path / "truncated.png"
+    unreadable.write_bytes(b"not an image")
+    admission = MODULE.RoundRobinAdmission(_policy(), None)
+    admission.begin_branch(1, clean=True)
+
+    selected = admission.admit(
+        [{"candidate_id": "bad", "source_filepath": str(unreadable)}],
+        1, True, lambda _: {"boxes": []},
+    )
+
+    assert selected == []
+    assert admission.report["rejected_unreadable_image"] == 1
