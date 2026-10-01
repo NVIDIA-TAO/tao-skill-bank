@@ -211,3 +211,10 @@ stray row and a quietly wrong mean. Pass `--expect-classes` either way.
   --duration-sec "$(( SECONDS - started ))" \
   --summary "kpi: mAP=<value>"
 ```
+
+`--map-value` is required on an `ok` commit. The per-phase mAP is the loop's result, so a
+phase scored without one has not succeeded, and the commit is refused rather than letting
+the loop advance past a missing point in the trend. If `kpi_analyze` printed `mAP: nan`, a
+target class has no ground truth in the KPI set; that holds for every phase, since all of
+them score the same set, so commit the stage with `--status error` and fix the KPI mapping
+or the class set.
