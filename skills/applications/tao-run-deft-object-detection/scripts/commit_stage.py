@@ -512,9 +512,10 @@ def _build_parser() -> argparse.ArgumentParser:
                                  f"recorded as {_dest(flag)}.")
 
     parser.add_argument("--map-value", type=float, default=None,
-                        help="Aggregate mAP parsed from the kpi_analyze log; the trend cannot "
-                             "be reported without it. Must be finite — when the log prints "
-                             "'mAP: nan', omit this flag and say so in --summary.")
+                        help="[kpi_analyze] Aggregate mAP, as summarize_kpi.py prints it. "
+                             "Required on an ok kpi_analyze commit: the trend cannot be "
+                             "reported without it. Must be finite — when the log prints "
+                             "'mAP: nan', commit the stage with --status error.")
     parser.add_argument("--weak-image-count", type=int, default=None,
                         help="[gap_analysis only] rows in weak_images.parquet. Required on an "
                              "ok gap_analysis commit; 0 is the documented early stop.")
@@ -612,9 +613,9 @@ def main() -> int:
             # Python and is rejected by every other JSON parser that reads the run.
             raise ValueError(
                 f"--map-value must be a finite number, got {args.map_value}. kpi_analyze "
-                "prints 'mAP: nan' when a class has no ground truth in the KPI set — omit "
-                "--map-value and record that in --summary rather than writing a non-JSON "
-                "literal into deft_state.json"
+                "prints 'mAP: nan' when a class has no ground truth in the KPI set, which "
+                "no phase of this run can score -- commit the stage with --status error "
+                "rather than writing a non-JSON literal into deft_state.json"
             )
 
         results_dir = Path(args.results_dir).expanduser().resolve()
@@ -744,6 +745,20 @@ def main() -> int:
                     unavailable.append(flag)
             if args.map_value is not None:
                 extras["map_value"] = args.map_value
+
+            # The mAP is kpi_analyze's result, and the per-phase trend built from it is
+            # the only thing the loop produces. A kpi_analyze recorded ok without one is
+            # a phase that did not deliver: allowing it lets the next iteration start on
+            # a trend with a hole in it, and the run end "complete" anyway. A real
+            # `mAP: nan` cannot be iteration-specific -- the KPI set and mapping are the
+            # same for every phase -- so it is a configuration fault and fails the stage.
+            if stage == "kpi_analyze" and args.status == "ok" and args.map_value is None:
+                raise ValueError(
+                    "stage 'kpi_analyze' requires --map-value, the mAP summarize_kpi.py "
+                    "prints and writes to kpi_summary.json. A phase scored without one has "
+                    "not succeeded, and committing it ok would let the loop advance past a "
+                    "missing result. If kpi_analyze printed 'mAP: nan', a target class has no "
+                    "ground truth in the KPI set: commit this stage with --status error")
 
             # The weak-image count is gap_analysis's measurement and no other
             # stage's. `entry.update(extras)` writes it straight onto the phase
