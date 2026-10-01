@@ -39,7 +39,7 @@ images:
     cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
     deft_cosmos_reason: nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-rl
     cosmos_predict:     nvcr.io/nvidia/tao/tao-toolkit:7.0.1-cosmos-predict
-    cosmos_embed:       nvcr.io/nvstaging/tao/cosmos-embed:7.3.0-rc-116
+    cosmos_embed:       nvcr.io/nvstaging/tao/cosmos-embed:7.3.0-rc-118
     vila:               nvcr.io/nvidia/tao/tao-toolkit:6.26.3-vila
 
   metropolis_sdg:
