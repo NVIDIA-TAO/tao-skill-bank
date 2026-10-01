@@ -151,6 +151,16 @@ class RoundRobinAdmission:
         )
         if self.index.ndim != 2 or self.index.shape[1] != ADMISSION_INDEX_WIDTH:
             raise ValueError(f"invalid admission index shape {self.index.shape}")
+        self.clean_clusters: list[list[Any]] = []
+        self.clean_cluster_cap = 0
+
+    def begin_branch(self, quota: int, clean: bool) -> None:
+        if clean:
+            self.clean_clusters = []
+            self.clean_cluster_cap = max(
+                int(self.policy["clean_cluster_minimum_cap"]),
+                quota // int(self.policy["clean_cluster_quota_divisor"]),
+            )
 
     def _pool(self) -> np.ndarray:
         if not self.pending:
@@ -160,11 +170,8 @@ class RoundRobinAdmission:
     def admit(self, ranked: list[dict[str, Any]], quota: int, clean: bool,
               record: Callable[[str], dict[str, Any]]) -> list[dict[str, Any]]:
         admitted: list[dict[str, Any]] = []
-        clusters: list[list[Any]] = []
-        cap = max(
-            int(self.policy["clean_cluster_minimum_cap"]),
-            quota // int(self.policy["clean_cluster_quota_divisor"]),
-        )
+        if clean and self.clean_cluster_cap < 1:
+            self.begin_branch(quota, clean=True)
         for candidate in ranked:
             if len(admitted) >= quota:
                 break
@@ -178,9 +185,12 @@ class RoundRobinAdmission:
                     continue
                 candidate = {**candidate, "admission_boxes": boxes}
             signature = _signature(source, boxes)
+            if signature is None:
+                self.report["rejected_unreadable_image"] += 1
+                continue
             pool = self._pool()
             duplicate = False
-            if signature is not None and len(pool):
+            if len(pool):
                 width = DCT_KEEP * DCT_KEEP
                 global_scores = pool[:, :width] @ signature[:width]
                 previous_clean = pool[:, 2 * width] < 0
@@ -206,20 +216,20 @@ class RoundRobinAdmission:
             if duplicate:
                 self.report["rejected_duplicate"] += 1
                 continue
-            if clean and signature is not None:
+            if clean:
                 global_signature = signature[:DCT_KEEP * DCT_KEEP]
-                cluster = next((item for item in clusters if float(item[0] @ global_signature)
+                cluster = next((item for item in self.clean_clusters
+                                if float(item[0] @ global_signature)
                                 > float(self.policy["clean_cluster_cosine"])), None)
-                if cluster and cluster[1] >= cap:
+                if cluster and cluster[1] >= self.clean_cluster_cap:
                     self.report["rejected_cluster_cap"] += 1
                     continue
                 if cluster:
                     cluster[1] += 1
                 else:
-                    clusters.append([global_signature, 1])
+                    self.clean_clusters.append([global_signature, 1])
             admitted.append(candidate)
-            if signature is not None:
-                self.pending.append(signature)
+            self.pending.append(signature)
         self.report["admitted"] += len(admitted)
         return admitted
 

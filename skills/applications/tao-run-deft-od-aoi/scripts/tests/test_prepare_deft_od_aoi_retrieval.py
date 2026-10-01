@@ -830,6 +830,16 @@ def test_tight_context_query_uses_displayed_gap_box_pixels(tmp_path: Path) -> No
     MODULE.candidates(policy, tmp_path / "candidates")
     query_image = tmp_path / "query.png"
     _oriented_image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "line-a",
+                    "texture_id": "board", "defect_class": "bridge"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
     strict = tmp_path / "strict.parquet"
     loose = tmp_path / "loose.parquet"
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
@@ -982,6 +992,17 @@ def test_max_similarity_keeps_one_x_real_factor_default(tmp_path: Path) -> None:
     policy = _policy(tmp_path, "square_context", "max_similarity")
     query_image = tmp_path / "query.png"
     _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "line-a",
+                    "texture_id": "board", "defect_class": "bridge"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
     strict = tmp_path / "strict.parquet"
     loose = tmp_path / "loose.parquet"
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",

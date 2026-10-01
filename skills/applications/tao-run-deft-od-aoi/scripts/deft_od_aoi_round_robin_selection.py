@@ -70,11 +70,7 @@ def round_robin_rank(candidates: pd.DataFrame, queries: pd.DataFrame, *,
     )
     orders: list[list[tuple[int, float]]] = []
     for row_scores in scores:
-        if per_query_limit < len(row_scores):
-            positions = np.argpartition(-row_scores, per_query_limit - 1)[:per_query_limit]
-            positions = positions[np.argsort(-row_scores[positions], kind="stable")]
-        else:
-            positions = np.argsort(-row_scores, kind="stable")
+        positions = np.lexsort((np.arange(len(row_scores)), -row_scores))[:per_query_limit]
         ranked, seen = [], set()
         for position in positions:
             score = float(row_scores[position])
@@ -112,13 +108,19 @@ def _canonical_queries(queries: pd.DataFrame) -> pd.DataFrame:
     if queries.empty:
         return queries
     ordered = queries.copy()
-    if "routing_order_key" in ordered:
-        ordered["_routing_order_key"] = ordered.routing_order_key.astype(str)
-    else:
-        ordered["_routing_order_key"] = [str(index) for index in range(len(ordered))]
-    return ordered.sort_values("_routing_order_key", kind="stable").drop(
-        columns="_routing_order_key"
-    )
+    def key(position: int, value: Any) -> tuple[str, int, str, int]:
+        parts = str(value).split(":", 2)
+        if len(parts) >= 2:
+            try:
+                return parts[0], int(parts[1]), parts[2] if len(parts) > 2 else "", position
+            except ValueError:
+                pass
+        return "", position, str(value), position
+
+    values = (ordered.routing_order_key.tolist() if "routing_order_key" in ordered
+              else list(range(len(ordered))))
+    positions = sorted(range(len(ordered)), key=lambda position: key(position, values[position]))
+    return ordered.iloc[positions].reset_index(drop=True)
 
 
 def _refill(candidates: pd.DataFrame, queries: pd.DataFrame, *, quota: int,
@@ -128,6 +130,8 @@ def _refill(candidates: pd.DataFrame, queries: pd.DataFrame, *, quota: int,
     selected: list[dict[str, Any]] = []
     attempted: set[str] = set()
     attempts = []
+    if admission is not None:
+        admission.begin_branch(quota, clean)
     for overfetch in overfetches:
         ranked = round_robin_rank(
             candidates, queries, excluded=used, minimum=minimum, quota=quota,
