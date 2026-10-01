@@ -124,6 +124,54 @@ def test_tight_context_does_not_read_square_output_size(tmp_path: Path) -> None:
     assert Image.open(real.iloc[0].filepath).size == (18, 18)
 
 
+def test_missing_preprocessing_profile_preserves_legacy_tight_context(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"].pop("preprocessing")
+    policy.write_text(yaml.safe_dump(value))
+
+    MODULE.candidates(policy, tmp_path / "candidates")
+
+    manifest = json.loads((tmp_path / "candidates/candidate_manifest.json").read_text())
+    assert manifest["preprocessing_profile"] == "tight_context"
+
+
+def test_candidate_cache_contract_rejects_policy_drift(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    candidates = tmp_path / "candidates"
+    MODULE.candidates(policy, candidates)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"]["model_path"] = "different-siglip"
+
+    with pytest.raises(ValueError, match="model_path"):
+        MODULE._validate_candidate_manifest(value, candidates, "tight_context", None)
+
+
+def test_candidate_cache_contract_rejects_clean_grid_drift(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    candidates = tmp_path / "candidates"
+    MODULE.candidates(policy, candidates)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"]["clean_grids"] = [1]
+
+    with pytest.raises(ValueError, match="clean_grids"):
+        MODULE._validate_candidate_manifest(value, candidates, "tight_context", None)
+
+
+def test_legacy_candidate_manifest_without_profile_is_tight_context(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    candidates = tmp_path / "candidates"
+    MODULE.candidates(policy, candidates)
+    manifest_path = candidates / "candidate_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("preprocessing_profile")
+    manifest_path.write_text(json.dumps(manifest))
+
+    MODULE._validate_candidate_manifest(
+        yaml.safe_load(policy.read_text()), candidates, "tight_context", None
+    )
+
+
 def test_square_context_reproduces_historical_fixed_size_crops(tmp_path: Path) -> None:
     report = MODULE.candidates(
         _policy(tmp_path, "square_context"), tmp_path / "candidates"
@@ -141,6 +189,40 @@ def test_square_context_reproduces_historical_fixed_size_crops(tmp_path: Path) -
                for path in [*real.filepath, *clean.filepath])
     manifest = json.loads((tmp_path / "candidates/candidate_manifest.json").read_text())
     assert manifest["preprocessing_profile"] == "square_context"
+
+
+def test_square_grid_mean_pads_before_resize() -> None:
+    padded = MODULE._mean_pad_square(Image.new("RGB", (32, 16), (10, 20, 30)))
+
+    assert padded.size == (32, 32)
+    assert padded.getpixel((0, 0)) == (10, 20, 30)
+
+
+def test_square_grid_uses_displayed_pixels(tmp_path: Path) -> None:
+    source = tmp_path / "oriented.png"
+    _oriented_image(source)
+
+    rows = MODULE._square_grid_crops(source, [2], tmp_path / "output", 1, 16)
+
+    with Image.open(source) as opened:
+        displayed = ImageOps.exif_transpose(opened).convert("RGB")
+    expected = MODULE._mean_pad_square(displayed.crop((0, 0, 10, 20))).resize(
+        (16, 16), Image.Resampling.BICUBIC
+    )
+    assert np.array_equal(np.asarray(Image.open(rows[0][1])), np.asarray(expected))
+
+
+def test_square_context_applies_exif_orientation_before_cropping(tmp_path: Path) -> None:
+    source = tmp_path / "oriented.png"
+    _oriented_image(source)
+    output = tmp_path / "crop.png"
+
+    MODULE._square_context_crop(source, [2, 25, 5, 5], 1.0, output, 32)
+
+    with Image.open(source) as opened:
+        expected = ImageOps.exif_transpose(opened).convert("RGB").crop((2, 25, 7, 30))
+    expected = expected.resize((32, 32), Image.Resampling.BICUBIC)
+    assert np.array_equal(np.asarray(Image.open(output)), np.asarray(expected))
 
 
 def test_square_context_preserves_historical_string_id_order(tmp_path: Path) -> None:
@@ -230,8 +312,11 @@ def test_candidate_cache_applies_exif_orientation_before_cropping(tmp_path: Path
 
     assert report["counts"]["real"] == 1
     frame = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
-    with Image.open(frame.iloc[0].filepath) as crop:
-        assert crop.size == (9, 9)
+    with Image.open(source) as opened:
+        expected = ImageOps.exif_transpose(opened).convert("RGB").crop((0, 23, 9, 32))
+    assert np.array_equal(
+        np.asarray(Image.open(frame.iloc[0].filepath)), np.asarray(expected)
+    )
 
 
 def test_cold_start_iteration_one_queries_accept_canonical_only_kpi_metadata(
@@ -509,6 +594,8 @@ def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) 
     (candidates / "candidate_manifest.json").write_text(json.dumps({
         "status": "COMPLETE",
         "counts": {"real": 3, "clean": 2},
+        "preprocessing_profile": "tight_context",
+        "encoder": document["retrieval"],
     }))
     previous = tmp_path / "previous.json"
     materialized_real = tmp_path / "iteration-3/images/materialized-real.png"
@@ -692,7 +779,7 @@ def test_queries_reject_missing_candidate_manifest(tmp_path: Path) -> None:
                    "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
     pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
 
-    with pytest.raises(FileNotFoundError, match="candidate manifest"):
+    with pytest.raises(FileNotFoundError, match="candidate cache lacks manifest"):
         MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
                        tmp_path / "missing-candidates", None)
 
@@ -734,6 +821,29 @@ def test_tiny_gap_crops_are_embedding_safe_at_boundaries(tmp_path: Path) -> None
     assert all(Image.open(path).getextrema() == ((80, 80),) * 3 for path in crops)
 
 
+def test_tight_context_query_uses_displayed_gap_box_pixels(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    MODULE.candidates(policy, tmp_path / "candidates")
+    query_image = tmp_path / "query.png"
+    _oriented_image(query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [2, 25, 7, 30], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
+    with Image.open(query_image) as opened:
+        expected = ImageOps.exif_transpose(opened).convert("RGB").crop((0, 23, 9, 32))
+    assert np.array_equal(
+        np.asarray(Image.open(frame.iloc[0].filepath)), np.asarray(expected)
+    )
+
+
 def test_square_context_applies_to_queries_independently_of_routing(tmp_path: Path) -> None:
     policy = _policy(tmp_path, "square_context")
     query_image = tmp_path / "query.png"
@@ -762,6 +872,24 @@ def test_square_context_applies_to_queries_independently_of_routing(tmp_path: Pa
     frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
     assert report["preprocessing_profile"] == "square_context"
     assert Image.open(frame.iloc[0].filepath).size == (224, 224)
+
+
+def test_queries_reject_candidate_cache_from_other_profile(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    MODULE.candidates(policy, tmp_path / "candidates")
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"]["preprocessing"]["profile"] = "square_context"
+    policy.write_text(yaml.safe_dump(value))
+    empty = pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"])
+    strict, loose = tmp_path / "strict.parquet", tmp_path / "loose.parquet"
+    empty.to_parquet(strict)
+    empty.to_parquet(loose)
+
+    with pytest.raises(ValueError, match="does not match policy"):
+        MODULE.queries(
+            policy, strict, loose, 1, tmp_path / "queries",
+            tmp_path / "candidates", None,
+        )
 
 
 def test_square_context_gap_boxes_use_bounded_pixel_geometry() -> None:

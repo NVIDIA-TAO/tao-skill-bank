@@ -91,12 +91,16 @@ def _minimum_crop_geometry(
     return (x1, y1, x2, y2), (left, top, right, bottom)
 
 
+def _display_image(source: Path) -> Image.Image:
+    with Image.open(source) as opened:
+        return ImageOps.exif_transpose(opened).convert("RGB")
+
+
 def _crop(source: Path, box: tuple[int, int, int, int], output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    with Image.open(source) as image:
-        image = ImageOps.exif_transpose(image)
+    with _display_image(source) as image:
         crop_box, padding = _minimum_crop_geometry(box, image.width, image.height)
-        crop = image.convert("RGB").crop(crop_box)
+        crop = image.crop(crop_box)
         if any(padding):
             mean = tuple(int(round(value)) for value in ImageStat.Stat(crop).mean[:3])
             crop = ImageOps.expand(crop, border=padding, fill=mean)
@@ -104,13 +108,15 @@ def _crop(source: Path, box: tuple[int, int, int, int], output: Path) -> None:
 
 
 def _size(source: Path) -> tuple[int, int]:
-    with Image.open(source) as image:
-        return ImageOps.exif_transpose(image).size
+    with _display_image(source) as image:
+        return image.size
 
 
 def _preprocessing(policy: dict[str, Any]) -> tuple[str, int | None]:
     retrieval = policy["retrieval"]
-    profile = str((retrieval.get("preprocessing") or {}).get("profile", "square_context"))
+    # Policies frozen before profiles existed used the original tight-context
+    # geometry; new policies explicitly select the square-context default.
+    profile = str((retrieval.get("preprocessing") or {}).get("profile", "tight_context"))
     if profile not in PREPROCESSING_PROFILES:
         raise ValueError(
             "retrieval.preprocessing.profile must be tight_context or square_context"
@@ -132,13 +138,21 @@ def _save_square(image: Image.Image, output: Path, size: int) -> None:
     os.replace(temporary, output)
 
 
+def _mean_pad_square(image: Image.Image) -> Image.Image:
+    image = image.convert("RGB")
+    side = max(image.size)
+    mean = tuple(int(round(value)) for value in ImageStat.Stat(image).mean[:3])
+    canvas = Image.new("RGB", (side, side), mean)
+    canvas.paste(image, ((side - image.width) // 2, (side - image.height) // 2))
+    return canvas
+
+
 def _square_context_crop(source: Path, bbox: Any, scale: float, output: Path,
                          size: int) -> None:
     x, y, width, height = map(float, bbox)
     if width <= 0 or height <= 0:
         raise ValueError(f"non-positive bbox: {bbox}")
-    with Image.open(source) as opened:
-        image = ImageOps.exif_transpose(opened).convert("RGB")
+    with _display_image(source) as image:
         side = max(1, int(math.ceil(max(width, height) * scale)))
         center_x, center_y = x + width / 2.0, y + height / 2.0
         left = int(math.floor(center_x - side / 2.0))
@@ -159,8 +173,7 @@ def _square_context_crop(source: Path, bbox: Any, scale: float, output: Path,
 def _square_grid_crops(source: Path, grids: list[int], output: Path,
                        image_id: Any, size: int) -> list[tuple[str, Path]]:
     rows = []
-    with Image.open(source) as opened:
-        image = ImageOps.exif_transpose(opened).convert("RGB")
+    with _display_image(source) as image:
         for grid in grids:
             if grid < 1:
                 raise ValueError("clean grid values must be positive")
@@ -176,7 +189,7 @@ def _square_grid_crops(source: Path, grids: list[int], output: Path,
                     crop = output / "crops" / "clean" / (
                         f"image_{image_id}_g{grid}_r{row}_c{column}.png"
                     )
-                    _save_square(image.crop(box), crop, size)
+                    _save_square(_mean_pad_square(image.crop(box)), crop, size)
                     rows.append((crop_id, crop))
     return rows
 
@@ -249,6 +262,44 @@ def _candidate_counts(root: Path) -> dict[str, int]:
            for count in counts.values()):
         raise ValueError("candidate manifest counts must be nonnegative integers")
     return counts
+
+
+def _validate_candidate_manifest(
+    policy: dict[str, Any], candidate_root: Path, profile: str, output_size: int | None
+) -> None:
+    path = candidate_root / "candidate_manifest.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"candidate cache lacks manifest: {path}")
+    manifest = json.loads(path.read_text())
+    if manifest.get("status") != "COMPLETE":
+        raise ValueError("candidate cache manifest is not COMPLETE")
+    # Manifests written before profiles existed used the original tight-context
+    # geometry; new candidate caches always record their selected profile.
+    cached_profile = str(manifest.get("preprocessing_profile") or "tight_context")
+    if cached_profile != profile:
+        raise ValueError(
+            f"candidate cache preprocessing profile {cached_profile!r} "
+            f"does not match policy {profile!r}"
+        )
+    cached = manifest.get("encoder") or {}
+    current = policy["retrieval"]
+    checks: dict[str, Any] = {
+        "model": current.get("model"),
+        "model_path": current.get("model_path"),
+        "defect_context_scale": current.get("defect_context_scale"),
+        "clean_grids": [int(value) for value in current.get("clean_grids", [])],
+    }
+    if profile == "square_context":
+        checks["output_size"] = output_size
+    mismatched = [
+        key for key, value in checks.items()
+        if cached.get(key) != value
+    ]
+    if mismatched:
+        raise ValueError(
+            "candidate cache encoder/preprocessing settings do not match policy: "
+            + ", ".join(mismatched)
+        )
 
 
 def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
@@ -377,6 +428,7 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
     profile, output_size = _preprocessing(policy)
+    _validate_candidate_manifest(policy, candidate_root, profile, output_size)
     strict, loose = pd.read_parquet(strict_path), pd.read_parquet(loose_path)
     required = {"filepath", "gap_type", "bbox", "best_iou"}
     for label, frame in (("strict", strict), ("loose", loose)):
@@ -411,8 +463,6 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
                 raise ValueError(f"gap image lacks frozen pocket metadata: {source}")
             width, height = _size(source)
             if profile == "square_context":
-                with Image.open(source) as image:
-                    width, height = ImageOps.exif_transpose(image).size
                 box = _gap_xywh(event["bbox"], width, height)
             else:
                 box = _gap_box(event["bbox"], width, height,
