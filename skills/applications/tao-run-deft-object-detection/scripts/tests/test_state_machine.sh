@@ -3246,6 +3246,54 @@ PYEOF
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G33. the train spec is not written against a checkpoint that is not there
+#
+# prepare_spec_for_train.py checked every input path but the checkpoint. A missing
+# one was written into train.pretrained_model_path, the script exited 0, and the
+# failure surfaced only after a training stage had been paid for.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G33 the checkpoint path is checked"
+
+G33=$(new_workspace g33)
+PREP_TRAIN="$SCRIPTS_DIR/prepare_spec_for_train.py"
+mkdir -p "$G33/tmm/images" "$G33/val/images" "$G33/ckpts/a_directory"
+make_file "$G33/tmm/images/000001.jpg" "jpg"
+make_file "$G33/tmm/tmm_odvg.jsonl" '{"file_name": "000001.jpg"}'
+make_file "$G33/tmm/labelmap.json" '{"0": "car", "1": "person"}'
+make_file "$G33/val/val_coco.json" '{"images": [], "annotations": [], "categories": []}'
+make_file "$G33/ckpts/gdino.pth" "weights"
+g33_train() {  # g33_train CHECKPOINT
+  run "$PY" "$PREP_TRAIN" --previous-spec "$SKILL_DIR/assets/train_grounding_dino.yaml" \
+    --output-spec "$G33/train.yaml" \
+    --tmm-image-dir "$G33/tmm/images" --tmm-odvg-file "$G33/tmm/tmm_odvg.jsonl" \
+    --tmm-label-map-file "$G33/tmm/labelmap.json" \
+    --val-image-dir "$G33/val/images" --val-json-file "$G33/val/val_coco.json" \
+    --pretrained-model-path "$1"
+}
+
+g33_train "$G33/ckpts/gdino.pth"
+assert_rc 0 "[G33] a spec is written for a checkpoint that exists"
+assert_eq "$G33/ckpts/gdino.pth" "$("$PY" -c 'import yaml,sys
+print(yaml.safe_load(open(sys.argv[1]))["train"]["pretrained_model_path"])' "$G33/train.yaml")" \
+  "[G33] the spec carries that checkpoint"
+
+rm -f "$G33/train.yaml"
+g33_train "$G33/ckpts/missing.pth"
+assert_rc 1 "[G33] a checkpoint that does not exist is refused"
+case "$RUN_OUT" in
+  *"--pretrained-model-path"*) ok "[G33] the refusal names the flag" ;;
+  *) notok "[G33] the refusal names the flag" "output: $RUN_OUT" ;;
+esac
+[ -f "$G33/train.yaml" ] && notok "[G33] no spec is written for it" \
+  || ok "[G33] no spec is written for it"
+
+g33_train "$G33/ckpts/a_directory"
+assert_rc 1 "[G33] a directory where the checkpoint should be is refused"
+
+g33_train "ckpts/gdino.pth"
+assert_rc 1 "[G33] a relative checkpoint path is refused"
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then
