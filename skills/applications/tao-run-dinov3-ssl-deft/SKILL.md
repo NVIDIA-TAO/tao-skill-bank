@@ -1,6 +1,6 @@
 ---
 name: tao-run-dinov3-ssl-deft
-description: Run iterative DINOv3 SSL DEFT data selection and retraining from an unlabeled pool, using GRIT or multi-task weakness and fixed C-RADIO retrieval. Use for active-learning-style DINOv3 mining, not plain pretraining/fine-tuning (tao-train-dinov3) or AOI/PAS DEFT.
+description: Run iterative DINOv3 SSL DEFT data selection and retraining from an unlabeled pool, using GRIT or multi-task weakness and fixed-encoder retrieval. Use for active-learning-style DINOv3 mining, not plain pretraining/fine-tuning (tao-train-dinov3) or AOI/PAS DEFT.
 license: Apache-2.0
 compatibility: Requires the selected platform's native launcher and a TAO Data Services image containing the DINOv3 SSL DEFT modules; no host TAO or Python data-stack installation.
 metadata:
@@ -34,7 +34,11 @@ prepares and approves its inputs; it does not implement orchestration.
    allocated DS container; no external runner ships with this application.
 3. Follow the selected platform's launch gate. For Docker, use the concrete
    allocation, preflight, and `docker exec` lifecycle in the integration
-   reference. Inside that runtime, generate a packaged recipe with `init`,
+   reference. Inside that runtime, follow the preparation sequence in
+   [adapter-contracts.md](references/adapter-contracts.md#prepare-fixed-mining-embeddings):
+   produce source/target embeddings with the same fixed encoder, register the
+   source store with its payload contract, and write the target contract.
+   No additional host/model package installation is needed. Generate a packaged recipe with `init`,
    fill paths/resources, then run `validate <config>` and `plan <config>`.
    Read [adapter-contracts.md](references/adapter-contracts.md) when configuring
    custom scoring/evaluation, indexed retrieval, or resource policies.
