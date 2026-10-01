@@ -483,10 +483,24 @@ def _completed_by_phase(events: list[dict[str, Any]]) -> dict[str, str]:
     return completed
 
 
+class _CommitArgumentParser(argparse.ArgumentParser):
+    """argparse with this script's exit codes.
+
+    argparse exits 2 on a usage error -- a missing required flag, a value outside a
+    flag's choices. Here 2 means "written, then rolled back", and a usage error is
+    caught before anything is written, so reporting it as 2 would tell the caller the
+    opposite of what happened. It is a rejection before any write: exit 1.
+    """
+
+    def error(self, message: str):  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     # allow_abbrev=False: an unrecognized flag must reach the extras parser
     # verbatim instead of being silently expanded into a declared one.
-    parser = argparse.ArgumentParser(
+    parser = _CommitArgumentParser(
         description=__doc__.splitlines()[0], allow_abbrev=False
     )
     parser.add_argument("--results-dir", required=True,
