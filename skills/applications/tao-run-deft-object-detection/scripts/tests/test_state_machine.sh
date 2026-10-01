@@ -3515,12 +3515,20 @@ commit "$G35_RUN" iter1 gap_analysis --execution-path docker \
   --weak-images "$G35_RUN/iter1/gaps/weak_images.parquet" \
   --gap-report "$G35_RUN/iter1/gaps/gap_report.json" \
   --weak-image-count 9 --summary s --duration-sec 1
-case "$RUN_RC:$RUN_OUT" in
-  0:*) notok "[G35] an unrecognised execution path is refused, not recorded" "output: $RUN_OUT" ;;
-  *"invalid choice: 'docker'"*) ok "[G35] an unrecognised execution path is refused, not recorded" ;;
-  *) notok "[G35] an unrecognised execution path is refused, not recorded" "output: $RUN_OUT" ;;
+assert_rc 1 "[G35] an unrecognised execution path is refused before any write (exit 1)"
+case "$RUN_OUT" in
+  *"invalid choice: 'docker'"*) ok "[G35] the refusal names the bad value" ;;
+  *) notok "[G35] the refusal names the bad value" "output: $RUN_OUT" ;;
 esac
 assert_unchanged "$G35_RUN" "[G35] the refused commit writes nothing"
+
+# Every usage error is a rejection before any write, so it exits 1 -- never 2, which
+# this script reserves for "written, then rolled back". argparse's own default is 2.
+commit "$G35_RUN" iter1 gap_analysis --status bogus --summary s --duration-sec 1
+assert_rc 1 "[G35] an invalid --status is exit 1, not argparse's 2"
+run "$PY" "$COMMIT" --results-dir "$G35_RUN" --stage gap_analysis --summary s
+assert_rc 1 "[G35] a missing required flag is exit 1, not argparse's 2"
+assert_unchanged "$G35_RUN" "[G35] neither usage error writes anything"
 
 # ═══════════════════════════════════════════════════════════════════════════
 
