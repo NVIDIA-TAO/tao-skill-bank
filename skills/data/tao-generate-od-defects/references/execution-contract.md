@@ -17,6 +17,9 @@ Exactly one input mode is allowed:
 Every testcase image and mask must exist. Each `anomaly_type` must be present
 in the recipe, and the requested count must equal the testcase row count.
 Prepared-input hashes are verified when the integrity manifest is present.
+The complete checkpoint root is a separate required input mounted at
+`/workspace/paidf-anomalygen/checkpoints`; its fixed Hugging Face and DINOv2
+assets are verified before native generation starts.
 
 ## Native stages
 

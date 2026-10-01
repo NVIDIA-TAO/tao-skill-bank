@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from PIL import Image
 
 
@@ -17,6 +18,24 @@ SPEC = importlib.util.spec_from_file_location("run_anomalygennext_amp", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
+
+
+def checkpoint_root(repo: Path) -> Path:
+    root = repo / "checkpoints"
+    for model_id in MODULE.AMP_HF_REPOS:
+        cache = root / f"hf/hub/models--{model_id.replace('/', '--')}"
+        (cache / "blobs").mkdir(parents=True)
+        (cache / "snapshots").mkdir()
+    model = root / "hf/hub/models--nvidia--Cosmos3-Nano"
+    (model / "blobs").mkdir(parents=True)
+    snapshot = model / "snapshots/revision"
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_text("{}\n")
+    (snapshot / "model.safetensors").write_bytes(b"weights")
+    sam2 = root / "facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt"
+    sam2.parent.mkdir(parents=True)
+    sam2.write_bytes(b"weights")
+    return root
 
 
 def inputs(root: Path) -> dict:
@@ -74,22 +93,35 @@ def test_plan_rejects_zero_norm_embeddings(tmp_path: Path) -> None:
         MODULE.plan(tmp_path, config)
 
 
-def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
+def test_run_launches_native_amp_offline_and_publishes_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ) -> None:
     frozen = tmp_path / "prepared_anomalygennext_inputs/filtering_config.yaml"
     frozen.parent.mkdir()
-    frozen.write_text("defect_spec: /input/defects.jsonl\n")
+    frozen.write_text(
+        "defect_spec: /input/defects.jsonl\n"
+        "amp:\n"
+        "  model_id: acme/custom-amp\n"
+    )
     config = tmp_path / "filtering.yaml"
     config.write_bytes(frozen.read_bytes())
-    checkpoint = tmp_path / "sam2.pt"
-    checkpoint.write_bytes(b"weights")
+    repo = tmp_path / "repo"
+    checkpoints = checkpoint_root(repo)
+    custom_model = checkpoints / "acme/custom-amp"
+    custom_model.mkdir(parents=True)
+    (custom_model / "config.json").write_text("{}\n")
+    (custom_model / "model.safetensors").write_bytes(b"weights")
     published = tmp_path.parent / "persistent-output"
     monkeypatch.setattr(MODULE, "plan", lambda root, value: {"candidates": 1})
 
-    def fake_run(command: list[str], *, check: bool, stdout: object) -> None:
+    def fake_run(command: list[str], *, check: bool, stdout: object,
+                 env: dict[str, str]) -> None:
         assert check is True and stdout is sys.stderr
-        assert command[1] == "-c" and str(checkpoint.resolve()) in command
+        assert command[1:3] == ["-m", "anomalygen.scripts.auto_mask_placement.roi_place"]
+        assert env["HF_HOME"] == str(checkpoints / "hf")
+        assert env["HF_HUB_CACHE"] == str(checkpoints / "hf/hub")
+        assert env["HF_HUB_OFFLINE"] == env["TRANSFORMERS_OFFLINE"] == "1"
+        assert command[command.index("--model_id") + 1] == "acme/custom-amp"
         print("native AMP progress", file=stdout)
         amp = tmp_path / "amp"
         amp.mkdir()
@@ -98,7 +130,7 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
         )
 
     monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
-    report = MODULE.run(config, tmp_path, checkpoint, published)
+    report = MODULE.run(config, tmp_path, checkpoints, published, repo)
 
     assert report["testcase"] == str(published.resolve() / "amp/testcase.jsonl")
     row = json.loads((tmp_path / "amp/testcase.jsonl").read_text())
@@ -107,9 +139,68 @@ def test_run_injects_sam2_isolates_stdout_and_publishes_paths(
     assert captured.out == "" and "native AMP progress" in captured.err
 
 
-def test_run_requires_sam2_checkpoint(tmp_path: Path) -> None:
+def test_checkpoint_root_requires_canonical_mount_and_amp_assets(tmp_path: Path) -> None:
+    external = checkpoint_root(tmp_path / "external")
+    with pytest.raises(ValueError, match="must be mounted"):
+        MODULE._validate_checkpoint_root(external, tmp_path / "repo")
+
+    repo = tmp_path / "repo"
+    root = checkpoint_root(repo)
+    snapshots = root / "hf/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots"
+    snapshots.rmdir()
+    with pytest.raises(FileNotFoundError, match="Qwen3-VL-8B-Instruct"):
+        MODULE._validate_checkpoint_root(root, repo)
+    snapshots.mkdir()
+    (root / "facebook/sam2.1-hiera-large/sam2.1_hiera_large.pt").unlink()
     with pytest.raises(FileNotFoundError, match="SAM2.1 checkpoint"):
-        MODULE.run(tmp_path / "config.yaml", tmp_path, tmp_path / "missing.pt")
+        MODULE._validate_checkpoint_root(root, repo)
+
+
+def test_checkpoint_root_validates_configured_amp_model(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    root = checkpoint_root(repo)
+
+    with pytest.raises(FileNotFoundError, match="acme/custom-amp"):
+        MODULE._validate_checkpoint_root(root, repo, "acme/custom-amp")
+
+
+def test_checkpoint_root_accepts_complete_direct_local_amp_model(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    root = checkpoint_root(repo)
+    cached = root / "hf/hub/models--nvidia--Cosmos3-Nano"
+    for path in sorted(cached.rglob("*"), reverse=True):
+        path.unlink() if path.is_file() else path.rmdir()
+    cached.rmdir()
+    local = root / "nvidia/Cosmos3-Nano"
+    local.mkdir(parents=True)
+    (local / "config.json").write_text("{}\n")
+    (local / "model.safetensors").write_bytes(b"weights")
+
+    MODULE._validate_checkpoint_root(root, repo, "nvidia/Cosmos3-Nano")
+
+
+def test_checkpoint_root_rejects_processor_only_amp_model(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    root = checkpoint_root(repo)
+    model = root / "hf/hub/models--nvidia--Cosmos3-Edge/snapshots/revision"
+    model.mkdir(parents=True)
+    (model / "config.json").write_text("{}\n")
+    (model / "tokenizer.json").write_text("{}\n")
+
+    with pytest.raises(FileNotFoundError, match="complete checkpoints/nvidia/Cosmos3-Edge"):
+        MODULE._validate_checkpoint_root(root, repo, "nvidia/Cosmos3-Edge")
+
+
+def test_run_amp_contract_mounts_complete_checkpoint_root() -> None:
+    contract = yaml.safe_load(
+        (SCRIPT.parents[1] / "references/skill_info.yaml").read_text()
+    )["actions"]["run_amp"]
+    inputs = contract["inputs"]
+    assert inputs["checkpoint_root"]["container_path"] == (
+        "/workspace/paidf-anomalygen/checkpoints"
+    )
+    assert "sam2_checkpoint" not in inputs
+    assert contract["args"]["checkpoint_root"] == "--checkpoint-root {checkpoint_root}"
 
 
 def test_plan_rejects_nonbinary_amp_mask(tmp_path: Path) -> None:

@@ -63,4 +63,14 @@ def test_training_wrapper_exposes_container_inputs() -> None:
     result = subprocess.run(["bash", str(ROOT / "finetune_anomalygennext.sh"), "--help"],
                             capture_output=True, text=True)
     assert result.returncode == 0
-    assert "--hf-cache PATH" in result.stdout
+    assert "--checkpoint-root PATH" in result.stdout
+
+
+def test_training_contract_mounts_complete_checkpoint_tree() -> None:
+    contract = yaml.safe_load((ROOT.parent / "references" / "skill_info.yaml").read_text())
+    inputs = contract["actions"]["train"]["inputs"]
+    assert inputs["checkpoint_root"]["container_path"] == (
+        "/workspace/paidf-anomalygen/checkpoints"
+    )
+    assert "nn_backbone" not in inputs
+    assert "hf_cache" not in inputs

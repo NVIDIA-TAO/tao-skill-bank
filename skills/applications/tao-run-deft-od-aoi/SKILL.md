@@ -232,17 +232,19 @@ scripts/prepare_deft_od_aoi_synthesis.py \
 ```
 
 Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
-then its finalized generation plan through `tao-generate-od-defects`. Commit
-`iteration_synthesis` before training. Re-run admission with the generated
-native COCO and image root; synthetic categories are folded to `defect`, and
-the frozen cumulative fraction cap is applied against admitted real defects.
-Boxes alone never substitute for the required pixel mask.
+mounting the complete checkpoint root for its `run_amp` action, then pass its
+finalized generation plan through `tao-generate-od-defects` with the same
+checkpoint root mounted at the same canonical path. Commit `iteration_synthesis`
+before training. Re-run admission with the generated native COCO and image
+root; synthetic categories are folded to `defect`, and the frozen cumulative
+fraction cap is applied against admitted real defects. Boxes alone never
+substitute for the required pixel mask.
 
 ## Missing AnomalyGenNext task weights
 
 A synthesis route may replace `checkpoint` and `recipe` with a `finetune` block
 containing `dataset_root`, frozen `validation_testcase`, Cosmos3-Nano
-`base_checkpoint`, `vae_path`, `nn_backbone`, future `result_handoff`, and
+`base_checkpoint`, `vae_path`, `checkpoint_root`, future `result_handoff`, and
 optional user `recipe_template`/`defect_spec`. These are AnomalyGenNext inputs;
 the application policy is not an upstream training recipe.
 
