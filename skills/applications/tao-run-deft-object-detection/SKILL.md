@@ -149,6 +149,8 @@ The overlays are written against two loop variables that Pre-Flight sets and eve
 
 If an *overlay* is missing, stop and ask the user to reinstall the plugin — the loop cannot run a stage whose settings it does not have. If a mapped *skill* is unavailable, do not stop and do not improvise: fall back to the overlay's documented `docker run` as described in `references/scripts-and-agents.md`, and commit that stage with `--execution-path direct-container` instead of the documented `skill`. The overlay carries everything the invocation needs, so the fallback produces the same artifacts.
 
+On a runtime that surfaces only the core router skills, the mapped skills are still on disk under the plugin root: read `skills/<layer>/<name>/SKILL.md` there for the invocation contract, then run it through the direct-container fallback above. On such a runtime that fallback is the expected route for every stage, not an exception.
+
 | Stage | Overlay | Underlying skill |
 |---|---|---|
 | `prep` (once) | `references/prep-source-pool.md` | `tao-skill-bank:tao-train-codetr` + `tao-generate-image-embeddings` (+ bundled glue) |

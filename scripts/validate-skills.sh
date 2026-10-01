@@ -120,7 +120,7 @@ errs = 0
 for layer in sorted(os.listdir('skills')):
     layer_dir = os.path.join('skills', layer)
     if layer == 'core' or not os.path.isdir(layer_dir):
-        continue  # skills/core/ ships via .codex-plugin, not the marketplace array
+        continue  # skills/core/ is not in the marketplace array; the Codex manifest root (./skills/) covers it
     for name in sorted(os.listdir(layer_dir)):
         skill_dir = os.path.join(layer_dir, name)
         if not os.path.isfile(os.path.join(skill_dir, 'SKILL.md')):
