@@ -127,7 +127,7 @@ Never ask for or read credential values. Check only whether the required environ
 Full detail in `references/pipeline-and-state.md`.
 
 1. **Pre-Flight.** Run every check in `references/preflight.md`. Resolve workspace, specs, annotations, the zero-shot checkpoint, the source-pool embedding parquet, and container images. Hard stop only on missing input you cannot resolve yourself.
-2. **Prep (once, before baseline).** If the source pool is not already labeled and embedded, pseudo-label it with Co-DETR, fold the predictions onto the user's target classes, convert KITTI→COCO→ODVG, and embed the pool. Idempotent — each artifact is skipped when it already exists. See `references/prep-source-pool.md`.
+2. **Prep (once, before baseline).** If the source pool is not already labeled and embedded, pseudo-label it with Co-DETR, fold the predictions onto the user's target classes, convert KITTI→COCO→ODVG, and embed the pool. Skip any step whose output already exists — no script does this for you, so check before each step. See `references/prep-source-pool.md`.
 3. **Baseline (iter_0) — no training.** Run `inference` with the supplied zero-shot / pretrained checkpoint, then `kpi_analyze`. Seed `train_grounding_dino.yaml` from the user's template for later iterations to extend.
 4. **Iterate.** For each iteration 1..`max_iterations`, run the seven stages in order:
    `gap_analysis` → `embed` → `mine` → `stage` → `train` → `inference` → `kpi_analyze`.
