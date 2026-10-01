@@ -35,14 +35,14 @@ location. It always validates `Qwen/Qwen3-VL-8B-Instruct` and
 `nvidia/Cosmos3-Edge` in the Hugging Face cache under `hf/`, plus a
 Transformers-compatible `facebook/dinov2-large`.
 
-The wrapper passes its `--guardrail` or `--no-guardrail` selection to the native
-generator. Guardrails default on. `--no-guardrail` disables text screening,
-image content-safety screening, and face blurring together. When guardrails are
-enabled, validation also requires `Qwen/Qwen3Guard-Gen-0.6B` and
-`nvidia/Cosmos-Guardrail1`; those repositories are not required with
-`--no-guardrail`. It then forces Hugging Face and Transformers offline. Missing
-assets fail before sampling. Keep registry and Hugging Face credentials out of
-specs, commands, logs, and job records.
+The wrapper preserves the native default invocation when guardrails are on and
+passes `--no-guardrail` only when they are explicitly disabled. The flag
+disables text screening, image content-safety screening, and face blurring
+together. When guardrails are enabled, validation also requires
+`Qwen/Qwen3Guard-Gen-0.6B` and `nvidia/Cosmos-Guardrail1`; those repositories
+are not required with `--no-guardrail`. It then forces Hugging Face and
+Transformers offline. Missing assets fail before sampling. Keep registry and
+Hugging Face credentials out of specs, commands, logs, and job records.
 
 Invoke the command declared in `skill_info.yaml`, for example inside the
 container:

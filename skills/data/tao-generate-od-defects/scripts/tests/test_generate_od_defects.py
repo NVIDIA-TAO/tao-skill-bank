@@ -87,10 +87,50 @@ def test_native_logs_are_kept_off_machine_readable_stdout(
     result = MODULE._run_group(group, tmp_path / "out", args)
 
     assert len(calls) == 2
-    expected = "--guardrail" if guardrail_enabled else "--no-guardrail"
-    assert expected in calls[0]
+    if guardrail_enabled:
+        assert "--guardrail" not in calls[0] and "--no-guardrail" not in calls[0]
+    else:
+        assert "--no-guardrail" in calls[0]
     assert "--guardrail" not in calls[1] and "--no-guardrail" not in calls[1]
     assert result["generated"] == result["blocked"] == 0
+
+
+def test_disabled_guardrails_reject_blocked_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(command, *, check, stdout):
+        if str(command[1]).endswith("pseudo_label.py"):
+            labels = tmp_path / "out/pseudo_labels"
+            labels.mkdir(parents=True)
+            (labels / "coco_annotations.json").write_text(json.dumps({
+                "images": [], "annotations": [], "categories": [],
+            }))
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        MODULE, "_csv_count",
+        lambda path: 1 if path.name == "guardrail_blocked.csv" else 0,
+    )
+    group = {
+        "dataset_id": "d", "checkpoint": "adapter.pt", "recipe": "recipe.yaml",
+        "testcase": "testcase.jsonl", "anomaly_types": ["texture+defect"],
+        "requested_rows": 1,
+    }
+    args = argparse.Namespace(repo=tmp_path, num_gpus=1, base_checkpoint=tmp_path,
+                              guardrail=False)
+
+    with pytest.raises(ValueError, match="guardrails are disabled"):
+        MODULE._run_group(group, tmp_path / "out", args)
+
+
+def test_generate_action_contract_exposes_guardrail_mode() -> None:
+    action = yaml.safe_load(
+        (SCRIPT.parents[1] / "references/skill_info.yaml").read_text()
+    )["actions"]["generate"]
+
+    assert action["inputs"]["guardrail"] == {"type": "bool"}
+    assert action["args"]["guardrail"] == "--guardrail/--no-guardrail {guardrail}"
+    assert action["defaults"]["guardrail"] is True
 
 
 def test_generation_metadata_uses_persistent_output_paths(tmp_path: Path) -> None:
@@ -139,9 +179,19 @@ def test_checkpoint_root_requires_canonical_mount_and_dinov2(tmp_path: Path) -> 
     repo = tmp_path / "repo"
     root = _checkpoint_root(repo)
     assert MODULE._validate_checkpoint_root(root, repo) == root / "hf"
+    for name in MODULE.GUARDRAIL_OFFLINE_HF_REPOS:
+        snapshots = (
+            root / "hf/hub" / f"models--{name.replace('/', '--')}" / "snapshots"
+        )
+        snapshots.rmdir()
+    assert MODULE._validate_checkpoint_root(
+        root, repo, guardrail_enabled=False
+    ) == root / "hf"
+    with pytest.raises(FileNotFoundError, match="Qwen3Guard-Gen-0.6B"):
+        MODULE._validate_checkpoint_root(root, repo, guardrail_enabled=True)
     (root / "facebook/dinov2-large/model.safetensors").unlink()
     with pytest.raises(FileNotFoundError, match="DINOv2 weights"):
-        MODULE._validate_checkpoint_root(root, repo)
+        MODULE._validate_checkpoint_root(root, repo, guardrail_enabled=False)
 
 
 def test_generate_contract_mounts_complete_checkpoint_root() -> None:

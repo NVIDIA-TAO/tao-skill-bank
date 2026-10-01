@@ -22,6 +22,7 @@ actions:
         type: folder
         container_path: /workspace/paidf-anomalygen/checkpoints
       published_root: {type: folder, optional: true}
+      guardrail: {type: bool}
     outputs:
       results_dir: {type: folder}
       validation_summary: {type: file, relative_path: validation_summary.json}
@@ -41,5 +42,7 @@ actions:
       datasets: --datasets {datasets}
       num_gpus: --num-gpus {num_gpus}
       checkpoint_root: --checkpoint-root {checkpoint_root}
+      guardrail: --guardrail/--no-guardrail {guardrail}
     defaults:
       num_gpus: 1
+      guardrail: true
