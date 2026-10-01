@@ -27,7 +27,8 @@ selects the embedding input geometry:
 
 - `square_context` (default) reproduces the historical behavior: expand the
   longer defect-box edge by the context scale, mean-pad to a square at image
-  boundaries, then bicubic-resize defect, query, and clean-grid crops to
+  boundaries, mean-pad non-square clean-grid cells, then bicubic-resize defect,
+  query, and clean-grid crops to
   `retrieval.output_size` (default `224`); this setting is read and validated
   only for this profile;
 - `tight_context` preserves the newer behavior: expand both box dimensions by
@@ -40,6 +41,16 @@ For either profile:
 - each real annotation produces a 1.5× contextual crop;
 - each verified-clean image produces the whole image and a 2×2 grid;
 - both roles use the same frozen SigLIP encoder.
+
+COCO and gap boxes use the displayed-image coordinate frame. Retrieval applies
+the image's EXIF orientation before reading dimensions or cropping pixels, so
+the coordinates must not be transformed a second time.
+
+Query preparation validates the candidate manifest before reuse. The frozen
+preprocessing profile, model and model path, context scale, clean-grid layout,
+and square output size must match the current policy. A legacy manifest without
+`preprocessing_profile` is treated as `tight_context`, matching the geometry
+that produced it.
 
 For each iteration, crop strict FNs and near-miss FPs as real queries, and
 background-like loose FPs as clean queries. Embed queries with the identical
