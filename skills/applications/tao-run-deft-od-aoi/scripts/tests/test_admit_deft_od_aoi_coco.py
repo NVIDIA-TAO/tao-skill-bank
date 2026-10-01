@@ -200,8 +200,8 @@ def test_round_robin_admission_consumes_materialized_selection(tmp_path: Path) -
         frame.to_parquet(candidate_path, index=False)
     real_queries = pd.read_parquet(retrieval / "real_query_embeddings.parquet")
     real_queries = real_queries.assign(
-        query_id="real-query", reason="fn", benchmark="line-a", texture="board",
-        defect_type="bridge", real_factor=1,
+        query_id="real-query", reason="fn", dataset_id="line-a", texture_id="board",
+        defect_class="bridge", real_factor=1,
     )
     real_queries.to_parquet(retrieval / "real_query_embeddings.parquet", index=False)
     clean_queries = pd.read_parquet(retrieval / "clean_query_embeddings.parquet")

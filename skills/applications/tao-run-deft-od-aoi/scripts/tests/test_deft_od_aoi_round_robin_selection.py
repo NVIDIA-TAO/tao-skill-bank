@@ -32,7 +32,7 @@ def test_frozen_fixture_preserves_semantic_selection() -> None:
     queries = fixture["queries"]
     for query in queries:
         query.update(dict(zip(
-            ("benchmark", "texture", "defect_type"),
+            ("dataset_id", "texture_id", "defect_class"),
             fixture["source_metadata"][query["query_id"]],
         )))
     retrieval = fixture["policy"]["retrieval"]
@@ -123,11 +123,11 @@ def test_select_isolates_pockets_and_caps_clean() -> None:
         for index, embedding in enumerate(([1, 0], [0, 1], [.7, .7]))
     ])
     real_queries = pd.DataFrame([
-        {"query_id": "strict-a", "reason": "fn", "benchmark": "b1",
-         "texture": "t1", "defect_type": "d1", "real_factor": 2,
+        {"query_id": "strict-a", "reason": "fn", "dataset_id": "b1",
+         "texture_id": "t1", "defect_class": "d1", "real_factor": 2,
          "embedding": [1, 0]},
-        {"query_id": "strict-b", "reason": "fn", "benchmark": "b2",
-         "texture": "t2", "defect_type": "d2", "real_factor": 1,
+        {"query_id": "strict-b", "reason": "fn", "dataset_id": "b2",
+         "texture_id": "t2", "defect_class": "d2", "real_factor": 1,
          "embedding": [0, 1]},
     ])
     clean_queries = pd.DataFrame([
@@ -154,6 +154,27 @@ def test_select_isolates_pockets_and_caps_clean() -> None:
     assert len(selected["clean"]) == 3
     assert [row["requested"] for row in audit["branches"]] == [2, 1, 3]
     assert all(row["shortfall"] == 0 for row in audit["branches"])
+
+
+def test_select_rejects_legacy_only_pocket_metadata() -> None:
+    queries = pd.DataFrame([{
+        "query_id": "legacy", "reason": "fn", "benchmark": "b",
+        "texture": "t", "defect_type": "d", "real_factor": 1,
+        "embedding": [1, 0],
+    }])
+    policy = {
+        "retrieval": {"minimum_similarity": -1, "audit_top_k_per_query": 20},
+        "routing": {"real_mine_factor_min": 1, "near_miss_real_factor": 2,
+                    "near_miss_real_cap_per_pocket": 2, "clean_factor": 2,
+                    "clean_cumulative_cap_per_real": 1.0},
+    }
+
+    with pytest.raises(ValueError, match="lacks pocket metadata"):
+        MODULE.select(
+            {"real": pd.DataFrame(), "clean": pd.DataFrame()},
+            {"real": queries, "clean": pd.DataFrame()}, policy,
+            {"real": set(), "clean": set()},
+        )
 
 
 def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -> None:
@@ -243,8 +264,8 @@ def test_materialized_outputs_satisfy_retrieval_stage_contract(tmp_path: Path) -
             "embedding": [1.0, 0.0],
         }
         if role == "real":
-            query.update(benchmark="line", texture="board", defect_type="bridge",
-                         real_factor=1)
+            query.update(dataset_id="line", texture_id="board",
+                         defect_class="bridge", real_factor=1)
         frame = pd.DataFrame([query])
         frame.drop(columns="embedding").to_parquet(
             retrieval_root / f"{role}_queries.parquet", index=False
@@ -292,8 +313,8 @@ def test_select_admits_available_defect_candidate_on_pocket_shortfall(
         "candidate_id": "only", "source_filepath": "/only", "embedding": [1, 0],
     }])
     queries = pd.DataFrame([{
-        "query_id": "defect", "reason": reason, "benchmark": "b",
-        "texture": "t", "defect_type": "d", "real_factor": 2,
+        "query_id": "defect", "reason": reason, "dataset_id": "b",
+        "texture_id": "t", "defect_class": "d", "real_factor": 2,
         "embedding": [1, 0],
     }])
     policy = {

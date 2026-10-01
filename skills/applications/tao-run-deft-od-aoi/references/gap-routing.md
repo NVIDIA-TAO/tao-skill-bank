@@ -84,7 +84,7 @@ Each strict round-robin query uses its gap-row `real_factor`, then the explicit
 default); all strict queries in one pocket must agree. Max-similarity retains
 the `routing.real_mine_factor_min` fallback (`1` by default). Annotated KPI
 images must provide the canonical `dataset_id`, `texture_id`, and
-`defect_class` fields.
+`defect_class` fields. Optional provenance fields do not define pockets.
 
 For each iteration, crop strict FNs and near-miss FPs as real queries, and
 background-like loose FPs as clean queries. Embed queries with the identical

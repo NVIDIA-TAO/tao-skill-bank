@@ -904,7 +904,7 @@ def test_square_context_gap_boxes_use_bounded_pixel_geometry() -> None:
 
 @pytest.mark.parametrize(
     ("profile", "expected_size"),
-    (("tight_context", (12, 6)), ("square_context", (224, 224))),
+    (("tight_context", (12, 8)), ("square_context", (224, 224))),
 )
 def test_round_robin_selection_is_independent_of_preprocessing(
         tmp_path: Path, profile: str, expected_size: tuple[int, int]) -> None:
@@ -916,11 +916,14 @@ def test_round_robin_selection_is_independent_of_preprocessing(
     kpi.write_text(json.dumps({
         "images": [{"id": 7, "file_name": query_image.name,
                     "source_path": str(query_image), "dataset_id": "line-a",
-                    "texture_id": "board", "defect_class": "bridge"}],
+                    "texture_id": "board", "defect_class": "bridge",
+                    "benchmark": "legacy-source", "texture": "legacy-board",
+                    "defect_type": "legacy-bridge"}],
         "annotations": [], "categories": [{"id": 1, "name": "defect"}],
     }))
     document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
     policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
     strict = tmp_path / "strict.parquet"
     loose = tmp_path / "loose.parquet"
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
@@ -934,9 +937,12 @@ def test_round_robin_selection_is_independent_of_preprocessing(
 
     frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
     assert report["selection_strategy"] == "round_robin_similarity"
-    assert frame.loc[0, ["benchmark", "texture", "defect_type", "real_factor"]].tolist() == [
+    assert frame.loc[0, [
+        "dataset_id", "texture_id", "defect_class", "real_factor"
+    ]].tolist() == [
         "line-a", "board", "bridge", 3,
     ]
+    assert not {"benchmark", "texture", "defect_type"}.intersection(frame.columns)
     assert Image.open(frame.iloc[0].filepath).size == expected_size
     assert not (tmp_path / "queries/mine_real.yaml").exists()
 
@@ -956,6 +962,7 @@ def test_round_robin_defaults_to_three_real_candidates_per_strict_fn(
     }))
     document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
     policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
     strict = tmp_path / "strict.parquet"
     loose = tmp_path / "loose.parquet"
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
