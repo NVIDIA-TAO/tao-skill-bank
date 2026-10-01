@@ -32,8 +32,8 @@ images:
     pyt:                nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-76-multiarch
     deploy:             nvcr.io/nvstaging/tao/tao-toolkit-deploy:7.3.0-rc-74-multiarch
     data_services:      nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-74-multiarch
-    deft_pas_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.0.1-20260922T185808Z-a6a5e75
-    deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.2.0-rc-52-multiarch
+    deft_pas_pyt:       nvcr.io/nvstaging/tao/tao-toolkit-pyt:7.3.0-rc-76-multiarch
+    deft_pas_data_services: nvcr.io/nvstaging/tao/tao-toolkit-ds:7.3.0-rc-74-multiarch
     # TAO 7.1.0 has the Cosmos Reason Conv3d/vLLM import regression (NVBUG 6587006).
     cosmos_framework:   nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-framework
     cosmos_rl:          nvcr.io/nvidia/tao/tao-toolkit:7.2.0-cosmos-rl
@@ -64,17 +64,17 @@ wheels:
   # platform skills run containers via docker/kubectl/srun and the SDK-free
   # 4-verb consumer path (tao-data-io + tao_job_record + tao-launch-workflow).
   # These `tao_sdk_*` keys exist so nvidia-tao-automl can pull a matching SDK.
-  tao_sdk:            nvidia-tao-sdk==7.2.0rc19
-  tao_sdk_brev:       nvidia-tao-sdk[brev]==7.2.0rc19
-  tao_sdk_slurm:      nvidia-tao-sdk[slurm]==7.2.0rc19
-  tao_sdk_kubernetes: nvidia-tao-sdk[kubernetes]==7.2.0rc19
-  tao_sdk_docker:     nvidia-tao-sdk[docker]==7.2.0rc19
-  tao_sdk_all:        nvidia-tao-sdk[all]==7.2.0rc19
+  tao_sdk:            nvidia-tao-sdk==7.2.0
+  tao_sdk_brev:       nvidia-tao-sdk[brev]==7.2.0
+  tao_sdk_slurm:      nvidia-tao-sdk[slurm]==7.2.0
+  tao_sdk_kubernetes: nvidia-tao-sdk[kubernetes]==7.2.0
+  tao_sdk_docker:     nvidia-tao-sdk[docker]==7.2.0
+  tao_sdk_all:        nvidia-tao-sdk[all]==7.2.0
   # nvidia-tao-automl pulls nvidia-tao-sdk as a transitive dep. One entry per
   # platform extra; append `,llm` or `,wandb` to an extra at install time for
   # the agentic-search or experiment-tracking deps.
-  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.2.0rc18
-  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.2.0rc18
-  tao_automl_docker:     nvidia-tao-automl[docker]==7.2.0rc18
-  tao_automl_brev:       nvidia-tao-automl[brev]==7.2.0rc18
-  tao_automl_all:        nvidia-tao-automl[all]==7.2.0rc18
+  tao_automl_slurm:      nvidia-tao-automl[slurm]==7.2.0
+  tao_automl_kubernetes: nvidia-tao-automl[kubernetes]==7.2.0
+  tao_automl_docker:     nvidia-tao-automl[docker]==7.2.0
+  tao_automl_brev:       nvidia-tao-automl[brev]==7.2.0
+  tao_automl_all:        nvidia-tao-automl[all]==7.2.0
