@@ -3293,6 +3293,13 @@ run "$PY" "$COMMIT" --results-dir "$G35_RUN" --stage gap_analysis --summary s
 assert_rc 1 "[G35] a missing required flag is exit 1, not argparse's 2"
 assert_unchanged "$G35_RUN" "[G35] neither usage error writes anything"
 
+# The audit has the same collision: its 2 means deft_state.json is missing or
+# unparseable, so a mistyped flag read as a corrupt run.
+run "$PY" "$AUDIT" --results-dir "$G35_RUN" --require-compelte
+assert_rc 1 "[G35] an audit usage error is exit 1, not 2"
+run "$PY" "$AUDIT" --results-dir "$G35/results/no_such_run"
+assert_rc 2 "[G35] a run with no deft_state.json is still the audit's 2"
+
 # ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'

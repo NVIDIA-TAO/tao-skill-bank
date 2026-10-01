@@ -41,7 +41,7 @@ CLI:
 
 Exit codes:
   0  VALID and every --require-* condition met
-  1  INVALID, or a --require-* condition unmet
+  1  INVALID, a --require-* condition unmet, or invalid arguments (nothing audited)
   2  deft_state.json is missing or unparseable (a special case of INVALID)
 """
 
@@ -854,8 +854,22 @@ def _print_text(report: dict[str, Any]) -> None:
         print(f"error: {error}", file=sys.stderr)
 
 
+class _AuditArgumentParser(argparse.ArgumentParser):
+    """argparse with this script's exit codes.
+
+    argparse exits 2 on a usage error, and here 2 means deft_state.json is missing or
+    unparseable -- so a mistyped flag would read as a corrupt run. A usage error
+    audits nothing; it is reported as 1, "not valid, stop", rather than as a fault in
+    the state.
+    """
+
+    def error(self, message: str):  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = _AuditArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--results-dir",
         required=True,
