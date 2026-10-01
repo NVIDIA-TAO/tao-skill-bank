@@ -60,7 +60,6 @@ synthesis:
   enabled: false
   fn_selection:
     mode: generated_per_type_plan
-    images_per_fn: 2
   pool_dataset_root: null
   defect_spec: null
   routes: {}

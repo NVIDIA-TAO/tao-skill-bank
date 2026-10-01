@@ -112,27 +112,27 @@ synthesis:
   cumulative_fraction_of_total_defects: 0.25
   fn_selection:
     mode: generated_per_type_plan
-    images_per_fn: 2
+  max_neighbors_per_fn: 1
 ```
 
 Pass the admitted real COCO with `--real-coco`. The planner solves
 `synthetic / (real + synthetic) = fraction`, subtracts previously admitted
 synthetic images, and distributes the remaining whole-FN budget across anomaly
 types in proportion to eligible FN counts with deterministic remainder ties.
-`images_per_fn` must describe the expected finalized generation yield for one
-selected FN:
+The planner derives the expected finalized generation yield for one selected
+FN as:
 
 ```text
 retained neighbors per FN × mask branches per neighbor × images per branch
 ```
 
 The accepted configuration uses one retained neighbor, two mask branches, and
-one generated image per branch, so the value is `1 × 2 × 1 = 2`. The retrieval
+one generated image per branch, so the value is `1 × 2 × 1 = 2`. This derived
+value is recorded as `images_per_fn` in the frozen plan evidence. The retrieval
 `candidate_topn` may be larger (for example, three) because it supplies fallback
 neighbors before AMP finalization; it does not increase the expected yield once
-`max_neighbors_per_fn` retains only one neighbor. If those retention, branch, or
-generation settings change, update `images_per_fn` with them or the planner will
-misstate the image budget and may generate work that admission later discards.
+`max_neighbors_per_fn` retains only one neighbor. Increasing that setting
+automatically increases the bounded-plan yield by two images per added neighbor.
 
 Set `synthesis.fn_selection.mode: all_eligible` explicitly only when every
 routed FN should proceed without pre-generation budgeting. That compatibility

@@ -106,14 +106,68 @@ def _validate_retrieval(iteration: int, artifacts: dict[str, dict[str, Any]]) ->
     return manifest
 
 
-def _validate_admission(iteration: int, artifacts: dict[str, dict[str, Any]]) -> None:
+def _validate_admission(iteration: int,
+                        artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
     report = _read_json(artifacts, "admission_report")
     if report.get("status") != "COMPLETE" or int(report.get("iteration", -1)) != iteration:
         raise ValueError("admission report is incomplete or for another iteration")
+    admitted = report.get("admitted")
+    if not isinstance(admitted, dict):
+        raise ValueError("admission report has no admitted counts")
+    for role in ("real", "clean", "synthetic"):
+        count = admitted.get(role, 0)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError("admission report has invalid admitted counts")
+    return report
 
 
-def _validate_synthesis(iteration: int,
-                        artifacts: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _validate_budget_skip(state: dict[str, Any], iteration: int,
+                          artifacts: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], str]:
+    if set(artifacts) != {"synthesis_request", "admission_report"}:
+        raise ValueError("a budget skip requires only its request and admission report")
+    request = _read_json(artifacts, "synthesis_request")
+    admission = _validate_admission(iteration, artifacts)
+    previous = next((event for event in reversed(state.get("events", []))
+                     if event.get("stage") == "iteration_admission"
+                     and event.get("iteration") == iteration), {})
+    committed = (previous.get("artifacts") or {}).get("admission_report") or {}
+    supplied = artifacts["admission_report"]
+    if (committed.get("path") != supplied["path"]
+            or committed.get("sha256") != supplied["sha256"]):
+        raise ValueError("budget skip requires the committed admission report")
+    if (request.get("status") != "SKIPPED"
+            or request.get("reason") != "no_synthetic_budget"):
+        raise ValueError("budget skip must declare SKIPPED/no_synthetic_budget")
+    if request.get("selection_mode") != "generated_per_type_plan":
+        raise ValueError(
+            "no_synthetic_budget requires selection_mode=generated_per_type_plan; "
+            "all_eligible does not use pre-generation budgeting"
+        )
+    planning = request.get("planning")
+    names = ("new_image_budget", "images_per_fn", "eligible_fn_count",
+             "selected_fn_count", "planned_images", "unplanned_budget")
+    if (not isinstance(planning, dict)
+            or any(isinstance(planning.get(name), bool)
+                   or not isinstance(planning.get(name), int)
+                   or planning[name] < 0 for name in names)):
+        raise ValueError("budget skip has invalid planning counts")
+    if (request.get("fn_count") != 0
+            or request.get("eligible_fn_count") != planning["eligible_fn_count"]
+            or planning["eligible_fn_count"] < 1
+            or not planning["new_image_budget"] < planning["images_per_fn"]
+            or planning["selected_fn_count"] != 0
+            or planning["planned_images"] != 0
+            or planning["unplanned_budget"] != planning["new_image_budget"]):
+        raise ValueError("budget skip has inconsistent whole-FN planning evidence")
+    return admission, "no_synthetic_budget"
+
+
+def _validate_synthesis(iteration: int, artifacts: dict[str, dict[str, Any]],
+                        state: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    if "synthesis_request" in artifacts:
+        request = _read_json(artifacts, "synthesis_request")
+        if request.get("reason") == "no_synthetic_budget":
+            return _validate_budget_skip(state, iteration, artifacts)
     skip_contracts = {
         "synthesis_request": "no_routed_false_negatives",
         "synthesis_preparation": "no_eligible_false_negatives",
@@ -162,7 +216,7 @@ def _validate_synthesis(iteration: int,
                                    and str(warning.get("message") or "").strip()
                                    for warning in warnings if isinstance(warning, dict))):
                     raise ValueError("no-clean-reference skip lacks typed warning evidence")
-        return report
+        return report, None
     generation = _read_json(artifacts, "generation_report")
     admission = _read_json(artifacts, "admission_report")
     if generation.get("status") != "COMPLETE":
@@ -184,11 +238,12 @@ def _validate_synthesis(iteration: int,
         blocked += group_blocked
     if int(generation.get("generated", -1)) != generated or generated + blocked != requested:
         raise ValueError("generation totals disagree with dataset groups")
-    _validate_admission(iteration, artifacts)
+    report = _validate_admission(iteration, artifacts)
     admitted = int((admission.get("admitted") or {}).get("synthetic", -1))
     if admitted < 0 or admitted > generated:
         raise ValueError("synthetic admission count exceeds generated images")
-    return generation
+    report = _validate_admission(iteration, artifacts)
+    return report, None
 
 
 def _retrieval_had_output(state: dict[str, Any], iteration: int) -> bool | None:
@@ -321,12 +376,18 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         raise ValueError("at least one completion artifact is required")
     retrieval = None
     synthesis = None
+    admission = None
+    synthesis_skip_reason = None
     if stage == "iteration_retrieval":
         retrieval = _validate_retrieval(iteration, artifacts)
     elif stage == "iteration_admission":
-        _validate_admission(iteration, artifacts)
+        admission = _validate_admission(iteration, artifacts)
     elif stage == "iteration_synthesis":
-        synthesis = _validate_synthesis(iteration, artifacts)
+        synthesis, synthesis_skip_reason = _validate_synthesis(
+            iteration, artifacts, state
+        )
+        if synthesis.get("status") == "COMPLETE":
+            admission = synthesis
     elif stage == "iteration_training":
         _validate_training(artifacts)
     elif stage == "iteration_measurement":
@@ -344,6 +405,11 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         state["completion_reason"] = "all_producers_exhausted"
     if stage == "iteration_admission" and state.get("synthesis_enabled"):
         next_stage = "iteration_synthesis"
+    if synthesis_skip_reason:
+        admitted = synthesis["admitted"]
+        if not sum(int(admitted.get(role, 0)) for role in ("real", "clean", "synthetic")):
+            next_stage, status = None, "COMPLETE"
+            state["completion_reason"] = "no_new_training_images"
     if stage == "iteration_gaps":
         if iteration >= int(state["max_iterations"]):
             next_stage, status = None, "COMPLETE"
@@ -353,6 +419,9 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
                  next_stage=next_stage)
     event = {"stage": stage, "iteration": iteration, "artifacts": artifacts,
              "committed_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    if synthesis_skip_reason:
+        event["synthesis_decision"] = {"status": "SKIPPED",
+                                       "reason": synthesis_skip_reason}
     state.setdefault("events", []).append(event)
     temporary = state_path.with_suffix(state_path.suffix + ".tmp")
     temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")

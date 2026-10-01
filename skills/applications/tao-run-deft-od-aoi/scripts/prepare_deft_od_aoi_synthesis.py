@@ -9,12 +9,16 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deft_od_aoi_synthesis_contract import validate_synthesis_contract
 
 
 FIELDS = ("dataset_id", "texture_id", "defect_class", "fn_mask_source")
@@ -31,17 +35,14 @@ def _sha256(path: Path) -> str:
 def _selection_contract(
     synthesis: dict[str, Any], iteration: int | None
 ) -> tuple[str, dict[str, int] | None, dict[str, Any] | None]:
-    selection = synthesis.get("fn_selection") or {
-        "mode": "generated_per_type_plan", "images_per_fn": 2,
-    }
-    mode = str(selection.get("mode") or "generated_per_type_plan")
+    mode, _ = validate_synthesis_contract(synthesis)
     if mode == "all_eligible":
         return mode, None, None
     if mode == "generated_per_type_plan":
         if iteration is None or iteration < 1:
             raise ValueError("generated_per_type_plan requires a positive --iteration")
         return mode, None, None
-    raise ValueError(f"unsupported synthesis.fn_selection.mode: {mode}")
+    raise AssertionError(f"unvalidated synthesis.fn_selection.mode: {mode}")
 
 
 def _generated_plan(
@@ -54,21 +55,8 @@ def _generated_plan(
     by_kind = Counter(str(row.get("deft_kind") or "") for row in document.get("images", []))
     real_count = by_kind["real_defect"]
     prior_synthetic = by_kind["synthetic_defect"]
-    if "cumulative_fraction_of_total_defects" not in synthesis:
-        raise ValueError(
-            "generated_per_type_plan requires "
-            "synthesis.cumulative_fraction_of_total_defects"
-        )
+    _, images_per_fn = validate_synthesis_contract(synthesis)
     fraction = float(synthesis["cumulative_fraction_of_total_defects"])
-    if not math.isfinite(fraction) or not 0 <= fraction < 1:
-        raise ValueError(
-            "synthesis.cumulative_fraction_of_total_defects must be in [0, 1)"
-        )
-    selection = synthesis.get("fn_selection") or {"images_per_fn": 2}
-    images_per_fn = selection.get("images_per_fn", 2)
-    if (isinstance(images_per_fn, bool) or not isinstance(images_per_fn, int)
-            or images_per_fn < 1):
-        raise ValueError("generated_per_type_plan images_per_fn must be a positive integer")
     cumulative_limit = int(fraction / (1.0 - fraction) * real_count)
     image_budget = max(0, cumulative_limit - prior_synthetic)
     fn_budget = image_budget // images_per_fn
@@ -290,10 +278,7 @@ def prepare(
                 "selected_fn_count": selected_count,
                 "requested_images": requested,
                 "frozen_generator_rows": frozen_rows,
-                "bounded_shortfall": requested - frozen_rows,
             }
-        if not selected:
-            raise ValueError("synthesis FN plan selected no eligible false negatives")
         rows = pd.concat(selected, ignore_index=True).drop(
             columns=["_image_sort", "_bbox_sort"]
         ).to_dict("records")
@@ -330,10 +315,15 @@ def prepare(
         "config": str(config_path.resolve()),
     }
     if plan_contract is not None:
+        requested_images = sum(plan.values()) if plan is not None else 0
+        frozen_generator_rows = sum(
+            row["frozen_generator_rows"] for row in per_type.values()
+        )
+        if frozen_generator_rows != requested_images:
+            raise ValueError("frozen generator rows disagree with the synthetic plan")
         report.update({
-            "requested_images": sum(plan.values()) if plan is not None else 0,
-            "frozen_generator_rows": sum(row["frozen_generator_rows"] for row in per_type.values()),
-            "bounded_shortfall": sum(row["bounded_shortfall"] for row in per_type.values()),
+            "requested_images": requested_images,
+            "frozen_generator_rows": frozen_generator_rows,
             "synthetic_plan": plan_contract,
             "per_type": per_type,
         })

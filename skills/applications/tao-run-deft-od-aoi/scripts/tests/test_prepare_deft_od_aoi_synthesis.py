@@ -280,7 +280,8 @@ def test_generated_plan_uses_fraction_of_combined_total(tmp_path: Path) -> None:
 
     plan, contract, evidence = MODULE._generated_plan(
         {"cumulative_fraction_of_total_defects": 0.25,
-         "fn_selection": {"mode": "generated_per_type_plan", "images_per_fn": 2}},
+         "fn_selection": {"mode": "generated_per_type_plan"},
+         "max_neighbors_per_fn": 1},
         rows, real_coco, output, 1,
     )
 
@@ -356,7 +357,8 @@ def test_runtime_generated_plan_selects_deterministically_and_is_reported(
     assert report["fn_count"] == 3
     assert report["requested_images"] == 6
     assert report["frozen_generator_rows"] == 6
-    assert report["bounded_shortfall"] == 0
+    assert "bounded_shortfall" not in report
+    assert all("bounded_shortfall" not in row for row in report["per_type"].values())
     assert report["synthetic_plan"]["counts"] == {
         "metal+crack": 4, "metal+dent": 2,
     }
@@ -364,9 +366,90 @@ def test_runtime_generated_plan_selects_deterministically_and_is_reported(
     assert config["synthetic_plan"] == report["synthetic_plan"]
 
 
+def test_runtime_generated_plan_emits_typed_no_budget_skip(tmp_path: Path) -> None:
+    images = tmp_path / "kpi"
+    images.mkdir()
+    image, mask = images / "image.png", tmp_path / "mask.png"
+    image.write_bytes(b"image")
+    mask.write_bytes(b"mask")
+    coco = tmp_path / "kpi.json"
+    coco.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": image.name, "dataset_id": "route",
+                    "texture_id": "metal"}],
+        "annotations": [{"id": 1, "image_id": 1, "category_id": 1,
+                         "bbox": [1, 2, 4, 5], "defect_class": "crack",
+                         "fn_mask_source": str(mask)}],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+    real_coco = tmp_path / "real.json"
+    real_coco.write_text(json.dumps({
+        "images": [{"id": 1, "deft_kind": "real_defect"}],
+    }))
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    defect_spec, checkpoint = tmp_path / "defect.jsonl", tmp_path / "adapter.pt"
+    recipe = tmp_path / "recipe.yaml"
+    defect_spec.write_text("{}\n")
+    checkpoint.write_bytes(b"adapter")
+    recipe.write_text("anomaly_types: []\n")
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(yaml.safe_dump({
+        "sources": {"kpi": {"images": str(images), "coco": str(coco)}},
+        "retrieval": {"model": "SigLIP", "model_path": "siglip",
+                      "candidate_overfetch": 3},
+        "synthesis": {
+            "enabled": True, "pool_dataset_root": str(pool),
+            "defect_spec": str(defect_spec),
+            "routes": {"route": {"checkpoint": str(checkpoint),
+                                  "recipe": str(recipe)}},
+            "fn_selection": {"mode": "generated_per_type_plan"},
+            "max_neighbors_per_fn": 1, "min_similarity": 0.9,
+            "amp_model_id": "nvidia/Cosmos3-Nano",
+            "cumulative_fraction_of_total_defects": 0.25,
+        },
+    }))
+    strict = tmp_path / "strict.parquet"
+    pd.DataFrame([{"image_id": 1, "filepath": str(image), "gap_type": "FN",
+                   "bbox": [1, 2, 5, 7], "class": "defect"}]).to_parquet(strict)
+
+    report = MODULE.prepare(
+        policy, strict, tmp_path / "out", iteration=1, real_coco=real_coco
+    )
+
+    assert report["status"] == "SKIPPED"
+    assert report["reason"] == "no_synthetic_budget"
+    assert report["eligible_fn_count"] == 1
+    assert report["planning"]["images_per_fn"] == 2
+    assert report["planning"]["planned_images"] == 0
+    assert not (tmp_path / "out/anomalygen_filtering.yaml").exists()
+
+
 def test_selection_contract_rejects_unknown_modes() -> None:
     with pytest.raises(ValueError, match="unsupported synthesis.fn_selection.mode"):
         MODULE._selection_contract({"fn_selection": {"mode": "external_plan"}}, 1)
+
+
+def test_generated_plan_derives_yield_from_retained_neighbors(tmp_path: Path) -> None:
+    real_coco = tmp_path / "real.json"
+    real_coco.write_text(json.dumps({
+        "images": [{"id": index, "deft_kind": "real_defect"}
+                   for index in range(24)]
+    }))
+    output = tmp_path / "out"
+    output.mkdir()
+
+    plan, contract, evidence = MODULE._generated_plan(
+        {"cumulative_fraction_of_total_defects": 0.2,
+         "fn_selection": {"mode": "generated_per_type_plan"},
+         "max_neighbors_per_fn": 3},
+        [{"anomaly_type": "metal+crack"}] * 4,
+        real_coco, output, 1,
+    )
+
+    assert plan == {"metal+crack": 6}
+    assert contract is not None and contract["images_per_fn"] == 6
+    assert evidence["images_per_fn"] == 6
+    assert evidence["selected_fn_count"] == 1
 
 
 def test_default_policy_uses_generated_per_type_plan() -> None:
@@ -375,7 +458,7 @@ def test_default_policy_uses_generated_per_type_plan() -> None:
     )
 
     assert policy["synthesis"]["fn_selection"] == {
-        "mode": "generated_per_type_plan", "images_per_fn": 2,
+        "mode": "generated_per_type_plan",
     }
     assert policy["synthesis"]["max_neighbors_per_fn"] == 1
     assert policy["synthesis"]["cumulative_fraction_of_total_defects"] == 0.25
