@@ -406,6 +406,18 @@ def test_admission_uses_overfetch_to_replace_a_previously_used_parent(tmp_path: 
     assert preview["roles"]["real"]["per_dataset"] == {"canonical-dataset-b": 1}
 
 
+def test_round_robin_rejects_empty_selection_without_required_schema(
+        tmp_path: Path) -> None:
+    mine = tmp_path / "mine_real"
+    mine.mkdir()
+    pd.DataFrame({"wrong_column": pd.Series(dtype="str")}).to_parquet(
+        mine / "final_unique_files.parquet", index=False
+    )
+
+    with pytest.raises(ValueError, match="round-robin selection output is invalid"):
+        MODULE._round_robin_selected("real", tmp_path)
+
+
 @pytest.mark.parametrize(("synthesis_enabled", "prior_real"), [(False, 0), (True, 0), (True, 1)])
 def test_empty_max_similarity_mining_routes_through_admission(
         tmp_path: Path, synthesis_enabled: bool, prior_real: int) -> None:

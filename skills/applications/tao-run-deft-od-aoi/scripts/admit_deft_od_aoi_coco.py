@@ -114,10 +114,10 @@ def _round_robin_selected(role: str, retrieval_root: Path) -> list[dict[str, Any
         raise FileNotFoundError(f"enabled {role} selection output is missing: {mined}")
     chosen = pd.read_parquet(mined)
     required = {"filepath", "source_filepath", "similarity", "query_id"}
-    if chosen.empty:
-        return []
     if not required.issubset(chosen):
         raise ValueError(f"enabled {role} round-robin selection output is invalid")
+    if chosen.empty:
+        return []
     return chosen.drop_duplicates("source_filepath").to_dict("records")
 
 
