@@ -83,7 +83,8 @@ def _synthesis_metadata(image: dict[str, Any], annotation: dict[str, Any]) -> di
     return metadata
 
 
-def _role(name: str, value: dict[str, Any], require_dataset_id: bool = False) -> dict[str, Any]:
+def _role(name: str, value: dict[str, Any], require_dataset_id: bool = False) -> tuple[
+        dict[str, Any], dict[str, Any]]:
     images = Path(str(value.get("images") or "")).expanduser().resolve()
     coco_path = Path(str(value.get("coco") or "")).expanduser().resolve()
     if not images.is_dir() or not coco_path.is_file():
@@ -119,7 +120,7 @@ def _role(name: str, value: dict[str, Any], require_dataset_id: bool = False) ->
     if missing_dataset_ids:
         details = ", ".join(missing_dataset_ids[:5])
         remainder = len(missing_dataset_ids) - 5
-        if remainder:
+        if remainder > 0:
             details += f", and {remainder} more"
         raise ValueError(
             "enabled synthesis requires every KPI annotation to resolve a nonempty "
@@ -134,13 +135,14 @@ def _role(name: str, value: dict[str, Any], require_dataset_id: bool = False) ->
         raise ValueError("clean role must have zero annotations")
     if name == "real" and any(count == 0 for count in counts.values()):
         raise ValueError("defective-real role contains a boxless image")
-    return {"images": str(images), "coco": str(coco_path), "coco_sha256": _sha(coco_path),
-            "image_count": len(paths), "annotation_count": sum(counts.values()),
-            "identities": {str(path) for path in paths}}
+    report = {"images": str(images), "coco": str(coco_path),
+              "coco_sha256": _sha(coco_path), "image_count": len(paths),
+              "annotation_count": sum(counts.values()),
+              "identities": {str(path) for path in paths}}
+    return report, coco
 
 
-def _validate_kpi_retrieval_metadata(coco_path: Path) -> None:
-    document = json.loads(coco_path.read_text())
+def _validate_kpi_retrieval_metadata(document: dict[str, Any]) -> None:
     boxed_image_ids = {
         int(annotation["image_id"]) for annotation in document.get("annotations", [])
     }
@@ -159,8 +161,8 @@ def _validate_kpi_retrieval_metadata(coco_path: Path) -> None:
             )
 
 
-def _validate_routed_kpi_metadata(policy: dict[str, Any]) -> None:
-    coco = json.loads(Path(policy["sources"]["kpi"]["coco"]).read_text())
+def _validate_routed_kpi_metadata(
+        policy: dict[str, Any], coco: dict[str, Any]) -> None:
     images = {int(row["id"]): row for row in coco["images"]}
     routes = policy["synthesis"]["routes"]
     issues = []
@@ -184,7 +186,7 @@ def _validate_routed_kpi_metadata(policy: dict[str, Any]) -> None:
     if issues:
         details = "; ".join(issues[:5])
         remainder = len(issues) - 5
-        if remainder:
+        if remainder > 0:
             details += f"; and {remainder} more"
         raise ValueError(f"routed KPI synthesis metadata is incomplete: {details}")
 
@@ -208,11 +210,15 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("baseline_mode must be cold_start or checkpoint")
     synthesis = policy.get("synthesis", {})
     synthesis_enabled = bool(synthesis.get("enabled"))
-    role_reports = {
-        name: _role(name, policy["sources"][name], synthesis_enabled and name == "kpi")
-        for name in ROLES
-    }
-    _validate_kpi_retrieval_metadata(Path(role_reports["kpi"]["coco"]))
+    role_reports = {}
+    role_documents = {}
+    for name in ROLES:
+        report, document = _role(
+            name, policy["sources"][name], synthesis_enabled and name == "kpi"
+        )
+        role_reports[name] = report
+        role_documents[name] = document
+    _validate_kpi_retrieval_metadata(role_documents["kpi"])
     owners: dict[str, str] = {}
     for name, report in role_reports.items():
         for identity in report.pop("identities"):
@@ -245,7 +251,8 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
                                  ("dataset_root", "validation_testcase", "base_checkpoint",
                                   "vae_path", "checkpoint_root", "result_handoff")):
                 raise ValueError(f"synthesis route {name} needs checkpoint/recipe or finetune inputs")
-        _validate_routed_kpi_metadata(policy)
+        # Reuse the document parsed from the resolved, existence-checked KPI path.
+        _validate_routed_kpi_metadata(policy, role_documents["kpi"])
     output.mkdir(parents=True)
     policy["base_checkpoint"] = str(checkpoint)
     policy["sources"] = {name: {"images": role_reports[name]["images"],

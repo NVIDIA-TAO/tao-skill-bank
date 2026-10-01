@@ -390,6 +390,7 @@ def test_initialize_rejects_globally_empty_synthesis_clean_pool(
 def test_initialize_rejects_missing_kpi_dataset_id_for_synthesis(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())
+    _set_kpi_dataset_id(value, "")
     _enable_synthesis(tmp_path, value)
     config.write_text(yaml.safe_dump(value))
 
@@ -407,7 +408,7 @@ def test_initialize_rejects_missing_routed_kpi_metadata(
     mask = _set_valid_routed_metadata(tmp_path, value)
     metadata = {"dataset_id": "route", "texture_id": "texture",
                 "defect_class": "scratch", "fn_mask_source": str(mask)}
-    metadata.pop(missing)
+    metadata[missing] = ""
     _set_kpi_synthesis_metadata(value, **metadata)
     _enable_synthesis(tmp_path, value)
     config.write_text(yaml.safe_dump(value))
@@ -444,6 +445,24 @@ def test_initialize_accepts_unconfigured_nested_kpi_dataset_id(tmp_path: Path) -
     assert state["synthesis_enabled"] is True
 
 
+def test_initialize_resolves_tilde_kpi_coco_before_routed_validation(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    config = _config(home)
+    value = yaml.safe_load(config.read_text())
+    _set_valid_routed_metadata(home, value)
+    _enable_synthesis(home, value)
+    kpi_coco = Path(value["sources"]["kpi"]["coco"])
+    value["sources"]["kpi"]["coco"] = f"~/{kpi_coco.relative_to(home)}"
+    config.write_text(yaml.safe_dump(value))
+    monkeypatch.setenv("HOME", str(home))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    assert state["roles"]["kpi"]["coco"] == str(kpi_coco.resolve())
+
+
 def test_initialize_accepts_mixed_routed_and_unrouted_kpi_metadata(
         tmp_path: Path) -> None:
     config = _config(tmp_path)
@@ -454,7 +473,13 @@ def test_initialize_accepts_mixed_routed_and_unrouted_kpi_metadata(
     unrouted_image.write_bytes(b"unrouted-image")
     kpi_coco = Path(value["sources"]["kpi"]["coco"])
     data = json.loads(kpi_coco.read_text())
-    data["images"].append({"id": 2, "file_name": unrouted_image.name})
+    data["images"].append({
+        "id": 2, "file_name": unrouted_image.name, "width": 10, "height": 10,
+        "deft_od_aoi": {
+            "dataset_id": "normal_real_data", "texture_id": "texture",
+            "defect_class": "scratch",
+        },
+    })
     data["annotations"].append({
         "id": 2,
         "image_id": 2,
