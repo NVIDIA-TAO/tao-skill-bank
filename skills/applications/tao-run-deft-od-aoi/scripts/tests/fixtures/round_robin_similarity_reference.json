@@ -2,8 +2,8 @@
   "policy": {"retrieval": {"minimum_similarity": -1.0, "candidate_overfetch": 2}},
   "ledger": ["/pool/excluded.png"],
   "source_metadata": {
-    "q-a": ["benchmark-a", "texture-a", "scratch"],
-    "q-b": ["benchmark-b", "texture-b", "bridge"]
+    "q-a": ["dataset-a", "texture-a", "scratch"],
+    "q-b": ["dataset-b", "texture-b", "bridge"]
   },
   "candidates": [
     {"candidate_id": "c-1", "source_filepath": "/pool/one.png", "embedding": [1.0, 0.0]},

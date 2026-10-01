@@ -173,7 +173,7 @@ def select(candidates: dict[str, pd.DataFrame], queries: dict[str, pd.DataFrame]
     def pocket(row: pd.Series) -> tuple[str, str, str]:
         values = tuple(
             str(row.get(key, "")).strip()
-            for key in ("benchmark", "texture", "defect_type")
+            for key in ("dataset_id", "texture_id", "defect_class")
         )
         if any(not value for value in values):
             raise ValueError(

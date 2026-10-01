@@ -917,7 +917,9 @@ def test_round_robin_selection_is_independent_of_preprocessing(
     kpi.write_text(json.dumps({
         "images": [{"id": 7, "file_name": query_image.name,
                     "source_path": str(query_image), "dataset_id": "line-a",
-                    "texture_id": "board", "defect_class": "bridge"}],
+                    "texture_id": "board", "defect_class": "bridge",
+                    "benchmark": "legacy-source", "texture": "legacy-board",
+                    "defect_type": "legacy-bridge"}],
         "annotations": [], "categories": [{"id": 1, "name": "defect"}],
     }))
     document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
@@ -935,9 +937,12 @@ def test_round_robin_selection_is_independent_of_preprocessing(
 
     frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
     assert report["selection_strategy"] == "round_robin_similarity"
-    assert frame.loc[0, ["benchmark", "texture", "defect_type", "real_factor"]].tolist() == [
+    assert frame.loc[0, [
+        "dataset_id", "texture_id", "defect_class", "real_factor"
+    ]].tolist() == [
         "line-a", "board", "bridge", 3,
     ]
+    assert not {"benchmark", "texture", "defect_type"}.intersection(frame.columns)
     assert Image.open(frame.iloc[0].filepath).size == expected_size
     assert not (tmp_path / "queries/mine_real.yaml").exists()
 

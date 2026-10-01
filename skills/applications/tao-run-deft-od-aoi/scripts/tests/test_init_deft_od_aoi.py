@@ -126,19 +126,6 @@ def test_initialize_accepts_max_similarity_selection(tmp_path: Path) -> None:
     assert policy["retrieval"]["selection"]["strategy"] == "max_similarity"
 
 
-def test_initialize_rejects_round_robin_without_kpi_pocket_metadata(tmp_path: Path) -> None:
-    config = _config(tmp_path)
-    value = yaml.safe_load(config.read_text())
-    kpi = Path(value["sources"]["kpi"]["coco"])
-    document = json.loads(kpi.read_text())
-    for key in ("dataset_id", "texture_id", "defect_class"):
-        document["images"][0].pop(key)
-    kpi.write_text(json.dumps(document))
-
-    with pytest.raises(ValueError, match="lacks pocket metadata"):
-        MODULE.initialize(config, tmp_path / "results")
-
-
 def test_initialize_rejects_unknown_selection_strategy(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())

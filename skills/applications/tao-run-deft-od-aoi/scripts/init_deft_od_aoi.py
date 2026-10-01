@@ -190,18 +190,6 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
             raise ValueError(
                 "round-robin real factor default must be within the frozen bounds"
             )
-        kpi = json.loads(Path(policy["sources"]["kpi"]["coco"]).read_text())
-        for row in kpi["images"]:
-            nested = row.get("deft_od_aoi") if isinstance(row.get("deft_od_aoi"), dict) else {}
-            values = (
-                nested.get("benchmark", row.get("benchmark", row.get("dataset_id"))),
-                nested.get("texture", row.get("texture", row.get("texture_id"))),
-                nested.get("defect_type", row.get("defect_type", row.get("defect_class"))),
-            )
-            if any(not str(value or "").strip() for value in values):
-                raise ValueError(
-                    f"round-robin KPI image {row.get('id')} lacks pocket metadata"
-                )
     synthesis = policy.get("synthesis", {})
     if synthesis.get("enabled"):
         pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
