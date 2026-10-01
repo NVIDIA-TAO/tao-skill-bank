@@ -799,6 +799,19 @@ def audit(results_dir: Path) -> dict[str, Any]:
             max_iterations=max_iterations,
         )
 
+    # Stages that ran through the overlay's docker run rather than their mapped
+    # skill, as commit_stage.py --execution-path records them. Reported, not judged:
+    # the fallback is documented, and the point is that a run can be attributed to
+    # the code path that produced it.
+    direct_container_stages = [
+        f"{phase}/{stage}"
+        for phase in sorted(iterations, key=_phase_sort_key)
+        if isinstance(iterations[phase], dict)
+        and isinstance(iterations[phase].get("execution_paths"), dict)
+        for stage, path in iterations[phase]["execution_paths"].items()
+        if path == "direct-container"
+    ]
+
     last_event = entries[-1] if entries else None
     last_committed = (
         f"{last_event.get('iter')}/{last_event.get('stage')}" if last_event else "none"
@@ -821,6 +834,7 @@ def audit(results_dir: Path) -> dict[str, Any]:
         "run_failed": run_failed,
         "complete": complete,
         "completion_reason": completion_reason,
+        "direct_container_stages": direct_container_stages,
         "load_failed": load_failed,
         "errors": errors,
         "warnings": warnings,
@@ -844,6 +858,8 @@ def _print_text(report: dict[str, Any]) -> None:
     # iteration and "complete" reached by a documented early stop are different
     # runs, and the reason is the only thing that tells them apart.
     print(f"completion_reason={report['completion_reason']}")
+    if report["direct_container_stages"]:
+        print("direct_container_stages=" + ",".join(report["direct_container_stages"]))
     sys.stdout.flush()  # keep the key=value block ahead of stderr when piped
     for warning in report["warnings"]:
         print(f"warning: {warning}", file=sys.stderr)

@@ -3483,6 +3483,46 @@ init_run "$G34" "$G34/results/run_c" 1 --allocation-policy global \
 assert_rc 1 "[G34] under the global policy, a target the pool does not hold is refused"
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G35. a stage that fell back to docker run says so on disk
+#
+# A stage runs through its mapped skill, or through the overlay's docker run when
+# the skill is unavailable. The docs asked for the fallback to be recorded and named
+# no place to record it, so a finished run could not be attributed to either path.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G35 execution path is recorded"
+
+G35=$(new_workspace g35); make_pool "$G35"
+G35_RUN="$G35/results/run_g35"
+init_run "$G35" "$G35_RUN" 1
+make_phase_artifacts "$G35_RUN" baseline
+commit "$G35_RUN" baseline inference --execution-path direct-container \
+  --inference-labels-dir "$G35_RUN/baseline/inference/labels" --summary s --duration-sec 1
+assert_rc 0 "[G35] a stage commits with --execution-path direct-container"
+commit "$G35_RUN" baseline kpi_analyze --execution-path skill \
+  --kpi-csv "$G35_RUN/baseline/kpi/kpi_calc.csv" --map-value 0.5 --summary s --duration-sec 1
+assert_rc 0 "[G35] and the next with --execution-path skill"
+assert_eq '{"inference": "direct-container", "kpi_analyze": "skill"}' \
+  "$("$PY" -c 'import json,sys
+print(json.dumps(json.load(open(sys.argv[1]))["iterations"]["baseline"]["execution_paths"], sort_keys=True))' \
+  "$G35_RUN/deft_state.json")" \
+  "[G35] each stage's path is recorded under its own name, not overwritten"
+assert_eq '["baseline/inference"]' "$(report_field "$G35_RUN" direct_container_stages)" \
+  "[G35] the audit lists the stage that ran through the fallback"
+
+freeze "$G35_RUN"
+make_iter_artifacts "$G35_RUN" iter1
+commit "$G35_RUN" iter1 gap_analysis --execution-path docker \
+  --weak-images "$G35_RUN/iter1/gaps/weak_images.parquet" \
+  --gap-report "$G35_RUN/iter1/gaps/gap_report.json" \
+  --weak-image-count 9 --summary s --duration-sec 1
+case "$RUN_RC:$RUN_OUT" in
+  0:*) notok "[G35] an unrecognised execution path is refused, not recorded" "output: $RUN_OUT" ;;
+  *"invalid choice: 'docker'"*) ok "[G35] an unrecognised execution path is refused, not recorded" ;;
+  *) notok "[G35] an unrecognised execution path is refused, not recorded" "output: $RUN_OUT" ;;
+esac
+assert_unchanged "$G35_RUN" "[G35] the refused commit writes nothing"
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then
