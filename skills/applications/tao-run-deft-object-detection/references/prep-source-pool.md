@@ -40,9 +40,9 @@ against the same pool reuses them.
 
 **Prep is idempotent.** Skip any step whose output already exists. A user arriving with a pool that is already labeled and embedded pays nothing; a user with raw images pays for the whole chain once. Never re-label or re-embed a pool that already has current artifacts.
 
-**A pre-supplied pool still needs its report.** `class_stratified` mining requires
-`pool_report.json`, and `init_deft_state.py` refuses without one on a pool it is not
-about to build. A pool prepared before that file existed, or by anything other than
+**A pre-supplied pool still needs its report.** `init_deft_state.py` refuses a pool it
+is not about to build unless it has `pool_report.json`, under every allocation policy:
+it is the only check that the pool holds annotations for the run's target classes. A pool prepared before that file existed, or by anything other than
 this skill, will not have it — generate one from the pool's own COCO rather than
 re-labelling:
 

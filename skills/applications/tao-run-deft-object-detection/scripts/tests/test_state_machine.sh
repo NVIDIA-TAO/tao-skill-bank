@@ -252,6 +252,10 @@ print(json.dumps(json.load(open(sys.argv[1])).get(sys.argv[2])))' \
 make_pool() {  # make_pool WORKSPACE  (what the prep stage would emit)
   make_file "$1/source_pool/odvg/pool_odvg.jsonl" '{"filename": "a.png"}'
   make_parquet "$1/source_pool/source_embeddings.parquet"
+  # Prep emits pool_report.json too, and init requires it for an existing pool. It
+  # holds every class a test here targets, so it constrains nothing it is not asked to.
+  make_file "$1/source_pool/pool_report.json" \
+    '{"annotations_by_class": {"car": 900, "person": 400, "bicycle": 120, "road_sign": 80, "bus": 60, "truck": 50}}'
 }
 
 init_run() {  # init_run WORKSPACE RESULTS_DIR MAX_ITERATIONS [extra args...]
@@ -261,6 +265,13 @@ init_run() {  # init_run WORKSPACE RESULTS_DIR MAX_ITERATIONS [extra args...]
   # defaults. Every other caller keeps passing thresholds explicitly.
   local ap50=(--ap50-thresholds-json '{"car": 0.9, "person": 0.85}')
   [ "${OMIT_AP50:-0}" = 1 ] && ap50=()
+  # The pool's report, as prep left it, unless the test supplies its own, points at a
+  # pool directory (init finds the report there), or sets OMIT_POOL_REPORT=1 to
+  # exercise a pool that has none.
+  local report=(--pool-report "$ws/source_pool/pool_report.json")
+  case " $* " in *" --pool-report "*|*" --pool-dir "*) report=() ;; esac
+  [ "${OMIT_POOL_REPORT:-0}" = 1 ] && report=()
+  [ -f "$ws/source_pool/pool_report.json" ] || report=()
   run "$PY" "$INIT" \
     --results-dir "$results" \
     --workspace "$ws" \
@@ -276,6 +287,7 @@ init_run() {  # init_run WORKSPACE RESULTS_DIR MAX_ITERATIONS [extra args...]
     --ground-truth-labels-dir "$ws/kpi/labels" \
     --class-mapping "$ws/classes/classes_its.yaml" \
     ${ap50[@]+"${ap50[@]}"} \
+    ${report[@]+"${report[@]}"} \
     "$@"
 }
 
@@ -2198,6 +2210,7 @@ run "$PY" "$INIT" \
   --kpi-images-dir "$G21_OUT/kpi/images" \
   --ground-truth-labels-dir "$G21_OUT/kpi/labels" \
   --class-mapping "$G21_WS/classes/classes_its.yaml" \
+  --pool-report "$G21_WS/source_pool/pool_report.json" \
   --ap50-thresholds-json '{"car": 0.9}'
 assert_rc 0 "[G21] inputs outside the workspace still initialize"
 case "$RUN_OUT" in
@@ -3244,6 +3257,33 @@ got = status_of({"complete": True, "completion_reason": "from the audit"}, state
 check("the reason recorded in state wins over the audit's", got == f"COMPLETE ({early})", got)
 PYEOF
 )
+
+# ═══════════════════════════════════════════════════════════════════════════
+# G34. an existing pool needs its report under every allocation policy
+#
+# pool_report.json is the only check that a prepared pool holds the run's target
+# classes. It was required only under class_stratified, so under the default
+# global policy a pool with no report initialised silently, for any classes.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G34 the pool report is required"
+
+G34=$(new_workspace g34); make_pool "$G34"
+OMIT_POOL_REPORT=1 init_run "$G34" "$G34/results/run_a" 1 --allocation-policy global
+assert_rc 1 "[G34] an existing pool with no report is refused under the global policy"
+case "$RUN_OUT" in
+  *"--pool-report is required"*) ok "[G34] the refusal names --pool-report and why" ;;
+  *) notok "[G34] the refusal names --pool-report and why" "output: $RUN_OUT" ;;
+esac
+
+init_run "$G34" "$G34/results/run_b" 1 --allocation-policy global
+assert_rc 0 "[G34] the same pool with its report initialises"
+
+# The report's own guard now applies under the global policy too: a target class
+# the pool holds no annotations for is refused.
+make_file "$G34/thin_report.json" '{"annotations_by_class": {"car": 900}}'
+init_run "$G34" "$G34/results/run_c" 1 --allocation-policy global \
+  --pool-report "$G34/thin_report.json" --target-classes car,person
+assert_rc 1 "[G34] under the global policy, a target the pool does not hold is refused"
 
 # ═══════════════════════════════════════════════════════════════════════════
 
