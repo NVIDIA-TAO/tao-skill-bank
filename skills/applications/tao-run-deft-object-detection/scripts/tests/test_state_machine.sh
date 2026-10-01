@@ -3158,6 +3158,27 @@ check("summarize_kpi still resolves per_class when every class is scored once",
       one_sum.get("per_class") == {"car": 0.9, "person": 0.6}
       and one_sum.get("per_class_withheld") is None, one_sum)
 
+# The documented call passes --expect-classes. For a labelled CSV it counts distinct
+# class names, so a class in two sequences reaches the handling above instead of
+# being refused as if it were a stray row.
+multi = root / "multi/kpi"
+multi.mkdir(parents=True)
+(multi / "kpi_calc.csv").write_text(
+    "Sequence Name,class_name,AP\ns1,car,0.9\ns2,car,0.1\ns1,person,0.6\ns1,bicycle,0.7\n")
+proc = subprocess.run([sys.executable, f"{sys.argv[1]}/summarize_kpi.py",
+                       "--kpi-csv", str(multi / "kpi_calc.csv"), "--expect-classes", "3"],
+                      capture_output=True, text=True)
+multi_sum = json.loads((multi / "kpi_summary.json").read_text()) if proc.returncode == 0 else {}
+check("--expect-classes counts distinct classes in a labelled CSV",
+      proc.returncode == 0 and multi_sum.get("per_class") is None
+      and multi_sum.get("class_count") == 3 and multi_sum.get("row_count") == 4,
+      proc.stderr or multi_sum)
+proc = subprocess.run([sys.executable, f"{sys.argv[1]}/summarize_kpi.py",
+                       "--kpi-csv", str(multi / "kpi_calc.csv"), "--expect-classes", "2"],
+                      capture_output=True, text=True)
+check("--expect-classes still refuses a labelled CSV with the wrong class count",
+      proc.returncode == 1 and "3 distinct class(es)" in proc.stderr, proc.stderr)
+
 # Staging numbers come only from a committed stage. A report at the default path with
 # no stage commit -- a rejected commit, or an earlier run in the same results dir --
 # must not appear as this run's.
