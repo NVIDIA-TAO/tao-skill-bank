@@ -4,6 +4,7 @@
 """Regression tests for the release delivered by the default marketplace."""
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -63,3 +64,44 @@ def test_pas_resolves_published_versions_without_embedding_image_uris():
         text = path.read_text()
         assert images["deft_pas_pyt"] not in text
         assert images["deft_pas_data_services"] not in text
+
+
+def test_codex_manifest_skills_root_covers_every_skill_on_disk():
+    """The README promises Codex parity with Claude Code; the manifest must deliver it.
+
+    Claude Code loads every skill directory because ``.claude-plugin/plugin.json``
+    declares no ``skills`` key. Codex loads only what sits under the single
+    ``skills`` root in ``.codex-plugin/plugin.json`` — it recurses, so one root
+    is enough, but that root has to contain every ``SKILL.md`` in the bank.
+    Pointing it at ``./skills/core/`` exposed 4 skills of 76 (NVBug 6777460).
+    """
+    codex_manifest = json.loads(
+        (REPO_ROOT / ".codex-plugin/plugin.json").read_text()
+    )
+    root = (REPO_ROOT / codex_manifest["skills"]).resolve()
+    assert root.is_dir(), f"Codex skills root does not exist: {root}"
+
+    all_skills = {p.parent.resolve() for p in (REPO_ROOT / "skills").rglob("SKILL.md")}
+    outside = sorted(
+        str(p.relative_to(REPO_ROOT)) for p in all_skills if root not in p.parents
+    )
+    assert not outside, (
+        f"{len(outside)} skills sit outside the Codex manifest root {codex_manifest['skills']!r} "
+        f"and are invisible to Codex: {outside[:5]}{' ...' if len(outside) > 5 else ''}"
+    )
+
+
+def test_readme_does_not_hardcode_stale_skill_counts():
+    """README once said skills/core/ held 2 skills while it held 4 (NVBug 6777460).
+
+    The repository-structure tree listed a count per layer; every one of them
+    had drifted. Counts are not maintained, so the tree must not carry them.
+    """
+    readme = (REPO_ROOT / "README.md").read_text()
+    layer_lines = [
+        line for line in readme.splitlines()
+        if re.search(r"[├└]── (applications|data|models|platform|core)/", line)
+    ]
+    assert len(layer_lines) == 5, layer_lines
+    stale = [line.strip() for line in layer_lines if re.search(r"#\s*\d+\s", line)]
+    assert not stale, f"README hardcodes skill counts that will drift: {stale}"
