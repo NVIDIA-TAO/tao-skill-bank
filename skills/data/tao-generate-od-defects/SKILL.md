@@ -57,8 +57,10 @@ persistent locations that will contain the saved results.
 The action deliberately exposes no switch that disables the image's default
 guardrail path. The checkpoint root is mounted over the image's canonical
 `/workspace/paidf-anomalygen/checkpoints` tree and validated before GPU work
-for the pinned tokenizer, guardrail, and DINOv2 assets. Generation is forced
-offline after that validation. The base-checkpoint argument remains separate:
+for the pinned tokenizer, guardrail, and DINOv2 assets. The selected platform
+must honor the declared `checkpoint_root.container_path`; the generation leaf
+rejects a different mount point. Generation is forced offline after that
+validation. The base-checkpoint argument remains separate:
 it is the parent containing `checkpoint.json` and the `model/` checkpoint
 directory.
 

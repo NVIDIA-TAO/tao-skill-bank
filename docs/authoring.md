@@ -361,6 +361,9 @@ actions:
     mode: config
     inputs:
       dataset.train_csv: { type: file }
+      checkpoint_root:
+        type: folder
+        container_path: /workspace/model/checkpoints
     outputs:
       results_dir: { type: folder }
     upload_excludes:
@@ -386,6 +389,12 @@ features: [tracking, multi-node, lustre]
 
 tags: [classification, my-domain]
 ```
+
+An input may declare `container_path` when the runtime requires a specific
+in-container mount destination. During action resolution, the launcher must
+translate this field into the selected platform's explicit mount target. The
+skill should validate the canonical location before beginning work. Do not
+assume that an arbitrary host path satisfies a runtime-owned absolute path.
 
 An action that needs runtime environment, pre/post commands, distributed-launch
 intent, completion evidence, or checked-in orchestration helpers emits the

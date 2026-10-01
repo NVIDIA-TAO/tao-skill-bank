@@ -28,7 +28,44 @@ def _hf_hub(root: Path) -> Path:
     return root / "hub" if (root / "hub").is_dir() else root
 
 
-def _validate_checkpoint_root(root: Path, repo: Path) -> Path:
+def _complete_transformers_model(directory: Path) -> bool:
+    if not (directory / "config.json").is_file():
+        return False
+    for index_name in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+        index = directory / index_name
+        if not index.is_file():
+            continue
+        try:
+            weight_map = json.loads(index.read_text()).get("weight_map", {})
+        except (OSError, json.JSONDecodeError):
+            return False
+        return bool(weight_map) and all(
+            (directory / filename).is_file() for filename in set(weight_map.values())
+        )
+    return any(directory.glob("*.safetensors")) or any(
+        directory.glob("pytorch_model*.bin")
+    )
+
+
+def _configured_model_available(root: Path, hub: Path, model_id: str) -> bool:
+    configured = Path(model_id).expanduser()
+    local = configured.resolve() if configured.is_absolute() else root / configured
+    try:
+        local.resolve().relative_to(root)
+    except ValueError:
+        local = root / "__outside_checkpoint_root__"
+    if _complete_transformers_model(local):
+        return True
+    snapshots = hub / f"models--{model_id.replace('/', '--')}" / "snapshots"
+    return snapshots.is_dir() and any(
+        child.is_dir() and _complete_transformers_model(child)
+        for child in snapshots.iterdir()
+    )
+
+
+def _validate_checkpoint_root(
+    root: Path, repo: Path, model_id: str = "nvidia/Cosmos3-Nano"
+) -> Path:
     resolved = root.expanduser().resolve()
     image_root = (repo / "checkpoints").resolve()
     if resolved != image_root:
@@ -38,13 +75,19 @@ def _validate_checkpoint_root(root: Path, repo: Path) -> Path:
     hf_home = resolved / "hf"
     hub = _hf_hub(hf_home)
     missing = []
+    if not model_id.strip():
+        raise ValueError("AMP model_id must be nonempty")
     for name in AMP_HF_REPOS:
         directory = hub / f"models--{name.replace('/', '--')}"
         if not (directory / "blobs").is_dir() or not (directory / "snapshots").is_dir():
             missing.append(name)
+    if not _configured_model_available(resolved, hub, model_id):
+        missing.append(
+            f"{model_id} (complete checkpoints/{model_id} or Hugging Face snapshot)"
+        )
     if missing:
         raise FileNotFoundError(
-            "checkpoint root lacks required AMP Hugging Face repositories: "
+            "checkpoint root lacks required AMP model assets: "
             + ", ".join(missing)
         )
     sam2 = (
@@ -172,19 +215,20 @@ def _publish_paths(amp_dir: Path, runtime_root: Path, published_root: Path) -> N
 def run(config_path: Path, root: Path, checkpoint_root: Path,
         published_root: Path | None = None,
         repo: Path = Path("/workspace/paidf-anomalygen")) -> dict[str, Any]:
-    hf_home = _validate_checkpoint_root(checkpoint_root, repo)
     frozen = root / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
     if config_path.read_bytes() != frozen.read_bytes():
         raise ValueError("config differs from the frozen preparation snapshot")
     config = yaml.safe_load(frozen.read_text())
     report = plan(root, config)
     amp = config.get("amp") or {}
+    model_id = str(amp.get("model_id", "nvidia/Cosmos3-Nano"))
+    hf_home = _validate_checkpoint_root(checkpoint_root, repo, model_id)
     command = [sys.executable, "-m", "anomalygen.scripts.auto_mask_placement.roi_place",
                "--input_pair_path", str(root / "amp" / "amp_samples.json"),
                "--defect_desc", str(Path(config["defect_spec"]).resolve()),
                "--output_dir", str(root / "amp"), "--n_seeds", "1",
                "--seed", str(int(amp.get("seed", 43))),
-               "--model_id", str(amp.get("model_id", "nvidia/Cosmos3-Nano"))]
+               "--model_id", model_id]
     env = os.environ.copy()
     env.update(HF_HOME=str(hf_home), HF_HUB_CACHE=str(_hf_hub(hf_home)),
                HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
