@@ -345,6 +345,33 @@ def test_main_prints_completion_reason(
     }
 
 
+def test_mixed_role_outcomes_continue_with_selected_data(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_admission",
+                 current_iteration=1, last_stage="iteration_retrieval",
+                 synthesis_enabled=False)
+    state.write_text(json.dumps(value))
+    report = tmp_path / "admission_report.json"
+    report.write_text(json.dumps({
+        "status": "COMPLETE", "iteration": 1,
+        "role_status": {
+            "real": {"status": "SELECTED", "selected_count": 1},
+            "clean": {"status": "NO_MATCHES", "selected_count": 0},
+        },
+        "admitted": {"real": 1, "clean": 0, "synthetic": 0},
+        "new_training_images": 1,
+    }))
+
+    result = MODULE.commit(
+        state, "iteration_admission", 1, [f"admission_report={report}"]
+    )
+
+    assert result["status"] == "RUNNING"
+    assert result["next_stage"] == "iteration_training"
+    assert "completion_reason" not in result
+
+
 def test_measurement_rejects_incomplete_inference(tmp_path: Path) -> None:
     state, _ = _state(tmp_path)
     artifacts = _iteration_artifacts(tmp_path)
@@ -553,7 +580,7 @@ def test_synthesis_budget_skip_trains_only_with_new_admission(
         "synthesis_request", "admission_report",
     }
     if admitted_real == 0:
-        assert result["completion_reason"] == "no_new_training_images"
+        assert result["completion_reason"] == "retrieval_no_matches"
 
 
 def test_synthesis_budget_skip_requires_exact_committed_admission(
