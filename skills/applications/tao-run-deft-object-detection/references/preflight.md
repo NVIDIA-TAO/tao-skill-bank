@@ -190,12 +190,13 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    refuses to write state without these paths, because the alternative is discovering the
    corpus is absent at `mine`, six stages and a training run later.
 
-   Pass `--pool-report` with the prep run's `pool_report.json`. It records which classes the
+   Pass `--pool-report` with the prep run's `pool_report.json`; init refuses an existing
+   pool without one, under every allocation policy. It records which classes the pool
+   actually holds annotations for, and init cross-checks that against the target classes.
 
    A pool prepared elsewhere may not carry `pool_report.json`. Do not re-label to get
    one — generate it from the pool's COCO with `validate_pool_coco.py --record`
    (`references/prep-source-pool.md`).
-   pool actually holds annotations for, and init cross-checks that against the target classes.
    A pool prepared for a different class set does not make mining fail — it makes mining
    return neighbours of something else, and the affected class simply never improves.
 
@@ -473,12 +474,16 @@ if [ -n "${POOL_IMAGES:-}" ]; then
   PREP_FLAGS="$PREP_FLAGS --codetr-classmap $CODETR_CLASSMAP"
 fi
 
-# A pool that already exists must declare what it holds. Under class_stratified both
-# of these are then mandatory: prep is what would otherwise produce the report and
-# derive the rare classes from it, and a prep that is not going to run cannot.
+# A pool that already exists must declare what it holds: prep is what would otherwise
+# produce the report, and a prep that is not going to run cannot. The report is
+# required under every policy; under class_stratified the rare classes are too, since
+# prep would otherwise derive them from it.
 EXISTING_POOL_FLAGS=""
-if [ -z "${POOL_IMAGES:-}" ] && [ "$ALLOCATION_POLICY" = class_stratified ]; then
-  EXISTING_POOL_FLAGS="--pool-report $POOL_REPORT --rare-class-list $RARE_CLASS_LIST"
+if [ -z "${POOL_IMAGES:-}" ]; then
+  EXISTING_POOL_FLAGS="--pool-report $POOL_REPORT"
+  if [ "$ALLOCATION_POLICY" = class_stratified ]; then
+    EXISTING_POOL_FLAGS="$EXISTING_POOL_FLAGS --rare-class-list $RARE_CLASS_LIST"
+  fi
 fi
 
 # Any path the run's own inputs do not name. Repeatable; omit when there are none.
