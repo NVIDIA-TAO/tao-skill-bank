@@ -212,7 +212,7 @@ Optional. Step 2a can take per-clip grounding labels — a frame-accurate, actor
 | `enhance_filter_field` | `"is_low_quality"` | Routing flag that selects videos for 0e |
 | `enhance_workers` | `4` | CPU-bound |
 | `enhance_scale` | `2.0` | Lanczos upscale factor |
-| `enhance_denoise` | `"hqdn3d"` | ffmpeg `hqdn3d`/`nlmeans`/`atadenoise`/`vaguedenoiser` (need a GPL ffmpeg, e.g. `6.26.3-data-services`), opencv `nlm`/`bilateral`/`temporal_median`, or `none`. On the current LGPL-only base, 0e itself fails (no `rawvideo` format), so no setting helps there: drop `0e` |
+| `enhance_denoise` | `"hqdn3d"` | ffmpeg `hqdn3d`/`nlmeans`/`atadenoise`/`vaguedenoiser` (only if built into the image's ffmpeg), opencv `nlm`/`bilateral`/`temporal_median`, or `none`. On the current LGPL-only base, 0e itself fails (no `rawvideo` format), so no setting helps there: drop `0e` |
 | `enhance_clahe_clip` / `enhance_clahe_tile` | `2.0` / `8` | CLAHE on L channel |
 | `enhance_unsharp_amount` / `_sigma` / `_thresh` | `0.6` / `1.5` / `3.0` | Unsharp mask; amount 0 disables |
 | `max_video_length_sec` | `300` | Longer videos skipped |
@@ -273,8 +273,8 @@ Optional. Step 2a can take per-clip grounding labels — a frame-accurate, actor
 | Symptom | Cause | Fix |
 |---|---|---|
 | Captions say "please provide the video" | Wrong `video_content_type` for the gateway (HTTP 200, video dropped) | Switch `image_url`↔`video_url`; check one caption by eye |
-| Videos missing after a run, no error | 0a filter error leaves the video absent | Compare `filter_results.jsonl` rows with "Filtering N videos" log line |
-| Long videos dropped | Caption truncated at `max_tokens` → completeness check rejects every retry | Raise captioner `max_tokens` / `max_output_tokens` |
+| Videos missing after a run, no error | 0a filter error leaves the video absent | `scripts/find_vra_dropouts.py <results_dir> --inputs <input.jsonl>` lists them; or compare `filter_results.jsonl` rows with the "Filtering N videos" log line |
+| Long videos dropped (`Output does not end with terminal punctuation (truncated)` on all 4 attempts) | Output truncated at `max_tokens` → completeness check rejects every retry; the in-run retries reuse the same limit, so they cannot succeed | Retry into the same `results_dir` with a higher limit: `find_vra_dropouts.py ... --plan-retry` (SKILL.md, "Recovering dropped videos after a run"); max 3 rounds |
 | HTTP 400 on temperature/top_p | Reasoning-family model rejects sampling params | `reasoning_model: true` |
 | No grounding events in descriptions | `clip_uuid` directories don't match video stems (e.g. missing `_enh` after 0e), or wrong `grounding_filename` | Rename the dirs or fix `grounding_filename`; check the "with grounding injection" log line |
 | Warning "no grounding config found" | No `<prompts_module>_grounding` module | Expected for non-smart_space domains; add one for domain judgment instructions |
@@ -291,5 +291,5 @@ Optional. Step 2a can take per-clip grounding labels — a frame-accurate, actor
 | `ImportError: cv2` | 0d/0e enabled without opencv | Install `opencv-python-headless` or drop 0d/0e |
 | ffprobe not found | Missing ffmpeg | Install ffmpeg |
 | 0e enhances 0 videos (`ffmpeg rc=234, frames=0`, `Requested output format 'rawvideo' is not known`) | Image on the current LGPL-only base: its ffmpeg has no `rawvideo` format, so 0e cannot re-encode | Drop `0e` from `steps` until the base image includes `rawvideo` |
-| `Denoise pre-pass failed` warnings in 0e | The ffmpeg build has no `hqdn3d`/`nlmeans`/… filters (GPL filters, absent from the LGPL-only base) | Use an image with a GPL ffmpeg, or an opencv option (`nlm`, `bilateral`, `temporal_median`) once 0e works on that image |
+| `Denoise pre-pass failed` warnings in 0e | The requested filter is not built into the image's ffmpeg | Use an opencv option (`nlm`, `bilateral`, `temporal_median`) once 0e works on that image |
 | Step N reads empty input | Upstream step produced nothing | Check the previous step's JSONL and `step_5_report/RESULTS_SUMMARY.md` attrition |
