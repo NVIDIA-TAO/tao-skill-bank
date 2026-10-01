@@ -53,8 +53,9 @@ scripts/generate_od_defects.py \
 When execution uses temporary storage, `--published-root` records the
 persistent locations that will contain the saved results.
 
-Guardrails are enabled by default. The wrapper passes its explicit
-`--guardrail` or `--no-guardrail` selection through to the native generator.
+Guardrails are enabled by default and preserve the native invocation without a
+guardrail flag. The wrapper appends `--no-guardrail` only when explicitly
+disabled.
 `--no-guardrail` disables text screening, image content-safety screening, and
 face blurring together. An optional Hugging Face cache can provide the Nano
 tokenizer and Edge processor assets for offline execution. When guardrails are

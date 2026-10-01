@@ -18,8 +18,9 @@ cache, this skill directory, and a new durable output directory. Preserve
 absolute paths or rewrite all related paths consistently inside the compute
 frame. The platform owns writable temporary storage and caches.
 
-The wrapper passes its `--guardrail` or `--no-guardrail` selection to the native
-generator. Guardrails default on. `--no-guardrail` disables text screening,
+The wrapper preserves the native default invocation when guardrails are on and
+passes `--no-guardrail` only when they are explicitly disabled. The flag
+disables text screening,
 image content-safety screening, and face blurring together. For offline use,
 preflight the selected Hugging Face cache for the Nano tokenizer and Edge
 processor assets resolved by the pinned image. When guardrails are enabled,

@@ -165,14 +165,17 @@ def _run_group(group: dict[str, Any], output: Path, args: argparse.Namespace) ->
                str(args.repo / "anomalygen/scripts/texture/generate.py"),
                "--checkpoint", group["checkpoint"], "--recipe", group["recipe"],
                "--base_checkpoint", str(args.base_checkpoint),
-               "--input_data_path", group["testcase"], "--output_dir", str(raw),
-               "--guardrail" if args.guardrail else "--no-guardrail"]
+               "--input_data_path", group["testcase"], "--output_dir", str(raw)]
+    if not args.guardrail:
+        command.append("--no-guardrail")
     subprocess.run(command, check=True, stdout=sys.stderr)
     subprocess.run([sys.executable, str(args.repo / "anomalygen/scripts/texture/pseudo_label.py"),
                     "--gen_root", str(raw), "--output_dir", str(labels), "--no_caption"],
                    check=True, stdout=sys.stderr)
     generated = _csv_count(raw / "texture_ft_generation_result.csv")
     blocked = _csv_count(raw / "guardrail_blocked.csv")
+    if not args.guardrail and blocked:
+        raise ValueError("guardrails are disabled but guardrail-blocked rows were produced")
     if generated + blocked != group["requested_rows"]:
         raise ValueError("generated + guardrail-blocked does not equal requested rows")
     coco = json.loads((labels / "coco_annotations.json").read_text())

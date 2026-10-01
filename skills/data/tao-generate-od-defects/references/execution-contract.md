@@ -18,8 +18,9 @@ Every testcase image and mask must exist. Each `anomaly_type` must be present
 in the recipe, and the requested count must equal the testcase row count.
 Prepared-input hashes are verified when the integrity manifest is present.
 
-The wrapper exposes the native Boolean guardrail choice and passes
-`--guardrail` or `--no-guardrail` explicitly. Guardrails default on.
+The wrapper exposes the native Boolean guardrail choice. Guardrails default on
+without changing the native invocation; disabling them appends
+`--no-guardrail` explicitly.
 `--no-guardrail` disables the text guardrail, image content-safety path, and
 face-blur postprocessor together. The validation summary records the selected
 mode.
