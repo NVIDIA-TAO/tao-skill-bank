@@ -122,6 +122,7 @@ RESERVED_RECORD_FIELDS = {
     "zero_weak_images": "--zero-weak-images",
     "pool_remaining": "--pool-remaining",
     "pool_exhausted": "--pool-exhausted",
+    "execution_paths": "--execution-path",
 }
 STATE_BOOKKEEPING_FIELDS = {"stage_completed", "status", "failed_stage"}
 
@@ -498,6 +499,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="One-line outcome recorded in loop_log.jsonl.")
     parser.add_argument("--status", choices=("ok", "error"), default="ok",
                         help="error records a hard stop and fails the run. Never auto-retry after one.")
+    parser.add_argument("--execution-path", choices=("skill", "direct-container"),
+                        default=None,
+                        help="How the stage ran. Pass direct-container when the mapped "
+                             "skill was unavailable and the overlay's documented docker run "
+                             "was used instead; recorded at state.iterations.<phase>."
+                             "execution_paths.<stage>. A stage committed without it ran "
+                             "through the mapped skill, the documented default.")
     parser.add_argument("--duration-sec", type=int, default=0,
                         help="Stage wall-clock seconds. Omit when no start time was captured; "
                              "it records 0. Do not invent a duration.")
@@ -863,6 +871,17 @@ def main() -> int:
                 raise ValueError(f"state.iterations.{phase} must be an object")
             entry.update(artifacts)
             entry.update(extras)
+
+            # Recorded per stage, because a phase entry holds several stages and one
+            # field would be overwritten by each. A stage that fell back to the
+            # overlay's docker run is then distinguishable on disk from one that ran
+            # through its mapped skill, which is otherwise impossible after the fact.
+            if args.execution_path is not None:
+                paths = entry.setdefault("execution_paths", {})
+                if not isinstance(paths, dict):
+                    raise ValueError(f"state.iterations.{phase}.execution_paths must be "
+                                     f"an object, got {type(paths).__name__}")
+                paths[stage] = args.execution_path
 
             # Which target classes are rare is a property of the pool, so it can
             # only be settled once prep has built one. init leaves it null on a run
