@@ -42,6 +42,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -660,9 +661,23 @@ def render(results_dir: str | Path, report: dict[str, Any] | None = None,
     generated = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     target = Path(out) if out else results_dir / REPORT_NAME
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(compose(results_dir, state, events, report, generated), encoding="utf-8")
-    os.replace(tmp, target)
+    text = compose(results_dir, state, events, report, generated)
+
+    # A temp file of its own, beside the target so the rename stays on one
+    # filesystem. A shared fixed name would let two overlapping renders -- a commit's
+    # hook and a hand-run refresh -- write into the same file, and one could rename
+    # the other's half-written copy into place. Removed on any failure.
+    handle, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.",
+                                        suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out_file:
+            out_file.write(text)
+        os.chmod(tmp, 0o644)  # mkstemp creates 0600; the report is meant to be read
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return target
 
 

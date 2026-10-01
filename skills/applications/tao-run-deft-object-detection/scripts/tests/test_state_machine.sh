@@ -2934,10 +2934,12 @@ grep -q '0.4200' "$G32_RUN/DEFT_Loop_Report.md" \
 # Presentation is not transactional. A render that cannot write must cost a
 # warning, never a GPU stage that already passed the audit.
 #
-# The failure is injected at the temp path the renderer writes before its atomic
-# rename. Making the report itself unreadable would not do it: os.replace swaps a
-# directory entry, so the old file's mode never blocks the new one.
-mkdir -p "$G32_RUN/DEFT_Loop_Report.md.tmp"
+# The failure is injected at the rename: a directory where the report goes makes
+# os.replace fail. Making the report unreadable would not do it -- os.replace swaps a
+# directory entry, so the old file's mode never blocks the new one -- and the temp
+# file's name is unique to each render, so it cannot be pre-empted either.
+mv "$G32_RUN/DEFT_Loop_Report.md" "$G32/report.before_failure"
+mkdir "$G32_RUN/DEFT_Loop_Report.md"
 make_iter_artifacts "$G32_RUN" iter1
 commit "$G32_RUN" iter1 gap_analysis \
   --weak-images "$G32_RUN/iter1/gaps/weak_images.parquet" \
@@ -2952,7 +2954,63 @@ case "$RUN_OUT" in
 esac
 assert_eq 'iter1/gap_analysis' "$(report_field "$G32_RUN" last_committed)" \
   "[G32] the commit it could not render still stands"
-rmdir "$G32_RUN/DEFT_Loop_Report.md.tmp"
+assert_eq '0' "$(find "$G32_RUN" -maxdepth 1 -name '.DEFT_Loop_Report.md.*.tmp' | wc -l | tr -d ' ')" \
+  "[G32] a failed render leaves no temp file behind"
+rmdir "$G32_RUN/DEFT_Loop_Report.md"
+mv "$G32/report.before_failure" "$G32_RUN/DEFT_Loop_Report.md"
+
+# Each render writes its own temp file, so two overlapping ones -- a commit's hook and
+# a hand-run refresh -- cannot write into the same file or rename each other's
+# half-written copy into place.
+"$PY" - "$SCRIPTS_DIR" "$G32_RUN" <<'PYEOF' > "$G32/tmpnames.out"
+import sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import render_report
+seen = []
+real = tempfile.mkstemp
+def spy(*a, **k):
+    fd, name = real(*a, **k)
+    seen.append(name)
+    return fd, name
+render_report.tempfile.mkstemp = spy
+render_report.render(sys.argv[2])
+render_report.render(sys.argv[2])
+print(len(seen), len(set(seen)))
+PYEOF
+assert_eq '2 2' "$(cat "$G32/tmpnames.out")" \
+  "[G32] two renders write two distinct temp files"
+
+# The hook renders under the run lock. Released, a following commit could rewrite
+# state and log mid-render and the report would mix two commits. Probed by trying
+# the lock without blocking from inside the hook: flock conflicts across open file
+# descriptions even within one process, so a held lock makes the attempt fail.
+"$PY" - "$SCRIPTS_DIR" "$G32_RUN" <<'PYEOF' > "$G32/lockprobe.out"
+import fcntl, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import commit_stage
+run = sys.argv[2]
+held = []
+def probe(results_dir, report=None, out=None):
+    fd = os.open(str(Path(results_dir) / commit_stage.LOCK_NAME), os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held.append("free")
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        held.append("held")
+    finally:
+        os.close(fd)
+commit_stage.render_loop_report = probe
+sys.argv = ["commit_stage.py", "--results-dir", run, "--iter-label", "iter1",
+            "--stage", "embed",
+            "--embeddings-parquet", f"{run}/iter1/embeddings/weak_images_embeddings.parquet",
+            "--summary", "embedded 120 weak images", "--duration-sec", "5"]
+rc = commit_stage.main()
+print(rc, ",".join(held))
+PYEOF
+assert_eq '0 held' "$(tail -1 "$G32/lockprobe.out")" \
+  "[G32] the commit's render runs while the run lock is held"
 
 # --out replaces the destination rather than adding a second copy, and
 # --require-terminal leaves the existing report alone for a run still in flight.

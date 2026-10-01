@@ -996,6 +996,21 @@ def main() -> int:
                 _fsync_path(state_path(results_dir))
 
             _clear_journal(results_dir)
+
+            # Rendering is a post-commit hook. It runs only once the commit is
+            # complete and durable -- after the journal is cleared -- and its own
+            # handler keeps a presentation failure from reaching the rollback below: it
+            # must be visible, but it must not undo a GPU stage that ran for an hour.
+            #
+            # It stays under the run lock. Released, a following commit could rewrite
+            # state and log while this render reads them alongside this commit's audit
+            # verdict, producing a report that is neither commit's.
+            try:
+                render_loop_report(results_dir, report)
+            except Exception as render_exc:  # noqa: BLE001 - presentation is not transactional
+                print(f"WARNING: the commit succeeded but the loop report was not "
+                      f"re-rendered ({type(render_exc).__name__}: {render_exc}); re-run "
+                      f"render_report.py to refresh it", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001
         if dirty and snapshot is not None and not rolled_back:
             try:
@@ -1014,17 +1029,6 @@ def main() -> int:
                 )
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2 if dirty else 1
-
-    # Rendering is a post-commit hook, deliberately outside the transaction above.
-    # The commit is already accepted by the audit and durable on disk; a failure to
-    # present it must be visible but must not roll back a GPU stage that ran for an
-    # hour, nor leave the caller unable to advance the state machine.
-    try:
-        render_loop_report(results_dir, report)
-    except Exception as exc:  # noqa: BLE001 - presentation is not transactional
-        print(f"WARNING: the commit succeeded but the loop report was not re-rendered "
-              f"({type(exc).__name__}: {exc}); re-run render_report.py to refresh it",
-              file=sys.stderr)
 
     for flag in unavailable:
         print(f"WARNING: {flag} was not on disk; not recorded (status=error)", file=sys.stderr)
