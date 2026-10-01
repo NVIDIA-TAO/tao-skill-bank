@@ -110,7 +110,10 @@ def test_admission_uses_overfetch_to_replace_a_previously_used_parent(tmp_path: 
     second.write_bytes(b"second")
     document = json.loads((tmp_path / "real.json").read_text())
     document["images"].append({"id": 2, "file_name": second.name, "source_path": str(second),
-                               "deft_od_aoi": {"benchmark": "dataset-b"}})
+                               "deft_od_aoi": {
+                                   "dataset_id": "canonical-dataset-b",
+                                    "benchmark": "source-dataset-b",
+                               }})
     document["annotations"].append({"id": 6, "image_id": 2, "category_id": 1,
                                     "bbox": [1, 1, 4, 4], "area": 16})
     (tmp_path / "real.json").write_text(json.dumps(document))
@@ -139,7 +142,7 @@ def test_admission_uses_overfetch_to_replace_a_previously_used_parent(tmp_path: 
     preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
     assert preview["roles"]["real"]["branches"]["fn"]["unique_parents"] == 2
     assert preview["roles"]["real"]["branches"]["fn"]["novel_parents"] == 1
-    assert preview["roles"]["real"]["per_dataset"] == {"dataset-b": 1}
+    assert preview["roles"]["real"]["per_dataset"] == {"canonical-dataset-b": 1}
 
 
 def test_admission_folds_capped_synthetic_categories_to_defect(tmp_path: Path) -> None:
@@ -196,7 +199,7 @@ def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) ->
                                      "categories": [{"id": 7, "name": "defect-variant"}]}))
 
     report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", previous, "copy",
-                          synthetic, generated)
+                          synthetic, generated, synthetic_only=True)
 
     admission = report["synthetic_admission"]
     assert admission["quality_filter"]["rejected_annotations_full_frame"] == 1
@@ -204,6 +207,47 @@ def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) ->
     assert admission["requested_new"] == 4
     assert admission["admitted_new"] == 2
     assert admission["admitted_by_stratum"] == {"line-a": 1, "line-b": 1}
+    preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
+    assert preview["mining_admission"] == "skipped" and preview["roles"] == {}
+
+
+def test_synthetic_inputs_do_not_implicitly_disable_mining(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": "old.png", "source_path": str(tmp_path / "old.png"),
+                    "deft_kind": "synthetic_defect"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    (tmp_path / "old.png").write_bytes(b"old")
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    image = generated / "synthetic.png"
+    image.write_bytes(b"synthetic")
+    synthetic = tmp_path / "synthetic.json"
+    synthetic.write_text(json.dumps({
+        "images": [{"id": 2, "file_name": image.name, "width": 16, "height": 16}],
+        "annotations": [{"id": 2, "image_id": 2, "category_id": 1,
+                         "bbox": [1, 1, 3, 3]}],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+
+    report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", previous, "copy",
+                          synthetic, generated)
+
+    assert report["admitted"]["real"] == 1
+    preview = json.loads((tmp_path / "out/admission_preview.json").read_text())
+    assert preview["mining_admission"] == "evaluated"
+
+
+def test_admission_reports_missing_selected_source_cleanly(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    frame = pd.read_parquet(candidates / "real_candidate_embeddings.parquet")
+    frame["source_filepath"] = str(tmp_path / "not-in-frozen-coco.png")
+    frame.to_parquet(candidates / "real_candidate_embeddings.parquet", index=False)
+
+    with pytest.raises(ValueError, match="selected real source is absent from its frozen COCO"):
+        MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
 
 
 def test_synthetic_cap_selection_is_independent_of_coco_order(tmp_path: Path) -> None:

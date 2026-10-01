@@ -82,6 +82,26 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
             "identities": {str(path) for path in paths}}
 
 
+def _validate_kpi_retrieval_metadata(coco_path: Path) -> None:
+    document = json.loads(coco_path.read_text())
+    boxed_image_ids = {
+        int(annotation["image_id"]) for annotation in document.get("annotations", [])
+    }
+    fields = ("dataset_id", "texture_id", "defect_class")
+    for row in document.get("images", []):
+        if int(row["id"]) not in boxed_image_ids:
+            continue
+        metadata = row.get("deft_od_aoi") or {}
+        missing = [
+            key for key in fields
+            if not str(metadata.get(key) or row.get(key) or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                f"KPI image {row['id']} lacks canonical retrieval metadata: {missing}"
+            )
+
+
 def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite output: {output}")
@@ -100,6 +120,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     if baseline_mode not in {"cold_start", "checkpoint"}:
         raise ValueError("baseline_mode must be cold_start or checkpoint")
     role_reports = {name: _role(name, policy["sources"][name]) for name in ROLES}
+    _validate_kpi_retrieval_metadata(Path(role_reports["kpi"]["coco"]))
     owners: dict[str, str] = {}
     for name, report in role_reports.items():
         for identity in report.pop("identities"):

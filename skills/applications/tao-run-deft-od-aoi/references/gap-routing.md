@@ -45,7 +45,7 @@ source dataset. A completely empty first admission still fails.
 
 Strict-FN real budgets use the selected factor within the frozen `1..6` range.
 Near-miss budgets are computed independently for each frozen
-`benchmark/texture/defect_type` pocket as `min(2 * queries, 20)` by default;
+`dataset_id/texture_id/defect_class` pocket as `min(2 * queries, 20)` by default;
 this cap is not a per-dataset allocation quota. Clean retrieval remains global
 and is capped only by its factor and the cumulative clean-to-real bound.
 

@@ -23,8 +23,13 @@ def _role(root: Path, name: str, boxed: bool) -> dict:
     image.write_bytes(b"image")
     annotations = ([{"id": 1, "image_id": 1, "category_id": 1,
                      "bbox": [1, 1, 4, 4], "area": 16}] if boxed else [])
+    image_row = {"id": 1, "file_name": image.name}
+    if name == "kpi" and boxed:
+        image_row["deft_od_aoi"] = {
+            "dataset_id": "route", "texture_id": "texture", "defect_class": "defect"
+        }
     coco = root / name / "coco.json"
-    coco.write_text(json.dumps({"images": [{"id": 1, "file_name": image.name}],
+    coco.write_text(json.dumps({"images": [image_row],
                                 "annotations": annotations,
                                 "categories": [{"id": 1, "name": "defect"}]}))
     return {"images": str(images), "coco": str(coco)}
@@ -104,7 +109,7 @@ def test_initialize_rejects_boxed_clean_role(tmp_path: Path) -> None:
         MODULE.initialize(config, tmp_path / "results")
 
 
-def test_initialize_accepts_mixed_boxed_and_boxless_heldout_roles(tmp_path: Path) -> None:
+def test_initialize_accepts_boxless_kpi_without_pocket_metadata(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())
     for name in ("kpi", "test"):
@@ -115,6 +120,85 @@ def test_initialize_accepts_mixed_boxed_and_boxless_heldout_roles(tmp_path: Path
     for name in ("kpi", "test"):
         assert state["roles"][name]["image_count"] == 2
         assert state["roles"][name]["annotation_count"] == 1
+
+
+def test_initialize_accepts_direct_canonical_kpi_metadata(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    kpi = Path(value["sources"]["kpi"]["coco"])
+    data = json.loads(kpi.read_text())
+    metadata = data["images"][0].pop("deft_od_aoi")
+    data["images"][0].update(metadata)
+    kpi.write_text(json.dumps(data))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    assert state["status"] == "READY"
+
+
+def test_initialize_rejects_missing_metadata_on_boxed_kpi_image(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    kpi = Path(value["sources"]["kpi"]["coco"])
+    data = json.loads(kpi.read_text())
+    data["images"][0].pop("deft_od_aoi")
+    kpi.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="lacks canonical retrieval metadata"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_accepts_legacy_aliases_when_canonical_metadata_exists(
+        tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    kpi = Path(value["sources"]["kpi"]["coco"])
+    data = json.loads(kpi.read_text())
+    data["images"][0]["deft_od_aoi"].update({
+        "benchmark": "legacy-dataset",
+        "texture": "legacy-texture",
+        "defect_type": "legacy-defect",
+    })
+    kpi.write_text(json.dumps(data))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    assert state["status"] == "READY"
+
+
+def test_initialize_rejects_legacy_only_kpi_metadata(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    kpi = Path(value["sources"]["kpi"]["coco"])
+    data = json.loads(kpi.read_text())
+    data["images"][0]["deft_od_aoi"] = {
+        "benchmark": "route", "texture": "texture", "defect_type": "defect"
+    }
+    kpi.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="lacks canonical retrieval metadata"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_expands_and_resolves_coco_paths(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    config = _config(fake_home)
+    value = yaml.safe_load(config.read_text())
+    expected = {}
+    for name, source in value["sources"].items():
+        coco = Path(source["coco"])
+        expected[name] = str(coco.resolve())
+        source["coco"] = f"~/{coco.relative_to(fake_home)}"
+    config.write_text(yaml.safe_dump(value))
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+    frozen = yaml.safe_load(Path(state["policy"]).read_text())
+
+    assert {name: role["coco"] for name, role in state["roles"].items()} == expected
+    assert {name: role["coco"] for name, role in frozen["sources"].items()} == expected
 
 
 def test_initialize_rejects_boxless_defective_real_role(tmp_path: Path) -> None:

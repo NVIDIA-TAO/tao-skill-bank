@@ -17,6 +17,11 @@ SPEC = importlib.util.spec_from_file_location("prepare_deft_od_aoi_retrieval", S
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
+INIT_SCRIPT = Path(__file__).parents[1] / "init_deft_od_aoi.py"
+INIT_SPEC = importlib.util.spec_from_file_location("init_deft_od_aoi", INIT_SCRIPT)
+INIT_MODULE = importlib.util.module_from_spec(INIT_SPEC)
+assert INIT_SPEC.loader
+INIT_SPEC.loader.exec_module(INIT_MODULE)
 
 
 def _image(path: Path, value: int = 80) -> None:
@@ -87,6 +92,77 @@ def test_candidate_cache_applies_exif_orientation_before_cropping(tmp_path: Path
         assert crop.size == (9, 9)
 
 
+def test_cold_start_iteration_one_queries_accept_canonical_only_kpi_metadata(
+        tmp_path: Path) -> None:
+    sources = {}
+    kpi_image = None
+    for role in INIT_MODULE.ROLES:
+        images = tmp_path / role / "images"
+        image = images / f"{role}.png"
+        _image(image)
+        image_row = {"id": 1, "file_name": image.name}
+        if role == "kpi":
+            image_row["deft_od_aoi"] = {
+                "dataset_id": "canonical-dataset",
+                "texture_id": "canonical-texture",
+                "defect_class": "canonical-defect",
+            }
+            kpi_image = image
+        annotations = [] if role == "clean" else [{
+            "id": 1,
+            "image_id": 1,
+            "category_id": 1,
+            "bbox": [4, 4, 12, 12],
+            "area": 144,
+        }]
+        coco = tmp_path / role / "coco.json"
+        coco.write_text(json.dumps({
+            "images": [image_row],
+            "annotations": annotations,
+            "categories": [{"id": 1, "name": "defect"}],
+        }))
+        sources[role] = {"images": str(images), "coco": str(coco)}
+    assert kpi_image is not None
+    checkpoint = tmp_path / "base.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({
+        "platform": "slurm",
+        "max_iterations": 2,
+        "base_checkpoint": str(checkpoint),
+        "sources": sources,
+    }))
+
+    state = INIT_MODULE.initialize(config, tmp_path / "contract")
+
+    assert state["baseline_mode"] == "cold_start"
+    policy = Path(state["policy"])
+    candidates = tmp_path / "candidates"
+    MODULE.candidates(policy, candidates)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{
+        "filepath": str(kpi_image),
+        "gap_type": "FN",
+        "bbox": [4, 4, 16, 16],
+        "best_iou": 0.0,
+    }]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    report = MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", candidates, None
+    )
+
+    assert report["query_counts"] == {"real": 1, "clean": 0}
+    query = pd.read_parquet(tmp_path / "queries/real_queries.parquet").iloc[0]
+    assert query[["dataset_id", "texture_id", "defect_class", "pocket"]].tolist() == [
+        "canonical-dataset",
+        "canonical-texture",
+        "canonical-defect",
+        "canonical-dataset/canonical-texture/canonical-defect",
+    ]
+
+
 def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     policy = _policy(tmp_path)
     query_image = tmp_path / "query.png"
@@ -95,9 +171,9 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     kpi = tmp_path / "kpi.json"
     kpi.write_text(json.dumps({"images": [{"id": 1, "file_name": query_image.name,
                                             "source_path": str(query_image),
-                                            "deft_od_aoi": {"benchmark": "visa",
-                                                            "texture": "pcb1",
-                                                            "defect_type": "bad"}}],
+                                            "deft_od_aoi": {"dataset_id": "visa",
+                                                            "texture_id": "pcb1",
+                                                            "defect_class": "bad"}}],
                                 "annotations": [], "categories": [{"id": 1, "name": "defect"}]}))
     document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
     policy.write_text(yaml.safe_dump(document))
@@ -118,11 +194,52 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     }
     real = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
     assert set(real.reason) == {"fn", "near_miss_fp"}
+    assert set(real.dataset_id) == {"visa"}
+    assert set(real.texture_id) == {"pcb1"}
+    assert set(real.defect_class) == {"bad"}
+    assert set(real.pocket) == {"visa/pcb1/bad"}
+    assert not {"dataset", "texture", "defect"}.intersection(real.columns)
     real_mining = yaml.safe_load((tmp_path / "queries/mine_real.yaml").read_text())
     clean_mining = yaml.safe_load((tmp_path / "queries/mine_clean.yaml").read_text())
     assert real_mining["desired_unique_count"] == 1
     assert clean_mining["desired_unique_count"] == 5
     assert real_mining["candidate_expansion_factor"] == 15
+
+
+def test_kpi_pockets_ignore_conflicting_legacy_aliases(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{
+            "id": 1,
+            "file_name": query_image.name,
+            "source_path": str(query_image),
+            "deft_od_aoi": {
+                "dataset_id": "canonical-dataset",
+                "texture_id": "canonical-texture",
+                "defect_class": "canonical-defect",
+                "benchmark": "legacy-dataset",
+                "texture": "legacy-texture",
+                "defect_type": "legacy-defect",
+            },
+        }],
+        "annotations": [],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+
+    pockets = MODULE._kpi_pockets(document)
+
+    assert pockets[str(query_image.resolve())] == {
+        "dataset_id": "canonical-dataset",
+        "texture_id": "canonical-texture",
+        "defect_class": "canonical-defect",
+        "pocket": "canonical-dataset/canonical-texture/canonical-defect",
+    }
 
 
 def test_queries_route_boxless_background_without_defect_pocket(tmp_path: Path) -> None:
@@ -134,7 +251,7 @@ def test_queries_route_boxless_background_without_defect_pocket(tmp_path: Path) 
     kpi.write_text(json.dumps({
         "images": [{"id": 1, "file_name": query_image.name,
                     "source_path": str(query_image),
-                    "deft_od_aoi": {"benchmark": "visa", "texture": "pcb1"}}],
+                    "deft_od_aoi": {}}],
         "annotations": [], "categories": [{"id": 1, "name": "defect"}],
     }))
     document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
@@ -153,10 +270,10 @@ def test_queries_route_boxless_background_without_defect_pocket(tmp_path: Path) 
     assert report["query_counts"] == {"real": 0, "clean": 1}
     clean = pd.read_parquet(tmp_path / "queries/clean_queries.parquet")
     assert clean.reason.tolist() == ["background_fp"]
-    assert clean.defect.tolist() == ["unknown"]
+    assert clean.defect_class.tolist() == ["unknown"]
 
 
-def test_queries_reject_real_gap_without_defect_pocket(tmp_path: Path) -> None:
+def test_queries_reject_complete_legacy_pocket_metadata(tmp_path: Path) -> None:
     policy = _policy(tmp_path)
     query_image = tmp_path / "defect.png"
     _image(query_image)
@@ -165,7 +282,8 @@ def test_queries_reject_real_gap_without_defect_pocket(tmp_path: Path) -> None:
     kpi.write_text(json.dumps({
         "images": [{"id": 1, "file_name": query_image.name,
                     "source_path": str(query_image),
-                    "deft_od_aoi": {"benchmark": "visa", "texture": "pcb1"}}],
+                    "deft_od_aoi": {"benchmark": "visa", "texture": "pcb1",
+                                    "defect_type": "bad"}}],
         "annotations": [{"id": 1, "image_id": 1, "category_id": 1,
                          "bbox": [4, 4, 12, 12]}],
         "categories": [{"id": 1, "name": "defect"}],
@@ -194,8 +312,8 @@ def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) 
     kpi.write_text(json.dumps({
         "images": [{"id": 1, "file_name": query_image.name,
                     "source_path": str(query_image),
-                    "deft_od_aoi": {"benchmark": "visa", "texture": "pcb1",
-                                    "defect_type": "bad"}}],
+                    "deft_od_aoi": {"dataset_id": "visa", "texture_id": "pcb1",
+                                    "defect_class": "bad"}}],
         "annotations": [], "categories": [{"id": 1, "name": "defect"}],
     }))
     document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
@@ -230,8 +348,11 @@ def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) 
          "source_filepath": str(novel_clean)},
     ]).to_parquet(candidates / "clean_candidates.parquet", index=False)
     previous = tmp_path / "previous.json"
+    materialized_real = tmp_path / "iteration-3/images/materialized-real.png"
+    _image(materialized_real)
     previous.write_text(json.dumps({"images": [
-        {"deft_kind": "real_defect", "original_source_path": str(prior_real)},
+        {"deft_kind": "real_defect", "source_path": str(materialized_real),
+         "original_source_path": str(prior_real)},
         {"deft_kind": "clean_negative", "source_path": str(prior_clean)},
         {"deft_kind": "synthetic_defect", "source_path": str(tmp_path / "synthetic.png")},
     ]}))
@@ -249,3 +370,33 @@ def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) 
         str(candidates / "real-prior-a.png"), str(candidates / "real-prior-b.png")
     }
     assert set(clean_excluded.filepath) == {str(candidates / "clean-prior.png")}
+
+
+def test_queries_reject_prior_sources_that_match_no_candidates(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "visa",
+                    "texture_id": "pcb1", "defect_class": "bad"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.1}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({"images": [{
+        "deft_kind": "real_defect", "source_path": str(tmp_path / "unknown.png"),
+    }]}))
+
+    with pytest.raises(ValueError, match="matched no frozen candidate"):
+        MODULE.queries(policy, strict, loose, 2, tmp_path / "queries",
+                       tmp_path / "candidates", None, previous)

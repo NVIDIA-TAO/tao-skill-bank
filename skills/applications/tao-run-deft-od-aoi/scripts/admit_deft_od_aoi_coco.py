@@ -95,10 +95,13 @@ def _source_index(policy: dict[str, Any], role: str) -> dict[str, dict[str, Any]
             images / str(image["file_name"])
         )
         metadata = image.get("deft_od_aoi") or {}
-        result[str(path.resolve())] = {"image": image,
-                                      "dataset": str(metadata.get("benchmark")
-                                                     or image.get("benchmark") or "unknown"),
-                                      "annotations": annotations.get(int(image["id"]), [])}
+        result[str(path.resolve())] = {
+            "image": image,
+            "dataset_id": str(
+                metadata.get("dataset_id") or image.get("dataset_id") or "unknown"
+            ),
+            "annotations": annotations.get(int(image["id"]), []),
+        }
     return result
 
 
@@ -203,7 +206,7 @@ def _stratified_synthetic(candidates: list[dict[str, Any]], limit: int
 
 def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output: Path,
           previous_path: Path | None, mode: str, synthetic_coco: Path | None = None,
-          synthetic_images: Path | None = None) -> dict[str, Any]:
+          synthetic_images: Path | None = None, synthetic_only: bool = False) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
@@ -214,15 +217,16 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                         for row in previous.get("images", [])}
     by_kind = {kind: sum(row.get("deft_kind") == kind for row in previous.get("images", []))
                for kind in ("real_defect", "clean_negative", "synthetic_defect")}
-    # The synthesis pass receives the just-published real admission as its
-    # previous COCO; it must only append synthetic rows, not re-run mining.
-    enabled = (set() if synthetic_coco and previous_path is not None
-               else set(manifest["enabled_roles"]))
+    if synthetic_only and (previous_path is None or synthetic_coco is None):
+        raise ValueError("--synthetic-only requires --previous-coco and synthetic inputs")
+    enabled = set() if synthetic_only else set(manifest["enabled_roles"])
     targets = manifest.get("admission_targets") or {}
     indexes = {role: _source_index(policy, role) for role in enabled}
     additions: dict[str, list[dict[str, Any]]] = {role: [] for role in enabled}
-    preview: dict[str, Any] = {"status": "PASS", "iteration": int(manifest["iteration"]),
-                               "roles": {}}
+    preview: dict[str, Any] = {
+        "status": "PASS", "iteration": int(manifest["iteration"]),
+        "mining_admission": "skipped" if synthetic_only else "evaluated", "roles": {},
+    }
     minimum = float(policy["retrieval"]["minimum_similarity"])
     for role, reasons in (("real", ("fn", "near_miss_fp")),):
         if role not in enabled:
@@ -254,8 +258,16 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             "branches": {"background_fp": stats},
         }
     for role, rows in additions.items():
-        counts = collections.Counter(indexes[role][str(Path(row["source_filepath"]).resolve())]["dataset"]
-                                     for row in rows)
+        missing = [str(Path(row["source_filepath"]).resolve()) for row in rows
+                   if str(Path(row["source_filepath"]).resolve()) not in indexes[role]]
+        if missing:
+            raise ValueError(
+                f"selected {role} source is absent from its frozen COCO: {missing[0]}"
+            )
+        counts = collections.Counter(
+            indexes[role][str(Path(row["source_filepath"]).resolve())]["dataset_id"]
+            for row in rows
+        )
         preview["roles"][role]["per_dataset"] = dict(sorted(counts.items()))
     if enabled and not any(additions.get(role) for role in enabled) and not previous.get("images"):
         raise ValueError("mining admitted no source images")
@@ -371,13 +383,15 @@ def main() -> int:
     parser.add_argument("--previous-coco", type=Path)
     parser.add_argument("--synthetic-coco", type=Path)
     parser.add_argument("--synthetic-images", type=Path)
+    parser.add_argument("--synthetic-only", action="store_true")
     parser.add_argument("--link-mode", choices=("copy", "hardlink"), default="copy")
     args = parser.parse_args()
     result = admit(args.policy.resolve(), args.candidate_root.resolve(),
                    args.retrieval_root.resolve(), args.output_dir.resolve(),
                    args.previous_coco.resolve() if args.previous_coco else None, args.link_mode,
                    args.synthetic_coco.resolve() if args.synthetic_coco else None,
-                   args.synthetic_images.resolve() if args.synthetic_images else None)
+                   args.synthetic_images.resolve() if args.synthetic_images else None,
+                   args.synthetic_only)
     print(json.dumps(result, sort_keys=True))
     return 0
 

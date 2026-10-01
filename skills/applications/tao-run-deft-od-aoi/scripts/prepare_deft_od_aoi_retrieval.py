@@ -80,11 +80,12 @@ def _kpi_pockets(policy: dict[str, Any]) -> dict[str, dict[str, str]]:
         path = _source(images, row)
         metadata = row.get("deft_od_aoi") or {}
         values = {
-            "dataset": str(metadata.get("benchmark") or row.get("benchmark") or "unknown"),
-            "texture": str(metadata.get("texture") or "unknown"),
-            "defect": str(metadata.get("defect_type") or "unknown"),
+            key: str(metadata.get(key) or row.get(key) or "unknown")
+            for key in ("dataset_id", "texture_id", "defect_class")
         }
-        values["pocket"] = "/".join((values["dataset"], values["texture"], values["defect"]))
+        values["pocket"] = "/".join(values[key] for key in (
+            "dataset_id", "texture_id", "defect_class"
+        ))
         result[str(path)] = values
     return result
 
@@ -152,9 +153,11 @@ def _previous_sources(previous_path: Path | None) -> dict[str, set[Path]]:
     kinds = {"real_defect": "real", "clean_negative": "clean"}
     for row in previous.get("images", []):
         role = kinds.get(str(row.get("deft_kind") or ""))
-        raw = row.get("original_source_path") or row.get("source_path")
-        if role and raw:
-            result[role].add(Path(str(raw)).resolve())
+        if role:
+            for key in ("source_path", "original_source_path"):
+                raw = row.get(key)
+                if raw:
+                    result[role].add(Path(str(raw)).resolve())
     return result
 
 
@@ -169,7 +172,9 @@ def _exclude_candidates(candidate_root: Path, role: str, prior_sources: set[Path
     source_paths = candidates.source_filepath.map(lambda value: Path(str(value)).resolve())
     excluded = candidates.loc[source_paths.isin(prior_sources), ["filepath"]].drop_duplicates()
     if excluded.empty:
-        return None, 0, 0
+        raise ValueError(
+            f"{role} prior sources matched no frozen candidate source paths"
+        )
     exclude_path = output / f"exclude_{role}_candidate_crops.parquet"
     excluded.to_parquet(exclude_path, index=False)
     matched_sources = set(source_paths[source_paths.isin(prior_sources)])

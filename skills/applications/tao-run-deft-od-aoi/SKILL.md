@@ -61,6 +61,10 @@ with the canonical `kpi`, `test`, `real`, and `clean` mapping. Copy
 `assets/default_policy.yaml`, use that mapping for `sources`, fill the other
 required values, and initialize once:
 
+Source COCOs must already satisfy the canonical KPI metadata contract in
+`references/data-contract.md`. The generic source preparer preserves those
+fields; it does not infer dataset-specific identity or mask paths.
+
 ```bash
 scripts/init_deft_od_aoi.py \
   --config /workspace/deft_policy.yaml \
@@ -242,6 +246,9 @@ then its finalized generation plan through `tao-generate-od-defects`. Commit
 `iteration_synthesis` before training. Re-run admission with the generated
 native COCO and image root; synthetic categories are folded to `defect`, and
 the frozen cumulative fraction cap is applied against admitted real defects.
+For this second pass, provide the same-iteration real admission as
+`--previous-coco` and set `--synthetic-only`; synthetic inputs do not
+implicitly turn off mining admission.
 Boxes alone never substitute for the required pixel mask.
 
 ## Missing AnomalyGenNext task weights

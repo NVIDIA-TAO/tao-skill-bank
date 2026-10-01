@@ -59,8 +59,12 @@ Run `prepare_deft_od_aoi_synthesis.py` against strict FN gaps. Pass the
 filtering YAML through `tao-prepare-anomalygennext-inputs`, complete its
 embedding and AMP actions, then invoke `tao-generate-od-defects`.
 
-Re-run admission with the generated binary COCO and image root. Commit
-`iteration_synthesis`. Never synthesize from a box without its exact mask.
+Re-run admission with the generated binary COCO and image root, the
+same-iteration real admission `train.json` as `--previous-coco`, and
+`--synthetic-only`. The explicit flag records mining admission as skipped;
+supplying synthetic and previous COCO inputs alone does not disable mining.
+Commit `iteration_synthesis`. Never synthesize from a box without its exact
+mask.
 
 ## 6. Train and select
 
