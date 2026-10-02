@@ -17,6 +17,8 @@ The embedding written here is compared against the **source-pool** embedding par
 
 Resolve `model` / `model_path` once in Pre-Flight (check 10) and reuse those exact values on every iteration from `state.config.embedding_model` / `state.config.embedding_model_path`. Never let one iteration pick a different encoder, and never let this stage fall back to a bare HuggingFace id at run time — Pre-Flight already decided between a local snapshot and a verified online id, and re-deciding mid-loop is how the two sides drift apart.
 
+Two checks hold this. `init_deft_state.py` compares the run's encoder against the one the pool report records as having built the pool. `verify_embed_encoder.py`, below, compares each iteration's embed spec against the run's. `verify_image_embeddings_spec.py` only checks a spec against itself, so it cannot catch either.
+
 ## Spec
 
 Write per-iteration under `${RESULTS_DIR}/iter${N}/embeddings/image_embeddings.yaml` — the invocation below reads it from
@@ -46,6 +48,9 @@ batch_size:     64
 ```bash
 <skill_root>/scripts/deft_python.sh <skill_bank>/skills/data/tao-generate-image-embeddings/scripts/verify_image_embeddings_spec.py \
   --spec "$EMBED_SPEC"
+
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/verify_embed_encoder.py \
+  --spec "$EMBED_SPEC" --results-dir "${RESULTS_DIR}"
 
 docker run --rm --name "deft_iter${N}_embed" --gpus all --ipc=host --user "$(id -u):$(id -g)" $DOCKER_IDENTITY \
   -v "$WORKSPACE:$WORKSPACE" $EXTRA_MOUNTS -w "$WORKSPACE" \
