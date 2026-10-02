@@ -28,6 +28,11 @@ tags:
 
 Use this skill before launching any TAO workflow or model action.
 
+Before invoking helpers, run the bank-checkout check in `tao-setup` and set
+`TAO_SKILL_BANK_PATH` to the verified root. Individually installed skill folders
+do not include the shared root helpers. If the check fails, stop before launch;
+manual Docker submission does not replace the record-then-launch requirement.
+
 ## Step 0 — Execution Mode: Card Packs (check first)
 
 Before running a multi-stage application workflow inside this conversation,
@@ -234,8 +239,9 @@ ${TAO_SKILL_BANK_PATH:-~/tao-skill-bank}/scripts/resolve_tao_image.py \
   --workload <workload-hint> --format text
 ```
 
-If the helper is unavailable, read `skills/models/<network>/config.json`
-directly. Resolve image fields in this order:
+For a manual image lookup, read the selected model skill's
+`references/skill_info.yaml` directly. This does not replace the shared helpers
+required for submission. Resolve image fields in this order:
 
 1. `backend_contracts.<selected-backend>.container_image`, when present
 2. `actions.<action>.container_image`
