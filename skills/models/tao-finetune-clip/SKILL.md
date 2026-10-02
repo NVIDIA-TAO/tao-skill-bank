@@ -64,7 +64,7 @@ Non-train actions such as `evaluate`, `inference`, `export`, and deploy flows st
 
 ## Instructions
 
-Use this skill for NVIDIA TAO CLIP jobs: training, evaluation, embedding inference, ONNX export, and TensorRT engine generation. Start by identifying the requested action, then load only the referenced files needed for that action: `defaults.json` for default parameters, `config.json` for action/data-source wiring, `references/spec_template.yaml` for full spec shape, and `references/model_info.yaml` for SDK metadata.
+Use this skill for NVIDIA TAO CLIP jobs: training, evaluation, embedding inference, ONNX export, and TensorRT engine generation. Start by identifying the requested action, then read `references/skill_info.yaml` for image, command, and data-source wiring; `references/spec_template_<action>.yaml` for packaged action defaults; and `schemas/<action>.schema.json` when packaged for parameter metadata. Use `references/spec_template.yaml` for the full spec shape and `references/tao-deploy-clip.md` for TensorRT actions.
 
 For dataset-backed actions, collect the required image, caption, list, or prompt files from the user and place the resolved paths in `spec_overrides`. For local Docker runs, mount extracted folders in the container and point `image_dir` / `caption_dir` at those folders; if a data source provides `.tar.gz` archives, extract them before running the in-container CLIP commands. For `export` and `gen_trt_engine`, infer parent artifacts from the upstream job when available; otherwise require explicit checkpoint, ONNX, or engine paths. Run `gen_trt_engine`, TensorRT `evaluate`, and TensorRT `inference` in the TAO Deploy image.
 
@@ -74,13 +74,29 @@ For TAO Deploy TensorRT actions (`gen_trt_engine`, TensorRT `evaluate`, and Tens
 
 - **Dataset type:** image_text
 - **Formats:** custom image/caption folders or WebDataset shards
-- **Monitoring metric:** val/t2i_mAP
+- **Monitoring metric:** `val/t2i_mAP` for paired-caption retrieval;
+  `val/pas/overall_mAP` for PAS metadata matching
 
-The train action emits `val/t2i_mAP`, which is the AutoML selection objective.
-The standalone evaluate action reports the corresponding held-out metric as
-`test/t2i_mAP`; use that name for checkpoint evaluation and compare its value
-with the selected training validation metric rather than expecting a `val/`
-key from the evaluate action.
+With `dataset.val.metadata_match_eval: false`, train logs `val/t2i_mAP`
+(the packaged AutoML selection objective), and ordinary standalone evaluate
+logs `test/t2i_mAP` for paired-caption retrieval. With
+`dataset.val.metadata_match_eval: true`, PAS training instead logs
+`val/pas/{easy,medium,hard,overall}_{mAP,rank1,rank5}`. It does not log
+`val/t2i_mAP`; configure a PAS-specific selection metric before using AutoML
+for this mode.
+
+PAS standalone evaluate writes CSVs and returns before the ordinary test
+loop, so it does not emit `test/t2i_mAP` or `test/pas/overall_mAP` scalars.
+To compare against `val/pas/*`, evaluate the same checkpoint on the same
+validation subset with `evaluate.pas_ground_truth_mode: scalar_attributes`.
+Read `nvidia_pas_metadata_metrics_weighted_aggregate.csv` in the evaluation
+results. `nvidia_pas_metrics_weighted_aggregate.csv` always contains the
+paired-caption result, even when scalar-attribute mode is selected; comparing
+it with `val/pas/*` mixes ground-truth modes. If a KPI requires
+`test/pas/overall_mAP`, compute the query-count-weighted mean of the `mAP`
+column across the `easy`, `medium`, and `hard` rows of the metadata weighted
+aggregate CSV, using `num_queries` as weights. Evaluate does not log that
+scalar directly.
 
 ### Supported Models
 
@@ -89,6 +105,118 @@ key from the evaluate action.
 - **SigLIP2:** `siglip2-so400m-patch16-256`, `siglip2-so400m-patch14-224`, `siglip2-so400m-patch14-384`, `siglip2-so400m-patch16-384`, `siglip2-so400m-patch16-512`, `siglip2-so400m-patch16-naflex`
 
 Radio-CLIP requires `model.adaptor_name` to be set to `siglip` or `clip`.
+
+### LoRA and preservation regularization
+
+The training spec has top-level `peft` and `regularization` blocks. The
+legacy tower contract uses
+`peft.enabled: true`, `peft.method: lora`, and separate
+`peft.vision.enabled` / `peft.text.enabled` booleans. Enable at least one
+tower for LoRA. Both tower flags default to `false`, as does `peft.enabled`;
+leaving them at their defaults preserves full fine-tuning. Each enabled tower
+has `target_modules`, `num_last_blocks` (3; 0 means all blocks), `rank` (8),
+`alpha` (16; scale is alpha/rank), and `dropout` (0.05). Set target modules
+for the selected backbone: SigLIP2 uses `q_proj`, `k_proj`, `v_proj`,
+`out_proj`; RADIO and OpenCLIP use `qkv`, `proj`. The default target list is
+the SigLIP2 list, so override it for RADIO or OpenCLIP. The default OpenCLIP
+backbone is not excluded by this config contract.
+
+For each LoRA tower, use an integer `rank >= 1`, an integer `alpha >= 1`,
+and finite `0 <= dropout < 1`. Defaults are rank 8, alpha 16, and dropout
+0.05. `num_last_blocks` must be an integer from 0 through the number of
+transformer blocks in that tower; 0 selects all blocks. Check these bounds
+when preparing specs and AutoML search spaces. Rank 0 makes alpha/rank
+undefined, while alpha 0 or dropout 1 disables the adapter's contribution.
+Do not use those values to freeze a tower; use `mode: frozen` under the
+newer contract. See `references/error-patterns.md` for failures from older
+runtimes that do not enforce the numeric bounds.
+
+LoRA trains a small adapter parameter set, but the documented training
+checkpoint remains a full CLIP checkpoint; do not budget storage as though it
+were an adapter-only file. `regularization.enabled` defaults to `false`.
+Enabling it creates a frozen teacher copy of the full model and adds
+embedding MSE (weight 0.05), cosine (0.05), and image-text similarity
+preservation (0.10) losses. Budget memory for that second model copy.
+
+Preservation regularization has not been fully validated for SigLIP2
+fine-tuning on PAS and is not currently recommended for that workflow. Keep
+`regularization.enabled: false` in the recommended PAS configuration.
+Enabling it keeps the frozen teacher on the GPU and adds a teacher forward
+pass, increasing VRAM use and step time. The teacher is excluded from saved
+checkpoints; its extra memory cost does not increase checkpoint size.
+
+A config field alone does not establish that LoRA injection works in an
+image. Verify the selected image exposes the required fields and injection
+path before launching LoRA; keep PEFT disabled if it does not. Use the schema
+of the selected runtime and apply the migration below when it uses tower
+`mode` fields.
+
+#### Migrating PEFT specs from 7.2 to 7.3
+
+The 7.3 tower contract replaces each tower's `enabled` boolean with `mode`.
+Apply the following mapping independently to `vision` and `text`:
+
+| 7.2 tower setting | 7.3 tower setting |
+|---|---|
+| `peft.<tower>.enabled: true` | `peft.<tower>.mode: lora` |
+| `peft.<tower>.enabled: false` | `peft.<tower>.mode: frozen` |
+
+Remove the old tower `enabled` keys; keep the top-level `peft.enabled` and
+`peft.method` keys. A tower's `mode` defaults to `frozen`, and `full` is an
+additional option for training all its parameters. Existing `target_modules`,
+`num_last_blocks`, `rank`, `alpha`, and `dropout` settings remain under their
+respective towers.
+
+The new `peft.train_logit_calibration` flag defaults to `true`, allowing
+`logit_scale` and optional `logit_bias` to train while PEFT is enabled. Set it
+to `false` to freeze those parameters. A migrated spec fragment for LoRA on
+both SigLIP2 towers is:
+
+```yaml
+peft:
+  enabled: true
+  method: lora
+  train_logit_calibration: true
+  vision:
+    mode: lora
+  text:
+    mode: lora
+```
+
+`ConfigKeyError: Key 'enabled' not in 'CLIPLoRATargetConfig'` with
+`full_key: peft.vision.enabled` or `peft.text.enabled` means the runtime
+expects this newer contract. Update both tower blocks before retrying; the
+error occurs during config merge, before model construction. See
+`references/error-patterns.md`. Apply this migration when selecting a runtime
+with the 7.3 contract; the packaged templates and schema describe the legacy
+boolean surface and must be adapted for runtimes that require tower modes.
+
+#### Encoder freeze flags and PEFT precedence
+
+Under the tower `mode` contract, `peft.enabled: true` makes
+`peft.vision.mode` and `peft.text.mode` control encoder trainability.
+PEFT first freezes all model parameters, then applies each tower's mode:
+
+| Tower mode | Result when PEFT is enabled |
+|---|---|
+| `frozen` | All parameters in that encoder remain frozen. |
+| `full` | All parameters in that encoder become trainable. |
+| `lora` | Injected adapter parameters are trainable; backbone parameters remain frozen. |
+
+These modes override the earlier `model.freeze_vision_encoder` and
+`model.freeze_text_encoder` settings in both directions. For example,
+`model.freeze_vision_encoder: true` with `peft.vision.mode: full` trains the
+vision encoder; `model.freeze_text_encoder: false` with
+`peft.text.mode: frozen` freezes the text encoder. With `peft.enabled: false`,
+the model freeze flags apply normally. Logit calibration parameters are
+controlled separately by `peft.train_logit_calibration` in this contract.
+
+Use tower modes as the source of trainability when PEFT is enabled, remove
+conflicting model freeze flags, and verify the per-tower trainable-parameter
+counts in the launch logs, even if no conflict warning is emitted.
+These `mode` fields belong to the
+newer contract and must not be mixed with the older per-tower `enabled`
+booleans above; the packaged templates describe that older config surface.
 
 ### Per-Action Dataset Requirements
 
@@ -209,14 +337,22 @@ Use `evaluate.trt_engine` for TensorRT evaluation and `inference.trt_engine` for
 - **model.image_size**: Training transform image resolution. Keep it aligned with the selected fixed-resolution backbone.
 - **train.num_epochs**: CLIP fine-tuning often converges quickly. Start with 10-20 epochs for domain adaptation, then increase only if validation loss is still improving.
 - **train.optim.vision_lr / train.optim.text_lr**: Learning rates for the two encoders. CLIP is sensitive to high learning rates; reduce both if loss is unstable.
-- **model.freeze_vision_encoder / model.freeze_text_encoder**: Defaults are false. Freezing one encoder can help when the dataset is small or only one modality needs adaptation.
+- **model.freeze_vision_encoder / model.freeze_text_encoder**: Defaults are false. These flags control encoder freezing when `peft.enabled: false`. With PEFT enabled under the tower `mode` contract, `peft.vision.mode` / `peft.text.mode` override them, even if they disagree: `full` trains the encoder, `frozen` freezes it, and `lora` trains adapters. See the PEFT precedence section above and remove conflicting freeze flags.
 - **train.loss_type**: `siglip` is recommended for SigLIP2 and Radio-CLIP. Use `clip` for CLIP-style softmax loss.
 - **export.encoder_type**: `combined` exports one ONNX graph. `separate` exports independent vision and text graphs.
 - **gen_trt_engine.tensorrt.data_type**: TensorRT deployment supports `fp16` and `fp32`.
 
 ## Hardware
 
-Single-GPU training works for small datasets. Use 4+ GPUs for datasets with more than 100k images or large backbones. Use 16GB+ VRAM per GPU for small/fixed-resolution runs and larger GPUs for Radio-CLIP or high-resolution OpenCLIP variants.
+Single-GPU training works for small datasets. Use 4+ GPUs for datasets with more than 100k images or large backbones. Use 16GB+ VRAM per GPU for small/fixed-resolution runs with preservation regularization disabled and larger GPUs for Radio-CLIP or high-resolution OpenCLIP variants.
+
+The 16GB+ guidance does not account for the additional full teacher model
+created by `regularization.enabled: true`. If testing regularization, budget
+VRAM for that second model and its forward-pass intermediates, measure peak
+memory and step time for the actual backbone and batch size, and reduce
+`dataset.train.batch_size` or use a larger GPU as needed. Extra memory depends
+on the model's resident dtype; `train.precision: fp16` alone does not guarantee
+that the teacher weights occupy half precision.
 
 ## Error Patterns
 
@@ -224,7 +360,7 @@ See `references/error-patterns.md` for the full list of CLIP error symptoms and 
 
 ## Spec Param / Parent Model Inference
 
-See `references/spec-param-inference.md` for the model-specific inference mappings (the full `clip.config.json` action/spec-field/inference-function table) that generated runners apply with SDK helpers before `create_job()`, plus `parent_job_id` resolution rules.
+See `references/spec-param-inference.md` for the packaged model-specific action/spec-field/inference-function mappings that generated runners apply with SDK helpers before `create_job()`, plus `parent_job_id` resolution rules.
 
 ## Deployment
 
