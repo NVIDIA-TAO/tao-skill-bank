@@ -109,7 +109,7 @@ Radio-CLIP requires `model.adaptor_name` to be set to `siglip` or `clip`.
 ### LoRA and preservation regularization
 
 The training spec has top-level `peft` and `regularization` blocks. The
-`CLIPExperimentConfig` contract in tao-pytorch at `556085a` uses
+legacy tower contract uses
 `peft.enabled: true`, `peft.method: lora`, and separate
 `peft.vision.enabled` / `peft.text.enabled` booleans. Enable at least one
 tower for LoRA. Both tower flags default to `false`, as does `peft.enabled`;
@@ -138,13 +138,18 @@ Enabling it creates a frozen teacher copy of the full model and adds
 embedding MSE (weight 0.05), cosine (0.05), and image-text similarity
 preservation (0.10) losses. Budget memory for that second model copy.
 
-The skill's pinned 7.2 image predates this documented tao-pytorch config,
-and a config field alone does not establish that LoRA injection works in an
-image. Verify the selected image exposes these exact fields and the injection
-path before launching LoRA; keep PEFT disabled if it does not. The cited
-tao-pytorch commit has the config but lacks the injection and regularization
-implementation, so it cannot validate an end-to-end LoRA run. Newer source
-may expose a different tower contract; use the schema of the actual image.
+Preservation regularization has not been fully validated for SigLIP2
+fine-tuning on PAS and is not currently recommended for that workflow. Keep
+`regularization.enabled: false` in the recommended PAS configuration.
+Enabling it keeps the frozen teacher on the GPU and adds a teacher forward
+pass, increasing VRAM use and step time. The teacher is excluded from saved
+checkpoints; its extra memory cost does not increase checkpoint size.
+
+A config field alone does not establish that LoRA injection works in an
+image. Verify the selected image exposes the required fields and injection
+path before launching LoRA; keep PEFT disabled if it does not. Use the schema
+of the selected runtime and apply the migration below when it uses tower
+`mode` fields.
 
 #### Migrating PEFT specs from 7.2 to 7.3
 
@@ -183,13 +188,12 @@ peft:
 expects this newer contract. Update both tower blocks before retrying; the
 error occurs during config merge, before model construction. See
 `references/error-patterns.md`. Apply this migration when selecting a runtime
-with the 7.3 contract; the packaged templates and schema retain the older
-boolean surface while the skill's image pin remains on 7.2.
+with the 7.3 contract; the packaged templates and schema describe the legacy
+boolean surface and must be adapted for runtimes that require tower modes.
 
 #### Encoder freeze flags and PEFT precedence
 
-In the tower `mode` contract used by the 7.3.0-rc-76 image and
-tao-pytorch at `a6a5e75`, `peft.enabled: true` makes
+Under the tower `mode` contract, `peft.enabled: true` makes
 `peft.vision.mode` and `peft.text.mode` control encoder trainability.
 PEFT first freezes all model parameters, then applies each tower's mode:
 
@@ -209,8 +213,8 @@ controlled separately by `peft.train_logit_calibration` in this contract.
 
 Use tower modes as the source of trainability when PEFT is enabled, remove
 conflicting model freeze flags, and verify the per-tower trainable-parameter
-counts in the launch logs. The cited runtime silently applies PEFT precedence;
-do not rely on it to warn about conflicts. These `mode` fields belong to the
+counts in the launch logs, even if no conflict warning is emitted.
+These `mode` fields belong to the
 newer contract and must not be mixed with the older per-tower `enabled`
 booleans above; the packaged templates describe that older config surface.
 
@@ -340,7 +344,15 @@ Use `evaluate.trt_engine` for TensorRT evaluation and `inference.trt_engine` for
 
 ## Hardware
 
-Single-GPU training works for small datasets. Use 4+ GPUs for datasets with more than 100k images or large backbones. Use 16GB+ VRAM per GPU for small/fixed-resolution runs and larger GPUs for Radio-CLIP or high-resolution OpenCLIP variants.
+Single-GPU training works for small datasets. Use 4+ GPUs for datasets with more than 100k images or large backbones. Use 16GB+ VRAM per GPU for small/fixed-resolution runs with preservation regularization disabled and larger GPUs for Radio-CLIP or high-resolution OpenCLIP variants.
+
+The 16GB+ guidance does not account for the additional full teacher model
+created by `regularization.enabled: true`. If testing regularization, budget
+VRAM for that second model and its forward-pass intermediates, measure peak
+memory and step time for the actual backbone and batch size, and reduce
+`dataset.train.batch_size` or use a larger GPU as needed. Extra memory depends
+on the model's resident dtype; `train.precision: fp16` alone does not guarantee
+that the teacher weights occupy half precision.
 
 ## Error Patterns
 
