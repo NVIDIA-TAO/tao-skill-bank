@@ -111,10 +111,11 @@ docker run --rm --name "deft_iter${N}_mine" --gpus all --ipc=host --user "$(id -
 
 `final_unique_files.parquet` is a single column named by `source_filepath_column` (`filepath`). It feeds the `stage` step.
 
-Read `coverage_pct` from `summary.json`:
+Read `summary.json`:
 
 - `retrieved_unique_count == 0` with weak images present → **hard stop**. The source pool has nothing left to give, or the exclude set has consumed it.
 - `coverage_pct < 50` → warn in the iteration summary; the pool is running dry and later iterations will add little.
+- A target class with no images in `resultant_dataset.per_class` → name it in the iteration summary, with its `allocation.per_class.desired_count` where it has one. Its slots are backfilled from other classes, so `retrieved_unique_count` and `coverage_pct` stay healthy and neither rule above fires; this is the only place the starvation shows. The loop continues — the iteration still has data to train on — and `DEFT_Loop_Report.md` flags the class too.
 - Otherwise proceed.
 
 ## Commit
