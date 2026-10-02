@@ -51,6 +51,8 @@ re-labelling:
   --coco "<pool>/coco.json" --classes "<classes.yaml>" \
   --record target_classes="<comma-separated target classes>" \
   --record source="<where this pool came from>" \
+  --record embedding_model="<SigLIP or CLIP, the family that embedded this pool>" \
+  --record embedding_model_path="<the encoder snapshot or id that embedded this pool>" \
   --report-json "<pool>/pool_report.json"
 ```
 
@@ -338,6 +340,8 @@ Do not read that as "the image survives to training". It does not: this step ski
   --record      target_classes="<comma-separated target classes>" \
   --record      codetr_checkpoint="$CODETR_CHECKPOINT" \
   --record      pyt_image="$TAO_PYT_IMAGE" \
+  --record      embedding_model="$EMBEDDING_MODEL" \
+  --record      embedding_model_path="$EMBEDDING_MODEL_PATH" \
   --report-json "${PREP_DIR}/pool_report.json"
 ```
 
