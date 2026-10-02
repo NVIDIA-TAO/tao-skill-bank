@@ -574,6 +574,36 @@ def main() -> int:
                 f"--embedding-model-path {model_path!r} is a HuggingFace id, not a local snapshot; "
                 "HF_TOKEN and outbound access are required on every iteration")
 
+        # Mining compares the pool's vectors with each iteration's weak-image vectors by
+        # distance, which only means anything within one encoder's space. A pool built
+        # with a different encoder either crashes mining (a different dimension) or,
+        # worse, returns confident nearest neighbours that are noise (the same one).
+        # The pool report is the only record of which encoder built the pool.
+        if isinstance(pool_provenance, dict) and pool_provenance:
+            def _as_encoder_path(value: str) -> str:
+                text = str(value)
+                local = text.startswith(("/", "~", ".")) or Path(text).exists()
+                return str(_abs(text)) if local else text
+
+            pool_encoder = pool_provenance.get("embedding_model_path")
+            pool_family = pool_provenance.get("embedding_model")
+            if pool_encoder is None:
+                warnings.append(
+                    "--pool-report records no embedding_model_path, so nothing can check "
+                    "that this run's encoder is the one that built the pool. Re-run "
+                    "validate_pool_coco.py with --record embedding_model_path=<encoder> "
+                    "to make it checkable")
+            elif _as_encoder_path(pool_encoder) != model_path:
+                errors.append(
+                    f"the pool was embedded with {pool_encoder} but this run's encoder is "
+                    f"{model_path}. Mining compares the two sets of vectors by distance, "
+                    f"which is meaningless across encoders; use the pool's encoder, or "
+                    f"re-embed the pool with this one")
+            if pool_family is not None and str(pool_family) != args.embedding_model:
+                errors.append(
+                    f"the pool was embedded with the {pool_family} family but this run "
+                    f"uses {args.embedding_model}; the two must match")
+
         if errors:
             raise ValueError("invalid run configuration:\n  - " + "\n  - ".join(errors))
 

@@ -3562,6 +3562,77 @@ run "$PY" "$AUDIT" --results-dir "$G35/results/no_such_run"
 assert_rc 2 "[G35] a run with no deft_state.json is still the audit's 2"
 
 # ═══════════════════════════════════════════════════════════════════════════
+# G36. the encoder is the pool's, at init and at every embed
+#
+# Mining compares weak-image and pool vectors by distance, which is meaningless
+# across encoders: a different vector size crashes mining two stages later, and the
+# same size returns confident neighbours that are noise. Nothing compared the run's
+# encoder with the pool's, nor an iteration's embed spec with the run's.
+# ═══════════════════════════════════════════════════════════════════════════
+CURRENT_SECTION="G36 the encoder matches the pool"
+
+G36=$(new_workspace g36); make_pool "$G36"
+make_file "$G36/encoder/clip_b16/config.json" '{"model_type": "clip"}'
+g36_report() {  # g36_report PATH PREP_INPUTS_JSON
+  make_file "$1" "{\"annotations_by_class\": {\"car\": 900, \"person\": 400}, \"prep_inputs\": $2}"
+}
+
+g36_report "$G36/same.json" "{\"embedding_model\": \"SigLIP\", \"embedding_model_path\": \"$G36/encoder/siglip\"}"
+init_run "$G36" "$G36/results/run_same" 1 --pool-report "$G36/same.json"
+assert_rc 0 "[G36] a run using the pool's encoder initialises"
+
+g36_report "$G36/other.json" "{\"embedding_model\": \"SigLIP\", \"embedding_model_path\": \"$G36/encoder/clip_b16\"}"
+init_run "$G36" "$G36/results/run_other" 1 --pool-report "$G36/other.json"
+assert_rc 1 "[G36] a run whose encoder is not the pool's is refused at init"
+case "$RUN_OUT" in
+  *"the pool was embedded with $G36/encoder/clip_b16"*"$G36/encoder/siglip"*)
+    ok "[G36] the refusal names both encoders" ;;
+  *) notok "[G36] the refusal names both encoders" "output: $RUN_OUT" ;;
+esac
+
+g36_report "$G36/family.json" "{\"embedding_model\": \"CLIP\", \"embedding_model_path\": \"$G36/encoder/siglip\"}"
+init_run "$G36" "$G36/results/run_family" 1 --pool-report "$G36/family.json"
+assert_rc 1 "[G36] a run whose encoder family is not the pool's is refused"
+
+g36_report "$G36/silent.json" '{"target_classes": "car,person"}'
+init_run "$G36" "$G36/results/run_silent" 1 --pool-report "$G36/silent.json" \
+  --target-classes car,person
+assert_rc 0 "[G36] a pool report that records no encoder still initialises"
+case "$RUN_OUT" in
+  *"records no embedding_model_path"*) ok "[G36] but warns that the encoder cannot be checked" ;;
+  *) notok "[G36] but warns that the encoder cannot be checked" "output: $RUN_OUT" ;;
+esac
+
+# Each iteration's embed spec against the run's encoder.
+G36_RUN="$G36/results/run_same"
+g36_spec() {  # g36_spec PATH MODEL MODEL_PATH
+  make_file "$1" "model: $2
+model_path: $3
+input_parquet: /in.parquet
+output_parquet: /out.parquet"
+}
+g36_spec "$G36/embed_ok.yaml" SigLIP "$G36/encoder/siglip"
+run "$PY" "$SCRIPTS_DIR/verify_embed_encoder.py" --spec "$G36/embed_ok.yaml" --results-dir "$G36_RUN"
+assert_rc 0 "[G36] an embed spec using the run's encoder passes"
+
+g36_spec "$G36/embed_path.yaml" SigLIP "$G36/encoder/clip_b16"
+run "$PY" "$SCRIPTS_DIR/verify_embed_encoder.py" --spec "$G36/embed_path.yaml" --results-dir "$G36_RUN"
+assert_rc 1 "[G36] an embed spec with another model_path is refused"
+case "$RUN_OUT" in
+  *"model_path is"*"the run's is"*) ok "[G36] the refusal names the spec's and the run's encoder" ;;
+  *) notok "[G36] the refusal names the spec's and the run's encoder" "output: $RUN_OUT" ;;
+esac
+
+g36_spec "$G36/embed_family.yaml" CLIP "$G36/encoder/siglip"
+run "$PY" "$SCRIPTS_DIR/verify_embed_encoder.py" --spec "$G36/embed_family.yaml" --results-dir "$G36_RUN"
+assert_rc 1 "[G36] an embed spec with another model family is refused"
+
+# The same snapshot spelled through a different path is the same encoder.
+g36_spec "$G36/embed_spelling.yaml" SigLIP "$G36/encoder/../encoder/siglip"
+run "$PY" "$SCRIPTS_DIR/verify_embed_encoder.py" --spec "$G36/embed_spelling.yaml" --results-dir "$G36_RUN"
+assert_rc 0 "[G36] the same snapshot through another spelling of its path passes"
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 printf '\n'
 if [ "$FAILURES" -eq 0 ]; then
