@@ -52,7 +52,11 @@ def _append_boxless_image(role: dict, name: str) -> None:
     image.write_bytes(b"boxless-image")
     coco = Path(role["coco"])
     data = json.loads(coco.read_text())
-    data["images"].append({"id": 2, "file_name": image.name, "width": 10, "height": 10})
+    row = {"id": 2, "file_name": image.name, "width": 10, "height": 10}
+    if name == "kpi":
+        row.update({"dataset_id": "line-a", "texture_id": "board",
+                    "defect_class": "bridge"})
+    data["images"].append(row)
     coco.write_text(json.dumps(data))
 
 
@@ -125,6 +129,7 @@ def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     assert state["roles"]["clean"]["annotation_count"] == 0
     policy = yaml.safe_load(Path(state["policy"]).read_text())
     assert policy["retrieval"]["preprocessing"]["profile"] == "square_context"
+    assert policy["retrieval"]["selection"]["strategy"] == "round_robin_similarity"
     assert policy["retrieval"]["output_size"] == 224
 
 
@@ -162,6 +167,28 @@ def test_initialize_rejects_unknown_preprocessing_profile(tmp_path: Path) -> Non
     config.write_text(yaml.safe_dump(value))
 
     with pytest.raises(ValueError, match="tight_context or square_context"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_accepts_max_similarity_selection(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {"selection": {"strategy": "max_similarity"}}
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+    assert policy["retrieval"]["selection"]["strategy"] == "max_similarity"
+
+
+def test_initialize_rejects_unknown_selection_strategy(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {"selection": {"strategy": "nearest"}}
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="unsupported retrieval selection strategy"):
         MODULE.initialize(config, tmp_path / "results")
 
 

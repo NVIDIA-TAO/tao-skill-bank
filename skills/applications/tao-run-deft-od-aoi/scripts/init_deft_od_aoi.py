@@ -243,6 +243,13 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     if (profile == "square_context"
             and int(policy["retrieval"].get("output_size", 0)) < 1):
         raise ValueError("retrieval.output_size must be positive")
+    strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get(
+        "strategy", ""
+    )
+    if strategy not in {"max_similarity", "round_robin_similarity"}:
+        raise ValueError(f"unsupported retrieval selection strategy: {strategy}")
+    if int(policy["retrieval"].get("audit_top_k_per_query", 0)) < 1:
+        raise ValueError("retrieval.audit_top_k_per_query must be positive")
     if synthesis_enabled:
         pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
         if not pool.is_dir():

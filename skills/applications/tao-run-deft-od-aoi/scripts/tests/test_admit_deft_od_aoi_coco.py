@@ -3,6 +3,7 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,7 @@ import yaml
 
 
 SCRIPT = Path(__file__).parents[1] / "admit_deft_od_aoi_coco.py"
+sys.path.insert(0, str(SCRIPT.parent))
 SPEC = importlib.util.spec_from_file_location("admit_deft_od_aoi_coco", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
@@ -48,7 +50,10 @@ def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
         pd.DataFrame([{"filepath": crop}]).to_parquet(mine / "final_unique_files.parquet")
     policy = root / "policy.yaml"
     policy.write_text(yaml.safe_dump({"sources": sources,
-                                      "retrieval": {"minimum_similarity": 0.5},
+                                      "retrieval": {
+                                          "selection": {"strategy": "max_similarity"},
+                                          "minimum_similarity": 0.5,
+                                      },
                                       "routing": {"clean_cumulative_cap_per_real": 1.0},
                                       "admission": {"minimum_box_area_px": 4,
                                                     "maximum_box_aspect": 25.0},
@@ -163,6 +168,42 @@ def test_admission_reports_requested_deduplicated_and_capped_role_counts(
         "real": {"requested": 1, "deduplicated": 1, "capped": 1},
         "clean": {"requested": 3, "deduplicated": 3, "capped": 1},
     }
+
+
+def test_round_robin_admission_bypasses_mining_outputs(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"].update({
+        "selection": {"strategy": "round_robin_similarity"},
+        "candidate_overfetch": 2, "audit_top_k_per_query": 20,
+    })
+    value["routing"].update({
+        "real_mine_factor_min": 1, "near_miss_real_factor": 2,
+        "near_miss_real_cap": 20, "clean_factor": 2,
+    })
+    policy.write_text(yaml.safe_dump(value))
+    for role in ("real", "clean"):
+        candidate_path = candidates / f"{role}_candidate_embeddings.parquet"
+        frame = pd.read_parquet(candidate_path)
+        frame["candidate_id"] = f"{role}-candidate"
+        frame.to_parquet(candidate_path, index=False)
+    real_queries = pd.read_parquet(retrieval / "real_query_embeddings.parquet")
+    real_queries = real_queries.assign(
+        query_id="real-query", reason="fn", benchmark="line-a", texture="board",
+        defect_type="bridge", real_factor=1,
+    )
+    real_queries.to_parquet(retrieval / "real_query_embeddings.parquet", index=False)
+    clean_queries = pd.read_parquet(retrieval / "clean_query_embeddings.parquet")
+    clean_queries = clean_queries.assign(query_id="clean-query", reason="background_fp")
+    clean_queries.to_parquet(retrieval / "clean_query_embeddings.parquet", index=False)
+
+    report = MODULE.admit(
+        policy, candidates, retrieval, tmp_path / "out", None, "copy"
+    )
+
+    assert report["selection_strategy"] == "round_robin_similarity"
+    assert report["admitted"] == {"real": 1, "clean": 1, "synthetic": 0}
+    assert [row["admitted"] for row in report["selection_audit"]["branches"]] == [1, 1]
 
 
 def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: Path) -> None:

@@ -429,6 +429,9 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
     policy = yaml.safe_load(policy_path.read_text())
     profile, output_size = _preprocessing(policy)
     _validate_candidate_manifest(policy, candidate_root, profile, output_size)
+    strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get(
+        "strategy", "round_robin_similarity"
+    )
     strict, loose = pd.read_parquet(strict_path), pd.read_parquet(loose_path)
     required = {"filepath", "gap_type", "bbox", "best_iou"}
     for label, frame in (("strict", strict), ("loose", loose)):
@@ -476,10 +479,17 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
                 )
             else:
                 _crop(source, box, crop)
-            rows.append({"filepath": str(crop), "query_id": query_id, "role": role,
-                         "reason": reason, "source_filepath": str(source),
-                         "source_bbox": event["bbox"], "best_iou": float(event["best_iou"]),
-                         **pockets[str(source)]})
+            row = {"filepath": str(crop), "query_id": query_id, "role": role,
+                   "reason": reason, "source_filepath": str(source),
+                   "source_bbox": event["bbox"], "best_iou": float(event["best_iou"]),
+                   **pockets[str(source)]}
+            if strategy == "round_robin_similarity" and role == "real":
+                if reason == "fn":
+                    factor_value = event.get("real_factor")
+                    if factor_value is None or pd.isna(factor_value):
+                        factor_value = real_factor or policy["routing"]["real_mine_factor_min"]
+                    row["real_factor"] = int(factor_value)
+            rows.append(row)
         counts[role], frames[role] = len(rows), pd.DataFrame(rows)
         if not rows:
             excluded_candidate_crops[role] = 0
@@ -591,13 +601,19 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         requested[role] = min(
             remaining, desired * int(policy["retrieval"]["candidate_overfetch"])
         )
-        mining = {"source_path": str(candidate_root / f"{role}_candidate_embeddings.parquet"),
-                  "target_path": str(embedded), "output_dir": str(output / f"mine_{role}"),
-                  "desired_unique_count": requested[role], "allocation_policy": "global",
-                  "distance_metric": "cosine", "candidate_expansion_factor": int(policy["retrieval"]["candidate_overfetch"])}
-        if role_status[role]["excluded_count"]:
-            mining["exclude_path"] = str(exclusion_file.resolve())
-        (output / f"mine_{role}.yaml").write_text(yaml.safe_dump(mining, sort_keys=False))
+        if strategy == "max_similarity":
+            mining = {
+                "source_path": str(candidate_root / f"{role}_candidate_embeddings.parquet"),
+                "target_path": str(embedded), "output_dir": str(output / f"mine_{role}"),
+                "desired_unique_count": requested[role], "allocation_policy": "global",
+                "distance_metric": "cosine",
+                "candidate_expansion_factor": int(policy["retrieval"]["candidate_overfetch"]),
+            }
+            if role_status[role]["excluded_count"]:
+                mining["exclude_path"] = str(exclusion_file.resolve())
+            (output / f"mine_{role}.yaml").write_text(
+                yaml.safe_dump(mining, sort_keys=False)
+            )
     enabled = [role for role, evidence in role_status.items() if evidence["status"] == "READY"]
     synthesis_pending = bool(policy.get("synthesis", {}).get("enabled")) and any(
         strict.gap_type.astype(str).str.upper().eq("FN")
@@ -610,7 +626,7 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
               "admission_targets": targets, "requested_crop_counts": requested,
               "excluded_candidate_crops": excluded_candidate_crops,
               "excluded_source_images": excluded_source_images,
-              "warnings": warnings}
+              "warnings": warnings, "selection_strategy": strategy}
     _json(output / "query_manifest.json", report)
     return report
 

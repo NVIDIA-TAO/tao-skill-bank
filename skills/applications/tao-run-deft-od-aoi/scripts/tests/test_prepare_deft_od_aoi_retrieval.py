@@ -38,7 +38,8 @@ def _oriented_image(path: Path) -> None:
     Image.fromarray(values).save(path, exif=exif)
 
 
-def _policy(root: Path, profile: str = "tight_context") -> Path:
+def _policy(root: Path, profile: str = "tight_context",
+            strategy: str = "max_similarity") -> Path:
     sources = {}
     for role in ("real", "clean"):
         images = root / role
@@ -77,10 +78,12 @@ def _policy(root: Path, profile: str = "tight_context") -> Path:
                                       "gap": {"background_iou_upper": 0.05,
                                               "near_miss_iou_upper": 0.5},
                                       "retrieval": {"model": "SigLIP", "model_path": "siglip",
+                                                    "selection": {"strategy": strategy},
                                                     "preprocessing": {"profile": profile},
                                                     "defect_context_scale": 1.5,
                                                     "clean_grids": [1, 2],
                                                     "output_size": 224,
+                                                    "audit_top_k_per_query": 20,
                                                     "candidate_overfetch": 15},
                                       "routing": {"real_mine_factor_min": 1,
                                                   "real_mine_factor_max": 6,
@@ -896,6 +899,45 @@ def test_square_context_gap_boxes_use_bounded_pixel_geometry() -> None:
     assert MODULE._gap_xywh([-2, -1, 5, 6], 4, 4) == [0, 0, 4, 4]
     with pytest.raises(ValueError, match="gap box clips empty"):
         MODULE._gap_xywh([6, 1, 7, 2], 4, 4)
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_size"),
+    (("tight_context", (12, 6)), ("square_context", (224, 224))),
+)
+def test_round_robin_selection_is_independent_of_preprocessing(
+        tmp_path: Path, profile: str, expected_size: tuple[int, int]) -> None:
+    policy = _policy(tmp_path, profile, "round_robin_similarity")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 7, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "line-a",
+                    "texture_id": "board", "defect_class": "bridge"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [8, 8, 16, 12], "best_iou": 0.0,
+                   "real_factor": 3}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    report = MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
+    assert report["selection_strategy"] == "round_robin_similarity"
+    assert frame.loc[0, ["benchmark", "texture", "defect_type", "real_factor"]].tolist() == [
+        "line-a", "board", "bridge", 3,
+    ]
+    assert Image.open(frame.iloc[0].filepath).size == expected_size
+    assert not (tmp_path / "queries/mine_real.yaml").exists()
 
 
 def test_unknown_preprocessing_profile_is_rejected(tmp_path: Path) -> None:
