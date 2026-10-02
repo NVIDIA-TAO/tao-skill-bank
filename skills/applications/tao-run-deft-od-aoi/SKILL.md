@@ -29,7 +29,8 @@ Read only the references needed for the current stage:
 - orchestration: `references/pipeline.md` and
   `references/scripts-and-agents.md`;
 - gaps and retrieval: `references/gap-routing.md` and
-  `references/tao-analyze-gaps-od-map.md`;
+  `references/tao-analyze-gaps-od-map.md`; use
+  `references/retrieval-regression.md` for regression and acceptance runs;
 - training and selection: `references/training-policy.md`;
 - optional synthesis: `references/anomalygen-pool.md`.
 
@@ -137,6 +138,10 @@ FPs route only to the verified-clean role. Pass the prior cumulative COCO as
 `--real-exclusions` and `--clean-exclusions`. Empty or fully excluded roles
 emit audited exhaustion evidence and no mining action. If every producer is
 exhausted and synthesis is not pending, the stage records convergence.
+The independent `retrieval.selection.strategy` defaults to
+`round_robin_similarity`, which balances candidates across stable per-query
+rank rounds and pocket-scoped quotas. `max_similarity` retains the global
+maximum-similarity path.
 
 ## Admission and cumulative COCO
 

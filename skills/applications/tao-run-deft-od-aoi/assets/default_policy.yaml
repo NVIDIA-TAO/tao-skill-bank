@@ -16,6 +16,8 @@ gap:
   background_iou_upper: 0.05
   near_miss_iou_upper: 0.5
 retrieval:
+  selection:
+    strategy: round_robin_similarity
   model: SigLIP
   model_path: google/siglip-base-patch16-224
   preprocessing:
@@ -26,6 +28,7 @@ retrieval:
   output_size: 224
   minimum_similarity: -1.0
   candidate_overfetch: 15
+  audit_top_k_per_query: 20
 routing:
   real_mine_factor_min: 1
   real_mine_factor_max: 6

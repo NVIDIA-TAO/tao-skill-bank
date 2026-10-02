@@ -169,6 +169,26 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     if (profile == "square_context"
             and int(policy["retrieval"].get("output_size", 0)) < 1):
         raise ValueError("retrieval.output_size must be positive")
+    strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get(
+        "strategy", ""
+    )
+    if strategy not in {"max_similarity", "round_robin_similarity"}:
+        raise ValueError(f"unsupported retrieval selection strategy: {strategy}")
+    if int(policy["retrieval"].get("audit_top_k_per_query", 0)) < 1:
+        raise ValueError("retrieval.audit_top_k_per_query must be positive")
+    if strategy == "round_robin_similarity":
+        kpi = json.loads(Path(policy["sources"]["kpi"]["coco"]).read_text())
+        for row in kpi["images"]:
+            nested = row.get("deft_od_aoi") if isinstance(row.get("deft_od_aoi"), dict) else {}
+            values = (
+                nested.get("benchmark", row.get("benchmark", row.get("dataset_id"))),
+                nested.get("texture", row.get("texture", row.get("texture_id"))),
+                nested.get("defect_type", row.get("defect_type", row.get("defect_class"))),
+            )
+            if any(not str(value or "").strip() for value in values):
+                raise ValueError(
+                    f"round-robin KPI image {row.get('id')} lacks pocket metadata"
+                )
     synthesis = policy.get("synthesis", {})
     if synthesis.get("enabled"):
         pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
