@@ -64,8 +64,13 @@ def _selected(role: str, reason: str, desired: int, excluded: set[str],
     if not mined.is_file():
         raise FileNotFoundError(f"enabled {role} mining output is missing: {mined}")
     chosen = pd.read_parquet(mined)
-    if chosen.empty or "filepath" not in chosen:
-        raise ValueError(f"enabled {role} mining output is empty")
+    if "filepath" not in chosen:
+        raise ValueError(f"enabled {role} mining output lacks filepath")
+    if chosen.empty:
+        return [], {"desired_parents": desired, "mined_crops": 0,
+                    "unique_parents": 0, "novel_parents": 0,
+                    "selected_parents": 0, "shortfall_parents": desired,
+                    "quota_met": desired == 0}
     if desired == 0:
         return [], {"desired_parents": 0, "mined_crops": len(chosen),
                     "unique_parents": 0, "novel_parents": 0,
@@ -101,6 +106,19 @@ def _selected(role: str, reason: str, desired: int, excluded: set[str],
              "shortfall_parents": max(0, desired - len(selected)),
              "quota_met": len(selected) >= desired}
     return selected.to_dict("records"), stats
+
+
+def _round_robin_selected(role: str, retrieval_root: Path) -> list[dict[str, Any]]:
+    mined = retrieval_root / f"mine_{role}" / "final_unique_files.parquet"
+    if not mined.is_file():
+        raise FileNotFoundError(f"enabled {role} selection output is missing: {mined}")
+    chosen = pd.read_parquet(mined)
+    required = {"filepath", "source_filepath", "similarity", "query_id"}
+    if not required.issubset(chosen):
+        raise ValueError(f"enabled {role} round-robin selection output is invalid")
+    if chosen.empty:
+        return []
+    return chosen.drop_duplicates("source_filepath").to_dict("records")
 
 
 def _source_index(policy: dict[str, Any], role: str) -> dict[str, dict[str, Any]]:
@@ -225,6 +243,22 @@ def _stratified_synthetic(candidates: list[dict[str, Any]], limit: int
     return sorted(selected, key=lambda row: str(row["source"]))
 
 
+def _synthetic_limit(real_total: int, synthesis: dict[str, Any]) -> tuple[int, str, float]:
+    if not synthesis or synthesis.get("enabled") is False:
+        return 0, "disabled", 0.0
+    if "cumulative_fraction_of_total_defects" in synthesis:
+        fraction = float(synthesis["cumulative_fraction_of_total_defects"])
+        if not math.isfinite(fraction) or not 0 <= fraction < 1:
+            raise ValueError("cumulative_fraction_of_total_defects must be in [0, 1)")
+        return int(fraction / (1.0 - fraction) * real_total), "fraction_of_total", fraction
+    if "cumulative_fraction_of_real_defects" not in synthesis:
+        return 0, "unconfigured", 0.0
+    fraction = float(synthesis["cumulative_fraction_of_real_defects"])
+    if not math.isfinite(fraction) or fraction < 0:
+        raise ValueError("cumulative_fraction_of_real_defects must be finite and nonnegative")
+    return int(real_total * fraction), "fraction_of_real", fraction
+
+
 def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output: Path,
           previous_path: Path | None, mode: str, synthetic_coco: Path | None = None,
           synthetic_images: Path | None = None, synthetic_only: bool = False) -> dict[str, Any]:
@@ -241,45 +275,77 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     if synthetic_only and (previous_path is None or synthetic_coco is None):
         raise ValueError("--synthetic-only requires --previous-coco and synthetic inputs")
     enabled = set() if synthetic_only else set(manifest["enabled_roles"])
-    targets = manifest.get("admission_targets") or {}
     indexes = {role: _source_index(policy, role) for role in enabled}
+    strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get(
+        "strategy", "round_robin_similarity"
+    )
+    selection_audit = None
+    selection_index = None
+    targets = manifest.get("admission_targets") or {}
     additions: dict[str, list[dict[str, Any]]] = {role: [] for role in enabled}
     preview: dict[str, Any] = {
         "status": "PASS", "iteration": int(manifest["iteration"]),
         "mining_admission": "skipped" if synthetic_only else "evaluated", "roles": {},
     }
     minimum = float(policy["retrieval"]["minimum_similarity"])
-    for role, reasons in (("real", ("fn", "near_miss_fp")),):
-        if role not in enabled:
-            continue
-        excluded = set(existing_sources)
-        branches = {}
-        for reason in reasons:
-            selected, stats = _selected(
-                role, reason, int((targets.get(role) or {}).get(reason, 0)), excluded,
-                candidate_root, retrieval_root, minimum,
-            )
-            additions[role].extend(selected)
-            excluded.update(str(Path(row["source_filepath"]).resolve()) for row in selected)
-            branches[reason] = stats
-        preview["roles"][role] = {
-            "requested_crop_count": int((manifest.get("requested_crop_counts") or {}).get(role, 0)),
-            "branches": branches,
+    if strategy == "round_robin_similarity":
+        selection_report = json.loads(
+            (retrieval_root / "round_robin_selection_report.json").read_text()
+        )
+        if (selection_report.get("status") != "COMPLETE"
+                or int(selection_report.get("iteration", -1)) != int(manifest["iteration"])
+                or selection_report.get("selection_strategy") != strategy):
+            raise ValueError("round-robin selection report is incomplete or mismatched")
+        selection_audit = selection_report.get("audit")
+        selection_index = retrieval_root / "round_robin_admission_index.npy"
+        if (selection_report.get("admission_index") != str(selection_index)
+                or not selection_index.is_file()):
+            raise ValueError("round-robin admission index is missing or mismatched")
+        additions = {
+            role: _round_robin_selected(role, retrieval_root) for role in enabled
         }
+    else:
+        if "real" in enabled:
+            excluded = set(existing_sources)
+            branches = {}
+            for reason in ("fn", "near_miss_fp"):
+                selected, stats = _selected(
+                    "real", reason, int((targets.get("real") or {}).get(reason, 0)),
+                    excluded, candidate_root, retrieval_root, minimum,
+                )
+                additions["real"].extend(selected)
+                excluded.update(
+                    str(Path(row["source_filepath"]).resolve()) for row in selected
+                )
+                branches[reason] = stats
+            preview["roles"]["real"] = {
+                "requested_crop_count": int(
+                    (manifest.get("requested_crop_counts") or {}).get("real", 0)
+                ),
+                "branches": branches,
+            }
+    for role in additions:
+        additions[role] = [row for row in additions[role]
+                           if str(Path(row["source_filepath"]).resolve()) not in existing_sources]
     real_total = by_kind["real_defect"] + len(additions.get("real", []))
     clean_limit = int(real_total * float(policy["routing"]["clean_cumulative_cap_per_real"]))
     clean_room = max(0, clean_limit - by_kind["clean_negative"])
     if "clean" in enabled:
-        clean_target = (targets.get("clean") or {}).get("background_fp")
-        desired = min(int(clean_target) if clean_target is not None else clean_room,
-                      clean_room)
-        selected, stats = _selected("clean", "background_fp", desired, existing_sources,
-                                    candidate_root, retrieval_root, minimum)
-        additions["clean"] = selected
-        preview["roles"]["clean"] = {
-            "requested_crop_count": int((manifest.get("requested_crop_counts") or {}).get("clean", 0)),
-            "branches": {"background_fp": stats},
-        }
+        if strategy == "round_robin_similarity":
+            additions["clean"] = additions.get("clean", [])[:clean_room]
+        else:
+            clean_target = (targets.get("clean") or {}).get("background_fp")
+            desired = min(int(clean_target) if clean_target is not None else clean_room,
+                          clean_room)
+            selected, stats = _selected("clean", "background_fp", desired, existing_sources,
+                                        candidate_root, retrieval_root, minimum)
+            additions["clean"] = selected
+            preview["roles"]["clean"] = {
+                "requested_crop_count": int(
+                    (manifest.get("requested_crop_counts") or {}).get("clean", 0)
+                ),
+                "branches": {"background_fp": stats},
+            }
     for role, rows in additions.items():
         missing = [str(Path(row["source_filepath"]).resolve()) for row in rows
                    if str(Path(row["source_filepath"]).resolve()) not in indexes[role]]
@@ -291,10 +357,12 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             indexes[role][str(Path(row["source_filepath"]).resolve())]["dataset_id"]
             for row in rows
         )
-        preview["roles"][role]["per_dataset"] = dict(sorted(counts.items()))
-    if enabled and not any(additions.get(role) for role in enabled) and not previous.get("images"):
-        raise ValueError("mining admitted no source images")
-
+        preview["roles"].setdefault(role, {})["per_dataset"] = dict(sorted(counts.items()))
+    role_status = {
+        role: {"status": "SELECTED" if rows else "NO_MATCHES",
+               "selected_count": len(rows)}
+        for role, rows in additions.items()
+    }
     output.mkdir(parents=True)
     _json(output / "admission_preview.json", preview)
     images_root = output / "images"
@@ -326,19 +394,44 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                str(image["deft_kind"]), image.get("retrieval_similarity"))
     admitted_rows = []
     for role, kind in (("real", "real_defect"), ("clean", "clean_negative")):
-        index = _source_index(policy, role)
+        index = indexes.get(role, {})
         for selected in additions.get(role, []):
             source = Path(str(selected["source_filepath"])).resolve()
             if str(source) not in index:
                 raise ValueError(f"selected {role} source is absent from its frozen COCO: {source}")
             row = index[str(source)]
-            append(source, row["image"], row["annotations"], kind, float(selected["similarity"]))
+            source_annotations = row["annotations"]
+            if role == "real" and selected.get("admission_boxes") is not None:
+                source_annotations = [
+                    {"bbox": [float(value) for value in box],
+                     "area": float(box[2] * box[3]), "iscrowd": 0}
+                    for box in selected["admission_boxes"]
+                ]
+            append(source, row["image"], source_annotations, kind,
+                   float(selected["similarity"]))
             admitted_rows.append({"source_filepath": str(source), "kind": kind,
                                   "similarity": float(selected["similarity"])})
     synthetic_admitted = 0
     synthetic_quality: dict[str, int] = {}
     synthetic_requested = 0
     admitted_by_stratum: dict[str, int] = {}
+    synthetic_limit, fraction_basis, synthetic_fraction = _synthetic_limit(
+        real_total, policy.get("synthesis") or {}
+    )
+    synthetic_room = max(0, synthetic_limit - by_kind["synthetic_defect"])
+    warnings = []
+    if (policy.get("synthesis") or {}).get("enabled") and synthetic_room == 0:
+        warnings.append({
+            "code": "SYNTHETIC_ADMISSION_CAP_ZERO",
+            "message": (
+                "synthetic admission currently has zero room; generation may complete "
+                "without admitting any synthetic images"
+            ),
+            "cumulative_real_images": real_total,
+            "configured_fraction": synthetic_fraction,
+            "cumulative_synthetic_limit": synthetic_limit,
+            "synthetic_images_before_admission": by_kind["synthetic_defect"],
+        })
     if bool(synthetic_coco) != bool(synthetic_images):
         raise ValueError("pass both synthetic COCO and synthetic images, or neither")
     if synthetic_coco and synthetic_images:
@@ -358,9 +451,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                 raise ValueError(f"conflicting duplicate synthetic source: {key}")
             unique.setdefault(key, candidate)
         synthetic_requested = len(unique)
-        limit = int(real_total * float(policy["synthesis"]["cumulative_fraction_of_real_defects"]))
-        room = max(0, limit - by_kind["synthetic_defect"])
-        admitted = _stratified_synthetic(list(unique.values()), room)
+        admitted = _stratified_synthetic(list(unique.values()), synthetic_room)
         admitted_by_stratum = dict(sorted(collections.Counter(
             row["stratum"] for row in admitted
         ).items()))
@@ -371,13 +462,39 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             synthetic_admitted += 1
             admitted_rows.append({"source_filepath": str(source),
                                   "kind": "synthetic_defect", "similarity": None})
+        excluded_by_cap = synthetic_requested - synthetic_admitted
+        if excluded_by_cap:
+            warnings.append({
+                "code": "SYNTHETIC_ADMISSION_CAPPED",
+                "message": (
+                    f"{excluded_by_cap} eligible generated synthetic images were excluded "
+                    "by the configured cumulative synthetic-admission cap"
+                ),
+                "cumulative_real_images": real_total,
+                "configured_fraction": synthetic_fraction,
+                "cumulative_synthetic_limit": synthetic_limit,
+                "synthetic_images_before_admission": by_kind["synthetic_defect"],
+            })
     coco = {"images": images, "annotations": annotations,
             "categories": [{"id": 1, "name": "defect"}]}
     _json(output / "train.json", coco)
     pd.DataFrame(admitted_rows, columns=["source_filepath", "kind", "similarity"]).to_parquet(
         output / "admitted_sources.parquet", index=False
     )
+    if selection_index is not None:
+        shutil.copy2(selection_index, output / "admission_index.npy")
     report = {"status": "COMPLETE", "iteration": int(manifest["iteration"]),
+              "selection_strategy": strategy,
+              "selection_audit": selection_audit,
+              "selection_admission_counters": (
+                  selection_report.get("admission_counters")
+                  if strategy == "round_robin_similarity" else None
+              ),
+              "admission_index": (
+                  str(output / "admission_index.npy")
+                  if strategy == "round_robin_similarity" else None
+              ),
+              "role_status": role_status,
               "retained_previous_images": len(previous.get("images", [])),
               "admitted": {"real": len(additions.get("real", [])),
                            "clean": len(additions.get("clean", [])),
@@ -386,12 +503,20 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
               "by_kind": {kind: sum(row["deft_kind"] == kind for row in images)
                           for kind in ("real_defect", "clean_negative", "synthetic_defect")},
               "synthetic_admission": {
+                  "fraction_basis": fraction_basis,
+                  "cumulative_limit": synthetic_limit,
                   "requested_new": synthetic_requested,
                   "admitted_new": synthetic_admitted,
                   "excluded_by_cap": synthetic_requested - synthetic_admitted,
+                  "configured_fraction": synthetic_fraction,
+                  "cumulative_real_images": real_total,
+                  "cumulative_synthetic_limit": synthetic_limit,
+                  "available_room_before_admission": synthetic_room,
                   "admitted_by_stratum": admitted_by_stratum,
                   "quality_filter": synthetic_quality,
               },
+              "warnings": warnings,
+              "new_training_images": len(admitted_rows),
               "training_pool_mutated": False}
     _json(output / "admission_report.json", report)
     return report

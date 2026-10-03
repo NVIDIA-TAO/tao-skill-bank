@@ -65,6 +65,16 @@ AnomalyGen clean-reference images come from the synthesis pool and are not the
 DEFT `clean` retrieval role. Missing references skip only affected synthesis
 FNs; they do not disable real-defect or clean-negative retrieval.
 
+## Artifact-scoped role states
+
+`role_status` is scoped to the artifact that contains it; it is not one shared
+status enum. In `query_manifest.json`, it describes retrieval-producer
+availability (`READY`, `EXHAUSTED`, or `NO_QUERIES`) and may carry exclusion
+counts. In round-robin selection and admission reports, it describes
+post-selection outcomes (`SELECTED` or `NO_MATCHES`) and carries
+`selected_count`. Consumers must interpret the field using the containing
+artifact's contract rather than mixing the two state machines.
+
 ## Cumulative admission
 
 `admit_deft_od_aoi_coco.py` recomputes similarity from the frozen embeddings,
@@ -77,9 +87,24 @@ admission pass, also pass `--synthetic-only` with the same-iteration real
 admission `train.json` as `--previous-coco`; the preview records
 `mining_admission: skipped`. Without that explicit flag, mining admission still
 runs. Synthetic admission is capped by
-`synthesis.cumulative_fraction_of_real_defects`. Existing records remain
-unchanged. Admission also emits `admission_preview.json`. When overfetched crops
-do not contain enough novel parent images for a branch target, it admits the
-available parents and records the shortfall instead of failing the iteration.
+`synthesis.cumulative_fraction_of_total_defects` so that synthetic defects
+occupy at most that fraction of the combined real and synthetic defect pool.
+Existing records remain unchanged. The legacy
+`cumulative_fraction_of_real_defects` key remains readable with its original
+synthetic-to-real meaning. Admission also emits `admission_preview.json`. When
+overfetched crops do not contain enough novel parent images for a branch target,
+it admits the available parents and records the shortfall instead of failing the
+iteration.
 Real retrieval may become exhausted while clean retrieval continues until the
 existing cumulative real count's clean allowance is full.
+
+The initial admission report calculates remaining capacity after admitting
+real/clean images, and emits `SYNTHETIC_ADMISSION_CAP_ZERO` when it is zero.
+The stage controller then records a budget skip instead of requesting
+iteration synthesis. Missing or invalid capacity evidence is an error.
+Positive capacity permits synthesis, but post-generation admission still
+enforces quality and cumulative limits; `SYNTHETIC_ADMISSION_CAPPED` reports
+otherwise-eligible generated images excluded by the cap. Training is allowed
+only when the iteration adds images. Cap formulas and whole-FN allocation
+are unchanged; a zero cumulative real count still permits no synthetic
+admissions.

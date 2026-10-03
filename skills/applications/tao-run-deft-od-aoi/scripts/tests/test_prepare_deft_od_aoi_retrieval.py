@@ -38,7 +38,8 @@ def _oriented_image(path: Path) -> None:
     Image.fromarray(values).save(path, exif=exif)
 
 
-def _policy(root: Path) -> Path:
+def _policy(root: Path, profile: str = "tight_context",
+            strategy: str = "max_similarity") -> Path:
     sources = {}
     for role in ("real", "clean"):
         images = root / role
@@ -77,13 +78,19 @@ def _policy(root: Path) -> Path:
                                       "gap": {"background_iou_upper": 0.05,
                                               "near_miss_iou_upper": 0.5},
                                       "retrieval": {"model": "SigLIP", "model_path": "siglip",
+                                                    "selection": {"strategy": strategy},
+                                                    "selection": {"strategy": strategy},
+                                                    "preprocessing": {"profile": profile},
                                                     "defect_context_scale": 1.5,
                                                     "clean_grids": [1, 2],
+                                                    "output_size": 224,
+                                                    "audit_top_k_per_query": 20,
                                                     "candidate_overfetch": 15},
                                       "routing": {"real_mine_factor_min": 1,
                                                   "real_mine_factor_max": 6,
                                                   "near_miss_real_factor": 2,
                                                   "near_miss_real_cap_per_pocket": 20,
+                                                  "round_robin_real_factor_default": 3,
                                                   "clean_factor": 2}}))
     return policy
 
@@ -104,6 +111,156 @@ def test_candidate_cache_uses_defect_crops_and_clean_grid(tmp_path: Path) -> Non
     clean = pd.read_parquet(tmp_path / "candidates/clean_candidates.parquet")
     assert real.source_filepath.nunique() == clean.source_filepath.nunique() == 1
     assert all(Path(path).is_file() for path in list(real.filepath) + list(clean.filepath))
+    assert all(value.startswith("real-") for value in real.candidate_id)
+    assert Image.open(real.iloc[0].filepath).size == (18, 18)
+    assert {Image.open(path).size for path in clean.filepath} == {(16, 16), (32, 32)}
+
+
+def test_tight_context_does_not_read_square_output_size(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"]["output_size"] = "unused-by-tight-context"
+    policy.write_text(yaml.safe_dump(value))
+
+    report = MODULE.candidates(policy, tmp_path / "candidates")
+
+    assert report["counts"] == {"real": 1, "clean": 5}
+    real = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
+    assert Image.open(real.iloc[0].filepath).size == (18, 18)
+
+
+def test_missing_preprocessing_profile_preserves_legacy_tight_context(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"].pop("preprocessing")
+    policy.write_text(yaml.safe_dump(value))
+
+    MODULE.candidates(policy, tmp_path / "candidates")
+
+    manifest = json.loads((tmp_path / "candidates/candidate_manifest.json").read_text())
+    assert manifest["preprocessing_profile"] == "tight_context"
+
+
+def test_candidate_cache_contract_rejects_policy_drift(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    candidates = tmp_path / "candidates"
+    MODULE.candidates(policy, candidates)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"]["model_path"] = "different-siglip"
+
+    with pytest.raises(ValueError, match="model_path"):
+        MODULE._validate_candidate_manifest(value, candidates, "tight_context", None)
+
+
+def test_candidate_cache_contract_rejects_clean_grid_drift(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    candidates = tmp_path / "candidates"
+    MODULE.candidates(policy, candidates)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"]["clean_grids"] = [1]
+
+    with pytest.raises(ValueError, match="clean_grids"):
+        MODULE._validate_candidate_manifest(value, candidates, "tight_context", None)
+
+
+def test_legacy_candidate_manifest_without_profile_is_tight_context(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    candidates = tmp_path / "candidates"
+    MODULE.candidates(policy, candidates)
+    manifest_path = candidates / "candidate_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("preprocessing_profile")
+    manifest_path.write_text(json.dumps(manifest))
+
+    MODULE._validate_candidate_manifest(
+        yaml.safe_load(policy.read_text()), candidates, "tight_context", None
+    )
+
+
+def test_square_context_produces_fixed_size_crops(tmp_path: Path) -> None:
+    report = MODULE.candidates(
+        _policy(tmp_path, "square_context"), tmp_path / "candidates"
+    )
+
+    assert report["counts"] == {"real": 1, "clean": 5}
+    real = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
+    clean = pd.read_parquet(tmp_path / "candidates/clean_candidates.parquet")
+    assert real.candidate_id.tolist() == ["defect:1:9"]
+    assert clean.candidate_id.tolist() == [
+        "clean:1:g1:r0:c0", "clean:1:g2:r0:c0", "clean:1:g2:r0:c1",
+        "clean:1:g2:r1:c0", "clean:1:g2:r1:c1",
+    ]
+    assert all(Image.open(path).size == (224, 224)
+               for path in [*real.filepath, *clean.filepath])
+    manifest = json.loads((tmp_path / "candidates/candidate_manifest.json").read_text())
+    assert manifest["preprocessing_profile"] == "square_context"
+
+
+def test_square_grid_mean_pads_before_resize() -> None:
+    padded = MODULE._mean_pad_square(Image.new("RGB", (32, 16), (10, 20, 30)))
+
+    assert padded.size == (32, 32)
+    assert padded.getpixel((0, 0)) == (10, 20, 30)
+
+
+def test_square_grid_uses_displayed_pixels(tmp_path: Path) -> None:
+    source = tmp_path / "oriented.png"
+    _oriented_image(source)
+
+    rows = MODULE._square_grid_crops(source, [2], tmp_path / "output", 1, 16)
+
+    with Image.open(source) as opened:
+        displayed = ImageOps.exif_transpose(opened).convert("RGB")
+    expected = MODULE._mean_pad_square(displayed.crop((0, 0, 10, 20))).resize(
+        (16, 16), Image.Resampling.BICUBIC
+    )
+    assert np.array_equal(np.asarray(Image.open(rows[0][1])), np.asarray(expected))
+
+
+def test_square_context_applies_exif_orientation_before_cropping(tmp_path: Path) -> None:
+    source = tmp_path / "oriented.png"
+    _oriented_image(source)
+    output = tmp_path / "crop.png"
+
+    MODULE._square_context_crop(source, [2, 25, 5, 5], 1.0, output, 32)
+
+    with Image.open(source) as opened:
+        expected = ImageOps.exif_transpose(opened).convert("RGB").crop((2, 25, 7, 30))
+    expected = expected.resize((32, 32), Image.Resampling.BICUBIC)
+    assert np.array_equal(np.asarray(Image.open(output)), np.asarray(expected))
+
+
+def test_square_context_preserves_deterministic_string_id_order(tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "square_context")
+    value = yaml.safe_load(policy.read_text())
+    for role in ("real", "clean"):
+        images = Path(value["sources"][role]["images"])
+        for image_id in (2, 10):
+            _image(images / f"{role}-{image_id}.png", image_id)
+        coco = Path(value["sources"][role]["coco"])
+        document = json.loads(coco.read_text())
+        document["images"] = [
+            {"id": 2, "file_name": f"{role}-2.png"},
+            {"id": 10, "file_name": f"{role}-10.png"},
+        ]
+        document["annotations"] = (
+            [
+                {"id": 4, "image_id": 2, "category_id": 1, "bbox": [8, 8, 12, 12]},
+                {"id": 3, "image_id": 10, "category_id": 1, "bbox": [8, 8, 12, 12]},
+                {"id": 20, "image_id": 10, "category_id": 1, "bbox": [8, 8, 12, 12]},
+            ] if role == "real" else []
+        )
+        coco.write_text(json.dumps(document))
+
+    MODULE.candidates(policy, tmp_path / "candidates")
+
+    real = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
+    clean = pd.read_parquet(tmp_path / "candidates/clean_candidates.parquet")
+    assert real.candidate_id.tolist() == [
+        "defect:10:20", "defect:10:3", "defect:2:4",
+    ]
+    assert clean.candidate_id.iloc[0] == "clean:10:g1:r0:c0"
+    assert clean.candidate_id.iloc[5] == "clean:2:g1:r0:c0"
 
 
 @pytest.mark.parametrize(
@@ -160,8 +317,11 @@ def test_candidate_cache_applies_exif_orientation_before_cropping(tmp_path: Path
 
     assert report["counts"]["real"] == 1
     frame = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
-    with Image.open(frame.iloc[0].filepath) as crop:
-        assert crop.size == (9, 9)
+    with Image.open(source) as opened:
+        expected = ImageOps.exif_transpose(opened).convert("RGB").crop((0, 23, 9, 32))
+    assert np.array_equal(
+        np.asarray(Image.open(frame.iloc[0].filepath)), np.asarray(expected)
+    )
 
 
 def test_cold_start_iteration_one_queries_accept_canonical_only_kpi_metadata(
@@ -254,6 +414,7 @@ def test_tiny_crop_uses_displayed_geometry_before_minimum_expansion(
 
 def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     policy = _policy(tmp_path)
+    MODULE.candidates(policy, tmp_path / "candidates")
     query_image = tmp_path / "query.png"
     _image(query_image)
     document = json.loads(policy.read_text()) if policy.suffix == ".json" else yaml.safe_load(policy.read_text())
@@ -266,7 +427,6 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
                                 "annotations": [], "categories": [{"id": 1, "name": "defect"}]}))
     document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
     policy.write_text(yaml.safe_dump(document))
-    MODULE.candidates(policy, tmp_path / "candidates")
     strict = tmp_path / "strict.parquet"
     loose = tmp_path / "loose.parquet"
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
@@ -439,6 +599,8 @@ def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) 
     (candidates / "candidate_manifest.json").write_text(json.dumps({
         "status": "COMPLETE",
         "counts": {"real": 3, "clean": 2},
+        "preprocessing_profile": "tight_context",
+        "encoder": document["retrieval"],
     }))
     previous = tmp_path / "previous.json"
     materialized_real = tmp_path / "iteration-3/images/materialized-real.png"
@@ -622,7 +784,7 @@ def test_queries_reject_missing_candidate_manifest(tmp_path: Path) -> None:
                    "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
     pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
 
-    with pytest.raises(FileNotFoundError, match="candidate manifest"):
+    with pytest.raises(FileNotFoundError, match="candidate cache lacks manifest"):
         MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
                        tmp_path / "missing-candidates", None)
 
@@ -662,3 +824,205 @@ def test_tiny_gap_crops_are_embedding_safe_at_boundaries(tmp_path: Path) -> None
     assert len(crops) == 2
     assert all(Image.open(path).size == (8, 8) for path in crops)
     assert all(Image.open(path).getextrema() == ((80, 80),) * 3 for path in crops)
+
+
+def test_tight_context_query_uses_displayed_gap_box_pixels(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    MODULE.candidates(policy, tmp_path / "candidates")
+    query_image = tmp_path / "query.png"
+    _oriented_image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "line-a",
+                    "texture_id": "board", "defect_class": "bridge"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [2, 25, 7, 30], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
+    with Image.open(query_image) as opened:
+        expected = ImageOps.exif_transpose(opened).convert("RGB").crop((0, 23, 9, 32))
+    assert np.array_equal(
+        np.asarray(Image.open(frame.iloc[0].filepath)), np.asarray(expected)
+    )
+
+
+def test_square_context_applies_to_queries_independently_of_routing(tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "square_context")
+    MODULE.candidates(policy, tmp_path / "candidates")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "visa",
+                    "texture_id": "pcb1", "defect_class": "bad"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [0, 0, 8, 4], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    report = MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
+    assert report["preprocessing_profile"] == "square_context"
+    assert Image.open(frame.iloc[0].filepath).size == (224, 224)
+
+
+def test_queries_reject_candidate_cache_from_other_profile(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    MODULE.candidates(policy, tmp_path / "candidates")
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"]["preprocessing"]["profile"] = "square_context"
+    policy.write_text(yaml.safe_dump(value))
+    empty = pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"])
+    strict, loose = tmp_path / "strict.parquet", tmp_path / "loose.parquet"
+    empty.to_parquet(strict)
+    empty.to_parquet(loose)
+
+    with pytest.raises(ValueError, match="does not match policy"):
+        MODULE.queries(
+            policy, strict, loose, 1, tmp_path / "queries",
+            tmp_path / "candidates", None,
+        )
+
+
+def test_square_context_gap_boxes_use_bounded_pixel_geometry() -> None:
+    assert MODULE._gap_xywh([-2, -1, 5, 6], 4, 4) == [0, 0, 4, 4]
+    with pytest.raises(ValueError, match="gap box clips empty"):
+        MODULE._gap_xywh([6, 1, 7, 2], 4, 4)
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_size"),
+    (("tight_context", (12, 8)), ("square_context", (224, 224))),
+)
+def test_round_robin_selection_is_independent_of_preprocessing(
+        tmp_path: Path, profile: str, expected_size: tuple[int, int]) -> None:
+    policy = _policy(tmp_path, profile, "round_robin_similarity")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 7, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "line-a",
+                    "texture_id": "board", "defect_class": "bridge",
+                    "benchmark": "legacy-source", "texture": "legacy-board",
+                    "defect_type": "legacy-bridge"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [8, 8, 16, 12], "best_iou": 0.0,
+                   "real_factor": 3}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    report = MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
+    assert report["selection_strategy"] == "round_robin_similarity"
+    assert frame.loc[0, [
+        "dataset_id", "texture_id", "defect_class", "real_factor"
+    ]].tolist() == [
+        "line-a", "board", "bridge", 3,
+    ]
+    assert not {"benchmark", "texture", "defect_type"}.intersection(frame.columns)
+    assert Image.open(frame.iloc[0].filepath).size == expected_size
+    assert not (tmp_path / "queries/mine_real.yaml").exists()
+
+
+def test_round_robin_defaults_to_three_real_candidates_per_strict_fn(
+        tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "square_context", "round_robin_similarity")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 7, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "line-a",
+                    "texture_id": "board", "defect_class": "bridge"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [8, 8, 16, 12], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
+    assert frame.real_factor.tolist() == [3]
+    assert frame.routing_order_key.tolist() == ["strict:0:strict_fn"]
+
+
+def test_max_similarity_keeps_one_x_real_factor_default(tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "square_context", "max_similarity")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    document = yaml.safe_load(policy.read_text())
+    kpi = tmp_path / "kpi.json"
+    kpi.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": query_image.name,
+                    "source_path": str(query_image), "dataset_id": "line-a",
+                    "texture_id": "board", "defect_class": "bridge"}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
+    policy.write_text(yaml.safe_dump(document))
+    MODULE.candidates(policy, tmp_path / "candidates")
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [8, 8, 16, 12], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    mining = yaml.safe_load((tmp_path / "queries/mine_real.yaml").read_text())
+    assert mining["desired_unique_count"] == 1
+
+
+def test_unknown_preprocessing_profile_is_rejected(tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "unknown")
+    try:
+        MODULE.candidates(policy, tmp_path / "candidates")
+    except ValueError as error:
+        assert "tight_context or square_context" in str(error)
+    else:
+        raise AssertionError("unknown preprocessing profile was accepted")

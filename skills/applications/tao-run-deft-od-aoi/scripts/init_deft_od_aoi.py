@@ -14,6 +14,9 @@ from typing import Any
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deft_od_aoi_synthesis_contract import validate_synthesis_contract
+
 
 DEFAULTS = Path(__file__).resolve().parents[1] / "assets" / "default_policy.yaml"
 # Normalized handoff roles: KPI/test are held out, ``real`` is the
@@ -132,7 +135,19 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     user = yaml.safe_load(config_path.read_text())
     if not isinstance(user, dict):
         raise ValueError("config must be a YAML mapping")
+    if "near_miss_real_cap" in (user.get("routing") or {}):
+        raise ValueError(
+            "routing.near_miss_real_cap is unsupported; use "
+            "routing.near_miss_real_cap_per_pocket"
+        )
     policy = _merge(yaml.safe_load(DEFAULTS.read_text()), user)
+    user_synthesis = user.get("synthesis", {})
+    if (isinstance(user_synthesis, dict)
+            and "cumulative_fraction_of_real_defects" in user_synthesis
+            and "cumulative_fraction_of_total_defects" not in user_synthesis):
+        policy["synthesis"].pop("cumulative_fraction_of_total_defects", None)
+        if "fn_selection" not in user_synthesis:
+            policy["synthesis"]["fn_selection"] = {"mode": "all_eligible"}
     if not isinstance(policy.get("max_iterations"), int) or policy["max_iterations"] < 1:
         raise ValueError("max_iterations must be a positive integer")
     if not str(policy.get("platform") or "").strip():
@@ -159,8 +174,35 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("background and near-miss IoU thresholds are inconsistent")
     if policy["class_name"] != "defect":
         raise ValueError("DEFT OD AOI has one foreground class named defect")
+    profile = str(((policy.get("retrieval") or {}).get("preprocessing") or {}).get(
+        "profile", ""
+    ))
+    if profile not in {"tight_context", "square_context"}:
+        raise ValueError(
+            "retrieval.preprocessing.profile must be tight_context or square_context"
+        )
+    if (profile == "square_context"
+            and int(policy["retrieval"].get("output_size", 0)) < 1):
+        raise ValueError("retrieval.output_size must be positive")
+    strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get(
+        "strategy", ""
+    )
+    if strategy not in {"max_similarity", "round_robin_similarity"}:
+        raise ValueError(f"unsupported retrieval selection strategy: {strategy}")
+    if int(policy["retrieval"].get("audit_top_k_per_query", 0)) < 1:
+        raise ValueError("retrieval.audit_top_k_per_query must be positive")
+    if strategy == "round_robin_similarity":
+        routing = policy["routing"]
+        minimum = int(routing["real_mine_factor_min"])
+        maximum = int(routing["real_mine_factor_max"])
+        default = int(routing["round_robin_real_factor_default"])
+        if not 1 <= minimum <= default <= maximum:
+            raise ValueError(
+                "round-robin real factor default must be within the frozen bounds"
+            )
     synthesis = policy.get("synthesis", {})
     if synthesis.get("enabled"):
+        validate_synthesis_contract(synthesis)
         pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
         if not pool.is_dir():
             raise ValueError("enabled synthesis needs pool_dataset_root")

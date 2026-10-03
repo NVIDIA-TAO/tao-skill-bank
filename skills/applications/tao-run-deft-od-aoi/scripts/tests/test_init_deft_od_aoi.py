@@ -46,13 +46,39 @@ def _config(root: Path) -> Path:
     return path
 
 
+def _enable_synthesis(root: Path, config: Path) -> dict:
+    value = yaml.safe_load(config.read_text())
+    pool = root / "pool"
+    pool.mkdir()
+    clean = pool / "texture/clean_image/clean.png"
+    clean.parent.mkdir(parents=True)
+    clean.write_bytes(b"clean")
+    defect, checkpoint, recipe = (
+        root / "defect.jsonl", root / "adapter.pt", root / "recipe.yaml"
+    )
+    defect.write_text("{}\n")
+    checkpoint.write_bytes(b"adapter")
+    recipe.write_text("anomaly_types: []\n")
+    value["synthesis"] = {
+        "enabled": True,
+        "pool_dataset_root": str(pool),
+        "defect_spec": str(defect),
+        "routes": {"route": {"checkpoint": str(checkpoint), "recipe": str(recipe)}},
+    }
+    return value
+
+
 def _append_boxless_image(role: dict, name: str) -> None:
     images = Path(role["images"])
     image = images / f"{name}_boxless.png"
     image.write_bytes(b"boxless-image")
     coco = Path(role["coco"])
     data = json.loads(coco.read_text())
-    data["images"].append({"id": 2, "file_name": image.name, "width": 10, "height": 10})
+    row = {"id": 2, "file_name": image.name, "width": 10, "height": 10}
+    if name == "kpi":
+        row.update({"dataset_id": "line-a", "texture_id": "board",
+                    "defect_class": "bridge"})
+    data["images"].append(row)
     coco.write_text(json.dumps(data))
 
 
@@ -64,6 +90,93 @@ def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     assert Path(state["policy"]).is_file()
     assert Path(state["classmap"]).read_text() == "background\ndefect\n"
     assert state["roles"]["clean"]["annotation_count"] == 0
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+    assert policy["retrieval"]["preprocessing"]["profile"] == "square_context"
+    assert policy["retrieval"]["selection"]["strategy"] == "round_robin_similarity"
+    assert policy["retrieval"]["output_size"] == 224
+    assert policy["routing"]["round_robin_real_factor_default"] == 3
+    assert policy["routing"]["near_miss_real_cap_per_pocket"] == 20
+    assert "near_miss_real_cap" not in policy["routing"]
+
+
+def test_initialize_accepts_tight_context_preprocessing(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {
+        "preprocessing": {"profile": "tight_context"},
+        "output_size": "unused-by-tight-context",
+    }
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+    assert policy["retrieval"]["preprocessing"]["profile"] == "tight_context"
+
+
+def test_initialize_rejects_invalid_square_output_size(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {
+        "preprocessing": {"profile": "square_context"}, "output_size": 0,
+    }
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="output_size must be positive"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_rejects_unknown_preprocessing_profile(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {"preprocessing": {"profile": "unsupported_profile"}}
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="tight_context or square_context"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_accepts_max_similarity_selection(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {"selection": {"strategy": "max_similarity"}}
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+    assert policy["retrieval"]["selection"]["strategy"] == "max_similarity"
+
+
+def test_initialize_rejects_unknown_selection_strategy(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["retrieval"] = {"selection": {"strategy": "nearest"}}
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="unsupported retrieval selection strategy"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_rejects_round_robin_default_outside_factor_bounds(
+        tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["routing"] = {"round_robin_real_factor_default": 7}
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="default must be within the frozen bounds"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_initialize_rejects_obsolete_near_miss_cap_name(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["routing"] = {"near_miss_real_cap": 20}
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match="near_miss_real_cap_per_pocket"):
+        MODULE.initialize(config, tmp_path / "results")
 
 
 def test_initialize_accepts_explicit_checkpoint_baseline(tmp_path: Path) -> None:
@@ -73,6 +186,45 @@ def test_initialize_accepts_explicit_checkpoint_baseline(tmp_path: Path) -> None
     config.write_text(yaml.safe_dump(value))
     state = MODULE.initialize(config, tmp_path / "results")
     assert state["baseline_mode"] == "checkpoint"
+
+
+def test_initialize_preserves_legacy_synthetic_fraction_override(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = _enable_synthesis(tmp_path, config)
+    value["synthesis"]["cumulative_fraction_of_real_defects"] = 0.4
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+
+    assert policy["synthesis"]["cumulative_fraction_of_real_defects"] == 0.4
+    assert "cumulative_fraction_of_total_defects" not in policy["synthesis"]
+    assert policy["synthesis"]["fn_selection"] == {"mode": "all_eligible"}
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"fn_selection": {"mode": "external_plan"}}, "unsupported.*mode"),
+        ({"max_neighbors_per_fn": 0}, "max_neighbors_per_fn.*positive integer"),
+        ({"max_neighbors_per_fn": True}, "max_neighbors_per_fn.*positive integer"),
+        ({"max_neighbors_per_fn": 1.5}, "max_neighbors_per_fn.*positive integer"),
+        ({"fn_selection": {"mode": "generated_per_type_plan", "images_per_fn": 2}},
+         "images_per_fn is derived"),
+        ({"cumulative_fraction_of_total_defects": -0.1}, "must be in.*0, 1"),
+        ({"cumulative_fraction_of_total_defects": 1.0}, "must be in.*0, 1"),
+        ({"cumulative_fraction_of_total_defects": float("nan")}, "must be in.*0, 1"),
+    ],
+)
+def test_initialize_rejects_invalid_bounded_synthesis_contract(
+        tmp_path: Path, override: dict, message: str) -> None:
+    config = _config(tmp_path)
+    value = _enable_synthesis(tmp_path, config)
+    value["synthesis"] = MODULE._merge(value["synthesis"], override)
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match=message):
+        MODULE.initialize(config, tmp_path / "results")
 
 
 def test_initialize_rejects_automatic_baseline_selection(tmp_path: Path) -> None:

@@ -95,7 +95,7 @@ The loop composes existing bank actions:
 
 All specs are nested YAML dictionaries. Every GPU/Data Services action uses the
 selected platform's `submit/status/logs/cancel` contract and a job record.
-Stop on missing artifacts, role overlap, empty enabled mining, class drift, or
+Stop on missing or invalid artifacts, role overlap, class drift, or
 failed training. Never infer live state from the JSON record alone.
 
 ## Retrieval preparation
@@ -117,27 +117,51 @@ scripts/prepare_deft_od_aoi_retrieval.py queries \
   --output-dir "$ITER/retrieval"
 ```
 
-Omit `--previous-coco` only for iteration 1. Later iterations exclude every
-candidate crop whose source image is already present in the cumulative training
-COCO before unique-neighbor matching. Admission still performs the authoritative
-source-level deduplication gate.
-
 The candidate manifest records a zero count and emits no candidate parquet or
-embedding spec for an empty clean source role. Run every emitted embedding spec
-through `tao-generate-image-embeddings`, then
-each enabled mining spec through `tao-mine-od-images`. Defective candidates
-and gap queries use contextual crops; clean candidates use the frozen grid.
+embedding spec for an empty clean source role.
+
+Run every emitted embedding spec through `tao-generate-image-embeddings`.
+For `max_similarity`, run each emitted mining spec through
+`tao-mine-od-images`. For `round_robin_similarity`, materialize the selected
+artifacts after query embedding instead:
+
+```bash
+scripts/deft_od_aoi_round_robin_selection.py \
+  --policy "$RESULTS/deft_od_aoi_policy.yaml" \
+  --candidate-root "$RESULTS/candidates" \
+  --retrieval-root "$ITER/retrieval" \
+  --previous-coco "$PREVIOUS/train.json"
+```
+
+Omit `--previous-coco` for iteration 1. Later iterations exclude candidate
+crops whose source image is already in the cumulative training COCO, while
+admission remains the authoritative source-level deduplication gate. Both
+strategies must produce an
+enabled role's `mine_<role>/final_unique_files.parquet` before committing
+`iteration_retrieval`; round-robin also commits
+`round_robin_selection_report.json` as `selection_report` and
+`round_robin_admission_index.npy` as `admission_index`. Defective candidates
+and gap queries use the independently selected
+`retrieval.preprocessing.profile`:
+the default `square_context` mean-pads and resizes to 224×224, while
+`tight_context` preserves an aspect-ratio-aware native-size crop. Clean
+candidates use the same profile over the frozen grid.
 Strict FNs and loose near-miss FPs route to real data. Background-like loose
 FPs route only to the verified-clean role. Pass the prior cumulative COCO as
 `--previous-coco`; optional role-specific exclusion parquets use
 `--real-exclusions` and `--clean-exclusions`. Empty or fully excluded roles
 emit audited exhaustion evidence and no mining action. If every producer is
 exhausted and synthesis is not pending, the stage records convergence.
+The independent `retrieval.selection.strategy` defaults to
+`round_robin_similarity`, which balances candidates across stable per-query
+rank rounds and pocket-scoped quotas. `max_similarity` retains the global
+maximum-similarity path.
 
 ## Admission and cumulative COCO
 
-After both enabled miners complete, admit their selected candidate crops back
-to unique source images and publish the next cumulative dataset:
+After each enabled role has a committed selection artifact, admit its selected
+candidate crops back to unique source images and publish the next cumulative
+dataset:
 
 ```bash
 scripts/admit_deft_od_aoi_coco.py \
@@ -148,10 +172,13 @@ scripts/admit_deft_od_aoi_coco.py \
   --output-dir "$ITER/training_data"
 ```
 
-Omit `--previous-coco` only for iteration 1. The helper recomputes maximum
-cosine similarity from the frozen candidate/query embeddings, applies the
-minimum similarity, deduplicates crop hits to source images, excludes prior
-sources, and caps cumulative clean negatives against cumulative real defects.
+Omit `--previous-coco` only for iteration 1. For `max_similarity`, the helper
+recomputes maximum cosine similarity from the frozen candidate/query
+embeddings. For `round_robin_similarity`, it consumes the committed per-query
+selection, screened boxes, audit report, and admission index without rerunning
+selection, then publishes `admission_index.npy` for the next iteration. Both paths apply the
+minimum similarity upstream, deduplicate crop hits to source images, exclude
+prior sources, and cap cumulative clean negatives against cumulative real defects.
 It retains every prior image and box and emits one binary COCO with explicit
 zero-annotation clean images. Use `--link-mode hardlink` only when source and
 output share a filesystem; portable staging should keep the copy default.
@@ -248,8 +275,24 @@ FN/annotation matches:
 scripts/prepare_deft_od_aoi_synthesis.py \
   --policy "$RESULTS/deft_od_aoi_policy.yaml" \
   --strict-gaps "$MEASURE/gap_strict/box_gaps.parquet" \
+  --iteration 1 \
+  --real-coco "$ITER/admission/train.json" \
   --output-dir "$ITER/synthesis_request"
 ```
+
+The default `synthesis.fn_selection.mode: generated_per_type_plan` bounds work
+from the current admitted real COCO. It derives a deterministic per-type plan
+from `cumulative_fraction_of_total_defects`, writes and hashes the plan, and
+records the full allocation calculation. A fraction of `0.25` means synthetic
+images are 25% of the combined real-plus-synthetic defect pool. Set the mode to
+`all_eligible` explicitly to preserve every routed FN without pre-generation
+budgeting.
+
+The planner derives the finalized yield as `2 * max_neighbors_per_fn`: the
+finalizer emits two fixed mask branches and requests one image from each branch
+for every retained neighbor. `candidate_topn` only supplies fallback neighbor
+candidates and does not enter this calculation. The derived value is recorded
+as `images_per_fn` in the frozen plan evidence; it is not a policy input.
 
 Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
 then its finalized generation plan through `tao-generate-od-defects`. Commit
@@ -258,10 +301,19 @@ generation root via `--generation-root`; admission resolves the declared
 logical `binary_coco` output instead of hardcoding its filename. Synthetic
 categories are folded to `defect`, and
 the frozen cumulative fraction cap is applied against admitted real defects.
-For this second pass, provide the same-iteration real admission as
-`--previous-coco` and set `--synthetic-only`; synthetic inputs do not
-implicitly turn off mining admission.
-Boxes alone never substitute for the required pixel mask. If the request has no
+Commit initial admission before requesting synthesis. The stage controller
+uses its calculated synthetic capacity: zero room records a
+`no_synthetic_budget` skip and bypasses iteration synthesis. Train only when
+this iteration admitted new images; otherwise converge. Positive capacity
+can remain from prior real admissions even without new real matches.
+The post-generation cap and quality checks still apply when synthesis runs;
+provide the same-iteration real admission as `--previous-coco` and set
+`--synthetic-only` so synthetic inputs do not implicitly rerun mining admission.
+`SYNTHETIC_ADMISSION_CAPPED` reports eligible generated images excluded by the
+cap. See `references/pipeline.md` for budget-skip evidence. A zero cumulative
+real count permits zero synthetic admissions.
+
+Boxes never substitute for the required pixel mask. If the request has no
 routed FNs, or preparation reports no mask-eligible FNs, commit that typed skip
 contract as `iteration_synthesis` and continue to training without running AMP
 or fabricating generation/admission success. Missing or empty AnomalyGen clean
