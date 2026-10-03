@@ -25,10 +25,10 @@ actions:
       published_root: {type: folder, optional: true}
     outputs:
       results_dir: {type: folder}
-      validation_summary: {type: file}
-      native_coco: {type: file}
-      binary_coco: {type: file}
-      status: {type: file}
+      validation_summary: {type: file, relative_path: validation_summary.json}
+      native_coco: {type: file, relative_path: pseudo_labels/coco_annotations.json}
+      binary_coco: {type: file, relative_path: pseudo_labels/coco_annotations_od_defect.json}
+      status: {type: file, relative_path: status.json}
     upload_excludes:
     - inputs/
     args:
