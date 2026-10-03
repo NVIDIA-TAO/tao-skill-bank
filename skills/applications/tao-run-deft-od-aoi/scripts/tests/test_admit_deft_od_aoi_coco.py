@@ -3,18 +3,29 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from PIL import Image
 
 
 SCRIPT = Path(__file__).parents[1] / "admit_deft_od_aoi_coco.py"
+sys.path.insert(0, str(SCRIPT.parent))
 SPEC = importlib.util.spec_from_file_location("admit_deft_od_aoi_coco", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
+SELECTION_SCRIPT = SCRIPT.parent / "deft_od_aoi_round_robin_selection.py"
+SELECTION_SPEC = importlib.util.spec_from_file_location(
+    "deft_od_aoi_round_robin_selection_test", SELECTION_SCRIPT
+)
+SELECTION_MODULE = importlib.util.module_from_spec(SELECTION_SPEC)
+assert SELECTION_SPEC.loader
+SELECTION_SPEC.loader.exec_module(SELECTION_MODULE)
 
 
 def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
@@ -24,7 +35,7 @@ def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
     sources = {}
     for role in ("real", "clean"):
         image = root / f"{role}.png"
-        image.write_bytes(role.encode())
+        Image.fromarray(np.full((16, 16), 80, dtype=np.uint8)).save(image)
         annotations = ([{"id": 5, "image_id": 1, "category_id": 1,
                          "bbox": [1, 1, 4, 4], "area": 16}] if role == "real" else [])
         coco = root / f"{role}.json"
@@ -48,13 +59,18 @@ def _fixture(root: Path, similarity: float = 1.0) -> tuple[Path, Path, Path]:
         pd.DataFrame([{"filepath": crop}]).to_parquet(mine / "final_unique_files.parquet")
     policy = root / "policy.yaml"
     policy.write_text(yaml.safe_dump({"sources": sources,
-                                      "retrieval": {"minimum_similarity": 0.5},
+                                      "retrieval": {
+                                          "selection": {"strategy": "max_similarity"},
+                                          "minimum_similarity": 0.5,
+                                      },
                                       "routing": {"clean_cumulative_cap_per_real": 1.0},
                                       "admission": {"minimum_box_area_px": 4,
                                                     "maximum_box_aspect": 25.0},
                                       "synthesis": {"cumulative_fraction_of_real_defects": 1.0}}))
     (retrieval_root / "query_manifest.json").write_text(
-        json.dumps({"iteration": 1, "enabled_roles": ["real", "clean"],
+        json.dumps({"status": "COMPLETE", "iteration": 1,
+                    "query_counts": {"real": 1, "clean": 1},
+                    "enabled_roles": ["real", "clean"],
                     "admission_targets": {"real": {"fn": 1, "near_miss_fp": 0},
                                           "clean": {"background_fp": 1}},
                     "requested_crop_counts": {"real": 15, "clean": 15}})
@@ -121,6 +137,48 @@ def test_clean_admission_uses_cumulative_real_capacity_after_real_mining_exhaust
     assert report["admitted"] == {"real": 0, "clean": 1, "synthetic": 0}
     assert report["by_kind"] == {"real_defect": 1, "clean_negative": 1,
                                  "synthetic_defect": 0}
+
+
+def test_round_robin_admission_consumes_materialized_selection(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value["retrieval"].update({
+        "selection": {"strategy": "round_robin_similarity"},
+        "candidate_overfetch": 2, "audit_top_k_per_query": 20,
+    })
+    value["routing"].update({
+        "real_mine_factor_min": 1, "near_miss_real_factor": 2,
+        "near_miss_real_cap_per_pocket": 20, "clean_factor": 2,
+    })
+    policy.write_text(yaml.safe_dump(value))
+    for role in ("real", "clean"):
+        candidate_path = candidates / f"{role}_candidate_embeddings.parquet"
+        frame = pd.read_parquet(candidate_path)
+        frame["candidate_id"] = f"{role}-candidate"
+        frame.to_parquet(candidate_path, index=False)
+    real_queries = pd.read_parquet(retrieval / "real_query_embeddings.parquet")
+    real_queries = real_queries.assign(
+        query_id="real-query", reason="fn", dataset_id="line-a", texture_id="board",
+        defect_class="bridge", real_factor=1,
+    )
+    real_queries.to_parquet(retrieval / "real_query_embeddings.parquet", index=False)
+    clean_queries = pd.read_parquet(retrieval / "clean_query_embeddings.parquet")
+    clean_queries = clean_queries.assign(query_id="clean-query", reason="background_fp")
+    clean_queries.to_parquet(retrieval / "clean_query_embeddings.parquet", index=False)
+    for role in ("real", "clean"):
+        (retrieval / f"mine_{role}/final_unique_files.parquet").unlink()
+    selection = SELECTION_MODULE.materialize(policy, candidates, retrieval)
+
+    report = MODULE.admit(
+        policy, candidates, retrieval, tmp_path / "out", None, "copy"
+    )
+
+    assert report["selection_strategy"] == "round_robin_similarity"
+    assert report["admitted"] == {"real": 1, "clean": 1, "synthetic": 0}
+    assert [row["admitted"] for row in report["selection_audit"]["branches"]] == [1, 1]
+    assert selection["selected_counts"] == {"real": 1, "clean": 1}
+    assert (tmp_path / "out/admission_index.npy").is_file()
+    assert report["selection_admission_counters"]["admitted"] == 2
 
 
 def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: Path) -> None:

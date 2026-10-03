@@ -103,6 +103,17 @@ def _selected(role: str, reason: str, desired: int, excluded: set[str],
     return selected.to_dict("records"), stats
 
 
+def _round_robin_selected(role: str, retrieval_root: Path) -> list[dict[str, Any]]:
+    mined = retrieval_root / f"mine_{role}" / "final_unique_files.parquet"
+    if not mined.is_file():
+        raise FileNotFoundError(f"enabled {role} selection output is missing: {mined}")
+    chosen = pd.read_parquet(mined)
+    required = {"filepath", "source_filepath", "similarity", "query_id"}
+    if chosen.empty or not required.issubset(chosen):
+        raise ValueError(f"enabled {role} round-robin selection output is invalid")
+    return chosen.drop_duplicates("source_filepath").to_dict("records")
+
+
 def _source_index(policy: dict[str, Any], role: str) -> dict[str, dict[str, Any]]:
     source = policy["sources"][role]
     images = Path(source["images"])
@@ -241,45 +252,77 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     if synthetic_only and (previous_path is None or synthetic_coco is None):
         raise ValueError("--synthetic-only requires --previous-coco and synthetic inputs")
     enabled = set() if synthetic_only else set(manifest["enabled_roles"])
-    targets = manifest.get("admission_targets") or {}
     indexes = {role: _source_index(policy, role) for role in enabled}
+    strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get(
+        "strategy", "round_robin_similarity"
+    )
+    selection_audit = None
+    selection_index = None
+    targets = manifest.get("admission_targets") or {}
     additions: dict[str, list[dict[str, Any]]] = {role: [] for role in enabled}
     preview: dict[str, Any] = {
         "status": "PASS", "iteration": int(manifest["iteration"]),
         "mining_admission": "skipped" if synthetic_only else "evaluated", "roles": {},
     }
     minimum = float(policy["retrieval"]["minimum_similarity"])
-    for role, reasons in (("real", ("fn", "near_miss_fp")),):
-        if role not in enabled:
-            continue
-        excluded = set(existing_sources)
-        branches = {}
-        for reason in reasons:
-            selected, stats = _selected(
-                role, reason, int((targets.get(role) or {}).get(reason, 0)), excluded,
-                candidate_root, retrieval_root, minimum,
-            )
-            additions[role].extend(selected)
-            excluded.update(str(Path(row["source_filepath"]).resolve()) for row in selected)
-            branches[reason] = stats
-        preview["roles"][role] = {
-            "requested_crop_count": int((manifest.get("requested_crop_counts") or {}).get(role, 0)),
-            "branches": branches,
+    if strategy == "round_robin_similarity":
+        selection_report = json.loads(
+            (retrieval_root / "round_robin_selection_report.json").read_text()
+        )
+        if (selection_report.get("status") != "COMPLETE"
+                or int(selection_report.get("iteration", -1)) != int(manifest["iteration"])
+                or selection_report.get("selection_strategy") != strategy):
+            raise ValueError("round-robin selection report is incomplete or mismatched")
+        selection_audit = selection_report.get("audit")
+        selection_index = retrieval_root / "round_robin_admission_index.npy"
+        if (selection_report.get("admission_index") != str(selection_index)
+                or not selection_index.is_file()):
+            raise ValueError("round-robin admission index is missing or mismatched")
+        additions = {
+            role: _round_robin_selected(role, retrieval_root) for role in enabled
         }
+    else:
+        if "real" in enabled:
+            excluded = set(existing_sources)
+            branches = {}
+            for reason in ("fn", "near_miss_fp"):
+                selected, stats = _selected(
+                    "real", reason, int((targets.get("real") or {}).get(reason, 0)),
+                    excluded, candidate_root, retrieval_root, minimum,
+                )
+                additions["real"].extend(selected)
+                excluded.update(
+                    str(Path(row["source_filepath"]).resolve()) for row in selected
+                )
+                branches[reason] = stats
+            preview["roles"]["real"] = {
+                "requested_crop_count": int(
+                    (manifest.get("requested_crop_counts") or {}).get("real", 0)
+                ),
+                "branches": branches,
+            }
+    for role in additions:
+        additions[role] = [row for row in additions[role]
+                           if str(Path(row["source_filepath"]).resolve()) not in existing_sources]
     real_total = by_kind["real_defect"] + len(additions.get("real", []))
     clean_limit = int(real_total * float(policy["routing"]["clean_cumulative_cap_per_real"]))
     clean_room = max(0, clean_limit - by_kind["clean_negative"])
     if "clean" in enabled:
-        clean_target = (targets.get("clean") or {}).get("background_fp")
-        desired = min(int(clean_target) if clean_target is not None else clean_room,
-                      clean_room)
-        selected, stats = _selected("clean", "background_fp", desired, existing_sources,
-                                    candidate_root, retrieval_root, minimum)
-        additions["clean"] = selected
-        preview["roles"]["clean"] = {
-            "requested_crop_count": int((manifest.get("requested_crop_counts") or {}).get("clean", 0)),
-            "branches": {"background_fp": stats},
-        }
+        if strategy == "round_robin_similarity":
+            additions["clean"] = additions.get("clean", [])[:clean_room]
+        else:
+            clean_target = (targets.get("clean") or {}).get("background_fp")
+            desired = min(int(clean_target) if clean_target is not None else clean_room,
+                          clean_room)
+            selected, stats = _selected("clean", "background_fp", desired, existing_sources,
+                                        candidate_root, retrieval_root, minimum)
+            additions["clean"] = selected
+            preview["roles"]["clean"] = {
+                "requested_crop_count": int(
+                    (manifest.get("requested_crop_counts") or {}).get("clean", 0)
+                ),
+                "branches": {"background_fp": stats},
+            }
     for role, rows in additions.items():
         missing = [str(Path(row["source_filepath"]).resolve()) for row in rows
                    if str(Path(row["source_filepath"]).resolve()) not in indexes[role]]
@@ -291,7 +334,7 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
             indexes[role][str(Path(row["source_filepath"]).resolve())]["dataset_id"]
             for row in rows
         )
-        preview["roles"][role]["per_dataset"] = dict(sorted(counts.items()))
+        preview["roles"].setdefault(role, {})["per_dataset"] = dict(sorted(counts.items()))
     if enabled and not any(additions.get(role) for role in enabled) and not previous.get("images"):
         raise ValueError("mining admitted no source images")
 
@@ -326,13 +369,21 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
                str(image["deft_kind"]), image.get("retrieval_similarity"))
     admitted_rows = []
     for role, kind in (("real", "real_defect"), ("clean", "clean_negative")):
-        index = _source_index(policy, role)
+        index = indexes.get(role, {})
         for selected in additions.get(role, []):
             source = Path(str(selected["source_filepath"])).resolve()
             if str(source) not in index:
                 raise ValueError(f"selected {role} source is absent from its frozen COCO: {source}")
             row = index[str(source)]
-            append(source, row["image"], row["annotations"], kind, float(selected["similarity"]))
+            source_annotations = row["annotations"]
+            if role == "real" and selected.get("admission_boxes") is not None:
+                source_annotations = [
+                    {"bbox": [float(value) for value in box],
+                     "area": float(box[2] * box[3]), "iscrowd": 0}
+                    for box in selected["admission_boxes"]
+                ]
+            append(source, row["image"], source_annotations, kind,
+                   float(selected["similarity"]))
             admitted_rows.append({"source_filepath": str(source), "kind": kind,
                                   "similarity": float(selected["similarity"])})
     synthetic_admitted = 0
@@ -377,7 +428,19 @@ def admit(policy_path: Path, candidate_root: Path, retrieval_root: Path, output:
     pd.DataFrame(admitted_rows, columns=["source_filepath", "kind", "similarity"]).to_parquet(
         output / "admitted_sources.parquet", index=False
     )
+    if selection_index is not None:
+        shutil.copy2(selection_index, output / "admission_index.npy")
     report = {"status": "COMPLETE", "iteration": int(manifest["iteration"]),
+              "selection_strategy": strategy,
+              "selection_audit": selection_audit,
+              "selection_admission_counters": (
+                  selection_report.get("admission_counters")
+                  if strategy == "round_robin_similarity" else None
+              ),
+              "admission_index": (
+                  str(output / "admission_index.npy")
+                  if strategy == "round_robin_similarity" else None
+              ),
               "retained_previous_images": len(previous.get("images", [])),
               "admitted": {"real": len(additions.get("real", [])),
                            "clean": len(additions.get("clean", [])),

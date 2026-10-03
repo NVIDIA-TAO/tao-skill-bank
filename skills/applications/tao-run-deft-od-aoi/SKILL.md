@@ -117,27 +117,51 @@ scripts/prepare_deft_od_aoi_retrieval.py queries \
   --output-dir "$ITER/retrieval"
 ```
 
-Omit `--previous-coco` only for iteration 1. Later iterations exclude every
-candidate crop whose source image is already present in the cumulative training
-COCO before unique-neighbor matching. Admission still performs the authoritative
-source-level deduplication gate.
-
 The candidate manifest records a zero count and emits no candidate parquet or
-embedding spec for an empty clean source role. Run every emitted embedding spec
-through `tao-generate-image-embeddings`, then
-each enabled mining spec through `tao-mine-od-images`. Defective candidates
-and gap queries use contextual crops; clean candidates use the frozen grid.
+embedding spec for an empty clean source role.
+
+Run every emitted embedding spec through `tao-generate-image-embeddings`.
+For `max_similarity`, run each emitted mining spec through
+`tao-mine-od-images`. For `round_robin_similarity`, materialize the selected
+artifacts after query embedding instead:
+
+```bash
+scripts/deft_od_aoi_round_robin_selection.py \
+  --policy "$RESULTS/deft_od_aoi_policy.yaml" \
+  --candidate-root "$RESULTS/candidates" \
+  --retrieval-root "$ITER/retrieval" \
+  --previous-coco "$PREVIOUS/train.json"
+```
+
+Omit `--previous-coco` for iteration 1. Later iterations exclude candidate
+crops whose source image is already in the cumulative training COCO, while
+admission remains the authoritative source-level deduplication gate. Both
+strategies must produce an
+enabled role's `mine_<role>/final_unique_files.parquet` before committing
+`iteration_retrieval`; round-robin also commits
+`round_robin_selection_report.json` as `selection_report` and
+`round_robin_admission_index.npy` as `admission_index`. Defective candidates
+and gap queries use the independently selected
+`retrieval.preprocessing.profile`:
+the default `square_context` mean-pads and resizes to 224×224, while
+`tight_context` preserves an aspect-ratio-aware native-size crop. Clean
+candidates use the same profile over the frozen grid.
 Strict FNs and loose near-miss FPs route to real data. Background-like loose
 FPs route only to the verified-clean role. Pass the prior cumulative COCO as
 `--previous-coco`; optional role-specific exclusion parquets use
 `--real-exclusions` and `--clean-exclusions`. Empty or fully excluded roles
 emit audited exhaustion evidence and no mining action. If every producer is
 exhausted and synthesis is not pending, the stage records convergence.
+The independent `retrieval.selection.strategy` defaults to
+`round_robin_similarity`, which balances candidates across stable per-query
+rank rounds and pocket-scoped quotas. `max_similarity` retains the global
+maximum-similarity path.
 
 ## Admission and cumulative COCO
 
-After both enabled miners complete, admit their selected candidate crops back
-to unique source images and publish the next cumulative dataset:
+After each enabled role has a committed selection artifact, admit its selected
+candidate crops back to unique source images and publish the next cumulative
+dataset:
 
 ```bash
 scripts/admit_deft_od_aoi_coco.py \
@@ -148,10 +172,13 @@ scripts/admit_deft_od_aoi_coco.py \
   --output-dir "$ITER/training_data"
 ```
 
-Omit `--previous-coco` only for iteration 1. The helper recomputes maximum
-cosine similarity from the frozen candidate/query embeddings, applies the
-minimum similarity, deduplicates crop hits to source images, excludes prior
-sources, and caps cumulative clean negatives against cumulative real defects.
+Omit `--previous-coco` only for iteration 1. For `max_similarity`, the helper
+recomputes maximum cosine similarity from the frozen candidate/query
+embeddings. For `round_robin_similarity`, it consumes the committed per-query
+selection, screened boxes, audit report, and admission index without rerunning
+selection, then publishes `admission_index.npy` for the next iteration. Both paths apply the
+minimum similarity upstream, deduplicate crop hits to source images, exclude
+prior sources, and cap cumulative clean negatives against cumulative real defects.
 It retains every prior image and box and emits one binary COCO with explicit
 zero-annotation clean images. Use `--link-mode hardlink` only when source and
 output share a filesystem; portable staging should keep the copy default.
