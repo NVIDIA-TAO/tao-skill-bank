@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,7 @@ from PIL import Image, ImageOps, ImageStat
 
 
 MIN_EMBEDDING_EDGE = 8
+PREPROCESSING_PROFILES = {"tight_context", "square_context"}
 
 
 def _json(path: Path, value: Any) -> None:
@@ -88,12 +91,16 @@ def _minimum_crop_geometry(
     return (x1, y1, x2, y2), (left, top, right, bottom)
 
 
+def _display_image(source: Path) -> Image.Image:
+    with Image.open(source) as opened:
+        return ImageOps.exif_transpose(opened).convert("RGB")
+
+
 def _crop(source: Path, box: tuple[int, int, int, int], output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    with Image.open(source) as image:
-        image = ImageOps.exif_transpose(image)
+    with _display_image(source) as image:
         crop_box, padding = _minimum_crop_geometry(box, image.width, image.height)
-        crop = image.convert("RGB").crop(crop_box)
+        crop = image.crop(crop_box)
         if any(padding):
             mean = tuple(int(round(value)) for value in ImageStat.Stat(crop).mean[:3])
             crop = ImageOps.expand(crop, border=padding, fill=mean)
@@ -101,8 +108,95 @@ def _crop(source: Path, box: tuple[int, int, int, int], output: Path) -> None:
 
 
 def _size(source: Path) -> tuple[int, int]:
-    with Image.open(source) as image:
-        return ImageOps.exif_transpose(image).size
+    with _display_image(source) as image:
+        return image.size
+
+
+def _preprocessing(policy: dict[str, Any]) -> tuple[str, int | None]:
+    retrieval = policy["retrieval"]
+    # Policies frozen before profiles existed used the original tight-context
+    # geometry; new policies explicitly select the square-context default.
+    profile = str((retrieval.get("preprocessing") or {}).get("profile", "tight_context"))
+    if profile not in PREPROCESSING_PROFILES:
+        raise ValueError(
+            "retrieval.preprocessing.profile must be tight_context or square_context"
+        )
+    output_size = None
+    if profile == "square_context":
+        output_size = int(retrieval.get("output_size", 224))
+        if output_size < 1:
+            raise ValueError("retrieval.output_size must be positive")
+    return profile, output_size
+
+
+def _save_square(image: Image.Image, output: Path, size: int) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    image.convert("RGB").resize((size, size), Image.Resampling.BICUBIC).save(
+        temporary, format="PNG", optimize=False
+    )
+    os.replace(temporary, output)
+
+
+def _mean_pad_square(image: Image.Image) -> Image.Image:
+    image = image.convert("RGB")
+    side = max(image.size)
+    mean = tuple(int(round(value)) for value in ImageStat.Stat(image).mean[:3])
+    canvas = Image.new("RGB", (side, side), mean)
+    canvas.paste(image, ((side - image.width) // 2, (side - image.height) // 2))
+    return canvas
+
+
+def _square_context_crop(source: Path, bbox: Any, scale: float, output: Path,
+                         size: int) -> None:
+    x, y, width, height = map(float, bbox)
+    if width <= 0 or height <= 0:
+        raise ValueError(f"non-positive bbox: {bbox}")
+    with _display_image(source) as image:
+        side = max(1, int(math.ceil(max(width, height) * scale)))
+        center_x, center_y = x + width / 2.0, y + height / 2.0
+        left = int(math.floor(center_x - side / 2.0))
+        top = int(math.floor(center_y - side / 2.0))
+        clipped = (
+            max(0, left), max(0, top), min(image.width, left + side),
+            min(image.height, top + side),
+        )
+        if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
+            raise ValueError(f"bbox context lies outside image: {bbox}")
+        visible = image.crop(clipped)
+        mean = tuple(int(round(value)) for value in ImageStat.Stat(visible).mean[:3])
+        canvas = Image.new("RGB", (side, side), mean)
+        canvas.paste(visible, (clipped[0] - left, clipped[1] - top))
+        _save_square(canvas, output, size)
+
+
+def _square_grid_crops(source: Path, grids: list[int], output: Path,
+                       image_id: Any, size: int) -> list[tuple[str, Path]]:
+    rows = []
+    with _display_image(source) as image:
+        for grid in grids:
+            if grid < 1:
+                raise ValueError("clean grid values must be positive")
+            for row in range(grid):
+                for column in range(grid):
+                    box = (
+                        round(column * image.width / grid),
+                        round(row * image.height / grid),
+                        round((column + 1) * image.width / grid),
+                        round((row + 1) * image.height / grid),
+                    )
+                    crop_id = f"clean:{image_id}:g{grid}:r{row}:c{column}"
+                    crop = output / "crops" / "clean" / (
+                        f"image_{image_id}_g{grid}_r{row}_c{column}.png"
+                    )
+                    _save_square(_mean_pad_square(image.crop(box)), crop, size)
+                    rows.append((crop_id, crop))
+    return rows
+
+
+def _gap_xywh(value: Any, width: int, height: int) -> list[float]:
+    x1, y1, x2, y2 = _gap_box(value, width, height, 1.0)
+    return [x1, y1, x2 - x1, y2 - y1]
 
 
 def _embedding_spec(policy: dict[str, Any], input_path: Path, output: Path) -> dict[str, Any]:
@@ -170,10 +264,49 @@ def _candidate_counts(root: Path) -> dict[str, int]:
     return counts
 
 
+def _validate_candidate_manifest(
+    policy: dict[str, Any], candidate_root: Path, profile: str, output_size: int | None
+) -> None:
+    path = candidate_root / "candidate_manifest.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"candidate cache lacks manifest: {path}")
+    manifest = json.loads(path.read_text())
+    if manifest.get("status") != "COMPLETE":
+        raise ValueError("candidate cache manifest is not COMPLETE")
+    # Manifests written before profiles existed used the original tight-context
+    # geometry; new candidate caches always record their selected profile.
+    cached_profile = str(manifest.get("preprocessing_profile") or "tight_context")
+    if cached_profile != profile:
+        raise ValueError(
+            f"candidate cache preprocessing profile {cached_profile!r} "
+            f"does not match policy {profile!r}"
+        )
+    cached = manifest.get("encoder") or {}
+    current = policy["retrieval"]
+    checks: dict[str, Any] = {
+        "model": current.get("model"),
+        "model_path": current.get("model_path"),
+        "defect_context_scale": current.get("defect_context_scale"),
+        "clean_grids": [int(value) for value in current.get("clean_grids", [])],
+    }
+    if profile == "square_context":
+        checks["output_size"] = output_size
+    mismatched = [
+        key for key, value in checks.items()
+        if cached.get(key) != value
+    ]
+    if mismatched:
+        raise ValueError(
+            "candidate cache encoder/preprocessing settings do not match policy: "
+            + ", ".join(mismatched)
+        )
+
+
 def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
+    profile, output_size = _preprocessing(policy)
     output.mkdir(parents=True)
     result: dict[str, int] = {}
     role_status: dict[str, dict[str, Any]] = {}
@@ -185,34 +318,69 @@ def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
         for annotation in coco.get("annotations", []):
             annotations.setdefault(int(annotation["image_id"]), []).append(annotation)
         rows = []
-        for image_row in coco["images"]:
+        image_rows = (
+            sorted(coco["images"], key=lambda row: str(row["id"]))
+            if profile == "square_context" else coco["images"]
+        )
+        for image_row in image_rows:
             source_path = _source(images, image_row)
             width, height = _size(source_path)
             if role == "real":
-                for annotation in annotations.get(int(image_row["id"]), []):
-                    box = _box(annotation["bbox"], width, height,
-                               float(policy["retrieval"]["defect_context_scale"]))
-                    crop_id = "real-" + _id(source_path, annotation["id"], box)
-                    crop = output / "crops" / role / f"{crop_id}.png"
-                    _crop(source_path, box, crop)
+                image_annotations = annotations.get(int(image_row["id"]), [])
+                if profile == "square_context":
+                    image_annotations = sorted(
+                        image_annotations, key=lambda row: str(row["id"])
+                    )
+                for annotation in image_annotations:
+                    if profile == "square_context":
+                        crop_id = f"defect:{image_row['id']}:{annotation['id']}"
+                        crop = output / "crops" / role / (
+                            f"image_{image_row['id']}_ann_{annotation['id']}.png"
+                        )
+                        _square_context_crop(
+                            source_path, annotation["bbox"],
+                            float(policy["retrieval"]["defect_context_scale"]),
+                            crop, output_size,
+                        )
+                    else:
+                        box = _box(annotation["bbox"], width, height,
+                                   float(policy["retrieval"]["defect_context_scale"]))
+                        crop_id = "real-" + _id(source_path, annotation["id"], box)
+                        crop = output / "crops" / role / f"{crop_id}.png"
+                        _crop(source_path, box, crop)
                     rows.append({"filepath": str(crop), "source_filepath": str(source_path),
                                  "source_image_id": int(image_row["id"]), "role": role,
                                  "candidate_id": crop_id, "source_bbox": annotation["bbox"]})
+            elif role == "clean":
+                if profile == "square_context":
+                    for crop_id, crop in _square_grid_crops(
+                            source_path,
+                            [int(value) for value in policy["retrieval"]["clean_grids"]],
+                            output, image_row["id"], output_size):
+                        rows.append({"filepath": str(crop),
+                                     "source_filepath": str(source_path),
+                                     "source_image_id": int(image_row["id"]), "role": role,
+                                     "candidate_id": crop_id, "source_bbox": None})
+                else:
+                    for grid in policy["retrieval"]["clean_grids"]:
+                        grid = int(grid)
+                        if grid < 1:
+                            raise ValueError("clean grid values must be positive")
+                        for row in range(grid):
+                            for column in range(grid):
+                                box = (column * width // grid, row * height // grid,
+                                       (column + 1) * width // grid,
+                                       (row + 1) * height // grid)
+                                crop_id = "clean-" + _id(source_path, grid, row, column)
+                                crop = output / "crops" / role / f"{crop_id}.png"
+                                _crop(source_path, box, crop)
+                                rows.append({"filepath": str(crop),
+                                             "source_filepath": str(source_path),
+                                             "source_image_id": int(image_row["id"]),
+                                             "role": role, "candidate_id": crop_id,
+                                             "source_bbox": None})
             else:
-                for grid in policy["retrieval"]["clean_grids"]:
-                    grid = int(grid)
-                    if grid < 1:
-                        raise ValueError("clean grid values must be positive")
-                    for row in range(grid):
-                        for column in range(grid):
-                            box = (column * width // grid, row * height // grid,
-                                   (column + 1) * width // grid, (row + 1) * height // grid)
-                            crop_id = "clean-" + _id(source_path, grid, row, column)
-                            crop = output / "crops" / role / f"{crop_id}.png"
-                            _crop(source_path, box, crop)
-                            rows.append({"filepath": str(crop), "source_filepath": str(source_path),
-                                         "source_image_id": int(image_row["id"]), "role": role,
-                                         "candidate_id": crop_id, "source_bbox": None})
+                raise ValueError(f"unsupported candidate role: {role}")
         frame = pd.DataFrame(rows)
         if frame.empty:
             result[role] = 0
@@ -230,7 +398,8 @@ def candidates(policy_path: Path, output: Path) -> dict[str, Any]:
                  "message": f"{role} retrieval has zero candidates; embedding and mining are disabled"}
                 for role, evidence in role_status.items() if evidence["status"] == "EXHAUSTED"]
     report = {"status": "COMPLETE", "counts": result, "role_status": role_status,
-              "warnings": warnings, "encoder": policy["retrieval"]}
+              "warnings": warnings, "encoder": policy["retrieval"],
+              "preprocessing_profile": profile}
     _json(output / "candidate_manifest.json", report)
     return report
 
@@ -258,6 +427,8 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
+    profile, output_size = _preprocessing(policy)
+    _validate_candidate_manifest(policy, candidate_root, profile, output_size)
     strict, loose = pd.read_parquet(strict_path), pd.read_parquet(loose_path)
     required = {"filepath", "gap_type", "bbox", "best_iou"}
     for label, frame in (("strict", strict), ("loose", loose)):
@@ -291,11 +462,20 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
             if role == "real" and "unknown" in pockets[str(source)].values():
                 raise ValueError(f"gap image lacks frozen pocket metadata: {source}")
             width, height = _size(source)
-            box = _gap_box(event["bbox"], width, height,
-                           float(policy["retrieval"]["defect_context_scale"]))
+            if profile == "square_context":
+                box = _gap_xywh(event["bbox"], width, height)
+            else:
+                box = _gap_box(event["bbox"], width, height,
+                               float(policy["retrieval"]["defect_context_scale"]))
             query_id = f"iter{iteration}-{role}-" + _id(source, event["bbox"], reason, index)
             crop = output / "crops" / role / f"{query_id}.png"
-            _crop(source, box, crop)
+            if profile == "square_context":
+                _square_context_crop(
+                    source, box, float(policy["retrieval"]["defect_context_scale"]),
+                    crop, output_size,
+                )
+            else:
+                _crop(source, box, crop)
             rows.append({"filepath": str(crop), "query_id": query_id, "role": role,
                          "reason": reason, "source_filepath": str(source),
                          "source_bbox": event["bbox"], "best_iou": float(event["best_iou"]),
@@ -426,6 +606,7 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
               "enabled_roles": enabled, "role_status": role_status,
               "converged": not enabled and not synthesis_pending,
               "synthesis_pending": synthesis_pending,
+              "preprocessing_profile": profile,
               "admission_targets": targets, "requested_crop_counts": requested,
               "excluded_candidate_crops": excluded_candidate_crops,
               "excluded_source_images": excluded_source_images,
