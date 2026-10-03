@@ -15,7 +15,7 @@ import yaml
 
 
 FINETUNE_INPUTS = ("dataset_root", "validation_testcase", "base_checkpoint",
-                   "vae_path", "nn_backbone", "result_handoff")
+                   "vae_path", "checkpoint_root", "result_handoff")
 
 
 def _sha(path: Path) -> str:

@@ -34,8 +34,10 @@ VALIDATION/testcase.jsonl
 ```
 
 Also supply the Cosmos3-Nano base checkpoint directory, `Wan2.2_VAE.pth`, and
-a local `facebook/dinov2-large` checkpoint directory. The validation JSONL must
-contain `image_filename`, `mask_filename`, and `anomaly_type`; each trained
+a complete checkpoint root containing the required Qwen tokenizer model assets
+under `hf/` plus `facebook/dinov2-large/` for validation. The `hf/` directory
+name is part of the upstream image's fixed checkpoint layout. The validation
+JSONL must contain `image_filename`, `mask_filename`, and `anomaly_type`; each trained
 `TEXTURE+DEFECT` needs at least three rows. A separately stored defect spec is
 accepted with `--defect-spec`.
 
@@ -54,7 +56,7 @@ scripts/prepare_finetune_recipe.py \
   --validation-testcase /data/validation/testcase.jsonl \
   --base-checkpoint /models/Cosmos3-Nano \
   --vae-path /models/Wan2.2_VAE.pth \
-  --nn-backbone /models/facebook/dinov2-large \
+  --checkpoint-root /models/anomalygen-checkpoints \
   --dataset-name my_dataset \
   --recipe-template /data/recipe.yaml \
   --output /results/canonical_recipe.yaml
@@ -68,15 +70,18 @@ and emits a recipe plus metadata. `validation_iter` must be a multiple of
 ## Train and accept
 
 Invoke `tao-launch-workflow`, review the platform, image, mounts, GPU shape,
-runtime, and exact recipe, then submit the `train` action. Bind the selected
-DINOv2 directory read-only at the fixed container path declared in
-`skill_info.yaml`; the public image does not bundle it. An optional Hugging Face
-cache supplies the Qwen tokenizer for offline execution.
+runtime, and exact recipe, then submit the `train` action. Bind the entire
+checkpoint root read-only at the fixed container path declared in
+`skill_info.yaml`; the upstream trainer resolves the Qwen tokenizer model
+assets at `checkpoints/hf` and DINOv2 at
+`checkpoints/facebook/dinov2-large` beneath its image repository. Mounting only
+the DINOv2 directory or setting `HF_HOME` does not satisfy that contract.
 
 ```bash
 scripts/finetune_anomalygennext.sh \
   --recipe /results/canonical_recipe.yaml \
   --results-dir /new/training_results \
+  --checkpoint-root /workspace/paidf-anomalygen/checkpoints \
   --num-gpus 1
 ```
 

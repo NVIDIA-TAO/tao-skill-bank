@@ -155,7 +155,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
             finetune = route.get("finetune") or {}
             if not ready and any(not str(finetune.get(key) or "").strip() for key in
                                  ("dataset_root", "validation_testcase", "base_checkpoint",
-                                  "vae_path", "nn_backbone", "result_handoff")):
+                                  "vae_path", "checkpoint_root", "result_handoff")):
                 raise ValueError(f"synthesis route {name} needs checkpoint/recipe or finetune inputs")
     output.mkdir(parents=True)
     policy["base_checkpoint"] = str(checkpoint)

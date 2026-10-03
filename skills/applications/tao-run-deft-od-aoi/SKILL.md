@@ -265,7 +265,7 @@ training on an unchanged iteration.
 
 A synthesis route may replace `checkpoint` and `recipe` with a `finetune` block
 containing `dataset_root`, frozen `validation_testcase`, Cosmos3-Nano
-`base_checkpoint`, `vae_path`, `nn_backbone`, future `result_handoff`, and
+`base_checkpoint`, `vae_path`, `checkpoint_root`, future `result_handoff`, and
 optional user `recipe_template`/`defect_spec`. These are AnomalyGenNext inputs;
 the application policy is not an upstream training recipe.
 
