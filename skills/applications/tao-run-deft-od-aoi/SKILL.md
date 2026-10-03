@@ -275,8 +275,24 @@ FN/annotation matches:
 scripts/prepare_deft_od_aoi_synthesis.py \
   --policy "$RESULTS/deft_od_aoi_policy.yaml" \
   --strict-gaps "$MEASURE/gap_strict/box_gaps.parquet" \
+  --iteration 1 \
+  --real-coco "$ITER/admission/train.json" \
   --output-dir "$ITER/synthesis_request"
 ```
+
+The default `synthesis.fn_selection.mode: generated_per_type_plan` bounds work
+from the current admitted real COCO. It derives a deterministic per-type plan
+from `cumulative_fraction_of_total_defects`, writes and hashes the plan, and
+records the full allocation calculation. A fraction of `0.25` means synthetic
+images are 25% of the combined real-plus-synthetic defect pool. Set the mode to
+`all_eligible` explicitly to preserve every routed FN without pre-generation
+budgeting.
+
+The planner derives the finalized yield as `2 * max_neighbors_per_fn`: the
+finalizer emits two fixed mask branches and requests one image from each branch
+for every retained neighbor. `candidate_topn` only supplies fallback neighbor
+candidates and does not enter this calculation. The derived value is recorded
+as `images_per_fn` in the frozen plan evidence; it is not a policy input.
 
 Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
 then its finalized generation plan through `tao-generate-od-defects`. Commit

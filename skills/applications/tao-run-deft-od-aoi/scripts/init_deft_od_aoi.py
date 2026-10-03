@@ -14,6 +14,9 @@ from typing import Any
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deft_od_aoi_synthesis_contract import validate_synthesis_contract
+
 
 DEFAULTS = Path(__file__).resolve().parents[1] / "assets" / "default_policy.yaml"
 # Normalized handoff roles: KPI/test are held out, ``real`` is the
@@ -138,6 +141,13 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
             "routing.near_miss_real_cap_per_pocket"
         )
     policy = _merge(yaml.safe_load(DEFAULTS.read_text()), user)
+    user_synthesis = user.get("synthesis", {})
+    if (isinstance(user_synthesis, dict)
+            and "cumulative_fraction_of_real_defects" in user_synthesis
+            and "cumulative_fraction_of_total_defects" not in user_synthesis):
+        policy["synthesis"].pop("cumulative_fraction_of_total_defects", None)
+        if "fn_selection" not in user_synthesis:
+            policy["synthesis"]["fn_selection"] = {"mode": "all_eligible"}
     if not isinstance(policy.get("max_iterations"), int) or policy["max_iterations"] < 1:
         raise ValueError("max_iterations must be a positive integer")
     if not str(policy.get("platform") or "").strip():
@@ -192,6 +202,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
             )
     synthesis = policy.get("synthesis", {})
     if synthesis.get("enabled"):
+        validate_synthesis_contract(synthesis)
         pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
         if not pool.is_dir():
             raise ValueError("enabled synthesis needs pool_dataset_root")

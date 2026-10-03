@@ -46,6 +46,28 @@ def _config(root: Path) -> Path:
     return path
 
 
+def _enable_synthesis(root: Path, config: Path) -> dict:
+    value = yaml.safe_load(config.read_text())
+    pool = root / "pool"
+    pool.mkdir()
+    clean = pool / "texture/clean_image/clean.png"
+    clean.parent.mkdir(parents=True)
+    clean.write_bytes(b"clean")
+    defect, checkpoint, recipe = (
+        root / "defect.jsonl", root / "adapter.pt", root / "recipe.yaml"
+    )
+    defect.write_text("{}\n")
+    checkpoint.write_bytes(b"adapter")
+    recipe.write_text("anomaly_types: []\n")
+    value["synthesis"] = {
+        "enabled": True,
+        "pool_dataset_root": str(pool),
+        "defect_spec": str(defect),
+        "routes": {"route": {"checkpoint": str(checkpoint), "recipe": str(recipe)}},
+    }
+    return value
+
+
 def _append_boxless_image(role: dict, name: str) -> None:
     images = Path(role["images"])
     image = images / f"{name}_boxless.png"
@@ -164,6 +186,45 @@ def test_initialize_accepts_explicit_checkpoint_baseline(tmp_path: Path) -> None
     config.write_text(yaml.safe_dump(value))
     state = MODULE.initialize(config, tmp_path / "results")
     assert state["baseline_mode"] == "checkpoint"
+
+
+def test_initialize_preserves_legacy_synthetic_fraction_override(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = _enable_synthesis(tmp_path, config)
+    value["synthesis"]["cumulative_fraction_of_real_defects"] = 0.4
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+    policy = yaml.safe_load(Path(state["policy"]).read_text())
+
+    assert policy["synthesis"]["cumulative_fraction_of_real_defects"] == 0.4
+    assert "cumulative_fraction_of_total_defects" not in policy["synthesis"]
+    assert policy["synthesis"]["fn_selection"] == {"mode": "all_eligible"}
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"fn_selection": {"mode": "external_plan"}}, "unsupported.*mode"),
+        ({"max_neighbors_per_fn": 0}, "max_neighbors_per_fn.*positive integer"),
+        ({"max_neighbors_per_fn": True}, "max_neighbors_per_fn.*positive integer"),
+        ({"max_neighbors_per_fn": 1.5}, "max_neighbors_per_fn.*positive integer"),
+        ({"fn_selection": {"mode": "generated_per_type_plan", "images_per_fn": 2}},
+         "images_per_fn is derived"),
+        ({"cumulative_fraction_of_total_defects": -0.1}, "must be in.*0, 1"),
+        ({"cumulative_fraction_of_total_defects": 1.0}, "must be in.*0, 1"),
+        ({"cumulative_fraction_of_total_defects": float("nan")}, "must be in.*0, 1"),
+    ],
+)
+def test_initialize_rejects_invalid_bounded_synthesis_contract(
+        tmp_path: Path, override: dict, message: str) -> None:
+    config = _config(tmp_path)
+    value = _enable_synthesis(tmp_path, config)
+    value["synthesis"] = MODULE._merge(value["synthesis"], override)
+    config.write_text(yaml.safe_dump(value))
+
+    with pytest.raises(ValueError, match=message):
+        MODULE.initialize(config, tmp_path / "results")
 
 
 def test_initialize_rejects_automatic_baseline_selection(tmp_path: Path) -> None:
